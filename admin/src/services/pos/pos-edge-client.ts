@@ -7,6 +7,7 @@ import type {
 import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
 import type { TenantBranding } from "@/services/api/tenants";
+import { printWorkSessionClosure, workSessionClosureHtml } from "./pos-work-session-close";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -371,6 +372,7 @@ export type PosCashMovementTicket = {
   occurredAt: string;
   reference: string | null;
   notes: string | null;
+  responsibleName: string;
 };
 
 export type PosWorkSessionPaymentTotal = {
@@ -818,10 +820,18 @@ export class PosEdgeClient implements PosClient {
     });
   }
 
-  closeWorkSession(input: PosCloseWorkSessionInput) {
-    return this.request<PosWorkSessionClosure>("/edge/v1/work-sessions/current/close", {
+  async closeWorkSession(input: PosCloseWorkSessionInput) {
+    const result = await this.request<{
+      closure: PosWorkSessionClosure;
+      printedDirectly: boolean;
+      printError: string | null;
+    }>("/edge/v1/work-sessions/current/close", {
       method: "POST", body: JSON.stringify(input),
     });
+    if (!result.printedDirectly)
+      await printWorkSessionClosure(workSessionClosureHtml(result.closure))
+        .catch(() => undefined);
+    return result.closure;
   }
 
   previewWorkSessionClosure(draftId: string, authorization?: PosSensitiveAuthorization) {

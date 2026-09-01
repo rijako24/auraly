@@ -17,13 +17,13 @@ const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP
 
 type LiveEvent = PosSynchronizationEvent & { expiresAt: number };
 type Props = {
-  open: boolean; client: PosClient; connected: boolean;
+  open: boolean; client: PosClient; serverConnected: boolean; pushConnected: boolean;
   canSynchronize: boolean;
   inProgress: boolean; pendingCount: number; failed: boolean; error: string | null;
   onSynchronize: () => Promise<void>; onClose: () => void;
 };
 
-export function PosSynchronizationEventsDialog({ open, client, connected, canSynchronize, inProgress, pendingCount, failed, error, onSynchronize, onClose }: Props) {
+export function PosSynchronizationEventsDialog({ open, client, serverConnected, pushConnected, canSynchronize, inProgress, pendingCount, failed, error, onSynchronize, onClose }: Props) {
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const seen = useRef(new Set<number>());
@@ -91,11 +91,17 @@ export function PosSynchronizationEventsDialog({ open, client, connected, canSyn
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(45,212,191,.18),transparent_42%),linear-gradient(135deg,rgba(255,255,255,.025),transparent_55%)]" />
           <div className="pointer-events-none absolute inset-x-0 top-0 h-px animate-pulse bg-gradient-to-r from-transparent via-cyan-200 to-transparent" />
           <div className="relative flex items-center gap-5">
-            <ConnectionPulse connected={connected} inProgress={inProgress} />
+            <ConnectionPulse connected={serverConnected} inProgress={inProgress} />
             <div className="min-w-0 flex-1">
-              <div className={`mb-2 flex items-center gap-2 text-[0.64rem] font-black uppercase tracking-[0.24em] ${connected ? "text-cyan-200/80" : "text-amber-200"}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-cyan-300 shadow-[0_0_14px_rgba(103,232,249,.9)]" : "bg-amber-300 shadow-[0_0_14px_rgba(252,211,77,.7)]"}`} />
-                {connected ? "Conectado · señal en tiempo real" : "Desconectado · trabajando local"}
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-[0.61rem] font-black uppercase tracking-[0.16em]">
+                <span className={`inline-flex items-center gap-1.5 ${serverConnected ? "text-cyan-200/80" : "text-amber-200"}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${serverConnected ? "bg-cyan-300 shadow-[0_0_14px_rgba(103,232,249,.9)]" : "bg-amber-300"}`} />
+                  API {serverConnected ? "conectada" : "desconectada"}
+                </span>
+                <span className={`inline-flex items-center gap-1.5 ${pushConnected ? "text-emerald-200/80" : "text-amber-200"}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${pushConnected ? "bg-emerald-300 shadow-[0_0_14px_rgba(110,231,183,.8)]" : "bg-amber-300"}`} />
+                  Señal {pushConnected ? "activa" : "interrumpida"}
+                </span>
                 <Badge className="ml-auto border-white/10 bg-white/5 text-white/70" variant="outline">Ctrl+L</Badge>
               </div>
               <DialogTitle className="text-[1.35rem] font-black tracking-tight">Sincronización</DialogTitle>

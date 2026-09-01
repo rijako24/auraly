@@ -48,6 +48,8 @@
     "src/services/pos/pos-work-session-close.ts",
     "src/services/pos/pos-work-session-close.test.ts",
     "src/services/pos/pos-receipt-brand.test.ts",
+    "src/services/pos/pos-cash-movement-print.ts",
+    "src/services/pos/pos-cash-movement-print.test.ts",
     "src/services/pos/pos-approval-permission.ts",
     "src/services/pos/pos-approval-client.test.ts",
     "src/services/pos/pos-approval-synchronization.ts",

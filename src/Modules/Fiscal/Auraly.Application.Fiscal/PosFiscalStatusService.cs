@@ -21,10 +21,9 @@ public sealed class PosFiscalStatusService(IPosFiscalStatusStore store)
     {
         ArgumentNullException.ThrowIfNull(device);
         if (device.DeviceId == Guid.Empty ||
-            device.BusinessId == Guid.Empty ||
-            !device.Permissions.Contains(FiscalPermissionCodes.PosStatusSync))
+            device.BusinessId == Guid.Empty)
             throw new FiscalForbiddenException(
-                $"Permission '{FiscalPermissionCodes.PosStatusSync}' is required.");
+                "The enrolled POS device context is incomplete.");
         if (pageSize is < 1 or > 200)
             throw new FiscalOperationException("PageSize must be between 1 and 200.");
         ValidateCursor(cursor);

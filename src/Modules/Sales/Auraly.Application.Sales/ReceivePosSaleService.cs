@@ -224,10 +224,6 @@ public sealed class ReceivePosSaleService(
         PosDeviceIdentity device,
         PosSaleUploadRequest request)
     {
-        if (!device.Permissions.Contains(CommercePermissionCodes.SalesCreate))
-            throw new PosSaleForbiddenException(
-                "The device cannot register POS sales.");
-
         if (device.DeviceId != request.DeviceId ||
             device.TenantId != request.TenantId)
             throw new PosSaleForbiddenException(

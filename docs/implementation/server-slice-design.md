@@ -12,7 +12,7 @@ documentos. No incluye firma XML ni transmisión a la DIAN.
 SQLite POS Edge
   -> PosEdgeOutboxUploader
   -> POST /api/pos/v1/sales
-  -> autenticación del dispositivo y permiso sales.create
+  -> autenticación del dispositivo enrolado y activo
   -> ReceivePosSaleService
   -> persistencia exacta del payload y snapshot
   -> FiscalSnapshotVerifier + Auraly.Fiscal.Core
@@ -41,8 +41,10 @@ La caja se autentica con:
 
 El secreto se almacena como PBKDF2 con salt en `PosDevices`. Los IDs del cuerpo
 deben coincidir con el contexto autenticado: tenant, empresa, sede, bodega y
-caja. Además, el dispositivo debe estar activo y tener `sales.create`. No
-existe un bypass de autenticación en producción.
+caja. El dispositivo debe estar enrolado y activo. La acción fue autorizada al
+usuario en POS Edge antes de quedar durable en el outbox; el transporte no
+vuelve a exigir un permiso técnico por caja. No existe un bypass de
+autenticación en producción.
 
 ## Persistencia SQL Server
 

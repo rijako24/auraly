@@ -47,6 +47,7 @@ public interface IWindowsRenderedPrintJob
         string documentName,
         string html,
         string outputDirectory,
+        int? paperWidthMillimeters,
         CancellationToken cancellationToken);
 }
 
@@ -57,6 +58,7 @@ public sealed class SystemWindowsRenderedPrintJob : IWindowsRenderedPrintJob
         string documentName,
         string html,
         string outputDirectory,
+        int? paperWidthMillimeters,
         CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows())
@@ -69,13 +71,36 @@ public sealed class SystemWindowsRenderedPrintJob : IWindowsRenderedPrintJob
         await File.WriteAllTextAsync(
             target, html, new System.Text.UTF8Encoding(false), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        var desktop = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "Auraly.Desktop.exe"));
+        if (!File.Exists(desktop))
+            throw new InvalidOperationException(
+                "No se encontró el adaptador local de impresión de Auraly.");
+        using var process = new System.Diagnostics.Process
         {
-            FileName = Path.GetFullPath(target),
-            Verb = "printto",
-            Arguments = $"\"{printerName}\"",
-            UseShellExecute = true
-        });
+            StartInfo = new System.Diagnostics.ProcessStartInfo(desktop)
+            {
+                WorkingDirectory = Path.GetDirectoryName(desktop)!,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        process.StartInfo.ArgumentList.Add("--print-html");
+        process.StartInfo.ArgumentList.Add(Path.GetFullPath(target));
+        process.StartInfo.ArgumentList.Add("--printer");
+        process.StartInfo.ArgumentList.Add(printerName);
+        if (paperWidthMillimeters is int paperWidth)
+        {
+            process.StartInfo.ArgumentList.Add("--paper-width-mm");
+            process.StartInfo.ArgumentList.Add(paperWidth.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (!process.Start())
+            throw new IOException("No fue posible iniciar la impresión local.");
+        await process.WaitForExitAsync(cancellationToken);
+        if (process.ExitCode != 0)
+            throw new IOException(
+                $"La impresora '{printerName}' no pudo completar el trabajo.");
     }
 }
 
@@ -332,6 +357,7 @@ public sealed class ConfigurableOrderDocumentPrinter(
                     $"Auraly-{format}",
                     rendered,
                     directory,
+                    null,
                     cancellationToken);
                 continue;
             }
@@ -442,6 +468,7 @@ public sealed class ConfigurablePosReceiptPrinter(
                 $"Auraly-{receipt.DocumentNumber}",
                 html.Render(receipt with { PaperWidthMillimeters = paperWidthMillimeters }),
                 settings.ReceiptOutputDirectory,
+                paperWidthMillimeters,
                 cancellationToken);
         }
         var printer = configuration.ReceiptMode switch
@@ -537,6 +564,7 @@ public sealed class RenderedWindowsReceiptPrinter(
             $"Auraly-{receipt.DocumentNumber}",
             renderer.Render(receipt),
             outputDirectory,
+            receipt.PaperWidthMillimeters,
             cancellationToken);
 }
 

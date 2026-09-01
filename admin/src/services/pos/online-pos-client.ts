@@ -59,6 +59,7 @@ import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
 import { referenceOptionsApi } from "@/services/api/reference-options";
 import { printWorkSessionClosure, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest } from "./pos-work-session-close";
+import { cashMovementTicketHtml, printCashMovementTicket } from "./pos-cash-movement-print";
 import { receiptBrandMarkup } from "./pos-receipt-brand";
 import { isWorkspacePolicySynchronizationMessage } from "./pos-workspace-synchronization";
 
@@ -433,11 +434,13 @@ export class OnlinePosClient implements PosClient {
       },
     );
   }
-  printCashMovement(ticket: PosCashMovementTicket) {
-    if (!this.edgeSessionToken)
-      return Promise.reject(new Error(
-        "La impresión de movimientos requiere una caja instalada con impresora de facturación en tirilla."));
-    return this.localEdge().printCashMovement(ticket);
+  async printCashMovement(ticket: PosCashMovementTicket) {
+    if (this.edgeSessionToken) return this.localEdge().printCashMovement(ticket);
+    const branding = await tenantsApi.getBranding().catch(() => null);
+    return printCashMovementTicket(cashMovementTicketHtml(
+      ticket,
+      branding?.displayName ?? branding?.legalName ?? "Empresa",
+    ));
   }
 
 
@@ -882,11 +885,22 @@ export class OnlinePosClient implements PosClient {
       request<PosWorkSessionClosure>(requestDefinition.path, requestDefinition.init),
       tenantsApi.getBranding().catch(() => null),
     ]);
-    await printWorkSessionClosure(workSessionClosureHtml({
+    const printableClosure = {
       ...closure,
       companyName: branding?.displayName ?? branding?.legalName ?? closure.businessName,
       logoUrl: branding?.logoUrl ?? null,
-    }));
+    };
+    if (this.edgeSessionToken) {
+      try {
+        await this.localEdge().printWorkSessionClosure(printableClosure);
+      } catch {
+        await printWorkSessionClosure(workSessionClosureHtml(printableClosure))
+          .catch(() => undefined);
+      }
+    } else {
+      await printWorkSessionClosure(workSessionClosureHtml(printableClosure))
+        .catch(() => undefined);
+    }
     return closure;
   }
 

@@ -718,13 +718,22 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         capture.EnsureSuccessStatusCode();
         var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
         var total = captured!.Draft!.PayableAmount;
+        var cashAmount = decimal.Round(total * 0.50m, 2, MidpointRounding.AwayFromZero);
+        var cardAmount = decimal.Round(total * 0.25m, 2, MidpointRounding.AwayFromZero);
+        var transferAmount = total - cashAmount - cardAmount;
         var completed = await Client.PostAsJsonAsync(
             $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/complete",
             new CompleteDraftRequest(
                 null,
-                [new CompletePaymentRequest("Cash", total, null)],
+                [
+                    new CompletePaymentRequest("Cash", cashAmount, null),
+                    new CompletePaymentRequest("Card", cardAmount, null, "Visa", "APPROVED-1"),
+                    new CompletePaymentRequest("Transfer", transferAmount, null)
+                ],
                 DocumentType: PosSaleDocumentTypes.Receipt));
-        completed.EnsureSuccessStatusCode();
+        Assert.True(
+            completed.IsSuccessStatusCode,
+            await completed.Content.ReadAsStringAsync());
         var nextDraft = (await completed.Content.ReadFromJsonAsync<CompletePosSaleResult>())!
             .NextDraft;
 
@@ -736,7 +745,16 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             .ReadFromJsonAsync<AuthorizedWorkSessionClosurePreview>();
         Assert.NotNull(preview);
         Assert.Equal(total, preview.Preview.TotalSales);
-        Assert.Equal(total, preview.Preview.ExpectedCash);
+        Assert.Equal(cashAmount, preview.Preview.ExpectedCash);
+        Assert.Equal(
+            cashAmount,
+            preview.Preview.PaymentTotals.Single(value => value.PaymentMethodCode == "Cash").NetAmount);
+        Assert.Equal(
+            cardAmount,
+            preview.Preview.PaymentTotals.Single(value => value.PaymentMethodCode == "Card").NetAmount);
+        Assert.Equal(
+            transferAmount,
+            preview.Preview.PaymentTotals.Single(value => value.PaymentMethodCode == "Transfer").NetAmount);
         Assert.Equal(
             new[] { "Cash", "Card", "Transfer" },
             preview.Preview.PaymentTotals
@@ -746,30 +764,26 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var closeRequest = new CloseLocalWorkSessionRequest(
             operationId,
             preview.AuthorizationToken,
-            total,
+            cashAmount,
             [
-                new WorkSessionPaymentCount("Cash", total),
-                new WorkSessionPaymentCount("Card", 0),
-                new WorkSessionPaymentCount("Transfer", 0)
+                new WorkSessionPaymentCount("Cash", cashAmount),
+                new WorkSessionPaymentCount("Card", cardAmount),
+                new WorkSessionPaymentCount("Transfer", transferAmount)
             ],
             null);
         _closurePrinter.FailuresRemaining = 1;
-        var failedPrint = await Client.PostAsJsonAsync(
-            "/edge/v1/work-sessions/current/close",
-            closeRequest);
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, failedPrint.StatusCode);
-
         var closeResponse = await Client.PostAsJsonAsync(
             "/edge/v1/work-sessions/current/close",
             closeRequest);
         closeResponse.EnsureSuccessStatusCode();
-        var closure = await closeResponse.Content.ReadFromJsonAsync<WorkSessionClosureView>();
-        Assert.NotNull(closure);
+        var closeResult = await closeResponse.Content.ReadFromJsonAsync<CloseLocalWorkSessionResult>();
+        Assert.NotNull(closeResult);
+        Assert.False(closeResult.PrintedDirectly);
+        Assert.Contains("impresora", closeResult.PrintError, StringComparison.OrdinalIgnoreCase);
+        var closure = closeResult.Closure;
         Assert.Equal(operationId, closure.WorkSessionClosureId);
         Assert.Equal(0, closure.CashDifference);
-        Assert.Equal(
-            operationId,
-            Assert.Single(_closurePrinter.Closures).WorkSessionClosureId);
+        Assert.Empty(_closurePrinter.Closures);
 
         await using var database = new Microsoft.Data.Sqlite.SqliteConnection(
             $"Data Source={_path}");

@@ -20,16 +20,14 @@ public sealed class PosCashMovementTicketTests
             125000m,
             new DateTimeOffset(2026, 8, 31, 14, 30, 0, TimeSpan.FromHours(-5)),
             "REC-45",
-            "Entregado por administración");
-        var session = new PosLocalUserSession(
-            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "cajero", "Carol Cairo",
-            [], DateTimeOffset.MaxValue, "token");
+            "Entregado por administración",
+            "Carol Cairo");
         var workstation = new PosWorkstationIdentity(
             "02", "Bodega de venta", "Principal", "Carol Cairo", "Auraly", null);
 
         var raw = Encoding.ASCII.GetString(
-            PosCashMovementTicketPrinter.RenderRaw(ticket, session, workstation, 80));
-        var html = PosCashMovementTicketPrinter.RenderHtml(ticket, session, workstation);
+            PosCashMovementTicketPrinter.RenderRaw(ticket, workstation, 80));
+        var html = PosCashMovementTicketPrinter.RenderHtml(ticket, workstation, 80);
 
         Assert.Contains(expectedTitle, raw);
         Assert.Contains("MOTIVO: Base inicial", raw);
@@ -38,5 +36,27 @@ public sealed class PosCashMovementTicketTests
         Assert.Contains(expectedTitle, html);
         Assert.Contains("Entregado por administraci", html);
         Assert.Contains("class=\"signature\"", html);
+        Assert.Contains("@page{size:80mm", html);
+    }
+
+    [Fact]
+    public void Optional_reference_and_notes_are_omitted_from_the_ticket()
+    {
+        var ticket = new PosCashMovementTicket(
+            Guid.NewGuid(), "In", "Base inicial", 10000m, DateTimeOffset.UtcNow,
+            null, null, "Cajero");
+        var workstation = new PosWorkstationIdentity(
+            "02", "Bodega", "Sede", "Cajero", "Empresa", null);
+
+        var raw = Encoding.ASCII.GetString(
+            PosCashMovementTicketPrinter.RenderRaw(ticket, workstation, 58));
+        var html = PosCashMovementTicketPrinter.RenderHtml(ticket, workstation, 58);
+
+        Assert.DoesNotContain("REFERENCIA", raw);
+        Assert.DoesNotContain("OBSERVACION", raw);
+        Assert.DoesNotContain("Referencia", html);
+        Assert.DoesNotContain("Observación", html);
+        Assert.Contains("FIRMA:", raw);
+        Assert.Contains("@page{size:58mm", html);
     }
 }

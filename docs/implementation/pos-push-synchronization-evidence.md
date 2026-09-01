@@ -67,9 +67,12 @@ sin enviar un mensaje por producto a cada dispositivo.
 
 ## Seguridad
 
-`POST /api/pos/v1/synchronization/negotiate` usa autenticación de dispositivo y
-el permiso `catalog.sync`. `TenantId`, `BusinessId` y `DeviceId` salen de los
-claims autenticados; el cliente no escoge el ámbito en el body.
+`POST /api/pos/v1/synchronization/negotiate` usa la credencial protegida del
+dispositivo. El autenticador comprueba que el `DeviceId` siga enrolado y activo
+y que el tenant continúe activo; la sincronización técnica no depende de un
+permiso asignado a la caja. `TenantId` y `DeviceId` salen de los claims
+autenticados y el negocio solicitado se limita a los grupos del dispositivo.
+Una caja desenrolada no puede negociar Web PubSub, descargar ni subir datos.
 
 La URI temporal autoriza únicamente:
 
@@ -79,6 +82,8 @@ tenant:{tenantId}:device:{deviceId}
 ```
 
 El dispositivo no recibe la cadena de conexión ni permisos para publicar.
+Los permisos del usuario gobiernan la operación local; el transporte posterior
+de una operación ya autorizada se autentica por enrolamiento activo.
 
 Configuración requerida del servidor:
 

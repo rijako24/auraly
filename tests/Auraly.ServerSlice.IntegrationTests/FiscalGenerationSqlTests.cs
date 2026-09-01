@@ -158,13 +158,13 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
 
         using var deniedRequest = new HttpRequestMessage(
             HttpMethod.Get,
-            "/api/pos/v1/fiscal/statuses");
+            $"/api/pos/v1/fiscal/statuses?businessId={fixture.BusinessId:D}");
         deniedRequest.Headers.Add(
             "X-Auraly-Device-Id", fixture.DeniedDeviceId.ToString("D"));
         deniedRequest.Headers.Add(
             "X-Auraly-Device-Secret", ServerSliceFixture.DeniedDeviceSecret);
         using var deniedResponse = await client.SendAsync(deniedRequest);
-        Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, deniedResponse.StatusCode);
     }
 
     [Fact]

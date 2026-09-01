@@ -16,8 +16,8 @@ export function AuralyLoadingState({
       className={`${overlay ? "fixed inset-0 z-[2147483647] min-h-dvh" : "min-h-[65dvh]"} grid place-items-center bg-[#f8fafc] px-6 text-[#07161a]`}
     >
       <div className="flex w-full max-w-sm flex-col items-center text-center">
-        <AuralyMark className="h-20 w-20" />
-        <h1 className="mt-5 text-lg font-semibold tracking-tight">{title}</h1>
+        <AuralyMark className="h-24 w-24" />
+        <h1 className="mt-5 text-lg font-black tracking-tight">{title}</h1>
         {description && (
           <p className="mt-2 text-sm leading-6 text-[#667f7d]">{description}</p>
         )}

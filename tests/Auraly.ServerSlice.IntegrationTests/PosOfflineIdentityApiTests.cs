@@ -43,7 +43,7 @@ public sealed class PosOfflineIdentityApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Device_without_identity_sync_permission_is_denied()
+    public async Task Active_enrolled_device_does_not_require_a_separate_identity_sync_permission()
     {
         using var client = fixture.CreateClient();
         using var request = new HttpRequestMessage(
@@ -53,7 +53,7 @@ public sealed class PosOfflineIdentityApiTests(ServerSliceFixture fixture)
         request.Headers.Add(
             "X-Auraly-Device-Secret", ServerSliceFixture.DeniedDeviceSecret);
         using var response = await client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     private async Task SeedCashierRoleAndVerifierAsync(

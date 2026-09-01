@@ -433,7 +433,7 @@ public sealed class PosConfigurationTests
                 Path.Combine(directory, "receipts"));
             store.Save(new PosPrinterConfiguration(
                 PosPrinterModes.WindowsRaw,
-                "Factura POS",
+                "Tirilla",
                 80,
                 "Media carta",
                 PosPrinterName: "Factura POS",
@@ -485,6 +485,102 @@ public sealed class PosConfigurationTests
             Assert.Equal(
                 new[] { "Factura POS", "Pedidos POS", "Factura POS" },
                 raw.PrinterNames);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Closure_recovery_reuses_the_one_durable_result_for_the_work_session()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(), "auraly-closure-recovery-" + Guid.NewGuid().ToString("N") + ".db");
+        try
+        {
+            var connectionString = "Data Source=" + path;
+            var store = new PosOfflineWorkSessionClosureStore(connectionString, TimeProvider.System);
+            await store.InitializeAsync();
+            var workSessionId = Guid.NewGuid();
+            var userId = Guid.NewGuid();
+            var now = DateTimeOffset.UtcNow;
+            PosQueuedWorkSessionClosure queued(Guid operationId, decimal counted) => new(
+                operationId,
+                new WorkSessionClosureView(
+                    operationId, workSessionId, Guid.NewGuid(), "Negocio",
+                    Guid.NewGuid(), "Bodega", userId, "Cajero", Guid.NewGuid(),
+                    now.AddHours(-8), now, 10m, 0, 0, 10m, 10m, counted,
+                    counted - 10m, null,
+                    [new WorkSessionPaymentTotal("Cash", 10m, 0, 0, 10m, counted, counted - 10m)]),
+                new DeviceCloseWorkSessionRequest(
+                    userId, workSessionId, counted, null, userId,
+                    [new WorkSessionPaymentCount("Cash", counted)]));
+
+            var firstOperation = Guid.NewGuid();
+            var first = await store.QueueAsync(queued(firstOperation, 10m));
+            var recovered = await store.QueueAsync(queued(Guid.NewGuid(), 99m));
+
+            Assert.Equal(firstOperation, first.WorkSessionClosureId);
+            Assert.Equal(firstOperation, recovered.WorkSessionClosureId);
+            Assert.Equal(10m, recovered.CountedCash);
+            await using var database = new SqliteConnection(connectionString);
+            await database.OpenAsync();
+            await using var count = database.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM PosWorkSessionClosures;";
+            Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Closure_and_cash_movements_always_use_invoice_printer_as_receipt()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-fixed-receipts-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw,
+                "Legacy receipt printer",
+                58,
+                "Letter printer",
+                PosOutputFormat: PrintTemplateFormats.HalfLetter,
+                PosPrinterName: "Microsoft XPS Document Writer",
+                OrdersPrinterName: "Orders printer"));
+            var raw = new RecordingRawPrintJob();
+            var rendered = new RecordingRenderedPrintJob();
+            var workstation = new PosWorkstationIdentity(
+                "POS-1", "Sede", "Bodega", "Cajero", "Empresa", null);
+            var now = DateTimeOffset.UtcNow;
+
+            await new PosCashMovementTicketPrinter(
+                store, raw, rendered, workstation).PrintAsync(
+                new PosCashMovementTicket(
+                    Guid.NewGuid(), "In", "Base", 10m, now, null, null, "Cajero"),
+                CancellationToken.None);
+            await new PosWorkSessionClosurePrinter(
+                store, raw, rendered, workstation).PrintAsync(
+                new WorkSessionClosureView(
+                    Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Sede",
+                    Guid.NewGuid(), "Bodega", Guid.NewGuid(), "Cajero", null,
+                    now.AddHours(-8), now, 10m, 0, 0, 10m, 10m, 10m, 0, null,
+                    [new WorkSessionPaymentTotal("Cash", 10m, 0, 0, 10m, 10m, 0)]),
+                CancellationToken.None);
+
+            Assert.Equal(
+                new[] { "Microsoft XPS Document Writer", "Microsoft XPS Document Writer" },
+                rendered.PrinterNames);
+            Assert.Equal(new int?[] { 58, 58 }, rendered.PaperWidths);
+            Assert.Empty(raw.PrinterNames);
         }
         finally
         {
@@ -582,16 +678,19 @@ public sealed class PosConfigurationTests
     {
         public List<string> PrinterNames { get; } = [];
         public List<string> Documents { get; } = [];
+        public List<int?> PaperWidths { get; } = [];
 
         public Task PrintAsync(
             string printerName,
             string documentName,
             string html,
             string outputDirectory,
+            int? paperWidthMillimeters,
             CancellationToken cancellationToken)
         {
             PrinterNames.Add(printerName);
             Documents.Add(html);
+            PaperWidths.Add(paperWidthMillimeters);
             return Task.CompletedTask;
         }
     }

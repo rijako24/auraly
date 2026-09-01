@@ -133,6 +133,26 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken = default)
     {
         Demand(identity, WorkSessionPermissionCodes.Close);
+        return await CloseCoreAsync(
+            identity, workSessionId, idempotencyKey, request, cancellationToken);
+    }
+
+    public Task<WorkSessionClosureView> CloseFromDeviceAsync(
+        WorkSessionIdentity deviceIdentity,
+        Guid workSessionId,
+        string idempotencyKey,
+        CloseWorkSessionRequest request,
+        CancellationToken cancellationToken = default) =>
+        CloseCoreAsync(
+            deviceIdentity, workSessionId, idempotencyKey, request, cancellationToken);
+
+    private async Task<WorkSessionClosureView> CloseCoreAsync(
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        string idempotencyKey,
+        CloseWorkSessionRequest request,
+        CancellationToken cancellationToken)
+    {
         if (workSessionId == Guid.Empty)
             throw new WorkSessionValidationException("WorkSessionId is required.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 128)
@@ -194,6 +214,17 @@ public sealed class WorkSessionService(
         if (workSessionId == Guid.Empty)
             throw new WorkSessionValidationException("WorkSessionId is required.");
         return store.PreviewClosureAsync(identity, workSessionId, cancellationToken);
+    }
+
+    public Task<WorkSessionClosurePreviewView> PreviewClosureFromDeviceAsync(
+        WorkSessionIdentity deviceIdentity,
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (workSessionId == Guid.Empty)
+            throw new WorkSessionValidationException("WorkSessionId is required.");
+        return store.PreviewClosureAsync(
+            deviceIdentity, workSessionId, cancellationToken);
     }
 
     public Task<IReadOnlyList<WorkSessionCashDifferenceView>> ListCashDifferencesAsync(
@@ -259,6 +290,27 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken = default)
     {
         Demand(identity, WorkSessionPermissionCodes.Read);
+        return ListCashReasonsCoreAsync(
+            identity, businessId, direction, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsFromDeviceAsync(
+        WorkSessionIdentity deviceIdentity,
+        Guid businessId,
+        string? direction,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateDeviceIdentity(deviceIdentity);
+        return ListCashReasonsCoreAsync(
+            deviceIdentity, businessId, direction, cancellationToken);
+    }
+
+    private Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsCoreAsync(
+        WorkSessionIdentity identity,
+        Guid businessId,
+        string? direction,
+        CancellationToken cancellationToken)
+    {
         if (businessId == Guid.Empty)
             throw new WorkSessionValidationException("BusinessId is required.");
         var normalizedDirection = NullIfWhiteSpace(direction);
@@ -308,6 +360,27 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken = default)
     {
         Demand(identity, WorkSessionPermissionCodes.ManageCash);
+        return await ConfirmCashMovementCoreAsync(
+            identity, idempotencyKey, request, cancellationToken);
+    }
+
+    public Task<CashMovementAcceptance> ConfirmCashMovementFromDeviceAsync(
+        WorkSessionIdentity deviceIdentity,
+        string idempotencyKey,
+        ConfirmCashMovementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateDeviceIdentity(deviceIdentity);
+        return ConfirmCashMovementCoreAsync(
+            deviceIdentity, idempotencyKey, request, cancellationToken);
+    }
+
+    private async Task<CashMovementAcceptance> ConfirmCashMovementCoreAsync(
+        WorkSessionIdentity identity,
+        string idempotencyKey,
+        ConfirmCashMovementRequest request,
+        CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(idempotencyKey) ||
             idempotencyKey.Trim().Length > 160)
             throw new WorkSessionValidationException(
@@ -362,6 +435,14 @@ public sealed class WorkSessionService(
         if (!identity.Permissions.Contains(permission))
             throw new WorkSessionForbiddenException(
                 $"Permission '{permission}' is required.");
+    }
+
+    private static void ValidateDeviceIdentity(WorkSessionIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        if (identity.UserId == Guid.Empty || identity.TenantId == Guid.Empty)
+            throw new WorkSessionForbiddenException(
+                "The enrolled POS device context is incomplete.");
     }
 
     private static string? NullIfWhiteSpace(string? value) =>

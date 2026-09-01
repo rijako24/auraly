@@ -614,14 +614,11 @@ builder.Services.AddAuthorization(options =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim(PosAuthenticationDefaults.PermissionClaim, CatalogPermissionCodes.Sync);
     });
     options.AddPolicy("pos.fiscal.status.sync", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim(PosAuthenticationDefaults.PermissionClaim,
-            FiscalPermissionCodes.PosStatusSync);
     });
     options.AddPolicy("pos.customer.create", policy =>
     {
@@ -635,25 +632,16 @@ builder.Services.AddAuthorization(options =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim(
-            PosAuthenticationDefaults.PermissionClaim,
-            CommercePermissionCodes.PosIdentitySync);
     });
     options.AddPolicy("pos.offline.authentication", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim(
-            PosAuthenticationDefaults.PermissionClaim,
-            CommercePermissionCodes.PosIdentitySync);
     });
     options.AddPolicy("pos.synchronization", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim(
-            PosAuthenticationDefaults.PermissionClaim,
-            CatalogPermissionCodes.Sync);
     });
     options.AddPolicy("pos.orders", policy =>
     {
@@ -677,25 +665,11 @@ builder.Services.AddAuthorization(options =>
         {
             policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
             policy.RequireAuthenticatedUser();
-            policy.RequireClaim(
-                PosAuthenticationDefaults.PermissionClaim,
-                CommercePermissionCodes.SalesCreate);
         });
     options.AddPolicy("pos.cash.manage", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim(
-            PosAuthenticationDefaults.PermissionClaim,
-            WorkSessionPermissionCodes.ManageCash);
-    });
-    options.AddPolicy("pos.work-session.close", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
-        policy.RequireClaim(
-            PosAuthenticationDefaults.PermissionClaim,
-            WorkSessionPermissionCodes.Close);
     });
 });
 var app = builder.Build();

@@ -89,13 +89,6 @@ internal sealed class PosSynchronizationWork(
         uiState.Publish();
         try
         {
-            if (trigger.HasFlag(PosSynchronizationTrigger.Security))
-                await identities.SynchronizeAsync(cancellationToken);
-            if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
-            {
-                await catalog.SynchronizeAsync(cancellationToken);
-                await cashMovements.RefreshReasonsAsync(cancellationToken);
-            }
             if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
             {
                 while (await outbox.NextAsync(cancellationToken) is { } route)
@@ -117,6 +110,13 @@ internal sealed class PosSynchronizationWork(
                         PosSynchronizationTrigger.LocalOutbox,
                         delay,
                         cancellationToken);
+            }
+            if (trigger.HasFlag(PosSynchronizationTrigger.Security))
+                await identities.SynchronizeAsync(cancellationToken);
+            if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
+            {
+                await catalog.SynchronizeAsync(cancellationToken);
+                await cashMovements.RefreshReasonsAsync(cancellationToken);
             }
             if (trigger.HasFlag(PosSynchronizationTrigger.FiscalStatus))
                 await fiscalStatuses.SynchronizeAsync(cancellationToken);

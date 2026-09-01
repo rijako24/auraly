@@ -16,7 +16,7 @@ de usuarios. Antes de poder iniciar sesion sin red, el dispositivo enrolado debe
 obtener de `Auraly.Api` una concesion exclusiva firmada:
 
 1. POS Edge envia usuario y contrasena por el canal autenticado del dispositivo.
-2. El servidor valida tenant, dispositivo, permiso, usuario, BCrypt y bloqueos.
+2. El servidor valida tenant, dispositivo enrolado, usuario, BCrypt y bloqueos.
 3. SQL Server serializa la operacion por usuario y dispositivo.
 4. Elegir el modo local constituye un traspaso autenticado: revoca las sesiones
    web activas del mismo usuario y adquiere la concesion offline sin cerrar su
@@ -63,9 +63,9 @@ POST /api/pos/v1/authentication/offline-leases/
 POST /api/pos/v1/authentication/offline-leases/{leaseId}/release
 ```
 
-Ambos endpoints usan autenticacion de dispositivo enrolado y requieren
-`pos.identity.sync`. El tenant y el `DeviceId` se obtienen de los claims firmados
-del dispositivo, no del body.
+Ambos endpoints usan autenticacion de dispositivo enrolado y activo. No exigen
+un permiso técnico por caja. El tenant y el `DeviceId` se obtienen de los claims
+firmados del dispositivo, no del body.
 
 ## Configuracion segura
 
@@ -109,7 +109,7 @@ Los escenarios nuevos prueban:
 - el traspaso a modo local revoca una sesion online activa y entrega una unica
   concesion offline; mientras esta siga activa no se abre otra sesion online;
 - liberar dos veces es idempotente y vuelve a permitir login online;
-- un dispositivo sin permiso no adquiere concesiones;
+- un dispositivo desenrolado o con credencial inválida no adquiere concesiones;
 - firma alterada, dispositivo diferente y concesion vencida son rechazados;
 - retroceder el reloj local bloquea el acceso;
 - SQLite conserva la concesion y una liberacion pendiente despues de reabrir.

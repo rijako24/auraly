@@ -81,7 +81,7 @@ public sealed class OfflineAuthenticationLeaseApiTests(ServerSliceFixture fixtur
     }
 
     [Fact]
-    public async Task Device_without_identity_permission_cannot_acquire_a_lease()
+    public async Task Active_enrolled_device_does_not_require_a_separate_identity_permission()
     {
         var user = await CreatePasswordUserAsync("denied-device");
         using var request = CreateAcquireRequest(
@@ -89,8 +89,8 @@ public sealed class OfflineAuthenticationLeaseApiTests(ServerSliceFixture fixtur
             fixture.DeniedDeviceId,
             ServerSliceFixture.DeniedDeviceSecret);
         using var response = await fixture.CreateClient().SendAsync(request);
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Equal(0, await CountActiveLeasesAsync(user.UserId));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, await CountActiveLeasesAsync(user.UserId));
     }
 
     private HttpRequestMessage CreateAcquireRequest(

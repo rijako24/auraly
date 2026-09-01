@@ -564,12 +564,11 @@ public static class PosEdgeHostApplication
         edge.MapPost("/print/cash-movement", async (
             PosCashMovementTicket request,
             PosCashMovementTicketPrinter printer,
-            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
             try
             {
-                await printer.PrintAsync(request, sessions.Required(), ct);
+                await printer.PrintAsync(request, ct);
                 return Results.NoContent();
             }
             catch (ArgumentException exception)

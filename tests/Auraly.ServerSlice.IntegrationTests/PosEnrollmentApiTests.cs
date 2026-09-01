@@ -150,6 +150,56 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, reader.GetInt32(1));
         Assert.Equal(1, reader.GetInt32(2));
     }
+
+    [Fact]
+    public async Task Unenrolled_workstation_can_enroll_again_with_a_new_active_identity()
+    {
+        const string installationId = "WORKSTATION-AFTER-UNENROLL";
+        using var client = fixture.CreateAdminClient(
+            CommercePermissionCodes.EnrolledDevicesEnroll);
+
+        var first = await EnrollAsync(client, installationId);
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                UPDATE dbo.EnrolledDevices SET IsActive=0 WHERE DeviceId=@DeviceId;
+                UPDATE dbo.DocumentSeries SET IsActive=0 WHERE DeviceId=@DeviceId;
+                """, connection);
+            command.Parameters.AddWithValue("@DeviceId", first.DeviceId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var second = await EnrollAsync(client, installationId);
+
+        Assert.NotEqual(first.DeviceId, second.DeviceId);
+        Assert.NotEqual(first.DeviceSecret, second.DeviceSecret);
+        using var oldSync = DeviceRequest(
+            $"/api/pos/v1/identity/snapshot?businessId={fixture.BusinessId:D}",
+            first);
+        using var oldSyncResponse = await client.SendAsync(oldSync);
+        Assert.Equal(HttpStatusCode.Unauthorized, oldSyncResponse.StatusCode);
+        using var newSync = DeviceRequest(
+            $"/api/pos/v1/identity/snapshot?businessId={fixture.BusinessId:D}",
+            second);
+        using var newSyncResponse = await client.SendAsync(newSync);
+        Assert.Equal(HttpStatusCode.OK, newSyncResponse.StatusCode);
+        await using var verification = new SqlConnection(fixture.ConnectionString);
+        await verification.OpenAsync();
+        await using var verify = new SqlCommand("""
+            SELECT
+              (SELECT COUNT(*) FROM dbo.EnrolledDevices
+               WHERE DeviceId=@OldDeviceId AND IsActive=0),
+              (SELECT COUNT(*) FROM dbo.EnrolledDevices
+               WHERE DeviceId=@NewDeviceId AND IsActive=1);
+            """, verification);
+        verify.Parameters.AddWithValue("@OldDeviceId", first.DeviceId);
+        verify.Parameters.AddWithValue("@NewDeviceId", second.DeviceId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1, reader.GetInt32(0));
+        Assert.Equal(1, reader.GetInt32(1));
+    }
     [Fact]
     public async Task New_device_enrollment_never_exceeds_tenant_capacity()
     {
@@ -269,5 +319,40 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@ChangedAt", verifier.ChangedAt);
         await command.ExecuteNonQueryAsync();
     }
+
+    private async Task<PosEnrollmentPackage> EnrollAsync(
+        HttpClient client,
+        string installationId)
+    {
+        using var authorizationResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/pos/enrollments",
+            new CreatePosEnrollmentRequest(
+                fixture.BusinessId, fixture.WarehouseId, "Equipo re-enrollable"));
+        authorizationResponse.EnsureSuccessStatusCode();
+        var authorization = await authorizationResponse.Content
+            .ReadFromJsonAsync<PosEnrollmentAuthorization>();
+        Assert.NotNull(authorization);
+        using var redeemResponse = await client.PostAsJsonAsync(
+            "/api/pos/v1/enrollments/redeem",
+            new RedeemPosEnrollmentRequest(
+                authorization.EnrollmentSessionId,
+                authorization.RedemptionCode,
+                installationId));
+        redeemResponse.EnsureSuccessStatusCode();
+        return (await redeemResponse.Content
+            .ReadFromJsonAsync<PosEnrollmentPackage>())!;
+    }
+
+    private static HttpRequestMessage DeviceRequest(
+        string path,
+        PosEnrollmentPackage enrollment)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Add(
+            "X-Auraly-Device-Id", enrollment.DeviceId.ToString("D"));
+        request.Headers.Add("X-Auraly-Device-Secret", enrollment.DeviceSecret);
+        return request;
+    }
+
     private sealed record DeviceCapacityState(int MaximumDevices, int ActiveDevices);
 }

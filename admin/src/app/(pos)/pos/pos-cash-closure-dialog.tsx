@@ -42,8 +42,8 @@ export function PosCashClosureDialog({ client, value, busy, submitted, onClose, 
   );
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && !submitted && onClose()}>
-      <DialogContent showClose={!busy && !submitted} className="max-h-[92vh] max-w-3xl overflow-y-auto p-0">
+    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
+      <DialogContent showClose={!busy} className="max-h-[92vh] max-w-3xl overflow-y-auto p-0">
         <DialogHeader className="border-b bg-slate-50 px-6 py-5 text-left">
           <div className="flex items-start gap-3">
             <span className="grid h-11 w-11 place-items-center rounded-xl bg-teal-100 text-teal-800"><LockKeyhole className="h-5 w-5" /></span>
@@ -106,13 +106,13 @@ export function PosCashClosureDialog({ client, value, busy, submitted, onClose, 
             <Textarea id="closure-note" value={note} disabled={busy || submitted} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder="Novedad identificada durante el conteo." />
           </div>
 
-          {submitted && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">El cierre ya fue enviado. Si falló únicamente la impresión, vuelve a intentarlo sin cambiar el conteo.</p>}
+          {submitted && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">El conteo quedó protegido para que puedas reintentar sin modificarlo.</p>}
         </div>
 
         <footer className="flex flex-wrap justify-end gap-2 border-t bg-slate-50 px-6 py-4">
-          <Button type="button" variant="outline" disabled={busy || submitted} onClick={onClose}>Cancelar</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancelar</Button>
           <Button type="button" disabled={busy || !valid} onClick={() => void onConfirm(paymentCounts, note.trim() || null)}>
-            {busy ? "Cerrando e imprimiendo…" : "Cerrar sesión de venta"}
+            {busy ? "Cerrando e imprimiendo…" : submitted ? "Reintentar cierre" : "Cerrar sesión de venta"}
           </Button>
         </footer>
       </DialogContent>

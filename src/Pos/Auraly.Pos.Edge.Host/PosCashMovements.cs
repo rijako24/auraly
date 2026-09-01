@@ -227,9 +227,6 @@ public sealed class PosCashMovementStore(
                 ?? throw new InvalidDataException(
                     "El motivo almacenado en la caja no es valido.");
         }
-        if (reason.RequiresReference && string.IsNullOrWhiteSpace(request.Reference))
-            throw new ArgumentException("El motivo seleccionado exige una referencia.");
-
         var movement = new ConfirmCashMovementRequest(
             request.DocumentId,
             businessId,

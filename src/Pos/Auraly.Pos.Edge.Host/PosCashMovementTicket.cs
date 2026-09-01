@@ -12,7 +12,8 @@ public sealed record PosCashMovementTicket(
     decimal Amount,
     DateTimeOffset OccurredAt,
     string? Reference,
-    string? Notes);
+    string? Notes,
+    string ResponsibleName);
 
 public sealed class PosCashMovementTicketPrinter(
     PosPrinterConfigurationStore configuration,
@@ -22,19 +23,16 @@ public sealed class PosCashMovementTicketPrinter(
 {
     public Task PrintAsync(
         PosCashMovementTicket ticket,
-        PosLocalUserSession session,
         CancellationToken cancellationToken)
     {
         if (ticket.DocumentId == Guid.Empty || ticket.Amount <= 0 ||
             ticket.Direction is not ("In" or "Out") ||
-            string.IsNullOrWhiteSpace(ticket.ReasonName))
+            string.IsNullOrWhiteSpace(ticket.ReasonName) ||
+            string.IsNullOrWhiteSpace(ticket.ResponsibleName))
             throw new ArgumentException("El movimiento para imprimir no es válido.");
 
         var settings = configuration.Load();
-        if (settings.PosOutputFormat != PrintTemplateFormats.Receipt)
-            throw new InvalidOperationException(
-                "El ticket de entrada o salida solo está soportado cuando facturación usa formato tirilla.");
-        var printerName = settings.PosPrinterName ?? settings.ReceiptPrinterName;
+        var printerName = settings.PosPrinterName;
         if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
             string.IsNullOrWhiteSpace(printerName))
             throw new InvalidOperationException(
@@ -46,20 +44,20 @@ public sealed class PosCashMovementTicketPrinter(
             return renderedPrintJob.PrintAsync(
                 printerName,
                 documentName,
-                RenderHtml(ticket, session, workstation),
+                RenderHtml(ticket, workstation, settings.ReceiptPaperWidthMillimeters),
                 configuration.ReceiptOutputDirectory,
+                settings.ReceiptPaperWidthMillimeters,
                 cancellationToken);
 
         rawPrintJob.Print(
             printerName,
             documentName,
-            RenderRaw(ticket, session, workstation, settings.ReceiptPaperWidthMillimeters));
+            RenderRaw(ticket, workstation, settings.ReceiptPaperWidthMillimeters));
         return Task.CompletedTask;
     }
 
     internal static byte[] RenderRaw(
         PosCashMovementTicket ticket,
-        PosLocalUserSession session,
         PosWorkstationIdentity workstation,
         int width)
     {
@@ -75,10 +73,12 @@ public sealed class PosCashMovementTicketPrinter(
         Write(stream, [0x1B, 0x61, 0x00]);
         Wrapped(stream, $"MOTIVO: {ticket.ReasonName}", columns);
         Line(stream, Pair("VALOR", Money(ticket.Amount), columns));
-        Wrapped(stream, $"REFERENCIA: {ticket.Reference ?? "-"}", columns);
-        Wrapped(stream, $"OBSERVACION: {ticket.Notes ?? "-"}", columns);
-        Wrapped(stream, $"RESPONSABLE: {session.DisplayName}", columns);
-        Line(stream, $"FECHA: {ticket.OccurredAt:yyyy-MM-dd HH:mm:ss}");
+        if (!string.IsNullOrWhiteSpace(ticket.Reference))
+            Wrapped(stream, $"REFERENCIA: {ticket.Reference}", columns);
+        if (!string.IsNullOrWhiteSpace(ticket.Notes))
+            Wrapped(stream, $"OBSERVACION: {ticket.Notes}", columns);
+        Wrapped(stream, $"RESPONSABLE: {ticket.ResponsibleName}", columns);
+        Line(stream, $"FECHA: {ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}");
         Line(stream, new string('-', columns));
         Line(stream, string.Empty);
         Line(stream, "FIRMA: ______________________");
@@ -91,14 +91,23 @@ public sealed class PosCashMovementTicketPrinter(
 
     internal static string RenderHtml(
         PosCashMovementTicket ticket,
-        PosLocalUserSession session,
-        PosWorkstationIdentity workstation)
+        PosWorkstationIdentity workstation,
+        int paperWidthMillimeters)
     {
+        if (paperWidthMillimeters is not (58 or 80))
+            throw new ArgumentOutOfRangeException(nameof(paperWidthMillimeters));
+        var contentWidthMillimeters = paperWidthMillimeters - 8;
         var logo = string.IsNullOrWhiteSpace(workstation.CompanyLogoSource)
             ? string.Empty
             : $"<img src=\"{Encode(workstation.CompanyLogoSource)}\" alt=\"Logo\">";
+        var reference = string.IsNullOrWhiteSpace(ticket.Reference)
+            ? string.Empty
+            : $"<p><strong>Referencia:</strong> {Encode(ticket.Reference)}</p>";
+        var notes = string.IsNullOrWhiteSpace(ticket.Notes)
+            ? string.Empty
+            : $"<p><strong>Observación:</strong> {Encode(ticket.Notes)}</p>";
         return $$"""
-<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:80mm auto;margin:4mm}body{width:72mm;margin:auto;font:10px Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:15px;margin:3px}h2{font-size:12px;margin:5px}.amount{display:flex;justify-content:space-between;border-block:2px solid #111;padding:8px 0;margin:10px 0;font-size:14px;font-weight:800}.detail{line-height:1.5;overflow-wrap:anywhere}.signature{margin-top:18mm;border-top:1px solid #111;text-align:center;padding-top:3px}.id{margin-top:10px;font-size:8px;overflow-wrap:anywhere}</style></head><body><header>{{logo}}<h1>{{Encode(workstation.CompanyName)}}</h1><h2>{{(ticket.Direction == "In" ? "ENTRADA DE DINERO" : "SALIDA DE DINERO")}}</h2><p>{{Encode(workstation.BusinessName)}} · {{Encode(workstation.WarehouseName)}}</p></header><div class="amount"><span>VALOR</span><span>{{Money(ticket.Amount)}}</span></div><div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p><p><strong>Referencia:</strong> {{Encode(ticket.Reference ?? "-")}}</p><p><strong>Observación:</strong> {{Encode(ticket.Notes ?? "-")}}</p><p><strong>Responsable:</strong> {{Encode(session.DisplayName)}}</p><p><strong>Fecha:</strong> {{ticket.OccurredAt:yyyy-MM-dd HH:mm:ss zzz}}</p></div><div class="signature">Firma</div><p class="id">Movimiento: {{ticket.DocumentId:D}}</p></body></html>
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:4mm}*{box-sizing:border-box}body{width:{{contentWidthMillimeters}}mm;margin:auto;font:10px/1.4 Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:15px;margin:3px}h2{font-size:12px;margin:5px}.scope{margin:2px 0}.amount{display:flex;justify-content:space-between;border-block:2px solid #111;padding:8px 0;margin:10px 0;font-size:14px;font-weight:800}.detail{line-height:1.5;overflow-wrap:anywhere}.detail p{margin:5px 0}.signature{margin-top:18mm;border-top:1px solid #111;text-align:center;padding-top:3px}.id{margin-top:10px;font-size:8px;overflow-wrap:anywhere}</style></head><body><header>{{logo}}<h1>{{Encode(workstation.CompanyName)}}</h1><h2>{{(ticket.Direction == "In" ? "ENTRADA DE DINERO" : "SALIDA DE DINERO")}}</h2><p class="scope"><strong>Sede:</strong> {{Encode(workstation.BusinessName)}}</p><p class="scope"><strong>Bodega:</strong> {{Encode(workstation.WarehouseName)}}</p></header><div class="amount"><span>VALOR</span><span>{{Money(ticket.Amount)}}</span></div><div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}<p><strong>Responsable:</strong> {{Encode(ticket.ResponsibleName)}}</p><p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="signature">Firma</div><p class="id">Movimiento: {{ticket.DocumentId:D}}</p></body></html>
 """;
     }
 

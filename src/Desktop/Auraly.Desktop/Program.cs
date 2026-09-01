@@ -21,10 +21,14 @@ internal static class Program
     private static readonly CancellationTokenSource Shutdown = new();
 
     [STAThread]
-    private static void Main()
+    private static int Main(string[] args)
     {
+        ApplicationConfiguration.Initialize();
+        if (AuralyRenderedPrintCommand.TryParse(args, out var printCommand))
+            return AuralyRenderedPrintRunner.Run(printCommand);
+
         using var mutex = new Mutex(true, "Local\\Auraly.Desktop", out var first);
-        if (!first) return;
+        if (!first) return 0;
 
         AppDomain.CurrentDomain.ProcessExit += (_, _) => StopChildren();
         Console.CancelKeyPress += (_, args) =>
@@ -35,14 +39,13 @@ internal static class Program
 
         try
         {
-            ApplicationConfiguration.Initialize();
             var configuration = LoadConfiguration(AppContext.BaseDirectory);
             var dataDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Auraly",
                 "PosEdge");
             if (AuralyPendingUpdateStore.TryStartAtStartup(dataDirectory, configuration))
-                return;
+                return 0;
             using var context = new AuralyDesktopApplicationContext(
                 AppContext.BaseDirectory,
                 configuration,
@@ -53,6 +56,7 @@ internal static class Program
         {
             StopChildren();
         }
+        return 0;
     }
 
     internal static DesktopConfiguration LoadConfiguration(string root)

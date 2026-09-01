@@ -54,7 +54,7 @@ public sealed class PosOfflineWorkSessionClosureStore(
             INSERT INTO PosWorkSessionClosures(
               OperationId,WorkSessionId,Payload,CreatedAt)
             VALUES($operation,$session,$payload,$now)
-            ON CONFLICT(OperationId) DO NOTHING;
+            ON CONFLICT DO NOTHING;
             """;
         insert.Parameters.AddWithValue("$operation", value.OperationId.ToString("D"));
         insert.Parameters.AddWithValue("$session", value.Closure.WorkSessionId.ToString("D"));
@@ -66,20 +66,32 @@ public sealed class PosOfflineWorkSessionClosureStore(
             await using var existing = connection.CreateCommand();
             existing.Transaction = transaction;
             existing.CommandText = """
-                SELECT Payload FROM PosWorkSessionClosures
-                WHERE OperationId=$operation;
+                SELECT OperationId,Payload FROM PosWorkSessionClosures
+                WHERE OperationId=$operation OR WorkSessionId=$session
+                ORDER BY CASE WHEN OperationId=$operation THEN 0 ELSE 1 END
+                LIMIT 1;
                 """;
             existing.Parameters.AddWithValue("$operation", value.OperationId.ToString("D"));
-            var existingPayload = await existing.ExecuteScalarAsync(cancellationToken) as string;
-            var existingValue = existingPayload is null
+            existing.Parameters.AddWithValue("$session", value.Closure.WorkSessionId.ToString("D"));
+            await using var reader = await existing.ExecuteReaderAsync(cancellationToken);
+            var found = await reader.ReadAsync(cancellationToken);
+            var existingOperationId = found ? Guid.Parse(reader.GetString(0)) : Guid.Empty;
+            var existingValue = !found
                 ? null
-                : JsonSerializer.Deserialize<PosQueuedWorkSessionClosure>(existingPayload, Json);
-            if (existingValue is null || !string.Equals(
+                : JsonSerializer.Deserialize<PosQueuedWorkSessionClosure>(reader.GetString(1), Json);
+            await reader.DisposeAsync();
+            if (existingValue is null)
+                throw new InvalidOperationException(
+                    "No fue posible recuperar el cierre ya guardado para esta sesión.");
+            if (existingOperationId == value.OperationId && !string.Equals(
                     JsonSerializer.Serialize(existingValue.Request, Json),
                     JsonSerializer.Serialize(value.Request, Json),
                     StringComparison.Ordinal))
                 throw new InvalidOperationException(
                     "El identificador del cierre ya fue usado con otro conteo.");
+            // One work session can only have one closure. If a previous process
+            // persisted it and stopped before ending the local login, recover
+            // that exact closure instead of creating or recalculating another.
             value = existingValue;
         }
         await using (var enqueue = connection.CreateCommand())

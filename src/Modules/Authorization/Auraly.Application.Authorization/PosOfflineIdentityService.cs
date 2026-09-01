@@ -23,10 +23,6 @@ public sealed class PosOfflineIdentityService(IPosOfflineIdentityStore store)
         PosIdentityDeviceScope device,
         CancellationToken cancellationToken = default)
     {
-        if (!device.Permissions.Contains(CommercePermissionCodes.PosIdentitySync))
-            throw new PosIdentityForbiddenException(
-                $"Permission '{CommercePermissionCodes.PosIdentitySync}' is required.");
-
         if (device.DeviceId == Guid.Empty || device.TenantId == Guid.Empty ||
             device.BusinessId == Guid.Empty)
         {

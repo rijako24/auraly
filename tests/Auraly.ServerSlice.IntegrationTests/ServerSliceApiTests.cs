@@ -40,12 +40,6 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
                   (@DeviceId,@TenantId,CONCAT(N'Offline device ',@DeviceId),
                    @CredentialSalt,@CredentialHash,@CredentialIterations,1,SYSUTCDATETIME());
 
-                INSERT dbo.PosDevicePermissions
-                  (DeviceId,PermissionCode,IsGranted,GrantedAt)
-                SELECT @DeviceId,PermissionCode,IsGranted,SYSUTCDATETIME()
-                FROM dbo.PosDevicePermissions
-                WHERE DeviceId=@SourceDeviceId;
-
                 INSERT dbo.DocumentSeries
                   (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
                    Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
@@ -56,7 +50,6 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
             command.Parameters.AddWithValue("@UserId", userId);
             command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             command.Parameters.AddWithValue("@DeviceId", deviceId);
-            command.Parameters.AddWithValue("@SourceDeviceId", fixture.DeviceId);
             command.Parameters.AddWithValue("@DocumentSeriesId", documentSeriesId);
             command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             command.Parameters.Add("@CredentialSalt", System.Data.SqlDbType.VarBinary, 32)
@@ -221,21 +214,13 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.NotEqual(Guid.Empty, signal.SignalId);
     }
     [Fact]
-    public async Task Authentication_permission_and_authenticated_context_are_enforced()
+    public async Task Device_authentication_and_authenticated_context_are_enforced()
     {
         using var client = fixture.CreateClient();
         var unauthenticated = fixture.CreateValidRequest(102);
         using var noCredentials = fixture.CreateUploadMessage(unauthenticated, secret: null);
         using var noCredentialsResponse = await client.SendAsync(noCredentials);
         Assert.Equal(HttpStatusCode.Unauthorized, noCredentialsResponse.StatusCode);
-
-        var denied = fixture.CreateValidRequest(103) with { DeviceId = fixture.DeniedDeviceId };
-        using var deniedMessage = fixture.CreateUploadMessage(
-            denied,
-            ServerSliceFixture.DeniedDeviceSecret,
-            fixture.DeniedDeviceId);
-        using var deniedResponse = await client.SendAsync(deniedMessage);
-        Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
 
         var wrongTenant = fixture.CreateValidRequest(104) with { TenantId = Guid.NewGuid() };
         using var wrongTenantMessage = fixture.CreateUploadMessage(wrongTenant);

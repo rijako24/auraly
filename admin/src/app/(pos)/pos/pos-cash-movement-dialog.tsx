@@ -8,15 +8,18 @@ import type {
   PosClient,
 } from "@/services/pos/pos-edge-client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { formatMoneyDraft, parseMoneyDraft } from "./pos-money-input";
 
 export function PosCashMovementDialog({
   client,
   initialDirection,
+  responsibleName,
   onClose,
   onCompleted,
 }: {
   client: PosClient;
   initialDirection: PosCashMovementDirection;
+  responsibleName: string;
   onClose: () => void;
   onCompleted: (message: string) => void;
 }) {
@@ -49,13 +52,9 @@ export function PosCashMovementDialog({
   }, [client, direction]);
 
   async function confirm() {
-    const numericAmount = Number(amount);
+    const numericAmount = parseMoneyDraft(amount);
     if (!reason || !Number.isFinite(numericAmount) || numericAmount <= 0) {
       setError("Selecciona un motivo e ingresa un valor mayor que cero.");
-      return;
-    }
-    if (!reference.trim()) {
-      setError("La referencia es obligatoria para entradas y salidas de caja.");
       return;
     }
     if (!reason.isAccountingConfigured) {
@@ -85,6 +84,7 @@ export function PosCashMovementDialog({
           occurredAt,
           reference: reference.trim() || null,
           notes: notes.trim() || null,
+          responsibleName,
         });
       } catch (caught) {
         printWarning = `. Movimiento guardado; ${caught instanceof Error ? caught.message : "no fue posible imprimir el ticket"}`;
@@ -133,11 +133,11 @@ export function PosCashMovementDialog({
         </Field>
         {!loading && reasons.length === 0 && !error && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Aún no hay motivos contables disponibles para esta sede. Actualiza los datos o pide al administrador revisar el aprovisionamiento contable.</p>}
         <Field label="Valor">
-          <input value={amount} onChange={(event)=>setAmount(event.target.value)}
-            type="number" min="1" step="1" inputMode="numeric"
-            className="h-11 w-full rounded-xl border border-slate-300 px-3"/>
+          <div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-500">$</span><input value={amount} onChange={(event)=>setAmount(formatMoneyDraft(event.target.value))}
+            inputMode="numeric" autoComplete="off" placeholder="0"
+            className="h-11 w-full rounded-xl border border-slate-300 pl-8 pr-3 text-right text-lg font-bold tabular-nums"/></div>
         </Field>
-        <Field label="Referencia obligatoria">
+        <Field label="Referencia (opcional)">
           <input value={reference} onChange={(event)=>setReference(event.target.value)}
             maxLength={120} className="h-11 w-full rounded-xl border border-slate-300 px-3"/>
         </Field>
@@ -154,7 +154,7 @@ export function PosCashMovementDialog({
       <footer className="flex justify-end gap-2 border-t px-6 py-4">
         <button type="button" onClick={onClose} disabled={saving}
           className="h-10 rounded-xl border px-4 text-sm font-semibold">Cancelar</button>
-        <button type="button" onClick={()=>void confirm()} disabled={saving||loading||!reference.trim()}
+        <button type="button" onClick={()=>void confirm()} disabled={saving||loading||!reason||parseMoneyDraft(amount)<=0}
           className="flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white disabled:opacity-50">
           {saving&&<Loader2 className="h-4 w-4 animate-spin"/>}Registrar
         </button>

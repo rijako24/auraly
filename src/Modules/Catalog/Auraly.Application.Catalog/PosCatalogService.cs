@@ -8,7 +8,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
     private const string BusinessesReadPermission = "businesses.read";
     public Task<CatalogSyncSessionResponse> StartSyncAsync(CatalogDeviceIdentity device, CancellationToken ct)
     {
-        RequireSync(device);
+        ValidateEnrolledScope(device);
         return store.StartSyncAsync(
             device.DeviceId,
             device.TenantId,
@@ -25,7 +25,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         int pageSize,
         CancellationToken ct)
     {
-        RequireSync(device);
+        ValidateEnrolledScope(device);
         ValidatePageSize(pageSize);
         return store.BootstrapPageAsync(device.DeviceId, sessionId, cursor, pageSize, ct);
     }
@@ -36,7 +36,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         int pageSize,
         CancellationToken ct)
     {
-        RequireSync(device);
+        ValidateEnrolledScope(device);
         if (cursor < 0) throw new CatalogValidationException("The catalog cursor cannot be negative.");
         ValidatePageSize(pageSize);
         return store.ChangesAsync(device.DeviceId, device.TenantId, device.BusinessId, cursor, pageSize, ct);
@@ -46,7 +46,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         CatalogDeviceIdentity device,
         CancellationToken ct)
     {
-        RequireSync(device);
+        ValidateEnrolledScope(device);
         return store.PricingSnapshotAsync(device.DeviceId, device.TenantId, device.BusinessId, device.WarehouseId, ct);
     }
     public Task<InventoryAvailabilityResponse> AvailabilityAsync(
@@ -54,7 +54,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         InventoryAvailabilityRequest request,
         CancellationToken ct)
     {
-        RequireSync(device);
+        ValidateEnrolledScope(device);
         if (request.WarehouseId != device.WarehouseId)
             throw new CatalogForbiddenException("The requested warehouse is not available in this operational context.");
         if (request.ProductId == Guid.Empty || request.OperationId == Guid.Empty || request.Quantity <= 0)
@@ -73,7 +73,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         bool includeOtherBusinesses,
         CancellationToken ct)
     {
-        RequireSync(device);
+        ValidateEnrolledScope(device);
         if (!device.Permissions.Contains(InventoryReadPermission))
             throw new CatalogForbiddenException($"Permission '{InventoryReadPermission}' is required.");
         if (productId == Guid.Empty)
@@ -83,10 +83,13 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
             includeOtherBusinesses && device.Permissions.Contains(BusinessesReadPermission), ct);
     }
 
-    private static void RequireSync(CatalogDeviceIdentity device)
+    private static void ValidateEnrolledScope(CatalogDeviceIdentity device)
     {
-        if (!device.Permissions.Contains(CatalogPermissionCodes.Sync))
-            throw new CatalogForbiddenException($"Permission '{CatalogPermissionCodes.Sync}' is required.");
+        ArgumentNullException.ThrowIfNull(device);
+        if (device.DeviceId == Guid.Empty || device.TenantId == Guid.Empty ||
+            device.BusinessId == Guid.Empty)
+            throw new CatalogForbiddenException(
+                "The enrolled POS device context is incomplete.");
     }
 
     private static void ValidatePageSize(int pageSize)

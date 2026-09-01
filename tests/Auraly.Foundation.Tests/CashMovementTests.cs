@@ -20,15 +20,16 @@ public sealed class CashMovementTests
     }
 
     [Fact]
-    public void Required_reference_and_business_scope_are_enforced()
+    public void Reference_is_optional_and_business_scope_is_enforced()
     {
         var businessId = Guid.NewGuid();
         var reason = CashMovementReasonDefinition.Create(Guid.NewGuid(), businessId, "bank",
             "Consignacion", CashMovementDirection.Out, "Bank", null, true, true);
 
-        Assert.Throws<CashMovementRuleException>(() => CashMovement.Create(
+        var movement = CashMovement.Create(
             Guid.NewGuid(), businessId, Guid.NewGuid(), reason, 1m, DateTimeOffset.UtcNow,
-            null, null, null));
+            null, null, null);
+        Assert.Null(movement.Reference);
         Assert.Throws<CashMovementRuleException>(() => CashMovement.Create(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), reason, 1m, DateTimeOffset.UtcNow,
             "REF", null, null));

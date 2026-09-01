@@ -932,7 +932,7 @@ export default function PosPage() {
       cashMovementDirection ||
       closurePreview
     ) return;
-    const canOpenCashMovement =
+    const canOpenSessionAction =
         Boolean(workstation.workSessionId) &&
         !busy &&
         !temporaryOpen &&
@@ -943,9 +943,10 @@ export default function PosPage() {
         !printerOpen &&
         !closurePreview &&
         !confirmation;
+    if (event.ctrlKey || event.altKey || event.shiftKey) return;
     if (
-        event.ctrlKey &&
-        shortcut === "F6" &&
+        !event.ctrlKey &&
+        shortcut === "F3" &&
         client?.mode === "online" &&
         serverConnected &&
         !busy &&
@@ -959,7 +960,7 @@ export default function PosPage() {
         setReturnsOpen(true);
       } else
       if (
-        shortcut === "F6" &&
+        shortcut === "F2" &&
         !busy &&
         !temporaryOpen &&
         !productSearchOpen &&
@@ -970,7 +971,7 @@ export default function PosPage() {
       ) {
         setInvoiceSearchOpen(true);
       } else if (
-        shortcut === "F1" &&
+        shortcut === "F8" &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -982,7 +983,7 @@ export default function PosPage() {
       ) {
         void openPayment();
       } else if (
-        shortcut === "F2" &&
+        shortcut === "F1" &&
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
@@ -993,7 +994,7 @@ export default function PosPage() {
         setProductSearchOpen(true);
       } else if (
         !event.ctrlKey &&
-        shortcut === "F10" &&
+        shortcut === "F11" &&
         !busy &&
         Boolean(draft) &&
         !temporaryOpen &&
@@ -1005,7 +1006,7 @@ export default function PosPage() {
         setCustomerSearchOpen(true);
       } else if (
         !event.ctrlKey &&
-        shortcut === "F7" &&
+        shortcut === "F9" &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -1017,7 +1018,7 @@ export default function PosPage() {
       ) {
         void requestPauseSale();
       } else if (
-        shortcut === "F3" &&
+        shortcut === "F4" &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -1028,7 +1029,7 @@ export default function PosPage() {
       ) {
         void protectedActionHandlers.current.discount();
       } else if (
-        shortcut === "F4" &&
+        shortcut === "F5" &&
         !busy &&
         hasSelectedLine &&
         selectedLineId &&
@@ -1041,7 +1042,7 @@ export default function PosPage() {
       ) {
         void protectedActionHandlers.current.removeLine(selectedLineId);
       } else if (
-        shortcut === "F5" &&
+        shortcut === "F6" &&
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
@@ -1051,16 +1052,10 @@ export default function PosPage() {
         !confirmation
       ) {
         void protectedActionHandlers.current.restartSale();
-      } else if (event.ctrlKey && shortcut === "F8" && canOpenCashMovement) {
-        setCashMovementDirection("In");
-      } else if (event.ctrlKey && shortcut === "F9" && canOpenCashMovement) {
-        setCashMovementDirection("Out");
-      } else if (event.ctrlKey && shortcut === "F10" && canOpenCashMovement) {
+      } else if (shortcut === "F12" && canOpenSessionAction) {
         salesSessionButton.current?.click();
-      } else if (!event.ctrlKey && shortcut === "F8" && !busy) {
-        setSidePanel("temporaries");
-      } else if (!event.ctrlKey && shortcut === "F9" && !busy) {
-        setSidePanel("orders");
+      } else if (!event.ctrlKey && shortcut === "F10" && orderSaveAvailable) {
+        requestSaveOrder();
     }
   };
 
@@ -2099,12 +2094,16 @@ export default function PosPage() {
     ? synchronization.pendingCount > 0
       ? `Subiendo ${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} pendiente${synchronization.pendingCount === 1 ? "" : "s"}`
       : "Subiendo pendientes y descargando cambios"
+    : synchronization.pendingCount > 0
+      ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} pendiente${synchronization.pendingCount === 1 ? "" : "s"} por subir${!serverConnected ? ". API desconectada." : !pushConnected ? ". Señal interrumpida; la sincronización manual sigue disponible." : "."}`
+    : !serverConnected
+      ? `Sin conexión para actualizar datos. ${synchronization.error ?? "Haz clic para revisar."}`
+    : !pushConnected
+      ? "La API está conectada, pero la señal en tiempo real está interrumpida. Puedes sincronizar manualmente."
     : synchronization.failed
       ? synchronization.pendingCount > 0
         ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} sin sincronizar. ${synchronization.error ?? "Haz clic para reintentar."}`
-        : `Sin conexión para actualizar datos. ${synchronization.error ?? "Haz clic para reintentar."}`
-      : synchronization.pendingCount > 0
-        ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} pendiente${synchronization.pendingCount === 1 ? "" : "s"} por subir`
+        : `La última actualización tuvo un problema. ${synchronization.error ?? "Haz clic para reintentar."}`
       : synchronization.lastAt
         ? `Última sincronización: ${new Date(synchronization.lastAt).toLocaleString("es-CO")}`
         : "Sincronización local pendiente";
@@ -2473,37 +2472,33 @@ export default function PosPage() {
               ref={salesSessionButton}
               onClick={() => void closeSalesSession()}
               disabled={busy}
-              title="Cerrar sesión de venta (Ctrl+F10)"
-              aria-keyshortcuts="Control+F10"
+              title="Cerrar sesión de venta (F12)"
+              aria-keyshortcuts="F12"
               className="flex h-8 items-center gap-1.5 rounded-full border border-sky-300/20 px-3 text-xs font-semibold text-sky-200 transition hover:bg-sky-300/10 hover:text-white disabled:opacity-40"
             >
               <Banknote className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Cerrar sesión de venta</span>
-              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F10</kbd>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">F12</kbd>
             </button>
             <button
               type="button"
               onClick={() => setCashMovementDirection("In")}
               disabled={busy || !workstation.workSessionId}
-              title="Registrar entrada de dinero (Ctrl+F8)"
-              aria-keyshortcuts="Control+F8"
+              title="Registrar entrada de dinero"
               className="flex h-8 items-center gap-1.5 rounded-full border border-emerald-300/20 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-300/10 hover:text-white disabled:opacity-40"
             >
               <ArrowDownToLine className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Entrada de dinero</span>
-              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F8</kbd>
             </button>
             <button
               type="button"
               onClick={() => setCashMovementDirection("Out")}
               disabled={busy || !workstation.workSessionId}
-              title="Registrar salida de dinero (Ctrl+F9)"
-              aria-keyshortcuts="Control+F9"
+              title="Registrar salida de dinero"
               className="flex h-8 items-center gap-1.5 rounded-full border border-amber-300/20 px-3 text-xs font-semibold text-amber-200 transition hover:bg-amber-300/10 hover:text-white disabled:opacity-40"
             >
               <ArrowUpFromLine className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Salida de dinero</span>
-              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F9</kbd>
             </button>
           </div>
           {client.mode === "edge" && (
@@ -2517,12 +2512,14 @@ export default function PosPage() {
               <RotateCcw className={`h-3.5 w-3.5 ${synchronization.inProgress ? "animate-spin" : ""}`} />
               <span>{synchronization.inProgress
                 ? "Sincronizando"
+                : synchronization.pendingCount > 0
+                  ? `${synchronization.pendingCount} por subir`
+                : !serverConnected
+                  ? "API desconectada"
+                : !pushConnected
+                  ? "Señal interrumpida"
                 : synchronization.failed
-                  ? synchronization.pendingCount > 0
-                    ? `${synchronization.pendingCount} sin sincronizar`
-                    : "Sin conexión"
-                  : synchronization.pendingCount > 0
-                    ? `${synchronization.pendingCount} por subir`
+                  ? "Revisar datos"
                     : "Datos al día"}</span>
             </button>
           )}
@@ -2599,30 +2596,6 @@ export default function PosPage() {
         </div>
       )}
 
-      {client.mode === "edge" && synchronization.pendingCount > 0 &&
-        (synchronization.failed || !serverConnected) && (
-        <div
-          role="alert"
-          className="flex items-center justify-between gap-4 border-b border-amber-300/30 bg-amber-100 px-5 py-2 text-sm text-amber-950"
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            <span className="truncate">
-              Esta caja no ha podido sincronizar {synchronization.pendingCount} documento{synchronization.pendingCount === 1 ? "" : "s"}.
-              {synchronization.oldestPendingAt && ` Pendiente desde ${new Date(synchronization.oldestPendingAt).toLocaleString("es-CO")}.`}
-              {" "}Informa al supervisor si el problema continúa.
-            </span>
-          </span>
-          <button
-            type="button"
-            onClick={() => setSynchronizationEventsOpen(true)}
-            className="shrink-0 rounded-lg border border-amber-900/20 bg-white/60 px-3 py-1 font-bold hover:bg-white disabled:opacity-50"
-          >
-            Ver sincronización
-          </button>
-        </div>
-      )}
-
       <section className="grid min-h-[calc(100vh-3.5rem)] grid-cols-1 gap-3 p-3 xl:h-[calc(100vh-3.5rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
         <div className="flex min-w-0 flex-col gap-3 xl:min-h-0">
           <form
@@ -2694,7 +2667,7 @@ export default function PosPage() {
                 className="flex min-w-28 items-center justify-center gap-2 rounded-xl border border-teal-700/25 bg-white px-4 font-semibold text-teal-800 transition hover:bg-teal-50 focus:outline-none focus:ring-4 focus:ring-teal-600/15 disabled:opacity-45"
               >
                 <Search className="h-4 w-4" />
-                Buscar <span className="rounded bg-teal-50 px-1.5 py-0.5 text-xs">F2</span>
+                Buscar <span className="rounded bg-teal-50 px-1.5 py-0.5 text-xs">F1</span>
               </button>
             </div>
             {scanRejection.phase !== "idle" && (
@@ -2704,7 +2677,7 @@ export default function PosPage() {
                 </span>
                 <span className="min-w-0">
                   <strong className="block">Este producto no pasó</strong>
-                  <span className="block truncate text-xs text-red-700">Código: {scanRejection.value || "captura inválida"} · vuelve a escanearlo o búscalo con F2</span>
+                  <span className="block truncate text-xs text-red-700">Código: {scanRejection.value || "captura inválida"} · vuelve a escanearlo o búscalo con F1</span>
                 </span>
               </div>
             )}
@@ -2728,42 +2701,42 @@ export default function PosPage() {
               Acciones de captura
             </p>
             <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-auto xl:grid-cols-5">
-              <button type="button" disabled={!salesReady || busy}
-                onClick={() => setInvoiceSearchOpen(true)}
-                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
-                <Printer className="h-4 w-4" />
-                Facturas
-                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F6</span>
-              </button>
-              <button type="button"
-                disabled={client?.mode !== "online" || !serverConnected || busy}
-                onClick={() => setReturnsOpen(true)}
-                title={client?.mode === "online" ? "Abrir devoluciones" : "Disponible en facturaci?n online"}
-                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
-                <RotateCcw className="h-4 w-4" />
-                Devoluciones
-                <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px]">Ctrl+F6</span>
-              </button>
               <button type="button" disabled={!draft?.lines.length || busy}
                 onClick={() => void openDiscount()}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <PencilLine className="h-4 w-4" />
                 Editar líneas
-                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F3</span>
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F4</span>
               </button>
               <button type="button" disabled={!hasSelectedLine || busy}
                 onClick={() => { if (selectedLineId) void requestRemoveLine(selectedLineId); }}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <Trash2 className="h-4 w-4" />
                 Eliminar
-                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F4</span>
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F5</span>
               </button>
               <button type="button" disabled={!draft?.lines.length || busy}
                 onClick={() => void requestCancelSale()}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400">
                 <RotateCcw className="h-4 w-4" />
                 Reiniciar
-                <span className="rounded bg-white px-1.5 py-0.5 text-[10px]">F5</span>
+                <span className="rounded bg-white px-1.5 py-0.5 text-[10px]">F6</span>
+              </button>
+              <button type="button" disabled={!salesReady || busy}
+                onClick={() => setInvoiceSearchOpen(true)}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
+                <Printer className="h-4 w-4" />
+                Facturas
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F2</span>
+              </button>
+              <button type="button"
+                disabled={client?.mode !== "online" || !serverConnected || busy}
+                onClick={() => setReturnsOpen(true)}
+                title={client?.mode === "online" ? "Abrir devoluciones" : "Disponible en facturación online"}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
+                <RotateCcw className="h-4 w-4" />
+                Devoluciones
+                <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px]">F3</span>
               </button>
             </div>
           </div>
@@ -2932,7 +2905,7 @@ export default function PosPage() {
                 </p>
                 <div className="relative mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-semibold">
                   <span className="rounded-full border border-teal-200 bg-white px-3 py-1.5 text-teal-800">Lector activo</span>
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · F2</span>
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · F1</span>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">
                     Próxima {nextNumber?.isAvailable
                       ? nextNumber.fullNumber
@@ -2986,7 +2959,7 @@ export default function PosPage() {
             >
               <UserRound className="h-4 w-4" />
               Buscar cliente
-              <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F10</span>
+              <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F11</span>
             </button>
             <dl className="space-y-2 text-sm">
               <TotalRow label="Subtotal" value={draft?.untaxedAmount ?? 0} />
@@ -3005,7 +2978,7 @@ export default function PosPage() {
               className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-auraly-accent px-4 text-base font-bold text-auraly-background transition hover:bg-auraly-light disabled:cursor-not-allowed disabled:opacity-40"
             >
               Cobrar
-              <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">F1</span>
+              <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">F8</span>
             </button>
 
             <div className="mt-2 grid grid-cols-2 gap-2">
@@ -3018,7 +2991,7 @@ export default function PosPage() {
               >
                 <Save className="h-4 w-4 shrink-0" />
                 <span className="truncate">Pausar venta</span>
-                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">F7</span>
+                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">F9</span>
               </button>
 
               <button
@@ -3034,6 +3007,7 @@ export default function PosPage() {
               >
                 <ClipboardList className="h-4 w-4 shrink-0" />
                 <span className="truncate">{draft?.sourceOrderId ? "Guardar cambios" : "Guardar pedido"}</span>
+                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">F10</span>
               </button>
             </div>
 
@@ -3099,7 +3073,6 @@ export default function PosPage() {
                 <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
                   {temporaries.length}
                 </span>
-                <span className="text-[10px] text-slate-400">F8</span>
               </button>
               <button
                 type="button"
@@ -3117,7 +3090,6 @@ export default function PosPage() {
                 <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
                    {ordersCount}
                 </span>
-                <span className="text-[10px] text-slate-400">F9</span>
               </button>
             </div>
 
@@ -3290,6 +3262,7 @@ export default function PosPage() {
         <PosCashMovementDialog
           client={client}
           initialDirection={cashMovementDirection}
+          responsibleName={workstation.userDisplayName}
           onClose={() => setCashMovementDirection(null)}
           onCompleted={(text) => {
             setMessage(text);
@@ -3454,7 +3427,7 @@ export default function PosPage() {
           }}
         />
       )}
-      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={client.mode === "online" ? serverConnected : pushConnected} canSynchronize={serverConnected} inProgress={synchronization.inProgress} pendingCount={synchronization.pendingCount} failed={synchronization.failed} error={synchronization.error} onSynchronize={synchronizeNow} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
+      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} serverConnected={serverConnected} pushConnected={pushConnected} canSynchronize={serverConnected} inProgress={synchronization.inProgress} pendingCount={synchronization.pendingCount} failed={synchronization.failed} error={synchronization.error} onSynchronize={synchronizeNow} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
 
       {quantityShortage && <PosQuantityAvailabilityDialog
         value={quantityShortage}

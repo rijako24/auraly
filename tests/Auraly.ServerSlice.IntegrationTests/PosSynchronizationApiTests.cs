@@ -45,7 +45,7 @@ public sealed class PosSynchronizationApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Device_without_sync_permission_cannot_negotiate_push()
+    public async Task Active_enrolled_device_does_not_require_a_separate_push_permission()
     {
         using var client = fixture.CreateClient();
         using var request = Request(
@@ -53,7 +53,7 @@ public sealed class PosSynchronizationApiTests(ServerSliceFixture fixture)
             ServerSliceFixture.DeniedDeviceSecret,
             fixture.BusinessId);
         using var response = await client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     private static HttpRequestMessage Request(Guid deviceId, string secret, Guid businessId)

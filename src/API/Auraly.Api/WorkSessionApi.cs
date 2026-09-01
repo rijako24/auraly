@@ -220,7 +220,7 @@ public static class WorkSessionApi
             WorkSessionService service,
             CancellationToken cancellationToken) =>
             await Handle(async () => Results.Ok(
-                await service.ListCashReasonsAsync(
+                await service.ListCashReasonsFromDeviceAsync(
                     context.User.ToDeviceWorkSessionIdentity(),
                     businessId,
                     direction,
@@ -239,7 +239,7 @@ public static class WorkSessionApi
                         "The local cashier is required.");
                 var deviceIdentity = context.User.ToDeviceWorkSessionIdentity();
                 var identity = deviceIdentity with { UserId = request.UserId };
-                var acceptance = await service.ConfirmCashMovementAsync(
+                var acceptance = await service.ConfirmCashMovementFromDeviceAsync(
                     identity,
                     context.Request.Headers["Idempotency-Key"].ToString(),
                     request.Movement,
@@ -267,7 +267,7 @@ public static class WorkSessionApi
                     cancellationToken))));
 
         var deviceCloseGroup = endpoints.MapGroup("/api/pos/v1")
-            .RequireAuthorization("pos.work-session.close");
+            .RequireAuthorization("pos.sales.upload");
         deviceCloseGroup.MapPost("/work-sessions/{workSessionId:guid}/close", async (
             HttpContext context,
             Guid workSessionId,
@@ -283,7 +283,7 @@ public static class WorkSessionApi
                 {
                     UserId = request.UserId
                 };
-                return Results.Ok(await service.CloseAsync(
+                return Results.Ok(await service.CloseFromDeviceAsync(
                     identity,
                     workSessionId,
                     context.Request.Headers["Idempotency-Key"].ToString(),
@@ -309,7 +309,7 @@ public static class WorkSessionApi
                 {
                     UserId = userId
                 };
-                return Results.Ok(await service.PreviewClosureAsync(
+                return Results.Ok(await service.PreviewClosureFromDeviceAsync(
                     identity,
                     workSessionId,
                     cancellationToken));
