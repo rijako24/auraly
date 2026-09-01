@@ -110,6 +110,46 @@ function Set-FunctionKeyWithRetry {
     }
 }
 
+function Set-AppConfigurationValueWithRetry {
+    param(
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][string]$Value,
+        [int]$Attempts = 8,
+        [int]$DelaySeconds = 10
+    )
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $null = & az appconfig kv set `
+            --name $configuration.AppConfiguration `
+            --key $Key `
+            --value $Value `
+            --content-type 'text/plain' `
+            --auth-mode login `
+            --yes `
+            --only-show-errors `
+            --output none 2>&1
+        if ($LASTEXITCODE -eq 0) { return }
+
+        # A data-plane timeout can happen after the value was committed. Read
+        # it back before retrying so the operation stays idempotent and the
+        # secret is never written to the log.
+        $currentValue = "$(& az appconfig kv show `
+            --name $configuration.AppConfiguration `
+            --key $Key `
+            --auth-mode login `
+            --query value `
+            --output tsv 2>$null)".Trim()
+        if ($LASTEXITCODE -eq 0 -and
+            [string]::Equals($currentValue, $Value, [StringComparison]::Ordinal)) {
+            return
+        }
+        if ($attempt -eq $Attempts) {
+            throw "No se pudo confirmar '$Key' en Azure App Configuration después de $Attempts intentos."
+        }
+        Write-Warning "App Configuration no confirmó '$Key'; reintento $attempt de $Attempts."
+        Start-Sleep -Seconds $DelaySeconds
+    }
+}
+
 function Sync-FunctionRuntimeSettingsFromApi {
     $requiredNames = @(
         'Auraly__Accounting__ServiceBus__QueueName',
@@ -396,24 +436,12 @@ function Publish-Function {
                 --settings "WhatsApp__Webhook__VerifyToken=$($env:CJ_WHATSAPP_VERIFY_TOKEN)" `
                 --output none
             Assert-LastExitCode 'No se pudo configurar el verify token de Meta para CJ'
-            & az appconfig kv set `
-                --name $configuration.AppConfiguration `
-                --key 'WhatsApp:Webhook:ApiBaseUrl' `
-                --value 'https://graph.facebook.com/v25.0/' `
-                --content-type 'text/plain' `
-                --auth-mode login `
-                --yes `
-                --output none
-            Assert-LastExitCode 'No se pudo sincronizar la URL de Meta en Azure App Configuration'
-            & az appconfig kv set `
-                --name $configuration.AppConfiguration `
-                --key 'WhatsApp:Webhook:VerifyToken' `
-                --value $env:CJ_WHATSAPP_VERIFY_TOKEN `
-                --content-type 'text/plain' `
-                --auth-mode login `
-                --yes `
-                --output none
-            Assert-LastExitCode 'No se pudo sincronizar el verify token en Azure App Configuration'
+            Set-AppConfigurationValueWithRetry `
+                -Key 'WhatsApp:Webhook:ApiBaseUrl' `
+                -Value 'https://graph.facebook.com/v25.0/'
+            Set-AppConfigurationValueWithRetry `
+                -Key 'WhatsApp:Webhook:VerifyToken' `
+                -Value $env:CJ_WHATSAPP_VERIFY_TOKEN
         }
     }
     finally {

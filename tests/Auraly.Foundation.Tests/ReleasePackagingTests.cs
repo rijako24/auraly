@@ -279,6 +279,24 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void App_configuration_writes_are_retried_and_verified_after_timeouts()
+    {
+        var deployment = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "infrastructure",
+            "azure",
+            "Publish-AuralyReleasePipeline.ps1"));
+
+        Assert.Contains("function Set-AppConfigurationValueWithRetry", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("az appconfig kv show", deployment, StringComparison.Ordinal);
+        Assert.Contains("[string]::Equals($currentValue, $Value", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("-Key 'WhatsApp:Webhook:VerifyToken'", deployment,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Function_receives_the_same_processing_queue_settings_owned_by_the_api()
     {
         var repositoryRoot = FindRepositoryRoot();
