@@ -323,7 +323,9 @@ public sealed class ReceivePosSaleService(
         new(
             sale.ReceiptId ?? Guid.Empty,
             sale.DocumentId,
-            sale.FiscalStatus is null
+            sale.ProcessingStatus == "Blocked"
+                ? PosSaleRemoteStatuses.FiscalIntegrityConflict
+                : sale.FiscalStatus is null
                 ? isDuplicate ? PosSaleRemoteStatuses.AlreadyProcessed : PosSaleRemoteStatuses.CommercialAccepted
                 : sale.FiscalStatus == PosSaleRemoteStatuses.FiscalIntegrityConflict
                     ? PosSaleRemoteStatuses.FiscalIntegrityConflict

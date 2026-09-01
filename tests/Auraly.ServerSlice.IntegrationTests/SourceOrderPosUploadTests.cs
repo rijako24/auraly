@@ -57,22 +57,19 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
     public async Task Invoice_and_receipt_without_source_order_process_without_order_side_effects()
     {
         var receiptSeriesId = Guid.NewGuid();
+        var receiptSeriesCode = $"T{receiptSeriesId:N}"[..4].ToUpperInvariant();
         var productId = Guid.NewGuid();
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
             await connection.OpenAsync();
             await using var seed = connection.CreateCommand();
             seed.CommandText = """
-                IF NOT EXISTS (
-                    SELECT 1 FROM dbo.DocumentSeries
-                    WHERE BusinessId=@BusinessId AND DocumentType=N'SalesReceipt'
-                      AND Prefix=N'CVI' AND SeriesCode=N'04')
-                  INSERT dbo.DocumentSeries(
-                    DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,
-                    SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-                  VALUES(
-                    @SeriesId,@BusinessId,@DeviceId,N'SalesReceipt',N'CVI',
-                    N'04',8,1,99999999,1,1,SYSDATETIMEOFFSET());
+                INSERT dbo.DocumentSeries(
+                  DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,
+                  SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                VALUES(
+                  @SeriesId,@BusinessId,@DeviceId,N'SalesReceipt',N'CVI',
+                  @SeriesCode,8,1,99999999,1,1,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Products(
                   ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
@@ -86,18 +83,16 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                   InventoryValue,LastProcessingSequence,UpdatedAt)
                 VALUES(@BusinessId,@WarehouseId,@ProductId,10,5000,50000,1,SYSDATETIMEOFFSET());
 
-                SELECT DocumentSeriesId FROM dbo.DocumentSeries
-                WHERE BusinessId=@BusinessId AND DocumentType=N'SalesReceipt'
-                  AND Prefix=N'CVI' AND SeriesCode=N'04';
                 """;
             seed.Parameters.AddWithValue("@SeriesId", receiptSeriesId);
+            seed.Parameters.AddWithValue("@SeriesCode", receiptSeriesCode);
             seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             seed.Parameters.AddWithValue("@DeviceId", fixture.DeviceId);
             seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
             seed.Parameters.AddWithValue("@ProductId", productId);
             seed.Parameters.AddWithValue("@Sku", $"NO-ORDER-{productId:N}");
-            receiptSeriesId = (Guid)(await seed.ExecuteScalarAsync())!;
+            await seed.ExecuteNonQueryAsync();
         }
 
         var invoiceBase = fixture.CreateValidRequest(182);
@@ -114,10 +109,10 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                 receiptSeriesId,
                 PosSaleDocumentTypes.Receipt,
                 "CVI",
-                "04",
+                receiptSeriesCode,
                 183,
                 8,
-                "CVI04-00000183"),
+                $"CVI{receiptSeriesCode}-00000183"),
             CommercialSnapshot = receiptBase.CommercialSnapshot with
             {
                 DocumentType = PosSaleDocumentTypes.Receipt,
@@ -148,6 +143,8 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
             Assert.NotNull(result);
             Assert.Equal(PosSaleRemoteStatuses.CommercialAccepted, result.Status);
         }
+        await AssertProcessingCompletedAsync(invoice.DocumentId);
+        await AssertProcessingCompletedAsync(receipt.DocumentId);
 
         await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
         await verifyConnection.OpenAsync();
@@ -191,6 +188,52 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
             item => item.DocumentId == receipt.DocumentId);
         Assert.Equal(string.Empty, receiptResult.FiscalNumber);
         Assert.Equal(string.Empty, receiptResult.Cufe);
+    }
+
+    [Fact]
+    public async Task Receipt_with_an_unassigned_series_is_reported_as_a_conflict()
+    {
+        var requestBase = fixture.CreateValidRequest(1_984);
+        var seriesId = Guid.NewGuid();
+        var seriesCode = $"X{seriesId:N}"[..4].ToUpperInvariant();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = connection.CreateCommand();
+            seed.CommandText = """
+                INSERT dbo.DocumentSeries(
+                  DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,
+                  SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                VALUES(
+                  @SeriesId,@BusinessId,@OtherDeviceId,N'SalesReceipt',N'CVI',
+                  @SeriesCode,8,1,99999999,1,1,SYSDATETIMEOFFSET());
+                """;
+            seed.Parameters.AddWithValue("@SeriesId", seriesId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@OtherDeviceId", fixture.DeniedDeviceId);
+            seed.Parameters.AddWithValue("@SeriesCode", seriesCode);
+            await seed.ExecuteNonQueryAsync();
+        }
+        var request = requestBase with
+        {
+            DocumentNumber = new PosSaleDocumentNumberContract(
+                seriesId, PosSaleDocumentTypes.Receipt, "CVI", seriesCode,
+                1_984, 8, $"CVI{seriesCode}-00001984"),
+            CommercialSnapshot = requestBase.CommercialSnapshot with
+            {
+                DocumentType = PosSaleDocumentTypes.Receipt,
+            },
+            FiscalSnapshot = null,
+            UblSnapshot = null,
+        };
+
+        using var client = fixture.CreateClient();
+        using var upload = fixture.CreateUploadMessage(request);
+        using var response = await client.SendAsync(upload);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<PosSaleUploadResponse>();
+        Assert.NotNull(result);
+        Assert.Equal(PosSaleRemoteStatuses.FiscalIntegrityConflict, result.Status);
     }
 
     [Fact]
@@ -319,13 +362,27 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
             WHERE d.DocumentId=@DocumentId;
             """;
         command.Parameters.AddWithValue("@DocumentId", documentId);
-        await using var reader = await command.ExecuteReaderAsync();
-        Assert.True(await reader.ReadAsync());
-        var documentStatus = reader.GetString(0);
-        var jobStatus = reader.GetString(1);
-        var error = reader.IsDBNull(2) ? null : reader.GetString(2);
-        Assert.True(
-            documentStatus == "Completed" && jobStatus == "Completed",
-            $"Document status: {documentStatus}; job status: {jobStatus}; error: {error}");
+        string? documentStatus = null;
+        string? jobStatus = null;
+        string? error = null;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            await using (var reader = await command.ExecuteReaderAsync())
+            {
+                if (await reader.ReadAsync())
+                {
+                    documentStatus = reader.GetString(0);
+                    jobStatus = reader.GetString(1);
+                    error = reader.IsDBNull(2) ? null : reader.GetString(2);
+                }
+            }
+            if (documentStatus == "Completed" && jobStatus == "Completed")
+                return;
+            if (documentStatus == "Failed" || jobStatus == "Failed")
+                break;
+            await Task.Delay(100);
+        }
+        Assert.Fail(
+            $"Document status: {documentStatus ?? "missing"}; job status: {jobStatus ?? "missing"}; error: {error}");
     }
 }
