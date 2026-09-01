@@ -90,6 +90,29 @@ public sealed class PosWorkSessionClosureServerClient(
                ?? throw new InvalidDataException(
                    "Auraly Server devolvió un cierre de sesión vacío.");
     }
+
+    public async Task<WorkSessionClosureView?> GetClosureAsync(
+        Guid workSessionId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/pos/v1/work-sessions/{workSessionId:D}/closure?userId={userId:D}");
+        request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
+        request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        if (!response.IsSuccessStatusCode)
+            throw new PosWorkSessionClosureException(
+                (int)response.StatusCode,
+                await response.Content.ReadAsStringAsync(cancellationToken));
+        return await response.Content.ReadFromJsonAsync<WorkSessionClosureView>(
+                   cancellationToken: cancellationToken)
+               ?? throw new InvalidDataException(
+                   "Auraly Server devolvió un cierre de sesión vacío.");
+    }
 }
 
 public sealed class PosCashDrawer(

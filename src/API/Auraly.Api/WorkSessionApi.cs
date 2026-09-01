@@ -314,6 +314,27 @@ public static class WorkSessionApi
                     workSessionId,
                     cancellationToken));
             }));
+        deviceCloseGroup.MapGet("/work-sessions/{workSessionId:guid}/closure", async (
+            HttpContext context,
+            Guid workSessionId,
+            Guid userId,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () =>
+            {
+                if (userId == Guid.Empty)
+                    throw new WorkSessionValidationException(
+                        "The local cashier is required.");
+                var identity = context.User.ToDeviceWorkSessionIdentity() with
+                {
+                    UserId = userId
+                };
+                var closure = await service.GetClosureFromDeviceAsync(
+                    identity,
+                    workSessionId,
+                    cancellationToken);
+                return closure is null ? Results.NotFound() : Results.Ok(closure);
+            }));
 
         return endpoints;
     }

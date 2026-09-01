@@ -174,6 +174,21 @@ public sealed class PosWorkSessionClosureApiTests(ServerSliceFixture fixture)
         Assert.Equal(workSessionId, closure.WorkSessionId);
         Assert.Equal(userId, closure.UserId);
 
+        using var replayLookup = DeviceRequest(
+            HttpMethod.Get,
+            $"/api/pos/v1/work-sessions/{workSessionId:D}/closure?userId={userId:D}",
+            deviceId,
+            secret);
+        using var replayResponse = await client.SendAsync(replayLookup);
+        var replayBody = await replayResponse.Content.ReadAsStringAsync();
+        Assert.True(
+            replayResponse.StatusCode == HttpStatusCode.OK,
+            $"Expected 200 but received {(int)replayResponse.StatusCode}: {replayBody}");
+        var replay = await replayResponse.Content
+            .ReadFromJsonAsync<WorkSessionClosureView>();
+        Assert.NotNull(replay);
+        Assert.Equal(closure.WorkSessionClosureId, replay.WorkSessionClosureId);
+
         await using var verificationConnection = new SqlConnection(fixture.ConnectionString);
         await verificationConnection.OpenAsync();
         await using var verification = verificationConnection.CreateCommand();

@@ -445,6 +445,23 @@ public sealed class PosWorkSessionClosureUploader(
         catch (Exception exception) when (
             exception is HttpRequestException or PosWorkSessionClosureException)
         {
+            if (exception is PosWorkSessionClosureException { StatusCode: 409 })
+            {
+                var existing = await server.GetClosureAsync(
+                    item.Value.Value.Closure.WorkSessionId,
+                    item.Value.Value.Request.UserId,
+                    cancellationToken);
+                if (existing is not null)
+                {
+                    await store.MarkUploadedAsync(item.Value.OperationId, cancellationToken);
+                    events.Record(
+                        "Success",
+                        "WorkSessionClosure",
+                        "Cierre de caja conciliado con el servidor",
+                        existing.WorkSessionId.ToString("D"));
+                    return true;
+                }
+            }
             await store.ScheduleRetryAsync(
                 item.Value.OperationId,
                 item.Value.Attempts,

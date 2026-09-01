@@ -202,6 +202,16 @@ public sealed class WorkSessionService(
         return store.GetClosureAsync(identity, workSessionId, cancellationToken);
     }
 
+    public Task<WorkSessionClosureView?> GetClosureFromDeviceAsync(
+        WorkSessionIdentity deviceIdentity,
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (workSessionId == Guid.Empty)
+            throw new WorkSessionValidationException("WorkSessionId is required.");
+        return store.GetClosureAsync(deviceIdentity, workSessionId, cancellationToken);
+    }
+
     public Task<WorkSessionClosurePreviewView> PreviewClosureAsync(
         WorkSessionIdentity identity,
         Guid workSessionId,
