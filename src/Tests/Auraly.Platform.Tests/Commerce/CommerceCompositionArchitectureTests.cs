@@ -67,7 +67,8 @@ public sealed class CommerceCompositionArchitectureTests
             .And.Contain("secrets.CJ_WHATSAPP_FUNCTION_KEY")
             .And.Contain("secrets.CJ_WHATSAPP_VERIFY_TOKEN");
         publisher.Should().Contain("/v:CJWhatsAppAccessToken=$($env:CJ_WHATSAPP_ACCESS_TOKEN)")
-            .And.Contain("--key-name 'meta-cj'")
+            .And.Contain("function Set-FunctionKeyWithRetry")
+            .And.Contain("-KeyName 'meta-cj'")
             .And.Contain("WhatsApp__Webhook__VerifyToken")
             .And.Contain("az appconfig kv set")
             .And.Contain("--auth-mode login")
