@@ -39,11 +39,14 @@ VALUES
 ('11000000-0000-0000-0000-000000000002',N'card-franchise',N'Mastercard',N'Mastercard',NULL,20),
 ('11000000-0000-0000-0000-000000000003',N'card-franchise',N'AmericanExpress',N'American Express',NULL,30),
 ('11000000-0000-0000-0000-000000000004',N'card-franchise',N'DinersClub',N'Diners Club',NULL,40),
-('12000000-0000-0000-0000-000000000001',N'sales-return-resolution-method',N'Cash',N'Efectivo',N'Reintegra dinero desde la sesión de caja y abre el cajón.',10),
+('11500000-0000-0000-0000-000000000001',N'bank-account-type',N'Savings',N'Ahorros',N'Cuenta de ahorros.',10),
+('11500000-0000-0000-0000-000000000002',N'bank-account-type',N'Checking',N'Corriente',N'Cuenta corriente.',20),
+('11500000-0000-0000-0000-000000000003',N'bank-account-type',N'DigitalDeposit',N'Depósito electrónico',N'Cuenta o depósito digital.',30),
+('12000000-0000-0000-0000-000000000001',N'sales-return-resolution-method',N'Cash',N'Efectivo',N'En punto de venta afecta el turno; en administración sale de la caja general.',10),
 ('12000000-0000-0000-0000-000000000002',N'sales-return-resolution-method',N'CustomerCredit',N'Abono a cartera',N'Resta el saldo de la cuenta por cobrar de la venta.',20),
 ('12000000-0000-0000-0000-000000000003',N'sales-return-resolution-method',N'Transfer',N'Transferencia',N'Reintegro por transferencia bancaria.',30),
-('12000000-0000-0000-0000-000000000004',N'sales-return-resolution-method',N'DebitCard',N'Tarjeta débito',N'Reversión al pago original con tarjeta débito.',40),
-('12000000-0000-0000-0000-000000000005',N'sales-return-resolution-method',N'CreditCard',N'Tarjeta crédito',N'Reversión al pago original con tarjeta crédito.',50),
+('12000000-0000-0000-0000-000000000004',N'sales-return-resolution-method',N'DebitCard',N'Tarjeta débito',N'Reintegro por tarjeta débito; exige franquicia y comprobante.',40),
+('12000000-0000-0000-0000-000000000005',N'sales-return-resolution-method',N'CreditCard',N'Tarjeta crédito',N'Reintegro por tarjeta crédito; exige franquicia y comprobante.',50),
 ('12100000-0000-0000-0000-000000000001',N'sales-return-scope',N'FullCancellation',N'Anulación / devolución total',N'Devuelve automáticamente todas las cantidades aún disponibles de la venta.',10),
 ('12100000-0000-0000-0000-000000000002',N'sales-return-scope',N'Partial',N'Devolución parcial',N'Permite seleccionar productos y cantidades específicas.',20),
 ('20000000-0000-0000-0000-000000000001',N'sales-document-type',N'SalesInvoice',N'Factura electrónica',N'Usa numeración DIAN, CUFE y código QR.',10),
@@ -114,7 +117,7 @@ WHEN NOT MATCHED THEN
            source.Description,1,source.SortOrder,@Now,@Now)
 WHEN NOT MATCHED BY SOURCE
      AND target.CatalogCode IN
-       (N'payment-method',N'cash-closure-method',N'cash-denomination',N'cash-reconciliation-reason',N'card-franchise',N'sales-return-resolution-method',N'sales-return-scope',N'sales-document-type',N'purchase-presentation',
+       (N'payment-method',N'cash-closure-method',N'cash-denomination',N'cash-reconciliation-reason',N'card-franchise',N'bank-account-type',N'sales-return-resolution-method',N'sales-return-scope',N'sales-document-type',N'purchase-presentation',
         N'inventory-operation-type',N'agent-bot-type',N'accounting-account-type',
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',

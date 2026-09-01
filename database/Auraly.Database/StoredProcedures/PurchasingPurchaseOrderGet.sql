@@ -13,7 +13,9 @@ BEGIN
     (
         SELECT d.PurchaseOrderId,CONVERT(nvarchar(40),NULL) DocumentNumber,N'Draft' Status,d.WarehouseId,w.Name WarehouseName,
             d.SupplierId,s.Name SupplierName,d.OrderedAt,d.ExpectedAt,d.CurrencyCode,d.Notes,d.NetAmount,d.TaxAmount,d.GrandTotal,d.UpdatedAt,
-            CONVERT(varchar(64),CAST(N'' AS XML).value('xs:base64Binary(sql:column("d.RowVersion"))','varbinary(8)')) ConcurrencyToken,CONVERT(bit,1) IsDraft
+            CAST(N'' AS XML).value(
+                'xs:base64Binary(xs:hexBinary(sql:column("d.RowVersion")))',
+                'varchar(64)') ConcurrencyToken,CONVERT(bit,1) IsDraft
         FROM purchasing.PurchaseOrderDrafts d
         LEFT JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId AND w.BusinessId=d.BusinessId
         LEFT JOIN dbo.Suppliers s ON s.SupplierId=d.SupplierId AND s.BusinessId=d.BusinessId
@@ -21,7 +23,9 @@ BEGIN
         UNION ALL
         SELECT o.PurchaseOrderId,o.DocumentNumber,o.Status,o.WarehouseId,w.Name,o.SupplierId,s.Name,o.OrderedAt,o.ExpectedAt,o.CurrencyCode,o.Notes,
             o.NetAmount,o.TaxAmount,o.GrandTotal,o.UpdatedAt,
-            CONVERT(varchar(64),CAST(N'' AS XML).value('xs:base64Binary(sql:column("o.RowVersion"))','varbinary(8)')),CONVERT(bit,0)
+            CAST(N'' AS XML).value(
+                'xs:base64Binary(xs:hexBinary(sql:column("o.RowVersion")))',
+                'varchar(64)'),CONVERT(bit,0)
         FROM purchasing.PurchaseOrders o
         JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.BusinessId=o.BusinessId
         JOIN dbo.Suppliers s ON s.SupplierId=o.SupplierId AND s.BusinessId=o.BusinessId

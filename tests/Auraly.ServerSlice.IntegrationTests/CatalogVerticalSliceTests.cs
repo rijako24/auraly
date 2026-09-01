@@ -930,18 +930,13 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             IF NOT EXISTS (SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Second)
               INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,IsActive,CreatedAt)
               VALUES(@Second,@Business,N'WHOLESALE',N'Wholesale',1,SYSDATETIMEOFFSET());
-            IF NOT EXISTS (SELECT 1 FROM dbo.PosDevicePermissions WHERE DeviceId=@Device AND PermissionCode=@Permission)
-              INSERT dbo.PosDevicePermissions(DeviceId,PermissionCode,IsGranted,GrantedAt)
-              VALUES(@Device,@Permission,1,SYSDATETIMEOFFSET());
             """;
         await ExecuteAsync(
             sql,
             new SqlParameter("@Tax", tax),
             new SqlParameter("@Channel", channel),
             new SqlParameter("@Second", second),
-            new SqlParameter("@Business", fixture.BusinessId),
-            new SqlParameter("@Device", fixture.DeviceId),
-            new SqlParameter("@Permission", CatalogPermissionCodes.Sync));
+            new SqlParameter("@Business", fixture.BusinessId));
         return (tax, channel, second);
     }
 

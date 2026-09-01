@@ -8,35 +8,38 @@ namespace Auraly.Platform.Tests.Commerce;
 public sealed class PosCatalogServiceTests
 {
     [Fact]
-    public async Task Warehouse_availability_requires_inventory_read()
+    public async Task Warehouse_availability_uses_the_authenticated_enrollment_scope()
     {
+        var productId = Guid.NewGuid();
+        var device = Device();
         var store = new Mock<ICatalogStore>(MockBehavior.Strict);
+        store.Setup(candidate => candidate.WarehouseAvailabilityAsync(
+                device.DeviceId, device.TenantId, device.BusinessId,
+                productId, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
         var service = new PosCatalogService(store.Object, TimeProvider.System);
 
-        await Assert.ThrowsAsync<CatalogForbiddenException>(() =>
-            service.WarehouseAvailabilityAsync(
-                Device(), Guid.NewGuid(), true, CancellationToken.None));
+        await service.WarehouseAvailabilityAsync(
+            device, productId, false, CancellationToken.None);
+
+        store.VerifyAll();
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public async Task Warehouse_availability_expands_businesses_only_with_permission(
-        bool requestOtherBusinesses,
-        bool hasBusinessesRead)
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Warehouse_availability_preserves_user_scope_validated_by_edge(
+        bool requestOtherBusinesses)
     {
         var productId = Guid.NewGuid();
-        var device = Device(
-            "inventory.read",
-            hasBusinessesRead ? "businesses.read" : null);
+        var device = Device();
         var store = new Mock<ICatalogStore>(MockBehavior.Strict);
         store.Setup(candidate => candidate.WarehouseAvailabilityAsync(
                 device.DeviceId,
                 device.TenantId,
                 device.BusinessId,
                 productId,
-                requestOtherBusinesses && hasBusinessesRead,
+                requestOtherBusinesses,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
         var service = new PosCatalogService(store.Object, TimeProvider.System);
@@ -70,13 +73,10 @@ public sealed class PosCatalogServiceTests
         store.VerifyAll();
     }
 
-    private static CatalogDeviceIdentity Device(params string?[] permissions) =>
+    private static CatalogDeviceIdentity Device() =>
         new(
             Guid.NewGuid(),
             Guid.NewGuid(),
             Guid.NewGuid(),
-            Guid.NewGuid(),
-            permissions.Where(static permission => permission is not null)
-                .Select(static permission => permission!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase));
+            Guid.NewGuid());
 }

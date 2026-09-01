@@ -6,13 +6,27 @@ const AUTHENTICATION_PATHS = [
 ];
 
 export const SESSION_EXPIRED_EVENT = "auraly:session-expired";
+export type SessionExpiredEventDetail = {
+  destination: string;
+  message: string;
+};
 export type SessionRefreshResult = "refreshed" | "expired" | "unavailable";
-export type SessionRuntime = "web" | "installed-web" | "desktop";
+
+export function announceSessionReplacement(destination: string): void {
+  if (typeof window === "undefined") return;
+  const event = new CustomEvent<SessionExpiredEventDetail>(SESSION_EXPIRED_EVENT, {
+    cancelable: true,
+    detail: {
+      destination,
+      message: "Tu usuario inició sesión en otro navegador o caja. Por seguridad, esta sesión se cerrará.",
+    },
+  });
+  if (window.dispatchEvent(event)) window.location.replace(destination);
+}
 
 export function isAuthenticationRequest(url: string): boolean {
   return AUTHENTICATION_PATHS.some((path) => url.includes(path));
 }
-
 export function shouldRefreshSession(status: number, url: string): boolean {
   return status === 401 && !isAuthenticationRequest(url);
 }
@@ -36,26 +50,4 @@ export async function retryAuthenticatedRequest<T extends { status: number }>(
   const retried = await send();
   if (retried.status === 401) await expire();
   return retried;
-}
-
-export function isInstalledApplicationDisplay(
-  standaloneDisplayMode: boolean,
-  iosStandalone: boolean,
-): boolean {
-  return standaloneDisplayMode || iosStandalone;
-}
-
-export function classifySessionRuntime(
-  desktopRuntime: boolean,
-  standaloneDisplayMode: boolean,
-  iosStandalone: boolean,
-): SessionRuntime {
-  if (desktopRuntime) return "desktop";
-  return isInstalledApplicationDisplay(standaloneDisplayMode, iosStandalone)
-    ? "installed-web"
-    : "web";
-}
-
-export function shouldExpireSession(runtime: SessionRuntime): boolean {
-  return runtime !== "desktop";
 }

@@ -189,15 +189,20 @@ This slice does not claim that Auraly is already a complete Colombian accounting
 system. The governing scope remains
 `decision-contabilidad-minima-colombia-y-cumplimiento.md`.
 
+The bank-account master is now implemented as tenant-scoped accounting data.
+Each active account links to one active, postable asset auxiliary in the PUC,
+has one canonical account type from `reference.Options`, and at most one active
+primary account exists per tenant. POS catalog/configuration synchronization
+downloads that master only to enrolled devices. Transfer sales debit the
+selected bank auxiliary and transfer refunds credit it through the existing
+accounting processor; neither API nor UI writes journal lines directly.
+
 Still pending:
 
 - minimum bank reconciliation before presenting Auraly as capable of a complete
-  accounting close: bank-account master linked to postable PUC accounts,
-  idempotent CSV/XLSX statement import, statement movements, manual matching
-  against posted receipts/payments/vouchers, unmatched differences, accounting
-  treatment for fees and interest, audited close and authorized reopen. The
-  first delivery does not require direct bank APIs, automatic matching,
-  multi-movement suggestions or AI classification;
+  accounting close. Its bounded functional design, Colombian bank-charge/GMF
+  treatment and canonical accounting integration are defined in
+  `bank-accounts-and-reconciliation-design.md`;
 - operational and fiscal debit note, then its posting rule;
 - inventory movements outside the explicitly connected operation types must be
   added through the same canonical document handler and accounting job path;

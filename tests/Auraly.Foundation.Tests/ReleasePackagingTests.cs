@@ -234,6 +234,9 @@ public sealed class ReleasePackagingTests
         Assert.Contains("LocalizationFile=\"AuralyTheme.wxl\"", bundle,
             StringComparison.Ordinal);
         Assert.DoesNotContain("LogoSideFile=", bundle, StringComparison.Ordinal);
+        Assert.Contains("admin\\public\\brand\\auraly-mark.png", bundle,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("AuralyIcon-v5.png", bundle, StringComparison.Ordinal);
         Assert.Contains("<Window Width=\"520\"", bundleTheme, StringComparison.Ordinal);
         Assert.Contains("Auraly.ico", bundle, StringComparison.Ordinal);
         Assert.Contains("<ApplicationIcon>Assets\\Auraly.ico</ApplicationIcon>",

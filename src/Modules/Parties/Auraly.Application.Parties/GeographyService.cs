@@ -9,21 +9,21 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
     public Task<IReadOnlyCollection<CountryItem>> CountriesAsync(
         PartyActorIdentity actor, bool includeInactive, CancellationToken ct)
     {
-        PartyService.Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.GeographyRead);
+        PartyService.RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.GeographyRead);
         return store.CountriesAsync(includeInactive, ct);
     }
 
     public Task<IReadOnlyCollection<AdministrativeDivisionItem>> DivisionsAsync(
         PartyActorIdentity actor, Guid countryId, bool includeInactive, CancellationToken ct)
     {
-        PartyService.Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.GeographyRead);
+        PartyService.RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.GeographyRead);
         return store.DivisionsAsync(countryId, includeInactive, ct);
     }
 
     public Task<IReadOnlyCollection<CityItem>> CitiesAsync(
         PartyActorIdentity actor, Guid divisionId, bool includeInactive, CancellationToken ct)
     {
-        PartyService.Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.GeographyRead);
+        PartyService.RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.GeographyRead);
         return store.CitiesAsync(divisionId, includeInactive, ct);
     }
 

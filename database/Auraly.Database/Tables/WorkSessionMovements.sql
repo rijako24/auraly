@@ -26,8 +26,10 @@ CREATE TABLE [dbo].[WorkSessionMovements]
             (N'SalePayment',N'Refund',N'ReceivablePayment',N'PayablePayment',N'OpeningFloat',N'CashIn',N'CashOut',N'Adjustment')),
     CONSTRAINT [CK_WorkSessionMovements_Amount] CHECK ([Amount] <> 0),
     CONSTRAINT [CK_WorkSessionMovements_SaleSource] CHECK (
-        ([MovementType] IN (N'SalePayment',N'Refund')
-            AND [DocumentId] IS NOT NULL AND [PaymentNumber] IS NOT NULL)
+        ([MovementType]=N'SalePayment' AND [DocumentId] IS NOT NULL AND [PaymentNumber] IS NOT NULL)
+        OR ([MovementType]=N'Refund' AND
+            (([DocumentId] IS NULL AND [PaymentNumber] IS NULL)
+             OR ([DocumentId] IS NOT NULL AND [PaymentNumber] IS NOT NULL)))
         OR ([MovementType] NOT IN (N'SalePayment',N'Refund')))
 );
 GO

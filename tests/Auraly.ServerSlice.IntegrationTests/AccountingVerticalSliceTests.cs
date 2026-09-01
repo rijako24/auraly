@@ -55,6 +55,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             await SetWarehouseNegativeSalesPolicyAsync(true);
         }
 
+        await AssertBalancedAsync(invoice.DocumentId);
+
         var dispatchId = Guid.NewGuid();
         var sourceId = Guid.NewGuid();
         var settlementId = Guid.NewGuid();
@@ -114,6 +116,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                        new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
             activate.EnsureSuccessStatusCode();
 
+        var bankAccountId = await CreatePrimaryBankAccountAsync(accounting);
         var customerId = await CreateCustomerAsync();
         var request = WithUblSnapshot(fixture.CreateValidRequest(9_900)) with
         {
@@ -127,7 +130,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 new(1, "Cash", 1_900m, null),
                 new(2, "DebitCard", 2_000m, "DB-2000", "Visa", "APP-DB"),
                 new(3, "CreditCard", 2_000m, "CR-2000", "Mastercard", "APP-CR"),
-                new(4, "Transfer", 2_000m, "TR-2000")
+                new(4, "Transfer", 2_000m, "TR-2000", BankAccountId: bankAccountId,
+                    Notes: "Pago recibido en la cuenta seleccionada")
             ]
         };
         request = request with
@@ -155,8 +159,155 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(1_900m, await AccountAmountAsync(request.DocumentId, "110505", true));
         Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "130510", true));
         Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "130515", true));
-        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "130520", true));
+        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "111005", true));
         Assert.Equal(4_000m, await AccountAmountAsync(request.DocumentId, "130505", true));
+        Assert.Equal("TR-2000|Pago recibido en la cuenta seleccionada", await ScalarAsync<string>(
+            "SELECT CONCAT(Reference,N'|',Notes) FROM dbo.SalesPayments WHERE DocumentId=@Id AND MethodCode=N'Transfer'",
+            request.DocumentId));
+
+        var settlementConfiguration = await accounting.GetFromJsonAsync<PosAccountingSettlementConfiguration>(
+            "/api/commerce/v1/pos/settlement-configuration");
+        Assert.NotNull(settlementConfiguration);
+        Assert.True(settlementConfiguration.IsAccountingEnabled);
+        Assert.Contains(settlementConfiguration.BankAccounts,
+            account => account.BankAccountId == bankAccountId && account.IsPrimary);
+
+        var salesReturn = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, request.DocumentId,
+            new DateTimeOffset(2026, 8, 31, 15, 0, 0, TimeSpan.FromHours(-5)),
+            ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Transfer,
+            "Reintegro por transferencia",
+            [new ConfirmSalesReturnLineRequest(1, .1m, ReturnInventoryDispositions.Sellable)],
+            null, null, "Other", null, SalesReturnScopes.Partial, bankAccountId,
+            "TR-RETURN-2000", "Reintegro confirmado por el banco");
+        using (var returns = fixture.CreateAdminClient(
+                   SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm))
+        using (var message = new HttpRequestMessage(HttpMethod.Post,
+                   "/api/commerce/v1/sales-returns/confirm")
+               {
+                   Content = JsonContent.Create(salesReturn)
+               })
+        {
+            message.Headers.Add("Idempotency-Key", $"bank-return-{salesReturn.ReturnId:N}");
+            using var response = await returns.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        await AssertBalancedAsync(salesReturn.ReturnId);
+        Assert.Equal(1_190m, await AccountAmountAsync(salesReturn.ReturnId, "111005", false));
+        Assert.Equal("TR-RETURN-2000|Reintegro confirmado por el banco", await ScalarAsync<string>(
+            "SELECT CONCAT(Reference,N'|',Notes) FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id",
+            salesReturn.ReturnId));
+    }
+
+    [Fact]
+    public async Task Bank_accounts_transfers_returns_and_postings_are_tenant_isolated()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate);
+        using (var defaults = await accounting.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(
+                       new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        var foreign = await SeedForeignBankAccountAsync();
+        var foreignNotificationsBefore = await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@Id AND Stream=N'Configuration'",
+            foreign.BusinessId);
+        var ownBankId = await CreatePrimaryBankAccountAsync(accounting);
+        Assert.Equal(foreignNotificationsBefore, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@Id AND Stream=N'Configuration'",
+            foreign.BusinessId));
+
+        var configuration = await accounting.GetFromJsonAsync<PosAccountingSettlementConfiguration>(
+            "/api/commerce/v1/pos/settlement-configuration");
+        Assert.NotNull(configuration);
+        Assert.Contains(configuration.BankAccounts, account => account.BankAccountId == ownBankId);
+        Assert.DoesNotContain(configuration.BankAccounts, account => account.BankAccountId == foreign.BankAccountId);
+
+        var foreignAccountSaveId = Guid.NewGuid();
+        using (var crossTenantAccount = await accounting.PutAsJsonAsync(
+                   $"/api/commerce/v1/accounting/bank-accounts/{foreignAccountSaveId:D}",
+                   new SaveBankAccountRequest(foreignAccountSaveId, foreign.AccountingAccountId,
+                       foreign.AccountTypeOptionId, "Banco ajeno", "9999", "Cuenta ajena", false, true, null)))
+            Assert.Equal(HttpStatusCode.Conflict, crossTenantAccount.StatusCode);
+
+        var acceptedSale = WithUblSnapshot(fixture.CreateValidRequest(9_902));
+        acceptedSale = acceptedSale with
+        {
+            Payments =
+            [
+                new(1, "Transfer", acceptedSale.CommercialSnapshot.PayableAmount,
+                    "OWN-TENANT", BankAccountId: ownBankId)
+            ]
+        };
+        using (var upload = fixture.CreateUploadMessage(acceptedSale))
+        using (var response = await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Equal(fixture.TenantId, await ScalarAsync<Guid>(
+            "SELECT TenantId FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id",
+            acceptedSale.DocumentId));
+        Assert.Equal(0, await ScalarAsync<int>("""
+            SELECT COUNT(*) FROM dbo.AccountingEntries entry
+            WHERE entry.SourceDocumentId=@Id AND entry.TenantId<>(
+                SELECT TenantId FROM dbo.Businesses WHERE BusinessId=entry.BusinessId)
+            """, acceptedSale.DocumentId));
+        Assert.Equal(0, await ScalarAsync<int>("""
+            SELECT COUNT(*) FROM dbo.AccountingEntryLines line
+            INNER JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId
+            INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId
+            WHERE entry.SourceDocumentId=@Id AND account.TenantId<>entry.TenantId
+            """, acceptedSale.DocumentId));
+
+        var salesReturn = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, acceptedSale.DocumentId,
+            new DateTimeOffset(2026, 8, 31, 16, 0, 0, TimeSpan.FromHours(-5)),
+            ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Transfer,
+            "Intento con cuenta de otro tenant",
+            [new ConfirmSalesReturnLineRequest(1, .1m, ReturnInventoryDispositions.Sellable)],
+            null, null, "Other", null, SalesReturnScopes.Partial, foreign.BankAccountId,
+            "CROSS-TENANT-RETURN", null);
+        using var returns = fixture.CreateAdminClient(
+            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using var message = new HttpRequestMessage(HttpMethod.Post,
+            "/api/commerce/v1/sales-returns/confirm") { Content = JsonContent.Create(salesReturn) };
+        message.Headers.Add("Idempotency-Key", $"cross-tenant-return-{salesReturn.ReturnId:N}");
+        using var returnResponse = await returns.SendAsync(message);
+        Assert.Equal(HttpStatusCode.BadRequest, returnResponse.StatusCode);
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id", salesReturn.ReturnId));
+
+        var rejectedSale = WithUblSnapshot(fixture.CreateValidRequest(9_901));
+        rejectedSale = rejectedSale with
+        {
+            Payments =
+            [
+                new(1, "Transfer", rejectedSale.CommercialSnapshot.PayableAmount,
+                    "CROSS-TENANT", BankAccountId: foreign.BankAccountId)
+            ]
+        };
+        using (var upload = fixture.CreateUploadMessage(rejectedSale))
+        using (var response = await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+        try
+        {
+            var rejectedProcessing = await WaitForDocumentProcessingRejectionAsync(rejectedSale.DocumentId);
+            Assert.Contains("bank account", rejectedProcessing.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("tenant", rejectedProcessing.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@Id", rejectedSale.DocumentId));
+            Assert.Equal(0, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id", rejectedSale.DocumentId));
+        }
+        finally
+        {
+            await ReleaseRejectedDocumentStreamAsync(rejectedSale.DocumentId);
+        }
     }
 
     [Fact]
@@ -895,7 +1046,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             new DateTimeOffset(2026, 8, 1, 10, 0, 0, TimeSpan.FromHours(-5)),
             ReturnEconomicResolutions.Refund, "Cash", "Devolucion contable",
             [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, 1, "Other");
+            fixture.WorkSessionId, null, "Other");
         using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
         { Content = JsonContent.Create(returnRequest) })
         {
@@ -1733,8 +1884,31 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             SELECT e.DebitTotal,e.CreditTotal,SUM(l.Debit),SUM(l.Credit)
             FROM dbo.AccountingEntries e INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
             WHERE e.SourceDocumentId=@Id GROUP BY e.DebitTotal,e.CreditTotal;
-            """, connection); command.Parameters.AddWithValue("@Id", documentId); await using var reader = await command.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync());
-        Assert.Equal(reader.GetDecimal(0), reader.GetDecimal(1)); Assert.Equal(reader.GetDecimal(0), reader.GetDecimal(2)); Assert.Equal(reader.GetDecimal(1), reader.GetDecimal(3));
+            """, connection);
+        command.Parameters.AddWithValue("@Id", documentId);
+        for (var attempt = 0; attempt < 150; attempt++)
+        {
+            await using var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                Assert.Equal(reader.GetDecimal(0), reader.GetDecimal(1));
+                Assert.Equal(reader.GetDecimal(0), reader.GetDecimal(2));
+                Assert.Equal(reader.GetDecimal(1), reader.GetDecimal(3));
+                return;
+            }
+            await Task.Delay(100);
+        }
+
+        var status = await ScalarAsync<string?>(
+            "SELECT CONCAT(Status,N'|',COALESCE(LastErrorCode,N''),N'|',COALESCE(LastErrorMessage,N'')) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+            documentId);
+        var documentStatus = await ScalarAsync<string?>(
+            "SELECT CONCAT(Status,N'|',COALESCE(LastError,N'')) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id",
+            documentId);
+        Assert.Fail(
+            $"Accounting entry was not posted for {documentId:D}. " +
+            $"Accounting job: {status ?? "missing"}. " +
+            $"Document job: {documentStatus ?? "missing"}.");
     }
 
     private async Task AssertFastProcessingAsync(Guid documentId, string operation)
@@ -2015,4 +2189,144 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand("UPDATE dbo.Warehouses SET AllowNegativeStockSales=@Value WHERE WarehouseId=@Id", connection); command.Parameters.AddWithValue("@Value", value); command.Parameters.AddWithValue("@Id", fixture.WarehouseId); Assert.Equal(1, await command.ExecuteNonQueryAsync()); }
     private async Task<int> CountAsync(string table, string column, Guid id)
     { Assert.Contains($"{table}:{column}", new[] { "AccountingEntries:SourceDocumentId", "AccountingPostingJobs:SourceDocumentId", "AccountingSourceDocuments:SourceDocumentId", "DocumentProcessingJobs:DocumentId" }); await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand($"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id", connection); command.Parameters.AddWithValue("@Id", id); return Convert.ToInt32(await command.ExecuteScalarAsync()); }
+
+    private async Task<Guid> CreatePrimaryBankAccountAsync(HttpClient accounting)
+    {
+        var accounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
+            "/api/commerce/v1/accounting/accounts") ?? [];
+        var postingAccount = Assert.Single(accounts, account => account.Code == "111005");
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var option = new SqlCommand("""
+            SELECT TOP(1) OptionId FROM reference.Options
+            WHERE CatalogCode=N'bank-account-type' AND Code=N'Checking' AND IsActive=1;
+            """, connection);
+        var optionId = (Guid)(await option.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("The bank-account-type seed is missing."));
+        var id = Guid.NewGuid();
+        using var response = await accounting.PutAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-accounts/{id:D}",
+            new SaveBankAccountRequest(id, postingAccount.AccountId, optionId,
+                "Banco prueba", $"{id:N}"[..12], "Cuenta principal prueba", true, true, null));
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        return id;
+    }
+
+    private async Task<RejectedDocumentProcessing> WaitForDocumentProcessingRejectionAsync(Guid documentId)
+    {
+        string? documentStatus = null;
+        string? jobStatus = null;
+        string? error = null;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                SELECT d.ProcessingStatus,j.Status,j.LastError
+                FROM dbo.SalesDocuments d
+                INNER JOIN dbo.DocumentProcessingJobs j
+                  ON j.DocumentId=d.DocumentId AND j.DocumentType=d.DocumentType
+                WHERE d.DocumentId=@DocumentId;
+                """, connection);
+            command.Parameters.AddWithValue("@DocumentId", documentId);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                documentStatus = reader.GetString(0);
+                jobStatus = reader.GetString(1);
+                error = reader.IsDBNull(2) ? null : reader.GetString(2);
+            }
+
+            if (jobStatus is "RetryScheduled" or "DeadLettered" && !string.IsNullOrWhiteSpace(error))
+                return new(documentStatus!, jobStatus!, error ?? string.Empty);
+            await Task.Delay(100);
+        }
+
+        Assert.Fail(
+            $"Expected tenant-isolation processing rejection. Document status: {documentStatus ?? "missing"}; " +
+            $"job status: {jobStatus ?? "missing"}; error: {error}");
+        throw new InvalidOperationException("The assertion above must terminate the test.");
+    }
+
+    private async Task ReleaseRejectedDocumentStreamAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            DECLARE @BusinessId uniqueidentifier,@Sequence bigint;
+            SELECT @BusinessId=BusinessId,@Sequence=ProcessingSequence
+            FROM dbo.DocumentProcessingJobs
+            WHERE DocumentId=@DocumentId
+              AND Status IN (N'RetryScheduled',N'NeedsIntervention',N'DeadLettered');
+
+            UPDATE dbo.DocumentProcessingJobs
+            SET Status=N'Completed',CompletedAt=SYSDATETIMEOFFSET(),
+                LeaseOwner=NULL,LeaseExpiresAt=NULL
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
+              AND ProcessingSequence=@Sequence;
+
+            UPDATE dbo.BusinessProcessingCursors
+            SET LastCompletedSequence=@Sequence,UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE BusinessId=@BusinessId
+              AND LastCompletedSequence=@Sequence-1;
+            """, connection);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<ForeignBankFixture> SeedForeignBankAccountAsync()
+    {
+        var tenantId = Guid.NewGuid();
+        var businessId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var accountingAccountId = Guid.NewGuid();
+        var bankAccountId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        await using var command = new SqlCommand("""
+            DECLARE @OptionId uniqueidentifier=(
+              SELECT TOP(1) OptionId FROM reference.Options
+              WHERE CatalogCode=N'bank-account-type' AND Code=N'Checking' AND IsActive=1);
+            INSERT dbo.Tenants(TenantId,TenantKey,Name,Email,IsActive)
+            VALUES(@TenantId,CONCAT(N'@tenant-',REPLACE(CONVERT(nvarchar(36),@TenantId),N'-',N'')),
+                   N'Tenant de aislamiento',CONCAT(REPLACE(CONVERT(nvarchar(36),@TenantId),N'-',N''),N'@example.test'),1);
+            INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+              FirstName,LastName,AccessFailedCount,EmailConfirmed,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,N'foreign-user',N'FOREIGN-USER',
+              CONCAT(REPLACE(CONVERT(nvarchar(36),@UserId),N'-',N''),N'@example.test'),
+              UPPER(CONCAT(REPLACE(CONVERT(nvarchar(36),@UserId),N'-',N''),N'@example.test')),
+              N'Foreign',N'User',0,1,1,SYSUTCDATETIME());
+            INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
+            VALUES(@BusinessId,@TenantId,N'Negocio de otro tenant',N'',N'',N'',
+              CONCAT(REPLACE(CONVERT(nvarchar(36),@BusinessId),N'-',N''),N'@example.test'),N'',1,SYSUTCDATETIME());
+            INSERT dbo.AccountingAccounts(AccountId,TenantId,Code,Name,AccountType,
+              AllowsPosting,RequiresParty,IsActive,CreatedAt)
+            VALUES(@AccountingAccountId,@TenantId,N'111005',N'Banco extranjero',N'Asset',1,0,1,SYSDATETIMEOFFSET());
+            INSERT accounting.BankAccounts(BankAccountId,TenantId,AccountingAccountId,AccountTypeOptionId,
+              BankName,AccountNumber,DisplayName,CurrencyCode,IsPrimary,IsActive,
+              CreatedByUserId,CreatedAt,UpdatedByUserId,UpdatedAt)
+            VALUES(@BankAccountId,@TenantId,@AccountingAccountId,@OptionId,N'Banco extranjero',N'0001',
+              N'Cuenta de otro tenant',N'COP',1,1,@UserId,SYSDATETIMEOFFSET(),@UserId,SYSDATETIMEOFFSET());
+            SELECT @OptionId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@AccountingAccountId", accountingAccountId);
+        command.Parameters.AddWithValue("@BankAccountId", bankAccountId);
+        var optionId = (Guid)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("The bank-account-type seed is missing."));
+        await transaction.CommitAsync();
+        return new(tenantId, businessId, accountingAccountId, bankAccountId, optionId);
+    }
+
+    private sealed record ForeignBankFixture(
+        Guid TenantId,
+        Guid BusinessId,
+        Guid AccountingAccountId,
+        Guid BankAccountId,
+        Guid AccountTypeOptionId);
+
+    private sealed record RejectedDocumentProcessing(string DocumentStatus, string JobStatus, string Error);
 }

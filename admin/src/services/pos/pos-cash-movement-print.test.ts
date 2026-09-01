@@ -15,6 +15,8 @@ test("cash movement receipt is professional and omits optional blank fields", ()
   assert.match(html, /Firma/);
   assert.doesNotMatch(html, /Referencia/);
   assert.doesNotMatch(html, /Observación/);
+  assert.ok(html.indexOf('class="details"') < html.indexOf('class="amount"'));
+  assert.ok(html.indexOf('class="amount"') < html.indexOf('class="signature"'));
 });
 
 test("cash movement receipt escapes user-controlled content", () => {

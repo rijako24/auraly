@@ -98,6 +98,8 @@
     "src/lib/default-start-route.test.ts",
     "src/components/layout/sidebar-nav-config.ts",
     "src/components/layout/sidebar-nav-config.test.ts",
+    "src/components/fiscal/fiscal-device-resolution-state.ts",
+    "src/components/fiscal/fiscal-device-resolution-state.test.ts",
     "src/lib/report-viewer.ts",
     "src/lib/report-viewer.test.ts",
     "src/lib/dispatch-report.ts",

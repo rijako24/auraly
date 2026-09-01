@@ -50,6 +50,8 @@ export interface ReturnableSale {
     originalAmount: number;
     refundedAmount: number;
     availableAmount: number;
+    cardFranchiseCode: string | null;
+    approvalNumber: string | null;
   }>;
   lines: Array<{
     originalLineNumber: number;
@@ -88,8 +90,22 @@ export interface ConfirmSalesReturnRequest {
   }>;
   workSessionId: string | null;
   originalPaymentNumber: number | null;
+  bankAccountId: string | null;
+  settlementReference: string | null;
+  settlementNotes: string | null;
   reasonCode: string;
   notes: string | null;
+}
+
+export interface SalesSettlementConfiguration {
+  isAccountingEnabled: boolean;
+  bankAccounts: Array<{
+    bankAccountId: string;
+    displayName: string;
+    bankName: string;
+    accountNumber: string;
+    isPrimary: boolean;
+  }>;
 }
 
 export interface SalesReturnAcceptance {
@@ -110,6 +126,8 @@ export interface WorkSessionView {
 }
 
 export const salesReturnsApi = {
+  settlementConfiguration: () =>
+    apiClient.get<SalesSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   listSales: (params: {
     page?: number;
     pageSize?: number;

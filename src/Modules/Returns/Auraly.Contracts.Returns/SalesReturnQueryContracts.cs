@@ -49,7 +49,9 @@ public sealed record ReturnableSalePayment(
     string MethodCode,
     decimal OriginalAmount,
     decimal RefundedAmount,
-    decimal AvailableAmount);
+    decimal AvailableAmount,
+    string? CardFranchiseCode,
+    string? ApprovalNumber);
 
 public sealed record ReturnableSaleLine(
     int OriginalLineNumber,

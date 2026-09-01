@@ -180,7 +180,9 @@ public sealed class OrderBatchService(
                             new OnlineSalesPayment(
                                 paymentMethod,
                                 draft.PayableAmount,
-                                paymentReference)
+                                paymentReference,
+                                BankAccountId: request.BankAccountId,
+                                Notes: request.PaymentNotes)
                         ],
                         DocumentType: documentType),
                     OperationKey(lease.OperationId, orderId, "invoice"),
@@ -312,9 +314,19 @@ public sealed class OrderBatchService(
             !PaymentMethods.Contains(request.PaymentMethodCode) ||
             request.DocumentType is not (
                 PosSaleDocumentTypes.Invoice or PosSaleDocumentTypes.Receipt) ||
-            request.PaymentReference?.Length > 160)
+            request.PaymentReference?.Length > 160 ||
+            request.PaymentNotes?.Length > 500)
             throw new OrderValidationException(
                 "Sesión, usuario, pedidos y medio de pago válidos son obligatorios.");
+        if (request.PaymentMethodCode == "Transfer" &&
+            string.IsNullOrWhiteSpace(request.PaymentReference))
+            throw new OrderValidationException(
+                "La referencia de la transferencia es obligatoria.");
+        if (request.PaymentMethodCode != "Transfer" &&
+            (request.BankAccountId is not null ||
+             !string.IsNullOrWhiteSpace(request.PaymentNotes)))
+            throw new OrderValidationException(
+                "La cuenta bancaria y la nota solo aplican a transferencias.");
         if (actor.WorkSessionId is not null && actor.WorkSessionId != request.WorkSessionId)
             throw new OrderForbiddenException(
                 "La sesión solicitada no coincide con el dispositivo autenticado.");
@@ -334,6 +346,8 @@ public sealed class OrderBatchService(
             request.UserId.ToString("D"),
             request.PaymentMethodCode,
             request.PaymentReference ?? string.Empty,
+            request.BankAccountId?.ToString("D") ?? string.Empty,
+            request.PaymentNotes ?? string.Empty,
             request.DocumentType,
             string.Join(",", orderIds.Select(id => id.ToString("D"))));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));

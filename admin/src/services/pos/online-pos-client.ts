@@ -52,6 +52,7 @@ import {
   PosApprovalSummary,
   type PosPrinterConfiguration,
   type PosPrintTemplateFormat,
+  type PosSettlementConfiguration,
   loadBrowserPrinterConfiguration,
 } from "./pos-edge-client";
 import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
@@ -408,6 +409,9 @@ export class OnlinePosClient implements PosClient {
   }
   referenceOptions(catalogCode: string) {
     return referenceOptionsApi.list(catalogCode);
+  }
+  settlementConfiguration() {
+    return request<PosSettlementConfiguration>("/api/commerce/v1/pos/settlement-configuration");
   }
   openCashDrawer() {
     return this.localEdge().openCashDrawer();
@@ -964,6 +968,9 @@ export class OnlinePosClient implements PosClient {
     orderIds: string[],
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
+    paymentReference?: string | null,
+    bankAccountId?: string | null,
+    paymentNotes?: string | null,
   ): Promise<InvoiceOrdersResponse> {
     // The installed POS owns its system printers. Its orders endpoint invoices
     // against the server and prints through the printer assigned to the orders
@@ -974,6 +981,9 @@ export class OnlinePosClient implements PosClient {
         orderIds,
         paymentMethodCode,
         documentType,
+        paymentReference,
+        bankAccountId,
+        paymentNotes,
       );
 
     const browserPreview = openHalfLetterPrintPreview();
@@ -983,7 +993,9 @@ export class OnlinePosClient implements PosClient {
       userId: this.userId,
       orderIds,
       paymentMethodCode,
-      paymentReference: null,
+      paymentReference: paymentReference ?? null,
+      bankAccountId: bankAccountId ?? null,
+      paymentNotes: paymentNotes ?? null,
       documentType,
     });
     try {

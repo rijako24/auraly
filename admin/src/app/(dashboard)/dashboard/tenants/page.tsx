@@ -26,7 +26,7 @@ export default function TenantsPage() {
     { accessorKey: "name", header: "Nombre", cell: ({ row }) => <div className="font-medium">{row.original.name}</div> },
     { accessorKey: "email", header: "Email" },
     { accessorKey: "isActive", header: "Estado", cell: ({ row }) => <Badge variant={row.original.isActive ? "default" : "secondary"}>{row.original.isActive ? "Activo" : "Inactivo"}</Badge> },
-    { accessorKey: "businessCount", header: "Negocios" },
+    { accessorKey: "businessCount", header: "Sedes" },
     { id: "users", header: "Usuarios", cell: ({ row }) => `${row.original.activeUserCount} / ${row.original.maximumUsers}` },
     { id: "devices", header: "Cajas", cell: ({ row }) => `${row.original.activeEnrolledDeviceCount} / ${row.original.maximumEnrolledDevices}` },
     { accessorKey: "fiscalCertificateValidTo", header: "Vencimiento certificado DIAN", cell: ({ row }) => {
@@ -44,10 +44,10 @@ export default function TenantsPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div><h1 className="text-2xl font-semibold tracking-tight">Tenants</h1><p className="text-muted-foreground">Gestiona las organizaciones que usan la plataforma</p></div>
-        {canCreateTenant && <Button asChild><Link href="/dashboard/tenants/new"><Plus className="mr-2 h-4 w-4" />Nuevo Tenant</Link></Button>}
+        <div><h1 className="text-2xl font-semibold tracking-tight">Empresas</h1><p className="text-muted-foreground">Gestiona las empresas que usan la plataforma</p></div>
+        {canCreateTenant && <Button asChild><Link href="/dashboard/tenants/new"><Plus className="mr-2 h-4 w-4" />Nueva empresa</Link></Button>}
       </div>
-      {canManageBillingPolicy ? <Tabs defaultValue="tenants" className="space-y-5"><TabsList><TabsTrigger value="tenants">Organizaciones</TabsTrigger><TabsTrigger value="billing">Política de cobranza</TabsTrigger></TabsList><TabsContent value="tenants"><DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} /></TabsContent><TabsContent value="billing"><PlatformBillingPolicyCard/></TabsContent></Tabs> : <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} />}
+      {canManageBillingPolicy ? <Tabs defaultValue="tenants" className="space-y-5"><TabsList><TabsTrigger value="tenants">Empresas</TabsTrigger><TabsTrigger value="billing">Política de cobranza</TabsTrigger></TabsList><TabsContent value="tenants"><DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} /></TabsContent><TabsContent value="billing"><PlatformBillingPolicyCard/></TabsContent></Tabs> : <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} />}
     </div>
   );
 }

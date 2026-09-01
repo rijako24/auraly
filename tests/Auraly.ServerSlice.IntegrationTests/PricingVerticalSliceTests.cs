@@ -278,17 +278,11 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
               (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
             VALUES
               (NEWID(),@BusinessId,@ProductId,@SupplierId,@ProductCode,1,1,SYSDATETIMEOFFSET());
-            IF NOT EXISTS (SELECT 1 FROM dbo.PosDevicePermissions
-                           WHERE DeviceId=@DeviceId AND PermissionCode=@CatalogSyncPermission)
-              INSERT dbo.PosDevicePermissions(DeviceId,PermissionCode,IsGranted,GrantedAt)
-              VALUES(@DeviceId,@CatalogSyncPermission,1,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
-        command.Parameters.AddWithValue("@DeviceId", fixture.DeviceId);
-        command.Parameters.AddWithValue("@CatalogSyncPermission", Auraly.Contracts.Catalog.CatalogPermissionCodes.Sync);
         command.Parameters.AddWithValue("@ProductCode", $"PR-{productId:N}");
         command.Parameters.AddWithValue("@TaxCode", $"T-{productId:N}"[..32]);
         command.Parameters.AddWithValue("@Barcode", barcode);

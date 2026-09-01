@@ -52,6 +52,13 @@ public interface IOfflineAuthenticationLeaseStore
         Guid leaseId,
         DateTimeOffset releasedAt,
         CancellationToken cancellationToken);
+
+    Task<bool> IsActiveAsync(
+        Guid tenantId,
+        Guid deviceId,
+        Guid leaseId,
+        Guid userId,
+        CancellationToken cancellationToken);
 }
 
 public sealed class OfflineAuthenticationLeaseService(
@@ -162,6 +169,24 @@ public sealed class OfflineAuthenticationLeaseService(
             device.DeviceId,
             leaseId,
             timeProvider.GetUtcNow(),
+            cancellationToken);
+    }
+
+    public Task<bool> IsActiveAsync(
+        OfflineAuthenticationLeaseDevice device,
+        Guid leaseId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureDevice(device);
+        if (leaseId == Guid.Empty || userId == Guid.Empty)
+            throw new AuthenticationValidationException(
+                "LeaseId and UserId are required.");
+        return leases.IsActiveAsync(
+            device.TenantId,
+            device.DeviceId,
+            leaseId,
+            userId,
             cancellationToken);
     }
 

@@ -37,7 +37,7 @@ Usuario JWT:
 Dispositivo POS:
 
 - `POST /api/pos/v1/sales` — `sales.create`.
-- `GET /api/pos/v1/fiscal/statuses?cursor=...&pageSize=100` — `fiscal.status.sync`.
+- `GET /api/pos/v1/fiscal/statuses?cursor=...&pageSize=100` — credencial de dispositivo enrolado y activo.
 
 La autenticación POS usa `X-Auraly-Device-Id` y `X-Auraly-Device-Secret`. El servidor deriva empresa, sede, bodega y caja del dispositivo autenticado; no confía en esos datos solamente porque lleguen en el body.
 

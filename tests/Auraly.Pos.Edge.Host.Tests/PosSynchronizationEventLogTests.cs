@@ -3,12 +3,57 @@ using Auraly.Contracts.Authorization;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosSynchronizationEventLogTests
 {
+    [Fact]
+    public async Task Failed_upload_lane_does_not_block_catalog_download_lane()
+    {
+        var signal = new PosSynchronizationSignal();
+        var events = new PosSynchronizationEventLog(TimeProvider.System);
+        var executor = new PosSynchronizationLaneExecutor(
+            signal,
+            events,
+            NullLogger<PosSynchronizationLaneExecutor>.Instance);
+        var catalogExecuted = false;
+        var catalogStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
+
+        var succeeded = await executor.ExecuteAllAsync(
+            [
+                new PosSynchronizationLane(
+                    PosSynchronizationTrigger.LocalOutbox,
+                    "subida",
+                    async () =>
+                    {
+                        await catalogStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                        throw new HttpRequestException("upload unavailable");
+                    }),
+                new PosSynchronizationLane(
+                    PosSynchronizationTrigger.Catalog,
+                    "catálogo",
+                    () =>
+                    {
+                        catalogExecuted = true;
+                        catalogStarted.TrySetResult();
+                        return Task.CompletedTask;
+                    })
+            ],
+            cancellation.Token);
+
+        cancellation.Cancel();
+        Assert.False(succeeded);
+        Assert.True(catalogExecuted);
+        Assert.Contains(
+            events.Read(),
+            item => item.Title.Contains("subida", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Product_price_event_preserves_previous_and_new_values()
     {

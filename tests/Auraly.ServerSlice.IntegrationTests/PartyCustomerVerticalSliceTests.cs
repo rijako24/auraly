@@ -282,7 +282,11 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         using var deniedResponse = await denied.PostAsJsonAsync(
             "/api/pos/v1/customers",
             request);
-        Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, deniedResponse.StatusCode);
+        var created = await deniedResponse.Content.ReadFromJsonAsync<CustomerDetail>();
+        Assert.NotNull(created);
+        Assert.Equal(fixture.BusinessId, created.BusinessId);
+        Assert.Null(created.PriceChannelId);
 
         using var pos = fixture.CreateClient();
         pos.DefaultRequestHeaders.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
@@ -290,14 +294,6 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         var countries = await pos.GetFromJsonAsync<IReadOnlyCollection<CountryItem>>(
             $"/api/pos/v1/customers/geography/countries?businessId={fixture.BusinessId:D}");
         Assert.Contains(countries!, item => item.CountryId == countryId);
-        using var createdResponse = await pos.PostAsJsonAsync(
-            "/api/pos/v1/customers",
-            request);
-        Assert.Equal(HttpStatusCode.OK, createdResponse.StatusCode);
-        var created = await createdResponse.Content.ReadFromJsonAsync<CustomerDetail>();
-        Assert.NotNull(created);
-        Assert.Equal(fixture.BusinessId, created.BusinessId);
-        Assert.Null(created.PriceChannelId);
 
         var found = await pos.GetFromJsonAsync<CustomerDetail>(
             $"/api/pos/v1/customers/by-identification?businessId={fixture.BusinessId:D}&countryId={countryId:D}" +

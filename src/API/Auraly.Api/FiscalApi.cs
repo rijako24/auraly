@@ -49,12 +49,11 @@ public static class FiscalApi
                 var identity = context.User.ToPosDeviceIdentity();
                 var device = new PosFiscalDeviceContext(
                     identity.DeviceId,
-                    businessId,
-                    identity.Permissions);
+                    businessId);
                 return Results.Ok(await service.PageAsync(
                     device, cursor, pageSize ?? 100, ct));
             }))
-            .RequireAuthorization("pos.fiscal.status.sync");
+            .RequireAuthorization("pos.enrolled");
 
         return endpoints;
     }

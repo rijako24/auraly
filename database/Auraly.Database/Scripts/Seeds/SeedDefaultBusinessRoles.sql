@@ -1,5 +1,9 @@
 SET NOCOUNT ON;
 
+DECLARE @OptInPermissionPrefixes TABLE(Prefix NVARCHAR(100) PRIMARY KEY);
+INSERT @OptInPermissionPrefixes(Prefix)
+VALUES(N'agents.'),(N'conversations.'),(N'leads.'),(N'campaigns.'),(N'reservations.');
+
 -- Estos permisos forman parte de la matriz base de caja y deben existir antes de
 -- asignar las plantillas. Mantenerlos aquí evita roles incompletos en tenants nuevos.
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
@@ -30,7 +34,9 @@ JOIN dbo.Tenants tenantValue ON tenantValue.TenantId=roleValue.TenantId
 JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
 WHERE roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
   AND tenantValue.TenantKey<>N'@auraly'
-  AND (permissionValue.Resource LIKE N'tenants.%' OR permissionValue.Resource LIKE N'platform.%');
+  AND (permissionValue.Resource LIKE N'tenants.%' OR permissionValue.Resource LIKE N'platform.%'
+    OR EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
+              WHERE permissionValue.Resource LIKE optIn.Prefix+N'%'));
 
 INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
 SELECT NEWID(),tenant.TenantId,preset.Name,preset.NormalizedName,preset.Description,1,preset.IsSystemRole,SYSUTCDATETIME()
@@ -75,6 +81,8 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
+      AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
+                     WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
     OR roleValue.NormalizedName=N'ACCOUNTANT' AND (
       permissionValue.Resource LIKE N'accounting.%'
       OR permissionValue.Resource LIKE N'payroll.%'
@@ -101,6 +109,8 @@ WHERE roleValue.IsActive=1
   AND (
     roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
       AND (permissionValue.Resource NOT LIKE N'tenants.%' AND permissionValue.Resource NOT LIKE N'platform.%'
+        AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
+                       WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
@@ -121,6 +131,8 @@ WHERE roleValue.IsActive=1
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
+      AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
+                     WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
     OR roleValue.NormalizedName=N'ACCOUNTANT' AND (
       permissionValue.Resource LIKE N'accounting.%'
       OR permissionValue.Resource LIKE N'payroll.%'

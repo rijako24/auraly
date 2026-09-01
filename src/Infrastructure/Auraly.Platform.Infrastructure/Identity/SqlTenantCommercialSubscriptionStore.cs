@@ -57,12 +57,15 @@ public sealed class SqlTenantCommercialSubscriptionStore(ApplicationDbContext db
             await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
             SELECT COUNT_BIG(*)
-            FROM billing.TenantSubscriptions subscription
-            JOIN dbo.Tenants tenantValue ON tenantValue.TenantId=subscription.TenantId
+            FROM dbo.Tenants tenantValue
+            LEFT JOIN billing.TenantSubscriptions subscription
+              ON subscription.TenantId=tenantValue.TenantId
             WHERE (@Search IS NULL OR tenantValue.Name LIKE N'%'+@Search+N'%'
                    OR tenantValue.TenantKey LIKE N'%'+@Search+N'%'
                    OR tenantValue.Email LIKE N'%'+@Search+N'%')
-              AND (@Status IS NULL OR subscription.Status=@Status);
+              AND (@Status IS NULL
+                   OR (@Status=N'Missing' AND subscription.TenantSubscriptionId IS NULL)
+                   OR subscription.Status=@Status);
 
             SELECT tenantValue.TenantId,tenantValue.TenantKey,tenantValue.Name,tenantValue.Email,
                    subscription.TenantSubscriptionId,serviceValue.Code,serviceValue.Name,
@@ -73,11 +76,12 @@ public sealed class SqlTenantCommercialSubscriptionStore(ApplicationDbContext db
                    COALESCE(periodValue.DianDocumentsUsed,0),subscription.PayrollEmployeeLimit,
                    renewal.TenantSubscriptionRenewalOrderId,renewal.Status,renewal.DueAt,
                    renewal.PayableAmount
-            FROM billing.TenantSubscriptions subscription
-            JOIN dbo.Tenants tenantValue ON tenantValue.TenantId=subscription.TenantId
-            JOIN billing.TenantCommercialPlans planValue
+            FROM dbo.Tenants tenantValue
+            LEFT JOIN billing.TenantSubscriptions subscription
+              ON subscription.TenantId=tenantValue.TenantId
+            LEFT JOIN billing.TenantCommercialPlans planValue
               ON planValue.TenantCommercialPlanId=subscription.TenantCommercialPlanId
-            JOIN billing.BillableServices serviceValue
+            LEFT JOIN billing.BillableServices serviceValue
               ON serviceValue.BillableServiceId=planValue.BillableServiceId
             OUTER APPLY(
               SELECT TOP(1) usageValue.DianDocumentsUsed
@@ -96,9 +100,13 @@ public sealed class SqlTenantCommercialSubscriptionStore(ApplicationDbContext db
             WHERE (@Search IS NULL OR tenantValue.Name LIKE N'%'+@Search+N'%'
                    OR tenantValue.TenantKey LIKE N'%'+@Search+N'%'
                    OR tenantValue.Email LIKE N'%'+@Search+N'%')
-              AND (@Status IS NULL OR subscription.Status=@Status)
-            ORDER BY CASE subscription.Status
-                       WHEN N'Suspended' THEN 0 WHEN N'PastDue' THEN 1 ELSE 2 END,
+              AND (@Status IS NULL
+                   OR (@Status=N'Missing' AND subscription.TenantSubscriptionId IS NULL)
+                   OR subscription.Status=@Status)
+            ORDER BY CASE
+                       WHEN subscription.TenantSubscriptionId IS NULL THEN 0
+                       WHEN subscription.Status=N'Suspended' THEN 1
+                       WHEN subscription.Status=N'PastDue' THEN 2 ELSE 3 END,
                      subscription.CurrentPeriodEnd,tenantValue.Name
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """, connection);
@@ -114,10 +122,19 @@ public sealed class SqlTenantCommercialSubscriptionStore(ApplicationDbContext db
         while (await reader.ReadAsync(cancellationToken))
             items.Add(new(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                reader.GetGuid(4), reader.GetString(5), reader.GetString(6), reader.GetString(7),
-                reader.GetString(8), reader.GetFieldValue<DateTimeOffset>(9),
-                reader.GetFieldValue<DateTimeOffset>(10), reader.GetInt32(11), reader.GetInt32(12),
-                reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9),
+                reader.IsDBNull(10) ? null : reader.GetFieldValue<DateTimeOffset>(10),
+                reader.IsDBNull(11) ? null : reader.GetInt32(11),
+                reader.IsDBNull(12) ? null : reader.GetInt32(12),
+                reader.IsDBNull(13) ? null : reader.GetInt32(13),
+                reader.IsDBNull(14) ? null : reader.GetInt32(14),
+                reader.IsDBNull(15) ? null : reader.GetInt32(15),
+                reader.IsDBNull(16) ? null : reader.GetInt32(16),
                 reader.IsDBNull(17) ? null : reader.GetGuid(17),
                 reader.IsDBNull(18) ? null : reader.GetString(18),
                 reader.IsDBNull(19) ? null : reader.GetFieldValue<DateTimeOffset>(19),

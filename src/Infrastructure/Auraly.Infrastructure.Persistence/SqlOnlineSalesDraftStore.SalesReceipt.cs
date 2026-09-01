@@ -112,7 +112,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             index + 1, payment.MethodCode, payment.Amount,
             string.IsNullOrWhiteSpace(payment.Reference) ? null : payment.Reference.Trim(),
             string.IsNullOrWhiteSpace(payment.CardFranchiseCode) ? null : payment.CardFranchiseCode.Trim(),
-            string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim())).ToArray();
+            string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim(),
+            payment.BankAccountId,
+            string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim())).ToArray();
         var taxes = lines.GroupBy(line => line.TaxCode, StringComparer.Ordinal)
             .Select(group => new PosSaleTaxContract(
                 group.Key, group.Sum(line => line.TaxAmount)))

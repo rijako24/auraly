@@ -372,14 +372,12 @@ public sealed partial class SqlWorkSessionStore
                 SELECT CONCAT(N'Refund:',CONVERT(nvarchar(36),settlement.ReturnId),N':',settlement.SettlementNumber),
                   COALESCE(mapping.ClosureMethodCode,settlement.MethodCode),N'Refund',settlement.ReturnId,
                   saleReturn.DocumentNumber,settlement.SettlementNumber,-settlement.Amount,settlement.Reference,
-                  originalPayment.CardFranchiseCode,originalPayment.ApprovalNumber,settlement.OccurredAt,
+                  settlement.CardFranchiseCode,settlement.ApprovalNumber,settlement.OccurredAt,
                   N'SalesReturn'
                 FROM dbo.SalesReturnSettlements settlement
                 INNER JOIN dbo.SalesReturns saleReturn ON saleReturn.ReturnId=settlement.ReturnId
                 INNER JOIN ClosureContext context ON saleReturn.CreatedByUserId=context.UserId
                   AND saleReturn.ReturnedAt>=context.OpenedAt AND saleReturn.ReturnedAt<=context.ClosedAt
-                LEFT JOIN dbo.SalesPayments originalPayment ON originalPayment.DocumentId=settlement.OriginalDocumentId
-                  AND originalPayment.PaymentNumber=settlement.OriginalPaymentNumber
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=settlement.MethodCode
                 WHERE settlement.SettlementType=N'Refund'
                 UNION ALL
@@ -395,10 +393,19 @@ public sealed partial class SqlWorkSessionStore
             SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType,movement.SourceId,
               movement.DocumentNumber,movement.SourceNumber,movement.Amount,movement.Reference,
               movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt,
-              movement.SourceDocumentType
+              movement.SourceDocumentType,decision.Status
             FROM VerificationMovements movement
             INNER JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
+            OUTER APPLY
+            (
+                SELECT TOP(1) JSON_VALUE(value.value,N'$.status') Status
+                FROM dbo.WorkSessionClosureReconciliations reconciliation
+                CROSS APPLY OPENJSON(reconciliation.SnapshotJson,N'$.paymentVerifications') value
+                WHERE reconciliation.WorkSessionClosureId=@ClosureId
+                  AND JSON_VALUE(value.value,N'$.verificationKey')=movement.VerificationKey
+                ORDER BY reconciliation.ReconciledAt DESC
+            ) decision
             ORDER BY closureOption.SortOrder,movement.OccurredAt,movement.VerificationKey;
             """, connection, transaction);
         command.Parameters.AddWithValue("@ClosureId", closureId);
@@ -410,7 +417,7 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8),
                 reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetDateTimeOffset(10),
-                reader.GetString(11)));
+                reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12)));
         return result;
     }
 

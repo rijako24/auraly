@@ -1,33 +1,3 @@
-DECLARE @PosIdentitySyncPermissionId UNIQUEIDENTIFIER =
-    CAST('019B2A31-7B93-7B4A-873B-C07C4AB9D99F' AS UNIQUEIDENTIFIER);
-
-IF NOT EXISTS (
-    SELECT 1 FROM dbo.Permissions WHERE Resource=N'pos.identity.sync')
-BEGIN
-    INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description)
-    VALUES(
-        @PosIdentitySyncPermissionId,
-        N'POS',
-        N'SyncIdentity',
-        N'pos.identity.sync',
-        N'Sincronizar usuarios y permisos mínimos en un dispositivo POS enrolado');
-END
-ELSE
-BEGIN
-    SELECT @PosIdentitySyncPermissionId=PermissionId
-    FROM dbo.Permissions WHERE Resource=N'pos.identity.sync';
-END;
-
-INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId)
-SELECT NEWID(),r.RoleId,@PosIdentitySyncPermissionId
-FROM dbo.AppRoles r
-WHERE r.NormalizedName=N'ADMINISTRATOR'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM dbo.RolePermissions rp
-      WHERE rp.RoleId=r.RoleId
-        AND rp.PermissionId=@PosIdentitySyncPermissionId);
-
 DECLARE @PosSynchronizationEventsPermissionId UNIQUEIDENTIFIER =
     CAST('019C0031-7B93-7B4A-873B-C07C4AB9D99F' AS UNIQUEIDENTIFIER);
 IF NOT EXISTS (SELECT 1 FROM dbo.Permissions WHERE Resource=N'pos.synchronization.events.read')

@@ -135,6 +135,16 @@ export default function OrdersPage() {
         source={user && isSellerOperationalProfile(user.roles ?? [], user.permissions ?? []) ? 1 : undefined}
         loadPage={loadCommerceOrders}
         loadDetail={loadCommerceOrder}
+        loadSettlementConfiguration={async () => {
+          if (!workspace || !user) throw new Error("Selecciona una sede y una bodega.");
+          const context = await selectSalesWorkspace(workspace);
+          return new OnlinePosClient(
+            context,
+            user.userId,
+            `${user.firstName} ${user.lastName}`.trim() || user.username,
+            readEdgeTokenFromLaunch(),
+          ).settlementConfiguration();
+        }}
         onRetryEmission={async (orderId) => {
           await retryCommerceOrderEmission(orderId);
         }}
@@ -148,7 +158,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user
-            ? async (orders, paymentMethodCode, documentType) => {
+            ? async (orders, paymentMethodCode, documentType, transfer) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
@@ -161,6 +171,9 @@ export default function OrdersPage() {
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
                   documentType,
+                  transfer?.reference,
+                  transfer?.bankAccountId,
+                  transfer?.notes,
                 );
                 return {
                   completedCount: response.completedCount,

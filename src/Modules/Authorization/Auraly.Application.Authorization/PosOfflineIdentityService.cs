@@ -5,8 +5,7 @@ namespace Auraly.Application.Authorization;
 public sealed record PosIdentityDeviceScope(
     Guid DeviceId,
     Guid TenantId,
-    Guid BusinessId,
-    IReadOnlySet<string> Permissions);
+    Guid BusinessId);
 
 public interface IPosOfflineIdentityStore
 {

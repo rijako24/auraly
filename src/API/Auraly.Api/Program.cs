@@ -610,66 +610,15 @@ builder.Services.AddAuthorization(options =>
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
     });
-    options.AddPolicy("pos.catalog.sync", policy =>
+    // A POS device has one technical authorization boundary: its signed-in
+    // enrollment must still be active. User permissions belong to the local
+    // user/approval context and must never gate synchronization transport.
+    options.AddPolicy("pos.enrolled", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
         policy.RequireAuthenticatedUser();
-    });
-    options.AddPolicy("pos.fiscal.status.sync", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
-    });
-    options.AddPolicy("pos.customer.create", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
-        policy.RequireClaim(
-            PosAuthenticationDefaults.PermissionClaim,
-            PartyPermissionCodes.PosCustomerCreate);
-    });
-    options.AddPolicy("pos.identity.sync", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
-    });
-    options.AddPolicy("pos.offline.authentication", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
-    });
-    options.AddPolicy("pos.synchronization", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
-    });
-    options.AddPolicy("pos.orders", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
-        policy.RequireClaim(
-            PosAuthenticationDefaults.PermissionClaim,
-            CommercePermissionCodes.PosIdentitySync);
-    });
-    options.AddPolicy("pos.approvals.consume", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
-        policy.RequireClaim(
-            PosAuthenticationDefaults.PermissionClaim,
-            CommercePermissionCodes.SalesCreate);
-    });
-    options.AddPolicy(
-        "pos.sales.upload",
-        policy =>
-        {
-            policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-            policy.RequireAuthenticatedUser();
-        });
-    options.AddPolicy("pos.cash.manage", policy =>
-    {
-        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
-        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(PosAuthenticationDefaults.DeviceIdClaim);
+        policy.RequireClaim(PosAuthenticationDefaults.TenantIdClaim);
     });
 });
 var app = builder.Build();
@@ -792,7 +741,7 @@ app.MapPost(
                     title: "DocumentProcessingBusy");
             }
         })
-    .RequireAuthorization("pos.sales.upload");
+    .RequireAuthorization("pos.enrolled");
 
 await app.SeedAuralyPlatformPermissionsAsync();
 app.Run();

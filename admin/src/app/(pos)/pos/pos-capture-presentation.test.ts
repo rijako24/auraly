@@ -6,6 +6,7 @@ import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } fr
 import {
   capturePosFunctionShortcut,
   isPosCashDrawerShortcut,
+  POS_ACTION_SHORTCUTS,
   resolvePosFunctionShortcut,
 } from "./pos-function-shortcut";
 
@@ -63,6 +64,22 @@ test("reconoce las teclas F por su código físico aunque el sistema cambie even
   assert.equal(resolvePosFunctionShortcut("LaunchApplication1", "LaunchApp1"), "F2");
   assert.equal(resolvePosFunctionShortcut("Unidentified", "", 113), "F2");
   assert.equal(resolvePosFunctionShortcut("a", "KeyA", 65), "");
+});
+
+test("mantiene un único mapa de atajos para todas las acciones de venta", () => {
+  assert.deepEqual(POS_ACTION_SHORTCUTS, {
+    productSearch: "F1",
+    editLines: "F2",
+    removeLine: "F3",
+    restartSale: "F4",
+    invoices: "F5",
+    returns: "F6",
+    customerSearch: "F7",
+    payment: "F8",
+    pauseSale: "F9",
+    saveOrder: "F10",
+    closeSession: "F12",
+  });
 });
 
 test("cancela la acción de Windows antes de ejecutar el atajo POS", () => {

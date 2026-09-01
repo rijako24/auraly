@@ -21,7 +21,8 @@ La autenticación online tiene una sola autoridad: `Auraly.Api`.
    reutilización revoca la sesión comprometida.
 5. El BFF guarda access token, refresh token y el identificador durable del
    navegador en cookies `HttpOnly`; varias pestañas comparten el mismo cliente.
-6. El logout cierra primero la `WorkSession` abierta y después revoca la sesión.
+6. El logout revoca únicamente la autenticación. La `WorkSession` abierta se
+   conserva y solo termina mediante el cierre operativo explícito.
 7. El host administrativo histórico ya no expone login, Google login, refresh,
    revoke ni `me`; solo conserva el cambio de contraseña autenticado.
 8. Las páginas de registro y recuperación ya no simulan operaciones. Informan de

@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   description: "Punto de venta de Auraly",
   manifest: "/pos.webmanifest",
   icons: {
-    icon: "/brand/auraly-app-icon-192-v4.png?v=5",
+    icon: "/brand/auraly-icon-v5.png?v=6",
     apple: "/brand/auraly-ios-icon-512-v4.png?v=5",
   },
 };

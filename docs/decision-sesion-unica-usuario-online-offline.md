@@ -8,8 +8,11 @@ Prevalencia: complementa `decision-sesiones-operativas-cierre-usuario.md`.
 
 Solo puede existir una `AuthenticationSession` activa por `TenantId + UserId`.
 Varias pestañas del mismo navegador reutilizan el `ClientId` durable y la misma
-sesión. Iniciar sesión en otro navegador o computador revoca inmediatamente la
-autenticación anterior. Volver al primer cliente revoca a su vez la del segundo.
+sesión. Iniciar sesión en otro navegador o computador marca inmediatamente como
+inactiva la autenticación anterior, sin desenrolar ni cerrar el dispositivo. El
+cliente anterior lo detecta en su siguiente acción conectada, informa al usuario y
+regresa al login. No se usa una orden push para cerrar la aplicación anterior.
+Volver al primer cliente invalida a su vez el login del segundo.
 
 La sesión de autenticación y la `WorkSession` son conceptos separados:
 

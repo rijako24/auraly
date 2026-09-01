@@ -152,8 +152,6 @@ public sealed class PosEdgeEnrollmentStore(
                  new Dictionary<string, string>(StringComparer.Ordinal))
             values[$"PosEdge:OfflineLeaseTrust:TrustedPublicKeys:{key.Key}"] = key.Value;
 
-        for (var index = 0; index < package.Permissions.Count; index++)
-            values[$"PosEdge:Permissions:{index}"] = package.Permissions[index];
         return values;
     }
 }

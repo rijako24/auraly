@@ -503,6 +503,42 @@ public sealed partial class PosLocalIdentityStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task RevokeActiveSessionsAsync(
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE PosLocalUserSessions
+            SET EndedAt=$now,EndReason=$reason
+            WHERE EndedAt IS NULL;
+            """;
+        command.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
+        command.Parameters.AddWithValue("$reason", reason);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<string?> SessionEndReasonAsync(
+        string? token,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT EndReason
+            FROM PosLocalUserSessions
+            WHERE TokenHash=$hash AND EndedAt IS NOT NULL
+            ORDER BY EndedAt DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$hash", TokenHash(token));
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
     public async Task<DateTimeOffset> WorkSessionOpenedAtAsync(
         Guid workSessionId,
         CancellationToken cancellationToken = default)

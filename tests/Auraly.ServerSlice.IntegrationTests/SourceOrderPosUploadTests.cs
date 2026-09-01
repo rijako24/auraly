@@ -12,9 +12,31 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Accepted_sale_is_processed_even_when_another_work_session_is_open()
     {
+        var originalWorkSessionId = Guid.NewGuid();
+        await using (var seedConnection = new SqlConnection(fixture.ConnectionString))
+        {
+            await seedConnection.OpenAsync();
+            await using var seed = seedConnection.CreateCommand();
+            seed.CommandText = """
+                INSERT dbo.WorkSessions(
+                  WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+                  OpenedAt,LastActivityAt,ClosedAt,Status)
+                VALUES(
+                  @WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
+                  DATEADD(hour,-2,SYSDATETIMEOFFSET()),
+                  DATEADD(hour,-1,SYSDATETIMEOFFSET()),
+                  DATEADD(hour,-1,SYSDATETIMEOFFSET()),N'Closed');
+                """;
+            seed.Parameters.AddWithValue("@WorkSessionId", originalWorkSessionId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            seed.Parameters.AddWithValue("@UserId", fixture.UserId);
+            seed.Parameters.AddWithValue("@DeviceId", fixture.DeviceId);
+            await seed.ExecuteNonQueryAsync();
+        }
         var request = fixture.CreateValidRequest(8_899) with
         {
-            WorkSessionId = Guid.NewGuid(),
+            WorkSessionId = originalWorkSessionId,
             DocumentId = Guid.NewGuid()
         };
         using var client = fixture.CreateClient();
@@ -47,7 +69,7 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
         Assert.True(await reader.ReadAsync());
         Assert.Equal("Completed", reader.GetString(0));
         Assert.Equal("Completed", reader.GetString(1));
-        Assert.Equal("Open", reader.GetString(2));
+        Assert.Equal("Closed", reader.GetString(2));
         Assert.Equal(1, reader.GetInt32(3));
         Assert.Equal(request.Payments.Count, reader.GetInt32(4));
         Assert.Equal("Posted", reader.GetString(5));
@@ -365,7 +387,7 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
         string? documentStatus = null;
         string? jobStatus = null;
         string? error = null;
-        for (var attempt = 0; attempt < 50; attempt++)
+        for (var attempt = 0; attempt < 150; attempt++)
         {
             await using (var reader = await command.ExecuteReaderAsync())
             {

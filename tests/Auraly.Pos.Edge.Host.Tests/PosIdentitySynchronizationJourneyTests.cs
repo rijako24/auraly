@@ -50,7 +50,8 @@ public sealed class PosIdentitySynchronizationJourneyTests
                 new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()),
                 identities,
                 new PosSynchronizationEventLog(TimeProvider.System));
-            var authentication = CreateAuthentication(identities, synchronizer);
+            var authentication = CreateAuthentication(
+                identities, synchronizer, $"Data Source={databasePath}");
 
             var session = await authentication.LoginAsync(
                 new PosLocalLoginRequest("new.cashier", password));
@@ -174,7 +175,8 @@ public sealed class PosIdentitySynchronizationJourneyTests
                 new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()),
                 identities,
                 new PosSynchronizationEventLog(TimeProvider.System));
-            var authentication = CreateAuthentication(identities, synchronizer);
+            var authentication = CreateAuthentication(
+                identities, synchronizer, $"Data Source={databasePath}");
 
             var error = await Assert.ThrowsAsync<PosLocalLoginException>(() =>
                 authentication.LoginAsync(new PosLocalLoginRequest("admin", "password")));
@@ -205,7 +207,8 @@ public sealed class PosIdentitySynchronizationJourneyTests
 
     private static PosEdgeAuthenticationService CreateAuthentication(
         PosLocalIdentityStore identities,
-        PosIdentitySynchronizer synchronizer)
+        PosIdentitySynchronizer synchronizer,
+        string connectionString)
     {
         var http = new HttpClient(new UnavailableWorkSessionHandler())
         {
@@ -215,9 +218,22 @@ public sealed class PosIdentitySynchronizationJourneyTests
             http,
             new PosDeviceCredentials(Guid.NewGuid(), "device-secret"),
             new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()));
+        var deviceId = Guid.NewGuid();
+        var credentials = new PosDeviceCredentials(deviceId, "device-secret");
+        var leases = new PosOfflineLeaseClient(http, credentials);
+        var leaseStore = new PosOfflineLeaseStore(
+            connectionString,
+            Guid.NewGuid(),
+            deviceId,
+            new PosOfflineLeaseVerifier(
+                Microsoft.Extensions.Options.Options.Create(
+                    new PosOfflineLeaseTrustOptions())),
+            TimeProvider.System);
         return new PosEdgeAuthenticationService(
             identities,
             synchronizer,
+            leases,
+            leaseStore,
             workSessions,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<PosEdgeAuthenticationService>.Instance);
     }

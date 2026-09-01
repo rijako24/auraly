@@ -423,6 +423,16 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal("Transfer", reclassification.FromPaymentMethodCode);
         Assert.Equal("Cash", reclassification.ToPaymentMethodCode);
         Assert.Equal(20_000m, reclassification.Amount);
+
+        var persistedDecisions = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
+        Assert.NotNull(persistedDecisions);
+        Assert.All(
+            persistedDecisions.Where(item => item.PaymentMethodCode != "Cash"),
+            item => Assert.Equal(
+                verificationDecisions.Single(decision =>
+                    decision.VerificationKey == item.VerificationKey).Status,
+                item.Status));
     }
 
     private static async Task<WorkSessionView> OpenAsync(

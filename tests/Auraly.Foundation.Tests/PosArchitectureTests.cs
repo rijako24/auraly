@@ -144,8 +144,8 @@ public sealed class PosArchitectureTests
         var functionShortcut = File.ReadAllText(
             Path.Combine(posDirectory, "pos-function-shortcut.ts"));
 
-        Assert.Contains("shortcut === \"F1\"", page, StringComparison.Ordinal);
-        Assert.Contains("shortcut === \"F2\"", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === POS_ACTION_SHORTCUTS.productSearch", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === POS_ACTION_SHORTCUTS.editLines", page, StringComparison.Ordinal);
         Assert.Contains("capturePosFunctionShortcut(event", page, StringComparison.Ordinal);
         Assert.Contains("LaunchApplication1: \"F2\"", functionShortcut, StringComparison.Ordinal);
         Assert.Contains("LaunchApp1: \"F2\"", functionShortcut, StringComparison.Ordinal);
@@ -175,8 +175,8 @@ public sealed class PosArchitectureTests
             page.Replace("\r\n", "\n", StringComparison.Ordinal),
             StringComparison.Ordinal);
         Assert.Contains("Buscar <span", page, StringComparison.Ordinal);
-        Assert.Contains(">F2</span>", page, StringComparison.Ordinal);
-        Assert.Contains(">F1</span>", page, StringComparison.Ordinal);
+        Assert.Contains("POS_ACTION_SHORTCUTS.editLines", page, StringComparison.Ordinal);
+        Assert.Contains("POS_ACTION_SHORTCUTS.productSearch", page, StringComparison.Ordinal);
         Assert.Contains(
             "event.key === \"Tab\"",
             page,
@@ -253,10 +253,10 @@ public sealed class PosArchitectureTests
         var page = File.ReadAllText(Path.Combine(posDirectory, "page.tsx"));
         var dialog = File.ReadAllText(Path.Combine(posDirectory, "pos-confirm-dialog.tsx"));
 
-        Assert.Contains("shortcut === \"F3\"", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === POS_ACTION_SHORTCUTS.removeLine", page, StringComparison.Ordinal);
         Assert.Contains("protectedActionHandlers.current.removeLine(selectedLineId)", page, StringComparison.Ordinal);
-        Assert.Contains("shortcut === \"F4\"", page, StringComparison.Ordinal);
-        Assert.Contains("shortcut === \"F5\"", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === POS_ACTION_SHORTCUTS.editLines", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === POS_ACTION_SHORTCUTS.restartSale", page, StringComparison.Ordinal);
         Assert.Contains("protectedActionHandlers.current.restartSale()", page, StringComparison.Ordinal);
         Assert.Contains("restartSale: requestCancelSale", page, StringComparison.Ordinal);
         Assert.Contains("<PosConfirmDialog", page, StringComparison.Ordinal);
@@ -328,7 +328,7 @@ public sealed class PosArchitectureTests
         Assert.Contains("createPortal(", notifications, StringComparison.Ordinal);
         Assert.Contains("Recibe aprobaciones con Auraly cerrada", notifications, StringComparison.Ordinal);
         Assert.Contains("auraly:pos-approvals-changed", notifications, StringComparison.Ordinal);
-        Assert.Contains("PosSynchronizationStreams.Approvals => PosSynchronizationTrigger.Approvals", synchronization, StringComparison.Ordinal);
+        Assert.DoesNotContain("PosSynchronizationStreams.Approvals =>", synchronization, StringComparison.Ordinal);
         Assert.Contains("self.addEventListener(\"push\"", serviceWorker, StringComparison.Ordinal);
         Assert.Contains("client.postMessage({ type: \"auraly:pos-approvals-changed\" })", serviceWorker, StringComparison.Ordinal);
     }
@@ -437,12 +437,12 @@ public sealed class PosArchitectureTests
         var enrollment = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Modules", "Organization",
             "Auraly.Application.Organization", "PosEnrollmentService.cs"));
-        var migration = File.ReadAllText(Path.Combine(
-            repositoryRoot, "database", "Auraly.Database", "Scripts", "Migrations",
-            "20260831_GrantInventoryReadToPosDevices.sql"));
-        var postDeployment = File.ReadAllText(Path.Combine(
+        var compatibilityTable = File.ReadAllText(Path.Combine(
+            repositoryRoot, "database", "Auraly.Database", "Tables",
+            "PosDevicePermissions.sql"));
+        var preDeployment = File.ReadAllText(Path.Combine(
             repositoryRoot, "database", "Auraly.Database", "Scripts",
-            "PostDeployment.sql"));
+            "PreDeployment.sql"));
 
         Assert.Contains("const availabilityVersion = useRef(0)", dialog, StringComparison.Ordinal);
         Assert.Contains("El producto local sigue disponible", dialog, StringComparison.Ordinal);
@@ -451,13 +451,10 @@ public sealed class PosArchitectureTests
         Assert.Contains("client.productWarehouseAvailability(productId)", page, StringComparison.Ordinal);
         Assert.Contains("/catalog/products/{productId:guid}/warehouse-availability", edgeHost, StringComparison.Ordinal);
         Assert.Contains("const string inventoryRead = \"inventory.read\"", edgeHost, StringComparison.Ordinal);
-        Assert.Contains("\"inventory.read\"", enrollment, StringComparison.Ordinal);
-        Assert.Contains("\"businesses.read\"", enrollment, StringComparison.Ordinal);
-        Assert.Contains("dbo.PosDevicePermissions", migration, StringComparison.Ordinal);
-        Assert.Contains(
-            @":r .\Migrations\20260831_GrantInventoryReadToPosDevices.sql",
-            postDeployment,
-            StringComparison.Ordinal);
+        Assert.DoesNotContain("DevicePermissions", enrollment, StringComparison.Ordinal);
+        Assert.Contains("Compatibilidad de despliegue", compatibilityTable, StringComparison.Ordinal);
+        Assert.Contains("La API actual no", compatibilityTable, StringComparison.Ordinal);
+        Assert.DoesNotContain("RemoveLegacyPosDevicePermissions", preDeployment, StringComparison.Ordinal);
     }
 
     [Fact]

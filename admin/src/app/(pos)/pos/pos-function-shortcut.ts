@@ -1,5 +1,19 @@
 const functionKey = /^F(?:[1-9]|1[0-2])$/;
 
+export const POS_ACTION_SHORTCUTS = {
+  productSearch: "F1",
+  editLines: "F2",
+  removeLine: "F3",
+  restartSale: "F4",
+  invoices: "F5",
+  returns: "F6",
+  customerSearch: "F7",
+  payment: "F8",
+  pauseSale: "F9",
+  saveOrder: "F10",
+  closeSession: "F12",
+} as const;
+
 const hardwareAliases: Readonly<Record<string, string>> = {
   // Some Windows keyboards expose the physical F2 position as the generic
   // "My Computer" application key while action-key mode is enabled.

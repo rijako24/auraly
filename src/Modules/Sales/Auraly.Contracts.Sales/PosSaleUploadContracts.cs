@@ -52,7 +52,9 @@ public sealed record PosSalePaymentContract(
     decimal Amount,
     string? Reference,
     string? CardFranchiseCode = null,
-    string? ApprovalNumber = null);
+    string? ApprovalNumber = null,
+    Guid? BankAccountId = null,
+    string? Notes = null);
 
 public sealed record PosSaleDocumentNumberContract(
     Guid SeriesId,

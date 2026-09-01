@@ -25,6 +25,7 @@ bld/
 [Ll]ogs/
 *.log
 artifacts/
+.artifacts/
 publish/
 .deploy/
 database/backups/

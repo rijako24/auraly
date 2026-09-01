@@ -530,7 +530,8 @@ public sealed class ConfigurablePosReceiptPrinter(
                     line.TaxCode, line.TaxRate)).ToArray(),
                 receipt.Payments.Select(payment => new OfflineSalePayment(
                     payment.MethodCode, payment.Amount, payment.Reference,
-                    payment.CardFranchiseCode, payment.ApprovalNumber)).ToArray(),
+                    payment.CardFranchiseCode, payment.ApprovalNumber,
+                    payment.BankAccountId, payment.Notes)).ToArray(),
                 receipt.UntaxedAmount,
                 receipt.TaxAmount,
                 receipt.PayableAmount,

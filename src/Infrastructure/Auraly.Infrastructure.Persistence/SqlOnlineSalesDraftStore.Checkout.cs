@@ -238,7 +238,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                     ? null
                     : payment.Reference.Trim(),
                 string.IsNullOrWhiteSpace(payment.CardFranchiseCode) ? null : payment.CardFranchiseCode.Trim(),
-                string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim())).ToArray();
+                string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim(),
+                payment.BankAccountId,
+                string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim())).ToArray();
         var upload = new PosSaleUploadRequest(
             user.TenantId,
             state.BusinessId,
@@ -858,7 +860,11 @@ public sealed partial class SqlOnlineSalesDraftStore
                 .Append(':')
                 .Append(payment.CardFranchiseCode?.Trim())
                 .Append(':')
-                .Append(payment.ApprovalNumber?.Trim());
+                .Append(payment.ApprovalNumber?.Trim())
+                .Append(':')
+                .Append(payment.BankAccountId?.ToString("D"))
+                .Append(':')
+                .Append(payment.Notes?.Trim());
         }
         if (request.Credit is not null)
             value.Append("|credit:").Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture))

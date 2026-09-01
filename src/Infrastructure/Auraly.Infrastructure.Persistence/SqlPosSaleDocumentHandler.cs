@@ -46,10 +46,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             await MarkDocumentProcessedAsync(session, request, cancellationToken);
             return;
         }
-        var workSessionId = await EnsureWorkSessionAsync(
-            session, request, cancellationToken);
-        if (request.WorkSessionId != workSessionId)
-            request = request with { WorkSessionId = workSessionId };
+        await ValidateWorkSessionAsync(session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
             await ValidateDocumentCostAsync(session, request.BusinessId, line, cancellationToken);
@@ -293,25 +290,42 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         CancellationToken cancellationToken)
     {
         const string sql = """
+            DECLARE @AccountingEnabled bit=CASE WHEN EXISTS(
+              SELECT 1 FROM dbo.AccountingTenantSettings settings
+              INNER JOIN dbo.Businesses business ON business.TenantId=settings.TenantId
+              WHERE business.BusinessId=@BusinessId AND settings.Status=N'Ready') THEN 1 ELSE 0 END;
             INSERT INTO dbo.SalesPayments
             (
                 DocumentId, PaymentNumber, MethodCode, Amount,
-                Reference, CardFranchiseCode, ApprovalNumber, RegisteredAt
+                Reference, Notes, CardFranchiseCode, ApprovalNumber, BankAccountId, RegisteredAt
             )
-            VALUES
-            (
+            SELECT
                 @DocumentId, @PaymentNumber, @MethodCode, @Amount,
-                @Reference, @CardFranchiseCode, @ApprovalNumber, @RegisteredAt
-            );
+                @Reference, @Notes, @CardFranchiseCode, @ApprovalNumber, @BankAccountId, @RegisteredAt
+            WHERE @MethodCode<>N'Transfer' OR
+              (@AccountingEnabled=0 AND @BankAccountId IS NULL) OR
+              (@AccountingEnabled=1 AND EXISTS(
+                  SELECT 1 FROM accounting.BankAccounts bank
+                  INNER JOIN dbo.Businesses business ON business.TenantId=bank.TenantId
+                  INNER JOIN dbo.AccountingAccounts account
+                    ON account.AccountId=bank.AccountingAccountId AND account.TenantId=bank.TenantId
+                  WHERE bank.BankAccountId=@BankAccountId
+                    AND business.BusinessId=@BusinessId AND bank.IsActive=1
+                    AND account.IsActive=1 AND account.AllowsPosting=1));
+            IF @@ROWCOUNT<>1
+                THROW 51000,N'The transfer bank account is not active for the sale tenant.',1;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@PaymentNumber", payment.PaymentNumber);
         command.Parameters.AddWithValue("@MethodCode", payment.MethodCode);
         AddDecimal(command, "@Amount", payment.Amount, 19, 4);
         command.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Notes", (object?)payment.Notes ?? DBNull.Value);
         command.Parameters.AddWithValue("@CardFranchiseCode", (object?)payment.CardFranchiseCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@ApprovalNumber", (object?)payment.ApprovalNumber ?? DBNull.Value);
+        command.Parameters.AddWithValue("@BankAccountId", (object?)payment.BankAccountId ?? DBNull.Value);
         command.Parameters.AddWithValue("@RegisteredAt", request.CommercialSnapshot.IssuedAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

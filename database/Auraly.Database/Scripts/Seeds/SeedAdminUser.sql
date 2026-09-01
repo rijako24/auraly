@@ -200,7 +200,10 @@ BEGIN
 
     SELECT NEWID(), @AdminRoleId, [PermissionId], GETUTCDATE()
     FROM [dbo].[Permissions]
-    WHERE [Resource] NOT LIKE N'tenants.%' AND [Resource] NOT LIKE N'platform.%';
+    WHERE [Resource] NOT LIKE N'tenants.%' AND [Resource] NOT LIKE N'platform.%'
+      AND [Resource] NOT LIKE N'agents.%' AND [Resource] NOT LIKE N'conversations.%'
+      AND [Resource] NOT LIKE N'leads.%' AND [Resource] NOT LIKE N'campaigns.%'
+      AND [Resource] NOT LIKE N'reservations.%';
 
 END
 
@@ -217,6 +220,9 @@ BEGIN
     FROM [dbo].[Permissions] p
 
     WHERE p.[Resource] NOT LIKE N'tenants.%' AND p.[Resource] NOT LIKE N'platform.%'
+      AND p.[Resource] NOT LIKE N'agents.%' AND p.[Resource] NOT LIKE N'conversations.%'
+      AND p.[Resource] NOT LIKE N'leads.%' AND p.[Resource] NOT LIKE N'campaigns.%'
+      AND p.[Resource] NOT LIKE N'reservations.%'
       AND NOT EXISTS (SELECT 1 FROM [dbo].[RolePermissions] rp WHERE rp.[RoleId] = @AdminRoleId AND rp.[PermissionId] = p.[PermissionId]);
 
 END

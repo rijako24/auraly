@@ -83,6 +83,33 @@ public sealed record AccountingAccountView(
     bool RequiresParty,
     bool IsActive);
 
+public sealed record SaveBankAccountRequest(
+    Guid BankAccountId,
+    Guid AccountingAccountId,
+    Guid AccountTypeOptionId,
+    string BankName,
+    string AccountNumber,
+    string DisplayName,
+    bool IsPrimary,
+    bool IsActive,
+    string? RowVersion);
+
+public sealed record BankAccountView(
+    Guid BankAccountId,
+    Guid AccountingAccountId,
+    string AccountingAccountCode,
+    string AccountingAccountName,
+    Guid AccountTypeOptionId,
+    string AccountTypeCode,
+    string AccountTypeName,
+    string BankName,
+    string AccountNumber,
+    string DisplayName,
+    string CurrencyCode,
+    bool IsPrimary,
+    bool IsActive,
+    string RowVersion);
+
 public sealed record CreateCostCenterRequest(
     Guid CostCenterId,
     Guid BusinessId,
@@ -156,6 +183,10 @@ public sealed record AccountingReadinessView(
     string? OpeningBalanceMode,
     DateTimeOffset? ActivatedAt,
     IReadOnlyList<string> BlockingIssues);
+
+public sealed record PosAccountingSettlementConfiguration(
+    bool IsAccountingEnabled,
+    IReadOnlyList<BankAccountView> BankAccounts);
 
 public static class AccountingOpeningBalanceStatuses
 {

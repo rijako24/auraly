@@ -111,7 +111,7 @@ import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-ap
 import { calculateRetailUnitPrice } from "./pos-retail-price";
 import { canRequestOrderSave } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
-import { capturePosFunctionShortcut, isPosCashDrawerShortcut } from "./pos-function-shortcut";
+import { capturePosFunctionShortcut, isPosCashDrawerShortcut, POS_ACTION_SHORTCUTS } from "./pos-function-shortcut";
 import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
@@ -946,7 +946,7 @@ export default function PosPage() {
     if (event.ctrlKey || event.altKey || event.shiftKey) return;
     if (
         !event.ctrlKey &&
-        shortcut === "F3" &&
+        shortcut === POS_ACTION_SHORTCUTS.returns &&
         client?.mode === "online" &&
         serverConnected &&
         !busy &&
@@ -960,7 +960,7 @@ export default function PosPage() {
         setReturnsOpen(true);
       } else
       if (
-        shortcut === "F2" &&
+        shortcut === POS_ACTION_SHORTCUTS.invoices &&
         !busy &&
         !temporaryOpen &&
         !productSearchOpen &&
@@ -971,7 +971,7 @@ export default function PosPage() {
       ) {
         setInvoiceSearchOpen(true);
       } else if (
-        shortcut === "F8" &&
+        shortcut === POS_ACTION_SHORTCUTS.payment &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -983,7 +983,7 @@ export default function PosPage() {
       ) {
         void openPayment();
       } else if (
-        shortcut === "F1" &&
+        shortcut === POS_ACTION_SHORTCUTS.productSearch &&
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
@@ -994,7 +994,7 @@ export default function PosPage() {
         setProductSearchOpen(true);
       } else if (
         !event.ctrlKey &&
-        shortcut === "F11" &&
+        shortcut === POS_ACTION_SHORTCUTS.customerSearch &&
         !busy &&
         Boolean(draft) &&
         !temporaryOpen &&
@@ -1006,7 +1006,7 @@ export default function PosPage() {
         setCustomerSearchOpen(true);
       } else if (
         !event.ctrlKey &&
-        shortcut === "F9" &&
+        shortcut === POS_ACTION_SHORTCUTS.pauseSale &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -1018,7 +1018,7 @@ export default function PosPage() {
       ) {
         void requestPauseSale();
       } else if (
-        shortcut === "F4" &&
+        shortcut === POS_ACTION_SHORTCUTS.editLines &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -1029,7 +1029,7 @@ export default function PosPage() {
       ) {
         void protectedActionHandlers.current.discount();
       } else if (
-        shortcut === "F5" &&
+        shortcut === POS_ACTION_SHORTCUTS.removeLine &&
         !busy &&
         hasSelectedLine &&
         selectedLineId &&
@@ -1042,7 +1042,7 @@ export default function PosPage() {
       ) {
         void protectedActionHandlers.current.removeLine(selectedLineId);
       } else if (
-        shortcut === "F6" &&
+        shortcut === POS_ACTION_SHORTCUTS.restartSale &&
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
@@ -1052,9 +1052,9 @@ export default function PosPage() {
         !confirmation
       ) {
         void protectedActionHandlers.current.restartSale();
-      } else if (shortcut === "F12" && canOpenSessionAction) {
+      } else if (shortcut === POS_ACTION_SHORTCUTS.closeSession && canOpenSessionAction) {
         salesSessionButton.current?.click();
-      } else if (!event.ctrlKey && shortcut === "F10" && orderSaveAvailable) {
+      } else if (!event.ctrlKey && shortcut === POS_ACTION_SHORTCUTS.saveOrder && orderSaveAvailable) {
         requestSaveOrder();
     }
   };
@@ -2236,12 +2236,16 @@ export default function PosPage() {
     orderIds: string[],
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
+    transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
   ) {
     if (!client) throw new Error("El punto de venta no está disponible.");
     const result = await client.invoiceOrders(
       orderIds,
       paymentMethodCode,
       documentType,
+      transfer?.reference,
+      transfer?.bankAccountId,
+      transfer?.notes,
     );
     setMessage(
       (result.printError ? result.printError + " · " : "") +
@@ -2472,13 +2476,13 @@ export default function PosPage() {
               ref={salesSessionButton}
               onClick={() => void closeSalesSession()}
               disabled={busy}
-              title="Cerrar sesión de venta (F12)"
-              aria-keyshortcuts="F12"
+              title={`Cerrar sesión de venta (${POS_ACTION_SHORTCUTS.closeSession})`}
+              aria-keyshortcuts={POS_ACTION_SHORTCUTS.closeSession}
               className="flex h-8 items-center gap-1.5 rounded-full border border-sky-300/20 px-3 text-xs font-semibold text-sky-200 transition hover:bg-sky-300/10 hover:text-white disabled:opacity-40"
             >
               <Banknote className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Cerrar sesión de venta</span>
-              <kbd className="hidden xl:inline text-[10px] opacity-70">F12</kbd>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">{POS_ACTION_SHORTCUTS.closeSession}</kbd>
             </button>
             <button
               type="button"
@@ -2667,7 +2671,7 @@ export default function PosPage() {
                 className="flex min-w-28 items-center justify-center gap-2 rounded-xl border border-teal-700/25 bg-white px-4 font-semibold text-teal-800 transition hover:bg-teal-50 focus:outline-none focus:ring-4 focus:ring-teal-600/15 disabled:opacity-45"
               >
                 <Search className="h-4 w-4" />
-                Buscar <span className="rounded bg-teal-50 px-1.5 py-0.5 text-xs">F1</span>
+                Buscar <span className="rounded bg-teal-50 px-1.5 py-0.5 text-xs">{POS_ACTION_SHORTCUTS.productSearch}</span>
               </button>
             </div>
             {scanRejection.phase !== "idle" && (
@@ -2677,7 +2681,7 @@ export default function PosPage() {
                 </span>
                 <span className="min-w-0">
                   <strong className="block">Este producto no pasó</strong>
-                  <span className="block truncate text-xs text-red-700">Código: {scanRejection.value || "captura inválida"} · vuelve a escanearlo o búscalo con F1</span>
+                  <span className="block truncate text-xs text-red-700">Código: {scanRejection.value || "captura inválida"} · vuelve a escanearlo o búscalo con {POS_ACTION_SHORTCUTS.productSearch}</span>
                 </span>
               </div>
             )}
@@ -2706,28 +2710,28 @@ export default function PosPage() {
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <PencilLine className="h-4 w-4" />
                 Editar líneas
-                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F4</span>
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.editLines}</span>
               </button>
               <button type="button" disabled={!hasSelectedLine || busy}
                 onClick={() => { if (selectedLineId) void requestRemoveLine(selectedLineId); }}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <Trash2 className="h-4 w-4" />
                 Eliminar
-                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F5</span>
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.removeLine}</span>
               </button>
               <button type="button" disabled={!draft?.lines.length || busy}
                 onClick={() => void requestCancelSale()}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400">
                 <RotateCcw className="h-4 w-4" />
                 Reiniciar
-                <span className="rounded bg-white px-1.5 py-0.5 text-[10px]">F6</span>
+                <span className="rounded bg-white px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.restartSale}</span>
               </button>
               <button type="button" disabled={!salesReady || busy}
                 onClick={() => setInvoiceSearchOpen(true)}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <Printer className="h-4 w-4" />
                 Facturas
-                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F2</span>
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.invoices}</span>
               </button>
               <button type="button"
                 disabled={client?.mode !== "online" || !serverConnected || busy}
@@ -2736,7 +2740,7 @@ export default function PosPage() {
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <RotateCcw className="h-4 w-4" />
                 Devoluciones
-                <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px]">F3</span>
+                <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.returns}</span>
               </button>
             </div>
           </div>
@@ -2905,7 +2909,7 @@ export default function PosPage() {
                 </p>
                 <div className="relative mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-semibold">
                   <span className="rounded-full border border-teal-200 bg-white px-3 py-1.5 text-teal-800">Lector activo</span>
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · F1</span>
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · {POS_ACTION_SHORTCUTS.productSearch}</span>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">
                     Próxima {nextNumber?.isAvailable
                       ? nextNumber.fullNumber
@@ -2959,7 +2963,7 @@ export default function PosPage() {
             >
               <UserRound className="h-4 w-4" />
               Buscar cliente
-              <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F11</span>
+              <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">{POS_ACTION_SHORTCUTS.customerSearch}</span>
             </button>
             <dl className="space-y-2 text-sm">
               <TotalRow label="Subtotal" value={draft?.untaxedAmount ?? 0} />
@@ -2978,7 +2982,7 @@ export default function PosPage() {
               className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-auraly-accent px-4 text-base font-bold text-auraly-background transition hover:bg-auraly-light disabled:cursor-not-allowed disabled:opacity-40"
             >
               Cobrar
-              <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">F8</span>
+              <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">{POS_ACTION_SHORTCUTS.payment}</span>
             </button>
 
             <div className="mt-2 grid grid-cols-2 gap-2">
@@ -2991,7 +2995,7 @@ export default function PosPage() {
               >
                 <Save className="h-4 w-4 shrink-0" />
                 <span className="truncate">Pausar venta</span>
-                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">F9</span>
+                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">{POS_ACTION_SHORTCUTS.pauseSale}</span>
               </button>
 
               <button
@@ -3007,7 +3011,7 @@ export default function PosPage() {
               >
                 <ClipboardList className="h-4 w-4 shrink-0" />
                 <span className="truncate">{draft?.sourceOrderId ? "Guardar cambios" : "Guardar pedido"}</span>
-                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">F10</span>
+                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">{POS_ACTION_SHORTCUTS.saveOrder}</span>
               </button>
             </div>
 
@@ -3150,12 +3154,14 @@ export default function PosPage() {
                 activeOrderId={draft?.sourceOrderId}
                 loadPage={(filters) => client!.orders(filters)}
                 loadDetail={(orderId) => client!.order(orderId)}
+                loadSettlementConfiguration={() => client!.settlementConfiguration()}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
-                onInvoiceSelected={(orders, method, documentType) =>
+                onInvoiceSelected={(orders, method, documentType, transfer) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     method,
                     documentType,
+                    transfer,
                   )
                 }
                 onConfigurePrinting={() => setPrinterOpen(true)}
@@ -3196,12 +3202,14 @@ export default function PosPage() {
               activeOrderId={draft?.sourceOrderId}
               loadPage={(filters) => client.orders(filters)}
               loadDetail={(orderId) => client.order(orderId)}
+              loadSettlementConfiguration={() => client.settlementConfiguration()}
               onRecover={(order) => recoverPosOrder(order.orderId)}
-              onInvoiceSelected={(orders, method, documentType) =>
+              onInvoiceSelected={(orders, method, documentType, transfer) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   method,
                   documentType,
+                  transfer,
                 )
               }
               onConfigurePrinting={() => setPrinterOpen(true)}

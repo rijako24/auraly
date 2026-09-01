@@ -55,10 +55,16 @@ dueño del esquema. La rebanada usa `dbo` y una sola base:
 - `Warehouses`
 - `CashRegisters`
 - `PosDevices`
-- `PosDevicePermissions`
 - `FiscalAuthorizations`
 - `FiscalSeries`
 - `SalesDocuments`
+
+`PosDevicePermissions` no forma parte del modelo de autorización vigente: la
+sincronización técnica valida la credencial secreta y el enrolamiento activo del
+dispositivo. La tabla física se conserva temporalmente, sin lectores ni escritores
+en la aplicación actual, únicamente para permitir el reemplazo y rollback del
+binario anterior durante este release. Se retirará en un release posterior cuando
+esa compatibilidad de despliegue ya no sea necesaria.
 - `SalesDocumentLines`
 - `SalesPayments`
 - `FiscalSnapshots`

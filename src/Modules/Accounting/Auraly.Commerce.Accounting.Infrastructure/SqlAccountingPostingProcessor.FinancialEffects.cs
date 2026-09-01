@@ -213,8 +213,9 @@ public sealed partial class SqlAccountingPostingProcessor
         await using (var settlement = new SqlCommand("""
             INSERT dbo.SalesReturnSettlements
               (ReturnId,SettlementNumber,SettlementType,MethodCode,OriginalDocumentId,
-               OriginalPaymentNumber,Amount,Reference,OccurredAt)
-            VALUES(@ReturnId,1,@Type,@Method,@OriginalId,@PaymentNumber,@Amount,@Reference,@At);
+               OriginalPaymentNumber,Amount,Reference,Notes,CardFranchiseCode,ApprovalNumber,BankAccountId,OccurredAt)
+            VALUES(@ReturnId,1,@Type,@Method,@OriginalId,@PaymentNumber,@Amount,@Reference,
+               @Notes,@CardFranchiseCode,@ApprovalNumber,@BankAccountId,@At);
             """, connection, transaction))
         {
             settlement.Parameters.AddWithValue("@ReturnId", value.ReturnId);
@@ -223,7 +224,12 @@ public sealed partial class SqlAccountingPostingProcessor
             settlement.Parameters.AddWithValue("@OriginalId", value.OriginalDocumentId);
             settlement.Parameters.AddWithValue("@PaymentNumber", (object?)value.OriginalPaymentNumber ?? DBNull.Value);
             AddMoney(settlement, "@Amount", value.TotalAmount);
-            settlement.Parameters.AddWithValue("@Reference", value.DocumentNumber);
+            settlement.Parameters.AddWithValue("@Reference",
+                (object?)value.SettlementReference ?? value.DocumentNumber);
+            settlement.Parameters.AddWithValue("@Notes", (object?)value.SettlementNotes ?? DBNull.Value);
+            settlement.Parameters.AddWithValue("@CardFranchiseCode", (object?)value.CardFranchiseCode ?? DBNull.Value);
+            settlement.Parameters.AddWithValue("@ApprovalNumber", (object?)value.ApprovalNumber ?? DBNull.Value);
+            settlement.Parameters.AddWithValue("@BankAccountId", (object?)value.BankAccountId ?? DBNull.Value);
             settlement.Parameters.AddWithValue("@At", value.ReturnedAt);
             await settlement.ExecuteNonQueryAsync(token);
         }
@@ -231,19 +237,19 @@ public sealed partial class SqlAccountingPostingProcessor
         if (value.EconomicResolution == ReturnEconomicResolutions.Refund)
         {
             if (value.RefundMethodCode != SalesReturnRefundMethods.Cash) return;
-            if (value.WorkSessionId is null || value.OriginalPaymentNumber is null)
-                throw new InvalidOperationException("A cash refund requires its work session and original payment.");
+            // A cash refund created from administration is a treasury/accounting
+            // settlement, not a cashier drawer movement. POS cash refunds carry
+            // their immutable work session and are included in that closure.
+            if (value.WorkSessionId is null) return;
             await using var refund = new SqlCommand("""
                 INSERT dbo.WorkSessionMovements
                   (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,BusinessDate,
                    MovementType,PaymentMethodCode,Amount,Reference,SourceKey,OccurredAt,RecordedByUserId)
-                VALUES(@Id,@SessionId,@OriginalId,@PaymentNumber,@Date,N'Refund',N'Cash',
+                VALUES(@Id,@SessionId,NULL,NULL,@Date,N'Refund',N'Cash',
                    @Amount,@Reference,@SourceKey,@At,@UserId);
                 """, connection, transaction);
             refund.Parameters.AddWithValue("@Id", ids.NewId());
             refund.Parameters.AddWithValue("@SessionId", value.WorkSessionId.Value);
-            refund.Parameters.AddWithValue("@OriginalId", value.OriginalDocumentId);
-            refund.Parameters.AddWithValue("@PaymentNumber", value.OriginalPaymentNumber.Value);
             refund.Parameters.AddWithValue("@Date", value.ReturnedAt.Date);
             AddMoney(refund, "@Amount", -value.TotalAmount);
             refund.Parameters.AddWithValue("@Reference", value.DocumentNumber);

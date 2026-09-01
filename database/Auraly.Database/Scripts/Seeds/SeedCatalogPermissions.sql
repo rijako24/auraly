@@ -12,8 +12,7 @@ INSERT @CatalogPermissions VALUES
     (N'Deactivate',N'catalog.deactivate',N'Activar o desactivar productos'),
     (N'ManagePrices',N'catalog.prices.manage',N'Administrar precios del cat?logo'),
     (N'ReadCosts',N'catalog.costs.read',N'Consultar costos de productos'),
-    (N'ManageCosts',N'catalog.costs.manage',N'Administrar costos de productos'),
-    (N'Sync',N'catalog.sync',N'Sincronizar el cat?logo con estaciones POS');
+    (N'ManageCosts',N'catalog.costs.manage',N'Administrar costos de productos');
 
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
 SELECT NEWID(),N'Catalog',p.Action,p.Resource,p.Description,SYSUTCDATETIME()
@@ -27,8 +26,7 @@ FROM dbo.AppRoles role
 JOIN dbo.Permissions permission
   ON permission.Resource IN (
       N'catalog.read',N'catalog.create',N'catalog.update',N'catalog.deactivate',
-      N'catalog.prices.manage',N'catalog.costs.read',N'catalog.costs.manage',
-      N'catalog.sync')
+      N'catalog.prices.manage',N'catalog.costs.read',N'catalog.costs.manage')
 WHERE role.IsActive=1
   AND role.NormalizedName=N'ADMINISTRATOR'
   AND NOT EXISTS(

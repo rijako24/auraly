@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArchiveRestore, Barcode, ChevronDown, CircleDollarSign, PackagePlus, Plus, Save,
+  ArchiveRestore, Barcode, ChevronDown, CircleAlert, CircleDollarSign, PackagePlus, Plus, Save,
   Search, Trash2, Truck, Warehouse, X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,6 +27,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useAssociateGoodsReceiptProduct, useConfirmGoodsReceipt, useDeleteGoodsReceiptDraft,
   useGoodsReceiptOptions, useGoodsReceiptProducts, useGoodsReceipts,
@@ -230,7 +231,7 @@ function ReceiptDetailDialog({
           <Truck className="h-5 w-5 text-primary" /> {detail.documentNumber}
         </DialogTitle>
         <DialogDescription>
-          Entrada de mercancía confirmada. Este documento es inmutable y conserva su trazabilidad completa.
+          Recepción de compra confirmada. Este documento es inmutable y conserva su trazabilidad completa.
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-5 overflow-y-auto px-6 py-5">
@@ -595,7 +596,7 @@ function ReceiptEditor({
     <DialogContent onEscapeKeyDown={(event) => { if (productMenuOpen) { event.preventDefault(); setProductMenuOpen(false); } }} className="flex max-h-[94dvh] w-[94vw] max-w-6xl flex-col overflow-hidden p-0">
       <DialogHeader className="border-b px-6 py-5">
         <DialogTitle className="flex items-center gap-2">
-          <Truck className="h-5 w-5 text-primary" /> Entrada de mercancía
+          <Truck className="h-5 w-5 text-primary" /> Recepción de compra
         </DialogTitle>
         <DialogDescription>
           {draft.concurrencyToken
@@ -678,7 +679,22 @@ function ReceiptEditor({
                 </SelectItem>)}</SelectContent>
             </Select>
           </Field>
-          <Field label="Tipo de soporte">
+          <Field label={<span className="flex items-center gap-2">Tipo de soporte
+            {draft.purchaseEvidenceType === "InternalReceiptVoucher" &&
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button type="button" aria-label="Información sobre el comprobante interno"
+                      className="rounded-full text-amber-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <CircleAlert className="h-4 w-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    Sólo registra inventario, cuenta por pagar y contabilidad. No genera documento fiscal ni IVA descontable.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>}
+          </span>}>
             <Select value={draft.purchaseEvidenceType} disabled={!draft.supplierId}
               onValueChange={(value: PurchaseEvidenceType) => {
                 if (value === "BuyerElectronicSupportDocument" && subscription.data
@@ -713,10 +729,6 @@ function ReceiptEditor({
           {draft.purchaseEvidenceType === "BuyerElectronicSupportDocument" &&
             <p className="self-end rounded-lg bg-primary/5 p-3 text-sm text-muted-foreground md:col-span-2">
               Auraly asignará numeración, generará el CUDS y enviará el documento soporte a la DIAN.
-            </p>}
-          {draft.purchaseEvidenceType === "InternalReceiptVoucher" &&
-            <p className="self-end rounded-lg bg-amber-50 p-3 text-sm text-amber-900 md:col-span-2">
-              Sólo registra inventario, cuenta por pagar y contabilidad. No genera documento fiscal ni IVA descontable.
             </p>}
           <Field label="Fecha de recepción">
             <DateTimePicker value={draft.receivedAt} onChange={(value) => change({ receivedAt: value })} />
@@ -1042,7 +1054,7 @@ function allowedPurchaseEvidenceTypes(policy: string | null) {
   return ["SupplierElectronicInvoice", "BuyerElectronicSupportDocument", "InternalReceiptVoucher"];
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return <div className="space-y-2"><Label>{label}</Label>{children}</div>;
 }
 function Amount({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {

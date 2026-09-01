@@ -250,17 +250,19 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         SqlConnection connection,Guid documentId,CancellationToken cancellationToken)
     {
         await using var command=new SqlCommand("""
-            SELECT p.PaymentNumber,p.MethodCode,p.Amount,COALESCE(SUM(s.Amount),0)
+            SELECT p.PaymentNumber,p.MethodCode,p.Amount,COALESCE(SUM(s.Amount),0),
+                   p.CardFranchiseCode,p.ApprovalNumber
             FROM dbo.SalesPayments p
             LEFT JOIN dbo.SalesReturnSettlements s ON s.OriginalDocumentId=p.DocumentId
               AND s.OriginalPaymentNumber=p.PaymentNumber AND s.SettlementType=N'Refund'
             WHERE p.DocumentId=@Id
-            GROUP BY p.PaymentNumber,p.MethodCode,p.Amount ORDER BY p.PaymentNumber;
+            GROUP BY p.PaymentNumber,p.MethodCode,p.Amount,p.CardFranchiseCode,p.ApprovalNumber
+            ORDER BY p.PaymentNumber;
             """,connection);
         command.Parameters.AddWithValue("@Id",documentId);var values=new List<ReturnableSalePayment>();
         await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken))
-        {var amount=reader.GetDecimal(2);var refunded=reader.GetDecimal(3);values.Add(new(reader.GetInt32(0),reader.GetString(1),amount,refunded,decimal.Max(0,amount-refunded)));}
+        {var amount=reader.GetDecimal(2);var refunded=reader.GetDecimal(3);values.Add(new(reader.GetInt32(0),reader.GetString(1),amount,refunded,decimal.Max(0,amount-refunded),reader.IsDBNull(4)?null:reader.GetString(4),reader.IsDBNull(5)?null:reader.GetString(5)));}
         return values;
     }
 

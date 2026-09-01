@@ -23,7 +23,7 @@ public sealed class PosCashMovementTicketTests
             "Entregado por administración",
             "Carol Cairo");
         var workstation = new PosWorkstationIdentity(
-            "02", "Bodega de venta", "Principal", "Carol Cairo", "Auraly", null);
+            "02", "Sede principal", "Bodega que no debe imprimirse", "Carol Cairo", "Auraly", null);
 
         var raw = Encoding.ASCII.GetString(
             PosCashMovementTicketPrinter.RenderRaw(ticket, workstation, 80));
@@ -37,6 +37,13 @@ public sealed class PosCashMovementTicketTests
         Assert.Contains("Entregado por administraci", html);
         Assert.Contains("class=\"signature\"", html);
         Assert.Contains("@page{size:80mm", html);
+        Assert.DoesNotContain("<strong>Bodega:</strong>", html);
+        Assert.DoesNotContain("Bodega que no debe imprimirse", html);
+        Assert.DoesNotContain("Bodega que no debe imprimirse", raw);
+        Assert.True(html.IndexOf("class=\"amount\"", StringComparison.Ordinal) <
+                    html.IndexOf("class=\"signature\"", StringComparison.Ordinal));
+        Assert.True(html.IndexOf("Responsable:", StringComparison.Ordinal) <
+                    html.IndexOf("class=\"amount\"", StringComparison.Ordinal));
     }
 
     [Fact]

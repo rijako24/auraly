@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Taxation.Contracts;
 using Microsoft.Data.SqlClient;
 
@@ -228,6 +229,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         client.Timeout = TimeSpan.FromSeconds(60);
 
         var captured = await CaptureAsync(client, await OpenAsync(client));
+        var bankAccountId = await EnsureTransferBankAccountAsync();
         var cashAmount = decimal.Round(captured.PayableAmount / 3m, 2);
         var transferAmount = captured.PayableAmount - cashAmount;
         var completed = await CompleteAsync(
@@ -236,7 +238,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             new CompleteOnlineSalesDraftRequest(captured.Version,
             [
                 new OnlineSalesPayment("Cash", cashAmount, null),
-                new OnlineSalesPayment("Transfer", transferAmount, "TRANSFER-SPLIT")
+                new OnlineSalesPayment("Transfer", transferAmount, "TRANSFER-SPLIT",
+                    BankAccountId: bankAccountId)
             ]),
             $"split-cash-trace-{Guid.NewGuid():N}");
 
@@ -810,6 +813,37 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         return await response.Content
             .ReadFromJsonAsync<CompleteOnlineSalesDraftResponse>()
             ?? throw new InvalidOperationException("Empty checkout response.");
+    }
+
+    private async Task<Guid> EnsureTransferBankAccountAsync()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read,
+            AccountingPermissionCodes.Configure);
+        var existing = await accounting.GetFromJsonAsync<BankAccountView[]>(
+            "/api/commerce/v1/accounting/bank-accounts?includeInactive=false") ?? [];
+        var available = existing.FirstOrDefault(account => account.IsActive);
+        if (available is not null)
+            return available.BankAccountId;
+
+        var accounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
+            "/api/commerce/v1/accounting/accounts") ?? [];
+        var postingAccount = Assert.Single(accounts, account => account.Code == "111005");
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var option = new SqlCommand("""
+            SELECT TOP(1) OptionId FROM reference.Options
+            WHERE CatalogCode=N'bank-account-type' AND Code=N'Checking' AND IsActive=1;
+            """, connection);
+        var optionId = (Guid)(await option.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("The bank-account-type seed is missing."));
+        var bankAccountId = Guid.NewGuid();
+        using var response = await accounting.PutAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-accounts/{bankAccountId:D}",
+            new SaveBankAccountRequest(bankAccountId, postingAccount.AccountId, optionId,
+                "Banco de prueba", $"{bankAccountId:N}"[..12], "Cuenta de transferencias", true, true, null));
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        return bankAccountId;
     }
 
     private async Task<OnlineSalesIssuedSalePage> SearchAsync(

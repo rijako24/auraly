@@ -53,5 +53,4 @@ public sealed record PosFiscalStatusPage(
 
 public sealed record PosFiscalDeviceContext(
     Guid DeviceId,
-    Guid BusinessId,
-    IReadOnlySet<string> Permissions);
+    Guid BusinessId);

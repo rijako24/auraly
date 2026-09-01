@@ -100,7 +100,6 @@ public sealed record PosEnrollmentPackage(
     bool WarehouseAllowsNegativeStock,
     Guid InitialUserId,
     string InitialUserDisplayName,
-    IReadOnlyList<string> Permissions,
     PosEnrollmentDocumentSeries DocumentSeries,
     PosEnrollmentFiscalSeries? FiscalSeries,
     PosEnrollmentDocumentSeries ReceiptDocumentSeries,

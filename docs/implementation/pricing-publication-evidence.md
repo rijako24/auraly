@@ -88,7 +88,7 @@ La suite despleg? el DACPAC en una base temporal real y comprob?:
 - existe una outbox durable;
 - la se?al se dirige al BusinessId;
 - un reintento responde conflicto y no duplica efectos;
-- el dispositivo requiere el permiso real catalog.sync;
+- el dispositivo requiere una credencial de enrolamiento activa; la sincronización no usa permisos de usuario ni permisos duplicados por caja;
 - POS Edge descarga el delta y aplica el precio en SQLite f?sico;
 - Pricing soporta productos unificados existentes con ProductCode o Sku;
 - los permisos y el alcance por negocio se validan en backend.
@@ -128,7 +128,7 @@ El comando npm run lint existe, pero el repositorio aislado no contiene una conf
 ## Incidencias detectadas y corregidas
 
 1. La consulta paginada no separaba de forma inequ?voca SELECT, FROM y ORDER BY. Se corrigi? la construcci?n SQL.
-2. La prueba POS no hab?a provisionado catalog.sync. Se agreg? el permiso real, sin bypass.
+2. La prueba histórica dependía de `catalog.sync`; esa autorización técnica duplicada fue retirada y sustituida por la validación canónica del enrolamiento activo.
 3. La tabla Products unificada contiene registros anteriores sin ProductCode. La lectura usa ProductCode, luego Sku y finalmente el UUID, sin crear otra tabla.
 
 Cada correcci?n se valid? primero con los escenarios focalizados y despu?s con las 85 pruebas juntas.

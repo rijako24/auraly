@@ -16,12 +16,12 @@ public sealed class ChannelsController : ControllerBase
     public ChannelsController(IWhatsAppChannelAdminService service) => _service = service;
 
     [HttpGet]
-    [PermissionAuthorize("business_config.read")]
+    [PermissionAuthorize("agents.read")]
     public async Task<ActionResult<IReadOnlyList<WhatsAppChannelDto>>> GetAll(Guid businessId, CancellationToken ct) =>
         Ok(await _service.GetByBusinessAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, ct));
 
     [HttpPost("whatsapp")]
-    [PermissionAuthorize("business_config.update")]
+    [PermissionAuthorize("agents.update")]
     public async Task<ActionResult<WhatsAppChannelDto>> Create(Guid businessId, [FromBody] CreateWhatsAppChannelRequest request, CancellationToken ct)
     {
         var result = await _service.CreateAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, request, ct);
@@ -29,12 +29,12 @@ public sealed class ChannelsController : ControllerBase
     }
 
     [HttpPut("whatsapp/{channelId:guid}")]
-    [PermissionAuthorize("business_config.update")]
+    [PermissionAuthorize("agents.update")]
     public async Task<ActionResult<WhatsAppChannelDto>> Update(Guid businessId, Guid channelId, [FromBody] UpdateWhatsAppChannelRequest request, CancellationToken ct) =>
         Ok(await _service.UpdateAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, channelId, request, ct));
 
     [HttpDelete("whatsapp/{channelId:guid}")]
-    [PermissionAuthorize("business_config.update")]
+    [PermissionAuthorize("agents.update")]
     public async Task<IActionResult> Deactivate(Guid businessId, Guid channelId, CancellationToken ct)
     {
         await _service.DeactivateAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, channelId, ct);
@@ -42,7 +42,7 @@ public sealed class ChannelsController : ControllerBase
     }
 
     [HttpPost("whatsapp/{channelId:guid}/validate")]
-    [PermissionAuthorize("business_config.update")]
+    [PermissionAuthorize("agents.update")]
     public async Task<ActionResult<WhatsAppChannelConnectionStatusDto>> Validate(Guid businessId, Guid channelId, CancellationToken ct) =>
         Ok(await _service.ValidateAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, channelId, ct));
 }

@@ -114,6 +114,12 @@ public sealed class PosCatalogSynchronizer(
                 cancellationToken);
             await store.ApplyReferenceOptionsAsync(catalogCode, options, cancellationToken);
         }
+        var settlementConfiguration = await SendAsync<PosAccountingSettlementConfiguration>(
+            HttpMethod.Get,
+            "api/pos/v1/accounting/settlement-configuration",
+            content: null,
+            cancellationToken);
+        await store.ApplySettlementConfigurationAsync(settlementConfiguration, cancellationToken);
         while (true)
         {
             status = await store.StatusAsync(cancellationToken);

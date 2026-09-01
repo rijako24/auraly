@@ -189,9 +189,6 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
             IF NOT EXISTS (SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Channel)
               INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,IsActive,CreatedAt)
               VALUES(@Channel,@Business,N'POS',N'Punto de venta',1,SYSDATETIMEOFFSET());
-            IF NOT EXISTS (SELECT 1 FROM dbo.PosDevicePermissions WHERE DeviceId=@Device AND PermissionCode=@Sync)
-              INSERT dbo.PosDevicePermissions(DeviceId,PermissionCode,IsGranted,GrantedAt)
-              VALUES(@Device,@Sync,1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@Business AND DocumentType=N'StockCount' AND IsActive=1)
               INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
               VALUES(NEWID(),@Business,NULL,N'StockCount',N'CTI',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
@@ -202,8 +199,6 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@Device", fixture.DeviceId);
-        command.Parameters.AddWithValue("@Sync", CatalogPermissionCodes.Sync);
         command.Parameters.AddWithValue("@Business", fixture.BusinessId);
         command.Parameters.AddWithValue("@Tax", fixture.TaxProfileId);
         command.Parameters.AddWithValue("@Channel", fixture.PriceChannelId);

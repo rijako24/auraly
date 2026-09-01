@@ -466,21 +466,24 @@ public sealed partial class SqlAccountingPostingProcessor(
             number = reader.GetString(0); untaxed = reader.GetDecimal(1); tax = reader.GetDecimal(2); total = reader.GetDecimal(3);
             partyId = reader.IsDBNull(4) ? null : reader.GetGuid(4);
         }
-        var paymentSources = new List<(string MethodCode, decimal Amount)>();
+        var paymentSources = new List<(string MethodCode, Guid? BankAccountId, decimal Amount)>();
         await using (var command = new SqlCommand("""
-            SELECT MethodCode,SUM(Amount) FROM dbo.SalesPayments
-            WHERE DocumentId=@DocumentId GROUP BY MethodCode ORDER BY MethodCode;
+            SELECT MethodCode,BankAccountId,SUM(Amount) FROM dbo.SalesPayments
+            WHERE DocumentId=@DocumentId GROUP BY MethodCode,BankAccountId ORDER BY MethodCode;
             """, connection, transaction))
         {
             command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
-                paymentSources.Add((reader.GetString(0), reader.GetDecimal(1)));
+                paymentSources.Add((reader.GetString(0),
+                    reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.GetDecimal(2)));
         }
         var payments = new List<(string Category, decimal Amount)>();
         foreach (var payment in paymentSources)
-            payments.Add((await ResolveSourceCategoryAsync(connection, transaction,
-                "PosPaymentMethod", payment.MethodCode, cancellationToken), payment.Amount));
+            payments.Add((payment.MethodCode == "Transfer" && payment.BankAccountId is { } bankId
+                ? BankAccountCategory(bankId)
+                : await ResolveSourceCategoryAsync(connection, transaction,
+                    "PosPaymentMethod", payment.MethodCode, cancellationToken), payment.Amount));
         var withholdingSources = new List<(string Kind, decimal Amount)>();
         await using (var command = new SqlCommand("""
             SELECT Kind,SUM(Amount) FROM dbo.DocumentWithholdingLines
@@ -512,11 +515,11 @@ public sealed partial class SqlAccountingPostingProcessor(
         CancellationToken cancellationToken)
     {
         string number; decimal untaxed; decimal tax; decimal total;
-        string resolution; string? refundMethod; Guid? partyId;
+        string resolution; string? refundMethod; Guid? bankAccountId; Guid? partyId;
         decimal receivableApplication; decimal customerCredit;
         await using (var command = new SqlCommand("""
                 SELECT r.DocumentNumber,r.UntaxedAmount,r.TaxAmount,r.TotalAmount,
-                       r.EconomicResolution,r.RefundMethodCode,c.PartyId,
+                       r.EconomicResolution,r.RefundMethodCode,r.BankAccountId,c.PartyId,
                        COALESCE((SELECT SUM(a.Amount)
                          FROM dbo.SalesReturnReceivableApplications a
                          WHERE a.ReturnId=r.ReturnId),0),
@@ -536,13 +539,16 @@ public sealed partial class SqlAccountingPostingProcessor(
             number=reader.GetString(0); untaxed=reader.GetDecimal(1); tax=reader.GetDecimal(2);
             total=reader.GetDecimal(3); resolution=reader.GetString(4);
             refundMethod=reader.IsDBNull(5)?null:reader.GetString(5);
-            partyId=reader.IsDBNull(6)?null:reader.GetGuid(6);
-            receivableApplication=reader.GetDecimal(7); customerCredit=reader.GetDecimal(8);
+            bankAccountId=reader.IsDBNull(6)?null:reader.GetGuid(6);
+            partyId=reader.IsDBNull(7)?null:reader.GetGuid(7);
+            receivableApplication=reader.GetDecimal(8); customerCredit=reader.GetDecimal(9);
         }
         var settlements = new List<(string Category, decimal Amount)>();
         if (resolution == "Refund")
-            settlements.Add((await ResolveSourceCategoryAsync(connection, transaction,
-                "PosPaymentMethod", refundMethod!, cancellationToken), total));
+            settlements.Add((refundMethod == "Transfer" && bankAccountId is { } bankId
+                ? BankAccountCategory(bankId)
+                : await ResolveSourceCategoryAsync(connection, transaction,
+                    "PosPaymentMethod", refundMethod!, cancellationToken), total));
         else
         {
             if (receivableApplication > 0)
@@ -965,6 +971,23 @@ public sealed partial class SqlAccountingPostingProcessor(
         var occurredOn = DateOnly.FromDateTime(source.OccurredAt.Date).ToDateTime(TimeOnly.MinValue);
         foreach (var category in categories)
         {
+            if (TryParseBankAccountCategory(category, out var bankAccountId))
+            {
+                await using var bank = new SqlCommand("""
+                    SELECT b.AccountingAccountId
+                    FROM accounting.BankAccounts b
+                    INNER JOIN dbo.AccountingAccounts a
+                      ON a.AccountId=b.AccountingAccountId AND a.TenantId=b.TenantId
+                    WHERE b.BankAccountId=@BankAccountId AND b.TenantId=@TenantId
+                      AND b.IsActive=1 AND a.IsActive=1 AND a.AllowsPosting=1;
+                    """, connection, transaction);
+                bank.Parameters.AddWithValue("@BankAccountId", bankAccountId);
+                bank.Parameters.AddWithValue("@TenantId", source.TenantId);
+                var bankValue = await bank.ExecuteScalarAsync(cancellationToken);
+                if (bankValue is Guid bankPostingAccountId)
+                    result[category] = bankPostingAccountId;
+                continue;
+            }
             await using var command = new SqlCommand("""
                 SELECT TOP(1) m.AccountId
                 FROM dbo.AccountingAccountMappings m
@@ -985,6 +1008,16 @@ public sealed partial class SqlAccountingPostingProcessor(
             if (value is Guid id) result[category] = id;
         }
         return result;
+    }
+
+    private static string BankAccountCategory(Guid bankAccountId) =>
+        $"BankAccount:{bankAccountId:D}";
+
+    private static bool TryParseBankAccountCategory(string category, out Guid bankAccountId)
+    {
+        bankAccountId = Guid.Empty;
+        return category.StartsWith("BankAccount:", StringComparison.Ordinal) &&
+            Guid.TryParse(category.AsSpan("BankAccount:".Length), out bankAccountId);
     }
 
     private async Task InsertEntryAsync(
@@ -1081,17 +1114,25 @@ public sealed partial class SqlAccountingPostingProcessor(
             reader.GetDecimal(2), reader.GetDecimal(3));
     }
 
-    private static async Task CompleteOpeningActivationAsync(
+    private async Task CompleteOpeningActivationAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
         CancellationToken token)
     {
-        await using var command = new SqlCommand("""
+        await using (var command = new SqlCommand("""
             UPDATE dbo.AccountingOpeningBalanceBatches
             SET Status=N'Posted',PostedAt=SYSDATETIMEOFFSET(),UpdatedAt=SYSDATETIMEOFFSET()
             WHERE BatchId=@DocumentId AND TenantId=@TenantId AND BusinessId=@BusinessId
               AND Status=N'Approved';
             IF @@ROWCOUNT<>1 THROW 51407,N'The opening balance approval is no longer valid.',1;
 
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+            command.Parameters.AddWithValue("@TenantId", source.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            await command.ExecuteNonQueryAsync(token);
+        }
+        await using var activation = new SqlCommand("""
             UPDATE settings
             SET Status=N'Ready',ActivatedAt=SYSDATETIMEOFFSET(),
                 ActivatedByUserId=settings.ActivationRequestedByUserId,
@@ -1107,10 +1148,11 @@ public sealed partial class SqlAccountingPostingProcessor(
                     AND openingBatch.EffectiveOn=settings.EffectiveFrom
                     AND openingBatch.Status=N'Posted'));
             """, connection, transaction);
-        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
-        command.Parameters.AddWithValue("@TenantId", source.TenantId);
-        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
-        await command.ExecuteNonQueryAsync(token);
+        activation.Parameters.AddWithValue("@TenantId", source.TenantId);
+        if (await activation.ExecuteNonQueryAsync(token) != 1) return;
+
+        await SqlAccountingPosSynchronizationOutbox.InsertTenantConfigurationAsync(
+            connection, transaction, source.TenantId, ids, timeProvider.GetUtcNow(), token);
     }
 
     private static void AddSource(SqlCommand command, SourceEnvelope source)

@@ -49,7 +49,9 @@ public sealed record OfflineSalePayment(
     decimal Amount,
     string? Reference = null,
     string? CardFranchiseCode = null,
-    string? ApprovalNumber = null);
+    string? ApprovalNumber = null,
+    Guid? BankAccountId = null,
+    string? Notes = null);
 
 public sealed record PosEdgeIssueCommand(
     UserId UserId,
@@ -1028,7 +1030,9 @@ public sealed class PosEdgeSaleStore
                     payment.Amount,
                     payment.Reference,
                     payment.CardFranchiseCode,
-                    payment.ApprovalNumber))
+                    payment.ApprovalNumber,
+                    payment.BankAccountId,
+                    payment.Notes))
                 .ToArray()
             : [new PosSalePaymentContract(1, "Cash", command.Withholding?.NetAmount ?? invoice.PayableAmount, null)];
         var withholding = command.Withholding ??
@@ -1045,6 +1049,10 @@ public sealed class PosEdgeSaleStore
                 (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
                 (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber))))
             throw new InvalidOperationException("Card payments require franchise and approval number.");
+        if (payments.Any(payment => payment.Reference?.Length > 160 || payment.Notes?.Length > 500 ||
+                (payment.MethodCode == "Transfer" && string.IsNullOrWhiteSpace(payment.Reference)) ||
+                (payment.MethodCode != "Transfer" && (payment.BankAccountId is not null || payment.Notes is not null))))
+            throw new InvalidOperationException("Transfer payments require valid evidence and settlement configuration.");
 
         var taxes = lines
             .GroupBy(line => line.TaxCode, StringComparer.Ordinal)

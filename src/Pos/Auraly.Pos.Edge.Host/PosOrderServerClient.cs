@@ -58,6 +58,9 @@ public sealed class PosOrderServerClient(
         PosLocalUserSession session,
         IReadOnlyCollection<Guid> orderIds,
         string paymentMethodCode,
+        string? paymentReference,
+        Guid? bankAccountId,
+        string? paymentNotes,
         string documentType,
         string idempotencyKey,
         CancellationToken cancellationToken) =>
@@ -73,7 +76,9 @@ public sealed class PosOrderServerClient(
                 orderIds,
                 paymentMethodCode,
                 documentType,
-                paymentReference = (string?)null
+                paymentReference,
+                bankAccountId,
+                paymentNotes
             }),
             idempotencyKey,
             cancellationToken);

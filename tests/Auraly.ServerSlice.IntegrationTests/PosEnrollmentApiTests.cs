@@ -55,8 +55,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
             package.OfflineLeaseTrustedPublicKeys![ServerSliceFixture.OfflineLeaseKeyId]);
         Assert.Null(package.FiscalSeries);
         Assert.NotEqual(Guid.Empty, package.DocumentSeries.SeriesId);
-        Assert.Contains("catalog.sync", package.Permissions);
-        Assert.Contains(CommercePermissionCodes.SalesCreate, package.Permissions);
         Assert.NotNull(package.InitialOfflineAccess);
         Assert.Equal(package.InitialUserId, package.InitialOfflineAccess!.User.UserId);
         Assert.Contains(

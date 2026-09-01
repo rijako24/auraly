@@ -68,11 +68,9 @@ public sealed class PosCashMovementTicketPrinter(
         Line(stream, workstation.CompanyName);
         Line(stream, ticket.Direction == "In" ? "ENTRADA DE DINERO" : "SALIDA DE DINERO");
         Line(stream, workstation.BusinessName);
-        Line(stream, workstation.WarehouseName);
         Line(stream, new string('-', columns));
         Write(stream, [0x1B, 0x61, 0x00]);
         Wrapped(stream, $"MOTIVO: {ticket.ReasonName}", columns);
-        Line(stream, Pair("VALOR", Money(ticket.Amount), columns));
         if (!string.IsNullOrWhiteSpace(ticket.Reference))
             Wrapped(stream, $"REFERENCIA: {ticket.Reference}", columns);
         if (!string.IsNullOrWhiteSpace(ticket.Notes))
@@ -80,6 +78,7 @@ public sealed class PosCashMovementTicketPrinter(
         Wrapped(stream, $"RESPONSABLE: {ticket.ResponsibleName}", columns);
         Line(stream, $"FECHA: {ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}");
         Line(stream, new string('-', columns));
+        Line(stream, Pair("VALOR", Money(ticket.Amount), columns));
         Line(stream, string.Empty);
         Line(stream, "FIRMA: ______________________");
         Line(stream, string.Empty);
@@ -107,7 +106,7 @@ public sealed class PosCashMovementTicketPrinter(
             ? string.Empty
             : $"<p><strong>Observación:</strong> {Encode(ticket.Notes)}</p>";
         return $$"""
-<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:4mm}*{box-sizing:border-box}body{width:{{contentWidthMillimeters}}mm;margin:auto;font:10px/1.4 Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:15px;margin:3px}h2{font-size:12px;margin:5px}.scope{margin:2px 0}.amount{display:flex;justify-content:space-between;border-block:2px solid #111;padding:8px 0;margin:10px 0;font-size:14px;font-weight:800}.detail{line-height:1.5;overflow-wrap:anywhere}.detail p{margin:5px 0}.signature{margin-top:18mm;border-top:1px solid #111;text-align:center;padding-top:3px}.id{margin-top:10px;font-size:8px;overflow-wrap:anywhere}</style></head><body><header>{{logo}}<h1>{{Encode(workstation.CompanyName)}}</h1><h2>{{(ticket.Direction == "In" ? "ENTRADA DE DINERO" : "SALIDA DE DINERO")}}</h2><p class="scope"><strong>Sede:</strong> {{Encode(workstation.BusinessName)}}</p><p class="scope"><strong>Bodega:</strong> {{Encode(workstation.WarehouseName)}}</p></header><div class="amount"><span>VALOR</span><span>{{Money(ticket.Amount)}}</span></div><div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}<p><strong>Responsable:</strong> {{Encode(ticket.ResponsibleName)}}</p><p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="signature">Firma</div><p class="id">Movimiento: {{ticket.DocumentId:D}}</p></body></html>
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:4mm}*{box-sizing:border-box}body{width:{{contentWidthMillimeters}}mm;margin:auto;font:10px/1.4 Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:15px;margin:3px}h2{font-size:12px;margin:5px}.scope{margin:2px 0}.detail{font-size:12px;line-height:1.5;overflow-wrap:anywhere}.detail p{margin:6px 0}.amount{display:flex;justify-content:space-between;border-block:2px solid #111;padding:8px 0;margin:12px 0 0;font-size:14px;font-weight:800}.signature{margin-top:18mm;border-top:1px solid #111;text-align:center;padding-top:3px}.id{margin-top:10px;font-size:8px;overflow-wrap:anywhere}</style></head><body><header>{{logo}}<h1>{{Encode(workstation.CompanyName)}}</h1><h2>{{(ticket.Direction == "In" ? "ENTRADA DE DINERO" : "SALIDA DE DINERO")}}</h2><p class="scope"><strong>Sede:</strong> {{Encode(workstation.BusinessName)}}</p></header><div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}<p><strong>Responsable:</strong> {{Encode(ticket.ResponsibleName)}}</p><p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="amount"><span>VALOR</span><span>{{Money(ticket.Amount)}}</span></div><div class="signature">Firma</div><p class="id">Movimiento: {{ticket.DocumentId:D}}</p></body></html>
 """;
     }
 

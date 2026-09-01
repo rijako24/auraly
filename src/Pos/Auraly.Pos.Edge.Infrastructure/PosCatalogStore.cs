@@ -508,6 +508,19 @@ public sealed partial class PosCatalogStore(string connectionString)
           PRIMARY KEY(CatalogCode,OptionId));
         CREATE UNIQUE INDEX IF NOT EXISTS UX_PosReferenceOptions_Code
           ON PosReferenceOptions(CatalogCode,Code);
+        CREATE TABLE IF NOT EXISTS PosBankAccounts(
+          BankAccountId TEXT PRIMARY KEY,
+          DisplayName TEXT NOT NULL,
+          BankName TEXT NOT NULL,
+          AccountNumber TEXT NOT NULL,
+          AccountTypeName TEXT NOT NULL,
+          IsPrimary INTEGER NOT NULL,
+          RowVersion TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS PosSettlementConfiguration(
+          ConfigurationId INTEGER PRIMARY KEY CHECK(ConfigurationId=1),
+          IsAccountingEnabled INTEGER NOT NULL CHECK(IsAccountingEnabled IN (0,1)));
+        INSERT OR IGNORE INTO PosSettlementConfiguration(ConfigurationId,IsAccountingEnabled)
+          VALUES(1,0);
         CREATE TABLE IF NOT EXISTS PosCatalogStagingBarcodes(
           ProductId TEXT NOT NULL,Value TEXT NOT NULL,
           PRIMARY KEY(ProductId,Value),

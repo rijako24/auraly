@@ -60,7 +60,10 @@ public sealed record ConfirmSalesReturnRequest(
     int? OriginalPaymentNumber = null,
     string ReasonCode = "",
     string? Notes = null,
-    string ReturnScopeCode = SalesReturnScopes.Partial);
+    string ReturnScopeCode = SalesReturnScopes.Partial,
+    Guid? BankAccountId = null,
+    string? SettlementReference = null,
+    string? SettlementNotes = null);
 
 public sealed record SalesReturnLineSnapshot(
     int LineNumber,
@@ -105,7 +108,12 @@ public sealed record SalesReturnDocumentPayload(
     int? OriginalPaymentNumber = null,
     string ReasonCode = "",
     string? Notes = null,
-    string ReturnScopeCode = SalesReturnScopes.Partial);
+    string ReturnScopeCode = SalesReturnScopes.Partial,
+    string? CardFranchiseCode = null,
+    string? ApprovalNumber = null,
+    Guid? BankAccountId = null,
+    string? SettlementReference = null,
+    string? SettlementNotes = null);
 
 public sealed record SalesReturnAcceptance(
     Guid ReturnId,

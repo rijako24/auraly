@@ -116,7 +116,7 @@ public static class PartyApi
             await Handle(async () => Results.Ok(await service.UpdateCityAsync(context.User.ToPartyUserIdentity(), cityId, request, ct))));
 
         var pos = endpoints.MapGroup("/api/pos/v1/customers")
-            .RequireAuthorization("pos.customer.create");
+            .RequireAuthorization("pos.enrolled");
 
         pos.MapGet("/geography/countries", async (
             HttpContext context, GeographyService service, Guid businessId, CancellationToken ct) =>
@@ -190,9 +190,7 @@ public static class PartyClaimsPrincipalExtensions
             RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
             businessId,
-            principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
-                .Select(claim => claim.Value)
-                .ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
             true);
 
     private static Guid RequiredGuid(ClaimsPrincipal principal, string claimType) =>

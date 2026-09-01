@@ -104,7 +104,7 @@ public static class CatalogApi
             await Handle(async () => Results.Ok(await service.SaveTaxProfileAsync(
                 context.User.ToCatalogUserIdentity(), taxProfileId, request, ct))));
         var pos = endpoints.MapGroup("/api/pos/v1")
-            .RequireAuthorization("pos.catalog.sync");
+            .RequireAuthorization("pos.enrolled");
 
         pos.MapPost("/catalog/sync-sessions", async (
             HttpContext context, PosCatalogService service, Guid businessId, Guid warehouseId, CancellationToken ct) =>
@@ -194,10 +194,7 @@ public static class CatalogClaimsPrincipalExtensions
             RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
             businessId,
-            warehouseId,
-            principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
-                .Select(claim => claim.Value)
-                .ToHashSet(StringComparer.Ordinal));
+            warehouseId);
 
     private static Guid RequiredGuid(ClaimsPrincipal principal, string claimType) =>
         Guid.TryParse(principal.FindFirstValue(claimType), out var value)

@@ -134,10 +134,8 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
             await transaction.CommitAsync(cancellationToken);
             return existing;
         }
-        if (await HasConflictingLeaseAsync(
-                connection, transaction, payload, cancellationToken))
-            throw new OfflineAuthenticationLeaseConflictException(
-                "The user or enrolled device already owns another active offline lease.");
+        await RevokeConflictingLeasesAsync(
+            connection, transaction, payload, cancellationToken);
 
         // Choosing local POS mode is an explicit authenticated handoff. Keep the
         // work session/cash drawer open, but revoke stale browser sessions so
@@ -185,10 +183,8 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
             await transaction.CommitAsync(cancellationToken);
             return new OfflineAuthenticationLeaseAcquireResponse(existing, user);
         }
-        if (await HasConflictingLeaseAsync(
-                connection, transaction, payload, cancellationToken))
-            throw new OfflineAuthenticationLeaseConflictException(
-                "El usuario o el equipo ya tiene otra sesión local activa.");
+        await RevokeConflictingLeasesAsync(
+            connection, transaction, payload, cancellationToken);
 
         await RevokeOnlineSessionsForHandoffAsync(
             connection, transaction, payload, cancellationToken);
@@ -237,6 +233,29 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
             throw new AuthenticationDeniedException(
                 "The offline authentication lease does not belong to this device.");
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<bool> IsActiveAsync(
+        Guid tenantId,
+        Guid deviceId,
+        Guid leaseId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT COUNT(1)
+            FROM dbo.OfflineAuthenticationLeases
+            WHERE LeaseId=@LeaseId AND TenantId=@TenantId
+              AND DeviceId=@DeviceId AND UserId=@UserId
+              AND Status=N'Active';
+            """, connection);
+        command.Parameters.AddWithValue("@LeaseId", leaseId);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@DeviceId", deviceId);
+        command.Parameters.AddWithValue("@UserId", userId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 1;
     }
 
     private static async Task LockUserAsync(
@@ -353,10 +372,6 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            UPDATE dbo.OfflineAuthenticationLeases WITH (UPDLOCK,HOLDLOCK)
-            SET Status=N'Expired',EndedAt=@Now,EndReason=N'Expired',UpdatedAt=@Now
-            WHERE Status=N'Active' AND ExpiresAt<=@Now
-              AND (TenantId=@TenantId OR DeviceId=@DeviceId);
             UPDATE dbo.AuthenticationSessions WITH (UPDLOCK,HOLDLOCK)
             SET Status=N'Expired',RevokedAt=@Now,
                 RevocationReason=N'Expired',UpdatedAt=@Now
@@ -395,22 +410,24 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
             : null;
     }
 
-    private static async Task<bool> HasConflictingLeaseAsync(
+    private static async Task RevokeConflictingLeasesAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         OfflineAuthenticationLeasePayload payload,
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT LeaseId
-            FROM dbo.OfflineAuthenticationLeases WITH (UPDLOCK,HOLDLOCK)
+            UPDATE dbo.OfflineAuthenticationLeases WITH (UPDLOCK,HOLDLOCK)
+            SET Status=N'Revoked',EndedAt=@Now,
+                EndReason=N'ReplacedByNewLogin',UpdatedAt=@Now
             WHERE TenantId=@TenantId AND Status=N'Active'
               AND (UserId=@UserId OR DeviceId=@DeviceId);
             """, connection, transaction);
+        command.Parameters.AddWithValue("@Now", payload.IssuedAt);
         command.Parameters.AddWithValue("@TenantId", payload.TenantId);
         command.Parameters.AddWithValue("@UserId", payload.UserId);
         command.Parameters.AddWithValue("@DeviceId", payload.DeviceId);
-        return await command.ExecuteScalarAsync(cancellationToken) is Guid;
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task UpdateOfflineVerifierAsync(

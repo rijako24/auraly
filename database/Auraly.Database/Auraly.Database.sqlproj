@@ -26,6 +26,7 @@
     <Build Include="Schemas\WorkSessions.sql" />
     <Build Include="Schemas\Billing.sql" />
     <Build Include="Schemas\Sales.sql" />
+    <Build Include="Schemas\Accounting.sql" />
     <Build Include="Functions\PriceChannelAmountCalculate.sql" />
     <Build Include="Functions\CustomerProductPriceResolve.sql" />
     <Build Include="StoredProcedures\SellerOrderCatalogGet.sql" />
@@ -255,6 +256,7 @@
     <Build Include="Tables\InventoryBalances.sql" />
     <Build Include="Tables\AccountingSourceDocuments.sql" />
     <Build Include="Tables\Accounting.sql" />
+    <Build Include="Tables\BankAccounts.sql" />
     <Build Include="Tables\ComplianceReporting.sql" />
     <Build Include="Tables\Expenses.sql" />
     <Build Include="Tables\PosSynchronizationOutboxMessages.sql" />

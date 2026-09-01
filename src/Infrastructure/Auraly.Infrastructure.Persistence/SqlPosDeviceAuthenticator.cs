@@ -18,12 +18,9 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
             SELECT d.TenantId,
                    d.CredentialSalt,
                    d.CredentialHash,
-                   d.CredentialIterations,
-                   p.PermissionCode,
-                   p.IsGranted
+                   d.CredentialIterations
             FROM dbo.EnrolledDevices d
             INNER JOIN dbo.Tenants tenant ON tenant.TenantId=d.TenantId AND tenant.IsActive=1
-            LEFT JOIN dbo.PosDevicePermissions p ON p.DeviceId=d.DeviceId
             WHERE d.DeviceId=@DeviceId
               AND d.IsActive=1;
             """;
@@ -43,14 +40,6 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
         if (!PosDeviceCredentialHasher.Verify(secret, salt, hash, iterations))
             return null;
 
-        var permissions = new HashSet<string>(StringComparer.Ordinal);
-        do
-        {
-            if (!reader.IsDBNull(4) && reader.GetBoolean(5))
-                permissions.Add(reader.GetString(4));
-        }
-        while (await reader.ReadAsync(cancellationToken));
-
-        return new PosDeviceIdentity(deviceId, tenantId, permissions);
+        return new PosDeviceIdentity(deviceId, tenantId);
     }
 }

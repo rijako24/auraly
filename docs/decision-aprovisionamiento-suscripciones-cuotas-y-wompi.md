@@ -81,6 +81,15 @@ El endpoint de eventos es un router, no un aprovisionador genérico. La referenc
 
 ## Entitlements y permisos
 
+El rol `ADMINISTRATOR` aprovisionado para una empresa cliente no recibe por
+defecto las capacidades opt-in de agentes y agenda: `agents.*`,
+`conversations.*`, `leads.*`, `campaigns.*` ni `reservations.*`. Esto cubre
+Agente IA, canales y contactos de atención, conversaciones, leads, campañas,
+reservas y calendario. Las vistas aparecen únicamente después de asignar sus
+permisos desde el propietario canónico de roles. El administrador del tenant de
+plataforma `@auraly` conserva el catálogo completo. Las plantillas
+`ADMINISTRATIVE` tampoco reciben estas capacidades automáticamente.
+
 Los cupos pertenecen al tenant y cubren todas sus sedes. El tenant solo puede ver su uso e iniciar una compra. No escribe límites ni precios. Plataforma con `tenants.capacity.update` puede ajustar cualquier tenant con motivo y auditoría.
 
 La capacidad aplicada siempre sale de las líneas de la cotización efectivamente pagada (o exenta), nunca del formulario del navegador. Al aprovisionar se comparan referencia, versión de catálogo, moneda, importe y cada cantidad comprada antes de materializar los límites. La vista del tenant muestra, por recurso, `usado / contratado / disponible`, fecha de corte y compras pendientes. Las ampliaciones solo aumentan capacidad cuando su propio pago queda confirmado.

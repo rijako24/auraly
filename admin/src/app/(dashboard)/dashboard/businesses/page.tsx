@@ -21,7 +21,7 @@ export default function BusinessesPage() {
   const { data, isLoading, isError, refetch } = useBusinesses();
   const businesses = data?.items ?? [];
   const columns: ColumnDef<Business>[] = useMemo(() => [
-    { accessorKey: "name", header: "Negocio", cell: ({ row }) => { const b = row.original; return (<div className="flex items-center gap-3"><Avatar className="h-9 w-9"><AvatarFallback className="text-xs">{getInitials(b.name)}</AvatarFallback></Avatar><span className="font-medium">{b.name}</span></div>); } },
+    { accessorKey: "name", header: "Sede", cell: ({ row }) => { const b = row.original; return (<div className="flex items-center gap-3"><Avatar className="h-9 w-9"><AvatarFallback className="text-xs">{getInitials(b.name)}</AvatarFallback></Avatar><span className="font-medium">{b.name}</span></div>); } },
     { accessorKey: "email", header: "Email" },
     { accessorKey: "phone", header: "Teléfono" },
     { accessorKey: "address", header: "Dirección", cell: ({ row }) => truncate(row.original.address, 35) },
@@ -44,10 +44,10 @@ export default function BusinessesPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div><h1 className="text-2xl font-semibold tracking-tight">Negocios</h1><p className="text-muted-foreground">Gestiona los negocios y sus configuraciones</p></div>
-        <Button asChild><Link href="/dashboard/businesses/new"><Plus className="mr-2 h-4 w-4" />Nuevo Negocio</Link></Button>
+        <div><h1 className="text-2xl font-semibold tracking-tight">Sedes</h1><p className="text-muted-foreground">Gestiona las sedes y sus configuraciones</p></div>
+        <Button asChild><Link href="/dashboard/businesses/new"><Plus className="mr-2 h-4 w-4" />Nueva sede</Link></Button>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><StatCard title="Total negocios" value={businesses.length} icon={Store} /></div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><StatCard title="Total sedes" value={businesses.length} icon={Store} /></div>
       <DataTable columns={columns} data={businesses} searchKey="name" searchPlaceholder="Buscar por nombre..." viewMode={viewMode} onViewModeChange={setViewMode} cardRenderer={cardRenderer} enableRowSelection={false} />
     </div>
   );

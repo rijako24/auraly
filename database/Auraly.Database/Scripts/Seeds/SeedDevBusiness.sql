@@ -164,7 +164,13 @@ BEGIN
 
     INSERT INTO [dbo].[RolePermissions] ([RolePermissionId], [RoleId], [PermissionId], [AssignedAt])
 
-    SELECT NEWID(), @AdminRoleId, [PermissionId], GETUTCDATE() FROM [dbo].[Permissions];
+    SELECT NEWID(), @AdminRoleId, [PermissionId], GETUTCDATE()
+    FROM [dbo].[Permissions]
+    WHERE [Resource] NOT LIKE N'agents.%'
+      AND [Resource] NOT LIKE N'conversations.%'
+      AND [Resource] NOT LIKE N'leads.%'
+      AND [Resource] NOT LIKE N'campaigns.%'
+      AND [Resource] NOT LIKE N'reservations.%';
 
 END
 

@@ -12,7 +12,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task First_offline_sale_materializes_its_local_work_session_idempotently()
+    public async Task First_offline_sale_preserves_its_existing_work_session_idempotently()
     {
         var userId = Guid.NewGuid();
         var deviceId = Guid.NewGuid();
@@ -46,12 +46,21 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
                 VALUES
                   (@DocumentSeriesId,@BusinessId,@DeviceId,N'SalesReceipt',N'CVI',N'91',
                    8,1,99999999,1,1,SYSUTCDATETIME());
+
+                INSERT dbo.WorkSessions
+                  (WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+                   OpenedAt,LastActivityAt,Status)
+                VALUES
+                  (@WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
+                   SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Open');
                 """;
             command.Parameters.AddWithValue("@UserId", userId);
             command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             command.Parameters.AddWithValue("@DeviceId", deviceId);
             command.Parameters.AddWithValue("@DocumentSeriesId", documentSeriesId);
             command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
             command.Parameters.Add("@CredentialSalt", System.Data.SqlDbType.VarBinary, 32)
                 .Value = deviceCredential.Salt;
             command.Parameters.Add("@CredentialHash", System.Data.SqlDbType.VarBinary, 32)

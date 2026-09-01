@@ -92,8 +92,14 @@ export interface TenantSubscriptionReceipt {
   totalAmount: number; paymentMethod: string; paymentReference: string; cufe: string | null;
   fiscalStatus: string; lines: TenantSubscriptionReceiptLine[];
 }
-export interface PlatformTenantSubscription extends TenantCommercialSubscription {
+export interface PlatformTenantSubscription {
   tenantId: string; tenantKey: string; tenantName: string; tenantEmail: string;
+  subscriptionId: string | null; planCode: string | null; planName: string | null;
+  billingPeriod: "Monthly" | "Annual" | null; status: string | null;
+  currentPeriodStart: string | null; currentPeriodEnd: string | null;
+  fullUserLimit: number | null; sellerUserLimit: number | null; posDeviceLimit: number | null;
+  dianDocumentMonthlyLimit: number | null; dianDocumentsUsed: number | null;
+  payrollEmployeeLimit: number | null;
   renewalOrderId: string | null; renewalStatus: string | null;
   renewalDueAt: string | null; renewalPayableAmount: number | null;
 }

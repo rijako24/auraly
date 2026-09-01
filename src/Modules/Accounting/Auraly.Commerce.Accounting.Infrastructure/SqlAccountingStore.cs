@@ -1117,6 +1117,18 @@ public sealed class SqlAccountingStore(
             if (issues.Count > 0)
                 throw new AccountingConflictException(
                     $"Accounting is not ready: {string.Join("; ", issues)}");
+            var wasReady = false;
+            await using (var current = new SqlCommand("""
+                SELECT Status FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+                WHERE TenantId=@TenantId;
+                """, connection, transaction))
+            {
+                current.Parameters.AddWithValue("@TenantId", user.TenantId);
+                wasReady = string.Equals(
+                    await current.ExecuteScalarAsync(cancellationToken) as string,
+                    AccountingActivationStatuses.Ready,
+                    StringComparison.Ordinal);
+            }
             var now = timeProvider.GetUtcNow();
             await using var command = new SqlCommand("""
                 MERGE dbo.AccountingTenantSettings WITH(HOLDLOCK) AS target
@@ -1153,6 +1165,9 @@ public sealed class SqlAccountingStore(
             if (request.OpeningBalanceMode == "ImportedAndApproved")
                 await QueueOpeningBalancesAsync(connection, transaction, user,
                     request.EffectiveFrom, now, cancellationToken);
+            else if (!wasReady)
+                await EnqueueBankAccountSynchronizationAsync(
+                    connection, transaction, user.TenantId, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new(activationStatus,
                 request.FunctionalCurrencyCode, request.EffectiveFrom,
@@ -1299,6 +1314,200 @@ public sealed class SqlAccountingStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) values.Add(new(reader.GetGuid(0),reader.GetGuid(1)));
         return values;
+    }
+
+    public async Task<IReadOnlyList<BankAccountView>> ListBankAccountsAsync(
+        AccountingUserIdentity user, bool includeInactive, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT b.BankAccountId,b.AccountingAccountId,a.Code,a.Name,
+                   b.AccountTypeOptionId,o.Code,o.Label,b.BankName,b.AccountNumber,
+                   b.DisplayName,b.CurrencyCode,b.IsPrimary,b.IsActive,b.RowVersion
+            FROM accounting.BankAccounts b
+            INNER JOIN dbo.AccountingAccounts a
+              ON a.AccountId=b.AccountingAccountId AND a.TenantId=b.TenantId
+            INNER JOIN reference.Options o
+              ON o.OptionId=b.AccountTypeOptionId AND o.CatalogCode=N'bank-account-type'
+            WHERE b.TenantId=@TenantId AND (@IncludeInactive=1 OR b.IsActive=1)
+            ORDER BY b.IsPrimary DESC,b.DisplayName,b.BankAccountId;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@IncludeInactive", includeInactive);
+        var values = new List<BankAccountView>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            values.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
+                reader.GetString(3), reader.GetGuid(4), reader.GetString(5), reader.GetString(6),
+                reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.GetString(10),
+                reader.GetBoolean(11), reader.GetBoolean(12),
+                Convert.ToBase64String((byte[])reader[13])));
+        return values;
+    }
+
+    public Task<IReadOnlyList<BankAccountView>> ListActiveBankAccountsForTenantAsync(
+        Guid tenantId, CancellationToken cancellationToken) => ListBankAccountsAsync(
+            new AccountingUserIdentity(Guid.Empty, tenantId, Guid.Empty,
+                new HashSet<string>(StringComparer.Ordinal)), false, cancellationToken);
+
+    public async Task<bool> IsAccountingEnabledAsync(
+        Guid tenantId, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT COUNT_BIG(1) FROM dbo.AccountingTenantSettings
+            WHERE TenantId=@TenantId AND Status=N'Ready';
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 1;
+    }
+
+    public async Task<BankAccountView> SaveBankAccountAsync(
+        AccountingUserIdentity user, SaveBankAccountRequest request,
+        CancellationToken cancellationToken)
+    {
+        byte[]? expectedVersion = null;
+        if (!string.IsNullOrWhiteSpace(request.RowVersion))
+        {
+            try { expectedVersion = Convert.FromBase64String(request.RowVersion); }
+            catch (FormatException) { throw new AccountingValidationException("The bank account version is invalid."); }
+        }
+
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await using (var validation = new SqlCommand("""
+                IF NOT EXISTS(
+                    SELECT 1 FROM dbo.AccountingAccounts WITH(UPDLOCK,HOLDLOCK)
+                    WHERE AccountId=@AccountingAccountId AND TenantId=@TenantId
+                      AND IsActive=1 AND AllowsPosting=1 AND AccountType=N'Asset'
+                      AND RequiresParty=0)
+                    THROW 51400,N'The bank account must use an active postable asset account that does not require a party.',1;
+                IF NOT EXISTS(
+                    SELECT 1 FROM reference.Options
+                    WHERE OptionId=@AccountTypeOptionId AND CatalogCode=N'bank-account-type' AND IsActive=1)
+                    THROW 51400,N'The bank account type is invalid.',1;
+                """, connection, transaction))
+            {
+                validation.Parameters.AddWithValue("@AccountingAccountId", request.AccountingAccountId);
+                validation.Parameters.AddWithValue("@AccountTypeOptionId", request.AccountTypeOptionId);
+                validation.Parameters.AddWithValue("@TenantId", user.TenantId);
+                await validation.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            var exists = false;
+            var wasPrimary = false;
+            await using (var current = new SqlCommand("""
+                SELECT IsPrimary FROM accounting.BankAccounts WITH(UPDLOCK,HOLDLOCK)
+                WHERE BankAccountId=@BankAccountId AND TenantId=@TenantId;
+                """, connection, transaction))
+            {
+                current.Parameters.AddWithValue("@BankAccountId", request.BankAccountId);
+                current.Parameters.AddWithValue("@TenantId", user.TenantId);
+                var value = await current.ExecuteScalarAsync(cancellationToken);
+                exists = value is not null;
+                wasPrimary = value is bool primary && primary;
+            }
+
+            var makePrimary = request.IsActive && (request.IsPrimary || !await HasActiveBankAccountAsync(
+                connection, transaction, user.TenantId, request.BankAccountId, cancellationToken));
+            if (wasPrimary && request.IsActive && !makePrimary)
+                throw new AccountingConflictException("Select another primary bank account before removing the current primary.");
+            if (wasPrimary && !request.IsActive && await HasActiveBankAccountAsync(
+                    connection, transaction, user.TenantId, request.BankAccountId, cancellationToken))
+                throw new AccountingConflictException("Select another primary bank account before deactivating the current primary.");
+
+            if (makePrimary)
+            {
+                await using var clear = new SqlCommand("""
+                    UPDATE accounting.BankAccounts SET IsPrimary=0,UpdatedByUserId=@UserId,UpdatedAt=@Now
+                    WHERE TenantId=@TenantId AND BankAccountId<>@BankAccountId AND IsPrimary=1;
+                    """, connection, transaction);
+                clear.Parameters.AddWithValue("@UserId", user.UserId);
+                clear.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+                clear.Parameters.AddWithValue("@TenantId", user.TenantId);
+                clear.Parameters.AddWithValue("@BankAccountId", request.BankAccountId);
+                await clear.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using var save = new SqlCommand(exists ? """
+                UPDATE accounting.BankAccounts SET AccountingAccountId=@AccountingAccountId,
+                    AccountTypeOptionId=@AccountTypeOptionId,BankName=@BankName,
+                    AccountNumber=@AccountNumber,DisplayName=@DisplayName,
+                    IsPrimary=@IsPrimary,IsActive=@IsActive,UpdatedByUserId=@UserId,UpdatedAt=@Now
+                WHERE BankAccountId=@BankAccountId AND TenantId=@TenantId
+                  AND (@ExpectedVersion IS NULL OR RowVersion=@ExpectedVersion);
+                """ : """
+                INSERT accounting.BankAccounts(BankAccountId,TenantId,AccountingAccountId,
+                    AccountTypeOptionId,BankName,AccountNumber,DisplayName,CurrencyCode,
+                    IsPrimary,IsActive,CreatedByUserId,CreatedAt,UpdatedByUserId,UpdatedAt)
+                VALUES(@BankAccountId,@TenantId,@AccountingAccountId,@AccountTypeOptionId,
+                    @BankName,@AccountNumber,@DisplayName,N'COP',@IsPrimary,@IsActive,
+                    @UserId,@Now,@UserId,@Now);
+                """, connection, transaction);
+            save.Parameters.AddWithValue("@BankAccountId", request.BankAccountId);
+            save.Parameters.AddWithValue("@TenantId", user.TenantId);
+            save.Parameters.AddWithValue("@AccountingAccountId", request.AccountingAccountId);
+            save.Parameters.AddWithValue("@AccountTypeOptionId", request.AccountTypeOptionId);
+            save.Parameters.AddWithValue("@BankName", request.BankName);
+            save.Parameters.AddWithValue("@AccountNumber", request.AccountNumber);
+            save.Parameters.AddWithValue("@DisplayName", request.DisplayName);
+            save.Parameters.AddWithValue("@IsPrimary", makePrimary);
+            save.Parameters.AddWithValue("@IsActive", request.IsActive);
+            save.Parameters.AddWithValue("@UserId", user.UserId);
+            save.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            if (exists)
+                save.Parameters.Add("@ExpectedVersion", SqlDbType.Timestamp).Value =
+                    (object?)expectedVersion ?? DBNull.Value;
+            if (await save.ExecuteNonQueryAsync(cancellationToken) != 1)
+                throw new AccountingConflictException("The bank account changed. Reload it and try again.");
+
+            await EnqueueBankAccountSynchronizationAsync(
+                connection, transaction, user.TenantId, cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (SqlException exception) when (IsConflict(exception))
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingConflictException(exception.Message);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+
+        return (await ListBankAccountsAsync(user, true, cancellationToken))
+            .Single(value => value.BankAccountId == request.BankAccountId);
+    }
+
+    private static async Task<bool> HasActiveBankAccountAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId,
+        Guid excludedId, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT CASE WHEN EXISTS(SELECT 1 FROM accounting.BankAccounts WITH(UPDLOCK,HOLDLOCK)
+                WHERE TenantId=@TenantId AND IsActive=1 AND BankAccountId<>@ExcludedId)
+                THEN 1 ELSE 0 END;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@ExcludedId", excludedId);
+        return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken));
+    }
+
+    private async Task EnqueueBankAccountSynchronizationAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        await SqlAccountingPosSynchronizationOutbox.InsertTenantConfigurationAsync(
+            connection, transaction, tenantId, ids, timeProvider.GetUtcNow(),
+            cancellationToken);
     }
 
     private async Task<string?> FindPostingSourceAsync(AccountingUserIdentity user, Guid documentId, CancellationToken token)

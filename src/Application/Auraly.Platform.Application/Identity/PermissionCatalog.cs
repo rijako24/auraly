@@ -68,6 +68,8 @@ public static class PermissionCatalog
         ("Campaigns", "Send", "campaigns.send", "Enviar campa�as"),
         ("Campaigns", "Cancel", "campaigns.cancel", "Cancelar campa�as"),
         ("Conversations", "Read", "conversations.read", "Ver conversaciones"),
+        ("Agents", "Read", "agents.read", "Ver agentes IA y contactos de atención"),
+        ("Agents", "Update", "agents.update", "Configurar agentes IA y contactos de atención"),
         ("Orders", "Read", "orders.read", "Ver pedidos"),
         ("Payments", "Read", "payments.read", "Ver transacciones de pago"),
         ("Payments", "ConfirmManual", "payments.confirm_manual", "Confirmar pagos manualmente"),

@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PosPaymentInput, type PosClient, type PosCustomer, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import { PosPaymentInput, type PosBankAccount, type PosClient, type PosCustomer, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
@@ -78,6 +78,10 @@ export function PosPaymentDialog({
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
   const [creditError, setCreditError] = useState<string | null>(null);
   const [cardCapture, setCardCapture] = useState<{ paymentId: string; franchiseCode: string; approvalNumber: string } | null>(null);
+  const [transferCapture, setTransferCapture] = useState<{ paymentId: string; bankAccountId: string; reference: string; notes: string } | null>(null);
+  const [bankAccounts, setBankAccounts] = useState<PosBankAccount[]>([]);
+  const [accountingEnabled, setAccountingEnabled] = useState(false);
+  const [settlementConfigurationLoaded, setSettlementConfigurationLoaded] = useState(false);
   const cardApprovalRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
   const settlement = useMemo(
@@ -90,6 +94,38 @@ export function PosPaymentDialog({
     if (!defaultMethod || payments.length > 0) return;
     setPayments([{ id: crypto.randomUUID(), methodCode: defaultMethod.code, amount: total, reference: null }]);
   }, [methods, payments.length, total]);
+
+  useEffect(() => {
+    let active = true;
+    void client.settlementConfiguration().then(configuration => {
+      if (!active) return;
+      setAccountingEnabled(configuration.isAccountingEnabled);
+      setBankAccounts(configuration.bankAccounts);
+      setSettlementConfigurationLoaded(true);
+    }).catch(() => { if (active) setSettlementConfigurationLoaded(false); });
+    return () => { active = false; };
+  }, [client]);
+
+  const principalBankAccountId = bankAccounts.find(account => account.isPrimary)?.bankAccountId ?? null;
+
+  const openTransferCapture = useCallback((paymentId: string, payment?: PaymentRow) => {
+    if (!settlementConfigurationLoaded) {
+      setCreditError("No fue posible consultar la configuración de transferencias. Intenta nuevamente.");
+      return false;
+    }
+    if (accountingEnabled && bankAccounts.length === 0) {
+      setCreditError("Configura una cuenta bancaria activa en Contabilidad antes de usar transferencia.");
+      return false;
+    }
+    setCreditError(null);
+    setTransferCapture({
+      paymentId,
+      bankAccountId: payment?.bankAccountId ?? principalBankAccountId ?? "",
+      reference: payment?.reference ?? "",
+      notes: payment?.notes ?? "",
+    });
+    return true;
+  }, [accountingEnabled, bankAccounts.length, principalBankAccountId, settlementConfigurationLoaded]);
 
   function update(id: string, value: Partial<PaymentRow>) {
     setPayments((current) =>
@@ -142,8 +178,10 @@ export function PosPaymentDialog({
     if (requestedMethod && settlement.missing <= 0) {
       const current = active ?? payments[0];
       if (!current) return;
-      update(current.id, { methodCode: requestedMethod, reference: null });
+      update(current.id, { methodCode: requestedMethod, reference: null, notes: null,
+        bankAccountId: null, cardFranchiseCode: null, approvalNumber: null });
       if (requiresCardCapture(requestedMethod)) openCardCapture(current.id);
+      else if (requestedMethod === "Transfer") openTransferCapture(current.id);
       else focusAmount(current.id);
       return;
     }
@@ -170,12 +208,15 @@ export function PosPaymentDialog({
         methodCode: nextMethod.code,
         amount: settlement.missing,
         reference: null,
+        notes: null,
+        bankAccountId: null,
       },
     ]);
     setActivePaymentId(id);
     if (requiresCardCapture(nextMethod.code)) openCardCapture(id);
+    else if (nextMethod.code === "Transfer") openTransferCapture(id);
     else setPendingFocusId(id);
-  }, [activePaymentId, busy, customer, focusAmount, methods, openCardCapture, payments, requiresCardCapture, settlement.missing]);
+  }, [activePaymentId, busy, customer, focusAmount, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, settlement.missing]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -185,10 +226,11 @@ export function PosPaymentDialog({
 
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
-      if (cardCapture) {
+      if (cardCapture || transferCapture) {
         if (event.key === "Escape") {
           event.preventDefault();
           setCardCapture(null);
+          setTransferCapture(null);
         }
         return;
       }
@@ -207,20 +249,24 @@ export function PosPaymentDialog({
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [activePaymentId, addPayment, busy, cardCapture, methods, onCancel, payments.length, removePayment]);
+  }, [activePaymentId, addPayment, busy, cardCapture, transferCapture, methods, onCancel, payments.length, removePayment]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!settlement.isValid || busy || !documentTypeReady ||
         payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) ||
+        payments.some(payment => payment.methodCode === "Transfer" &&
+          (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) ||
         paymentMethods.isLoading || paymentMethods.isError) return;
     await onConfirm(
-      settlement.appliedPayments.map(({ methodCode, amount, reference, cardFranchiseCode, approvalNumber }) => ({
+      settlement.appliedPayments.map(({ methodCode, amount, reference, cardFranchiseCode, approvalNumber, bankAccountId, notes }) => ({
         methodCode,
         amount,
         reference: reference?.trim() || null,
         cardFranchiseCode: cardFranchiseCode?.trim() || null,
         approvalNumber: approvalNumber?.trim() || null,
+        bankAccountId: methodCode === "Transfer" && accountingEnabled ? bankAccountId ?? null : null,
+        notes: methodCode === "Transfer" ? notes?.trim() || null : null,
       })),
       settlement,
     );
@@ -239,6 +285,18 @@ export function PosPaymentDialog({
     update(cardCapture.paymentId, { reference: null, cardFranchiseCode: cardCapture.franchiseCode, approvalNumber: cardCapture.approvalNumber.trim() });
     const paymentId = cardCapture.paymentId;
     setCardCapture(null);
+    setPendingFocusId(paymentId);
+  }
+
+  function saveTransferCapture() {
+    if (!transferCapture?.reference.trim() || (accountingEnabled && !transferCapture.bankAccountId)) return;
+    update(transferCapture.paymentId, {
+      bankAccountId: accountingEnabled ? transferCapture.bankAccountId : null,
+      reference: transferCapture.reference.trim(),
+      notes: transferCapture.notes.trim() || null,
+    });
+    const paymentId = transferCapture.paymentId;
+    setTransferCapture(null);
     setPendingFocusId(paymentId);
   }
 
@@ -316,8 +374,10 @@ export function PosPaymentDialog({
                 <Select
                   value={payment.methodCode}
                   onValueChange={(methodCode) => {
-                    update(payment.id, { methodCode, reference: null, cardFranchiseCode: null, approvalNumber: null });
+                    update(payment.id, { methodCode, reference: null, notes: null,
+                      cardFranchiseCode: null, approvalNumber: null, bankAccountId: null });
                     if (requiresCardCapture(methodCode)) openCardCapture(payment.id);
+                    else if (methodCode === "Transfer") openTransferCapture(payment.id);
                   }}
                   disabled={busy}
                 >
@@ -371,6 +431,8 @@ export function PosPaymentDialog({
                 <div className="text-xs font-medium text-slate-600"><span>Efectivo</span><div className="mt-1 flex h-11 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900"><span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-700 text-white">$</span><span>Cambio automático</span></div></div>
               ) : payment.methodCode === "Credit" ? (
                 <div className="text-xs font-medium text-slate-600"><span>Crédito del cliente</span><div className="mt-1 flex h-11 items-center rounded-lg border border-violet-200 bg-violet-50 px-3 text-sm font-semibold text-violet-900">{customer ? `Plazo ${customer.defaultCreditDueDays ?? 0} días` : "Selecciona un cliente"}</div></div>
+              ) : payment.methodCode === "Transfer" ? (
+                <div className="text-xs font-medium text-slate-600"><span>Transferencia</span><button type="button" onClick={() => openTransferCapture(payment.id, payment)} className={`mt-1 flex h-11 w-full items-center gap-2 rounded-lg border px-3 text-left text-sm font-semibold ${payment.reference && (!accountingEnabled || payment.bankAccountId) ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}><Receipt className="h-4 w-4 shrink-0"/><span className="truncate">{payment.reference && (!accountingEnabled || payment.bankAccountId) ? `${accountingEnabled ? `${bankAccounts.find(account => account.bankAccountId === payment.bankAccountId)?.displayName ?? "Cuenta"} · ` : ""}${payment.reference}` : "Registrar transferencia"}</span></button></div>
               ) : (
                 <label className="text-xs font-medium text-slate-600">Referencia<input value={payment.reference ?? ""} data-payment-reference="true" onChange={(event) => update(payment.id, { reference: event.target.value })} className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Comprobante o referencia"/></label>
               )}
@@ -416,6 +478,17 @@ export function PosPaymentDialog({
             </div>
           </div>
         )}
+        {transferCapture && (
+          <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4" data-pos-focus-surface="modal">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="transfer-capture-title">
+              <div className="flex items-start justify-between gap-3"><div><h3 id="transfer-capture-title" className="text-lg font-bold text-slate-950">Datos de la transferencia</h3><p className="mt-1 text-sm text-slate-500">Registra el soporte del movimiento. La cuenta principal es solo la selección inicial.</p></div><button type="button" onClick={() => setTransferCapture(null)} aria-label="Cerrar datos de transferencia" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"><X className="h-5 w-5"/></button></div>
+              {accountingEnabled && <label className="mt-5 block text-sm font-medium text-slate-700">Cuenta bancaria<Select value={transferCapture.bankAccountId} onValueChange={bankAccountId => setTransferCapture(current => current ? { ...current, bankAccountId } : null)}><SelectTrigger className="mt-1 h-11"><SelectValue placeholder="Selecciona la cuenta"/></SelectTrigger><SelectContent>{bankAccounts.map(account => <SelectItem key={account.bankAccountId} value={account.bankAccountId}>{account.displayName} · {account.accountNumber}</SelectItem>)}</SelectContent></Select></label>}
+              <label className={`${accountingEnabled ? "mt-4" : "mt-5"} block text-sm font-medium text-slate-700`}>Referencia<input autoFocus={!accountingEnabled} required maxLength={160} value={transferCapture.reference} onChange={event => setTransferCapture(current => current ? { ...current, reference: event.target.value } : null)} className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-base font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Número o referencia del comprobante"/></label>
+              <label className="mt-4 block text-sm font-medium text-slate-700">Nota <span className="font-normal text-slate-400">(opcional)</span><textarea maxLength={500} rows={3} value={transferCapture.notes} onChange={event => setTransferCapture(current => current ? { ...current, notes: event.target.value } : null)} className="mt-1 w-full resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Detalle útil para identificar la transferencia"/></label>
+              <button type="button" onClick={saveTransferCapture} disabled={!transferCapture.reference.trim() || (accountingEnabled && !transferCapture.bankAccountId)} className="mt-4 h-11 w-full rounded-xl bg-teal-700 font-bold text-white disabled:opacity-45">Guardar transferencia</button>
+            </div>
+          </div>
+        )}
         </div>
 
         <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:justify-end sm:px-5 sm:pb-4 sm:pt-4">
@@ -431,6 +504,8 @@ export function PosPaymentDialog({
             type="submit"
             disabled={!settlement.isValid || busy || !documentTypeReady ||
               payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) ||
+              payments.some(payment => payment.methodCode === "Transfer" &&
+                (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) ||
               paymentMethods.isLoading || paymentMethods.isError}
             className="flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45 sm:min-w-48 sm:px-5"
           >

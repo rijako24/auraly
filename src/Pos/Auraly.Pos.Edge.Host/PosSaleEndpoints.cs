@@ -16,7 +16,9 @@ public sealed record CompletePaymentRequest(
     decimal Amount,
     string? Reference,
     string? CardFranchiseCode = null,
-    string? ApprovalNumber = null);
+    string? ApprovalNumber = null,
+    Guid? BankAccountId = null,
+    string? Notes = null);
 
 public sealed record CompleteDraftRequest(
     string? CustomerIdentification,
@@ -73,7 +75,6 @@ internal static class PosSaleHostModule
     {
         services.AddPosPeripherals(configuration, databasePath);
         var tenantId = new TenantId(RequiredGuid(configuration, "PosEdge:TenantId"));
-        _ = ReadPermissions(configuration);
         var fiscal = ReadFiscalSettings(configuration, runtime.DeviceId);
         var settings = new PosSaleHostSettings(
             tenantId,
@@ -169,7 +170,9 @@ internal static class PosSaleHostModule
                         payment.Amount,
                         payment.Reference,
                         payment.CardFranchiseCode,
-                        payment.ApprovalNumber))
+                        payment.ApprovalNumber,
+                        payment.BankAccountId,
+                        payment.Notes))
                     .ToArray();
                 var session = sessions.Required();
                 var result = await completion.CompleteAsync(
@@ -327,20 +330,6 @@ internal static class PosSaleHostModule
             ? value
             : throw new InvalidOperationException(
                 "PosEdge:PaperWidthMillimeters must be 58 or 80.");
-    }
-
-    private static IReadOnlyCollection<string> ReadPermissions(IConfiguration configuration)
-    {
-        var values = configuration
-            .GetSection("PosEdge:Permissions")
-            .Get<string[]>()?
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray() ?? [];
-        if (!values.Contains(CommercePermissionCodes.SalesCreate, StringComparer.Ordinal))
-            throw new InvalidOperationException(
-                $"PosEdge:Permissions must contain {CommercePermissionCodes.SalesCreate}.");
-        return values;
     }
 
     private sealed class ConfiguredPermissionProvider(UserPermissionSet permissionSet)

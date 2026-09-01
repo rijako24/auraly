@@ -14,6 +14,39 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PosConfigurationTests
 {
     [Fact]
+    public async Task Accounting_settlement_configuration_is_replaced_atomically_for_offline_use()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-settlement-config-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var store = new PosCatalogStore($"Data Source={Path.Combine(directory, "catalog.db")}");
+            await store.InitializeAsync();
+            var bankId = Guid.NewGuid();
+
+            await store.ApplySettlementConfigurationAsync(new(
+                true,
+                [new PosBankAccount(bankId, "Principal", "Banco prueba", "1234",
+                    "Corriente", true, "AQID")]));
+
+            var enabled = await store.SettlementConfigurationAsync();
+            Assert.True(enabled.IsAccountingEnabled);
+            Assert.Equal(bankId, Assert.Single(enabled.BankAccounts).BankAccountId);
+
+            await store.ApplySettlementConfigurationAsync(new(false, []));
+            var disabled = await store.SettlementConfigurationAsync();
+            Assert.False(disabled.IsAccountingEnabled);
+            Assert.Empty(disabled.BankAccounts);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Warehouse_policy_push_is_applied_in_memory_and_persisted_for_offline_restart()
     {
         var directory = Path.Combine(
@@ -178,7 +211,6 @@ public sealed class PosConfigurationTests
             false,
             Guid.NewGuid(),
             "Cajero",
-            ["sales.create"],
             new PosEnrollmentDocumentSeries(
                 Guid.NewGuid(), "SalesInvoice", "VTA", "01", 8, 1, 99_999_999),
             null,
@@ -263,7 +295,6 @@ public sealed class PosConfigurationTests
             allowsNegativeStock,
             Guid.NewGuid(),
             "Cajero",
-            ["sales.create"],
             new PosEnrollmentDocumentSeries(
                 Guid.NewGuid(), "SalesInvoice", "VTA", "01", 8, 1, 99_999_999),
             null,

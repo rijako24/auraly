@@ -183,6 +183,134 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Enrolled_pos_login_revokes_the_previous_browser_before_it_can_close_the_work_session()
+    {
+        var user = await CreatePasswordUserAsync("auth-pos-handoff");
+        var browserClientId = Guid.NewGuid();
+        var browserLogin = await LoginAsync(user.Username, browserClientId);
+        using var browser = AuthenticatedClient(browserLogin, browserClientId);
+        using (var open = await browser.PostAsJsonAsync(
+                   "/api/commerce/v1/work-sessions/current",
+                   new OpenWorkSessionRequest(
+                       fixture.BusinessId, fixture.WarehouseId, null)))
+            open.EnsureSuccessStatusCode();
+
+        using var acquire = new HttpRequestMessage(
+            HttpMethod.Post, "/api/pos/v1/authentication/offline-leases")
+        {
+            Content = JsonContent.Create(
+                new OfflineAuthenticationLeaseAcquireRequest(
+                    user.Username, Password))
+        };
+        acquire.Headers.Add(
+            "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        acquire.Headers.Add(
+            "X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        using var acquired = await fixture.CreateClient().SendAsync(acquire);
+        acquired.EnsureSuccessStatusCode();
+        var acquiredLease = await acquired.Content
+            .ReadFromJsonAsync<OfflineAuthenticationLeaseAcquireResponse>();
+        Assert.NotNull(acquiredLease);
+
+        using var staleAction = await browser.GetAsync(
+            "/api/commerce/v1/work-sessions/current");
+        Assert.Equal(HttpStatusCode.Unauthorized, staleAction.StatusCode);
+        Assert.Equal(0, await CountActiveSessionsAsync(user.UserId));
+        Assert.Equal(1, await CountOpenWorkSessionsAsync(user.UserId));
+        Assert.Equal(0, await CountWorkSessionClosuresAsync(user.UserId));
+
+        var leasePayload = OfflineAuthenticationLeaseTokenCodec.Deserialize(
+            OfflineAuthenticationLeaseTokenCodec.Decode(acquiredLease.Lease.Payload));
+        using var release = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/pos/v1/authentication/offline-leases/{leasePayload.LeaseId:D}/release");
+        release.Headers.Add(
+            "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        release.Headers.Add(
+            "X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        using var released = await fixture.CreateClient().SendAsync(release);
+        Assert.Equal(HttpStatusCode.NoContent, released.StatusCode);
+    }
+
+    [Fact]
+    public async Task Browser_login_invalidates_only_the_previous_pos_login_and_keeps_device_and_work_session()
+    {
+        var user = await CreatePasswordUserAsync("auth-pos-to-browser");
+        var browserClientId = Guid.NewGuid();
+        var browserLogin = await LoginAsync(user.Username, browserClientId);
+        using var browser = AuthenticatedClient(browserLogin, browserClientId);
+        using var opened = await browser.PostAsJsonAsync(
+            "/api/commerce/v1/work-sessions/current",
+            new OpenWorkSessionRequest(
+                fixture.BusinessId, fixture.WarehouseId, null));
+        opened.EnsureSuccessStatusCode();
+        var workSession = await opened.Content.ReadFromJsonAsync<WorkSessionView>();
+        Assert.NotNull(workSession);
+
+        var posLease = await AcquireOfflineLeaseAsync(
+            user.Username,
+            fixture.DeviceId,
+            ServerSliceFixture.DeviceSecret);
+        Assert.True(await IsOfflineLeaseActiveAsync(
+            posLease.LeaseId,
+            user.UserId,
+            fixture.DeviceId,
+            ServerSliceFixture.DeviceSecret));
+
+        var replacementClientId = Guid.NewGuid();
+        var replacementLogin = await LoginAsync(user.Username, replacementClientId);
+
+        Assert.False(await IsOfflineLeaseActiveAsync(
+            posLease.LeaseId,
+            user.UserId,
+            fixture.DeviceId,
+            ServerSliceFixture.DeviceSecret));
+        Assert.Equal(1, await CountOpenWorkSessionsAsync(user.UserId));
+        Assert.Equal(0, await CountWorkSessionClosuresAsync(user.UserId));
+        Assert.Equal(1, await CountActiveDevicesAsync(fixture.DeviceId));
+
+        using var replacement = AuthenticatedClient(
+            replacementLogin, replacementClientId);
+        var resumed = await replacement.GetFromJsonAsync<WorkSessionView>(
+            "/api/commerce/v1/work-sessions/current");
+        Assert.NotNull(resumed);
+        Assert.Equal(workSession.WorkSessionId, resumed.WorkSessionId);
+    }
+
+    [Fact]
+    public async Task Login_on_another_enrolled_device_invalidates_only_the_previous_pos_login()
+    {
+        var user = await CreatePasswordUserAsync("auth-pos-to-pos");
+        var first = await AcquireOfflineLeaseAsync(
+            user.Username,
+            fixture.DeviceId,
+            ServerSliceFixture.DeviceSecret);
+        Assert.True(await IsOfflineLeaseActiveAsync(
+            first.LeaseId,
+            user.UserId,
+            fixture.DeviceId,
+            ServerSliceFixture.DeviceSecret));
+
+        var second = await AcquireOfflineLeaseAsync(
+            user.Username,
+            fixture.DeniedDeviceId,
+            ServerSliceFixture.DeniedDeviceSecret);
+
+        Assert.False(await IsOfflineLeaseActiveAsync(
+            first.LeaseId,
+            user.UserId,
+            fixture.DeviceId,
+            ServerSliceFixture.DeviceSecret));
+        Assert.True(await IsOfflineLeaseActiveAsync(
+            second.LeaseId,
+            user.UserId,
+            fixture.DeniedDeviceId,
+            ServerSliceFixture.DeniedDeviceSecret));
+        Assert.Equal(1, await CountActiveDevicesAsync(fixture.DeviceId));
+        Assert.Equal(1, await CountActiveDevicesAsync(fixture.DeniedDeviceId));
+    }
+
+    [Fact]
     public async Task Concurrent_logins_from_distinct_clients_leave_only_one_active()
     {
         var user = await CreatePasswordUserAsync("auth-concurrent");
@@ -256,6 +384,47 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         client.DefaultRequestHeaders.Add(
             AuthenticationDefaults.ClientIdHeader, clientId.ToString("D"));
         return client;
+    }
+
+    private async Task<OfflineLeaseIdentity> AcquireOfflineLeaseAsync(
+        string username,
+        Guid deviceId,
+        string deviceSecret)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/pos/v1/authentication/offline-leases")
+        {
+            Content = JsonContent.Create(
+                new OfflineAuthenticationLeaseAcquireRequest(username, Password))
+        };
+        request.Headers.Add("X-Auraly-Device-Id", deviceId.ToString("D"));
+        request.Headers.Add("X-Auraly-Device-Secret", deviceSecret);
+        using var response = await fixture.CreateClient().SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var lease = await response.Content
+            .ReadFromJsonAsync<OfflineAuthenticationLeaseAcquireResponse>()
+            ?? throw new InvalidOperationException("The offline lease response is empty.");
+        var payload = OfflineAuthenticationLeaseTokenCodec.Deserialize(
+            OfflineAuthenticationLeaseTokenCodec.Decode(lease.Lease.Payload));
+        return new OfflineLeaseIdentity(payload.LeaseId);
+    }
+
+    private async Task<bool> IsOfflineLeaseActiveAsync(
+        Guid leaseId,
+        Guid userId,
+        Guid deviceId,
+        string deviceSecret)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/pos/v1/authentication/offline-leases/{leaseId:D}/active?userId={userId:D}");
+        request.Headers.Add("X-Auraly-Device-Id", deviceId.ToString("D"));
+        request.Headers.Add("X-Auraly-Device-Secret", deviceSecret);
+        using var response = await fixture.CreateClient().SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var state = await response.Content.ReadFromJsonAsync<OfflineLeaseActiveState>();
+        return state?.Active == true;
     }
 
     private static async Task<AuthenticationResponse> ReadAuthenticationResponseAsync(
@@ -351,6 +520,19 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
             "INNER JOIN dbo.WorkSessions s ON s.WorkSessionId=c.WorkSessionId " +
             "WHERE s.UserId=@UserId;", userId);
 
+    private async Task<int> CountActiveDevicesAsync(Guid deviceId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT COUNT(*) FROM dbo.EnrolledDevices " +
+            "WHERE TenantId=@TenantId AND DeviceId=@DeviceId AND IsActive=1;",
+            connection);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@DeviceId", deviceId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     private async Task<int> CountAsync(string sql, Guid userId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -363,4 +545,6 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     private sealed record TestUser(Guid UserId, string Username);
     private sealed record TestSessionRow(
         Guid ClientId, byte[] RefreshTokenHash, string Status);
+    private sealed record OfflineLeaseIdentity(Guid LeaseId);
+    private sealed record OfflineLeaseActiveState(bool Active);
 }

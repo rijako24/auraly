@@ -110,7 +110,6 @@ public sealed class SqlPosEnrollmentStore(
     public async Task<PosEnrollmentPackage> RedeemAsync(
         RedeemPosEnrollmentRequest request,
         byte[] redemptionCodeHash,
-        IReadOnlyCollection<string> devicePermissions,
         CancellationToken cancellationToken)
     {
         // Validate trust material before opening the transaction. A broken
@@ -188,14 +187,14 @@ public sealed class SqlPosEnrollmentStore(
         {
             await InsertDeviceAndSeriesAsync(
                 connection, transaction, data, deviceId, documentSeriesId,
-                documentSeries.SeriesCode, credential, devicePermissions,
+                documentSeries.SeriesCode, credential,
                 request.InstallationId, now, cancellationToken);
         }
         else
         {
             await UpdateExistingDeviceAsync(
                 connection, transaction, data, existing, credential,
-                devicePermissions, request.InstallationId, now, cancellationToken);
+                request.InstallationId, now, cancellationToken);
         }
         var receiptDocumentSeries = await EnsureReceiptDocumentSeriesAsync(
             connection, transaction, data.BusinessId, deviceId,
@@ -207,7 +206,6 @@ public sealed class SqlPosEnrollmentStore(
             data.WarehouseId, data.BusinessName, data.WarehouseCode,
             data.WarehouseName, data.AllowNegativeStock,
             data.UserId, data.UserDisplayName,
-            devicePermissions.Order(StringComparer.Ordinal).ToArray(),
             documentSeries,
             material is null || data.FiscalSeriesId is null ? null : new PosEnrollmentFiscalSeries(
                 data.FiscalSeriesId.Value, data.FiscalAuthorizationId!.Value,
@@ -322,7 +320,6 @@ public sealed class SqlPosEnrollmentStore(
         Provisioning data,
         ExistingDevice existing,
         PosDeviceCredential credential,
-        IReadOnlyCollection<string> permissions,
         string installationId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -333,7 +330,6 @@ public sealed class SqlPosEnrollmentStore(
                 CredentialIterations=@Iterations,IsActive=1,LastSeenAt=@Now
             WHERE DeviceId=@DeviceId AND TenantId=@TenantId;
             IF @@ROWCOUNT<>1 THROW 51003,'The existing POS device is not valid for this tenant.',1;
-            DELETE FROM dbo.PosDevicePermissions WHERE DeviceId=@DeviceId;
             UPDATE dbo.PosEnrollmentSessions
             SET RedeemedAt=@Now,DeviceId=@DeviceId
             WHERE EnrollmentSessionId=@SessionId AND RedeemedAt IS NULL;
@@ -350,18 +346,6 @@ public sealed class SqlPosEnrollmentStore(
             Add(command, "@Now", now);
             Add(command, "@SessionId", data.SessionId);
             await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-        foreach (var permission in permissions)
-        {
-            await using var permissionCommand = new SqlCommand("""
-                INSERT dbo.PosDevicePermissions
-                  (DeviceId,PermissionCode,IsGranted,GrantedAt)
-                VALUES (@DeviceId,@Permission,1,@Now);
-                """, connection, transaction);
-            Add(permissionCommand, "@DeviceId", existing.DeviceId);
-            Add(permissionCommand, "@Permission", permission);
-            Add(permissionCommand, "@Now", now);
-            await permissionCommand.ExecuteNonQueryAsync(cancellationToken);
         }
     }
     private static async Task<Provisioning?> ReadProvisioningAsync(
@@ -463,7 +447,6 @@ public sealed class SqlPosEnrollmentStore(
         Guid documentSeriesId,
         string seriesCode,
         PosDeviceCredential credential,
-        IReadOnlyCollection<string> permissions,
         string installationId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -504,18 +487,6 @@ public sealed class SqlPosEnrollmentStore(
             Add(command, "@Now", now);
             Add(command, "@SessionId", data.SessionId);
             await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-        foreach (var permission in permissions)
-        {
-            await using var permissionCommand = new SqlCommand("""
-                INSERT dbo.PosDevicePermissions
-                  (DeviceId,PermissionCode,IsGranted,GrantedAt)
-                VALUES (@DeviceId,@Permission,1,@Now);
-                """, connection, transaction);
-            Add(permissionCommand, "@DeviceId", deviceId);
-            Add(permissionCommand, "@Permission", permission);
-            Add(permissionCommand, "@Now", now);
-            await permissionCommand.ExecuteNonQueryAsync(cancellationToken);
         }
     }
 

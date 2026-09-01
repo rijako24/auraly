@@ -140,7 +140,7 @@ public static class PosApprovalApi
         });
 
         var device = endpoints.MapGroup("/api/pos/v1/approvals")
-            .RequireAuthorization("pos.approvals.consume");
+            .RequireAuthorization("pos.enrolled");
 
         device.MapPost("/", async (
             ClaimsPrincipal principal,

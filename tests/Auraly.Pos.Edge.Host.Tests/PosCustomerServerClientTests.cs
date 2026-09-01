@@ -132,6 +132,8 @@ public sealed class PosCustomerServerClientTests
                 ], WarehouseAllowsNegativeStock: true));
             if (path.StartsWith("/api/commerce/v1/reference-options/", StringComparison.Ordinal))
                 return Ok<IReadOnlyList<ReferenceOption>>([]);
+            if (path == "/api/pos/v1/accounting/settlement-configuration")
+                return Ok(new PosAccountingSettlementConfiguration(false, []));
             if (path.StartsWith("/api/pos/v1/catalog/changes?", StringComparison.Ordinal))
                 return Ok(new CatalogDeltaPage(0, 0, false, []));
             return new HttpResponseMessage(HttpStatusCode.NotFound)

@@ -17,6 +17,11 @@ CREATE TABLE [dbo].[SalesReturns]
     [EconomicResolution] NVARCHAR(24) NOT NULL,
     [RefundMethodCode] NVARCHAR(32) NULL,
     [OriginalPaymentNumber] INT NULL,
+    [CardFranchiseCode] NVARCHAR(64) NULL,
+    [ApprovalNumber] NVARCHAR(100) NULL,
+    [BankAccountId] UNIQUEIDENTIFIER NULL,
+    [RefundReference] NVARCHAR(160) NULL,
+    [RefundNotes] NVARCHAR(500) NULL,
     [CorrectionCode] NVARCHAR(4) NOT NULL,
     [ReasonCode] NVARCHAR(32) NOT NULL,
     [ReasonDescription] NVARCHAR(300) NOT NULL,
@@ -39,6 +44,7 @@ CREATE TABLE [dbo].[SalesReturns]
     CONSTRAINT [FK_SalesReturns_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_SalesReturns_OriginalDocument] FOREIGN KEY ([OriginalDocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesReturns_OriginalPayment] FOREIGN KEY ([OriginalDocumentId],[OriginalPaymentNumber]) REFERENCES [dbo].[SalesPayments] ([DocumentId],[PaymentNumber]),
+    CONSTRAINT [FK_SalesReturns_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [FK_SalesReturns_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_SalesReturns_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
     CONSTRAINT [FK_SalesReturns_CreatedBy] FOREIGN KEY ([CreatedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
@@ -46,10 +52,20 @@ CREATE TABLE [dbo].[SalesReturns]
     CONSTRAINT [UQ_SalesReturns_Number] UNIQUE ([BusinessId],[DocumentPrefix],[DocumentSeriesCode],[DocumentConsecutive]),
     CONSTRAINT [CK_SalesReturns_Resolution] CHECK
       (([EconomicResolution]=N'Refund' AND [RefundMethodCode] IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard')
-          AND [OriginalPaymentNumber] IS NOT NULL
-          AND (([RefundMethodCode]=N'Cash' AND [WorkSessionId] IS NOT NULL) OR ([RefundMethodCode]<>N'Cash' AND [WorkSessionId] IS NULL))) OR
+          AND (([RefundMethodCode]=N'Cash' AND [BankAccountId] IS NULL)
+               OR ([RefundMethodCode]=N'Transfer' AND [WorkSessionId] IS NULL
+                   AND NOT ([OriginalPaymentNumber] IS NOT NULL AND [BankAccountId] IS NOT NULL))
+               OR ([RefundMethodCode] IN(N'DebitCard',N'CreditCard') AND [WorkSessionId] IS NULL
+                   AND [OriginalPaymentNumber] IS NOT NULL AND [BankAccountId] IS NULL))
+          AND (([RefundMethodCode] IN(N'DebitCard',N'CreditCard')
+                AND ((NULLIF(LTRIM(RTRIM([CardFranchiseCode])),N'') IS NOT NULL
+                      AND NULLIF(LTRIM(RTRIM([ApprovalNumber])),N'') IS NOT NULL)
+                     OR ([CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL)))
+               OR ([RefundMethodCode] NOT IN(N'DebitCard',N'CreditCard')
+                   AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL))) OR
        ([EconomicResolution]=N'CustomerCredit' AND [RefundMethodCode] IS NULL
-          AND [OriginalPaymentNumber] IS NULL)),
+          AND [OriginalPaymentNumber] IS NULL AND [WorkSessionId] IS NULL
+          AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL AND [BankAccountId] IS NULL)),
     CONSTRAINT [CK_SalesReturns_ReturnScope] CHECK ([ReturnScopeCode] IN(N'FullCancellation',N'Partial')),
     CONSTRAINT [CK_SalesReturns_Correction] CHECK ([CorrectionCode]=N'1'),
     CONSTRAINT [CK_SalesReturns_Amounts] CHECK
@@ -138,6 +154,10 @@ CREATE TABLE [dbo].[SalesReturnSettlements]
     [OriginalPaymentNumber] INT NULL,
     [Amount] DECIMAL(19,4) NOT NULL,
     [Reference] NVARCHAR(160) NULL,
+    [CardFranchiseCode] NVARCHAR(64) NULL,
+    [ApprovalNumber] NVARCHAR(100) NULL,
+    [BankAccountId] UNIQUEIDENTIFIER NULL,
+    [Notes] NVARCHAR(500) NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_SalesReturnSettlements] PRIMARY KEY CLUSTERED ([ReturnId],[SettlementNumber]),
     CONSTRAINT [FK_SalesReturnSettlements_Return] FOREIGN KEY ([ReturnId]) REFERENCES [dbo].[SalesReturns] ([ReturnId]),
@@ -145,9 +165,22 @@ CREATE TABLE [dbo].[SalesReturnSettlements]
       REFERENCES [dbo].[SalesReturns] ([ReturnId],[OriginalDocumentId]),
     CONSTRAINT [FK_SalesReturnSettlements_OriginalPayment] FOREIGN KEY ([OriginalDocumentId],[OriginalPaymentNumber])
       REFERENCES [dbo].[SalesPayments] ([DocumentId],[PaymentNumber]),
+    CONSTRAINT [FK_SalesReturnSettlements_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [CK_SalesReturnSettlements_Type] CHECK
-      (([SettlementType]=N'Refund' AND [MethodCode] IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard') AND [OriginalPaymentNumber] IS NOT NULL) OR
-       ([SettlementType]=N'CustomerCredit' AND [MethodCode] IS NULL AND [OriginalPaymentNumber] IS NULL)),
+      (([SettlementType]=N'Refund' AND [MethodCode] IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard')
+          AND (([MethodCode]=N'Cash' AND [BankAccountId] IS NULL)
+               OR ([MethodCode]=N'Transfer'
+                   AND NOT ([OriginalPaymentNumber] IS NOT NULL AND [BankAccountId] IS NOT NULL))
+               OR ([MethodCode] IN(N'DebitCard',N'CreditCard')
+                   AND [OriginalPaymentNumber] IS NOT NULL AND [BankAccountId] IS NULL))
+          AND (([MethodCode] IN(N'DebitCard',N'CreditCard')
+                AND ((NULLIF(LTRIM(RTRIM([CardFranchiseCode])),N'') IS NOT NULL
+                      AND NULLIF(LTRIM(RTRIM([ApprovalNumber])),N'') IS NOT NULL)
+                     OR ([CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL)))
+               OR ([MethodCode] NOT IN(N'DebitCard',N'CreditCard')
+                   AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL))) OR
+       ([SettlementType]=N'CustomerCredit' AND [MethodCode] IS NULL AND [OriginalPaymentNumber] IS NULL
+          AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL AND [BankAccountId] IS NULL)),
     CONSTRAINT [CK_SalesReturnSettlements_Amount] CHECK ([Amount]>0)
 );
 GO

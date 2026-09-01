@@ -25,6 +25,39 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
     private const string Password = "Auraly-New-Tenant-2026!";
 
     [Fact]
+    public async Task Platform_subscription_list_includes_tenants_pending_commercial_assignment()
+    {
+        var tenantId = Guid.NewGuid();
+        var suffix = Guid.NewGuid().ToString("N")[..10];
+        var email = $"legacy-{suffix}@auraly.test";
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                INSERT dbo.Tenants
+                  (TenantId,TenantKey,Name,Email,IsActive,MaximumUsers,MaximumEnrolledDevices,CreatedAt)
+                VALUES(@TenantId,@TenantKey,@Name,@Email,1,5,1,SYSUTCDATETIME());
+                """, connection);
+            command.Parameters.AddWithValue("@TenantId", tenantId);
+            command.Parameters.AddWithValue("@TenantKey", $"@legacy-{suffix}");
+            command.Parameters.AddWithValue("@Name", $"Empresa histórica {suffix}");
+            command.Parameters.AddWithValue("@Email", email);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        using var admin = fixture.CreateAdminClient("tenants.read");
+        var page = await admin.GetFromJsonAsync<PlatformTenantSubscriptionPageDto>(
+            $"/api/v1/tenants/subscriptions?search={Uri.EscapeDataString(email)}");
+
+        Assert.NotNull(page);
+        var item = Assert.Single(page.Items);
+        Assert.Equal(tenantId, item.TenantId);
+        Assert.Null(item.SubscriptionId);
+        Assert.Null(item.PlanCode);
+        Assert.Null(item.Status);
+    }
+
+    [Fact]
     public async Task Paid_renewal_creates_one_shared_service_invoice_and_no_operational_work()
     {
         await UseCanonicalAuralyBillingBusinessAsync();
@@ -148,6 +181,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(1, state.DefaultCustomers);
         Assert.Equal(52, state.AccountingAccounts);
         Assert.Equal(52, state.AccountingMappings);
+        Assert.Equal(1, await CountGeneralCashAccountsAsync(result.TenantId));
         Assert.Equal(0, state.UnmappedPosPaymentMethods);
         Assert.Equal(1, state.OpenAccountingPeriods);
         Assert.Equal(1, state.DefaultCostCenters);
@@ -162,6 +196,17 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             result.TenantId, "CASHIER", "pos.synchronization.events.read"));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "inventory.read"));
+        foreach (var permission in new[]
+                 {
+                     "agents.read", "agents.update", "conversations.read",
+                     "leads.read", "campaigns.read", "reservations.read"
+                 })
+        {
+            Assert.False(await RoleHasPermissionAsync(
+                result.TenantId, "ADMINISTRATOR", permission));
+            Assert.False(await RoleHasPermissionAsync(
+                result.TenantId, "ADMINISTRATIVE", permission));
+        }
         foreach (var permission in new[]
                  {
                      "accounting.configure", "accounting.manual.create",
@@ -307,6 +352,9 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             permission.StartsWith("tenants.", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(authentication.User.Permissions, permission =>
             permission.StartsWith("platform.", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(authentication.User.Permissions, permission =>
+            new[] { "agents.", "conversations.", "leads.", "campaigns.", "reservations." }
+                .Any(prefix => permission.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)));
         Assert.Equal(
             await TenantAdministratorPermissionCountAsync(),
             authentication.User.Permissions.Count);
@@ -477,6 +525,29 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             ?? throw new InvalidOperationException("Invitation token is missing.");
     }
 
+    private async Task<int> CountGeneralCashAccountsAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.AccountingAccounts account
+            INNER JOIN dbo.AccountingAccountMappings mapping
+              ON mapping.TenantId=account.TenantId
+             AND mapping.AccountId=account.AccountId
+             AND mapping.BusinessId IS NULL
+             AND mapping.Category=N'Cash'
+             AND mapping.EffectiveTo IS NULL
+            WHERE account.TenantId=@TenantId
+              AND account.Code=N'110505'
+              AND account.Name=N'Caja general'
+              AND account.IsActive=1
+              AND account.AllowsPosting=1;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     private async Task<CommercialSubscriptionState> ReadCommercialSubscriptionAsync(Guid tenantId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -585,6 +656,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             FROM dbo.Permissions permissionValue
             WHERE permissionValue.Resource NOT LIKE N'tenants.%'
               AND permissionValue.Resource NOT LIKE N'platform.%'
+              AND permissionValue.Resource NOT LIKE N'agents.%'
+              AND permissionValue.Resource NOT LIKE N'conversations.%'
+              AND permissionValue.Resource NOT LIKE N'leads.%'
+              AND permissionValue.Resource NOT LIKE N'campaigns.%'
+              AND permissionValue.Resource NOT LIKE N'reservations.%'
               AND NOT EXISTS(
                 SELECT 1
                 FROM dbo.AppRoles roleValue
@@ -651,7 +727,12 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             SELECT COUNT(*)
             FROM dbo.Permissions
             WHERE Resource NOT LIKE N'tenants.%'
-              AND Resource NOT LIKE N'platform.%';
+              AND Resource NOT LIKE N'platform.%'
+              AND Resource NOT LIKE N'agents.%'
+              AND Resource NOT LIKE N'conversations.%'
+              AND Resource NOT LIKE N'leads.%'
+              AND Resource NOT LIKE N'campaigns.%'
+              AND Resource NOT LIKE N'reservations.%';
             """, connection);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }

@@ -3,11 +3,8 @@ import { buildLoginRedirect } from "@/lib/login-redirect";
 import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
 
 import {
-  classifySessionRuntime,
+  announceSessionReplacement,
   retryAuthenticatedRequest,
-  SESSION_EXPIRED_EVENT,
-  shouldExpireSession,
-  type SessionRuntime,
   type SessionRefreshResult,
 } from "@/lib/auth-session";
 
@@ -17,7 +14,6 @@ const SELECTED_BUSINESS_STORAGE_KEY = "selected_business_id";
 
 let activeRefresh: Promise<SessionRefreshResult> | null = null;
 
-let sessionRuntime: Promise<SessionRuntime> | null = null;
 const REQUEST_TIMEOUT_MS = 45_000;
 
 class ApiClientError extends Error implements ApiError {
@@ -76,43 +72,18 @@ function fetchWithTimeout(
   return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
-async function detectSessionRuntime(): Promise<SessionRuntime> {
-  if (typeof window === "undefined") return "web";
-  const iosNavigator = navigator as Navigator & { standalone?: boolean };
-  const standaloneDisplayMode =
-    window.matchMedia?.("(display-mode: standalone)").matches ?? false;
-  const iosStandalone = iosNavigator.standalone === true;
-
-  sessionRuntime ??= fetchWithTimeout(
-    "/api/runtime",
-    { method: "GET", credentials: "same-origin" },
-    5_000,
-  )
-    .then(async (response) => response.ok
-      ? classifySessionRuntime(
-          Boolean((await response.json() as { desktop?: boolean }).desktop),
-          standaloneDisplayMode,
-          iosStandalone,
-        )
-      : classifySessionRuntime(false, standaloneDisplayMode, iosStandalone))
-    .catch(() => classifySessionRuntime(false, standaloneDisplayMode, iosStandalone));
-  return sessionRuntime;
-}
-
 async function expireWebSession(): Promise<void> {
   if (typeof window === "undefined") return;
-  if (!shouldExpireSession(await detectSessionRuntime())) return;
   try {
     localStorage.removeItem("auth-state");
   } catch {
     // Storage can be unavailable in hardened browsers; navigation still expires the shell.
   }
-  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
   const destination = buildLoginRedirect(
     window.location.pathname,
     window.location.search,
   );
-  window.location.replace(destination);
+  announceSessionReplacement(destination);
 }
 
 async function refreshSession(): Promise<SessionRefreshResult> {

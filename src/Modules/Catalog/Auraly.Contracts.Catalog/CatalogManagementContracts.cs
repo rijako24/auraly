@@ -9,7 +9,6 @@ public static class CatalogPermissionCodes
     public const string ManagePrices = "catalog.prices.manage";
     public const string ReadCosts = "catalog.costs.read";
     public const string ManageCosts = "catalog.costs.manage";
-    public const string Sync = "catalog.sync";
 }
 
 public sealed record ProductBarcodeInput(string Value, bool IsPrimary = false);
@@ -124,8 +123,7 @@ public sealed record CatalogDeviceIdentity(
     Guid DeviceId,
     Guid TenantId,
     Guid BusinessId,
-    Guid WarehouseId,
-    IReadOnlySet<string> Permissions);
+    Guid WarehouseId);
 
 [method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record PosCatalogItem(

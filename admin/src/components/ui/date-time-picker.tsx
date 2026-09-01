@@ -20,9 +20,13 @@ export function DateTimePicker({ value, onChange, disabled, className }: DateTim
   };
 
   return (
-    <div className={cn("grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem]", className)}>
-      <DatePicker value={date} onChange={updateDate} disabled={disabled} />
-      <TimePicker value={time.slice(0, 5)} onChange={updateTime} disabled={disabled} />
+    <div className={cn("flex min-w-0 flex-wrap gap-2", className)}>
+      <div className="min-w-[12rem] flex-1">
+        <DatePicker value={date} onChange={updateDate} disabled={disabled} />
+      </div>
+      <div className="min-w-[8rem] flex-[0_1_10rem]">
+        <TimePicker value={time.slice(0, 5)} onChange={updateTime} disabled={disabled} />
+      </div>
     </div>
   );
 }

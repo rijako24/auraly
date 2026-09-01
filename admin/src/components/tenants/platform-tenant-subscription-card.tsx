@@ -67,7 +67,11 @@ export function PlatformTenantSubscriptionCard({ tenantId }: { tenantId: string 
   }
 
   if (loading) return <section className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">Consultando suscripción…</section>;
-  if (!subscription) return null;
+  if (!subscription) return <section className="rounded-2xl border bg-card p-6 shadow-sm">
+    <p className="text-xs font-semibold uppercase tracking-wide text-primary">Suscripción</p>
+    <h2 className="mt-1 text-xl font-semibold">Sin suscripción comercial</h2>
+    <p className="mt-1 text-sm text-muted-foreground">Esta empresa fue creada antes del modelo comercial o todavía no tiene un plan asignado.</p>
+  </section>;
   const payable = order?.status === "Draft" || order?.status === "PendingPayment";
 
   return <>

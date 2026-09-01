@@ -40,7 +40,6 @@ usuario/dispositivo, caja, bodega y recurso pertenecen al tenant autenticado.
 | Warehouses | Warehouse | Business | Sí | No | Retirar |
 | CashRegisters | Register | Business | Sí | No | Retirar tenant y canal de caja |
 | PosDevices | Device | Register | Derivable | No | Retirar tenant/business/location/warehouse redundantes |
-| PosDevicePermissions | Device | Device | No | No | Sin cambio |
 | FiscalAuthorizations | Authorization | Business | Sí | No | Retirar |
 | FiscalSeries | Series | Register/Authorization | Derivable | No | Retirar tenant/business |
 | SalesDocuments | SalesDocument | Business | Sí | No | Retirar tenant |

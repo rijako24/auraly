@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { canOpenFiscalResolutionChange } from "./fiscal-device-resolution-state";
 import {
   fiscalConfigurationApi,
   type FiscalDeviceSeriesWorkspace,
@@ -28,6 +29,7 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
   const [savingAlerts, setSavingAlerts] = useState(false);
   const [unassigningDeviceId, setUnassigningDeviceId] = useState<string>();
   const [confirmUnassign, setConfirmUnassign] = useState<{ deviceId: string; name: string }>();
+  const [editingDeviceId, setEditingDeviceId] = useState<string>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,6 +90,7 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
       setSelected((current) => Object.fromEntries(Object.entries(current).map(
         ([key, value]) => [key, value === dianNumberingRangeId ? "" : value],
       )));
+      setEditingDeviceId(undefined);
       toast.success("Resolución DIAN asignada. El equipo descargará siempre la nueva asignación al sincronizar.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No fue posible asignar la resolución.");
@@ -124,6 +127,7 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
       setSelected((current) => ({ ...current, [confirmUnassign.deviceId]: "" }));
       toast.success("Resolución retirada. Solo este equipo recibirá el cambio inmediatamente.");
       setConfirmUnassign(undefined);
+      setEditingDeviceId(undefined);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No fue posible retirar la resolución.");
     } finally {
@@ -133,6 +137,7 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
 
   const available = workspace?.availableResolutions ?? [];
   const canAssign = onboarding?.habilitationAccepted === true;
+  const editingDevice = workspace?.devices.find((device) => device.deviceId === editingDeviceId);
 
   return <Card className="overflow-hidden rounded-3xl">
     <CardHeader className="border-b bg-slate-950 text-white">
@@ -166,15 +171,30 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
         <div className="min-w-0"><strong className="block truncate">{device.deviceName}</strong><small className="text-muted-foreground">{device.deviceIsActive ? "Equipo activo" : "Equipo inactivo"}{device.lastSeenAt ? ` · visto ${new Date(device.lastSeenAt).toLocaleString("es-CO")}` : ""}</small></div>
         <div className="space-y-2">
           {device.isProvisioned && <AssignedResolution authorizationNumber={device.authorizationNumber ?? ""} prefix={device.prefix ?? ""} rangeStart={device.rangeStart ?? 0} rangeEnd={device.rangeEnd ?? 0} />}
-          {(!device.isProvisioned || available.length > 0) && <ResolutionSelect value={selected[device.deviceId] ?? ""} onChange={(value) => setSelected((current) => ({ ...current, [device.deviceId]: value }))} available={available} disabled={!canManage || !canAssign || !device.deviceIsActive} />}
+          {!device.isProvisioned && <ResolutionSelect value={selected[device.deviceId] ?? ""} onChange={(value) => setSelected((current) => ({ ...current, [device.deviceId]: value }))} available={available} disabled={!canManage || !canAssign || !device.deviceIsActive} />}
         </div>
         <div className="flex justify-self-end gap-2">
-          {device.isProvisioned && <Button variant="outline" size="icon" title="Quitar resolución del equipo" disabled={!canManage || unassigningDeviceId === device.deviceId} onClick={() => setConfirmUnassign({ deviceId: device.deviceId, name: device.deviceName })}><Trash2 className="h-4 w-4" /></Button>}
-          <Button disabled={!canManage || !canAssign || !selected[device.deviceId] || savingDeviceId === device.deviceId} onClick={() => void assignDevice(device.deviceId)}>{savingDeviceId === device.deviceId && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{device.isProvisioned ? "Cambiar" : "Asignar resolución"}</Button>
+          {device.isProvisioned
+            ? <Button disabled={!canOpenFiscalResolutionChange(canManage, canAssign, device.deviceIsActive, savingDeviceId === device.deviceId)} onClick={() => { setSelected((current) => ({ ...current, [device.deviceId]: "" })); setEditingDeviceId(device.deviceId); }}>Cambiar</Button>
+            : <Button disabled={!canManage || !canAssign || !selected[device.deviceId] || savingDeviceId === device.deviceId} onClick={() => void assignDevice(device.deviceId)}>{savingDeviceId === device.deviceId && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Asignar resolución</Button>}
         </div>
       </div>)}
       {!loading && available.length === 0 && <p className="text-sm text-muted-foreground">No hay resoluciones libres y vigentes. Consulta la DIAN después de asociar una nueva numeración al software.</p>}
     </CardContent>
+    <Dialog open={!!editingDeviceId} onOpenChange={(open) => !open && !savingDeviceId && setEditingDeviceId(undefined)}>
+      <DialogContent className="rounded-3xl sm:max-w-lg">
+        <DialogHeader><DialogTitle>Cambiar resolución de la caja</DialogTitle><DialogDescription>Selecciona una resolución libre y vigente. La caja recibirá únicamente su nueva asignación al sincronizar.</DialogDescription></DialogHeader>
+        {editingDeviceId && editingDevice ? <div className="space-y-4">
+          <div><p className="mb-2 text-sm font-medium">Resolución actual</p><AssignedResolution authorizationNumber={editingDevice.authorizationNumber ?? ""} prefix={editingDevice.prefix ?? ""} rangeStart={editingDevice.rangeStart ?? 0} rangeEnd={editingDevice.rangeEnd ?? 0} /></div>
+          <div><p className="mb-2 text-sm font-medium">Nueva resolución</p><ResolutionSelect value={selected[editingDeviceId] ?? ""} onChange={(value) => setSelected((current) => ({ ...current, [editingDeviceId]: value }))} available={available} disabled={!canManage || !canAssign} /></div>
+          {available.length === 0 && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">No hay otra resolución libre y vigente. Consulta la DIAN después de asociar una nueva numeración. La resolución retirada no vuelve al pool porque podría haber sido consumida sin conexión.</p>}
+        </div> : null}
+        <DialogFooter className="sm:justify-between">
+          <Button variant="destructive" disabled={!editingDeviceId || !!savingDeviceId || !!unassigningDeviceId} onClick={() => { if (!editingDevice) return; setEditingDeviceId(undefined); setConfirmUnassign({ deviceId: editingDevice.deviceId, name: editingDevice.deviceName }); }}><Trash2 className="mr-2 h-4 w-4" />Quitar resolución</Button>
+          <div className="flex gap-2"><Button variant="outline" disabled={!!savingDeviceId} onClick={() => setEditingDeviceId(undefined)}>Cancelar</Button><Button disabled={!editingDeviceId || !selected[editingDeviceId] || !!savingDeviceId} onClick={() => editingDeviceId && void assignDevice(editingDeviceId)}>{savingDeviceId && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Guardar cambio</Button></div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog open={!!confirmUnassign} onOpenChange={(open) => !open && !unassigningDeviceId && setConfirmUnassign(undefined)}>
       <DialogContent className="rounded-3xl sm:max-w-md">
         <DialogHeader><DialogTitle>¿Quitar la resolución de esta caja?</DialogTitle><DialogDescription>{confirmUnassign?.name} dejará de emitir factura electrónica hasta que le asignes otra. La numeración histórica queda reservada para evitar reutilizar consecutivos.</DialogDescription></DialogHeader>

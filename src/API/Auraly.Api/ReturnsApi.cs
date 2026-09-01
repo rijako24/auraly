@@ -107,7 +107,6 @@ public static class ReturnsApi
             RequiredGuid(principal, "tenant_id"),
             RequiredGuid(principal, "business_id"),
             principal.FindAll("permission")
-                .Concat(principal.FindAll(PosAuthenticationDefaults.PermissionClaim))
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));
 

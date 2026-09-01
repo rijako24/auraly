@@ -25,9 +25,10 @@ sesiones abiertas. La sesión conserva sede, bodega, usuario, equipo opcional, a
 actividad y cierre.
 
 Los movimientos de medios de pago se atribuyen a la sesión. El cierre genera una
-evidencia durable en `WorkSessionClosures`; cerrar sesión de usuario cierra también su
-sesión de trabajo abierta. Esto reemplaza arqueos, turnos y cierres vinculados a una
-caja física.
+evidencia durable en `WorkSessionClosures`. Login y logout no abren ni cierran la
+sesión de trabajo; entrar al punto de venta abre o recupera la única sesión del
+usuario y solo el cierre operativo explícito la termina. Esto reemplaza arqueos,
+turnos y cierres vinculados a una caja física.
 
 ## Espacio de venta
 

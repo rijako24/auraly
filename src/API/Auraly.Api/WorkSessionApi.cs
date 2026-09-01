@@ -212,7 +212,7 @@ public static class WorkSessionApi
             }));
 
         var deviceCatalogGroup = endpoints.MapGroup("/api/pos/v1")
-            .RequireAuthorization("pos.synchronization");
+            .RequireAuthorization("pos.enrolled");
         deviceCatalogGroup.MapGet("/cash-movement-reasons", async (
             HttpContext context,
             Guid businessId,
@@ -226,7 +226,7 @@ public static class WorkSessionApi
                     direction,
                     cancellationToken))));
         var deviceCashGroup = endpoints.MapGroup("/api/pos/v1")
-            .RequireAuthorization("pos.cash.manage");
+            .RequireAuthorization("pos.enrolled");
         deviceCashGroup.MapPost("/cash-movements", async (
             HttpContext context,
             DeviceCashMovementRequest request,
@@ -250,7 +250,7 @@ public static class WorkSessionApi
             }));
 
         var deviceOpenGroup = endpoints.MapGroup("/api/pos/v1")
-            .RequireAuthorization("pos.sales.upload");
+            .RequireAuthorization("pos.enrolled");
         deviceOpenGroup.MapPost("/work-sessions/current", async (
             HttpContext context,
             DeviceOpenWorkSessionRequest request,
@@ -267,7 +267,7 @@ public static class WorkSessionApi
                     cancellationToken))));
 
         var deviceCloseGroup = endpoints.MapGroup("/api/pos/v1")
-            .RequireAuthorization("pos.sales.upload");
+            .RequireAuthorization("pos.enrolled");
         deviceCloseGroup.MapPost("/work-sessions/{workSessionId:guid}/close", async (
             HttpContext context,
             Guid workSessionId,
@@ -394,9 +394,7 @@ public static class WorkSessionClaimsPrincipalExtensions
         new(
             RequiredGuid(principal, ClaimTypes.NameIdentifier),
             RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
-            principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
-                .Select(claim => claim.Value)
-                .ToHashSet(StringComparer.Ordinal));
+            new HashSet<string>(StringComparer.Ordinal));
 
     public static Guid ToDeviceId(this ClaimsPrincipal principal) =>
         RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim);

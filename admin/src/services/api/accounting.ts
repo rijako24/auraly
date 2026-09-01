@@ -29,6 +29,17 @@ export interface ActivateAccounting {
   functionalCurrencyCode: "COP";
   openingBalanceMode: "ZeroDeclared" | "ImportedAndApproved";
 }
+export interface BankAccount {
+  bankAccountId:string;accountingAccountId:string;accountingAccountCode:string;
+  accountingAccountName:string;accountTypeOptionId:string;accountTypeCode:string;
+  accountTypeName:string;bankName:string;accountNumber:string;displayName:string;
+  currencyCode:string;isPrimary:boolean;isActive:boolean;rowVersion:string;
+}
+export interface SaveBankAccount {
+  bankAccountId:string;accountingAccountId:string;accountTypeOptionId:string;
+  bankName:string;accountNumber:string;displayName:string;isPrimary:boolean;
+  isActive:boolean;rowVersion:string|null;
+}
 export interface AccountingOpeningBalanceLine { lineNumber:number;accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number; }
 export interface AccountingOpeningBalance { batchId:string;businessId:string;effectiveOn:string;currencyCode:string;description:string;status:"Draft"|"Approved"|"Posted";debitTotal:number;creditTotal:number;rowVersion:string;updatedAt:string;approvedAt:string|null;postedAt:string|null;lines:AccountingOpeningBalanceLine[]; }
 export interface SaveAccountingOpeningBalance { batchId:string;businessId:string;effectiveOn:string;currencyCode:"COP";description:string;rowVersion:string|null;lines:Array<Omit<AccountingOpeningBalanceLine,"lineNumber">>; }
@@ -74,6 +85,8 @@ export interface GenerateComplianceReport { authorityCode:string;taxYear:number;
 
 export const accountingApi = {
   accounts: () => apiClient.get<AccountingAccount[]>("/commerce/v1/accounting/accounts"),
+  bankAccounts: (includeInactive=false) => apiClient.get<BankAccount[]>("/commerce/v1/accounting/bank-accounts", {includeInactive}),
+  saveBankAccount: (request:SaveBankAccount) => apiClient.put<BankAccount>(`/commerce/v1/accounting/bank-accounts/${request.bankAccountId}`,request),
   costCenters: () => apiClient.get<AccountingCostCenter[]>("/commerce/v1/accounting/cost-centers"),
   periods: () => apiClient.get<AccountingPeriod[]>("/commerce/v1/accounting/periods"),
   mappings: () => apiClient.get<AccountingMapping[]>("/commerce/v1/accounting/account-mappings"),

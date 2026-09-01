@@ -31,6 +31,48 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Local_capture_is_saved_only_on_request_and_the_saved_draft_can_be_confirmed()
+    {
+        using var client = CreateClient();
+        var orderedAt = new DateTimeOffset(2026, 9, 1, 9, 0, 0, TimeSpan.FromHours(-5));
+        var purchaseOrderId = Guid.NewGuid();
+        var line = new PurchaseOrderLineRequest(
+            Guid.NewGuid(), 1, fixture.ProductId, "Producto desde captura",
+            2m, 5_000m, 0m, "01", 19m,
+            PurchasingTaxTreatments.DeductibleInputVat, "Unidad", 2m, 1m);
+        var draftRequest = new SavePurchaseOrderDraftRequest(
+            purchaseOrderId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+            orderedAt, orderedAt.AddDays(7), "COP", "Captura local",
+            [line], null);
+
+        using var save = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/purchase-orders/{purchaseOrderId:D}/draft", draftRequest);
+        var saveBody = await save.Content.ReadAsStringAsync();
+        Assert.True(save.IsSuccessStatusCode,
+            $"Expected draft save to succeed, got {save.StatusCode}: {saveBody}");
+        var saved = await save.Content.ReadFromJsonAsync<PurchaseOrderDetail>();
+        Assert.NotNull(saved);
+        Assert.Equal(PurchaseOrderStatuses.Draft, saved.Status);
+        Assert.False(string.IsNullOrWhiteSpace(saved.ConcurrencyToken));
+        Assert.Equal(2m, Assert.Single(saved.Lines).OrderedQuantity);
+
+        var confirmRequest = new ConfirmPurchaseOrderRequest(
+            purchaseOrderId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+            orderedAt, orderedAt.AddDays(7), "COP", "Captura local",
+            [line], saved.ConcurrencyToken);
+        using var confirmMessage = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/purchase-orders/confirm")
+        {
+            Content = JsonContent.Create(confirmRequest)
+        };
+        confirmMessage.Headers.Add("Idempotency-Key", $"purchase-order-{purchaseOrderId:N}");
+        using var confirm = await client.SendAsync(confirmMessage);
+        var confirmBody = await confirm.Content.ReadAsStringAsync();
+        Assert.True(confirm.StatusCode == HttpStatusCode.Created,
+            $"Expected confirmation to succeed, got {confirm.StatusCode}: {confirmBody}");
+    }
+
+    [Fact]
     public async Task Order_can_be_recovered_and_received_in_changed_partial_quantities()
     {
         using var client = CreateClient();

@@ -162,7 +162,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             true,
             Guid.NewGuid(),
             "Usuario",
-            ["sales.create"],
             new PosEnrollmentDocumentSeries(
                 Guid.NewGuid(), "SalesInvoice", "VTA", "01", 8, 1, 99999999),
             new PosEnrollmentFiscalSeries(
@@ -728,7 +727,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                 [
                     new CompletePaymentRequest("Cash", cashAmount, null),
                     new CompletePaymentRequest("Card", cardAmount, null, "Visa", "APPROVED-1"),
-                    new CompletePaymentRequest("Transfer", transferAmount, null)
+                    new CompletePaymentRequest("Transfer", transferAmount, "TRX-EDGE-1")
                 ],
                 DocumentType: PosSaleDocumentTypes.Receipt));
         Assert.True(
@@ -893,10 +892,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:TenantId"] = tenantId.ToString("D"),
             ["PosEdge:SupplierTaxId"] = "9001234567",
             ["PosEdge:DefaultCustomerIdentification"] = "222222222",
-            ["PosEdge:Permissions:0"] = "sales.create",
-            ["PosEdge:Permissions:1"] = "sales.reprint",
-            ["PosEdge:Permissions:2"] = "sales.void",
-            ["PosEdge:Permissions:3"] = "sales.discount",
             ["PosEdge:PrinterName"] = "Test printer",
             ["PosEdge:PaperWidthMillimeters"] = "80",
             ["PosEdge:Documents:SalesInvoice:SeriesId"] = Guid.NewGuid().ToString("D"),
@@ -1183,7 +1178,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             false,
             Guid.NewGuid(),
             "Administrador",
-            ["sales.create"],
             new PosEnrollmentDocumentSeries(
                 Guid.NewGuid(), "SalesInvoice", "VTA", seriesCode, 8, 1, 99_999_999),
             null,

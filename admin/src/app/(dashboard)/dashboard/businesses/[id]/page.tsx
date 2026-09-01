@@ -43,7 +43,7 @@ export default function BusinessDetailPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle>Datos del negocio</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Datos de la sede</CardTitle></CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div><p className="text-sm font-medium text-muted-foreground">Nombre</p><p>{business.name}</p></div>
           <div><p className="text-sm font-medium text-muted-foreground">Descripcion</p><p>{business.description}</p></div>

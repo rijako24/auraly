@@ -9,7 +9,6 @@ namespace Auraly.Api;
 public static class PosAuthenticationDefaults
 {
     public const string Scheme = "AuralyPosDevice";
-    public const string PermissionClaim = "auraly:permission";
     public const string DeviceIdClaim = "auraly:device_id";
     public const string TenantIdClaim = "auraly:tenant_id";
 }
@@ -45,9 +44,6 @@ public sealed class PosDeviceAuthenticationHandler(
             new(PosAuthenticationDefaults.DeviceIdClaim, identity.DeviceId.ToString("D")),
             new(PosAuthenticationDefaults.TenantIdClaim, identity.TenantId.ToString("D"))
         };
-        claims.AddRange(identity.Permissions.Select(
-            permission => new Claim(PosAuthenticationDefaults.PermissionClaim, permission)));
-
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
     }

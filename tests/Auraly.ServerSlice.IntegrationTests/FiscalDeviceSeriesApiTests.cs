@@ -91,10 +91,6 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         var documentSeriesId = Guid.NewGuid();
         await SeedAsync(rangeId, fixture.DeniedDeviceId, documentSeriesId,
             "OFF", 81201, 81300);
-        await ExecuteAsync("""
-            INSERT dbo.PosDevicePermissions(DeviceId,PermissionCode,IsGranted,GrantedAt)
-            VALUES(@DeviceId,N'catalog.sync',1,SYSDATETIMEOFFSET());
-            """, fixture.DeniedDeviceId);
         try
         {
             using var manager = fixture.CreateAdminClient(
@@ -132,10 +128,6 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         }
         finally
         {
-            await ExecuteAsync("""
-                DELETE dbo.PosDevicePermissions
-                WHERE DeviceId=@DeviceId AND PermissionCode=N'catalog.sync';
-                """, fixture.DeniedDeviceId);
             await CleanupAsync(rangeId, [documentSeriesId], [fixture.DeniedDeviceId], false);
         }
     }
@@ -187,10 +179,6 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         var documentSeriesId = Guid.NewGuid();
         await SeedAsync(rangeId, fixture.DeniedDeviceId, documentSeriesId,
             "HAB", 81501, 81600, production: false);
-        await ExecuteAsync("""
-            INSERT dbo.PosDevicePermissions(DeviceId,PermissionCode,IsGranted,GrantedAt)
-            VALUES(@DeviceId,N'catalog.sync',1,SYSDATETIMEOFFSET());
-            """, fixture.DeniedDeviceId);
         try
         {
             using var manager = fixture.CreateAdminClient(
@@ -214,10 +202,6 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         }
         finally
         {
-            await ExecuteAsync("""
-                DELETE dbo.PosDevicePermissions
-                WHERE DeviceId=@DeviceId AND PermissionCode=N'catalog.sync';
-                """, fixture.DeniedDeviceId);
             await CleanupAsync(rangeId, [documentSeriesId], [fixture.DeniedDeviceId], false);
         }
     }

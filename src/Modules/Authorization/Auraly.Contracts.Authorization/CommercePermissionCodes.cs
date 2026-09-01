@@ -5,7 +5,6 @@ public static class CommercePermissionCodes
     public const string CatalogRead = "catalog.read";
     public const string CatalogWrite = "catalog.write";
     public const string EnrolledDevicesEnroll = "pos.devices.enroll";
-    public const string PosIdentitySync = "pos.identity.sync";
     public const string SalesCreate = "sales.create";
     public const string SalesDiscount = "sales.discount";
     public const string SalesChangePrice = "sales.change-price";

@@ -54,7 +54,7 @@ public static class FiscalConfigurationApi
                     nextConsecutive, ct);
                 return result.Count == 0 ? Results.NoContent() : Results.Ok(result[0]);
             })
-            .RequireAuthorization("pos.synchronization");
+            .RequireAuthorization("pos.enrolled");
 
         endpoints.MapGet("/api/pos/v1/fiscal/provisioning-bundle", async (
                 HttpContext context, Guid businessId, Guid? currentSeriesId,
@@ -70,7 +70,7 @@ public static class FiscalConfigurationApi
                     nextConsecutive, ct);
                 return result.Count == 0 ? Results.NoContent() : Results.Ok(result);
             })
-            .RequireAuthorization("pos.synchronization");
+            .RequireAuthorization("pos.enrolled");
 
         group.MapGet("/onboarding", async (HttpContext context, Guid businessId,
             FiscalOnboardingService service, CancellationToken ct) =>

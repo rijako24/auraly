@@ -136,9 +136,6 @@ public sealed class PosOfflineLeaseStore(
         command.Transaction = (SqliteTransaction)transaction;
         command.CommandText = """
             UPDATE PosOfflineAuthenticationLeases
-            SET Status='Expired',UpdatedAt=$now
-            WHERE Status='Active' AND ExpiresAt<=$now;
-            UPDATE PosOfflineAuthenticationLeases
             SET Status='Replaced',UpdatedAt=$now
             WHERE UserId=$user AND Status='Active' AND LeaseId<>$lease;
             INSERT INTO PosOfflineAuthenticationLeases(
@@ -160,6 +157,25 @@ public sealed class PosOfflineLeaseStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return validated;
+    }
+
+    public async Task<Guid?> ActiveLeaseIdForUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT LeaseId
+            FROM PosOfflineAuthenticationLeases
+            WHERE UserId=$user AND Status='Active'
+            ORDER BY UpdatedAt DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$user", userId.ToString("D"));
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is string text ? Guid.Parse(text) : null;
     }
 
     public async Task<PosValidatedOfflineLease> RequireForUserAsync(
@@ -326,9 +342,26 @@ public sealed class PosOfflineLeaseClient(
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<bool> IsActiveAsync(
+        Guid leaseId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/pos/v1/authentication/offline-leases/{leaseId:D}/active?userId={userId:D}");
+        AddDeviceHeaders(message);
+        using var response = await http.SendAsync(message, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<LeaseActiveResponse>(
+            cancellationToken))?.Active == true;
+    }
+
     private void AddDeviceHeaders(HttpRequestMessage message)
     {
         message.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         message.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
     }
+
+    private sealed record LeaseActiveResponse(bool Active);
 }

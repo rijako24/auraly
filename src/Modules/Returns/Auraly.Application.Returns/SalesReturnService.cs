@@ -46,19 +46,33 @@ public sealed class SalesReturnService(
             !string.IsNullOrWhiteSpace(request.RefundMethodCode))
             throw new SalesReturnValidationException("Customer credit cannot include a refund method.");
         if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
-            (!SalesReturnRefundMethods.All.Contains(request.RefundMethodCode!) ||
-             request.OriginalPaymentNumber is null))
-            throw new SalesReturnValidationException(
-                "The refund method and its original payment are required.");
-        if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
-            request.RefundMethodCode == SalesReturnRefundMethods.Cash && request.WorkSessionId is null)
-            throw new SalesReturnValidationException("A cash refund requires an active work session.");
+            !SalesReturnRefundMethods.All.Contains(request.RefundMethodCode!))
+            throw new SalesReturnValidationException("The refund method is invalid.");
         if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             request.RefundMethodCode != SalesReturnRefundMethods.Cash && request.WorkSessionId is not null)
             throw new SalesReturnValidationException("Only a cash refund can affect a work session.");
-        if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
-            request.OriginalPaymentNumber is not null)
-            throw new SalesReturnValidationException("Customer credit cannot reference a payment to refund.");
+        var cardRefund = request.EconomicResolution == ReturnEconomicResolutions.Refund &&
+            request.RefundMethodCode is SalesReturnRefundMethods.DebitCard or SalesReturnRefundMethods.CreditCard;
+        var transferRefund = request.EconomicResolution == ReturnEconomicResolutions.Refund &&
+            request.RefundMethodCode == SalesReturnRefundMethods.Transfer;
+        if (cardRefund && request.OriginalPaymentNumber is null)
+            throw new SalesReturnValidationException(
+                "La reversión por tarjeta debe identificar el pago original.");
+        if (!cardRefund && request.OriginalPaymentNumber is not null)
+            throw new SalesReturnValidationException(
+                "Solo una reversión por tarjeta puede enlazar un pago original.");
+        if (!transferRefund && request.BankAccountId is not null)
+            throw new SalesReturnValidationException(
+                "La cuenta bancaria solo aplica a una devolución por transferencia.");
+        if (transferRefund && string.IsNullOrWhiteSpace(request.SettlementReference))
+            throw new SalesReturnValidationException(
+                "La devolución por transferencia requiere la referencia bancaria.");
+        if (!transferRefund && (request.SettlementReference is not null || request.SettlementNotes is not null))
+            throw new SalesReturnValidationException(
+                "La referencia y nota bancaria solo aplican a una devolución por transferencia.");
+        if (request.SettlementReference?.Trim().Length > 160 || request.SettlementNotes?.Trim().Length > 500)
+            throw new SalesReturnValidationException(
+                "La referencia admite 160 caracteres y la nota bancaria 500.");
         if (string.IsNullOrWhiteSpace(request.ReasonCode) || request.ReasonCode.Trim().Length > 40)
             throw new SalesReturnValidationException("The return reason code is required.");
         if (request.Notes?.Trim().Length > 1000)
@@ -87,7 +101,11 @@ public sealed class SalesReturnService(
             ReasonDescription = request.ReasonDescription.Trim(),
             ReasonCode = request.ReasonCode.Trim(),
             ReturnScopeCode = request.ReturnScopeCode.Trim(),
-            Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim()
+            Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(),
+            SettlementReference = transferRefund ? request.SettlementReference!.Trim() : null,
+            SettlementNotes = transferRefund && !string.IsNullOrWhiteSpace(request.SettlementNotes)
+                ? request.SettlementNotes.Trim()
+                : null
         };
         var accepted = await store.AcceptAsync(
             user, idempotencyKey.Trim(), normalized, cancellationToken);

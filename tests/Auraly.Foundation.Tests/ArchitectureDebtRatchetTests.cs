@@ -89,6 +89,38 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void Pos_sale_processing_preserves_the_original_work_session()
+    {
+        var persistence = Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence");
+        var handler = File.ReadAllText(Path.Combine(
+            persistence, "SqlPosSaleDocumentHandler.cs"));
+        var workSession = File.ReadAllText(Path.Combine(
+            persistence, "SqlPosSaleDocumentHandler.WorkSession.cs"));
+
+        Assert.Contains(
+            "ValidateWorkSessionAsync(session, request, cancellationToken)",
+            handler,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "request = request with { WorkSessionId",
+            handler,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "INSERT dbo.WorkSessions",
+            workSession,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "SELECT TOP(1) WorkSessionId",
+            workSession,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "link.Parameters.AddWithValue(\"@WorkSessionId\", request.WorkSessionId)",
+            workSession,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AccountingAndReportingProcessors_OwnOneSerializableSqlTransaction()
     {
         var paths = new[]

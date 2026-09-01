@@ -63,11 +63,13 @@ public sealed class PermissionServiceTests
     }
 
     [Fact]
-    public async Task SeedPermissionsAsync_Grants_platform_admin_everything_and_tenant_admin_every_tenant_permission()
+    public async Task SeedPermissionsAsync_Leaves_agent_and_scheduling_features_opt_in_for_tenant_admin()
     {
         var tenantPermission = Permission("dispatches.delivery.execute");
         var tenantManagement = Permission("tenants.read");
         var platformManagement = Permission("platform.settings.update");
+        var agentPermission = Permission("agents.read");
+        var reservationPermission = Permission("reservations.read");
         var platformAdministrator = Administrator("@auraly");
         var tenantAdministrator = Administrator("@cliente");
 
@@ -78,7 +80,10 @@ public sealed class PermissionServiceTests
         unitOfWork.Setup(x => x.Permissions.ExistsByResourceAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         unitOfWork.Setup(x => x.Permissions.GetAllAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([tenantPermission, tenantManagement, platformManagement]);
+            .ReturnsAsync([
+                tenantPermission, tenantManagement, platformManagement,
+                agentPermission, reservationPermission
+            ]);
         unitOfWork.Setup(x => x.AppRoles.GetActiveSystemRolesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([platformAdministrator, tenantAdministrator]);
 
@@ -90,7 +95,7 @@ public sealed class PermissionServiceTests
         var service = new PermissionService(unitOfWork.Object, Mock.Of<ILogger<PermissionService>>());
         await service.SeedPermissionsAsync(CancellationToken.None);
 
-        Assert.Equal(3, assignments.Count(item => item.RoleId == platformAdministrator.RoleId));
+        Assert.Equal(5, assignments.Count(item => item.RoleId == platformAdministrator.RoleId));
         Assert.Single(assignments, item => item.RoleId == tenantAdministrator.RoleId);
         Assert.Contains(assignments, item =>
             item.RoleId == tenantAdministrator.RoleId && item.PermissionId == tenantPermission.PermissionId);

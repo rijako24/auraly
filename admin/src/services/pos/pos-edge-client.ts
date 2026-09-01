@@ -8,6 +8,8 @@ import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
 import type { TenantBranding } from "@/services/api/tenants";
 import { printWorkSessionClosure, workSessionClosureHtml } from "./pos-work-session-close";
+import { announceSessionReplacement } from "@/lib/auth-session";
+import { buildLoginRedirect } from "@/lib/login-redirect";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -227,6 +229,8 @@ export type PosPaymentInput = {
   reference: string | null;
   cardFranchiseCode?: string | null;
   approvalNumber?: string | null;
+  bankAccountId?: string | null;
+  notes?: string | null;
 };
 
 export type PosSaleSettlement = {
@@ -328,6 +332,15 @@ type PosEdgePrintableReceipt = Omit<PosPrintableReceipt,
 type PosEdgeCompleteSaleResult = Omit<PosCompleteSaleResult, "receipt"> & {
   receipt: PosEdgePrintableReceipt;
 };
+
+function announceEdgeLoginReplacement(status: number, code?: string): void {
+  if (status !== 401 || code !== "LoginReplaced" || typeof window === "undefined") return;
+  window.localStorage.removeItem("auraly.pos.user-session");
+  announceSessionReplacement(buildLoginRedirect(
+    window.location.pathname,
+    window.location.search,
+  ));
+}
 
 export type PosCashMovementDirection = "In" | "Out";
 
@@ -473,6 +486,14 @@ export type PosReferenceOption = {
   description: string | null;
   sortOrder: number;
 };
+export type PosBankAccount = {
+  bankAccountId:string;displayName:string;bankName:string;accountNumber:string;
+  accountTypeName:string;isPrimary:boolean;rowVersion:string;
+};
+export type PosSettlementConfiguration = {
+  isAccountingEnabled: boolean;
+  bankAccounts: PosBankAccount[];
+};
 
 export interface PosClient {
   readonly mode: "edge" | "online";
@@ -507,6 +528,7 @@ export interface PosClient {
   synchronizeNow(): Promise<void>;
   synchronizationEvents(take?: number): Promise<PosSynchronizationEvent[]>;
   referenceOptions(catalogCode: string): Promise<PosReferenceOption[]>;
+  settlementConfiguration(): Promise<PosSettlementConfiguration>;
   openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
@@ -563,6 +585,9 @@ export interface PosClient {
     orderIds: string[],
     paymentMethodCode: string,
     documentType: PosSaleDocumentType,
+    paymentReference?: string | null,
+    bankAccountId?: string | null,
+    paymentNotes?: string | null,
   ): Promise<InvoiceOrdersResponse>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
@@ -832,6 +857,9 @@ export class PosEdgeClient implements PosClient {
       await printWorkSessionClosure(workSessionClosureHtml(result.closure))
         .catch(() => undefined);
     return result.closure;
+  }
+  settlementConfiguration() {
+    return this.request<PosSettlementConfiguration>("/edge/v1/settlement-configuration");
   }
 
   previewWorkSessionClosure(draftId: string, authorization?: PosSensitiveAuthorization) {
@@ -1163,13 +1191,18 @@ export class PosEdgeClient implements PosClient {
     orderIds: string[],
     paymentMethodCode: string,
     documentType: PosSaleDocumentType,
+    paymentReference?: string | null,
+    bankAccountId?: string | null,
+    paymentNotes?: string | null,
   ) {
     return this.request<InvoiceOrdersResponse>("/edge/v1/orders/invoice", {
       method: "POST",
       body: JSON.stringify({
         orderIds,
         paymentMethodCode,
-        paymentReference: null,
+        paymentReference: paymentReference ?? null,
+        bankAccountId: bankAccountId ?? null,
+        paymentNotes: paymentNotes ?? null,
         documentType,
         idempotencyKey: crypto.randomUUID(),
       }),
@@ -1195,6 +1228,7 @@ export class PosEdgeClient implements PosClient {
       try {
         const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
         detail = problem.detail || problem.title || detail;
+        announceEdgeLoginReplacement(response.status, problem.code || problem.title);
         throw new PosEdgeError(detail, response.status, problem.code || problem.title);
       } catch (parsed) {
         if (parsed instanceof PosEdgeError) throw parsed;
@@ -1235,6 +1269,7 @@ export class PosEdgeClient implements PosClient {
     try {
       const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
       detail = problem.detail || problem.title || detail;
+      announceEdgeLoginReplacement(response.status, problem.code || problem.title);
       throw new PosEdgeError(detail, response.status, problem.code || problem.title);
     } catch (parsed) {
       if (parsed instanceof PosEdgeError) throw parsed;
@@ -1259,8 +1294,9 @@ export class PosEdgeClient implements PosClient {
       const raw = await response.text();
       let detail = raw || response.statusText;
       try {
-        const problem = JSON.parse(raw) as { detail?: string; title?: string };
+        const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
         detail = problem.detail || problem.title || detail;
+        announceEdgeLoginReplacement(response.status, problem.code || problem.title);
       } catch {
         // The local host may intentionally return plain text for simple failures.
       }

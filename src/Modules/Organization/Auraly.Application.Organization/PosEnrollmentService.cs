@@ -43,7 +43,6 @@ public interface IPosEnrollmentStore
     Task<PosEnrollmentPackage> RedeemAsync(
         RedeemPosEnrollmentRequest request,
         byte[] redemptionCodeHash,
-        IReadOnlyCollection<string> devicePermissions,
         CancellationToken cancellationToken);
 }
 
@@ -58,22 +57,6 @@ public sealed class PosEnrollmentService(
     TimeProvider timeProvider,
     IAuralyIdGenerator idGenerator)
 {
-    private static readonly string[] DevicePermissions =
-    [
-        CommercePermissionCodes.SalesCreate,
-        CommercePermissionCodes.SalesDiscount,
-        CommercePermissionCodes.SalesChangePrice,
-        CommercePermissionCodes.SalesReprint,
-        CommercePermissionCodes.SalesRemoveLine,
-        CommercePermissionCodes.SalesRestartDraft,
-        CatalogPermissionCodes.Sync,
-        "inventory.read",
-        "businesses.read",
-        FiscalPermissionCodes.PosStatusSync,
-        PartyPermissionCodes.PosCustomerCreate,
-        CommercePermissionCodes.PosIdentitySync,
-        WorkSessionPermissionCodes.ManageCash
-    ];
     public async Task<PosEnrollmentAuthorization> AuthorizeAsync(
         PosEnrollmentUserIdentity user,
         CreatePosEnrollmentRequest request,
@@ -135,7 +118,6 @@ public sealed class PosEnrollmentService(
         var package = await store.RedeemAsync(
             request with { InstallationId = request.InstallationId.Trim() },
             hash,
-            DevicePermissions,
             cancellationToken);
         try
         {

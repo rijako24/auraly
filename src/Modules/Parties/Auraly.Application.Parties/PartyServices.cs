@@ -55,7 +55,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     public Task<CustomerDetail> CreateCustomerAsync(
         PartyActorIdentity actor, CreateCustomerRequest request, CancellationToken ct)
     {
-        Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.CustomerCreate);
+        RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.CustomerCreate);
         if (request.BusinessId != actor.BusinessId)
             throw new PartyForbiddenException("The customer business does not match the authenticated identity.");
         ValidateParty(request.Party);
@@ -91,7 +91,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     public Task<CustomerDetail?> FindCustomerAsync(
         PartyActorIdentity actor, Guid countryId, string type, string identification, CancellationToken ct)
     {
-        Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.CustomerRead);
+        RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.CustomerRead);
         var normalized = string.Empty;
         Translate(() =>
             normalized = PartyIdentityNormalizer.Normalize(type, identification));
@@ -118,7 +118,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     public Task<PartySiteDetail> AddSiteAsync(
         PartyActorIdentity actor, Guid customerId, AddPartySiteRequest request, CancellationToken ct)
     {
-        Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.ManageSites);
+        RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.ManageSites);
         ValidateSite(request.Site);
         return store.AddSiteAsync(actor, customerId, ids.NewId(), request, time.GetUtcNow(), ct);
     }
@@ -198,6 +198,21 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     {
         if (!actor.Permissions.Contains(permission))
             throw new PartyForbiddenException($"Permission '{permission}' is required.");
+    }
+
+    internal static void RequireUserOrEnrolledDevice(
+        PartyActorIdentity actor,
+        string userPermission)
+    {
+        if (actor.IsDevice)
+        {
+            if (actor.ActorId == Guid.Empty || actor.TenantId == Guid.Empty ||
+                actor.BusinessId == Guid.Empty)
+                throw new PartyForbiddenException(
+                    "The enrolled POS device context is incomplete.");
+            return;
+        }
+        Require(actor, userPermission);
     }
 }
 

@@ -6,6 +6,10 @@ namespace Auraly.Commerce.Accounting.Application;
 public interface IAccountingStore
 {
     Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<IReadOnlyList<BankAccountView>> ListBankAccountsAsync(AccountingUserIdentity user, bool includeInactive, CancellationToken cancellationToken);
+    Task<IReadOnlyList<BankAccountView>> ListActiveBankAccountsForTenantAsync(Guid tenantId, CancellationToken cancellationToken);
+    Task<bool> IsAccountingEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
+    Task<BankAccountView> SaveBankAccountAsync(AccountingUserIdentity user, SaveBankAccountRequest request, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingCostCenterView>> ListCostCentersAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingPeriodView>> ListPeriodsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingMappingView>> ListMappingsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
@@ -167,6 +171,45 @@ public sealed class AccountingService(
     {
         Demand(user, AccountingPermissionCodes.Read);
         return store.ListAccountsAsync(user, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<BankAccountView>> ListBankAccountsAsync(
+        AccountingUserIdentity user, bool includeInactive = false,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        return store.ListBankAccountsAsync(user, includeInactive, cancellationToken);
+    }
+
+    public async Task<PosAccountingSettlementConfiguration> GetPosSettlementConfigurationAsync(
+        Guid tenantId, CancellationToken cancellationToken = default)
+    {
+        if (tenantId == Guid.Empty)
+            throw new AccountingForbiddenException("The enrolled device has no tenant scope.");
+        var enabled = await store.IsAccountingEnabledAsync(tenantId, cancellationToken);
+        var accounts = enabled
+            ? await store.ListActiveBankAccountsForTenantAsync(tenantId, cancellationToken)
+            : [];
+        return new(enabled, accounts);
+    }
+
+    public Task<BankAccountView> SaveBankAccountAsync(
+        AccountingUserIdentity user, SaveBankAccountRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Configure);
+        if (request.BankAccountId == Guid.Empty || request.AccountingAccountId == Guid.Empty ||
+            request.AccountTypeOptionId == Guid.Empty)
+            throw new AccountingValidationException("The bank account scope is invalid.");
+        ValidateText(request.BankName, 120, "Bank name");
+        ValidateText(request.AccountNumber, 64, "Account number");
+        ValidateText(request.DisplayName, 160, "Display name");
+        return store.SaveBankAccountAsync(user, request with
+        {
+            BankName = request.BankName.Trim(),
+            AccountNumber = request.AccountNumber.Trim(),
+            DisplayName = request.DisplayName.Trim()
+        }, cancellationToken);
     }
 
     public Task<IReadOnlyList<AccountingCostCenterView>> ListCostCentersAsync(

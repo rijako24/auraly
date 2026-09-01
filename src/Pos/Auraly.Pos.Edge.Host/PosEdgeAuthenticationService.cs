@@ -3,6 +3,8 @@ namespace Auraly.Pos.Edge.Host;
 public sealed class PosEdgeAuthenticationService(
     PosLocalIdentityStore identities,
     PosIdentitySynchronizer identitySynchronization,
+    PosOfflineLeaseClient offlineLeases,
+    PosOfflineLeaseStore offlineLeaseStore,
     PosWorkSessionOpenServerClient workSessions,
     ILogger<PosEdgeAuthenticationService> logger)
 {
@@ -13,6 +15,11 @@ public sealed class PosEdgeAuthenticationService(
         var session = await LoginLocalAsync(request, cancellationToken);
         try
         {
+            // A connected login on an enrolled POS is the canonical handoff to
+            // this device. The server acquisition revokes every online browser
+            // session for the same user before the POS starts operating.
+            var lease = await offlineLeases.AcquireAsync(request, cancellationToken);
+            await offlineLeaseStore.SaveAsync(lease, cancellationToken);
             var active = await workSessions.OpenOrResumeAsync(
                 session, cancellationToken);
             if (active.WorkSessionId != session.WorkSessionId)
@@ -26,7 +33,7 @@ public sealed class PosEdgeAuthenticationService(
         {
             logger.LogWarning(
                 error,
-                "The server work session could not be activated; local offline login remains available.");
+                "The server authentication handoff or work session could not be activated; local offline login remains available.");
         }
         return session;
     }

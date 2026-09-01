@@ -35,7 +35,7 @@ public static class PosSynchronizationApi
                             PosSynchronizationGroups.Device(tenantId, deviceId)
                         ]));
                 })
-            .RequireAuthorization("pos.synchronization");
+            .RequireAuthorization("pos.enrolled");
         return endpoints;
     }
 

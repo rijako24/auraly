@@ -24,6 +24,18 @@ public static class AccountingApi
             await ExecuteAsync(() => service.ConfirmManualVoucherAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Accepted($"/api/commerce/v1/accounting/entries/by-document/{value.DocumentId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/accounts", async (HttpContext context, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListAccountsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/bank-accounts", async (HttpContext context, bool? includeInactive, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListBankAccountsAsync(context.User.ToAccountingIdentity(), includeInactive == true, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/pos/v1/accounting/settlement-configuration", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetPosSettlementConfigurationAsync(
+                context.User.ToPosDeviceIdentity().TenantId, token), Results.Ok)).RequireAuthorization("pos.enrolled");
+        endpoints.MapGet("/api/commerce/v1/pos/settlement-configuration", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetPosSettlementConfigurationAsync(
+                context.User.ToAccountingIdentity().TenantId, token), Results.Ok)).RequireAuthorization();
+        endpoints.MapPut("/api/commerce/v1/accounting/bank-accounts/{bankAccountId:guid}", async (HttpContext context, Guid bankAccountId, SaveBankAccountRequest request, AccountingService service, CancellationToken token) =>
+            bankAccountId != request.BankAccountId
+                ? Results.Problem("The route and payload bank account IDs differ.", statusCode: 400)
+                : await ExecuteAsync(() => service.SaveBankAccountAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/cost-centers", async (HttpContext context, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListCostCentersAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/periods", async (HttpContext context, AccountingService service, CancellationToken token) =>

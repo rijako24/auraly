@@ -179,6 +179,8 @@ export function invoiceCommerceOrders(request: {
   orderIds: string[];
   paymentMethodCode: string;
   paymentReference: string | null;
+  bankAccountId?: string | null;
+  paymentNotes?: string | null;
   documentType?: "SalesInvoice" | "SalesReceipt";
 }) {
   return orderRequest<InvoiceOrdersResponse>(

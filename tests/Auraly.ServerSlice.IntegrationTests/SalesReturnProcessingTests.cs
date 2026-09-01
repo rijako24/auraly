@@ -11,6 +11,128 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Card_sale_can_be_refunded_in_cash_without_linking_the_original_payment()
+    {
+        var original = WithUblSnapshot(fixture.CreateValidRequest(9_502) with
+        {
+            Payments = [new PosSalePaymentContract(
+                1, "CreditCard", 11_900m, "SALE-CARD", "Visa", "SALE-APPROVAL")]
+        });
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var uploadResponse = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
+        Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
+
+        var request = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            original.DocumentId,
+            new DateTimeOffset(2026, 8, 1, 10, 0, 0, TimeSpan.FromHours(-5)),
+            ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Cash,
+            "Cambio de medio para el reintegro",
+            [new ConfirmSalesReturnLineRequest(
+                1, .25m, ReturnInventoryDispositions.Sellable)],
+            fixture.WorkSessionId, null, "Other");
+        using var user = fixture.CreateAdminClient(
+            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using var message = Message(request, $"sales-return-cash-{request.ReturnId:N}");
+        using var response = await user.SendAsync(message);
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            await response.Content.ReadAsStringAsync());
+        Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
+
+        Assert.Equal("Cash", await ScalarAsync<string>(
+            "SELECT RefundMethodCode FROM dbo.SalesReturns WHERE ReturnId=@Id", request.ReturnId));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id AND OriginalPaymentNumber IS NOT NULL",
+            request.ReturnId));
+        Assert.Equal(-2_975m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'sales-return:',REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))",
+            request.ReturnId));
+    }
+
+    [Fact]
+    public async Task Administrative_cash_refund_is_accounted_without_opening_or_affecting_a_cashier_shift()
+    {
+        var original = WithUblSnapshot(fixture.CreateValidRequest(9_504));
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var uploadResponse = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
+        Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
+
+        var request = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            original.DocumentId,
+            new DateTimeOffset(2026, 8, 1, 10, 10, 0, TimeSpan.FromHours(-5)),
+            ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Cash,
+            "Reintegro administrativo fuera del punto de venta",
+            [new ConfirmSalesReturnLineRequest(
+                1, .25m, ReturnInventoryDispositions.Sellable)],
+            null, null, "Other");
+        using var user = fixture.CreateAdminClient(
+            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using var message = Message(
+            request, $"sales-return-admin-cash-{request.ReturnId:N}");
+        using var response = await user.SendAsync(message);
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            await response.Content.ReadAsStringAsync());
+        Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
+
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id AND WorkSessionId IS NOT NULL",
+            request.ReturnId));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'sales-return:',REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))",
+            request.ReturnId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id AND MethodCode=N'Cash'",
+            request.ReturnId));
+    }
+
+    [Fact]
+    public async Task Card_refund_reverses_original_payment_and_copies_its_evidence()
+    {
+        var original = WithUblSnapshot(fixture.CreateValidRequest(9_503) with
+        {
+            Payments = [new PosSalePaymentContract(
+                1, "CreditCard", 11_900m, "SALE-CARD", "Visa", "SALE-APPROVAL-503")]
+        });
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var uploadResponse = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
+        Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
+
+        var request = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            original.DocumentId,
+            new DateTimeOffset(2026, 8, 1, 10, 15, 0, TimeSpan.FromHours(-5)),
+            ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.CreditCard,
+            "Reversión del pago original con tarjeta",
+            [new ConfirmSalesReturnLineRequest(
+                1, .25m, ReturnInventoryDispositions.Sellable)],
+            null, 1, "Other", null, SalesReturnScopes.Partial);
+        using var user = fixture.CreateAdminClient(
+            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using var message = Message(request, $"sales-return-card-{request.ReturnId:N}");
+        using var response = await user.SendAsync(message);
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            await response.Content.ReadAsStringAsync());
+        Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
+
+        Assert.Equal("Visa|SALE-APPROVAL-503", await ScalarAsync<string>(
+            "SELECT CONCAT(CardFranchiseCode,N'|',ApprovalNumber) FROM dbo.SalesReturns WHERE ReturnId=@Id",
+            request.ReturnId));
+        Assert.Equal("Visa|SALE-APPROVAL-503", await ScalarAsync<string>(
+            "SELECT CONCAT(CardFranchiseCode,N'|',ApprovalNumber) FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id",
+            request.ReturnId));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'sales-return:',REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))",
+            request.ReturnId));
+    }
+
+    [Fact]
     public async Task Return_flows_once_through_api_motor_inventory_and_refund()
     {
         var original = WithUblSnapshot(fixture.CreateValidRequest(9_501));
@@ -30,7 +152,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             ReturnEconomicResolutions.Refund, "Cash", "Cliente devuelve parcialmente",
             [new ConfirmSalesReturnLineRequest(
                 1, .5m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, 1, "Other");
+            fixture.WorkSessionId, null, "Other");
         const string idempotencyKey = "sales-return-e2e-001";
         using var user = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Read, SalesReturnPermissionCodes.Create,
@@ -102,7 +224,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             var sale = await saleResponse.Content.ReadFromJsonAsync<ReturnableSale>();
             Assert.NotNull(sale);
             Assert.Equal(.5m, Assert.Single(sale.Lines).AvailableQuantity);
-            Assert.Equal(5_950m, Assert.Single(sale.Payments).AvailableAmount);
+            Assert.Equal(11_900m, Assert.Single(sale.Payments).AvailableAmount);
         }
 
 

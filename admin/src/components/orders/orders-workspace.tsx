@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Expand,
   FileText,
+  Landmark,
   Loader2,
   PackageSearch,
   Printer,
@@ -22,7 +23,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "@/components/ui/date-picker";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -35,6 +38,8 @@ import {
   type CommerceOrderListItem,
   type CommerceOrderPage,
 } from "@/services/orders/commerce-orders-client";
+import type { PosSettlementConfiguration } from "@/services/pos/pos-edge-client";
+import { Textarea } from "@/components/ui/textarea";
 import { getOrderAvailability } from "./order-availability";
 
 const ORDER_STATUS_REFRESH_INTERVAL_MS = 10_000;
@@ -73,12 +78,14 @@ type OrdersWorkspaceProps = {
     onlyMine?: boolean;
   }) => Promise<CommerceOrderPage>;
   loadDetail: (orderId: string) => Promise<CommerceOrderDetail>;
+  loadSettlementConfiguration?: () => Promise<PosSettlementConfiguration>;
   onRecover?: (order: CommerceOrderListItem) => Promise<void>;
   onRetryEmission?: (orderId: string) => Promise<void>;
   onInvoiceSelected?: (
     orders: CommerceOrderListItem[],
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
+    transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -115,6 +122,7 @@ export function OrdersWorkspace({
   showHeader = true,
   loadPage,
   loadDetail,
+  loadSettlementConfiguration,
   onRecover,
   onRetryEmission,
   onInvoiceSelected,
@@ -142,11 +150,40 @@ export function OrdersWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferLoading, setTransferLoading] = useState(false);
+  const [settlementConfiguration, setSettlementConfiguration] = useState<PosSettlementConfiguration | null>(null);
+  const [transferBankAccountId, setTransferBankAccountId] = useState("");
+  const [transferReference, setTransferReference] = useState("");
+  const [transferNotes, setTransferNotes] = useState("");
   const [documentType, setDocumentType] = useState<"SalesInvoice" | "SalesReceipt">(
     "SalesInvoice",
   );
   const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
   const pageSize = compact ? 8 : 20;
+
+  const openTransfer = useCallback(async () => {
+    if (!loadSettlementConfiguration) {
+      setError("No fue posible cargar la configuración de transferencias.");
+      return;
+    }
+    setTransferLoading(true);
+    setError(null);
+    try {
+      const configuration = await loadSettlementConfiguration();
+      if (configuration.isAccountingEnabled && configuration.bankAccounts.length === 0) {
+        setError("Contabilidad está activa, pero no hay una cuenta bancaria disponible.");
+        return;
+      }
+      setSettlementConfiguration(configuration);
+      setTransferBankAccountId((current) => current || configuration.bankAccounts.find((account) => account.isPrimary)?.bankAccountId || "");
+      setTransferOpen(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible cargar la configuración de transferencias.");
+    } finally {
+      setTransferLoading(false);
+    }
+  }, [loadSettlementConfiguration]);
 
   const refresh = useCallback(async (silent = false) => {
     if (!connected) {
@@ -274,6 +311,27 @@ export function OrdersWorkspace({
       await refresh();
       return;
     }
+    let confirmedOrderIds = new Set<string>();
+    if (paymentMethod !== "Transfer") {
+      try {
+        const details = await Promise.all(available.map((order) => loadDetail(order.orderId)));
+        confirmedOrderIds = new Set(details
+          .filter((order) => order.paymentStatus === "Confirmed")
+          .map((order) => order.orderId));
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "No fue posible validar el pago de los pedidos.");
+        return;
+      }
+    }
+    const requiresTransfer = paymentMethod === "Transfer" || confirmedOrderIds.size > 0;
+    if (requiresTransfer) {
+      const accountRequired = settlementConfiguration?.isAccountingEnabled === true;
+      if (!settlementConfiguration || !transferReference.trim() ||
+          (accountRequired && !transferBankAccountId)) {
+        await openTransfer();
+        return;
+      }
+    }
     setWorking(true);
     setError(null);
     setNotice(null);
@@ -285,7 +343,23 @@ export function OrdersWorkspace({
       for (const [index, order] of available.entries()) {
         const activeEvent = { id: `${order.orderId}-active`, text: `Validando y emitiendo ${order.orderNumber}`, tone: "active" as const };
         setInvoiceProgress((current) => current && ({ ...current, current: order.orderNumber, events: [...current.events.slice(-3), activeEvent] }));
-        const result = await onInvoiceSelected([order], paymentMethod, documentType);
+        const effectivePaymentMethod = confirmedOrderIds.has(order.orderId)
+          ? "Transfer"
+          : paymentMethod;
+        const result = await onInvoiceSelected(
+          [order],
+          effectivePaymentMethod,
+          documentType,
+          effectivePaymentMethod === "Transfer"
+            ? {
+                bankAccountId: settlementConfiguration!.isAccountingEnabled
+                  ? transferBankAccountId
+                  : null,
+                reference: transferReference.trim(),
+                notes: transferNotes.trim() || null,
+              }
+            : undefined,
+        );
         completed += result.completedCount;
         failed += result.failedCount;
         printError ||= result.printError ?? null;
@@ -557,7 +631,10 @@ export function OrdersWorkspace({
                   <Printer className="h-4 w-4" />
                 </Button>
               )}
-              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+              <Select value={paymentMethod} onValueChange={(value) => {
+                setPaymentMethod(value);
+                if (value === "Transfer") void openTransfer();
+              }}>
                 <SelectTrigger className="w-full sm:w-44">
                   <SelectValue />
                 </SelectTrigger>
@@ -570,7 +647,7 @@ export function OrdersWorkspace({
               </Select>
               <Button
                 type="button"
-                disabled={!selectedOrders.length || working || !onInvoiceSelected}
+                disabled={!selectedOrders.length || working || transferLoading || !onInvoiceSelected}
                 onClick={() => void invoiceSelected()}
                 className="col-span-2 w-full bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
               >
@@ -829,6 +906,57 @@ export function OrdersWorkspace({
           </section>
         </div>
       )}
+
+      <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Datos de la transferencia</DialogTitle>
+            <DialogDescription>
+              La referencia identifica el movimiento. La cuenta principal se propone, pero puedes cambiarla.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {settlementConfiguration?.isAccountingEnabled && (
+              <div className="space-y-2">
+                <Label>Cuenta bancaria</Label>
+                <Select value={transferBankAccountId} onValueChange={setTransferBankAccountId}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona una cuenta" /></SelectTrigger>
+                  <SelectContent>
+                    {settlementConfiguration.bankAccounts.map((account) => (
+                      <SelectItem key={account.bankAccountId} value={account.bankAccountId}>
+                        {account.displayName} · {account.bankName} · {account.accountNumber}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="order-transfer-reference">Referencia</Label>
+              <Input id="order-transfer-reference" maxLength={160} value={transferReference}
+                onChange={(event) => setTransferReference(event.target.value)}
+                placeholder="Comprobante o referencia bancaria" autoFocus />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="order-transfer-notes">Nota (opcional)</Label>
+              <Textarea id="order-transfer-notes" maxLength={500} value={transferNotes}
+                onChange={(event) => setTransferNotes(event.target.value)}
+                placeholder="Detalle útil para conciliación" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => {
+              setTransferOpen(false);
+              if (!transferReference.trim()) setPaymentMethod("Cash");
+            }}>Cancelar</Button>
+            <Button type="button"
+              disabled={!transferReference.trim() || (settlementConfiguration?.isAccountingEnabled === true && !transferBankAccountId)}
+              onClick={() => setTransferOpen(false)}>
+              <Landmark className="mr-2 h-4 w-4" />Guardar transferencia
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

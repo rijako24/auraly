@@ -4,6 +4,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Parties;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Pos.Edge.Infrastructure;
@@ -241,6 +242,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosSynchronizationSignal>();
         builder.Services.AddSingleton<PosUiStateSignal>();
         builder.Services.AddSingleton<PosSynchronizationState>();
+        builder.Services.AddSingleton<PosSynchronizationLaneExecutor>();
         builder.Services.AddSingleton<PosSynchronizationWork>();
         builder.Services.AddSingleton(sp => new PosWebPubSubConnection(
             sp.GetRequiredService<HttpClient>(),
@@ -300,13 +302,61 @@ public static class PosEdgeHostApplication
                     .GetRequiredService<PosLocalIdentityStore>();
                 var userSession = await identities.ResolveAsync(
                     userToken, context.RequestAborted);
+                if (userSession is not null)
+                {
+                    var leases = context.RequestServices
+                        .GetRequiredService<PosOfflineLeaseStore>();
+                    var leaseId = await leases.ActiveLeaseIdForUserAsync(
+                        userSession.UserId, context.RequestAborted);
+                    // A login completed while the enrolled POS is genuinely
+                    // offline has no server lease to validate yet. It remains a
+                    // valid local login; only a lease that the server has
+                    // actually issued can later be reported as replaced.
+                    var loginIsActive = true;
+                    if (leaseId is not null)
+                    {
+                        try
+                        {
+                            var server = context.RequestServices
+                                .GetRequiredService<PosOfflineLeaseClient>();
+                            loginIsActive = await server.IsActiveAsync(
+                                leaseId.Value,
+                                userSession.UserId,
+                                context.RequestAborted);
+                        }
+                        catch (HttpRequestException exception)
+                            when (exception.StatusCode is null)
+                        {
+                            // A signed local lease remains authoritative while the
+                            // enrolled POS is genuinely offline.
+                            loginIsActive = true;
+                        }
+                        catch (TaskCanceledException)
+                            when (!context.RequestAborted.IsCancellationRequested)
+                        {
+                            loginIsActive = true;
+                        }
+                    }
+                    if (!loginIsActive)
+                    {
+                        await identities.RevokeActiveSessionsAsync(
+                            "ReplacedByNewLogin", context.RequestAborted);
+                        userSession = null;
+                    }
+                }
                 if (userSession is null)
                 {
+                    var endReason = await identities.SessionEndReasonAsync(
+                        userToken, context.RequestAborted);
+                    var replaced = string.Equals(
+                        endReason, "ReplacedByNewLogin", StringComparison.Ordinal);
                     context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     await context.Response.WriteAsJsonAsync(new
                     {
-                        code = "LocalLoginRequired",
-                        detail = "Inicia sesiÃ³n en este dispositivo para continuar."
+                        code = replaced ? "LoginReplaced" : "LocalLoginRequired",
+                        detail = replaced
+                            ? "Tu usuario inició sesión en otro navegador o caja. Esta sesión se cerrará."
+                            : "Inicia sesión en este dispositivo para continuar."
                     });
                     return;
                 }
@@ -794,6 +844,10 @@ public static class PosEdgeHostApplication
             PosCatalogStore catalog,
             CancellationToken ct) =>
             Results.Ok(await catalog.ReferenceOptionsAsync(catalogCode, ct)));
+        edge.MapGet("/settlement-configuration", async (
+            PosCatalogStore catalog,
+            CancellationToken ct) =>
+            Results.Ok(await catalog.SettlementConfigurationAsync(ct)));
         edge.MapGet("/customers", async (
             string? search,
             int? skip,
@@ -830,9 +884,12 @@ public static class PosEdgeHostApplication
         edge.MapPost("/customers", async (
             PosCreateCustomerInput request,
             PosCustomerServerClient server,
+            PosLocalSessionAccessor sessions,
             PosSynchronizationEventLog events,
             CancellationToken ct) =>
         {
+            if (!sessions.Required().Permissions.Contains(PartyPermissionCodes.PosCustomerCreate))
+                return Results.Forbid();
             events.Record("Info", "Cliente", "Creando cliente", request.DisplayName);
             var customer = await server.CreateAsync(request, ct);
             events.Record("Success", "Cliente", $"Cliente creado: {customer.Name}",

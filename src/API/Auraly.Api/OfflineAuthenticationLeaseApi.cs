@@ -11,7 +11,7 @@ public static class OfflineAuthenticationLeaseApi
     {
         var group = endpoints
             .MapGroup("/api/pos/v1/authentication/offline-leases")
-            .RequireAuthorization("pos.offline.authentication");
+            .RequireAuthorization("pos.enrolled");
 
         group.MapPost("/", async (
             HttpContext context,
@@ -32,6 +32,18 @@ public static class OfflineAuthenticationLeaseApi
                     Device(context.User), leaseId, cancellationToken);
                 return Results.NoContent();
             }));
+
+        group.MapGet("/{leaseId:guid}/active", async (
+            HttpContext context,
+            Guid leaseId,
+            Guid userId,
+            OfflineAuthenticationLeaseService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(new
+            {
+                active = await service.IsActiveAsync(
+                    Device(context.User), leaseId, userId, cancellationToken)
+            })));
 
         return endpoints;
     }

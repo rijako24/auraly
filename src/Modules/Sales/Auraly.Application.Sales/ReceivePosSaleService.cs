@@ -9,8 +9,7 @@ namespace Auraly.Application.Sales;
 
 public sealed record PosDeviceIdentity(
     Guid DeviceId,
-    Guid TenantId,
-    IReadOnlySet<string> Permissions);
+    Guid TenantId);
 
 public sealed record PosSaleContextValidation(bool IsValid, string? Reason)
 {
@@ -244,9 +243,13 @@ public sealed class ReceivePosSaleService(
         if (request.Payments.Any(payment => payment.Amount <= 0) ||
             request.Payments.Select(payment => payment.PaymentNumber).Distinct().Count() != request.Payments.Count ||
             request.Payments.Any(payment =>
+                payment.Reference?.Length > 160 || payment.Notes?.Length > 500 ||
                 payment.CardFranchiseCode?.Length > 64 || payment.ApprovalNumber?.Length > 100 ||
                 (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
                 (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber))) ||
+            request.Payments.Any(payment =>
+                (payment.MethodCode == "Transfer" && string.IsNullOrWhiteSpace(payment.Reference)) ||
+                (payment.MethodCode != "Transfer" && (payment.BankAccountId is not null || payment.Notes is not null))) ||
             paid + credit != request.CommercialSnapshot.NetPayableAmount)
             throw new PosSaleInvalidException(
                 "Actual payments plus financed balance must equal the net sale settlement.");

@@ -48,10 +48,10 @@ public sealed record TenantCommercialSubscriptionDto(
 
 public sealed record PlatformTenantSubscriptionDto(
     Guid TenantId, string TenantKey, string TenantName, string TenantEmail,
-    Guid SubscriptionId, string PlanCode, string PlanName, string BillingPeriod,
-    string Status, DateTimeOffset CurrentPeriodStart, DateTimeOffset CurrentPeriodEnd,
-    int FullUserLimit, int SellerUserLimit, int PosDeviceLimit,
-    int DianDocumentMonthlyLimit, int DianDocumentsUsed, int PayrollEmployeeLimit,
+    Guid? SubscriptionId, string? PlanCode, string? PlanName, string? BillingPeriod,
+    string? Status, DateTimeOffset? CurrentPeriodStart, DateTimeOffset? CurrentPeriodEnd,
+    int? FullUserLimit, int? SellerUserLimit, int? PosDeviceLimit,
+    int? DianDocumentMonthlyLimit, int? DianDocumentsUsed, int? PayrollEmployeeLimit,
     Guid? RenewalOrderId, string? RenewalStatus, DateTimeOffset? RenewalDueAt,
     decimal? RenewalPayableAmount);
 

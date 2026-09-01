@@ -11,7 +11,7 @@ public static class PosOrdersApi
         this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/pos/v1/orders")
-            .RequireAuthorization("pos.orders");
+            .RequireAuthorization("pos.enrolled");
 
         group.MapGet("/", async (
             HttpContext context,
@@ -110,7 +110,9 @@ public static class PosOrdersApi
                     request.OrderIds.ToArray(),
                     request.PaymentMethodCode,
                     request.PaymentReference,
-                    request.DocumentType),
+                    request.DocumentType,
+                    request.BankAccountId,
+                    request.PaymentNotes),
                     context.Request.Headers["Idempotency-Key"].ToString(),
                     ct);
             }));
@@ -186,7 +188,9 @@ public sealed record PosInvoiceOrdersRequest(
     IReadOnlyCollection<Guid> OrderIds,
     string PaymentMethodCode,
     string? PaymentReference,
-    string DocumentType = "SalesInvoice")
+    string DocumentType = "SalesInvoice",
+    Guid? BankAccountId = null,
+    string? PaymentNotes = null)
 {
     public PosOrderExecutionContext ToExecutionContext() =>
         new(UserId, BusinessId, WarehouseId, WorkSessionId);

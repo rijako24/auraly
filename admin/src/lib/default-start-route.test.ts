@@ -26,7 +26,7 @@ test("the first authorized view owns the generic landing", () => {
 });
 
 test("the generic landing follows the first visible navigation item", () => {
-  assert.equal(defaultStartRoute(["Administrador"], ["business_config.read"]), "/dashboard/channels");
+  assert.equal(defaultStartRoute(["Administrador"], ["agents.read"]), "/dashboard/agents");
   assert.equal(defaultStartRoute(["Administrador"], ["reservations.read"]), "/dashboard/reservations");
 });
 

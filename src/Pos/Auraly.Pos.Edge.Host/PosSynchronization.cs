@@ -15,8 +15,7 @@ public enum PosSynchronizationTrigger
     FiscalStatus = 4,
     LocalOutbox = 8,
     FiscalProvisioning = 32,
-    Approvals = 64,
-    All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning | Approvals
+    All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning
 }
 
 public sealed class PosSynchronizationSignal
@@ -78,7 +77,8 @@ internal sealed class PosSynchronizationWork(
     PosUiStateSignal uiState,
     PosSynchronizationState state,
     PosSynchronizationEventLog events,
-    PosSynchronizationSignal signal)
+    PosSynchronizationSignal signal,
+    PosSynchronizationLaneExecutor lanes)
 {
     public async Task ExecuteAsync(
         PosSynchronizationTrigger trigger,
@@ -89,49 +89,138 @@ internal sealed class PosSynchronizationWork(
         uiState.Publish();
         try
         {
+            var pending = new List<PosSynchronizationLane>();
             if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
-            {
-                while (await outbox.NextAsync(cancellationToken) is { } route)
-                {
-                    var dispatched = route switch
+                pending.Add(new PosSynchronizationLane(
+                    PosSynchronizationTrigger.LocalOutbox,
+                    "subida de documentos",
+                    async () =>
                     {
-                        PosUnifiedOutboxRoute.Sale =>
-                            await uploader.UploadNextAsync(cancellationToken),
-                        PosUnifiedOutboxRoute.CashMovement =>
-                            await cashMovements.UploadNextAsync(cancellationToken),
-                        PosUnifiedOutboxRoute.WorkSessionClosure =>
-                            await closures.UploadNextAsync(cancellationToken),
-                        _ => throw new ArgumentOutOfRangeException(nameof(route))
-                    };
-                    if (!dispatched) break;
-                }
-                if (await outbox.NextRetryDelayAsync(cancellationToken) is { } delay)
-                    signal.Schedule(
-                        PosSynchronizationTrigger.LocalOutbox,
-                        delay,
-                        cancellationToken);
-            }
+                        const int batchSize = 25;
+                        var processed = 0;
+                        while (processed < batchSize &&
+                               await outbox.NextAsync(cancellationToken) is { } route)
+                        {
+                            var dispatched = route switch
+                            {
+                                PosUnifiedOutboxRoute.Sale =>
+                                    await uploader.UploadNextAsync(cancellationToken),
+                                PosUnifiedOutboxRoute.CashMovement =>
+                                    await cashMovements.UploadNextAsync(cancellationToken),
+                                PosUnifiedOutboxRoute.WorkSessionClosure =>
+                                    await closures.UploadNextAsync(cancellationToken),
+                                _ => throw new ArgumentOutOfRangeException(nameof(route))
+                            };
+                            processed++;
+                            if (!dispatched) continue;
+                        }
+                        if (processed == batchSize &&
+                            await outbox.NextAsync(cancellationToken) is not null)
+                            signal.Signal(PosSynchronizationTrigger.LocalOutbox);
+                        if (await outbox.NextRetryDelayAsync(cancellationToken) is { } delay)
+                            signal.Schedule(
+                                PosSynchronizationTrigger.LocalOutbox,
+                                delay,
+                                cancellationToken);
+                    }));
             if (trigger.HasFlag(PosSynchronizationTrigger.Security))
-                await identities.SynchronizeAsync(cancellationToken);
+                pending.Add(new PosSynchronizationLane(
+                    PosSynchronizationTrigger.Security,
+                    "usuarios y permisos",
+                    () => identities.SynchronizeAsync(cancellationToken)));
             if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
             {
-                await catalog.SynchronizeAsync(cancellationToken);
-                await cashMovements.RefreshReasonsAsync(cancellationToken);
+                pending.Add(new PosSynchronizationLane(
+                    PosSynchronizationTrigger.Catalog,
+                    "catálogo",
+                    () => catalog.SynchronizeAsync(cancellationToken)));
+                pending.Add(new PosSynchronizationLane(
+                    PosSynchronizationTrigger.Catalog,
+                    "motivos de caja",
+                    () => cashMovements.RefreshReasonsAsync(cancellationToken)));
             }
             if (trigger.HasFlag(PosSynchronizationTrigger.FiscalStatus))
-                await fiscalStatuses.SynchronizeAsync(cancellationToken);
+                pending.Add(new PosSynchronizationLane(
+                    PosSynchronizationTrigger.FiscalStatus,
+                    "estados fiscales",
+                    () => fiscalStatuses.SynchronizeAsync(cancellationToken)));
             if (trigger.HasFlag(PosSynchronizationTrigger.FiscalProvisioning))
-                await fiscalProvisioning.SynchronizeAsync(cancellationToken);
-            state.Succeeded();
-            events.Record("Success", "Synchronization", "Sincronización completada", trigger.ToString());
+                pending.Add(new PosSynchronizationLane(
+                    PosSynchronizationTrigger.FiscalProvisioning,
+                    "configuración fiscal",
+                    () => fiscalProvisioning.SynchronizeAsync(cancellationToken)));
+            if (!await lanes.ExecuteAllAsync(pending, cancellationToken))
+            {
+                state.Failed();
+                events.Record(
+                    "Warning",
+                    "Synchronization",
+                    "Sincronización parcial; los pendientes reintentarán",
+                    trigger.ToString());
+            }
+            else
+            {
+                state.Succeeded();
+                events.Record(
+                    "Success",
+                    "Synchronization",
+                    "Sincronización completada",
+                    trigger.ToString());
+            }
+        }
+        finally { uiState.Publish(); }
+    }
+}
+
+internal sealed record PosSynchronizationLane(
+    PosSynchronizationTrigger Trigger,
+    string Label,
+    Func<Task> Execute);
+
+internal sealed class PosSynchronizationLaneExecutor(
+    PosSynchronizationSignal signal,
+    PosSynchronizationEventLog events,
+    ILogger<PosSynchronizationLaneExecutor> logger)
+{
+    public async Task<bool> ExecuteAllAsync(
+        IReadOnlyCollection<PosSynchronizationLane> lanes,
+        CancellationToken cancellationToken)
+    {
+        var results = await Task.WhenAll(lanes.Select(
+            lane => ExecuteAsync(lane, cancellationToken)));
+        return results.All(value => value);
+    }
+
+    private async Task<bool> ExecuteAsync(
+        PosSynchronizationLane lane,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await lane.Execute();
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception)
         {
-            state.Failed();
-            events.Record("Error", "Synchronization", "Falló la sincronización", exception.Message);
-            throw;
+            logger.LogWarning(
+                exception,
+                "POS synchronization lane {Lane} failed without blocking other lanes.",
+                lane.Trigger);
+            events.Record(
+                "Warning",
+                "Synchronization",
+                $"Pendiente de sincronizar: {lane.Label}",
+                exception.Message);
+            signal.Schedule(
+                lane.Trigger,
+                TimeSpan.FromSeconds(5),
+                cancellationToken);
+            return false;
         }
-        finally { uiState.Publish(); }
     }
 }
 
@@ -334,7 +423,6 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
             PosSynchronizationStreams.FiscalProvisioning => PosSynchronizationTrigger.FiscalProvisioning,
             PosSynchronizationStreams.LocalOutbox => PosSynchronizationTrigger.LocalOutbox,
             PosSynchronizationStreams.Authentication => PosSynchronizationTrigger.Security,
-            PosSynchronizationStreams.Approvals => PosSynchronizationTrigger.Approvals,
             PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Catalog,
             _ => PosSynchronizationTrigger.None
         };

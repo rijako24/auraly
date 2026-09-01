@@ -51,16 +51,20 @@ test("el efectivo despliega su trazabilidad sin conciliar cada movimiento", asyn
   await expect(cash.getByText("Total verificado", { exact: true })).toBeVisible();
 });
 
-test("una venta a crédito ofrece cartera y enlaza un pago único sin segundo combo", async ({ page }) => {
+test("la devolución ofrece destinos independientes y enlaza la reversión de tarjeta", async ({ page }) => {
   await authenticate(page);
   await page.route("**/api/commerce/v1/sales-returns/sales?**", route => json(route, { items: [{ documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, hasAvailableQuantity: true, fiscalStatus: "Accepted" }], page: 1, pageSize: 25, totalCount: 1, totalPages: 1 }));
   await page.route(`**/api/commerce/v1/sales-returns/sales/${saleId}`, route => json(route, {
-    documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, receivableOutstanding: 90000, fiscalStatus: "Accepted", payments: [{ paymentNumber: 1, methodCode: "Cash", originalAmount: 29000, refundedAmount: 0, availableAmount: 29000 }], lines: [{ originalLineNumber: 1, productId: crypto.randomUUID(), productCode: "P-1", reference: null, description: "Producto", soldQuantity: 1, returnedQuantity: 0, availableQuantity: 1, unitPrice: 100000, discountAmount: 0, taxCode: "01", taxRate: 19, untaxedAmount: 100000, taxAmount: 19000, lineTotal: 119000, barcodes: "" }],
+    documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, receivableOutstanding: 90000, fiscalStatus: "Accepted", payments: [{ paymentNumber: 1, methodCode: "CreditCard", originalAmount: 29000, refundedAmount: 0, availableAmount: 29000, cardFranchiseCode: "Visa", approvalNumber: "APP-900" }], lines: [{ originalLineNumber: 1, productId: crypto.randomUUID(), productCode: "P-1", reference: null, description: "Producto", soldQuantity: 1, returnedQuantity: 0, availableQuantity: 1, unitPrice: 100000, discountAmount: 0, taxCode: "01", taxRate: 19, untaxedAmount: 100000, taxAmount: 19000, lineTotal: 119000, barcodes: "" }],
   }));
   await page.route("**/api/commerce/v1/reference-options/sales-return-resolution-method", route => json(route, [
     { id: "cash", code: "Cash", label: "Efectivo", description: null, sortOrder: 10 },
     { id: "credit", code: "CustomerCredit", label: "Abono a cartera", description: null, sortOrder: 20 },
+    { id: "transfer", code: "Transfer", label: "Transferencia", description: null, sortOrder: 30 },
+    { id: "debit", code: "DebitCard", label: "Tarjeta débito", description: null, sortOrder: 40 },
+    { id: "credit-card", code: "CreditCard", label: "Tarjeta crédito", description: null, sortOrder: 50 },
   ]));
+  await page.route("**/api/commerce/v1/accounting/bank-accounts**", route => json(route, [{ bankAccountId: crypto.randomUUID(), displayName: "Cuenta principal", bankName: "Banco", accountNumber: "1234", accountTypeName: "Ahorros", isPrimary: true, isActive: true, rowVersion: "AQ==" }]));
   await page.route("**/api/commerce/v1/reference-options/sales-return-scope", route => json(route, [{ id: "partial", code: "Partial", label: "Parcial", description: null, sortOrder: 10 }]));
   await page.route("**/api/commerce/v1/reasons?**", route => json(route, []));
 
@@ -71,10 +75,13 @@ test("una venta a crédito ofrece cartera y enlaza un pago único sin segundo co
   await expect(resolution.getByRole("combobox")).toContainText("Abono a cartera");
   await resolution.getByRole("combobox").click();
   await expect(page.getByRole("option", { name: "Abono a cartera" })).toBeVisible();
-  await page.getByRole("option", { name: "Efectivo" }).click();
-  await expect(dialog.getByText("Pago de origen", { exact: true })).toBeVisible();
-  await expect(dialog.getByText(/Pago 1/)).toBeVisible();
-  await expect(dialog.getByText("Pago de origen a reversar", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: "Efectivo" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Tarjeta crédito" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Transferencia" })).toBeVisible();
+  await page.getByRole("option", { name: "Tarjeta crédito" }).click();
+  const originalPayment = dialog.getByText("Pago de tarjeta por reversar", { exact: true }).locator("..");
+  await originalPayment.getByRole("combobox").click();
+  await expect(page.getByRole("option", { name: /Visa · APP-900/ })).toBeVisible();
 });
 
 function movement(key: string, movementType: "Sale" | "Refund" | "CashIn" | "CashOut", sourceDocumentType: "SalesInvoice" | "SalesReceipt" | "SalesReturn" | "CashMovement", documentNumber: string, amount: number) {

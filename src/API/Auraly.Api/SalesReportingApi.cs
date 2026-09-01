@@ -62,7 +62,7 @@ public static class SalesReportingApi
         new(from,to,customerId,sellerId,supplierId,productId,categoryId,warehouseId,documentType);
     private static SalesReportingUserIdentity Identity(ClaimsPrincipal principal)=>new(
         Required(principal,ClaimTypes.NameIdentifier),Required(principal,"tenant_id"),Required(principal,"business_id"),
-        principal.FindAll("permission").Concat(principal.FindAll(PosAuthenticationDefaults.PermissionClaim))
+        principal.FindAll("permission")
             .Select(x=>x.Value).ToHashSet(StringComparer.Ordinal));
     private static Guid Required(ClaimsPrincipal principal,string type)=>
         Guid.TryParse(principal.FindFirstValue(type),out var id)?id:

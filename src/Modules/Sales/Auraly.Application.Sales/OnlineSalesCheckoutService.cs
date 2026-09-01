@@ -199,10 +199,13 @@ public sealed class OnlineSalesCheckoutService(
                 !PaymentMethods.Contains(payment.MethodCode) ||
                 payment.Amount <= 0 ||
                 payment.Reference?.Length > 160 ||
+                payment.Notes?.Length > 500 ||
                 payment.CardFranchiseCode?.Length > 64 ||
                 payment.ApprovalNumber?.Length > 100 ||
                 (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
-                (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber))))
+                (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber)) ||
+                (payment.MethodCode == "Transfer" && string.IsNullOrWhiteSpace(payment.Reference)) ||
+                (payment.MethodCode != "Transfer" && (payment.BankAccountId is not null || payment.Notes is not null))))
             throw new OnlineSalesDraftValidationException(
                 "Uno de los medios de pago no es válido.");
         if (request.Payments.Count(payment => payment.MethodCode == "Cash") > 1)

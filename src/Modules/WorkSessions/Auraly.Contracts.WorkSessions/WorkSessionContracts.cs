@@ -213,7 +213,8 @@ public sealed record WorkSessionPaymentVerificationItem(
     string? CardFranchiseCode,
     string? ApprovalNumber,
     DateTimeOffset OccurredAt,
-    string SourceDocumentType);
+    string SourceDocumentType,
+    string? Status);
 
 public sealed record WorkSessionPaymentVerificationDecision(
     string VerificationKey,

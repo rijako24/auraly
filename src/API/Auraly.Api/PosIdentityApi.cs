@@ -27,7 +27,7 @@ public static class PosIdentityApi
                             statusCode: StatusCodes.Status403Forbidden);
                     }
                 })
-            .RequireAuthorization("pos.identity.sync");
+            .RequireAuthorization("pos.enrolled");
 
         return endpoints;
     }
@@ -41,10 +41,7 @@ public static class PosIdentityClaimsExtensions
         new(
             RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
-            businessId,
-            principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
-                .Select(claim => claim.Value)
-                .ToHashSet(StringComparer.Ordinal));
+            businessId);
 
     private static Guid RequiredGuid(ClaimsPrincipal principal, string claimType) =>
         Guid.TryParse(principal.FindFirstValue(claimType), out var value)

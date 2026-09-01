@@ -102,7 +102,7 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
     return permissions
       .filter((permission) => scopes.some((scope) => permission.resource.startsWith(scope)))
       .filter((permission) => row.href === "/dashboard/products/price-segments" || !permission.resource.startsWith("pricing.segments."))
-      .filter((permission) => row.href !== "/dashboard/channels" || permission.resource === "business_config.read");
+      .filter((permission) => row.href !== "/dashboard/channels" || permission.resource === "agents.read");
   };
   const filteredRows = rows.filter((row) => !search.trim() || `${row.section} ${row.name} ${row.href}`.toLowerCase().includes(search.toLowerCase()));
   const additional = permissions.filter((permission) => !rows.some((row) => matching(row).some((item) => item.permissionId === permission.permissionId)));
