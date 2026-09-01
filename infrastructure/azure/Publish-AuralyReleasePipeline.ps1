@@ -84,6 +84,32 @@ function Wait-HttpHealthy {
     }
 }
 
+function Set-FunctionKeyWithRetry {
+    param(
+        [Parameter(Mandatory)][string]$FunctionName,
+        [Parameter(Mandatory)][string]$KeyName,
+        [Parameter(Mandatory)][string]$KeyValue,
+        [int]$Attempts = 18,
+        [int]$DelaySeconds = 10
+    )
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $null = & az functionapp function keys set `
+            --resource-group $configuration.ResourceGroup `
+            --name $configuration.Function `
+            --function-name $FunctionName `
+            --key-name $KeyName `
+            --key-value $KeyValue `
+            --only-show-errors `
+            --output none 2>&1
+        if ($LASTEXITCODE -eq 0) { return }
+        if ($attempt -eq $Attempts) {
+            throw "No se pudo configurar la Function key '$KeyName' de '$FunctionName' después de $Attempts intentos."
+        }
+        Write-Warning "La Function todavía no expone '$FunctionName'; reintento $attempt de $Attempts."
+        Start-Sleep -Seconds $DelaySeconds
+    }
+}
+
 function Assert-OfflineLeaseSigningConfiguration {
     $settings = & az webapp config appsettings list `
         --resource-group $configuration.ResourceGroup `
@@ -335,14 +361,10 @@ function Publish-Function {
         if ($Environment -eq 'dev' -and
             -not [string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_FUNCTION_KEY) -and
             -not [string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_VERIFY_TOKEN)) {
-            & az functionapp function keys set `
-                --resource-group $configuration.ResourceGroup `
-                --name $configuration.Function `
-                --function-name 'WhatsAppWebhook' `
-                --key-name 'meta-cj' `
-                --key-value $env:CJ_WHATSAPP_FUNCTION_KEY `
-                --output none
-            Assert-LastExitCode 'No se pudo configurar la Function key dedicada de Meta para CJ'
+            Set-FunctionKeyWithRetry `
+                -FunctionName 'WhatsAppWebhook' `
+                -KeyName 'meta-cj' `
+                -KeyValue $env:CJ_WHATSAPP_FUNCTION_KEY
             & az functionapp config appsettings set `
                 --resource-group $configuration.ResourceGroup `
                 --name $configuration.Function `

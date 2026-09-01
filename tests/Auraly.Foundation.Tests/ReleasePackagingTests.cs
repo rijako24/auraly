@@ -258,6 +258,27 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Function_key_configuration_retries_while_the_new_host_discovers_functions()
+    {
+        var deployment = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "infrastructure",
+            "azure",
+            "Publish-AuralyReleasePipeline.ps1"));
+
+        Assert.Contains("function Set-FunctionKeyWithRetry", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("for ($attempt = 1; $attempt -le $Attempts; $attempt++)", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("Set-FunctionKeyWithRetry `", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("-FunctionName 'WhatsAppWebhook'", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("-KeyName 'meta-cj'", deployment,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Release_rejects_a_truncated_offline_signing_key_before_deployment()
     {
         var repositoryRoot = FindRepositoryRoot();
