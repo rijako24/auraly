@@ -14,8 +14,8 @@ export const metadata: Metadata = {
   description: "Panel de administración de Auraly",
   manifest: "/app.webmanifest",
   icons: {
-    icon: "/brand/auraly-icon-v5.png?v=6",
-    shortcut: "/brand/auraly-icon-v5.png?v=6",
+    icon: "/brand/auraly-mark.png?v=7",
+    shortcut: "/brand/auraly-mark.png?v=7",
     apple: "/brand/auraly-ios-icon-512-v4.png?v=5",
   },
   appleWebApp: {
