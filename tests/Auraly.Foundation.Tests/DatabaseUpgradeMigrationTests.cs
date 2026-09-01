@@ -16,6 +16,10 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("N'O-13'", options, StringComparison.Ordinal);
         Assert.Contains("platform.fiscal_certificates.expiry.read", platform,
             StringComparison.Ordinal);
+        Assert.Contains("PosOfflinePasswordSalt=NULL", platform,
+            StringComparison.Ordinal);
+        Assert.Contains("PosOfflinePasswordHash=NULL", platform,
+            StringComparison.Ordinal);
     }
 
     [Fact]

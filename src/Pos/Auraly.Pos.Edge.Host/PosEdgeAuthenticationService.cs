@@ -1,3 +1,5 @@
+using Auraly.Contracts.Authentication;
+
 namespace Auraly.Pos.Edge.Host;
 
 public sealed class PosEdgeAuthenticationService(
@@ -12,14 +14,19 @@ public sealed class PosEdgeAuthenticationService(
         PosLocalLoginRequest request,
         CancellationToken cancellationToken = default)
     {
-        var session = await LoginLocalAsync(request, cancellationToken);
+        var login = await LoginLocalAsync(request, cancellationToken);
+        var session = login.Session;
         try
         {
             // A connected login on an enrolled POS is the canonical handoff to
             // this device. The server acquisition revokes every online browser
             // session for the same user before the POS starts operating.
-            var lease = await offlineLeases.AcquireAsync(request, cancellationToken);
-            await offlineLeaseStore.SaveAsync(lease, cancellationToken);
+            if (login.AcquiredLease is null)
+            {
+                var lease = await offlineLeases.AcquireAsync(request, cancellationToken);
+                await offlineLeaseStore.SaveAsync(lease, cancellationToken);
+                await identities.ApplyLeaseUserAsync(lease.User, cancellationToken);
+            }
             var active = await workSessions.OpenOrResumeAsync(
                 session, cancellationToken);
             if (active.WorkSessionId != session.WorkSessionId)
@@ -38,20 +45,38 @@ public sealed class PosEdgeAuthenticationService(
         return session;
     }
 
-    private async Task<PosLocalUserSession> LoginLocalAsync(
+    private async Task<LocalLoginResult> LoginLocalAsync(
         PosLocalLoginRequest request,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await identities.LoginAsync(request, cancellationToken);
+            return new LocalLoginResult(
+                await identities.LoginAsync(request, cancellationToken),
+                null);
         }
         catch (PosLocalLoginException exception) when (
             exception.Code is "InvalidCredentials" or "IdentityUnavailable")
         {
             if (exception.Code == "InvalidCredentials" &&
                 await identities.ContainsUserAsync(request.Username, cancellationToken))
-                throw;
+            {
+                try
+                {
+                    var lease = await offlineLeases.AcquireAsync(
+                        request, cancellationToken);
+                    await offlineLeaseStore.SaveAsync(lease, cancellationToken);
+                    await identities.ApplyLeaseUserAsync(
+                        lease.User, cancellationToken);
+                    return new LocalLoginResult(
+                        await identities.LoginAsync(request, cancellationToken),
+                        lease);
+                }
+                catch (HttpRequestException)
+                {
+                    throw exception;
+                }
+            }
             try
             {
                 if (exception.Code == "IdentityUnavailable")
@@ -62,7 +87,9 @@ public sealed class PosEdgeAuthenticationService(
             }
             catch (HttpRequestException)
             {
-                return await identities.LoginAsync(request, cancellationToken);
+                return new LocalLoginResult(
+                    await identities.LoginAsync(request, cancellationToken),
+                    null);
             }
 
             if (!await identities.ContainsUserAsync(request.Username, cancellationToken))
@@ -70,9 +97,15 @@ public sealed class PosEdgeAuthenticationService(
                     "CloudLoginRequired",
                     "Este usuario no tiene acceso local en el equipo. Auraly intentará iniciar la sesión administrativa en el servidor.");
 
-            return await identities.LoginAsync(request, cancellationToken);
+            return new LocalLoginResult(
+                await identities.LoginAsync(request, cancellationToken),
+                null);
         }
     }
+
+    private sealed record LocalLoginResult(
+        PosLocalUserSession Session,
+        OfflineAuthenticationLeaseAcquireResponse? AcquiredLease);
 
     public async Task LogoutAsync(
         string? token,

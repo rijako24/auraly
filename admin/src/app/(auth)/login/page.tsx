@@ -27,7 +27,7 @@ import {
 } from "@/services/pos/pos-edge-client";
 import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
-import { defaultStartRoute, requiresCloudWorkspace } from "@/lib/default-start-route";
+import { defaultStartRoute } from "@/lib/default-start-route";
 import { rememberSalesWorkspace } from "@/services/pos/online-pos-client";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ApiError } from "@/types/api";
@@ -119,16 +119,7 @@ function LoginForm() {
 
       if (edgeClient && !forceCloud) {
         try {
-          const localSession = await edgeClient.login(username, password);
-          if (requiresCloudWorkspace(localSession.permissions)) {
-            try {
-              await loginToCloud();
-            } catch (error) {
-              await edgeClient.logout().catch(() => undefined);
-              throw error;
-            }
-            return;
-          }
+          await edgeClient.login(username, password);
           window.location.replace("/pos");
         } catch (error) {
           if (error instanceof PosEdgeError && error.code === "CloudLoginRequired") {

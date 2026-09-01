@@ -83,6 +83,16 @@ BEGIN
 
         UPDATE dbo.RefreshTokens SET RevokedAt=GETUTCDATE()
         WHERE UserId=@AdminUserId AND RevokedAt IS NULL;
+
+        -- El hash offline deriva de la contraseña en claro durante un login
+        -- autenticado. Al rotar el hash principal debe invalidarse para impedir
+        -- que una caja conserve indefinidamente la credencial anterior.
+        UPDATE dbo.AppUsers
+        SET PosOfflinePasswordSalt=NULL,
+            PosOfflinePasswordHash=NULL,
+            PosOfflinePasswordIterations=NULL,
+            PosOfflinePasswordChangedAt=NULL
+        WHERE UserId=@AdminUserId;
     END;
 
     UPDATE dbo.AppUsers

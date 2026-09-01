@@ -1,16 +1,116 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosIdentitySynchronizationJourneyTests
 {
+    [Fact]
+    public async Task Connected_login_refreshes_a_stale_local_password_and_keeps_the_pos_session()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(), $"auraly-identity-lease-refresh-{Guid.NewGuid():N}.db");
+        var keyDirectory = Path.Combine(
+            Path.GetTempPath(), $"auraly-identity-lease-refresh-keys-{Guid.NewGuid():N}");
+        using var signingKey = RSA.Create(2048);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var tenantId = Guid.NewGuid();
+            var deviceId = Guid.NewGuid();
+            var userId = Guid.NewGuid();
+            const string currentPassword = "Current-Admin-Password-1";
+            const string keyId = "identity-refresh-test-key";
+            var currentVerifier = PosOfflinePasswordHasher.Hash(currentPassword, now);
+            var payload = new OfflineAuthenticationLeasePayload(
+                1, Guid.NewGuid(), tenantId, userId, deviceId,
+                now, now, now.AddHours(12), Guid.NewGuid());
+            var payloadBytes = OfflineAuthenticationLeaseTokenCodec.Serialize(payload);
+            var signature = signingKey.SignData(
+                payloadBytes, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
+            var leaseResponse = new OfflineAuthenticationLeaseAcquireResponse(
+                new SignedOfflineAuthenticationLease(
+                    keyId,
+                    OfflineAuthenticationLeaseAlgorithms.RsaPssSha256,
+                    OfflineAuthenticationLeaseTokenCodec.Encode(payloadBytes),
+                    OfflineAuthenticationLeaseTokenCodec.Encode(signature)),
+                new OfflineAuthenticationLeaseUser(
+                    userId, "admin", "Administrador Auraly",
+                    [CommercePermissionCodes.SalesCreate],
+                    currentVerifier.Salt, currentVerifier.Hash,
+                    currentVerifier.Iterations, currentVerifier.ChangedAt));
+            var leaseHandler = new LeaseThenUnavailableHandler(leaseResponse);
+            using var leaseHttp = new HttpClient(leaseHandler)
+            {
+                BaseAddress = new Uri("https://auraly.test")
+            };
+            var identities = new PosLocalIdentityStore(
+                $"Data Source={databasePath}", keyDirectory,
+                new Uuid7AuralyIdGenerator(TimeProvider.System), TimeProvider.System);
+            await identities.InitializeAsync();
+            await identities.ApplySnapshotAsync(Snapshot(
+                "stale-password", now.AddDays(-1), userId, "admin",
+                "Administrador Auraly", [CommercePermissionCodes.SalesCreate],
+                PosOfflinePasswordHasher.Hash("Previous-Password-1", now.AddDays(-1))));
+            var unavailableIdentityHttp = new HttpClient(new UnavailableWorkSessionHandler())
+            {
+                BaseAddress = new Uri("https://auraly.test")
+            };
+            var credentials = new PosDeviceCredentials(deviceId, "device-secret");
+            var leaseStore = new PosOfflineLeaseStore(
+                $"Data Source={databasePath}", tenantId, deviceId,
+                new PosOfflineLeaseVerifier(Options.Create(
+                    new PosOfflineLeaseTrustOptions
+                    {
+                        TrustedPublicKeys = new Dictionary<string, string>
+                        {
+                            [keyId] = signingKey.ExportSubjectPublicKeyInfoPem()
+                        }
+                    })),
+                TimeProvider.System);
+            await leaseStore.InitializeAsync();
+            var authentication = new PosEdgeAuthenticationService(
+                identities,
+                new PosIdentitySynchronizer(
+                    unavailableIdentityHttp,
+                    credentials,
+                    new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()),
+                    identities,
+                    new PosSynchronizationEventLog(TimeProvider.System)),
+                new PosOfflineLeaseClient(leaseHttp, credentials),
+                leaseStore,
+                new PosWorkSessionOpenServerClient(
+                    leaseHttp, credentials,
+                    new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid())),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<PosEdgeAuthenticationService>.Instance);
+
+            var session = await authentication.LoginAsync(
+                new PosLocalLoginRequest("admin", currentPassword));
+
+            Assert.Equal(userId, session.UserId);
+            Assert.Equal(1, leaseHandler.AcquireCount);
+            Assert.Equal(1, leaseHandler.WorkSessionCount);
+            await identities.LoginAsync(
+                new PosLocalLoginRequest("admin", currentPassword));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            foreach (var path in new[] { databasePath, databasePath + "-wal", databasePath + "-shm" })
+                if (File.Exists(path)) File.Delete(path);
+            if (Directory.Exists(keyDirectory)) Directory.Delete(keyDirectory, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -245,6 +345,31 @@ public sealed class PosIdentitySynchronizationJourneyTests
             CancellationToken cancellationToken) =>
             Task.FromException<HttpResponseMessage>(
                 new HttpRequestException("Auraly Server is unavailable."));
+    }
+
+    private sealed class LeaseThenUnavailableHandler(
+        OfflineAuthenticationLeaseAcquireResponse response) : HttpMessageHandler
+    {
+        public int AcquireCount { get; private set; }
+        public int WorkSessionCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Post &&
+                request.RequestUri!.AbsolutePath == "/api/pos/v1/authentication/offline-leases")
+            {
+                AcquireCount++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(response)
+                });
+            }
+            WorkSessionCount++;
+            return Task.FromException<HttpResponseMessage>(
+                new HttpRequestException("Work session endpoint is unavailable."));
+        }
     }
 
     private sealed class MutableIdentityServerHandler(
