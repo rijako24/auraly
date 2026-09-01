@@ -822,10 +822,10 @@ public static class PosEdgeHostApplication
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
-            const string inventoryRead = "inventory.read";
+            const string inventoryAvailabilityRead = "pos.inventory.availability.read";
             const string businessesRead = "businesses.read";
             var user = sessions.Required();
-            if (!user.Permissions.Contains(inventoryRead)) return Results.Forbid();
+            if (!user.Permissions.Contains(inventoryAvailabilityRead)) return Results.Forbid();
             try
             {
                 return Results.Ok(await availability.GetAsync(

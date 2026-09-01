@@ -74,7 +74,21 @@ BEGIN
 END
 ELSE
 BEGIN
-    UPDATE dbo.AppUsers SET IsActive=1,AccessFailedCount=0,LockoutEnd=NULL,UpdatedAt=SYSUTCDATETIME() WHERE UserId=@AdminUserId;
+    IF @PasswordHash IS NOT NULL AND NOT EXISTS(
+        SELECT 1 FROM dbo.AppUsers WHERE UserId=@AdminUserId AND PasswordHash=@PasswordHash)
+    BEGIN
+        UPDATE dbo.AuthenticationSessions
+        SET Status=N'Revoked',RevokedAt=SYSUTCDATETIME(),RevocationReason=N'PasswordReset',UpdatedAt=SYSUTCDATETIME()
+        WHERE UserId=@AdminUserId AND Status=N'Active';
+
+        UPDATE dbo.RefreshTokens SET RevokedAt=GETUTCDATE()
+        WHERE UserId=@AdminUserId AND RevokedAt IS NULL;
+    END;
+
+    UPDATE dbo.AppUsers
+    SET PasswordHash=COALESCE(@PasswordHash,PasswordHash),IsActive=1,EmailConfirmed=1,
+        AccessFailedCount=0,LockoutEnd=NULL,UpdatedAt=SYSUTCDATETIME()
+    WHERE UserId=@AdminUserId;
 END;
 
 IF @AdminUserId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.UserRoles WHERE UserId=@AdminUserId AND RoleId=@PlatformRoleId AND BusinessId IS NULL)

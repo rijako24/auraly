@@ -33,6 +33,14 @@ public static class CatalogApi
             await Handle(async () => Results.Ok(await service.WarehouseAvailabilityAsync(
                 context.User.ToCatalogUserIdentity(), productId, ct))));
 
+        var onlinePos = endpoints.MapGroup("/api/commerce/v1/pos/catalog")
+            .RequireAuthorization("pos.user");
+
+        onlinePos.MapGet("/products/{productId:guid}/warehouse-availability", async (
+            HttpContext context, CatalogService service, Guid productId, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.PosWarehouseAvailabilityAsync(
+                context.User.ToCatalogUserIdentity(), productId, ct))));
+
         administration.MapGet("/", async (
             HttpContext context, CatalogService service, int? pageSize, string? afterProductCode,
             string? productCode, string? reference, string? barcode, string? name, bool? isActive,

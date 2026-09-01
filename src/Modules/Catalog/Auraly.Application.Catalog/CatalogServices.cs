@@ -36,6 +36,7 @@ public sealed class CatalogService(
     IPosSynchronizationOutboxDispatcher synchronization)
 {
     private const string InventoryReadPermission = "inventory.read";
+    private const string PosInventoryAvailabilityReadPermission = "pos.inventory.availability.read";
     private const string BusinessesReadPermission = "businesses.read";
     public async Task<ProductDetail> CreateAsync(
         CatalogUserIdentity user,
@@ -101,8 +102,16 @@ public sealed class CatalogService(
 
     public Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
         CatalogUserIdentity user, Guid productId, CancellationToken ct)
+        => WarehouseAvailabilityAsync(user, productId, InventoryReadPermission, ct);
+
+    public Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> PosWarehouseAvailabilityAsync(
+        CatalogUserIdentity user, Guid productId, CancellationToken ct)
+        => WarehouseAvailabilityAsync(user, productId, PosInventoryAvailabilityReadPermission, ct);
+
+    private Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
+        CatalogUserIdentity user, Guid productId, string requiredPermission, CancellationToken ct)
     {
-        Require(user, InventoryReadPermission);
+        Require(user, requiredPermission);
         if (productId == Guid.Empty)
             throw new CatalogValidationException("ProductId is required.");
         return store.WarehouseAvailabilityAsync(

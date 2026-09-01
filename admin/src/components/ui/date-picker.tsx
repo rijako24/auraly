@@ -12,7 +12,7 @@ const WEEKDAYS = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"];
 
 interface DatePickerProps {
   value?: string;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
@@ -32,7 +32,8 @@ export function DatePicker({ value, onChange, placeholder = "Selecciona una fech
   }, [value]);
 
   const choose = (date: Date) => {
-    onChange(toInputValue(date));
+    if (disabled) return;
+    onChange?.(toInputValue(date));
     setOpen(false);
   };
 

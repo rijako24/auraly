@@ -178,11 +178,12 @@ public sealed class SqlTenantProvisioningStore(
                 WHERE Resource IN(
                   N'sales.create',N'sales.discount',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
                   N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',
-                  N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
+                  N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.invoice',
                   N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
                   N'service-invoices.read',N'service-invoices.create',N'service-invoices.price.override',
                   N'service-invoices.discount',N'service-invoices.issue',N'service-invoices.print',
-                  N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',N'inventory.read');
+                  N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+                  N'inventory.read');
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@SellerRoleId,PermissionId,@Now
                 FROM dbo.Permissions
@@ -194,7 +195,7 @@ public sealed class SqlTenantProvisioningStore(
                 FROM dbo.Permissions
                 WHERE Resource IN(
                   N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
-                  N'fiscal.configuration.read',N'pos.synchronization.events.read',N'inventory.read');
+                  N'pos.synchronization.events.read',N'pos.inventory.availability.read');
 
                 INSERT dbo.TenantUserInvitations
                   (InvitationId,TenantId,UserId,DeliveryEmail,TokenHash,ExpiresAt,Status,CreatedAt)

@@ -450,7 +450,8 @@ public sealed class PosArchitectureTests
         Assert.Contains("connected={serverConnected}", page, StringComparison.Ordinal);
         Assert.Contains("client.productWarehouseAvailability(productId)", page, StringComparison.Ordinal);
         Assert.Contains("/catalog/products/{productId:guid}/warehouse-availability", edgeHost, StringComparison.Ordinal);
-        Assert.Contains("const string inventoryRead = \"inventory.read\"", edgeHost, StringComparison.Ordinal);
+        Assert.Contains("const string inventoryAvailabilityRead = \"pos.inventory.availability.read\"", edgeHost, StringComparison.Ordinal);
+        Assert.Contains(".includes(\"pos.inventory.availability.read\")", page, StringComparison.Ordinal);
         Assert.DoesNotContain("DevicePermissions", enrollment, StringComparison.Ordinal);
         Assert.Contains("Compatibilidad de despliegue", compatibilityTable, StringComparison.Ordinal);
         Assert.Contains("La API actual no", compatibilityTable, StringComparison.Ordinal);

@@ -383,12 +383,19 @@ function Publish-Database {
         else {
             "/v:CJWhatsAppAccessToken=$($env:CJ_WHATSAPP_ACCESS_TOKEN)"
         }
+        $bootstrapAdminPasswordHashArgument = if ([string]::IsNullOrWhiteSpace($env:AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH)) {
+            '/v:BootstrapAdminPasswordHash=""'
+        }
+        else {
+            "/v:BootstrapAdminPasswordHash=$($env:AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH)"
+        }
 
         $commonArguments = @(
             "/SourceFile:$dacpac",
             "/TargetServerName:tcp:$($configuration.SqlServer).database.windows.net,1433",
             "/TargetDatabaseName:$($configuration.Database)",
             "/AccessToken:$accessToken",
+            $bootstrapAdminPasswordHashArgument,
             $whatsAppAccessTokenArgument,
             '/p:BlockOnPossibleDataLoss=True',
             '/p:DropObjectsNotInSource=False',
@@ -414,6 +421,50 @@ function Publish-Database {
 
         & $resolvedSqlPackagePath '/Action:Publish' @commonArguments
         Assert-LastExitCode 'La publicacion del DACPAC fallo'
+
+        $verificationConnection = [System.Data.SqlClient.SqlConnection]::new(
+            "Server=tcp:$($configuration.SqlServer).database.windows.net,1433;" +
+            "Initial Catalog=$($configuration.Database);Encrypt=True;TrustServerCertificate=False;Connection Timeout=60;")
+        $verificationConnection.AccessToken = $accessToken
+        try {
+            $verificationConnection.Open()
+            $verificationCommand = $verificationConnection.CreateCommand()
+            $verificationCommand.CommandTimeout = 60
+            $verificationCommand.CommandText = @'
+SELECT
+  CASE WHEN tenantValue.IsActive=1 THEN 1 ELSE 0 END,
+  CASE WHEN userValue.IsActive=1 AND userValue.EmailConfirmed=1 THEN 1 ELSE 0 END,
+  CASE WHEN userRole.UserRoleId IS NOT NULL THEN 1 ELSE 0 END,
+  (SELECT COUNT(*) FROM dbo.Permissions),
+  (SELECT COUNT(*) FROM dbo.RolePermissions assignment WHERE assignment.RoleId=roleValue.RoleId),
+  CASE WHEN @ExpectedPasswordHash=N'' OR userValue.PasswordHash=@ExpectedPasswordHash THEN 1 ELSE 0 END
+FROM dbo.Tenants tenantValue
+JOIN dbo.AppRoles roleValue ON roleValue.TenantId=tenantValue.TenantId AND roleValue.NormalizedName=N'ADMINISTRATOR'
+JOIN dbo.AppUsers userValue ON userValue.TenantId=tenantValue.TenantId AND userValue.NormalizedUsername=N'ADMIN'
+LEFT JOIN dbo.UserRoles userRole ON userRole.UserId=userValue.UserId AND userRole.RoleId=roleValue.RoleId AND userRole.BusinessId IS NULL
+WHERE tenantValue.TenantKey=N'@auraly';
+'@
+            [void]$verificationCommand.Parameters.AddWithValue(
+                '@ExpectedPasswordHash',
+                $(if ([string]::IsNullOrWhiteSpace($env:AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH)) { '' } else { $env:AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH }))
+            $reader = $verificationCommand.ExecuteReader()
+            try {
+                if (-not $reader.Read()) { throw 'No existe el tenant canonico @auraly con su administrador de plataforma.' }
+                $tenantActive = $reader.GetInt32(0) -eq 1
+                $userActive = $reader.GetInt32(1) -eq 1
+                $roleAssigned = $reader.GetInt32(2) -eq 1
+                $permissionCount = $reader.GetInt32(3)
+                $assignedPermissionCount = $reader.GetInt32(4)
+                $passwordMatches = $reader.GetInt32(5) -eq 1
+                if (-not $tenantActive -or -not $userActive -or -not $roleAssigned -or
+                    $permissionCount -ne $assignedPermissionCount -or -not $passwordMatches) {
+                    throw "El administrador @auraly no quedo aprovisionado correctamente. Tenant=$tenantActive User=$userActive Role=$roleAssigned Permissions=$assignedPermissionCount/$permissionCount Password=$passwordMatches."
+                }
+                Write-Information "Administrador @auraly verificado con $assignedPermissionCount permisos." -InformationAction Continue
+            }
+            finally { $reader.Dispose() }
+        }
+        finally { $verificationConnection.Dispose() }
     }
     finally {
         $accessToken = $null

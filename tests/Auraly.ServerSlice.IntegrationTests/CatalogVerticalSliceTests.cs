@@ -895,6 +895,17 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 && item.ProductId == currentProductId
                 && item.QuantityOnHand == 7m);
             Assert.DoesNotContain(allItems, item => item.WarehouseId == otherSystemWarehouseId);
+
+            using var cashier = fixture.CreateAdminClient("pos.inventory.availability.read");
+            var posItems = await cashier.GetFromJsonAsync<List<ProductWarehouseAvailabilityItem>>(
+                $"/api/commerce/v1/pos/catalog/products/{currentProductId:D}/warehouse-availability");
+            Assert.NotNull(posItems);
+            Assert.All(posItems, item => Assert.Equal(fixture.BusinessId, item.BusinessId));
+
+            using var inventoryOnly = fixture.CreateAdminClient("inventory.read");
+            using var deniedPosResponse = await inventoryOnly.GetAsync(
+                $"/api/commerce/v1/pos/catalog/products/{currentProductId:D}/warehouse-availability");
+            Assert.Equal(HttpStatusCode.Forbidden, deniedPosResponse.StatusCode);
         }
         finally
         {

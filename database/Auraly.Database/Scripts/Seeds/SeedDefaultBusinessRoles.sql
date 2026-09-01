@@ -11,6 +11,7 @@ SELECT NEWID(),source.Module,source.Action,source.Resource,source.Description,SY
 FROM (VALUES
   (N'POS',N'CreateCustomer',N'pos.customer.create',N'Crear y seleccionar clientes desde el punto de venta'),
   (N'POS',N'Orders',N'pos.orders',N'Consultar y recuperar pedidos desde el punto de venta'),
+  (N'POS',N'ReadInventoryAvailability',N'pos.inventory.availability.read',N'Consultar existencias desde el punto de venta'),
   (N'Sales',N'ChangePrice',N'sales.change-price',N'Editar descripción, precio y descuento de las líneas de una venta')
 ) source(Module,Action,Resource,Description)
 WHERE NOT EXISTS(SELECT 1 FROM dbo.Permissions existing WHERE existing.Resource=source.Resource);
@@ -65,11 +66,11 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
-      N'pos.synchronization.events.read',N'inventory.read')
+      N'pos.synchronization.events.read',N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.discount',N'sales.change-price',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
-      N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
+      N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
@@ -115,11 +116,11 @@ WHERE roleValue.IsActive=1
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
-      N'pos.synchronization.events.read',N'inventory.read')
+      N'pos.synchronization.events.read',N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.discount',N'sales.change-price',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
-      N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
+      N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',

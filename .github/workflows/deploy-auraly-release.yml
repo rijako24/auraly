@@ -223,6 +223,7 @@ jobs:
       - name: Publish cloud release
         shell: pwsh
         env:
+          AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH: ${{ secrets.AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH }}
           CJ_WHATSAPP_ACCESS_TOKEN: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_ACCESS_TOKEN || '' }}
           CJ_WHATSAPP_FUNCTION_KEY: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_FUNCTION_KEY || '' }}
           CJ_WHATSAPP_VERIFY_TOKEN: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_VERIFY_TOKEN || '' }}

@@ -458,7 +458,7 @@ export class OnlinePosClient implements PosClient {
 
   productWarehouseAvailability(productId: string) {
     return request<PosProductWarehouseAvailability[]>(
-      `/api/commerce/v1/products/${productId}/warehouse-availability`,
+      `/api/commerce/v1/pos/catalog/products/${productId}/warehouse-availability`,
     );
   }
 

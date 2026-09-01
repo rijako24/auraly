@@ -11,6 +11,7 @@ import {
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
+import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -922,24 +923,14 @@ function ReceiptEditor({
         </section>
       </div>
 
-      <Dialog open={!!pendingSupplierChange} onOpenChange={(value) => !value && setPendingSupplierChange(undefined)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Cambiar proveedor</DialogTitle>
-            <DialogDescription>
-              Esta recepción ya tiene {draft.lines.length} {draft.lines.length === 1 ? "producto agregado" : "productos agregados"}.
-              Al cambiar a {pendingSupplierChange?.supplier.displayName}, limpiaremos esas líneas para evitar mezclar productos, costos o códigos de proveedores distintos.
-            </DialogDescription>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">Los demás datos de la recepción se conservarán.</p>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPendingSupplierChange(undefined)}>Conservar proveedor actual</Button>
-            <Button type="button" variant="destructive" onClick={() => pendingSupplierChange && applySupplierChange(pendingSupplierChange.supplier)}>
-              Cambiar y limpiar productos
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SupplierChangeConfirmationDialog
+        open={!!pendingSupplierChange}
+        supplierName={pendingSupplierChange?.supplier.displayName}
+        productCount={draft.lines.length}
+        documentName="recepción"
+        onCancel={() => setPendingSupplierChange(undefined)}
+        onConfirm={() => pendingSupplierChange && applySupplierChange(pendingSupplierChange.supplier)}
+      />
 
       {pendingAssociation && <section className="mx-6 mb-4 space-y-4 rounded-2xl border border-teal-200 bg-teal-50/30 p-5">
           <div>

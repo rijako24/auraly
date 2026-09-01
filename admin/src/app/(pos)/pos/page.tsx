@@ -908,7 +908,7 @@ export default function PosPage() {
   const canReadSynchronizationEvents = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.synchronization.events.read");
   const canReadProductAvailability = (client?.mode === "edge" ? edgePermissions : permissions)
-    .includes("inventory.read");
+    .includes("pos.inventory.availability.read");
 
   const openCashDrawer = useCallback(async () => {
     if (!client || busy || !workstation.workSessionId) return;

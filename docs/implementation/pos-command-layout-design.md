@@ -129,7 +129,9 @@ consume esas teclas mientras el diálogo esté activo.
 
 La búsqueda ampliada de productos conserva dos cargas independientes. El
 catálogo local aparece de inmediato; la disponibilidad por sede y bodega se
-consulta al servidor solo con `inventory.read`. `businesses.read` amplía el
+consulta al servidor solo con `pos.inventory.availability.read`, un permiso del
+propio punto de venta que no concede acceso al módulo de inventario.
+`businesses.read` amplía el
 resultado a otras sedes del mismo tenant. Las bodegas internas nunca se
 exponen. Para no mezclar artículos distintos, la equivalencia entre sedes usa
 identidades estables compartidas —código de barras, identificador tipado o
