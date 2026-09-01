@@ -19,7 +19,7 @@ public sealed partial class SqlWorkSessionStore
         await ValidateBusinessScopeAsync(
             connection, transaction, identity, businessId, cancellationToken);
         await EnsureDefaultCashReasonsAsync(
-            connection, transaction, businessId, cancellationToken);
+            connection, transaction, identity.TenantId, businessId, cancellationToken);
         var values = new List<CashMovementReasonView>();
         await using var command = new SqlCommand(ReasonViewSql + " " + """
             WHERE r.BusinessId=@BusinessId
@@ -79,6 +79,19 @@ public sealed partial class SqlWorkSessionStore
             AddReasonParameters(command, reason, now);
             await command.ExecuteNonQueryAsync(cancellationToken);
             await SyncCashReasonCompatibilityAsync(connection, transaction, reason, now, cancellationToken);
+            await using (var synchronization = new SqlCommand("""
+                INSERT dbo.PosSynchronizationOutboxMessages(
+                    NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+                SELECT NEWID(),@BusinessId,N'Configuration',
+                       COALESCE(MAX(AvailableThroughCursor),0)+1,@Now
+                FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+                WHERE BusinessId=@BusinessId AND Stream=N'Configuration';
+                """, connection, transaction))
+            {
+                synchronization.Parameters.AddWithValue("@BusinessId", reason.BusinessId);
+                synchronization.Parameters.AddWithValue("@Now", now);
+                await synchronization.ExecuteNonQueryAsync(cancellationToken);
+            }
             await transaction.CommitAsync(cancellationToken);
             return await ReadCashReasonViewAsync(
                 connection, identity, reason.BusinessId, reason.ReasonId,
@@ -108,7 +121,7 @@ public sealed partial class SqlWorkSessionStore
         await ValidateBusinessScopeAsync(
             connection, transaction, identity, businessId, cancellationToken);
         await EnsureDefaultCashReasonsAsync(
-            connection, transaction, businessId, cancellationToken);
+            connection, transaction, identity.TenantId, businessId, cancellationToken);
         var reason = await ReadCashReasonDefinitionAsync(
             connection, transaction, businessId, reasonId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -116,9 +129,21 @@ public sealed partial class SqlWorkSessionStore
     }
 
     private async Task EnsureDefaultCashReasonsAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId, Guid businessId,
         CancellationToken cancellationToken)
     {
+        await using (var provision = new SqlCommand("""
+            IF NOT EXISTS(
+                SELECT 1 FROM dbo.BusinessReasons
+                WHERE BusinessId=@BusinessId AND ReasonType IN (N'CashIn',N'CashOut'))
+              EXEC dbo.AccountingDefaultsProvision @TenantId,@BusinessId,@Now;
+            """, connection, transaction))
+        {
+            provision.Parameters.AddWithValue("@TenantId", tenantId);
+            provision.Parameters.AddWithValue("@BusinessId", businessId);
+            provision.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            await provision.ExecuteNonQueryAsync(cancellationToken);
+        }
         await using var command = new SqlCommand("""
             INSERT dbo.BusinessReasons
               (ReasonId,BusinessId,ReasonType,Code,Name,Direction,

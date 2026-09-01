@@ -10,11 +10,13 @@ import type { SalesRouteDetail, SalesRouteStop } from "@/services/api/routes";
 import { useAuthStore } from "@/stores/auth-store";
 import { loadCommerceOrder, loadCommerceOrders, type CommerceOrderDetail, type CommerceOrderListItem } from "@/services/orders/commerce-orders-client";
 import { loadSellerOrderSnapshots } from "@/lib/seller-order-offline-store";
+import { SELLER_ORDER_SYNC_COMPLETED_EVENT } from "@/services/orders/seller-order-reliability";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 const time = new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit" });
 
-export function SellerRouteOrdersPanel({ route, warehouseId, operationalDate, revision }: { route: SalesRouteDetail; warehouseId: string; operationalDate: string; revision: number }) {
+export function SellerRouteOrdersPanel({ route, warehouseId, operationalDate, revision, localFirst = false }: { route: SalesRouteDetail; warehouseId: string; operationalDate: string; revision: number; localFirst?: boolean }) {
+  const userId = useAuthStore((state) => state.user?.userId ?? "");
   const canUpdate = useAuthStore((state) => state.user?.permissions?.includes("orders.update") ?? false);
   const [items, setItems] = useState<CommerceOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,21 +25,21 @@ export function SellerRouteOrdersPanel({ route, warehouseId, operationalDate, re
   const [detailLoading, setDetailLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [editing, setEditing] = useState<{ order: CommerceOrderDetail; stop: SalesRouteStop } | null>(null);
+  useEffect(()=>{const refresh=()=>setRefreshKey(value=>value+1);window.addEventListener(SELLER_ORDER_SYNC_COMPLETED_EVENT,refresh);return()=>window.removeEventListener(SELLER_ORDER_SYNC_COMPLETED_EVENT,refresh)},[]);
   useEffect(() => {
     let active = true;
     const from = new Date(`${operationalDate}T00:00:00`);
     const to = new Date(from); to.setDate(to.getDate() + 1);
     setLoading(true); setError(null);
     const common = { page: 1, pageSize: 100, source: 1, warehouseId, onlyMine: true, createdFrom: from.toISOString(), createdTo: to.toISOString() };
-    void loadSellerOrderSnapshots(route.businessId,warehouseId,operationalDate).then((local)=>{
-      if(!active)return;
-      setItems(local.map(value=>({orderId:value.orderId,orderNumber:value.orderNumber,status:value.synchronized?value.status:"LocalPending",source:1,customerName:value.customerName,customerIdentification:null,customerPhone:null,currency:"COP",total:value.total,lineCount:value.lineCount,createdAt:value.createdAt,canInvoice:false,invoiceDocumentId:null,claim:null})));
-      return loadCommerceOrders(common).then((page)=>{if(active){const serverIds=new Set(page.items.map(item=>item.orderId));setItems([...local.filter(value=>!serverIds.has(value.orderId)).map(value=>({orderId:value.orderId,orderNumber:value.orderNumber,status:value.synchronized?value.status:"LocalPending",source:1,customerName:value.customerName,customerIdentification:null,customerPhone:null,currency:"COP",total:value.total,lineCount:value.lineCount,createdAt:value.createdAt,canInvoice:false,invoiceDocumentId:null,claim:null})),...page.items].sort((left,right)=>right.createdAt.localeCompare(left.createdAt)));}});
-    })
+    if (!userId) { setLoading(false); setError("No encontramos el usuario de esta sesión."); return () => { active = false; }; }
+    void (localFirst
+      ? loadSellerOrderSnapshots(userId,route.businessId,warehouseId,operationalDate).then(local=>{if(active)setItems(local.map(snapshotItem))})
+      : loadCommerceOrders(common).then(page=>{if(active)setItems(page.items)}))
       .catch((caught) => { if (active&&navigator.onLine) setError(caught instanceof Error ? caught.message : "No fue posible consultar tus pedidos de hoy."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [operationalDate, refreshKey, revision, route.businessId, warehouseId]);
+  }, [localFirst, operationalDate, refreshKey, revision, route.businessId, userId, warehouseId]);
   const total = items.reduce((sum, item) => sum + item.total, 0);
   const open = async (orderId: string) => { if(orderId.startsWith("local-")){setError("Este pedido está guardado en el teléfono y podrás abrirlo cuando termine de sincronizar.");return;} setDetailLoading(true); try { setDetail(await loadCommerceOrder(orderId)); } catch (caught) { setError(caught instanceof Error ? caught.message : "No fue posible abrir el pedido."); } finally { setDetailLoading(false); } };
   const editDetail = canUpdate && detail && (["InReview","Pending","Available","Confirmed"].includes(detail.status)) && detail.customerId ? route.stops.find((stop) => stop.customerId === detail.customerId) : undefined;
@@ -46,3 +48,4 @@ export function SellerRouteOrdersPanel({ route, warehouseId, operationalDate, re
 
 function OrderDetail({ value, editable, onEdit, onClose }: { value: CommerceOrderDetail; editable:boolean; onEdit:()=>void; onClose: () => void }) { return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="max-h-[92dvh] w-[calc(100%-1.5rem)] overflow-y-auto rounded-3xl sm:max-w-xl"><DialogHeader><DialogTitle>{value.orderNumber}</DialogTitle><DialogDescription>{value.customerName} · {new Date(value.createdAt).toLocaleString("es-CO")}</DialogDescription></DialogHeader><div className="space-y-2">{value.lines.map((line) => <div key={line.orderItemId} className="flex items-start justify-between gap-3 rounded-2xl border p-3"><span className="min-w-0"><strong className="block truncate text-sm">{line.productName}</strong><small className="text-muted-foreground">{line.quantity} {line.unitCode} · {money.format(line.unitPrice)}</small></span><strong className="shrink-0 text-sm">{money.format(line.lineTotal)}</strong></div>)}</div><div className="flex items-center justify-between rounded-2xl bg-slate-950 p-4 text-white"><span>Total</span><strong className="text-xl">{money.format(value.total)}</strong></div>{editable&&<Button className="w-full" onClick={onEdit}><Pencil className="mr-2 h-4 w-4"/>Actualizar pedido en revisión</Button>}</DialogContent></Dialog>; }
 function StatusBadge({ status }: { status: string }) { const local=status==="LocalPending";const label = local ? "Por sincronizar" : status === "Available" ? "Listo para facturar" : status === "Invoiced" ? "Facturado" : status === "ProcessingEmission" ? "Procesando emisión" : status === "EmissionFailed" ? "Error de emisión" : status === "InReview" || status === "Pending" ? "Pendiente de inventario" : status; const attention=local||status === "InReview"||status === "Pending"||status === "ProcessingEmission"||status === "EmissionFailed"; return <Badge variant="outline" className={attention ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}>{local&&<CloudOff className="mr-1 h-3 w-3"/>}{label}</Badge>; }
+function snapshotItem(value:Awaited<ReturnType<typeof loadSellerOrderSnapshots>>[number]):CommerceOrderListItem{return{orderId:value.orderId,orderNumber:value.orderNumber,status:value.synchronized?value.status:"LocalPending",source:1,customerName:value.customerName,customerIdentification:null,customerPhone:null,currency:"COP",total:value.total,lineCount:value.lineCount,createdAt:value.createdAt,canInvoice:false,invoiceDocumentId:null,claim:null}}

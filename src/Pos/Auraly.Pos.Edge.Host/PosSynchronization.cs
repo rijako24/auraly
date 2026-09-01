@@ -92,7 +92,10 @@ internal sealed class PosSynchronizationWork(
             if (trigger.HasFlag(PosSynchronizationTrigger.Security))
                 await identities.SynchronizeAsync(cancellationToken);
             if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
+            {
                 await catalog.SynchronizeAsync(cancellationToken);
+                await cashMovements.RefreshReasonsAsync(cancellationToken);
+            }
             if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
             {
                 while (await outbox.NextAsync(cancellationToken) is { } route)

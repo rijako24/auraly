@@ -1,4 +1,4 @@
-import Image from "next/image";
+import { AuralyMark } from "./auraly-mark";
 
 export function AuralyLoadingState({
   title = "Cargando Auraly",
@@ -16,17 +16,8 @@ export function AuralyLoadingState({
       className={`${overlay ? "fixed inset-0 z-[2147483647] min-h-dvh" : "min-h-[65dvh]"} grid place-items-center bg-[#f8fafc] px-6 text-[#07161a]`}
     >
       <div className="flex w-full max-w-sm flex-col items-center text-center">
-        <span className="grid h-24 w-24 place-items-center overflow-hidden rounded-[2rem] bg-gradient-to-br from-white via-teal-50 to-teal-100 shadow-2xl shadow-teal-950/10 ring-1 ring-teal-900/10">
-          <Image
-            src="/brand/auraly-app-icon-192-v4.png"
-            width={96}
-            height={96}
-            alt="Auraly"
-            priority
-            className="h-full w-full object-cover"
-          />
-        </span>
-        <h1 className="mt-5 text-lg font-black tracking-tight">{title}</h1>
+        <AuralyMark className="h-20 w-20" />
+        <h1 className="mt-5 text-lg font-semibold tracking-tight">{title}</h1>
         {description && (
           <p className="mt-2 text-sm leading-6 text-[#667f7d]">{description}</p>
         )}

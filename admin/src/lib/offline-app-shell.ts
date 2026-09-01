@@ -29,7 +29,11 @@ async function prepareAppShell(paths: string[]) {
 }
 
 export function prepareSellerAppShell() {
-  return prepareAppShell(["/dashboard", "/dashboard/orders?view=today-route"]);
+  return prepareAppShell([
+    "/dashboard",
+    "/dashboard/orders?view=today-route",
+    "/dashboard/orders?view=all",
+  ]);
 }
 
 export function prepareCurrentAppShell(path: string) {

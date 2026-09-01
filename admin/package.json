@@ -7,7 +7,7 @@
   },
   "scripts": {
     "check:encoding": "node scripts/check-text-encoding.mjs",
-    "test:orders-ui": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/orders/order-http-error.test.js\"",
+    "test:orders-ui": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/orders/order-http-error.test.js\" \".pos-test-dist/services/orders/seller-order-reliability.test.js\" \".pos-test-dist/lib/seller-offline-scope.test.js\"",
     "test:navigation": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/components/layout/sidebar-nav-config.test.js\" \".pos-test-dist/lib/default-start-route.test.js\"",
     "test:pos-enrollment": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-enrollment.test.js\"",
     "test:pos-sync-monitor": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-synchronization-event-feed.test.js\"",

@@ -854,11 +854,17 @@ export class PosEdgeClient implements PosClient {
   }
 
   async logout() {
-    if (this.userSessionToken) {
-      await this.requestVoid("/edge/v1/auth/logout", { method: "POST" });
+    try {
+      if (this.userSessionToken) {
+        await this.requestVoid("/edge/v1/auth/logout", { method: "POST" });
+      }
+    } catch {
+      // Closing the browser-held session must remain possible while Edge restarts
+      // or the server is unavailable. The opaque local token is removed below.
+    } finally {
+      this.userSessionToken = null;
+      window.localStorage.removeItem("auraly.pos.user-session");
     }
-    this.userSessionToken = null;
-    window.localStorage.removeItem("auraly.pos.user-session");
   }
 
   searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null) {

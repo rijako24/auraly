@@ -3,6 +3,7 @@ using Auraly.Application.Authorization;
 using Auraly.Application.WorkSessions;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.WorkSessions;
+using Auraly.BuildingBlocks.Application.Synchronization;
 
 namespace Auraly.Api;
 
@@ -174,16 +175,19 @@ public static class WorkSessionApi
             Guid reasonId,
             UpsertCashMovementReasonRequest request,
             WorkSessionService service,
+            IPosSynchronizationOutboxDispatcher synchronization,
             CancellationToken cancellationToken) =>
             await Handle(async () =>
             {
                 if (request.ReasonId != reasonId)
                     throw new WorkSessionValidationException(
                         "The route and request reason identifiers differ.");
-                return Results.Ok(await service.UpsertCashReasonAsync(
-                    context.User.ToWorkSessionIdentity(),
-                    request,
-                    cancellationToken));
+                var identity = context.User.ToWorkSessionIdentity();
+                var saved = await service.UpsertCashReasonAsync(
+                    identity, request, cancellationToken);
+                await synchronization.DispatchPendingAsync(
+                    identity.TenantId, request.BusinessId, CancellationToken.None);
+                return Results.Ok(saved);
             }));
 
         group.MapPost("/{workSessionId:guid}/cash-movements", async (
@@ -207,9 +211,9 @@ public static class WorkSessionApi
                     acceptance);
             }));
 
-        var deviceGroup = endpoints.MapGroup("/api/pos/v1")
-            .RequireAuthorization("pos.cash.manage");
-        deviceGroup.MapGet("/cash-movement-reasons", async (
+        var deviceCatalogGroup = endpoints.MapGroup("/api/pos/v1")
+            .RequireAuthorization("pos.synchronization");
+        deviceCatalogGroup.MapGet("/cash-movement-reasons", async (
             HttpContext context,
             Guid businessId,
             string? direction,
@@ -221,7 +225,9 @@ public static class WorkSessionApi
                     businessId,
                     direction,
                     cancellationToken))));
-        deviceGroup.MapPost("/cash-movements", async (
+        var deviceCashGroup = endpoints.MapGroup("/api/pos/v1")
+            .RequireAuthorization("pos.cash.manage");
+        deviceCashGroup.MapPost("/cash-movements", async (
             HttpContext context,
             DeviceCashMovementRequest request,
             WorkSessionService service,

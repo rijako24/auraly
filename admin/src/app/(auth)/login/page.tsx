@@ -28,6 +28,7 @@ import {
 import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
 import { defaultStartRoute, requiresCloudWorkspace } from "@/lib/default-start-route";
+import { rememberSalesWorkspace } from "@/services/pos/online-pos-client";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ApiError } from "@/types/api";
 
@@ -63,12 +64,28 @@ function LoginForm() {
     let active = true;
     const resolveInstalledRuntime = async () => {
       const edgeToken = readEdgeTokenFromLaunch();
+      let installedEdgeClient: PosEdgeClient | null = null;
       if (edgeToken) {
         const client = new PosEdgeClient(edgeToken, readEdgeUserSession());
         const health = await client.health().catch(() => null);
         if (active && health && usesEnrolledPosRuntime(health)) {
+          installedEdgeClient = client;
           setEdgeClient(client);
           setPreparedBusinessName(health.businessName);
+        }
+      }
+      if (active && !installedEdgeClient) {
+        const auth = useAuthStore.getState();
+        if (auth.isAuthenticated && auth.user?.userId) {
+          const { isSellerLocalModeEnabled, loadLatestSellerOfflinePreparation } = await import("@/lib/seller-order-offline-store");
+          const preparation = await loadLatestSellerOfflinePreparation(auth.user.userId).catch(() => undefined);
+          if (active && preparation && isSellerLocalModeEnabled(auth.user.userId, preparation.businessId, preparation.warehouseId)) {
+            window.localStorage.setItem("selected_tenant_id", auth.user.tenantId);
+            window.localStorage.setItem("selected_business_id", preparation.businessId);
+            rememberSalesWorkspace(preparation);
+            window.location.replace("/dashboard/orders?view=today-route");
+            return;
+          }
         }
       }
       if (active) setIsHydrated(true);

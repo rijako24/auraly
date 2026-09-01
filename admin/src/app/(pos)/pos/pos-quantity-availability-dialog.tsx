@@ -58,7 +58,7 @@ export function PosQuantityAvailabilityDialog({ value, busy, onConfirm, onCancel
       } else {
         acknowledgeButton.current?.focus();
       }
-    }} className="w-[calc(100%-1.5rem)] overflow-hidden rounded-3xl p-0 sm:max-w-lg">
+    }} data-pos-focus-surface="modal" className="w-[calc(100%-1.5rem)] overflow-hidden rounded-3xl p-0 sm:max-w-lg">
       <form onSubmit={submit}>
         <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 px-6 py-6 text-white">
           <span className="mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-amber-400/15 text-amber-300"><PackageX className="h-6 w-6" /></span>

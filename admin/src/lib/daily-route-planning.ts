@@ -27,3 +27,11 @@ export function resolveSellerWorkspace<T extends SellerWorkspaceIdentity>(option
 export function canDismissWorkspaceDialog(required: boolean, itemCount: number) {
   return !required || itemCount === 0;
 }
+
+export type ScheduledRoute = { schedules: ReadonlyArray<{ dayOfWeek: number }> };
+
+export function routesScheduledForDate<T extends ScheduledRoute>(routes: readonly T[], date: string) {
+  const browserDay = new Date(`${date}T12:00:00`).getDay();
+  const day = isoScheduleDay(browserDay);
+  return routes.filter((route) => route.schedules.some((schedule) => schedule.dayOfWeek === day));
+}

@@ -9,11 +9,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { loadSellerCatalog, loadSellerDraft, queueSellerOrder, removeSellerDraft, saveSellerCatalog, saveSellerDraft, saveSellerOrderSnapshot } from "@/lib/seller-order-offline-store";
 import type { SalesRouteDetail, SalesRouteStop } from "@/services/api/routes";
-import { sellerOrdersApi, type SellerCatalogItem, type SellerOrderRequest } from "@/services/api/seller-orders";
+import { sellerOrdersApi, type SellerCatalogItem, type SellerOrderRequest, type SellerOrderResult } from "@/services/api/seller-orders";
 import type { CommerceOrderDetail } from "@/services/orders/commerce-orders-client";
+import { SELLER_ORDER_SYNC_REQUEST_EVENT, sellerOrderErrorMessage } from "@/services/orders/seller-order-reliability";
+import { useAuthStore } from "@/stores/auth-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
-export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop, editing, onClose, onCreated }: { businessId: string; warehouseId: string; route: SalesRouteDetail | null; stop: SalesRouteStop; editing?: CommerceOrderDetail|null; onClose: () => void; onCreated: (orderId: string) => Promise<void> }) {
+export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop, editing, localFirst = false, onClose, onCreated }: { businessId: string; warehouseId: string; route: SalesRouteDetail | null; stop: SalesRouteStop; editing?: CommerceOrderDetail|null; localFirst?: boolean; onClose: () => void; onCreated: (orderId: string) => Promise<void> }) {
+  const userId = useAuthStore((state) => state.user?.userId ?? "");
   const key = `${businessId}:${warehouseId}:${route?.routeId ?? "outside-route"}:${stop.routeStopId}:${editing?.orderId??"new"}`;
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -32,7 +35,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
       if (!active) return;
       let available = catalog;
       const requiredProducts=editing?.lines.flatMap(line=>line.productId?[line.productId]:[])??draft?.request.lines.map(line=>line.productId)??[];
-      if ((Boolean(editing) || requiredProducts.some(productId=>!available.some(item=>item.productId===productId))) && navigatorOnline()) {
+      if (!localFirst && (Boolean(editing) || requiredProducts.some(productId=>!available.some(item=>item.productId===productId))) && navigatorOnline()) {
         try {
           const page = await sellerOrdersApi.catalog({ businessId, warehouseId, customerId: stop.customerId, search: undefined, skip: 0, take: 500 });
           available = [...new Map([...catalog, ...page.items].map((item) => [item.productId, item])).values()];
@@ -45,18 +48,18 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
       else if (draft) { setQuantities(draft.quantities); setNotes(draft.request.notes ?? ""); }
     });
     return () => { active = false; };
-  }, [businessId, editing, key, stop.customerId, warehouseId]);
+  }, [businessId, editing, key, localFirst, stop.customerId, warehouseId]);
 
   useEffect(() => {
     if (!Object.values(quantities).some((quantity) => quantity > 0)) return;
-    const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !navigatorOnline(), notes: notes || null, idempotencyKey: `draft-${key}`, lines: Object.entries(quantities).filter(([, quantity]) => quantity > 0).map(([productId, quantity]) => ({ productId, quantity })) };
+    const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: localFirst || !navigatorOnline(), notes: notes || null, idempotencyKey: `draft-${key}`, lines: Object.entries(quantities).filter(([, quantity]) => quantity > 0).map(([productId, quantity]) => ({ productId, quantity })) };
     void saveSellerDraft(key, request, quantities);
-  }, [businessId, key, notes, quantities, route, stop.customerId, stop.partySiteId, stop.routeStopId, warehouseId]);
+  }, [businessId, key, localFirst, notes, quantities, route, stop.customerId, stop.partySiteId, stop.routeStopId, warehouseId]);
 
   const selected = useMemo(() => Object.entries(quantities).filter(([, quantity]) => quantity > 0).flatMap(([productId, quantity]) => knownItems[productId] ? [{ item: knownItems[productId], quantity }] : []), [knownItems, quantities]);
   const units = selected.reduce((sum, value) => sum + value.quantity, 0);
   const total = selected.reduce((sum, value) => sum + value.item.unitPrice * value.quantity, 0);
-  const online = navigatorOnline();
+  const online = navigatorOnline() && !localFirst;
   const invalid = online && selected.some((value) => value.item.manageStock && value.quantity > value.item.quantityOnHand);
   const shortages = online ? selected.filter((value) => value.item.manageStock && value.quantity > value.item.quantityOnHand) : [];
 
@@ -65,6 +68,15 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
     if (term.length < 2) { toast.info("Escribe al menos dos letras o el código del producto."); return; }
     setLoading(true); setSearched(true);
     try {
+      if (localFirst) {
+        const cached = await loadSellerCatalog(businessId, warehouseId, stop.customerId);
+        const normalized = term.toLocaleLowerCase("es");
+        const filtered = cached.filter((item) => `${item.productCode} ${item.name}`.toLocaleLowerCase("es").includes(normalized)).slice(0, 100);
+        setResults(filtered);
+        setKnownItems((current) => ({ ...current, ...Object.fromEntries(cached.map((item) => [item.productId, item])) }));
+        if (!filtered.length) toast.info("No encontramos coincidencias en el catálogo guardado.");
+        return;
+      }
       const page = await sellerOrdersApi.catalog({ businessId, warehouseId, customerId: stop.customerId, search: term, skip: 0, take: 100 });
       setResults(page.items);
       setKnownItems((current) => ({ ...current, ...Object.fromEntries(page.items.map((item) => [item.productId, item])) }));
@@ -97,15 +109,27 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
   };
   const setQuantity = (item: SellerCatalogItem, value: number) => { setKnownItems((current) => ({ ...current, [item.productId]: item })); setQuantities((current) => ({ ...current, [item.productId]: Math.max(0, value) })); };
   const submit = async () => {
+    if (!userId) { toast.error("No encontramos el usuario de esta sesión. Vuelve a iniciar sesión."); return; }
     setSaving(true);
     try {
       const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !online, notes: notes || null, idempotencyKey: crypto.randomUUID(), lines: selected.map(({ item, quantity }) => ({ productId: item.productId, quantity })) };
-      const result = editing ? await sellerOrdersApi.update(editing.orderId,{customerId:stop.customerId,notes:request.notes,idempotencyKey:crypto.randomUUID(),lines:request.lines}) : online ? await sellerOrdersApi.create(request) : await queueSellerOrder(request, route, localDateKey());
-      if (!editing) await saveSellerOrderSnapshot({idempotencyKey:request.idempotencyKey,orderId:result.orderId,orderNumber:result.orderNumber,businessId,warehouseId,routeId:request.routeId,customerName:stop.customerName,total:online?result.total:total,lineCount:selected.length,operationalDate:localDateKey(),createdAt:new Date().toISOString(),status:result.status,synchronized:online});
+      let synchronized = online;
+      let result: SellerOrderResult;
+      if (editing) {
+        result = await sellerOrdersApi.update(editing.orderId,{customerId:stop.customerId,notes:request.notes,idempotencyKey:crypto.randomUUID(),lines:request.lines});
+      } else if (localFirst) {
+        result = await queueSellerOrder(userId, request, route, localDateKey());
+        synchronized = false;
+      } else {
+        if (!online) throw new Error("Prepara el teléfono con conexión antes de tomar pedidos sin Internet.");
+        result = await sellerOrdersApi.create(request);
+      }
+      if (!editing) await saveSellerOrderSnapshot({idempotencyKey:request.idempotencyKey,userId,orderId:result.orderId,orderNumber:result.orderNumber,businessId,warehouseId,routeId:request.routeId,customerName:stop.customerName,total:synchronized?result.total:total,lineCount:selected.length,operationalDate:localDateKey(),createdAt:new Date().toISOString(),status:result.status,synchronized});
       await removeSellerDraft(key);
-      toast.success(result.requiresReview ? `${result.orderNumber} quedó en revisión` : editing?`${result.orderNumber} actualizado`:`${result.orderNumber} guardado`);
+      if (!synchronized) { toast.info("Pedido guardado en este dispositivo", { description: online ? "Ya aparece en Pedidos y se está sincronizando en segundo plano." : "Aparece en Pedidos y se enviará automáticamente cuando regrese la conexión." }); window.dispatchEvent(new Event(SELLER_ORDER_SYNC_REQUEST_EVENT)); }
+      else toast.success(result.requiresReview ? `${result.orderNumber} quedó en revisión` : editing?`${result.orderNumber} actualizado`:`${result.orderNumber} guardado`);
       await onCreated(result.orderId);
-    } catch (error) { toast.error(errorMessage(error, "No fue posible guardar el pedido.")); }
+    } catch (error) { toast.error(sellerOrderErrorMessage(error)); }
     finally { setSaving(false); }
   };
 
@@ -136,4 +160,3 @@ function ProductRow({ item, quantity, online, selected, onChange, onEdit }: { it
 function QuantityDialog({ item, current, online, onClose, onConfirm }: { item: SellerCatalogItem; current: number; online: boolean; onClose: () => void; onConfirm: (quantity: number) => void }) { const [value, setValue] = useState(String(current || 1)); const quantity = Math.max(0, Number(value) || 0); const overStock = online && item.manageStock && quantity > item.quantityOnHand; return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="w-[calc(100%-1.5rem)] rounded-3xl p-5 sm:max-w-sm"><DialogHeader><DialogTitle>Cantidad</DialogTitle><DialogDescription>{item.name} · disponible {item.quantityOnHand}</DialogDescription></DialogHeader><Input autoFocus className="h-16 rounded-2xl text-center text-3xl font-black" inputMode="decimal" value={value} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && quantity > 0 && !overStock) onConfirm(quantity); }}/>{overStock && <p className="text-sm font-medium text-red-700">La cantidad supera la existencia disponible.</p>}<DialogFooter className="grid grid-cols-2 gap-2 sm:grid-cols-2"><Button variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-teal-600" disabled={quantity <= 0 || overStock} onClick={() => onConfirm(quantity)}>Aplicar</Button></DialogFooter></DialogContent></Dialog>; }
 function localDateKey(value = new Date()) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
 function navigatorOnline() { return typeof navigator === "undefined" || navigator.onLine; }
-function errorMessage(error: unknown, fallback: string) { return error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : fallback; }

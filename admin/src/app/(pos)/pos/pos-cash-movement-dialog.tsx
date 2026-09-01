@@ -131,6 +131,7 @@ export function PosCashMovementDialog({
               disabled={!item.isAccountingConfigured}>{item.name}{item.isAccountingConfigured?"":" (sin cuenta)"}</SelectItem>)}</SelectContent>
           </Select>
         </Field>
+        {!loading && reasons.length === 0 && !error && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Aún no hay motivos contables disponibles para esta sede. Actualiza los datos o pide al administrador revisar el aprovisionamiento contable.</p>}
         <Field label="Valor">
           <input value={amount} onChange={(event)=>setAmount(event.target.value)}
             type="number" min="1" step="1" inputMode="numeric"

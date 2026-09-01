@@ -496,7 +496,6 @@ public static class PosEdgeHostApplication
         edge.MapGet("/cash-movement-reasons", async (
             string? direction,
             PosCashMovementStore store,
-            PosCashMovementServerClient server,
             PosEdgeRuntimeContext context,
             CancellationToken ct) =>
         {
@@ -505,14 +504,6 @@ public static class PosEdgeHostApplication
                 {
                     [nameof(direction)] = ["La direccion debe ser In u Out."]
                 });
-            try
-            {
-                await server.RefreshReasonsAsync(context.BusinessId.Value, ct);
-            }
-            catch (HttpRequestException)
-            {
-                // The last durable catalog remains authoritative while offline.
-            }
             return Results.Ok(await store.ListReasonsAsync(
                 context.BusinessId.Value, direction!, ct));
         });

@@ -344,11 +344,11 @@ public static class PosWorkSessionClosureEndpoints
         }
     }
 
-    private static bool CanUseOfflineFallback(
+    internal static bool CanUseOfflineFallback(
         Exception exception,
         CancellationToken cancellationToken) =>
         exception is HttpRequestException ||
-        exception is PosWorkSessionClosureException { StatusCode: >= 500 or 408 } ||
+        exception is PosWorkSessionClosureException { StatusCode: 404 or 408 or 409 or >= 500 } ||
         exception is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 }
 

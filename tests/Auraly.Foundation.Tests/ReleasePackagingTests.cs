@@ -215,6 +215,8 @@ public sealed class ReleasePackagingTests
             repositoryRoot, "src", "Installer", "Auraly.Pos.Setup", "Package.wxs"));
         var bundle = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Installer", "Auraly.Pos.Bundle", "Bundle.wxs"));
+        var bundleTheme = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Installer", "Auraly.Pos.Bundle", "AuralyTheme.xml"));
         var desktopProject = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Desktop", "Auraly.Desktop", "Auraly.Desktop.csproj"));
 
@@ -231,7 +233,8 @@ public sealed class ReleasePackagingTests
             StringComparison.Ordinal);
         Assert.Contains("LocalizationFile=\"AuralyTheme.wxl\"", bundle,
             StringComparison.Ordinal);
-        Assert.Contains("LogoSideFile=", bundle, StringComparison.Ordinal);
+        Assert.DoesNotContain("LogoSideFile=", bundle, StringComparison.Ordinal);
+        Assert.Contains("<Window Width=\"520\"", bundleTheme, StringComparison.Ordinal);
         Assert.Contains("Auraly.ico", bundle, StringComparison.Ordinal);
         Assert.Contains("<ApplicationIcon>Assets\\Auraly.ico</ApplicationIcon>",
             desktopProject, StringComparison.Ordinal);

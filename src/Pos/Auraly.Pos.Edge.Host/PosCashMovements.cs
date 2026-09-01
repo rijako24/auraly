@@ -380,6 +380,7 @@ public sealed class PosCashMovementStore(
 public sealed class PosCashMovementServerClient(
     HttpClient http,
     PosDeviceCredentials credentials,
+    PosOperationalScope scope,
     PosCashMovementStore store,
     PosSynchronizationEventLog events)
 {
@@ -387,19 +388,18 @@ public sealed class PosCashMovementServerClient(
         new(JsonSerializerDefaults.Web);
 
     public async Task RefreshReasonsAsync(
-        Guid businessId,
         CancellationToken cancellationToken = default)
     {
         using var request = Request(
             HttpMethod.Get,
             "/api/pos/v1/cash-movement-reasons?businessId=" +
-            businessId.ToString("D"));
+            scope.BusinessId.ToString("D"));
         using var response = await http.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         var reasons = await response.Content.ReadFromJsonAsync<CashMovementReasonView[]>(
                           cancellationToken: cancellationToken)
                       ?? [];
-        await store.ReplaceReasonsAsync(businessId, reasons, cancellationToken);
+        await store.ReplaceReasonsAsync(scope.BusinessId, reasons, cancellationToken);
     }
 
     public async Task<bool> UploadNextAsync(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canDismissWorkspaceDialog, firstPendingRouteStop, isoScheduleDay, pendingRouteStops, resolveSellerWorkspace } from "./daily-route-planning";
+import { canDismissWorkspaceDialog, firstPendingRouteStop, isoScheduleDay, pendingRouteStops, resolveSellerWorkspace, routesScheduledForDate } from "./daily-route-planning";
 
 const stops = ["first", "second", "third"].map((routeStopId) => ({ routeStopId }));
 
@@ -51,4 +51,12 @@ test("allows closing the required warehouse dialog when there are no choices", (
   assert.equal(canDismissWorkspaceDialog(true, 0), true);
   assert.equal(canDismissWorkspaceDialog(true, 2), false);
   assert.equal(canDismissWorkspaceDialog(false, 2), true);
+});
+
+test("projects persistent prepared routes for the next operational day", () => {
+  const routes = [
+    { id: "monday", schedules: [{ dayOfWeek: 1 }] },
+    { id: "tuesday", schedules: [{ dayOfWeek: 2 }] },
+  ];
+  assert.deepEqual(routesScheduledForDate(routes, "2026-09-01").map((route) => route.id), ["tuesday"]);
 });

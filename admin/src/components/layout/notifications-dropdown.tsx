@@ -3,6 +3,7 @@
 import { AlertTriangle, Bell, Check, CreditCard, KeyRound, Loader2, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 import { tenantCommercialApi, tenantsApi, type FiscalCertificateExpiryAlert, type TenantBillingNotification } from "@/services/api/tenants";
 
 export function NotificationsDropdown({ className }: { className?: string }) {
+  const router = useRouter();
   const user = useAuthStore((state) => state.user);
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const canApprove = Boolean(
@@ -38,6 +40,7 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   const [requests, setRequests] = useState<PosApprovalRequest[]>([]);
   const [billing, setBilling] = useState<TenantBillingNotification[]>([]);
   const [fiscalCertificates, setFiscalCertificates] = useState<FiscalCertificateExpiryAlert[]>([]);
+  const [seenFiscalCertificates, setSeenFiscalCertificates] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [credentialOpen, setCredentialOpen] = useState(false);
@@ -52,6 +55,11 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   const [portalReady, setPortalReady] = useState(false);
 
   useEffect(() => setPortalReady(true), []);
+  useEffect(() => {
+    if (!user?.userId) { setSeenFiscalCertificates(new Set()); return; }
+    try { setSeenFiscalCertificates(new Set(JSON.parse(window.localStorage.getItem(`auraly.notifications.fiscal-seen:${user.userId}`) ?? "[]") as string[])); }
+    catch { setSeenFiscalCertificates(new Set()); }
+  }, [user?.userId]);
   useEffect(()=>{if(new URLSearchParams(window.location.search).has("posApproval"))setDropdownOpen(true)},[]);
   useEffect(() => {
     if (!canReceivePush || !businessId || typeof Notification === "undefined") return;
@@ -125,8 +133,32 @@ export function NotificationsDropdown({ className }: { className?: string }) {
       }
     }
     setDropdownOpen(false);
-    window.location.assign(item.actionUrl);
+    router.push(item.actionUrl);
   }
+
+  function changeDropdownOpen(open: boolean) {
+    setDropdownOpen(open);
+  }
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const unread = billing.filter((item) => !item.readAt);
+    if (unread.length) {
+      const readAt = new Date().toISOString();
+      setBilling((current) => current.map((item) => item.readAt ? item : { ...item, readAt }));
+      void Promise.all(unread.map((item) => tenantCommercialApi.markBillingNotificationRead(item.notificationId)))
+        .catch((caught) => setError(caught instanceof Error ? caught.message : "No fue posible marcar los avisos como leídos."));
+    }
+    if (fiscalCertificates.length && user?.userId) {
+      setSeenFiscalCertificates((current) => {
+        const values = new Set(current);
+        fiscalCertificates.forEach((item) => values.add(fiscalCertificateKey(item)));
+        try { window.localStorage.setItem(`auraly.notifications.fiscal-seen:${user.userId}`, JSON.stringify([...values])); }
+        catch { /* The current view is still marked as seen for this session. */ }
+        return values;
+      });
+    }
+  }, [billing, dropdownOpen, fiscalCertificates, user?.userId]);
 
   useEffect(() => {
     if (!canApprove || !businessId) {
@@ -236,13 +268,13 @@ export function NotificationsDropdown({ className }: { className?: string }) {
 
   return (
     <>
-      <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+      <DropdownMenu open={dropdownOpen} onOpenChange={changeDropdownOpen}>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className={cn("relative h-9 w-9", className)} aria-label="Notificaciones">
             <Bell className="h-4 w-4" />
-            {requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.length > 0 && (
+            {requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.filter((item) => !seenFiscalCertificates.has(fiscalCertificateKey(item))).length > 0 && (
               <Badge variant="destructive" className="absolute -right-1 -top-1 h-5 min-w-5 rounded-full px-1.5 text-[10px]">
-                {requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.length > 99 ? "99+" : requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.length}
+                {requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.filter((item) => !seenFiscalCertificates.has(fiscalCertificateKey(item))).length > 99 ? "99+" : requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.filter((item) => !seenFiscalCertificates.has(fiscalCertificateKey(item))).length}
               </Badge>
             )}
           </Button>
@@ -273,7 +305,7 @@ export function NotificationsDropdown({ className }: { className?: string }) {
             ) : (
               <div className="space-y-2 p-2">
                 {fiscalCertificates.map((item) => (
-                  <button key={item.tenantId} type="button" onClick={() => { setDropdownOpen(false); window.location.assign(`/dashboard/tenants/${item.tenantId}`); }}
+                  <button key={item.tenantId} type="button" onClick={() => { setDropdownOpen(false); router.push(`/dashboard/tenants/${item.tenantId}`); }}
                     className="w-full rounded-xl border border-red-200 bg-red-50/80 p-3 text-left shadow-sm transition hover:border-red-300 hover:bg-red-50">
                     <div className="flex items-start gap-3"><span className="mt-0.5 rounded-lg bg-red-100 p-2 text-red-700"><AlertTriangle className="h-4 w-4"/></span><span className="min-w-0 flex-1"><span className="block font-semibold text-red-950">{item.isExpired ? "Certificado DIAN vencido" : "Certificado DIAN próximo a vencer"}</span><span className="mt-1 block text-xs leading-relaxed text-red-900">{item.tenantName} · vence {new Date(item.validTo).toLocaleDateString("es-CO")}</span><span className="mt-2 block text-xs font-semibold text-red-700">Revisar tenant</span></span></div>
                   </button>
@@ -400,6 +432,10 @@ export function NotificationsDropdown({ className }: { className?: string }) {
       </Dialog>
     </>
   );
+}
+
+function fiscalCertificateKey(item: FiscalCertificateExpiryAlert) {
+  return `${item.tenantId}:${item.validTo}:${item.isExpired ? "expired" : "expiring"}`;
 }
 
 function describeContext(request: PosApprovalRequest) {

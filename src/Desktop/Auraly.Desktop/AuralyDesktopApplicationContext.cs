@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -168,7 +167,8 @@ internal sealed class AuralyPosForm : Form
             data,
             shutdown);
         Text = "Auraly";
-        Icon = AuralyDesktopVisuals.LoadIcon(root);
+        Icon = AuralyDesktopVisuals.LoadIcon();
+        ShowIcon = true;
         StartPosition = FormStartPosition.CenterScreen;
         WindowState = FormWindowState.Maximized;
         MinimumSize = new Size(1024, 680);
@@ -212,12 +212,14 @@ internal sealed class AuralyPosForm : Form
         if (isPos)
         {
             WindowState = FormWindowState.Normal;
-            Bounds = Screen.FromControl(this).Bounds;
+            FormBorderStyle = FormBorderStyle.None;
+            WindowState = FormWindowState.Maximized;
             TopMost = true;
             return;
         }
 
         TopMost = false;
+        FormBorderStyle = FormBorderStyle.Sizable;
         WindowState = FormWindowState.Maximized;
     }
 
@@ -252,9 +254,8 @@ internal sealed class AuralySplashForm : Form
         ShowInTaskbar = true;
         TopMost = true;
         DoubleBuffered = true;
-        Icon = AuralyDesktopVisuals.LoadIcon(root);
-        var logoPath = Path.Combine(root, "auraly-pos-icon.png");
-        if (File.Exists(logoPath)) logo = Image.FromFile(logoPath);
+        Icon = AuralyDesktopVisuals.LoadIcon();
+        logo = AuralyDesktopVisuals.CreateMarkBitmap(96);
         animation.Tick += (_, _) =>
         {
             phase = (phase + .016f) % 1f;
@@ -327,7 +328,7 @@ internal sealed class AuralySplashForm : Form
         if (logo is not null)
             graphics.DrawImage(logo, new Rectangle((Width - 92) / 2, 82, 92, 92));
 
-        using var brandFont = new Font("Segoe UI Variable Display", 25, FontStyle.Bold);
+        using var brandFont = new Font("Segoe UI Variable Display", 24, FontStyle.Regular);
         using var subtitleFont = new Font("Segoe UI Variable Text", 10, FontStyle.Regular);
         using var statusFont = new Font("Segoe UI Variable Text", 10, FontStyle.Bold);
         DrawCentered(graphics, "Auraly", brandFont, Color.White, 190);
@@ -402,16 +403,44 @@ internal sealed class AuralySplashForm : Form
 
 internal static class AuralyDesktopVisuals
 {
-    public static Icon? LoadIcon(string root)
+    public static Bitmap CreateMarkBitmap(int size)
     {
-        var path = Path.Combine(root, "auraly-pos-icon.png");
-        if (!File.Exists(path)) return null;
-        using var bitmap = new Bitmap(path);
-        var handle = bitmap.GetHicon();
-        try { return (Icon)Icon.FromHandle(handle).Clone(); }
-        finally { DestroyIcon(handle); }
+        var bitmap = new Bitmap(size, size);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.Clear(Color.Transparent);
+        var scale = size / 48f;
+        using var tile = new GraphicsPath();
+        var radius = 14f * scale;
+        var bounds = new RectangleF(0, 0, size, size);
+        tile.AddArc(bounds.Left, bounds.Top, radius * 2, radius * 2, 180, 90);
+        tile.AddArc(bounds.Right - radius * 2, bounds.Top, radius * 2, radius * 2, 270, 90);
+        tile.AddArc(bounds.Right - radius * 2, bounds.Bottom - radius * 2, radius * 2, radius * 2, 0, 90);
+        tile.AddArc(bounds.Left, bounds.Bottom - radius * 2, radius * 2, radius * 2, 90, 90);
+        tile.CloseFigure();
+        using var background = new SolidBrush(Color.FromArgb(15, 118, 110));
+        graphics.FillPath(background, tile);
+        using var pen = new Pen(Color.FromArgb(248, 255, 254), 5f * scale)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round
+        };
+        graphics.DrawLines(pen,
+        [
+            new PointF(11.5f * scale, 35f * scale),
+            new PointF(24f * scale, 10.5f * scale),
+            new PointF(36.5f * scale, 35f * scale)
+        ]);
+        graphics.DrawLine(pen, 17.3f * scale, 27.2f * scale, 30.7f * scale, 27.2f * scale);
+        using var accent = new SolidBrush(Color.FromArgb(94, 234, 212));
+        graphics.FillEllipse(accent, 33f * scale, 8.5f * scale, 7f * scale, 7f * scale);
+        return bitmap;
     }
 
-    [DllImport("user32.dll")]
-    private static extern bool DestroyIcon(IntPtr handle);
+    public static Icon LoadIcon()
+    {
+        return Icon.ExtractAssociatedIcon(Application.ExecutablePath)
+               ?? (Icon)SystemIcons.Application.Clone();
+    }
 }

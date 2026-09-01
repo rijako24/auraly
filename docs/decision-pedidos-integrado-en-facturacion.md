@@ -273,6 +273,46 @@ En modo offline:
 - no se permite facturar un pedido remoto sin reconciliación;
 - una venta libre puede continuar según la política offline de la caja.
 
+La captura móvil del vendedor es distinta de recuperar pedidos remotos para
+facturarlos. La acción **Preparar** conserva para el usuario autenticado la
+carcasa de la aplicación, sede, bodega, todas sus rutas activas, clientes, el
+catálogo activo completo —incluidos catálogos de decenas de miles de productos—,
+precios, existencias y pedidos del día. La descarga es paginada, sustituye cada
+catálogo completo en una sola escritura y valida el almacenamiento disponible;
+no reescribe un arreglo creciente por cada página. Cada actualización se guarda
+en una generación nueva y el puntero activo solo cambia al terminar todo el
+corte, por lo que una interrupción conserva íntegro el catálogo anterior.
+
+Preparar y operar son decisiones separadas. La UI inyecta un único contrato de
+datos con modo `online` o `local`; no duplica pantallas ni reglas. En modo local,
+cada pedido se confirma primero en el outbox con su misma clave idempotente,
+aparece de inmediato en **Pedidos** y se sincroniza en segundo plano aunque haya
+Internet. La visita se sincroniza junto con ese pedido; no se genera además una
+segunda visita en otra cola. **Actualizar datos** descarga un nuevo corte y
+muestra fecha y hora. La preparación y el modo se aíslan por
+`UserId + BusinessId + WarehouseId`, no caducan a medianoche y permanecen hasta
+que el usuario vuelva explícitamente al modo online. Cada día se proyectan desde
+las definiciones guardadas las rutas programadas para esa fecha, mientras
+pedidos y visitas mantienen su fecha operativa.
+
+Sin preparación, la captura permanece server-first y la lista consulta al
+servidor. Una caída muestra un error útil y no afirma que el pedido quedó
+guardado. El modo local nunca se infiere de `navigator.onLine`: es una decisión
+explícita y durable del usuario.
+
+Los snapshots, preparaciones, pedidos pendientes y visitas locales se aíslan por
+`UserId`; cambiar de usuario no permite leer ni enviar el trabajo pendiente de
+otro vendedor. Preparar conserva la sesión actual para reabrir la aplicación sin
+red, pero nunca almacena contraseñas ni crea verificadores de acceso en el
+navegador. Un nuevo login con credenciales completamente desconectado continúa
+siendo exclusivo de un equipo Edge enrolado y su proyección de identidad
+firmada, conforme a `decision-sesion-unica-usuario-online-offline.md`.
+En el teléfono, si la aplicación se vuelve a abrir, la pantalla de acceso
+reconoce la sesión autenticada conservada y el modo local activo, haya o no red,
+restaura su sede y bodega y entra directamente a **Pedidos**. Un cierre de
+sesión explícito elimina esa sesión conservada y exige volver a autenticarse en
+línea; preparar nunca convierte el navegador en un verificador de credenciales.
+
 ---
 
 ## 10. Diseño web dentro del POS

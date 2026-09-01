@@ -15,23 +15,25 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { ensurePosApprovalPushSubscription } from "@/lib/pos-approval-push";
 import { prepareCurrentAppShell } from "@/lib/offline-app-shell";
+import { SELLER_ORDER_SYNC_COMPLETED_EVENT, SELLER_ORDER_SYNC_REQUEST_EVENT } from "@/services/orders/seller-order-reliability";
 
 export function PwaProvider({ children }: { children: ReactNode }) {
   const [online,setOnline]=useState(true),[syncing,setSyncing]=useState(false);
   const pathname=usePathname();
   const isAuthenticated=useAuthStore(state=>state.isAuthenticated);
+  const userId=useAuthStore(state=>state.user?.userId??"");
   const permissions=useAuthStore(state=>state.user?.permissions??[]);
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
   const synchronizing=useRef(false);
   useEffect(()=>{
     let active=true;
-    const synchronize=async()=>{if(!navigator.onLine||synchronizing.current)return;synchronizing.current=true;setSyncing(true);try{await flushDispatchOutbox();const orders=await flushSellerOrderOutbox(sellerOrdersApi.create,(routeId,request)=>routesApi.recordVisit(routeId,request));if(orders.reviews.length)toast.warning(`${orders.reviews.length} ${orders.reviews.length===1?"pedido requiere":"pedidos requieren"} ajustar inventario`,{description:"Ábrelos en Mi ruta, cambia las cantidades o elimina los productos sin existencia."});await flushPendingRouteVisits((routeId,request)=>routesApi.recordVisit(routeId,request))}finally{synchronizing.current=false;if(active)setSyncing(false)}};
+    const synchronize=async()=>{if(!navigator.onLine||synchronizing.current)return;synchronizing.current=true;setSyncing(true);try{await flushDispatchOutbox();if(userId){const orders=await flushSellerOrderOutbox(userId,sellerOrdersApi.create,(routeId,request)=>routesApi.recordVisit(routeId,request));if(orders.reviews.length)toast.warning(`${orders.reviews.length} ${orders.reviews.length===1?"pedido requiere":"pedidos requieren"} ajustar inventario`,{description:"Ábrelos en Mi ruta, cambia las cantidades o elimina los productos sin existencia."});await flushPendingRouteVisits(userId,(routeId,request)=>routesApi.recordVisit(routeId,request));if(orders.uploaded)window.dispatchEvent(new Event(SELLER_ORDER_SYNC_COMPLETED_EVENT))}}finally{synchronizing.current=false;if(active)setSyncing(false)}};
     const connected=()=>{setOnline(true);void synchronize()};const disconnected=()=>setOnline(false);const visible=()=>{if(document.visibilityState==="visible")void synchronize()};
-    setOnline(navigator.onLine);window.addEventListener("online",connected);window.addEventListener("offline",disconnected);window.addEventListener("focus",synchronize);document.addEventListener("visibilitychange",visible);
+    setOnline(navigator.onLine);window.addEventListener("online",connected);window.addEventListener("offline",disconnected);window.addEventListener("focus",synchronize);window.addEventListener(SELLER_ORDER_SYNC_REQUEST_EVENT,synchronize);document.addEventListener("visibilitychange",visible);
     if("serviceWorker" in navigator&&process.env.NODE_ENV==="production")void navigator.serviceWorker.register("/app-sw.js",{scope:"/",updateViaCache:"none"}).then(registration=>registration.update());
     void synchronize();
-    return()=>{active=false;window.removeEventListener("online",connected);window.removeEventListener("offline",disconnected);window.removeEventListener("focus",synchronize);document.removeEventListener("visibilitychange",visible)};
-  },[]);
+    return()=>{active=false;window.removeEventListener("online",connected);window.removeEventListener("offline",disconnected);window.removeEventListener("focus",synchronize);window.removeEventListener(SELLER_ORDER_SYNC_REQUEST_EVENT,synchronize);document.removeEventListener("visibilitychange",visible)};
+  },[userId]);
   useEffect(()=>{
     if(!isAuthenticated||!businessId||!permissions.includes("pos.approvals.receive_notifications")||typeof Notification==="undefined"||Notification.permission!=="granted")return;
     void ensurePosApprovalPushSubscription().catch(()=>undefined);

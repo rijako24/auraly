@@ -11,8 +11,7 @@ import {
   ClipboardList,
   Loader2,
   LogOut,
-  PackageCheck,
-  PackageOpen,
+  Package,
   PencilLine,
   Printer,
   RotateCcw,
@@ -242,6 +241,7 @@ export default function PosPage() {
     value: string;
   }>({ phase: "idle", value: "" });
   const [quantityShortage, setQuantityShortage] = useState<PosQuantityShortage | null>(null);
+  const [productSearchFocusRequest, setProductSearchFocusRequest] = useState(0);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [edgeReady, setEdgeReady] = useState(false);
@@ -413,6 +413,9 @@ export default function PosPage() {
       if (document.querySelector('[data-pos-focus-surface="modal"]')) return;
       scanner.current?.focus({ preventScroll: true });
     }));
+  }, []);
+  const focusProductSearch = useCallback(() => {
+    setProductSearchFocusRequest((current) => current + 1);
   }, []);
   const showError = useCallback((caught: unknown) => {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
@@ -2075,9 +2078,8 @@ export default function PosPage() {
   );
 
   async function selectSearchProduct(product: PosCatalogProduct) {
-    setProductSearchOpen(false);
     const added = await captureSelectedProduct(product);
-    if (!added) setProductSearchOpen(true);
+    if (added) setProductSearchOpen(false);
     return added;
   }
 
@@ -3254,6 +3256,7 @@ export default function PosPage() {
       {productSearchOpen && client && (
         <PosProductSearchDialog
           busy={busy}
+          focusRequest={productSearchFocusRequest}
           onSearch={searchProducts}
           connected={serverConnected}
           canReadAvailability={canReadProductAvailability}
@@ -3461,13 +3464,15 @@ export default function PosPage() {
           setQuantityShortage(null);
           if (lineId) await changeQuantity(lineId, quantity, false);
           else if (capturedValue) await captureValue(capturedValue, quantity);
-          focusScanner();
+          if (productSearchOpen) focusProductSearch();
+          else focusScanner();
         }}
         onCancel={() => {
           const lineId = quantityShortage.lineId;
           setQuantityShortage(null);
           if (!lineId) {
-            window.setTimeout(focusScanner, 0);
+            if (productSearchOpen) focusProductSearch();
+            else window.setTimeout(focusScanner, 0);
             return;
           }
           window.requestAnimationFrame(() => {
@@ -3536,14 +3541,14 @@ export default function PosPage() {
 
 function InventoryPolicyChip({ allowsNegativeStock }: { allowsNegativeStock: boolean }) {
   const presentation = posInventoryPolicyPresentation(allowsNegativeStock);
-  const Icon = allowsNegativeStock ? PackageOpen : PackageCheck;
   return <span
     title={presentation.detail}
     aria-label={presentation.label}
-    className={`flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs font-semibold ${allowsNegativeStock ? "border-amber-300/35 text-amber-200" : "border-emerald-300/30 text-emerald-200"}`}
+    className={`relative flex h-8 w-8 items-center justify-center rounded-full ${allowsNegativeStock ? "bg-amber-400/15 text-amber-100" : "bg-emerald-400/15 text-emerald-100"}`}
   >
-    <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-    <span className="hidden xl:inline">{presentation.label}</span>
+    <Package className="h-4 w-4" aria-hidden="true" />
+    {allowsNegativeStock && <span aria-hidden="true" className="absolute h-px w-5 rotate-45 rounded-full bg-current" />}
+    <span className="sr-only">{presentation.label}</span>
   </span>;
 }
 

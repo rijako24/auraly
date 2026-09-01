@@ -17,6 +17,7 @@ const money = new Intl.NumberFormat("es-CO", {
 
 export function PosProductSearchDialog({
   busy,
+  focusRequest,
   onSearch,
   connected,
   canReadAvailability,
@@ -25,6 +26,7 @@ export function PosProductSearchDialog({
   onCancel,
 }: {
   busy: boolean;
+  focusRequest: number;
   onSearch: (term: string, skip: number) => Promise<PosCatalogSearchPage>;
   connected: boolean;
   canReadAvailability: boolean;
@@ -53,7 +55,7 @@ export function PosProductSearchDialog({
       input.current?.focus({ preventScroll: true }),
     );
     return () => window.cancelAnimationFrame(frame);
-  }, []);
+  }, [focusRequest]);
 
   useEffect(() => {
     const version = ++requestVersion.current;
@@ -231,7 +233,8 @@ export function PosProductSearchDialog({
         <div className="p-5 pb-3">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-            <input
+          <input
+            data-pos-product-search-input
               ref={input}
               autoFocus
               value={term}

@@ -13,7 +13,6 @@
                                                ThemeFile="AuralyTheme.xml"
                                                LocalizationFile="AuralyTheme.wxl"
                                                LogoFile="..\..\Desktop\Auraly.Desktop\Assets\AuralyIcon-v5.png"
-                                               LogoSideFile="..\..\..\admin\public\brand\launch\auraly-828x1792-v4.png"
                                                ShowVersion="yes"
                                                SuppressOptionsUI="yes"
                                                LaunchTarget="[ProgramFiles64Folder]Auraly\Auraly.Desktop.exe"

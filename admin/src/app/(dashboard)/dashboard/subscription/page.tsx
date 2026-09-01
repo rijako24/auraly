@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Users,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +24,7 @@ import { TenantCommercialSubscriptionCard } from "@/components/subscriptions/ten
 import { TenantRenewalOrderCard } from "@/components/subscriptions/tenant-renewal-order-card";
 import { PlatformTenantSubscriptions } from "@/components/subscriptions/platform-tenant-subscriptions";
 import { useAuthStore } from "@/stores/auth-store";
+import { tenantCommercialApi } from "@/services/api/tenants";
 
 const operationLabels: Record<string, string> = {
   "1": "Turno del agente",
@@ -68,8 +70,16 @@ export default function SubscriptionPage() {
   const canReadAllTenants = useAuthStore((state) =>
     Boolean(state.user?.permissions.includes("tenants.read")));
   const subscriptionQuery = useSubscriptionDetails();
+  const commercialQuery = useQuery({ queryKey: ["tenant-commercial", "subscription"], queryFn: tenantCommercialApi.subscription });
 
   if (canReadAllTenants) return <PlatformTenantSubscriptions />;
+
+  if (commercialQuery.isLoading) return <PageLoading cards={3} />;
+  if (commercialQuery.isError) return <PageError onRetry={commercialQuery.refetch} />;
+
+  if (commercialQuery.data && (!businessId || subscriptionQuery.isLoading || subscriptionQuery.isError || !subscriptionQuery.data)) {
+    return <CommercialSubscriptionView />;
+  }
 
   if (!businessId) {
     return (
@@ -336,4 +346,12 @@ export default function SubscriptionPage() {
       </Card>
     </div>
   );
+}
+
+function CommercialSubscriptionView() {
+  return <div className="mx-auto max-w-[1600px] space-y-7">
+    <div><p className="mb-1 text-sm font-medium text-primary">FACTURACIÓN</p><h1 className="text-3xl font-semibold tracking-tight">Suscripción</h1><p className="mt-1 text-muted-foreground">Plan contratado, cupos, vigencia y próxima renovación.</p></div>
+    <TenantCommercialSubscriptionCard />
+    <TenantRenewalOrderCard />
+  </div>;
 }

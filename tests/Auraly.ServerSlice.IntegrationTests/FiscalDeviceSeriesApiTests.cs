@@ -265,6 +265,7 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         var tenantId = Guid.NewGuid();
         var businessId = Guid.NewGuid();
         var userId = Guid.NewGuid();
+        var roleId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using (var seed = new SqlCommand("""
@@ -273,17 +274,25 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
             VALUES(@TenantId,@TenantKey,N'Tenant anterior a suscripciones',@Email,1,10,10,SYSUTCDATETIME());
             INSERT dbo.Businesses
               (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
-            VALUES(@BusinessId,@TenantId,N'Sede legado',NULL,NULL,NULL,@Email,NULL,1,SYSUTCDATETIME());
+            VALUES(@BusinessId,@TenantId,N'Sede legado',N'Empresa anterior al modelo comercial',
+                   N'',N'',@Email,N'',1,SYSUTCDATETIME());
             INSERT dbo.AppUsers
               (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
-               FirstName,LastName,IsActive,CreatedAt)
+               FirstName,LastName,IsActive,EmailConfirmed,CreatedAt)
             VALUES(@UserId,@TenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
-                   N'Administrador',N'Legado',1,SYSUTCDATETIME());
+                   N'Administrador',N'Legado',1,1,SYSUTCDATETIME());
+            INSERT dbo.AppRoles
+              (RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+            VALUES(@RoleId,@TenantId,N'Administrador legado',N'ADMINISTRADOR LEGADO',
+                   N'Acceso integral al tenant de regresión',1,0,SYSUTCDATETIME());
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            VALUES(NEWID(),@UserId,@RoleId,NULL,SYSUTCDATETIME());
             """, connection))
         {
             seed.Parameters.AddWithValue("@TenantId", tenantId);
             seed.Parameters.AddWithValue("@BusinessId", businessId);
             seed.Parameters.AddWithValue("@UserId", userId);
+            seed.Parameters.AddWithValue("@RoleId", roleId);
             seed.Parameters.AddWithValue("@TenantKey", $"@legacy-{tenantId:N}");
             seed.Parameters.AddWithValue("@Username", $"legacy-{userId:N}");
             seed.Parameters.AddWithValue("@Email", $"legacy-{userId:N}@test.local");
@@ -293,6 +302,7 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         {
             using var client = fixture.CreateTenantUserClient(
                 tenantId, userId, FiscalPermissionCodes.ConfigurationRead);
+            client.DefaultRequestHeaders.Add("X-Business-Id", businessId.ToString("D"));
             using var response = await client.GetAsync(
                 $"/api/commerce/v1/fiscal/configuration/?businessId={businessId:D}");
             response.EnsureSuccessStatusCode();
@@ -302,10 +312,10 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
             Assert.Equal(0, configuration.DianDocumentMonthlyLimit);
 
             await using var reserve = new SqlCommand("""
-                DECLARE @Reserved bit;
+                DECLARE @Reserved bit,@Now datetimeoffset(7)=SYSDATETIMEOFFSET();
                 EXEC dbo.TenantDianDocumentQuotaReserve
                   @BusinessId=@BusinessId,@DocumentId=@DocumentId,
-                  @DocumentKind=N'SalesInvoice',@Now=SYSDATETIMEOFFSET(),@Reserved=@Reserved OUTPUT;
+                  @DocumentKind=N'SalesInvoice',@Now=@Now,@Reserved=@Reserved OUTPUT;
                 SELECT @Reserved;
                 """, connection);
             reserve.Parameters.AddWithValue("@BusinessId", businessId);
@@ -316,11 +326,14 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         {
             await using var cleanup = new SqlCommand("""
                 DELETE dbo.AuthenticationSessions WHERE UserId=@UserId;
+                DELETE dbo.UserRoles WHERE UserId=@UserId;
                 DELETE dbo.AppUsers WHERE UserId=@UserId;
+                DELETE dbo.AppRoles WHERE RoleId=@RoleId;
                 DELETE dbo.Businesses WHERE BusinessId=@BusinessId;
                 DELETE dbo.Tenants WHERE TenantId=@TenantId;
                 """, connection);
             cleanup.Parameters.AddWithValue("@UserId", userId);
+            cleanup.Parameters.AddWithValue("@RoleId", roleId);
             cleanup.Parameters.AddWithValue("@BusinessId", businessId);
             cleanup.Parameters.AddWithValue("@TenantId", tenantId);
             await cleanup.ExecuteNonQueryAsync();

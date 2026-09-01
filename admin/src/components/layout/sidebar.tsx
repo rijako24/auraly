@@ -50,7 +50,7 @@ export function Sidebar() {
                   href="/dashboard"
                   className="flex items-center justify-center w-full rounded-md hover:bg-sidebar-accent transition-colors"
                 >
-                  <AuralyLogo collapsed markClassName="h-7 w-8" />
+                  <AuralyLogo collapsed markClassName="h-8 w-8" />
                 </Link>
               </TooltipTrigger>
               <TooltipContent side="right">AURALY Admin</TooltipContent>
