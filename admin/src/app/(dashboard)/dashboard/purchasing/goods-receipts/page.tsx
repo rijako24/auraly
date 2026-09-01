@@ -592,7 +592,7 @@ function ReceiptEditor({
   };
 
   return <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
-    <DialogContent onEscapeKeyDown={(event) => { if (productMenuOpen) { event.preventDefault(); setProductMenuOpen(false); } }} className="flex max-h-[96dvh] max-w-[96vw] flex-col overflow-hidden p-0">
+    <DialogContent onEscapeKeyDown={(event) => { if (productMenuOpen) { event.preventDefault(); setProductMenuOpen(false); } }} className="flex max-h-[94dvh] w-[94vw] max-w-6xl flex-col overflow-hidden p-0">
       <DialogHeader className="border-b px-6 py-5">
         <DialogTitle className="flex items-center gap-2">
           <Truck className="h-5 w-5 text-primary" /> Entrada de mercancía
@@ -662,7 +662,7 @@ function ReceiptEditor({
           <ChevronDown className={`h-5 w-5 transition-transform ${detailsExpanded ? "rotate-180" : ""}`} />
         </button>
         {detailsExpanded && <>
-        <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-4">
+        <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
           <Field label="Proveedor">
             <PartyRoleSelect role="Supplier" value={draft.supplierId} placeholder="Buscar proveedor"
               disabled={!!draft.purchaseOrderId}
@@ -800,20 +800,21 @@ function ReceiptEditor({
                 {products.isFetchingNextPage ? "Cargando..." : "Cargar 50 más"}
               </Button>}
             </div>}
-          {productMenuOpen && draft.supplierId && !products.isLoading && productItems.length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Sin datos</div>}
+          {productMenuOpen && draft.supplierId && productSearch.trim().length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Escribe al menos una letra, código o referencia para buscar.</div>}
+          {productMenuOpen && draft.supplierId && productSearch.trim().length > 0 && !products.isLoading && productItems.length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Sin resultados para esta búsqueda.</div>}
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-sm">
+          <div className="overflow-hidden">
+            <table className="w-full table-fixed text-sm">
               <thead className="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <tr><th className="px-4 py-3">Producto</th><th className="w-44 px-3 py-3">Cantidad recibida</th>
-                  <th className="w-40 px-3 py-3">Costo unitario</th><th className="w-36 px-3 py-3">Descuento</th>
-                  <th className="w-28 px-3 py-3">IVA</th><th className="w-36 px-3 py-3 text-right">Total</th>
-                  <th className="w-14" /></tr>
+                <tr><th className="w-[34%] px-4 py-3">Producto</th><th className="w-[17%] px-3 py-3">Cantidad recibida</th>
+                  <th className="w-[14%] px-3 py-3">Costo unitario</th><th className="w-[12%] px-3 py-3">Descuento</th>
+                  <th className="w-[7%] px-3 py-3 text-center">IVA</th><th className="w-[11%] px-3 py-3 text-right">Total</th>
+                  <th className="w-[5%]" /></tr>
               </thead>
               <tbody>{draft.lines.map((line) => {
                 const lineTotal = calculateGoodsReceiptLine(line).total;
-                return <tr key={line.productId} className="border-t align-middle">
-                  <td className="px-4 py-3"><p className="font-semibold">{line.description}</p>
+                return <tr key={line.productId} className="border-t align-top">
+                  <td className="break-words px-4 py-3"><p className="font-semibold">{line.description}</p>
                     <p className="text-xs text-muted-foreground">IVA de compra {line.taxRate} % · {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}</p>
                     <p className="text-xs text-muted-foreground">Costo promedio {line.averageUnitCost == null ? "—" : formatCurrency(line.averageUnitCost)} · Último costo {line.latestUnitCost == null ? "—" : formatCurrency(line.latestUnitCost)}</p>
                     <p className="text-xs text-muted-foreground">{line.presentationQuantity} {line.presentationName.toLowerCase()} × {line.unitsPerPresentation} = {line.quantity} {goodsReceiptUnitLabel(line.baseUnitCode, line.quantity)}</p></td>
@@ -844,13 +845,13 @@ function ReceiptEditor({
                         const name = value === "base" ? goodsReceiptUnitLabel(line.baseUnitCode) : (line.preferredPresentationName ?? line.presentationName);
                         updateLine(line.productId, { presentationName: name, unitsPerPresentation: factor, quantity: calculateBaseQuantity(line.presentationQuantity, factor) });
                       }}>
-                      <SelectTrigger className="mt-1 h-7 border-0 px-1 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="mt-1 h-8 w-full px-2 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="base">{goodsReceiptUnitLabel(line.baseUnitCode)}</SelectItem>
                         <SelectItem value="package">{line.preferredPresentationName ?? line.presentationName} · {line.preferredUnitsPerPresentation ?? line.unitsPerPresentation} {goodsReceiptUnitLabel(line.baseUnitCode, line.preferredUnitsPerPresentation ?? line.unitsPerPresentation)}</SelectItem>
                       </SelectContent>
                     </Select>}
-                    {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) <= 1 && <span className="mt-1 block text-xs text-muted-foreground">{goodsReceiptUnitLabel(line.baseUnitCode)}</span>}
+                    {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) <= 1 && <span className="mt-1 flex h-8 items-center rounded-md bg-muted/40 px-2 text-xs text-muted-foreground">{goodsReceiptUnitLabel(line.baseUnitCode)}</span>}
                     {line.remainingQuantity != null && <span className="mt-1 block text-xs text-muted-foreground">Pendiente en orden: {line.remainingQuantity}</span>}
                     {line.remainingQuantity != null && line.quantity > line.remainingQuantity && <Input className="mt-2" value={line.overReceiptReason ?? ""}
                       onChange={(event) => updateLine(line.productId, { overReceiptReason: event.target.value })}
@@ -864,8 +865,8 @@ function ReceiptEditor({
                     ariaLabel={`Descuento de ${line.description}`}
                     value={line.discountAmount} onValueChange={(value) =>
                       updateLine(line.productId, { discountAmount: value ?? 0 })} /></td>
-                  <td className="px-3 py-2">{line.taxRate} %</td>
-                  <td className="px-3 py-2 text-right font-semibold">{formatCurrency(lineTotal)}</td>
+                  <td className="px-3 py-4 text-center">{line.taxRate} %</td>
+                  <td className="break-words px-3 py-4 text-right text-xs font-semibold">{formatCurrency(lineTotal)}</td>
                   <td className="pr-3"><Button type="button" size="icon" variant="ghost"
                     aria-label={`Eliminar ${line.description}`}
                     onClick={() => change({ lines: draft.lines

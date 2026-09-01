@@ -110,23 +110,25 @@ public sealed partial class SqlWorkSessionStore
                 throw new WorkSessionValidationException("La conciliación debe incluir cada medio contado exactamente una vez.");
             var expectedVerifications = await ReadPaymentVerificationsAsync(
                 connection, transaction, closureId, cancellationToken);
+            var individuallyVerifiable = expectedVerifications.Where(item =>
+                !item.PaymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase)).ToArray();
             var requestedVerifications = request.PaymentVerifications ?? [];
             var verificationDecisions = requestedVerifications
                 .GroupBy(value => value.VerificationKey.Trim(), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
             if (verificationDecisions.Any(group => group.Value.Length != 1) ||
-                verificationDecisions.Count != expectedVerifications.Count ||
-                expectedVerifications.Any(item => !verificationDecisions.ContainsKey(item.VerificationKey)) ||
-                verificationDecisions.Keys.Any(key => expectedVerifications.All(item =>
+                verificationDecisions.Count != individuallyVerifiable.Length ||
+                individuallyVerifiable.Any(item => !verificationDecisions.ContainsKey(item.VerificationKey)) ||
+                verificationDecisions.Keys.Any(key => individuallyVerifiable.All(item =>
                     !item.VerificationKey.Equals(key, StringComparison.OrdinalIgnoreCase))))
                 throw new WorkSessionValidationException(
                     "Debe verificar cada comprobante de tarjeta y transferencia exactamente una vez.");
-            var verifiedAmounts = expectedVerifications
+            var verifiedAmounts = individuallyVerifiable
                 .Where(item => verificationDecisions[item.VerificationKey][0].Status == "Verified")
                 .GroupBy(item => item.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.Sum(item => item.Amount),
                     StringComparer.OrdinalIgnoreCase);
-            foreach (var method in expectedVerifications.Select(item => item.PaymentMethodCode)
+            foreach (var method in individuallyVerifiable.Select(item => item.PaymentMethodCode)
                          .Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 var verified = verifiedAmounts.GetValueOrDefault(method);
@@ -360,7 +362,8 @@ public sealed partial class SqlWorkSessionStore
                 SELECT CONCAT(N'Sale:',CONVERT(nvarchar(36),payment.DocumentId),N':',payment.PaymentNumber) VerificationKey,
                   COALESCE(mapping.ClosureMethodCode,payment.MethodCode) PaymentMethodCode,N'Sale' MovementType,
                   payment.DocumentId SourceId,document.DocumentNumber,payment.PaymentNumber SourceNumber,
-                  payment.Amount,payment.Reference,payment.CardFranchiseCode,payment.ApprovalNumber,payment.RegisteredAt OccurredAt
+                  payment.Amount,payment.Reference,payment.CardFranchiseCode,payment.ApprovalNumber,payment.RegisteredAt OccurredAt,
+                  document.DocumentType SourceDocumentType
                 FROM dbo.SalesPayments payment
                 INNER JOIN dbo.SalesDocuments document ON document.DocumentId=payment.DocumentId
                 INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
@@ -369,7 +372,8 @@ public sealed partial class SqlWorkSessionStore
                 SELECT CONCAT(N'Refund:',CONVERT(nvarchar(36),settlement.ReturnId),N':',settlement.SettlementNumber),
                   COALESCE(mapping.ClosureMethodCode,settlement.MethodCode),N'Refund',settlement.ReturnId,
                   saleReturn.DocumentNumber,settlement.SettlementNumber,-settlement.Amount,settlement.Reference,
-                  originalPayment.CardFranchiseCode,originalPayment.ApprovalNumber,settlement.OccurredAt
+                  originalPayment.CardFranchiseCode,originalPayment.ApprovalNumber,settlement.OccurredAt,
+                  N'SalesReturn'
                 FROM dbo.SalesReturnSettlements settlement
                 INNER JOIN dbo.SalesReturns saleReturn ON saleReturn.ReturnId=settlement.ReturnId
                 INNER JOIN ClosureContext context ON saleReturn.CreatedByUserId=context.UserId
@@ -380,9 +384,9 @@ public sealed partial class SqlWorkSessionStore
                 WHERE settlement.SettlementType=N'Refund'
                 UNION ALL
                 SELECT CONCAT(N'Movement:',CONVERT(nvarchar(36),movement.WorkSessionMovementId)),
-                  COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode),N'Movement',movement.WorkSessionMovementId,
+                  COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode),movement.MovementType,movement.WorkSessionMovementId,
                   COALESCE(NULLIF(movement.Reference,N''),movement.SourceKey),0,movement.Amount,movement.Reference,
-                  NULL,NULL,movement.OccurredAt
+                  NULL,NULL,movement.OccurredAt,N'CashMovement'
                 FROM dbo.WorkSessionMovements movement
                 INNER JOIN ClosureContext context ON context.WorkSessionId=movement.WorkSessionId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=movement.PaymentMethodCode
@@ -390,11 +394,11 @@ public sealed partial class SqlWorkSessionStore
             )
             SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType,movement.SourceId,
               movement.DocumentNumber,movement.SourceNumber,movement.Amount,movement.Reference,
-              movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt
+              movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt,
+              movement.SourceDocumentType
             FROM VerificationMovements movement
             INNER JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
-            WHERE movement.PaymentMethodCode<>N'Cash'
             ORDER BY closureOption.SortOrder,movement.OccurredAt,movement.VerificationKey;
             """, connection, transaction);
         command.Parameters.AddWithValue("@ClosureId", closureId);
@@ -405,7 +409,8 @@ public sealed partial class SqlWorkSessionStore
                 reader.GetString(4), reader.GetInt32(5), reader.GetDecimal(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetDateTimeOffset(10)));
+                reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetDateTimeOffset(10),
+                reader.GetString(11)));
         return result;
     }
 

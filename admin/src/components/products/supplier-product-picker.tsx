@@ -131,7 +131,9 @@ export const SupplierProductPicker = forwardRef<HTMLInputElement, SupplierProduc
         disabled={productsQuery.isFetchingNextPage} onMouseDown={(event) => event.preventDefault()}
         onClick={() => void productsQuery.fetchNextPage()}>{productsQuery.isFetchingNextPage ? "Cargando…" : "Cargar 50 más"}</Button>}
     </div>}
-    {open && supplierId && !productsQuery.isLoading && products.length === 0 &&
-      <div role="listbox" className="absolute z-40 mt-1 w-full rounded-xl border bg-background px-4 py-3 text-sm text-muted-foreground shadow-xl">Sin datos</div>}
+    {open && supplierId && search.trim().length === 0 &&
+      <div role="listbox" className="absolute z-40 mt-1 w-full rounded-xl border bg-background px-4 py-3 text-sm text-muted-foreground shadow-xl">Escribe al menos una letra, código o referencia para buscar.</div>}
+    {open && supplierId && search.trim().length > 0 && !productsQuery.isLoading && products.length === 0 &&
+      <div role="listbox" className="absolute z-40 mt-1 w-full rounded-xl border bg-background px-4 py-3 text-sm text-muted-foreground shadow-xl">Sin resultados para esta búsqueda.</div>}
   </div>;
 });

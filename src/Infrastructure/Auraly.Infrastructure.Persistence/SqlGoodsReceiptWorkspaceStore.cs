@@ -31,14 +31,24 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             FROM reference.Options
             WHERE CatalogCode=N'purchase-evidence-type' AND IsActive=1
             ORDER BY SortOrder,Label;
-            SELECT DISTINCT ConceptCode AS Code,ConceptCode AS Label
-            FROM dbo.WithholdingRules
-            WHERE BusinessId=@BusinessId AND Direction=N'Purchase' AND IsActive=1 AND ConceptCode IS NOT NULL
-            ORDER BY Code;
-            SELECT DISTINCT JurisdictionCode AS Code,JurisdictionCode AS Label
-            FROM dbo.WithholdingRules
-            WHERE BusinessId=@BusinessId AND Direction=N'Purchase' AND IsActive=1 AND JurisdictionCode IS NOT NULL
-            ORDER BY Code;
+            WITH latest AS (
+              SELECT source.*,ROW_NUMBER() OVER(PARTITION BY source.RuleId ORDER BY source.Version DESC) AS rn
+              FROM dbo.WithholdingRules source
+              WHERE source.BusinessId=@BusinessId AND source.Direction=N'Purchase'
+            )
+            SELECT ConceptCode AS Code,CONCAT(ConceptCode,N' · ',MIN(Name)) AS Label
+            FROM latest
+            WHERE rn=1 AND IsActive=1 AND ConceptCode IS NOT NULL
+            GROUP BY ConceptCode
+            ORDER BY ConceptCode;
+            SELECT city.Code,CONCAT(city.Name,N' · ',division.Name) AS Label
+            FROM dbo.Cities city
+            JOIN dbo.AdministrativeDivisions division
+              ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+            JOIN dbo.Countries country ON country.CountryId=division.CountryId
+            WHERE country.Code=N'CO' AND country.IsActive=1
+              AND division.IsActive=1 AND city.IsActive=1
+            ORDER BY city.Name,division.Name,city.Code;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);

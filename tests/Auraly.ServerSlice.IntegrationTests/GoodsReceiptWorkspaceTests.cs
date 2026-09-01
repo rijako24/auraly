@@ -10,6 +10,74 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Workspace_options_expose_purchase_concepts_and_colombian_municipalities()
+    {
+        var ruleId = Guid.NewGuid();
+        var suffix = ruleId.ToString("N")[..8];
+        var conceptCode = $"SERV-{suffix}";
+        string cityCode;
+        string cityName;
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT dbo.WithholdingRules
+                  (RuleId,Version,BusinessId,Code,Name,Kind,Direction,Moment,BaseKind,
+                   ConceptCode,JurisdictionCode,Rate,MinimumBase,RequiredResponsibilities,
+                   EffectiveFrom,EffectiveTo,IsActive,CreatedAt,CreatedByUserId)
+                VALUES
+                  (@RuleId,1,@BusinessId,@Code,N'Servicios de prueba',N'IncomeTax',N'Purchase',
+                   N'Accrual',N'TaxExclusiveAmount',@ConceptCode,NULL,2.5,0,N'[]',
+                   CAST(SYSDATETIMEOFFSET() AS date),NULL,1,SYSDATETIMEOFFSET(),@UserId);
+
+                SELECT TOP (1) city.Code,city.Name
+                FROM dbo.Cities city
+                JOIN dbo.AdministrativeDivisions division
+                  ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+                JOIN dbo.Countries country ON country.CountryId=division.CountryId
+                WHERE country.Code=N'CO' AND country.IsActive=1
+                  AND division.IsActive=1 AND city.IsActive=1
+                ORDER BY city.Name,city.Code;
+                """;
+            command.Parameters.AddWithValue("@RuleId", ruleId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@Code", $"WR-{suffix}");
+            command.Parameters.AddWithValue("@ConceptCode", conceptCode);
+            command.Parameters.AddWithValue("@UserId", fixture.UserId);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            cityCode = reader.GetString(0);
+            cityName = reader.GetString(1);
+        }
+
+        try
+        {
+            using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.ReadGoodsReceipts);
+            using var response = await client.GetAsync("/api/commerce/v1/goods-receipts/options");
+            var responseBody = await response.Content.ReadAsStringAsync();
+            Assert.True(response.IsSuccessStatusCode, responseBody);
+            var options = await response.Content.ReadFromJsonAsync<GoodsReceiptWorkspaceOptions>();
+
+            Assert.NotNull(options);
+            Assert.Contains(options.WithholdingConcepts,
+                item => item.Code == conceptCode && item.Label.Contains("Servicios de prueba"));
+            Assert.Contains(options.WithholdingJurisdictions,
+                item => item.Code == cityCode && item.Label.Contains(cityName));
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var delete = new SqlCommand(
+                "DELETE dbo.WithholdingRules WHERE RuleId=@RuleId;", connection);
+            delete.Parameters.AddWithValue("@RuleId", ruleId);
+            await delete.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task Warehouse_not_enabled_for_receipts_is_hidden_and_rejected_by_the_server()
     {
         var warehouseId = Guid.NewGuid();

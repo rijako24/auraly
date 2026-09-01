@@ -31,15 +31,16 @@ export function useGoodsReceiptProducts(
   supplierId?: string, search?: string, includeUnassociated = false,
 ) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const normalizedSearch = search?.trim() ?? "";
   return useInfiniteQuery({
-    queryKey: ["goods-receipt-products", businessId, supplierId, search, includeUnassociated],
+    queryKey: ["goods-receipt-products", businessId, supplierId, normalizedSearch, includeUnassociated],
     queryFn: ({ pageParam }) => goodsReceiptsApi.products(
-      supplierId!, search?.trim() || undefined, includeUnassociated, pageParam, 50,
+      supplierId!, normalizedSearch, includeUnassociated, pageParam, 50,
     ),
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
-    enabled: !!businessId && !!supplierId,
+    enabled: !!businessId && !!supplierId && normalizedSearch.length > 0,
   });
 }
 

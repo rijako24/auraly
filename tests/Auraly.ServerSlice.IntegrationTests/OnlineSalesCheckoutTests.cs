@@ -216,6 +216,62 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Cash_closure_traces_only_the_cash_share_of_a_split_payment_sale()
+    {
+        var userId = await CreateUserAsync("split-cash-trace");
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences);
+        client.Timeout = TimeSpan.FromSeconds(60);
+
+        var captured = await CaptureAsync(client, await OpenAsync(client));
+        var cashAmount = decimal.Round(captured.PayableAmount / 3m, 2);
+        var transferAmount = captured.PayableAmount - cashAmount;
+        var completed = await CompleteAsync(
+            client,
+            captured.DraftId,
+            new CompleteOnlineSalesDraftRequest(captured.Version,
+            [
+                new OnlineSalesPayment("Cash", cashAmount, null),
+                new OnlineSalesPayment("Transfer", transferAmount, "TRANSFER-SPLIT")
+            ]),
+            $"split-cash-trace-{Guid.NewGuid():N}");
+
+        using var closeRequest = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/commerce/v1/work-sessions/{captured.WorkSessionId:D}/close")
+        {
+            Content = JsonContent.Create(new CloseWorkSessionRequest(cashAmount,
+                "Venta con pago dividido", PaymentCounts:
+                [
+                    new WorkSessionPaymentCount("Cash", cashAmount),
+                    new WorkSessionPaymentCount("Card", 0m),
+                    new WorkSessionPaymentCount("Transfer", transferAmount)
+                ]))
+        };
+        closeRequest.Headers.Add("Idempotency-Key", $"split-close-{Guid.NewGuid():N}");
+        using var closeResponse = await client.SendAsync(closeRequest);
+        closeResponse.EnsureSuccessStatusCode();
+        var closure = await closeResponse.Content.ReadFromJsonAsync<WorkSessionClosureView>();
+        Assert.NotNull(closure);
+
+        var verificationItems = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
+        Assert.NotNull(verificationItems);
+        var cashTrace = Assert.Single(verificationItems, item =>
+            item.SourceId == completed.Receipt.DocumentId && item.PaymentMethodCode == "Cash");
+        var transferTrace = Assert.Single(verificationItems, item =>
+            item.SourceId == completed.Receipt.DocumentId && item.PaymentMethodCode == "Transfer");
+        Assert.Equal(cashAmount, cashTrace.Amount);
+        Assert.Equal(transferAmount, transferTrace.Amount);
+        Assert.NotEqual(completed.Receipt.PayableAmount, cashTrace.Amount);
+        Assert.Equal(completed.Receipt.DocumentNumber, cashTrace.DocumentNumber);
+        Assert.Equal(completed.Receipt.DocumentNumber, transferTrace.DocumentNumber);
+    }
+
+    [Fact]
     public async Task Commercial_receipt_uses_its_own_series_and_skips_the_fiscal_stage()
     {
         var userId = await CreateUserAsync("receipt");

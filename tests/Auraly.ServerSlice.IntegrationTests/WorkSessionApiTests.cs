@@ -368,9 +368,16 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var verificationItems = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
             $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
         Assert.NotNull(verificationItems);
-        Assert.Equal(4, verificationItems.Length);
+        Assert.Equal(6, verificationItems.Length);
+        Assert.Equal(2, verificationItems.Count(item => item.PaymentMethodCode == "Cash"));
         Assert.Equal(2, verificationItems.Count(item => item.PaymentMethodCode == "Card"));
         Assert.Equal(2, verificationItems.Count(item => item.PaymentMethodCode == "Transfer"));
+        Assert.Equal(listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Cash").NetAmount,
+            verificationItems.Where(item => item.PaymentMethodCode == "Cash").Sum(item => item.Amount));
+        Assert.Contains(verificationItems, item => item.PaymentMethodCode == "Cash" &&
+            item.MovementType == "CashIn" && item.Amount == 100_000m);
+        Assert.Contains(verificationItems, item => item.PaymentMethodCode == "Cash" &&
+            item.MovementType == "CashOut" && item.Amount == -20_000m);
 
         using (var incomplete = new HttpRequestMessage(HttpMethod.Post,
                    $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
@@ -388,7 +395,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.BadRequest, incompleteResponse.StatusCode);
         }
 
-        var verificationDecisions = verificationItems.Select(item =>
+        var verificationDecisions = verificationItems
+            .Where(item => item.PaymentMethodCode != "Cash")
+            .Select(item =>
             new WorkSessionPaymentVerificationDecision(item.VerificationKey,
                 item.PaymentMethodCode == "Transfer" && item.Amount == 20_000m ? "Missing" : "Verified")).ToArray();
 
