@@ -117,6 +117,8 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await expect(quantity).toHaveValue("2");
   await dialog.getByRole("button", { name: "Aplicar todos los sugeridos" }).click();
   await expect(quantity).toHaveValue("4");
+  const selectedOrderDate = await orderDate.textContent();
+  const selectedExpectedDate = await expectedDate.textContent();
   await expect.poll(() => page.evaluate(({ key }) => {
     const stored = localStorage.getItem(key);
     return stored ? (JSON.parse(stored) as { lines: unknown[] }).lines.length : 0;
@@ -125,6 +127,10 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByRole("button", { name: "Nueva orden" }).click();
   const restored = page.getByRole("dialog", { name: "Nueva orden de compra" });
+  await expect(restored.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Proveedor Andino");
+  await expect(restored.getByText("Bodega", { exact: true }).locator("..").getByRole("combobox")).toContainText("Auxiliar");
+  await expect(restored.getByText("Fecha de orden", { exact: true }).locator("..").getByRole("button").first()).toHaveText(selectedOrderDate ?? "");
+  await expect(restored.getByText("Entrega esperada", { exact: true }).locator("..").getByRole("button").first()).toHaveText(selectedExpectedDate ?? "");
   await expect(restored.locator("tbody tr").first()).toContainText("Café tostado");
   await expect(restored.locator("tbody tr").first().locator('input[type="number"]')).toHaveValue("4");
   await restored.getByRole("button", { name: "Descartar captura" }).click();
