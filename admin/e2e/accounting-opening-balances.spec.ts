@@ -2,7 +2,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 const businessId = "22222222-2222-2222-2222-222222222222";
-const permissions = ["accounting.read", "accounting.configure", "accounting.activate", "parties.read"];
+const permissions = ["accounting.read", "accounting.configure", "accounting.activate", "parties.read", "commerce.taxation.withholdings.view", "commerce.taxation.withholdings.manage"];
 
 async function authenticate(page: Page) {
   await page.context().addCookies([{ name: "auth_token", value: "e2e", url: process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000", httpOnly: true, sameSite: "Lax" }]);
@@ -58,4 +58,59 @@ test("saldos iniciales busca cualquier tercero activo sin filtrar por rol", asyn
   const url = new URL(partyRequest);
   expect(url.searchParams.has("role")).toBe(false);
   expect(Number(url.searchParams.get("pageSize"))).toBeLessThanOrEqual(100);
+});
+
+test("limpia el tipo de cuenta bancaria y expone la creación de reglas de retención", async ({ page }) => {
+  const bankTypeId = "99999999-9999-9999-9999-999999999999";
+  const bankAccountId = "44444444-4444-4444-4444-444444444444";
+  let savedBankAccount: Record<string, unknown> | null = null;
+
+  await page.route("**/api/auth/me", route => json(route, { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions }));
+  await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
+  await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly" }]));
+  await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions }));
+  await page.route("**/api/commerce/v1/reference-options/**", route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/bank-account-type")) return json(route, [{ id: bankTypeId, code: "Savings", label: "Ahorros", description: null, sortOrder: 1 }]);
+    if (path.endsWith("/accounting-withholding-kind")) return json(route, [{ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", code: "IncomeTax", label: "ReteFuente", description: null, sortOrder: 1 }]);
+    return json(route, []);
+  });
+  await page.route("**/api/commerce/v1/accounting/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/accounts")) return json(route, [{ accountId: bankAccountId, code: "111005", name: "Bancos", accountType: "Asset", allowsPosting: true, requiresParty: false, isActive: true }]);
+    if (path.endsWith("/bank-accounts") && route.request().method() === "GET") return json(route, savedBankAccount ? [savedBankAccount] : []);
+    if (path.includes("/bank-accounts/") && route.request().method() === "PUT") {
+      savedBankAccount = { ...route.request().postDataJSON(), accountingAccountCode: "111005", accountingAccountName: "Bancos", accountTypeCode: "Savings", accountTypeName: "Ahorros", currencyCode: "COP", rowVersion: "AQID" };
+      return json(route, savedBankAccount);
+    }
+    if (path.endsWith("/readiness")) return json(route, { status: "Ready", functionalCurrencyCode: "COP", effectiveFrom: "2026-01-01", openingBalanceMode: "ZeroDeclared", activatedAt: "2026-01-01T00:00:00Z", blockingIssues: [] });
+    if (path.endsWith("/opening-balances")) return json(route, null);
+    return json(route, []);
+  });
+  await page.route("**/api/commerce/v1/taxation/withholding-rules**", route => json(route, [{ ruleId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", businessId, version: 1, code: "RF-COMPRA", name: "Retefuente compras", kind: "IncomeTax", direction: "Purchase", moment: "Accrual", baseKind: "TaxExclusiveAmount", conceptCode: null, jurisdictionCode: null, rate: 2.5, minimumBase: 100000, requiredResponsibilities: [], effectiveFrom: "2026-01-01", effectiveTo: null, isActive: true }]));
+
+  await authenticate(page);
+  await page.goto("/dashboard/accounting");
+  const retentionLink = page.getByRole("link", { name: "Reglas de retención" });
+  await expect(retentionLink).toHaveAttribute("href", "/dashboard/accounting/withholdings");
+  await page.getByRole("button", { name: "Cuentas bancarias" }).click();
+  const bankForm = page.getByRole("heading", { name: "Nueva cuenta bancaria" }).locator("../..");
+  await bankForm.getByText("Banco", { exact: true }).locator("..").locator("input").fill("Banco E2E");
+  await bankForm.getByText("Nombre para mostrar", { exact: true }).locator("..").locator("input").fill("Cuenta principal E2E");
+  await bankForm.getByText("Tipo de cuenta", { exact: true }).locator("..").getByRole("combobox").click();
+  await page.getByRole("option", { name: "Ahorros" }).click();
+  await bankForm.getByText("Número de cuenta", { exact: true }).locator("..").locator("input").fill("123456789");
+  await bankForm.getByText("Cuenta auxiliar del PUC", { exact: true }).locator("..").getByRole("combobox").click();
+  await page.getByRole("option", { name: /111005.*Bancos/ }).click();
+  await bankForm.getByRole("button", { name: "Guardar cuenta bancaria" }).click();
+
+  await expect.poll(() => savedBankAccount?.accountTypeOptionId).toBe(bankTypeId);
+  await expect(bankForm.getByText("Tipo de cuenta", { exact: true }).locator("..").getByRole("combobox")).toContainText("Seleccionar tipo");
+  await expect(bankForm.getByText("Cuenta auxiliar del PUC", { exact: true }).locator("..").getByRole("combobox")).toContainText("Seleccionar auxiliar de bancos");
+
+  await retentionLink.click();
+  await expect(page.getByRole("heading", { name: "Retenciones" })).toBeVisible();
+  await expect(page.getByText("RF-COMPRA · Retefuente compras")).toBeVisible();
+  await page.getByRole("button", { name: "Nueva regla" }).click();
+  await expect(page.getByRole("heading", { name: "Nueva regla de retención" })).toBeVisible();
 });

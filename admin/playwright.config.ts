@@ -6,7 +6,7 @@ const manageApi = process.env.AURALY_E2E_MANAGE_API !== "0";
 export default defineConfig({
   webServer: manageServers ? [
     ...(manageApi ? [{
-      command: "dotnet ../src/API/Auraly.Api/bin/Release/net8.0/Auraly.Api.dll --urls http://127.0.0.1:5097",
+      command: "dotnet ../src/API/Auraly.Api/bin/Release/net8.0/Auraly.Api.dll --contentRoot ../../.. --urls http://127.0.0.1:5097",
       url: "http://127.0.0.1:5097/health",
       reuseExistingServer: false,
       timeout: 120_000,
