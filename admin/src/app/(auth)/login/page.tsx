@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/services/api/auth";
+import { establishWebSession } from "@/services/api/client";
 import {
   PosEdgeClient,
   PosEdgeError,
@@ -110,6 +111,7 @@ function LoginForm() {
           username,
           password,
         });
+        establishWebSession();
         rememberTenantKey(response.user.tenantKey || effectiveTenantKey);
         setAuth(response.user);
         const redirect = searchParams.get("redirect")

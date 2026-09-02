@@ -5,6 +5,7 @@ import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
 import {
   announceSessionReplacement,
   isActiveLocalPosSession,
+  isCurrentWebSessionVersion,
   retryAuthenticatedRequest,
   type SessionRefreshResult,
 } from "@/lib/auth-session";
@@ -12,8 +13,13 @@ import {
 const API_BASE = "/api";
 const SELECTED_TENANT_STORAGE_KEY = "selected_tenant_id";
 const SELECTED_BUSINESS_STORAGE_KEY = "selected_business_id";
+const WEB_SESSION_VERSION_STORAGE_KEY = "auraly.auth.session-version";
 
-let activeRefresh: Promise<SessionRefreshResult> | null = null;
+let fallbackWebSessionVersion = "initial";
+let activeRefresh: {
+  version: string;
+  promise: Promise<SessionRefreshResult>;
+} | null = null;
 
 const REQUEST_TIMEOUT_MS = 45_000;
 
@@ -106,10 +112,44 @@ async function refreshSession(): Promise<SessionRefreshResult> {
   }
 }
 
+/**
+ * Marks a successful login as a new browser-session boundary. Requests that
+ * started under the replaced session must never expire the newly issued one.
+ */
+export function establishWebSession(): void {
+  fallbackWebSessionVersion = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(
+        WEB_SESSION_VERSION_STORAGE_KEY,
+        fallbackWebSessionVersion,
+      );
+    } catch {
+      // Hardened browsers can disable storage; the current tab remains safe.
+    }
+  }
+  activeRefresh = null;
+}
+
+function currentWebSessionVersion(): string {
+  if (typeof window !== "undefined") {
+    try {
+      return window.localStorage.getItem(WEB_SESSION_VERSION_STORAGE_KEY)
+        ?? fallbackWebSessionVersion;
+    } catch {
+      // Use the in-memory boundary when browser storage is unavailable.
+    }
+  }
+  return fallbackWebSessionVersion;
+}
+
 export async function fetchWithSessionRetry(
   url: string,
   options: RequestInit,
 ): Promise<Response> {
+  const requestSessionVersion = currentWebSessionVersion();
   const send = () => fetchWithTimeout(url, {
     ...options,
     credentials: "include",
@@ -118,12 +158,22 @@ export async function fetchWithSessionRetry(
     url,
     send,
     () => {
-      activeRefresh ??= refreshSession().finally(() => {
-        activeRefresh = null;
-      });
-      return activeRefresh;
+      if (!activeRefresh || activeRefresh.version !== requestSessionVersion) {
+        const refresh = refreshSession();
+        const clearRefresh = () => {
+          if (activeRefresh?.promise === refresh) activeRefresh = null;
+        };
+        activeRefresh = { version: requestSessionVersion, promise: refresh };
+        void refresh.then(clearRefresh, clearRefresh);
+      }
+      return activeRefresh.promise;
     },
-    expireWebSession,
+    () => isCurrentWebSessionVersion(
+      requestSessionVersion,
+      currentWebSessionVersion(),
+    )
+      ? expireWebSession()
+      : Promise.resolve(),
   );
 }
 

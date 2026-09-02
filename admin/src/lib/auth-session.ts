@@ -24,6 +24,13 @@ export function shouldRunCloudBackgroundSynchronization(pathname: string): boole
   return pathname.startsWith("/dashboard");
 }
 
+export function isCurrentWebSessionVersion(
+  requestVersion: string,
+  currentVersion: string,
+): boolean {
+  return requestVersion === currentVersion;
+}
+
 export function announceSessionReplacement(destination: string): void {
   if (typeof window === "undefined") return;
   const event = new CustomEvent<SessionExpiredEventDetail>(SESSION_EXPIRED_EVENT, {

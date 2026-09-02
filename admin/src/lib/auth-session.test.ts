@@ -4,12 +4,18 @@ import { describe, it } from "node:test";
 import {
   isActiveLocalPosSession,
   isAuthenticationRequest,
+  isCurrentWebSessionVersion,
   retryAuthenticatedRequest,
   shouldRunCloudBackgroundSynchronization,
   shouldRefreshSession,
 } from "./auth-session";
 
 describe("auth session decisions", () => {
+  it("never lets a response from the replaced browser session expire the winner", () => {
+    assert.equal(isCurrentWebSessionVersion("old", "new"), false);
+    assert.equal(isCurrentWebSessionVersion("winner", "winner"), true);
+  });
+
   it("keeps an enrolled POS session independent from a stale web cookie", () => {
     assert.equal(isActiveLocalPosSession("/pos", "edge", "cashier"), true);
     assert.equal(isActiveLocalPosSession("/pos", "edge", null), false);

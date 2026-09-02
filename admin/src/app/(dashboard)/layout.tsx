@@ -7,7 +7,6 @@ import { Header } from "@/components/layout/header";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { Sidebar } from "@/components/layout/sidebar";
-import { AuthSyncProvider } from "@/providers/auth-sync-provider";
 import { BusinessContextProvider } from "@/providers/business-context-provider";
 
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -53,23 +52,21 @@ export default function DashboardLayout({
   }, []);
 
   return (
-    <AuthSyncProvider>
-      <div className="flex overflow-hidden bg-background" style={{ height: viewportHeight }}>
-        {/* Desktop sidebar - hidden on mobile */}
-        {!isMobile && <Sidebar />}
+    <div className="flex overflow-hidden bg-background" style={{ height: viewportHeight }}>
+      {/* Desktop sidebar - hidden on mobile */}
+      {!isMobile && <Sidebar />}
 
-        {/* Mobile nav - Sheet slides from left */}
-        <MobileNav />
+      {/* Mobile nav - Sheet slides from left */}
+      <MobileNav />
 
-        {/* Main content area */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <Header onMobileMenuClick={handleMobileMenuClick} />
-          <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-background px-3 pb-5 pt-4 sm:px-5 lg:px-8 lg:py-7">
-            <BusinessContextProvider>{children}</BusinessContextProvider>
-          </main>
-          <MobileBottomNav />
-        </div>
+      {/* Main content area */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <Header onMobileMenuClick={handleMobileMenuClick} />
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-background px-3 pb-5 pt-4 sm:px-5 lg:px-8 lg:py-7">
+          <BusinessContextProvider>{children}</BusinessContextProvider>
+        </main>
+        <MobileBottomNav />
       </div>
-    </AuthSyncProvider>
+    </div>
   );
 }
