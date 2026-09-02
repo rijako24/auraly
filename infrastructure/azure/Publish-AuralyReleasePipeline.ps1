@@ -438,34 +438,40 @@ function Publish-Database {
             $verificationCommand.CommandText = @'
 SELECT
   CASE WHEN tenantValue.IsActive=1 THEN 1 ELSE 0 END,
-  CASE WHEN userValue.IsActive=1 AND userValue.EmailConfirmed=1 THEN 1 ELSE 0 END,
-  CASE WHEN userRole.UserRoleId IS NOT NULL THEN 1 ELSE 0 END,
+  CASE WHEN roleValue.IsActive=1 AND roleValue.IsSystemRole=1 THEN 1 ELSE 0 END,
   (SELECT COUNT(*) FROM dbo.Permissions),
   (SELECT COUNT(*) FROM dbo.RolePermissions assignment WHERE assignment.RoleId=roleValue.RoleId),
-  CASE WHEN @ExpectedPasswordHash=N'' OR userValue.PasswordHash=@ExpectedPasswordHash THEN 1 ELSE 0 END
+  (SELECT COUNT(*) FROM dbo.AppUsers obsoleteUser
+   WHERE obsoleteUser.IsActive=1
+     AND (obsoleteUser.NormalizedUsername=N'ADMIN2222'
+       OR (obsoleteUser.TenantId=tenantValue.TenantId
+         AND obsoleteUser.NormalizedUsername=N'ADMIN'
+         AND obsoleteUser.NormalizedEmail=N'ADMIN@AURALY.AI'))),
+  (SELECT COUNT(*) FROM dbo.UserRoles obsoleteAssignment
+   JOIN dbo.AppUsers obsoleteUser ON obsoleteUser.UserId=obsoleteAssignment.UserId
+   WHERE obsoleteUser.NormalizedUsername=N'ADMIN2222'
+      OR (obsoleteUser.TenantId=tenantValue.TenantId
+        AND obsoleteUser.NormalizedUsername=N'ADMIN'
+        AND obsoleteUser.NormalizedEmail=N'ADMIN@AURALY.AI'))
 FROM dbo.Tenants tenantValue
 JOIN dbo.AppRoles roleValue ON roleValue.TenantId=tenantValue.TenantId AND roleValue.NormalizedName=N'ADMINISTRATOR'
-JOIN dbo.AppUsers userValue ON userValue.TenantId=tenantValue.TenantId AND userValue.NormalizedUsername=N'ADMIN'
-LEFT JOIN dbo.UserRoles userRole ON userRole.UserId=userValue.UserId AND userRole.RoleId=roleValue.RoleId AND userRole.BusinessId IS NULL
 WHERE tenantValue.TenantKey=N'@auraly';
 '@
-            [void]$verificationCommand.Parameters.AddWithValue(
-                '@ExpectedPasswordHash',
-                $(if ([string]::IsNullOrWhiteSpace($env:AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH)) { '' } else { $env:AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH }))
             $reader = $verificationCommand.ExecuteReader()
             try {
-                if (-not $reader.Read()) { throw 'No existe el tenant canonico @auraly con su administrador de plataforma.' }
+                if (-not $reader.Read()) { throw 'No existe el tenant canonico @auraly con su rol administrador de plataforma.' }
                 $tenantActive = $reader.GetInt32(0) -eq 1
-                $userActive = $reader.GetInt32(1) -eq 1
-                $roleAssigned = $reader.GetInt32(2) -eq 1
-                $permissionCount = $reader.GetInt32(3)
-                $assignedPermissionCount = $reader.GetInt32(4)
-                $passwordMatches = $reader.GetInt32(5) -eq 1
-                if (-not $tenantActive -or -not $userActive -or -not $roleAssigned -or
-                    $permissionCount -ne $assignedPermissionCount -or -not $passwordMatches) {
-                    throw "El administrador @auraly no quedo aprovisionado correctamente. Tenant=$tenantActive User=$userActive Role=$roleAssigned Permissions=$assignedPermissionCount/$permissionCount Password=$passwordMatches."
+                $roleActive = $reader.GetInt32(1) -eq 1
+                $permissionCount = $reader.GetInt32(2)
+                $assignedPermissionCount = $reader.GetInt32(3)
+                $activeObsoleteUsers = $reader.GetInt32(4)
+                $obsoleteAssignments = $reader.GetInt32(5)
+                if (-not $tenantActive -or -not $roleActive -or
+                    $permissionCount -ne $assignedPermissionCount -or
+                    $activeObsoleteUsers -ne 0 -or $obsoleteAssignments -ne 0) {
+                    throw "El rol administrador @auraly no quedo aprovisionado correctamente. Tenant=$tenantActive Role=$roleActive Permissions=$assignedPermissionCount/$permissionCount ActiveObsoleteUsers=$activeObsoleteUsers ObsoleteAssignments=$obsoleteAssignments."
                 }
-                Write-Information "Administrador @auraly verificado con $assignedPermissionCount permisos." -InformationAction Continue
+                Write-Information "Rol administrador @auraly verificado con $assignedPermissionCount permisos y sin identidades tecnicas activas." -InformationAction Continue
             }
             finally { $reader.Dispose() }
         }

@@ -82,6 +82,15 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.Contains("NormalizedEmail=N'ADMIN@AURALY.AI'", platform,
             StringComparison.Ordinal);
+
+        var releasePipeline = File.ReadAllText(Path.Combine(root,
+            "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        Assert.DoesNotContain("JOIN dbo.AppUsers userValue", releasePipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("ActiveObsoleteUsers", releasePipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("sin identidades tecnicas activas", releasePipeline,
+            StringComparison.Ordinal);
     }
 
     [Fact]
