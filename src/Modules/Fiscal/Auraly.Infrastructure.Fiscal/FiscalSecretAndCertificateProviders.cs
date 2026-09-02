@@ -46,7 +46,7 @@ public sealed class WindowsFiscalSigningCertificateProvider : IFiscalSigningCert
         var certificate = store.Certificates.OfType<X509Certificate2>()
             .SingleOrDefault(item => Normalize(item.Thumbprint) == thumbprint)
             ?? throw new InvalidOperationException("The configured fiscal certificate is unavailable.");
-        return Task.FromResult(new FiscalCertificateMaterial(certificate, [], RequireTrustedChain: true));
+        return Task.FromResult(new FiscalCertificateMaterial(certificate, []));
     }
 
     private static string Normalize(string value) =>
@@ -91,6 +91,6 @@ public sealed class ManagedFiscalSigningCertificateProvider(
         var chain = collection.OfType<X509Certificate2>()
             .Where(item => item.Thumbprint != certificate.Thumbprint)
             .ToArray();
-        return new FiscalCertificateMaterial(certificate, chain, RequireTrustedChain: true);
+        return new FiscalCertificateMaterial(certificate, chain);
     }
 }

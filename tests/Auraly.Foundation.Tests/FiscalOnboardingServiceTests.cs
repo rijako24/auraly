@@ -10,13 +10,39 @@ public sealed class FiscalOnboardingServiceTests
     private static readonly DateTimeOffset Now = new(2026, 8, 25, 18, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Loading_a_certificate_with_another_nit_fails_before_persisting_credentials()
+    public async Task Loading_an_untrusted_self_signed_certificate_is_accepted()
+    {
+        const string password = "certificate-password";
+        const string supplierTaxId = "1002269668";
+        var store = new TestOnboardingStore(Configuration(supplierTaxId));
+        var vault = new TestCredentialVault();
+        var service = new FiscalOnboardingService(
+            store, vault, new TestNumberingRangeClient());
+        var request = new SaveDianHabilitationConfiguration(
+            Guid.NewGuid().ToString(),
+            "software-pin",
+            Guid.NewGuid(),
+            password,
+            CreatePfx(supplierTaxId, password));
+        var user = new FiscalConfigurationUser(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
+
+        await service.ConfigureHabilitationAsync(
+            user, store.Configuration.BusinessId, request);
+
+        Assert.True(vault.StoreCalled);
+        Assert.True(store.SaveCalled);
+    }
+
+    [Fact]
+    public async Task Loading_a_certificate_with_another_nit_is_accepted()
     {
         const string password = "certificate-password";
         var store = new TestOnboardingStore(Configuration("1002269668"));
         var vault = new TestCredentialVault();
         var service = new FiscalOnboardingService(
-            store, vault, new TestNumberingRangeClient(), new FixedTimeProvider(Now));
+            store, vault, new TestNumberingRangeClient());
         var request = new SaveDianHabilitationConfiguration(
             Guid.NewGuid().ToString(),
             "software-pin",
@@ -28,14 +54,11 @@ public sealed class FiscalOnboardingServiceTests
             Guid.NewGuid(),
             new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
 
-        var exception = await Assert.ThrowsAsync<FiscalConfigurationValidationException>(() =>
-            service.ConfigureHabilitationAsync(user, store.Configuration.BusinessId, request));
+        await service.ConfigureHabilitationAsync(
+            user, store.Configuration.BusinessId, request);
 
-        Assert.Equal(
-            "El NIT del certificado no coincide con el NIT del perfil legal.",
-            exception.Message);
-        Assert.False(vault.StoreCalled);
-        Assert.False(store.SaveCalled);
+        Assert.True(vault.StoreCalled);
+        Assert.True(store.SaveCalled);
     }
 
     [Fact]
@@ -46,8 +69,7 @@ public sealed class FiscalOnboardingServiceTests
             Guid.NewGuid(), Guid.NewGuid(),
             new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
         var inactiveService = new FiscalOnboardingService(
-            inactiveStore, new TestCredentialVault(), new TestNumberingRangeClient(),
-            new FixedTimeProvider(Now));
+            inactiveStore, new TestCredentialVault(), new TestNumberingRangeClient());
 
         await Assert.ThrowsAsync<FiscalConfigurationValidationException>(() =>
             inactiveService.ActivateSupportDocumentAsync(
@@ -57,8 +79,7 @@ public sealed class FiscalOnboardingServiceTests
         var activeStore = new TestOnboardingStore(
             Configuration("1002269668") with { ProductionActive = true });
         var activeService = new FiscalOnboardingService(
-            activeStore, new TestCredentialVault(), new TestNumberingRangeClient(),
-            new FixedTimeProvider(Now));
+            activeStore, new TestCredentialVault(), new TestNumberingRangeClient());
 
         await activeService.ActivateSupportDocumentAsync(
             user, activeStore.Configuration.BusinessId, Guid.NewGuid());
@@ -176,7 +197,13 @@ public sealed class FiscalOnboardingServiceTests
             CancellationToken cancellationToken)
         {
             StoreCalled = true;
-            throw new InvalidOperationException("Credentials must not be stored for an invalid certificate identity.");
+            return Task.FromResult(new FiscalCredentialReference(
+                "ProtectedDatabase",
+                "fiscal://test/pin",
+                "fiscal://test/certificate",
+                thumbprint,
+                validFrom,
+                validTo));
         }
 
         public Task<string> ResolveSoftwarePinAsync(
@@ -193,10 +220,5 @@ public sealed class FiscalOnboardingServiceTests
         public Task<IReadOnlyList<ImportedDianNumberingRange>> GetAsync(
             DianNumberingRangeContext context,
             CancellationToken cancellationToken) => throw new NotSupportedException();
-    }
-
-    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
     }
 }

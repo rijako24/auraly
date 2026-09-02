@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using System.Text.RegularExpressions;
 using Auraly.Contracts.Fiscal;
 
 namespace Auraly.Application.Fiscal;
@@ -78,8 +77,7 @@ public interface IDianNumberingRangeClient
 public sealed class FiscalOnboardingService(
     IFiscalOnboardingStore store,
     IFiscalCredentialVault credentials,
-    IDianNumberingRangeClient numberingRanges,
-    TimeProvider timeProvider)
+    IDianNumberingRangeClient numberingRanges)
 {
     private const int MaximumCertificateBytes = 2 * 1024 * 1024;
 
@@ -110,9 +108,7 @@ public sealed class FiscalOnboardingService(
 
         var certificate = ValidateCertificate(
             request.CertificatePfx,
-            request.CertificatePassword,
-            current.SupplierTaxId,
-            timeProvider.GetUtcNow());
+            request.CertificatePassword);
         var stored = await credentials.StoreAsync(
             user.TenantId,
             businessId,
@@ -226,9 +222,7 @@ public sealed class FiscalOnboardingService(
 
     private static ValidatedCertificate ValidateCertificate(
         byte[] pfx,
-        string password,
-        string supplierTaxId,
-        DateTimeOffset now)
+        string password)
     {
         X509Certificate2Collection collection = [];
         try
@@ -251,24 +245,10 @@ public sealed class FiscalOnboardingService(
         if (collection.OfType<X509Certificate2>().Count(item => item.HasPrivateKey) != 1)
             throw new FiscalConfigurationValidationException(
                 "El archivo debe contener exactamente un certificado con clave privada.");
-        if (now < certificate.NotBefore || now > certificate.NotAfter)
-            throw new FiscalConfigurationValidationException("El certificado no está vigente.");
-
-        if (!FiscalCertificateIdentityPolicy.IsAcceptable(
-                supplierTaxId, certificate.Subject))
-            throw new FiscalConfigurationValidationException(
-                "El NIT del certificado no coincide con el NIT del perfil legal.");
-        var keyUsage = certificate.Extensions.OfType<X509KeyUsageExtension>().FirstOrDefault();
-        if (keyUsage is not null &&
-            !keyUsage.KeyUsages.HasFlag(X509KeyUsageFlags.DigitalSignature) &&
-            !keyUsage.KeyUsages.HasFlag(X509KeyUsageFlags.NonRepudiation))
-            throw new FiscalConfigurationValidationException(
-                "El certificado no permite firma digital.");
-
-        if (!BuildTrustedChain(certificate, collection, now))
-            throw new FiscalConfigurationValidationException(
-                "La cadena de confianza del certificado no es válida.");
-
+        // Product policy: onboarding accepts any parseable PFX/P12 containing one
+        // usable signing key. DIAN remains the authority that accepts or rejects the
+        // certificate for a fiscal submission; Auraly does not gate uploads by issuer,
+        // chain, validity period, subject NIT or declared key-usage extensions.
         var probe = RandomNumberGenerator.GetBytes(32);
         if (certificate.GetRSAPrivateKey() is RSA rsa)
             _ = rsa.SignHash(probe, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -283,15 +263,6 @@ public sealed class FiscalOnboardingService(
             certificate.NotBefore,
             certificate.NotAfter);
     }
-
-    private static bool BuildTrustedChain(
-        X509Certificate2 certificate,
-        X509Certificate2Collection collection,
-        DateTimeOffset now) =>
-        FiscalCertificateTrustPolicy.IsTrustedChain(
-            certificate,
-            collection.OfType<X509Certificate2>().Where(item => item != certificate),
-            now);
 
     private static void ValidateBusiness(Guid businessId)
     {
@@ -310,107 +281,4 @@ public sealed class FiscalOnboardingService(
         string Thumbprint,
         DateTimeOffset NotBefore,
         DateTimeOffset NotAfter);
-}
-
-public static class FiscalCertificateIdentityPolicy
-{
-    private static readonly Regex SubjectSerialNumber = new(
-        """(?:^|[,;+])\s*(?:SERIALNUMBER|OID\.2\.5\.4\.5|2\.5\.4\.5)\s*=\s*(?<value>"[^"]*"|[^,;+]*)""",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-    public static bool IsAcceptable(string supplierTaxId, string certificateSubject)
-    {
-        var expected = Digits(supplierTaxId);
-        if (expected.Length == 0 || string.IsNullOrWhiteSpace(certificateSubject)) return false;
-
-        return SubjectSerialNumber.Matches(certificateSubject)
-            .Select(match => Digits(match.Groups["value"].Value))
-            .Any(identity => string.Equals(identity, expected, StringComparison.Ordinal));
-    }
-
-    private static string Digits(string value) =>
-        new((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
-}
-
-public static class FiscalCertificateTrustPolicy
-{
-    // Roots published by Colombian ONAC-accredited certification entities that are
-    // not consistently present in the Linux trust store used by App Service. Public
-    // roots already installed by the operating system are accepted by systemChain.
-    // Keeping exact fingerprints here prevents trusting an arbitrary self-signed
-    // certificate merely because it was bundled in a PKCS#12 file.
-    private static readonly HashSet<string> OfficialRootThumbprints =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "032D6DCFE71F2C57ECADA9A99F2F6CE9825A6550", // GSE
-            "71EBA87B1D60D495F5BA91C48B3B5C2A3DFEB486", // Viafirma
-            "3977884DA7B83A006AED158D506AAC861BCA1A4F", // Andes SCD
-            "1139A49E8484AAF2D90D985EC4741A65DD5D94E2", // Camerfirma Colombia
-            "6DC08450A95CD32662C0910F8C2DCE230D7466AD", // Uanataca Colombia
-            "5463283B6793FF55277CEDE39098E80422F912F7", // Certicamara
-            "EBB08B91DF02D0B9A813CBE10E112CC11A50611C", // PKI Services
-            "4BA80D75903497F45D32EFEFD25F184B362F1DD0", // Lleida.net Colombia
-            "A08ED8F6DFC49FFD2884E25A576F4EAC980B2481", // Olimpia IT
-            "F68347D8A59B9312389BCB010BEB7E6C3E067FE5"  // Thomas Signe
-        };
-
-    public static bool IsOfficialRoot(X509Certificate2 certificate) =>
-        certificate.SubjectName.RawData.AsSpan().SequenceEqual(certificate.IssuerName.RawData) &&
-        IsAllowedRootThumbprint(certificate.Thumbprint);
-
-    public static bool IsAllowedRootThumbprint(string thumbprint) =>
-        OfficialRootThumbprints.Contains(Normalize(thumbprint));
-
-    public static bool IsTrustedChain(
-        X509Certificate2 certificate,
-        IEnumerable<X509Certificate2> suppliedChain,
-        DateTimeOffset verificationTime)
-    {
-        ArgumentNullException.ThrowIfNull(certificate);
-        var extras = suppliedChain
-            .Where(item => !string.Equals(item.Thumbprint, certificate.Thumbprint,
-                StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        using var systemChain = CreateChain(extras, verificationTime);
-        if (systemChain.Build(certificate)) return true;
-
-        var trustedRoot = extras.SingleOrDefault(IsOfficialRoot);
-        if (trustedRoot is null) return false;
-        using var customChain = CreateChain(extras, verificationTime);
-        customChain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
-        customChain.ChainPolicy.CustomTrustStore.Add(trustedRoot);
-        if (customChain.Build(certificate)) return true;
-
-        return customChain.ChainElements.Count >= 2 &&
-               IsOfficialRoot(customChain.ChainElements[^1].Certificate) &&
-               AreOnlyRevocationAvailabilityFailures(
-                   customChain.ChainStatus.Select(status => status.Status));
-    }
-
-    public static bool AreOnlyRevocationAvailabilityFailures(
-        IEnumerable<X509ChainStatusFlags> statuses)
-    {
-        const X509ChainStatusFlags allowed =
-            X509ChainStatusFlags.RevocationStatusUnknown |
-            X509ChainStatusFlags.OfflineRevocation;
-        return statuses.All(status => status == X509ChainStatusFlags.NoError ||
-                                      (status & ~allowed) == X509ChainStatusFlags.NoError);
-    }
-
-    private static X509Chain CreateChain(
-        IEnumerable<X509Certificate2> extras,
-        DateTimeOffset verificationTime)
-    {
-        var chain = new X509Chain();
-        chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
-        chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
-        chain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(10);
-        chain.ChainPolicy.DisableCertificateDownloads = false;
-        chain.ChainPolicy.VerificationTime = verificationTime.UtcDateTime;
-        foreach (var extra in extras) chain.ChainPolicy.ExtraStore.Add(extra);
-        return chain;
-    }
-
-    private static string Normalize(string value) =>
-        value.Replace(" ", string.Empty, StringComparison.Ordinal);
 }

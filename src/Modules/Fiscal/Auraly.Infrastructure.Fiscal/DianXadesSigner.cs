@@ -12,8 +12,7 @@ namespace Auraly.Infrastructure.Fiscal;
 
 public sealed record FiscalCertificateMaterial(
     X509Certificate2 Certificate,
-    IReadOnlyList<X509Certificate2> Chain,
-    bool RequireTrustedChain);
+    IReadOnlyList<X509Certificate2> Chain);
 
 public interface IFiscalSigningCertificateProvider
 {
@@ -157,12 +156,6 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
         if (keyUsage is not null &&
             (keyUsage.KeyUsages & (X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.NonRepudiation)) == 0)
             throw new CryptographicException("The fiscal certificate is not enabled for digital signatures.");
-        if (material.RequireTrustedChain)
-        {
-            if (!FiscalCertificateTrustPolicy.IsTrustedChain(
-                    certificate, material.Chain, request.SigningTime))
-                throw new CryptographicException("The fiscal certificate chain could not be validated.");
-        }
     }
 
     private static XmlNamespaceManager CreateXadesNamespaceManager(XmlDocument document)
