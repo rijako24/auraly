@@ -234,6 +234,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(0, await AccountantPermissionMismatchAsync(result.TenantId));
         Assert.Equal(0, state.UserRoles);
         Assert.Equal(0, await CountTenantUsersAsync(result.TenantId));
+        Assert.Equal(new ProvisionedPrincipals(0, 1, 1, 0, 1),
+            await ReadProvisionedPrincipalsAsync(result.TenantId));
         Assert.Null(state.UserActive);
         Assert.Null(state.PasswordHash);
         Assert.Equal("Pending", state.InvitationStatus);
@@ -308,6 +310,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.NotNull(acceptedState.PasswordHash);
         Assert.Equal("Accepted", acceptedState.InvitationStatus);
         Assert.Equal(1, await CountTenantUsersAsync(result.TenantId));
+        Assert.Equal(new ProvisionedPrincipals(1, 1, 1, 0, 2),
+            await ReadProvisionedPrincipalsAsync(result.TenantId));
 
         using (var scope = fixture.CreateScope())
         {
@@ -571,6 +575,35 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.AppUsers WHERE TenantId=@TenantId;", connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<ProvisionedPrincipals> ReadProvisionedPrincipalsAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT
+              (SELECT COUNT(*) FROM dbo.AppUsers WHERE TenantId=@TenantId),
+              (SELECT COUNT(*) FROM dbo.Customers customerValue
+               JOIN dbo.Parties partyValue ON partyValue.PartyId=customerValue.PartyId
+               WHERE partyValue.TenantId=@TenantId
+                 AND partyValue.DisplayName=N'Consumidor final'),
+              (SELECT COUNT(*) FROM dbo.Suppliers supplierValue
+               JOIN dbo.Businesses businessValue ON businessValue.BusinessId=supplierValue.BusinessId
+               WHERE businessValue.TenantId=@TenantId
+                 AND supplierValue.Identification=N'OCASIONAL'
+                 AND supplierValue.Name=N'Gasto ocasional / sin proveedor'),
+              (SELECT COUNT(*) FROM dbo.Employees employeeValue
+               JOIN dbo.Businesses businessValue ON businessValue.BusinessId=employeeValue.BusinessId
+               WHERE businessValue.TenantId=@TenantId),
+              (SELECT COUNT(*) FROM dbo.Parties WHERE TenantId=@TenantId);
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new ProvisionedPrincipals(
+            reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
+            reader.GetInt32(3), reader.GetInt32(4));
     }
 
     private async Task<CommercialSubscriptionState> ReadCommercialSubscriptionAsync(Guid tenantId)
@@ -911,6 +944,9 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         int OpenAccountingPeriods, int DefaultCostCenters, int AccountingVoucherCursors,
         int UnmappedPosPaymentMethods, int Roles, int OnlineSalesDocumentSeries, int UserRoles,
         bool? UserActive, string? PasswordHash, string InvitationStatus);
+
+    private sealed record ProvisionedPrincipals(
+        int Users, int FinalConsumers, int OccasionalSuppliers, int Employees, int Parties);
 
     private sealed record CommercialSubscriptionState(
         string PlanCode, string BillingPeriod, string Status, int FullUsers,
