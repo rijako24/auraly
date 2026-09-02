@@ -10,5 +10,5 @@ INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
 SELECT NEWID(),r.RoleId,p.PermissionId,SYSUTCDATETIME()
 FROM dbo.AppRoles r JOIN dbo.Permissions p ON p.Resource IN
   (N'commerce.taxation.withholdings.view',N'commerce.taxation.withholdings.manage')
-WHERE r.IsActive=1 AND r.NormalizedName=N'ADMINISTRATOR'
+WHERE r.IsActive=1 AND r.NormalizedName IN (N'ADMINISTRATOR',N'ADMINISTRATIVE',N'ACCOUNTANT')
 AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions rp WHERE rp.RoleId=r.RoleId AND rp.PermissionId=p.PermissionId);

@@ -4,7 +4,9 @@ import type { Tenant } from "@/types/entities";
 
 export interface ProvisionTenantRequest {
   provisioningRequestId: string;
-  legalName: string; tradeName: string; nit: string; verificationDigit: string;
+  legalName: string; tradeName: string;
+  entityType: "NaturalPerson" | "Organization";
+  identificationTypeCode: string; nit: string; verificationDigit: string | null;
   countryId: string; administrativeDivisionId: string; cityId: string;
   address: string; phone: string; email: string; taxResponsibilities: string;
   businessName: string; businessAddress: string; businessPhone: string; businessEmail: string;
@@ -67,6 +69,11 @@ export interface TenantProvisioningCheckoutStatus {
   tenantKey: string | null; errorMessage: string | null;
 }
 export interface TenantProvisioningGeography { id: string; code: string; name: string; }
+export interface TenantProvisioningLegalIdentityOption { code: string; label: string; entityTypeCode: string | null; }
+export interface TenantProvisioningLegalIdentityCatalog {
+  entityTypes: TenantProvisioningLegalIdentityOption[];
+  identificationTypes: TenantProvisioningLegalIdentityOption[];
+}
 export interface TenantCommercialSubscription {
   subscriptionId: string; planCode: string; planName: string; billingPeriod: "Monthly" | "Annual";
   status: string; currentPeriodStart: string; currentPeriodEnd: string;
@@ -182,6 +189,7 @@ export const tenantCommercialApi = {
     return body as TenantProvisioningCheckoutStatus;
   },
   countries: () => apiClient.get<TenantProvisioningGeography[]>("/tenant-commercial/geography/countries"),
+  legalIdentityOptions: () => apiClient.get<TenantProvisioningLegalIdentityCatalog>("/tenant-commercial/legal-identity-options"),
   divisions: (countryId: string) => apiClient.get<TenantProvisioningGeography[]>(`/tenant-commercial/geography/countries/${countryId}/divisions`),
   cities: (divisionId: string) => apiClient.get<TenantProvisioningGeography[]>(`/tenant-commercial/geography/divisions/${divisionId}/cities`),
   subscription: () => apiClient.get<TenantCommercialSubscription | null>("/tenant-commercial/subscription"),

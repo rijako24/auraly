@@ -6,8 +6,10 @@ public sealed record ProvisionTenantRequest(
     Guid ProvisioningRequestId,
     string LegalName,
     string TradeName,
+    string EntityType,
+    string IdentificationTypeCode,
     string Nit,
-    string VerificationDigit,
+    string? VerificationDigit,
     Guid CountryId,
     Guid AdministrativeDivisionId,
     Guid CityId,
@@ -42,7 +44,7 @@ public sealed record AcceptTenantInvitationRequest(
     string Identification,
     string FirstName,
     string LastName,
-    string Email,
+    string Username,
     string Phone,
     string Address,
     string Password,
@@ -54,13 +56,15 @@ public sealed record TenantInvitationAdministratorProfile(
     string Identification,
     string FirstName,
     string LastName,
-    string Email,
+    string Username,
     string Phone,
     string Address);
 
 public sealed record AcceptTenantInvitationResult(
     Guid TenantId,
     Guid UserId,
+    string Username,
+    string TenantKey,
     string Email,
     string Status);
 

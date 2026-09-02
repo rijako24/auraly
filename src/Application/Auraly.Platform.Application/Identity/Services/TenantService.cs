@@ -64,6 +64,9 @@ public sealed class TenantService(
         TenantQuoteDto commercialQuote, CancellationToken ct)
     {
         TenantProvisioningRequestValidator.Validate(request);
+        if (!await unitOfWork.Tenants.IsReferenceOptionActiveAsync("tenant-entity-type", request.EntityType, ct)
+            || !await unitOfWork.Tenants.IsReferenceOptionActiveAsync("tenant-identification-type", request.IdentificationTypeCode, ct))
+            throw new ArgumentException("Selecciona un tipo de persona y de identificación vigentes.");
         ArgumentNullException.ThrowIfNull(commercialQuote);
         if (request.MaximumUsers != checked(commercialQuote.FullUserLimit + commercialQuote.SellerUserLimit)
             || request.MaximumEnrolledDevices != commercialQuote.PosDeviceLimit)
@@ -118,15 +121,17 @@ public sealed class TenantService(
             if (!await unitOfWork.Tenants.IsReferenceOptionActiveAsync("tenant-entity-type", nextEntityType, ct)
                 || !await unitOfWork.Tenants.IsReferenceOptionActiveAsync("tenant-identification-type", nextIdentificationType, ct))
                 throw new ArgumentException("Selecciona un tipo de persona y de identificación vigentes.");
-            if (nextEntityType == "NaturalPerson" && nextIdentificationType != "CC"
+            if (nextEntityType == "NaturalPerson" && nextIdentificationType == "NIT"
                 || nextEntityType == "Organization" && nextIdentificationType != "NIT")
-                throw new ArgumentException("La persona natural se identifica con cédula y la persona jurídica con NIT.");
+                throw new ArgumentException("La persona natural usa un documento personal y la persona jurídica usa NIT.");
             var nextVerificationDigit = nextIdentificationType == "NIT"
                 ? verificationDigit?.Trim() ?? tenant.VerificationDigit
                 : null;
             if (string.IsNullOrWhiteSpace(nextLegalName) || string.IsNullOrWhiteSpace(nextNit)
                 || nextIdentificationType == "NIT" && string.IsNullOrWhiteSpace(nextVerificationDigit))
                 throw new ArgumentException("Completa la identidad legal y el documento del tenant.");
+            TenantProvisioningRequestValidator.ValidateIdentification(
+                nextIdentificationType, nextNit!, nextVerificationDigit);
             if (!await unitOfWork.Tenants.UpdateLegalIdentityAsync(tenantId, nextLegalName, nextNit,
                     nextVerificationDigit, nextEntityType, nextIdentificationType, DateTimeOffset.UtcNow, ct))
                 throw new ConflictException("El tenant no tiene un perfil legal editable.");

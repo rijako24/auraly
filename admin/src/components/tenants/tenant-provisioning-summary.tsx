@@ -75,7 +75,7 @@ export function TenantProvisioningSummary({ tenant }: { tenant: Tenant }) {
       </section>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Metric icon={Building2} label="Empresa" value={summary?.form.legalName ?? tenant.name} detail={summary ? `NIT ${summary.form.nit}-${summary.form.verificationDigit}` : tenant.email} />
+        <Metric icon={Building2} label={summary?.form.entityType === "NaturalPerson" ? "Persona natural" : "Empresa"} value={summary?.form.legalName ?? tenant.name} detail={summary ? `${summary.form.identificationTypeCode} ${summary.form.nit}${summary.form.verificationDigit ? `-${summary.form.verificationDigit}` : ""}` : tenant.email} />
         <Metric icon={Store} label="Sede principal" value={summary?.form.businessName ?? "Sede creada"} detail={summary?.form.businessAddress ?? "Operación habilitada"} />
         <Metric icon={Warehouse} label="Inventario" value="2 bodegas" detail="VEN · venta / PED · pedidos" />
         <Metric icon={ShieldCheck} label="Estado" value={tenant.isActive ? "Activo" : "Inactivo"} detail={`Creado ${formatDate(tenant.createdAt)}`} />

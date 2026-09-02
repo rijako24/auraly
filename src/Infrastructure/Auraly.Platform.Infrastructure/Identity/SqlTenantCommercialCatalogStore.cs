@@ -58,6 +58,32 @@ public sealed class SqlTenantCommercialCatalogStore(ApplicationDbContext db)
     public Task<IReadOnlyList<TenantProvisioningGeographyDto>> GetCitiesAsync(Guid divisionId, CancellationToken cancellationToken) =>
         GeographyAsync("SELECT CityId,Code,Name FROM dbo.Cities WHERE AdministrativeDivisionId=@ParentId AND IsActive=1 ORDER BY Name;", divisionId, cancellationToken);
 
+    public async Task<TenantProvisioningLegalIdentityCatalogDto> GetLegalIdentityCatalogAsync(
+        CancellationToken cancellationToken)
+    {
+        var connection = (SqlConnection)db.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync(cancellationToken);
+        var entityTypes = new List<TenantProvisioningLegalIdentityOptionDto>();
+        var identificationTypes = new List<TenantProvisioningLegalIdentityOptionDto>();
+        await using var command = new SqlCommand("""
+            SELECT CatalogCode,Code,Label,Description
+            FROM reference.Options
+            WHERE CatalogCode IN (N'tenant-entity-type',N'tenant-identification-type')
+              AND IsActive=1
+            ORDER BY CatalogCode,SortOrder,Label;
+            """, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var option = new TenantProvisioningLegalIdentityOptionDto(
+                reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3));
+            if (reader.GetString(0) == "tenant-entity-type") entityTypes.Add(option);
+            else identificationTypes.Add(option);
+        }
+        return new(entityTypes, identificationTypes);
+    }
+
     private async Task<IReadOnlyList<TenantProvisioningGeographyDto>> GeographyAsync(
         string sql, Guid? parentId, CancellationToken cancellationToken)
     {

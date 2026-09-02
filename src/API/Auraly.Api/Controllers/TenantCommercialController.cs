@@ -88,6 +88,11 @@ public sealed class TenantCommercialController(
     public async Task<ActionResult<IReadOnlyList<TenantProvisioningGeographyDto>>> Countries(CancellationToken ct) =>
         Ok(await catalogStore.GetCountriesAsync(ct));
 
+    [HttpGet("legal-identity-options")]
+    [AllowAnonymous]
+    public async Task<ActionResult<TenantProvisioningLegalIdentityCatalogDto>> LegalIdentityOptions(CancellationToken ct) =>
+        Ok(await catalogStore.GetLegalIdentityCatalogAsync(ct));
+
     [HttpGet("geography/countries/{countryId:guid}/divisions")]
     [AllowAnonymous]
     public async Task<ActionResult<IReadOnlyList<TenantProvisioningGeographyDto>>> Divisions(Guid countryId, CancellationToken ct) =>

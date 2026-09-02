@@ -13,8 +13,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { tenantsApi } from "@/services/api/tenants";
 import type { Tenant } from "@/types/entities";
+import { sanitizeTenantIdentification, validateTenantIdentification } from "@/lib/tenant-legal-identity";
 
 type Props = { tenant: Tenant; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<unknown> };
+type TenantEditForm = {
+  name: string; email: string; legalName: string; identification: string; verificationDigit: string;
+  entityType: "NaturalPerson" | "Organization"; identificationTypeCode: NonNullable<Tenant["identificationTypeCode"]>;
+  inventoryCostBasis: "LatestReceiptCost" | "WeightedAverageCost";
+};
 
 export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props) {
   const entityTypes = useReferenceOptions("tenant-entity-type", open);
@@ -28,11 +34,14 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
   useEffect(() => { if (open) { setForm(initial(tenant)); setLogo(null); } }, [open, tenant]);
 
   const set = (key: keyof typeof form, value: string) => setForm(current => ({ ...current, [key]: value }));
-  const identityMatches = form.entityType === "NaturalPerson"
-    ? form.identificationTypeCode === "CC"
-    : form.identificationTypeCode === "NIT";
+  const availableIdentificationTypes = (identificationTypes.data ?? [])
+    .filter(item => item.description === form.entityType);
+  const identityMatches = availableIdentificationTypes.some(item => item.code === form.identificationTypeCode);
+  const identityError = form.identification
+    ? validateTenantIdentification(form.identificationTypeCode, form.identification, form.identificationTypeCode === "NIT" ? form.verificationDigit : null)
+    : null;
   const valid = Boolean(form.name.trim() && form.email.trim() && form.legalName.trim()
-    && form.identification.trim() && identityMatches
+    && form.identification.trim() && identityMatches && !identityError
     && (form.identificationTypeCode !== "NIT" || form.verificationDigit.trim()));
 
   async function save() {
@@ -68,12 +77,12 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
           <div className="space-y-2"><Label htmlFor="tenant-logo">Logo del tenant</Label><Input id="tenant-logo" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setLogo(event.target.files?.[0] ?? null)} /><p className="text-xs text-muted-foreground">JPG, PNG o WEBP, máximo 4 MB. Se usa en todos los reportes.</p></div>
         </section>
         <section className="grid gap-4 sm:grid-cols-2">
-          <Field label="Tipo de persona"><Select value={form.entityType} onValueChange={value => set("entityType", value)}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(entityTypes.data ?? []).map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
-          <Field label="Tipo de identificación"><Select value={form.identificationTypeCode} onValueChange={value => set("identificationTypeCode", value)}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(identificationTypes.data ?? []).map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select>{!identityMatches && <p className="text-xs text-destructive">Persona natural usa cédula; persona jurídica usa NIT.</p>}</Field>
+          <Field label="Tipo de persona"><Select value={form.entityType} onValueChange={value => { const entityType = value as TenantEditForm["entityType"]; const identificationTypeCode = (identificationTypes.data ?? []).find(item => item.description === entityType)?.code as TenantEditForm["identificationTypeCode"] | undefined; setForm(current => ({ ...current, entityType, identificationTypeCode: identificationTypeCode ?? (entityType === "Organization" ? "NIT" : "CC"), verificationDigit: "" })); }}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(entityTypes.data ?? []).map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="Tipo de identificación"><Select value={form.identificationTypeCode} onValueChange={value => set("identificationTypeCode", value as TenantEditForm["identificationTypeCode"])}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{availableIdentificationTypes.map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select>{!identityMatches && <p className="text-xs text-destructive">Selecciona un documento válido para el tipo de persona.</p>}</Field>
           <Field label="Nombre comercial"><Input value={form.name} onChange={event => set("name", event.target.value)} /></Field>
           <Field label={form.entityType === "NaturalPerson" ? "Nombre completo" : "Razón social"}><Input value={form.legalName} onChange={event => set("legalName", event.target.value)} /></Field>
-          <Field label={form.identificationTypeCode === "CC" ? "Cédula" : "NIT"}><Input value={form.identification} onChange={event => set("identification", event.target.value)} /></Field>
-          {form.identificationTypeCode === "NIT" && <Field label="Dígito de verificación"><Input maxLength={4} value={form.verificationDigit} onChange={event => set("verificationDigit", event.target.value)} /></Field>}
+          <Field label="Número de identificación"><Input inputMode={form.identificationTypeCode === "PA" || form.identificationTypeCode === "DE" ? "text" : "numeric"} maxLength={32} value={form.identification} onChange={event => set("identification", sanitizeTenantIdentification(form.identificationTypeCode, event.target.value))} />{identityError && form.identificationTypeCode !== "NIT" && <p className="text-xs text-destructive">{identityError}</p>}</Field>
+          {form.identificationTypeCode === "NIT" && <Field label="Dígito de verificación"><Input inputMode="numeric" maxLength={1} value={form.verificationDigit} onChange={event => set("verificationDigit", event.target.value.replace(/\D/g, "").slice(0, 1))} />{identityError && <p className="text-xs text-destructive">{identityError}</p>}</Field>}
           <Field label="Correo empresarial" className="sm:col-span-2"><Input type="email" value={form.email} onChange={event => set("email", event.target.value)} /></Field>
           <Field label="Base para formar costos" className="sm:col-span-2"><Select value={form.inventoryCostBasis} onValueChange={value => set("inventoryCostBasis", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="LatestReceiptCost">Último costo recibido</SelectItem><SelectItem value="WeightedAverageCost">Costo promedio ponderado</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Define la base que usa el tenant al preparar precios. El costo promedio consolida las sedes que comparten precios.</p></Field>
         </section>
@@ -84,5 +93,5 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
 }
 
 function Field({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) { return <div className={`space-y-2 ${className ?? ""}`}><Label>{label}</Label>{children}</div>; }
-function initial(tenant: Tenant) { return { name: tenant.name, email: tenant.email, legalName: tenant.legalName ?? tenant.name, identification: tenant.nit ?? "", verificationDigit: tenant.verificationDigit ?? "", entityType: tenant.entityType ?? "Organization", identificationTypeCode: tenant.identificationTypeCode ?? "NIT", inventoryCostBasis: tenant.inventoryCostBasis }; }
+function initial(tenant: Tenant): TenantEditForm { return { name: tenant.name, email: tenant.email, legalName: tenant.legalName ?? tenant.name, identification: tenant.nit ?? "", verificationDigit: tenant.verificationDigit ?? "", entityType: tenant.entityType ?? "Organization", identificationTypeCode: tenant.identificationTypeCode ?? "NIT", inventoryCostBasis: tenant.inventoryCostBasis }; }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "No fue posible actualizar el tenant."; }

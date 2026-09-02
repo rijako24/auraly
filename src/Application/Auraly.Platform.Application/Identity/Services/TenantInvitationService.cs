@@ -28,7 +28,7 @@ public sealed class TenantInvitationService(
         if (!string.Equals(request.Password, request.PasswordConfirmation, StringComparison.Ordinal))
             throw new TenantInvitationException("PasswordMismatch", "Las contraseñas no coinciden.");
 
-        if (request.IdentificationType is not ("CC" or "CE" or "PAS"))
+        if (request.IdentificationType is not ("CC" or "CE" or "PA"))
             throw new TenantInvitationException("InvalidIdentificationType", "Selecciona un tipo de identificación válido.");
         if (string.IsNullOrWhiteSpace(request.Identification))
             throw new TenantInvitationException("IdentificationRequired", "La identificación es obligatoria.");
@@ -36,8 +36,10 @@ public sealed class TenantInvitationService(
             throw new TenantInvitationException("FirstNameRequired", "Los nombres son obligatorios.");
         if (string.IsNullOrWhiteSpace(request.LastName))
             throw new TenantInvitationException("LastNameRequired", "Los apellidos son obligatorios.");
-        if (string.IsNullOrWhiteSpace(request.Email) || !request.Email.Contains('@'))
-            throw new TenantInvitationException("EmailRequired", "Escribe un correo válido.");
+        var username = request.Username?.Trim() ?? string.Empty;
+        if (username.Length is < 3 or > 100
+            || !username.All(value => char.IsAsciiLetterOrDigit(value) || value is '.' or '_' or '-'))
+            throw new TenantInvitationException("InvalidUsername", "El usuario debe tener entre 3 y 100 caracteres y usar solo letras, números, punto, guion o guion bajo.");
         if (string.IsNullOrWhiteSpace(request.Phone))
             throw new TenantInvitationException("PhoneRequired", "El teléfono es obligatorio.");
         if (string.IsNullOrWhiteSpace(request.Address))
@@ -57,7 +59,7 @@ public sealed class TenantInvitationService(
             request.Identification.Trim(),
             request.FirstName.Trim(),
             request.LastName.Trim(),
-            request.Email.Trim(),
+            username,
             request.Phone.Trim(),
             request.Address.Trim());
         return await store.AcceptInvitationAsync(tokenHash, profile, material, now, cancellationToken);

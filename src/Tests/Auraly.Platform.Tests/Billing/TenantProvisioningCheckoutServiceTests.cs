@@ -43,7 +43,7 @@ public sealed class TenantProvisioningCheckoutServiceTests
             .ReturnsAsync((WompiWidgetCheckoutRequest request, CancellationToken _) =>
                 new(true, "pub_test_safe", request.Reference, request.AmountInCents, "COP",
                     "signed", request.ExpiresAt?.ToString("O"), request.RedirectUrl, null, 7));
-        var service = new TenantProvisioningCheckoutService(quotes.Object, store.Object, payments.Object,
+        var service = new TenantProvisioningCheckoutService(quotes.Object, LegalIdentityCatalog(), store.Object, payments.Object,
             Mock.Of<IPaymentConfirmationHandler>());
 
         var result = await service.StartAsync(new(Tenant(), new("business", "Annual", 2, 1, 1, 1),
@@ -120,7 +120,7 @@ public sealed class TenantProvisioningCheckoutServiceTests
                 null, providerReference, null));
         var confirmation = new Mock<IPaymentConfirmationHandler>();
         var service = new TenantProvisioningCheckoutService(
-            Mock.Of<ITenantCommercialQuoteService>(), store.Object, payments.Object, confirmation.Object);
+            Mock.Of<ITenantCommercialQuoteService>(), LegalIdentityCatalog(), store.Object, payments.Object, confirmation.Object);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.ConfirmWidgetPaymentAsync(
             draftId, token, new("provider-transaction"), CancellationToken.None));
@@ -154,7 +154,7 @@ public sealed class TenantProvisioningCheckoutServiceTests
                 It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<PaymentTransactionSource?>()))
             .ReturnsAsync(new PaymentConfirmationResult(true, null));
         var service = new TenantProvisioningCheckoutService(
-            Mock.Of<ITenantCommercialQuoteService>(), store.Object, payments.Object, confirmation.Object);
+            Mock.Of<ITenantCommercialQuoteService>(), LegalIdentityCatalog(), store.Object, payments.Object, confirmation.Object);
 
         var result = await service.ConfirmWidgetPaymentAsync(
             draftId, token, new("provider-transaction"), CancellationToken.None);
@@ -168,8 +168,19 @@ public sealed class TenantProvisioningCheckoutServiceTests
         539_820m, 0m, 3_058_980m, 254_915m, 10, 1, 4, 2_500, 30, []);
 
     private static ProvisionTenantRequest Tenant() => new(
-        Guid.NewGuid(), "Empresa SAS", "Empresa", "900123456", "1",
+        Guid.NewGuid(), "Empresa SAS", "Empresa", "Organization", "NIT", "900123456",
+        TenantProvisioningRequestValidator.CalculateNitVerificationDigit("900123456").ToString(),
         Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Calle 1", "3001234567",
         "empresa@example.com", "R-99-PN", "Sede principal", "Calle 1", "3001234567",
         "sede@example.com", "America/Bogota", "LatestReceiptCost", "admin@example.com", 1, 0);
+
+    private static ITenantCommercialCatalogStore LegalIdentityCatalog()
+    {
+        var catalog = new Mock<ITenantCommercialCatalogStore>();
+        catalog.Setup(value => value.GetLegalIdentityCatalogAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TenantProvisioningLegalIdentityCatalogDto(
+                [new("Organization", "Persona jurídica")],
+                [new("NIT", "NIT", "Organization")]));
+        return catalog.Object;
+    }
 }

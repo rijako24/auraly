@@ -40,6 +40,13 @@ public sealed record WaivedTenantProvisioningRequest(
 
 public sealed record TenantProvisioningGeographyDto(Guid Id, string Code, string Name);
 
+public sealed record TenantProvisioningLegalIdentityOptionDto(
+    string Code, string Label, string? EntityTypeCode = null);
+
+public sealed record TenantProvisioningLegalIdentityCatalogDto(
+    IReadOnlyList<TenantProvisioningLegalIdentityOptionDto> EntityTypes,
+    IReadOnlyList<TenantProvisioningLegalIdentityOptionDto> IdentificationTypes);
+
 public sealed record TenantCommercialSubscriptionDto(
     Guid SubscriptionId, string PlanCode, string PlanName, string BillingPeriod,
     string Status, DateTimeOffset CurrentPeriodStart, DateTimeOffset CurrentPeriodEnd,
@@ -158,4 +165,5 @@ public interface ITenantCommercialCatalogStore
     Task<IReadOnlyList<TenantProvisioningGeographyDto>> GetCountriesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<TenantProvisioningGeographyDto>> GetDivisionsAsync(Guid countryId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TenantProvisioningGeographyDto>> GetCitiesAsync(Guid divisionId, CancellationToken cancellationToken);
+    Task<TenantProvisioningLegalIdentityCatalogDto> GetLegalIdentityCatalogAsync(CancellationToken cancellationToken);
 }

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Auraly.Contracts.TenantBilling;
 using Auraly.Platform.Application.Identity.DTOs;
 using Auraly.Platform.Application.Services;
 
@@ -7,6 +8,7 @@ namespace Auraly.Platform.Application.Identity.Services;
 
 public sealed class TenantProvisioningCheckoutService(
     ITenantCommercialQuoteService quotes,
+    ITenantCommercialCatalogStore catalog,
     ITenantProvisioningCheckoutStore store,
     IPaymentLinkService payments,
     IPaymentConfirmationHandler confirmation)
@@ -26,6 +28,11 @@ public sealed class TenantProvisioningCheckoutService(
             MaximumEnrolledDevices = quote.PosDeviceLimit
         };
         TenantProvisioningRequestValidator.Validate(tenant);
+        var identityCatalog = await catalog.GetLegalIdentityCatalogAsync(cancellationToken);
+        if (!identityCatalog.EntityTypes.Any(option => option.Code == tenant.EntityType)
+            || !identityCatalog.IdentificationTypes.Any(option => option.Code == tenant.IdentificationTypeCode
+                && option.EntityTypeCode == tenant.EntityType))
+            throw new ArgumentException("Selecciona un tipo de persona y de identificación vigentes.");
 
         var billingBusinessId = await store.GetBillingBusinessIdAsync(cancellationToken);
         var draftId = Guid.NewGuid();

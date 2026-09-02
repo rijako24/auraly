@@ -63,9 +63,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         await UseCanonicalAuralyBillingBusinessAsync();
         var geography = await ReadGeographyAsync();
         var suffix = Guid.NewGuid().ToString("N")[..10];
+        var nit = $"89{Random.Shared.Next(10000000, 99999999)}";
         var request = new ProvisionTenantRequest(
             Guid.NewGuid(), $"Suscriptor {suffix} SAS", $"Suscriptor {suffix}",
-            $"89{Random.Shared.Next(10000000, 99999999)}", "1",
+            "Organization", "NIT",
+            nit, TenantProvisioningRequestValidator.CalculateNitVerificationDigit(nit).ToString(),
             geography.CountryId, geography.DivisionId, geography.CityId,
             "Calle 10", "3001234567", $"billing-{suffix}@auraly.test", "R-99-PN",
             "Sede principal", "Calle 10", "3001234567", $"site-{suffix}@auraly.test",
@@ -157,9 +159,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         var geography = await ReadGeographyAsync();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var email = $"admin-{suffix}@auraly.test";
+        var nit = $"90{Random.Shared.Next(10000000, 99999999)}";
         var request = new ProvisionTenantRequest(
             Guid.NewGuid(), $"Empresa {suffix} SAS", $"Empresa {suffix}",
-            $"90{Random.Shared.Next(10000000, 99999999)}", "1",
+            "Organization", "NIT",
+            nit, TenantProvisioningRequestValidator.CalculateNitVerificationDigit(nit).ToString(),
             geography.CountryId, geography.DivisionId, geography.CityId,
             "Calle 1 # 2-3", "3001234567", $"empresa-{suffix}@auraly.test", "R-99-PN",
             "Sede principal", "Calle 1 # 2-3", "3001234567", $"sede-{suffix}@auraly.test",
@@ -284,17 +288,20 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         }
 
         var token = await ReadInvitationTokenAsync(result.TenantId);
+        var username = $"admin-{suffix}";
         using var publicClient = fixture.CreateClient();
         using var accepted = await publicClient.PostAsJsonAsync(
             "/api/v1/auth/invitations/accept",
             new AcceptTenantInvitationRequest(
                 token, "CC", $"10{Random.Shared.Next(10000000, 99999999)}",
-                "Administrador", suffix, email, "3007654321", "Calle 1 # 2-3",
+                "Administrador", suffix, username, "3007654321", "Calle 1 # 2-3",
                 Password, Password));
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
 
         var acceptedResult = await accepted.Content.ReadFromJsonAsync<AcceptTenantInvitationResult>();
         Assert.NotNull(acceptedResult);
+        Assert.Equal(username, acceptedResult!.Username);
+        Assert.Equal(result.TenantKey, acceptedResult.TenantKey);
         var acceptedState = await ReadProvisionedStateAsync(result.TenantId, acceptedResult!.UserId);
         Assert.True(acceptedState.UserActive);
         Assert.NotNull(acceptedState.PasswordHash);
@@ -336,13 +343,13 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             "/api/v1/auth/invitations/accept",
             new AcceptTenantInvitationRequest(
                 token, "CC", $"10{Random.Shared.Next(10000000, 99999999)}",
-                "Administrador", suffix, email, "3007654321", "Calle 1 # 2-3",
+                "Administrador", suffix, username, "3007654321", "Calle 1 # 2-3",
                 Password, Password));
         Assert.Equal(HttpStatusCode.Conflict, reused.StatusCode);
 
         using var loginRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
         {
-            Content = JsonContent.Create(new AuthenticationLoginRequest(email, result.TenantKey, Password))
+            Content = JsonContent.Create(new AuthenticationLoginRequest(username, result.TenantKey, Password))
         };
         loginRequest.Headers.Add(AuthenticationDefaults.ClientIdHeader, Guid.NewGuid().ToString("D"));
         using var login = await publicClient.SendAsync(loginRequest);
@@ -374,9 +381,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
 
         async Task<(ProvisionTenantResult Result, string Token)> ProvisionAsync(string suffix)
         {
+            var nit = $"9{Random.Shared.NextInt64(100000000, 999999999)}";
             var request = new ProvisionTenantRequest(
                 Guid.NewGuid(), $"Empresa {suffix} SAS", $"Empresa {suffix}",
-                $"9{Random.Shared.NextInt64(100000000, 999999999)}", "1",
+                "Organization", "NIT",
+                nit, TenantProvisioningRequestValidator.CalculateNitVerificationDigit(nit).ToString(),
                 geography.CountryId, geography.DivisionId, geography.CityId,
                 "Calle 1 # 2-3", "3001234567", $"empresa-{suffix}@auraly.test", "R-99-PN",
                 "Sede principal", "Calle 1 # 2-3", "3001234567", $"sede-{suffix}@auraly.test",
@@ -402,7 +411,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                 "/api/v1/auth/invitations/accept",
                 new AcceptTenantInvitationRequest(
                     token, "CC", sharedIdentification, "Administrador", lastName,
-                    sharedEmail, "3007654321", "Calle 1 # 2-3", Password, Password));
+                    "shared-admin", "3007654321", "Calle 1 # 2-3", Password, Password));
             var body = await response.Content.ReadAsStringAsync();
             Assert.True(
                 response.StatusCode == HttpStatusCode.OK,

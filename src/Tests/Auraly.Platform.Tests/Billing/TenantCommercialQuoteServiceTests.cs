@@ -99,6 +99,9 @@ public sealed class TenantCommercialQuoteServiceTests
         public Task<IReadOnlyList<TenantProvisioningGeographyDto>> GetCitiesAsync(Guid divisionId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<TenantProvisioningGeographyDto>>([]);
 
+        public Task<TenantProvisioningLegalIdentityCatalogDto> GetLegalIdentityCatalogAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new TenantProvisioningLegalIdentityCatalogDto([], []));
+
         public Task<TenantCommercialCatalogDto> GetAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new TenantCommercialCatalogDto(
                 [

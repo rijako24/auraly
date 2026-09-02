@@ -14,12 +14,12 @@ import { authApi } from "@/services/api/auth";
 function ActivateTenantInvitationForm() {
   const params = useSearchParams();
   const token = useMemo(() => params.get("token")?.trim() ?? "", [params]);
-  const [profile, setProfile] = useState({ identificationType: "CC", identification: "", firstName: "", lastName: "", email: "", phone: "", address: "" });
+  const [profile, setProfile] = useState({ identificationType: "CC", identification: "", firstName: "", lastName: "", username: "", phone: "", address: "" });
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
-  const [email, setEmail] = useState<string>();
+  const [access, setAccess] = useState<{ username: string; tenantKey: string }>();
   const [submitting, setSubmitting] = useState(false);
   const set = (field: keyof typeof profile, value: string) => setProfile((current) => ({ ...current, [field]: value }));
 
@@ -30,7 +30,7 @@ function ActivateTenantInvitationForm() {
     if (!profile.identification.trim()) errors.identification = "Este campo es requerido";
     if (!profile.firstName.trim()) errors.firstName = "Este campo es requerido";
     if (!profile.lastName.trim()) errors.lastName = "Este campo es requerido";
-    if (!profile.email.trim() || !profile.email.includes("@")) errors.email = "Escribe un correo válido";
+    if (!/^[A-Za-z0-9._-]{3,100}$/.test(profile.username.trim())) errors.username = "Usa de 3 a 100 letras, números, punto, guion o guion bajo";
     if (!profile.phone.trim()) errors.phone = "Este campo es requerido";
     if (!profile.address.trim()) errors.address = "Este campo es requerido";
     if (password.length < 10) errors.password = "Debe tener al menos 10 caracteres";
@@ -41,7 +41,7 @@ function ActivateTenantInvitationForm() {
     setSubmitting(true);
     try {
       const result = await authApi.acceptInvitation({ token, ...profile, password, passwordConfirmation: confirmation });
-      setEmail(result.email);
+      setAccess({ username: result.username, tenantKey: result.tenantKey });
     } catch (failure) {
       setError(failure && typeof failure === "object" && "message" in failure
         ? String(failure.message)
@@ -51,21 +51,22 @@ function ActivateTenantInvitationForm() {
     }
   };
 
-  if (email) return <section className="space-y-6 rounded-3xl border bg-white p-8 shadow-xl">
+  if (access) return <section className="space-y-6 rounded-3xl border bg-white p-8 shadow-xl">
     <span className="grid h-14 w-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-7 w-7" /></span>
-    <div><p className="text-sm font-semibold uppercase tracking-[.2em] text-emerald-700">Cuenta activada</p><h1 className="mt-2 text-3xl font-semibold">Tu empresa está lista</h1><p className="mt-2 text-sm text-muted-foreground">Ya puedes ingresar con <strong>{email}</strong>.</p></div>
-    <Button className="w-full" asChild><Link href="/login">Ir a iniciar sesión</Link></Button>
+    <div><p className="text-sm font-semibold uppercase tracking-[.2em] text-emerald-700">Cuenta activada</p><h1 className="mt-2 text-3xl font-semibold">Tu empresa está lista</h1><p className="mt-2 text-sm text-muted-foreground">Usa estos datos en el inicio de sesión:</p></div>
+    <dl className="grid gap-3 rounded-2xl border bg-muted/30 p-5 sm:grid-cols-2"><div><dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Empresa (tenant key)</dt><dd className="mt-1 font-mono text-lg font-semibold">{access.tenantKey}</dd></div><div><dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Usuario</dt><dd className="mt-1 font-mono text-lg font-semibold">{access.username}</dd></div></dl>
+    <Button className="w-full" asChild><Link href={`/login?tenant=${encodeURIComponent(access.tenantKey)}`}>Ir a iniciar sesión</Link></Button>
   </section>;
 
   return <form onSubmit={submit} className="space-y-6 rounded-3xl border bg-white p-8 shadow-xl">
     <span className="grid h-14 w-14 place-items-center rounded-2xl bg-teal-100 text-teal-800"><ShieldCheck className="h-7 w-7" /></span>
     <div><p className="text-sm font-semibold uppercase tracking-[.2em] text-teal-700">Invitación Auraly</p><h1 className="mt-2 text-3xl font-semibold">Completa tu registro</h1><p className="mt-2 text-sm text-muted-foreground">Estos datos crearán tu identidad y acceso como administrador. Nada se crea hasta terminar este formulario.</p></div>
     <div className="grid gap-4 sm:grid-cols-2">
-      <Field label="Tipo de identificación"><Select value={profile.identificationType} onValueChange={(value) => set("identificationType", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="CC">Cédula de ciudadanía</SelectItem><SelectItem value="CE">Cédula de extranjería</SelectItem><SelectItem value="PAS">Pasaporte</SelectItem></SelectContent></Select></Field>
+      <Field label="Tipo de identificación"><Select value={profile.identificationType} onValueChange={(value) => set("identificationType", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="CC">Cédula de ciudadanía</SelectItem><SelectItem value="CE">Cédula de extranjería</SelectItem><SelectItem value="PA">Pasaporte</SelectItem></SelectContent></Select></Field>
       <Field label="Número de identificación" error={fieldErrors.identification}><Input value={profile.identification} onChange={(event) => set("identification", event.target.value)} /></Field>
       <Field label="Nombres" error={fieldErrors.firstName}><Input value={profile.firstName} onChange={(event) => set("firstName", event.target.value)} /></Field>
       <Field label="Apellidos" error={fieldErrors.lastName}><Input value={profile.lastName} onChange={(event) => set("lastName", event.target.value)} /></Field>
-      <Field label="Correo de acceso" error={fieldErrors.email}><Input type="email" autoComplete="email" value={profile.email} onChange={(event) => set("email", event.target.value)} /></Field>
+      <Field label="Usuario para entrar" error={fieldErrors.username}><Input autoComplete="username" value={profile.username} onChange={(event) => set("username", event.target.value.replace(/[^A-Za-z0-9._-]/g, "").slice(0, 100))} placeholder="ej. administrador" /></Field>
       <Field label="Teléfono" error={fieldErrors.phone}><Input autoComplete="tel" value={profile.phone} onChange={(event) => set("phone", event.target.value)} /></Field>
       <div className="sm:col-span-2"><Field label="Dirección" error={fieldErrors.address}><Input autoComplete="street-address" value={profile.address} onChange={(event) => set("address", event.target.value)} /></Field></div>
       <Field label="Contraseña" error={fieldErrors.password}><div className="relative"><KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted-foreground"/><Input id="password" className="pl-9" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></div></Field>

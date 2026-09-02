@@ -13,7 +13,7 @@ export interface AcceptTenantInvitationRequest {
   identification: string;
   firstName: string;
   lastName: string;
-  email: string;
+  username: string;
   phone: string;
   address: string;
   passwordConfirmation: string;
@@ -22,6 +22,8 @@ export interface AcceptTenantInvitationRequest {
 export interface AcceptTenantInvitationResult {
   tenantId: string;
   userId: string;
+  username: string;
+  tenantKey: string;
   email: string;
   status: string;
 }
