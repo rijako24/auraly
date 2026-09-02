@@ -12,6 +12,10 @@ param(
 
     [string]$ReleaseRoot,
 
+    [Parameter(Mandatory)]
+    [ValidateSet('database', 'function', 'api', 'pos-installer')]
+    [string[]]$Components,
+
     [string]$SqlPackagePath = 'sqlpackage'
 )
 
@@ -645,51 +649,80 @@ function Publish-PosInstallerIfPresent {
 
 $manifest = Test-Release
 Write-Information "Release $ReleaseVersion verificado; commit $($manifest.commit)." -InformationAction Continue
-Assert-OfflineLeaseSigningConfiguration
-Publish-Database
-& (Join-Path $PSScriptRoot 'Sync-AuralySqlFirewall.ps1') -Environment $Environment
-if ($LASTEXITCODE -ne 0) { throw 'No se pudo habilitar el acceso administrado del runtime a Azure SQL.' }
-Publish-Function
-Publish-Api
-$installerMetadata = Publish-PosInstallerIfPresent
+$selectedComponents = @($Components | ForEach-Object { $_.Trim().ToLowerInvariant() } | Sort-Object -Unique)
+$recordedComponents = @(
+    $manifest.deploymentComponents |
+        ForEach-Object { "$_".Trim().ToLowerInvariant() } |
+        Where-Object { $_ -in @('database', 'function', 'api', 'pos-installer') } |
+        Sort-Object -Unique)
+if ($recordedComponents.Count -gt 0 -and
+    (Compare-Object -ReferenceObject $recordedComponents -DifferenceObject $selectedComponents)) {
+    throw 'El alcance solicitado no coincide con los componentes archivados en el release.'
+}
 
-$apiStatus = Wait-HttpHealthy "https://$($configuration.Api).azurewebsites.net/health"
-$functionStatus = Wait-HttpHealthy "https://$($configuration.Function).azurewebsites.net/api/health"
-$apiVersion = (& az webapp config appsettings list `
-    --resource-group $configuration.ResourceGroup `
-    --name $configuration.Api `
-    --query "[?name=='Release__Version'].value | [0]" `
-    --output tsv).Trim()
-Assert-LastExitCode 'No se pudo validar la version de API'
-$functionVersion = (& az functionapp config appsettings list `
-    --resource-group $configuration.ResourceGroup `
-    --name $configuration.Function `
-    --query "[?name=='Release__Version'].value | [0]" `
-    --output tsv).Trim()
-Assert-LastExitCode 'No se pudo validar la version de Function'
-$installerVersion = (& az webapp config appsettings list `
-    --resource-group $configuration.ResourceGroup `
-    --name $configuration.Api `
-    --query "[?name=='PosInstaller__Version'].value | [0]" `
-    --output tsv).Trim()
-Assert-LastExitCode 'No se pudo validar la version remota del instalador POS'
-$installerSha256 = (& az webapp config appsettings list `
-    --resource-group $configuration.ResourceGroup `
-    --name $configuration.Api `
-    --query "[?name=='PosInstaller__Sha256'].value | [0]" `
-    --output tsv).Trim()
-Assert-LastExitCode 'No se pudo validar la integridad remota del instalador POS'
-if ($apiVersion -ne $ReleaseVersion -or $functionVersion -ne $ReleaseVersion -or
-    $installerVersion -ne $ReleaseVersion -or
-    $installerSha256 -ne "$($installerMetadata.sha256)") {
-    throw "Version remota inconsistente. API=$apiVersion Function=$functionVersion."
+if ($selectedComponents -contains 'database') {
+    Publish-Database
+    & (Join-Path $PSScriptRoot 'Sync-AuralySqlFirewall.ps1') -Environment $Environment
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo habilitar el acceso administrado del runtime a Azure SQL.' }
+}
+if ($selectedComponents -contains 'function') {
+    Assert-OfflineLeaseSigningConfiguration
+    Publish-Function
+}
+if ($selectedComponents -contains 'api') { Publish-Api }
+$installerMetadata = if ($selectedComponents -contains 'pos-installer') { Publish-PosInstallerIfPresent } else { $null }
+
+$apiStatus = if ($selectedComponents -contains 'api' -or $selectedComponents -contains 'pos-installer') {
+    Wait-HttpHealthy "https://$($configuration.Api).azurewebsites.net/health"
+}
+else { $null }
+$functionStatus = if ($selectedComponents -contains 'function') {
+    Wait-HttpHealthy "https://$($configuration.Function).azurewebsites.net/api/health"
+}
+else { $null }
+
+if ($selectedComponents -contains 'api') {
+    $apiVersion = (& az webapp config appsettings list `
+        --resource-group $configuration.ResourceGroup `
+        --name $configuration.Api `
+        --query "[?name=='Release__Version'].value | [0]" `
+        --output tsv).Trim()
+    Assert-LastExitCode 'No se pudo validar la version de API'
+    if ($apiVersion -ne $ReleaseVersion) { throw "Version remota de API inconsistente: $apiVersion." }
+}
+if ($selectedComponents -contains 'function') {
+    $functionVersion = (& az functionapp config appsettings list `
+        --resource-group $configuration.ResourceGroup `
+        --name $configuration.Function `
+        --query "[?name=='Release__Version'].value | [0]" `
+        --output tsv).Trim()
+    Assert-LastExitCode 'No se pudo validar la version de Function'
+    if ($functionVersion -ne $ReleaseVersion) { throw "Version remota de Function inconsistente: $functionVersion." }
+}
+if ($selectedComponents -contains 'pos-installer') {
+    $installerVersion = (& az webapp config appsettings list `
+        --resource-group $configuration.ResourceGroup `
+        --name $configuration.Api `
+        --query "[?name=='PosInstaller__Version'].value | [0]" `
+        --output tsv).Trim()
+    Assert-LastExitCode 'No se pudo validar la version remota del instalador POS'
+    $installerSha256 = (& az webapp config appsettings list `
+        --resource-group $configuration.ResourceGroup `
+        --name $configuration.Api `
+        --query "[?name=='PosInstaller__Sha256'].value | [0]" `
+        --output tsv).Trim()
+    Assert-LastExitCode 'No se pudo validar la integridad remota del instalador POS'
+    if ($installerVersion -ne $ReleaseVersion -or $installerSha256 -ne "$($installerMetadata.sha256)") {
+        throw "Version remota del instalador inconsistente: $installerVersion."
+    }
 }
 
 $result = [pscustomobject]@{
     Environment = $Environment
     Release = $ReleaseVersion
     Commit = $manifest.commit
-    Database = $configuration.Database
+    Components = $selectedComponents -join ','
+    Database = if ($selectedComponents -contains 'database') { $configuration.Database } else { $null }
     ApiStatus = $apiStatus
     FunctionStatus = $functionStatus
 }
@@ -699,7 +732,8 @@ if ($env:GITHUB_STEP_SUMMARY) {
 ## Auraly $ReleaseVersion desplegado en $Environment
 
 - Commit: ``$($manifest.commit)``
-- Database: ``$($configuration.Database)``
+- Components: ``$($selectedComponents -join ',')``
+- Database: ``$(if ($selectedComponents -contains 'database') { $configuration.Database } else { 'sin cambios' })``
 - API health: ``$apiStatus``
 - Function health: ``$functionStatus``
 "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY

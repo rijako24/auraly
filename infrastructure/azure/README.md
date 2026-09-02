@@ -53,8 +53,8 @@ La línea base DEV registrada es `0.1.0-rc7`, generada y desplegada por el pipel
 Los despliegues ordinarios ya no se ejecutan desde el equipo del operador. Se usa el workflow manual `.github/workflows/deploy-auraly-release.yml`:
 
 1. En GitHub Actions, abrir **Deploy Auraly release** y seleccionar **Run workflow**.
-2. Para DEV, indicar una versión nueva y `ref=main`. El pipeline ejecuta pruebas, crea una sola vez los artefactos, los archiva bajo la versión en el contenedor privado `auraly-releases`, crea el tag Git y despliega DB, Function, API y Admin.
-3. Para PROD, elegir la misma versión ya validada en DEV. El pipeline descarga los mismos bytes del archivo privado; no recompila ni reemplaza artefactos.
+2. Para DEV, indicar una versión nueva, `ref=main` y el alcance auditado en `components`. Los valores permitidos son `database`, `function`, `api`, `admin` y `pos-installer`, separados por coma. El pipeline ejecuta todas las pruebas y crea una sola vez el release completo, pero despliega únicamente los componentes declarados.
+3. El alcance queda guardado en `manifest.json` antes de archivar y etiquetar el release. Para PROD se elige la misma versión validada en DEV: el pipeline descarga los mismos bytes y reutiliza obligatoriamente ese alcance; no recompila, amplía ni reemplaza componentes ajenos al cambio.
 4. Revisar el resumen final y los health checks. Un job fallido no se corrige con comandos aislados: se reejecuta el job idempotente después de corregir la causa.
 
 Cada environment de GitHub (`dev` y `prod`) debe definir las variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` y `AZURE_SUBSCRIPTION_ID`. DEV también define los secretos `AURALY_SIGNING_PFX_BASE64`, `AURALY_SIGNING_PFX_PASSWORD` y `AURALY_SIGNING_THUMBPRINT` del certificado Authenticode de publicación; el workflow rechaza el release si falta alguno o si el PFX no coincide con la huella esperada. La identidad usa federación OIDC y no guarda secretos de Azure. Además necesita `Contributor` en su resource group, `Storage Blob Data Contributor` en el storage del ambiente y un usuario contenido con permisos de despliegue en Azure SQL. La identidad PROD solo recibe `Storage Blob Data Reader` sobre el archivo privado de DEV para promover exactamente el release aprobado. `prod` debe tener aprobación obligatoria en GitHub Environments. Los tokens existentes `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV` y `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD` publican el Admin. Los binarios y el DACPAC no se publican como GitHub Release porque este repositorio es público.
@@ -121,7 +121,7 @@ El script exige un árbol Git limpio, hace restore bloqueado, build determiníst
 - `auraly-database-<version>.dacpac`
 - `auraly-pos-<version>.exe`, genérico por tenant y configurado para DEV
 - `auraly-pos-prod-<version>.exe`, genérico por tenant y configurado para PROD
-- `manifest.json` con commit, herramientas, tamaños y SHA-256
+- `manifest.json` con commit, herramientas, tamaños, SHA-256 y el alcance inmutable de despliegue fijado por el workflow
 
 Los dos instaladores nacen del mismo commit, quedan firmados y archivados en el
 mismo release inmutable. La promoción no recompila ni modifica binarios: el

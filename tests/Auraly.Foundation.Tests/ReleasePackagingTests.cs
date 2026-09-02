@@ -261,6 +261,41 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Release_deploys_only_the_components_recorded_in_the_immutable_manifest()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var workflow = File.ReadAllText(Path.Combine(
+            repositoryRoot, ".github", "workflows", "deploy-auraly-release.yml"));
+        var deployment = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var scopeResolver = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "Resolve-AuralyDeploymentComponents.ps1"));
+
+        Assert.Contains("Record immutable deployment scope in DEV", workflow,
+            StringComparison.Ordinal);
+        Assert.Contains("needs.release.outputs.deploy_cloud == 'true'", workflow,
+            StringComparison.Ordinal);
+        Assert.Contains("needs.release.outputs.deploy_admin == 'true'", workflow,
+            StringComparison.Ordinal);
+        Assert.Contains("-Components $components", workflow, StringComparison.Ordinal);
+        Assert.Contains("deploymentComponents", scopeResolver, StringComparison.Ordinal);
+        Assert.Contains("Los componentes solicitados no coinciden", scopeResolver,
+            StringComparison.Ordinal);
+        Assert.Contains("if ($selectedComponents -contains 'database')", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("if ($selectedComponents -contains 'function')", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("if ($selectedComponents -contains 'api')", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("if ($selectedComponents -contains 'pos-installer')", deployment,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Assert-OfflineLeaseSigningConfiguration\r\nPublish-Database",
+            deployment,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Function_key_configuration_retries_while_the_new_host_discovers_functions()
     {
         var deployment = File.ReadAllText(Path.Combine(

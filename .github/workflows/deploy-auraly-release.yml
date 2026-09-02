@@ -20,6 +20,10 @@ on:
         required: true
         default: main
         type: string
+      components:
+        description: Componentes modificados separados por coma (database,function,api,admin,pos-installer). PROD reutiliza el alcance archivado.
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -40,6 +44,10 @@ jobs:
     outputs:
       commit: ${{ steps.metadata.outputs.commit }}
       artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+      components: ${{ steps.metadata.outputs.components }}
+      deploy_cloud: ${{ steps.metadata.outputs.deploy_cloud }}
+      deploy_admin: ${{ steps.metadata.outputs.deploy_admin }}
+      needs_sqlpackage: ${{ steps.metadata.outputs.needs_sqlpackage }}
     steps:
       - name: Checkout source for DEV
         if: inputs.environment == 'dev'
@@ -122,6 +130,18 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Record immutable deployment scope in DEV
+        if: inputs.environment == 'dev'
+        shell: pwsh
+        env:
+          REQUESTED_COMPONENTS: ${{ inputs.components }}
+        run: |
+          ./infrastructure/azure/Resolve-AuralyDeploymentComponents.ps1 `
+            -Environment dev `
+            -ManifestPath './artifacts/releases/${{ inputs.version }}/manifest.json' `
+            -RequestedComponents $env:REQUESTED_COMPONENTS `
+            -Persist | Format-List
+
       - name: Archive immutable private release from DEV
         if: inputs.environment == 'dev'
         shell: pwsh
@@ -171,14 +191,24 @@ jobs:
       - name: Validate metadata
         id: metadata
         shell: pwsh
+        env:
+          REQUESTED_COMPONENTS: ${{ inputs.components }}
         run: |
           $manifest = Get-Content './artifacts/releases/${{ inputs.version }}/manifest.json' -Raw | ConvertFrom-Json
           $head = (git rev-parse HEAD).Trim()
           if ($manifest.commit -ne $head -or $manifest.dirty -or $manifest.version -ne '${{ inputs.version }}') {
             throw 'El manifiesto no corresponde al commit/tag seleccionado.'
           }
+          $scope = ./infrastructure/azure/Resolve-AuralyDeploymentComponents.ps1 `
+            -Environment '${{ inputs.environment }}' `
+            -ManifestPath './artifacts/releases/${{ inputs.version }}/manifest.json' `
+            -RequestedComponents $env:REQUESTED_COMPONENTS
           "commit=$($manifest.commit)" >> $env:GITHUB_OUTPUT
           "artifact_name=auraly-release-${{ inputs.version }}" >> $env:GITHUB_OUTPUT
+          "components=$($scope.Csv)" >> $env:GITHUB_OUTPUT
+          "deploy_cloud=$($scope.DeployCloud.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "deploy_admin=$($scope.DeployAdmin.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "needs_sqlpackage=$($scope.NeedsSqlPackage.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Upload release between jobs
         uses: actions/upload-artifact@v4
@@ -189,8 +219,9 @@ jobs:
           retention-days: 7
 
   cloud:
-    name: Deploy DB, Function and API
+    name: Deploy selected cloud components
     needs: release
+    if: needs.release.outputs.deploy_cloud == 'true'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -204,10 +235,12 @@ jobs:
           path: artifacts/releases/${{ inputs.version }}
 
       - uses: actions/setup-dotnet@v4
+        if: needs.release.outputs.needs_sqlpackage == 'true'
         with:
           dotnet-version: 8.0.x
 
       - name: Install SQLPackage 170
+        if: needs.release.outputs.needs_sqlpackage == 'true'
         shell: pwsh
         run: |
           dotnet tool install --global Microsoft.SqlPackage --version 170.4.83
@@ -223,21 +256,25 @@ jobs:
       - name: Publish cloud release
         shell: pwsh
         env:
+          DEPLOYMENT_COMPONENTS: ${{ needs.release.outputs.components }}
           AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH: ${{ secrets.AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH }}
           CJ_WHATSAPP_ACCESS_TOKEN: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_ACCESS_TOKEN || '' }}
           CJ_WHATSAPP_FUNCTION_KEY: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_FUNCTION_KEY || '' }}
           CJ_WHATSAPP_VERIFY_TOKEN: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_VERIFY_TOKEN || '' }}
-        run: >-
-          ./infrastructure/azure/Publish-AuralyReleasePipeline.ps1
-          -Environment '${{ inputs.environment }}'
-          -ReleaseVersion '${{ inputs.version }}'
-          -SqlPackagePath $env:SQLPACKAGE_PATH
+        run: |
+          $components = @($env:DEPLOYMENT_COMPONENTS -split ',' | Where-Object { $_ -ne 'admin' })
+          ./infrastructure/azure/Publish-AuralyReleasePipeline.ps1 `
+            -Environment '${{ inputs.environment }}' `
+            -ReleaseVersion '${{ inputs.version }}' `
+            -Components $components `
+            -SqlPackagePath $env:SQLPACKAGE_PATH
 
   admin:
     name: Deploy Admin
     needs:
       - release
       - cloud
+    if: always() && needs.release.result == 'success' && needs.release.outputs.deploy_admin == 'true' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped')
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -271,7 +308,9 @@ jobs:
     name: Verify environment
     needs:
       - release
+      - cloud
       - admin
+    if: always() && needs.release.result == 'success' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped') && (needs.admin.result == 'success' || needs.admin.result == 'skipped')
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -306,4 +345,4 @@ jobs:
             if (-not $healthy) { throw "$uri no quedo saludable despues de 6 intentos." }
           }
           "## Verificacion final" >> $env:GITHUB_STEP_SUMMARY
-          "Release ``${{ inputs.version }}`` saludable en ``${{ inputs.environment }}``." >> $env:GITHUB_STEP_SUMMARY
+          "Release ``${{ inputs.version }}`` saludable en ``${{ inputs.environment }}``. Componentes: ``${{ needs.release.outputs.components }}``." >> $env:GITHUB_STEP_SUMMARY
