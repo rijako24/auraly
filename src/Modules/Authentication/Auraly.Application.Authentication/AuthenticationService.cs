@@ -84,6 +84,7 @@ public interface IAuthenticationSessionStore
 
     Task<bool> IsActiveAsync(
         ParsedAuthenticationToken token,
+        Guid clientId,
         DateTimeOffset now,
         CancellationToken cancellationToken);
 
@@ -114,6 +115,7 @@ public interface IAuthenticationSessionValidator
 {
     Task<bool> IsActiveAsync(
         ParsedAuthenticationToken token,
+        Guid clientId,
         CancellationToken cancellationToken = default);
 }
 
@@ -223,8 +225,9 @@ public sealed class AuthenticationService(
 
     public Task<bool> IsActiveAsync(
         ParsedAuthenticationToken token,
+        Guid clientId,
         CancellationToken cancellationToken = default) =>
-        store.IsActiveAsync(token, timeProvider.GetUtcNow(), cancellationToken);
+        store.IsActiveAsync(token, clientId, timeProvider.GetUtcNow(), cancellationToken);
 
     public async Task<AuthenticationUserView> GetCurrentUserAsync(
         ParsedAuthenticationToken token,
@@ -290,8 +293,9 @@ public sealed class AuthenticationSessionValidator(
 {
     public Task<bool> IsActiveAsync(
         ParsedAuthenticationToken token,
+        Guid clientId,
         CancellationToken cancellationToken = default) =>
-        store.IsActiveAsync(token, timeProvider.GetUtcNow(), cancellationToken);
+        store.IsActiveAsync(token, clientId, timeProvider.GetUtcNow(), cancellationToken);
 }
 
 public sealed class AuthenticationDeniedException(string message) : Exception(message);

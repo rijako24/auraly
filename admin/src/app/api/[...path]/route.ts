@@ -53,7 +53,14 @@ async function proxy(
   const url = getBackendRequestUrl(path, searchParams);
 
   const accessToken = request.cookies.get(AUTH_COOKIE_NAMES.accessToken)?.value;
-  const headers = buildBackendProxyHeaders(request.headers, accessToken);
+  const authenticationClientId = request.cookies.get(
+    AUTH_COOKIE_NAMES.clientId,
+  )?.value;
+  const headers = buildBackendProxyHeaders(
+    request.headers,
+    accessToken,
+    authenticationClientId,
+  );
 
   let body: string | undefined;
   if (method !== "GET") {

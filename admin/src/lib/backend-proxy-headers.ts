@@ -1,11 +1,15 @@
 export function buildBackendProxyHeaders(
   requestHeaders: Headers,
   accessToken?: string,
+  authenticationClientId?: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": requestHeaders.get("Content-Type") || "application/json",
   };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  if (authenticationClientId) {
+    headers["X-Auraly-Client-Id"] = authenticationClientId;
+  }
 
   for (const name of [
     "X-Tenant-Id",

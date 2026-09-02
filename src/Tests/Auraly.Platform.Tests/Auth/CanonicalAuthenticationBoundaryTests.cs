@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
-using Auraly.Api.Authorization;
+using Auraly.Api;
 using Auraly.Api.Controllers;
 using Xunit;
 
@@ -34,6 +34,7 @@ public sealed class CanonicalAuthenticationBoundaryTests
         validator
             .Setup(service => service.IsActiveAsync(
                 It.IsAny<ParsedAuthenticationToken>(),
+                It.IsAny<Guid>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         var events = new AuthenticationSessionJwtBearerEvents(validator.Object);
@@ -58,14 +59,31 @@ public sealed class CanonicalAuthenticationBoundaryTests
         validator.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task Administrative_host_rejects_a_token_without_browser_client_id()
+    {
+        var validator = new Mock<IAuthenticationSessionValidator>(MockBehavior.Strict);
+        var events = new AuthenticationSessionJwtBearerEvents(validator.Object);
+        var context = Context(Principal());
+        context.HttpContext.Request.Headers.Remove(AuthenticationDefaults.ClientIdHeader);
+
+        await events.TokenValidated(context);
+
+        Assert.NotNull(context.Result?.Failure);
+        validator.VerifyNoOtherCalls();
+    }
+
     private static TokenValidatedContext Context(ClaimsPrincipal principal)
     {
         var scheme = new AuthenticationScheme(
             JwtBearerDefaults.AuthenticationScheme,
             JwtBearerDefaults.AuthenticationScheme,
             typeof(IAuthenticationHandler));
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers[AuthenticationDefaults.ClientIdHeader] =
+            Guid.NewGuid().ToString("D");
         return new TokenValidatedContext(
-            new DefaultHttpContext(), scheme, new JwtBearerOptions())
+            httpContext, scheme, new JwtBearerOptions())
         {
             Principal = principal,
         };

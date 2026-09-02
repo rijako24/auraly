@@ -31,7 +31,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Login_is_shared_by_tabs_and_a_different_client_revokes_it()
+    public async Task First_login_is_active_and_replacement_login_revokes_only_the_old_session()
     {
         var user = await CreatePasswordUserAsync("auth-login");
         var clientId = Guid.NewGuid();
@@ -82,6 +82,9 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         using var secondAuthenticated = AuthenticatedClient(replacementLogin, secondClientId);
         using var secondResponse = await secondAuthenticated.GetAsync("/api/v1/auth/me");
         Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        Assert.Equal("Revoked", (await ReadSessionAsync(sessionId)).Status);
+        Assert.Equal("Active", (await ReadSessionAsync(
+            SessionId(replacementLogin.AccessToken))).Status);
         Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
     }
 
@@ -179,7 +182,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Login_from_the_same_client_replaces_the_previous_authentication()
+    public async Task Same_browser_relogin_rejects_the_old_session_id_and_accepts_the_new_one()
     {
         var user = await CreatePasswordUserAsync("auth-same-client");
         var clientId = Guid.NewGuid();
@@ -194,6 +197,32 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         using var currentResponse = await currentClient.GetAsync("/api/v1/auth/me");
         Assert.Equal(HttpStatusCode.OK, currentResponse.StatusCode);
         Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
+    }
+
+    [Fact]
+    public async Task Active_session_accepts_only_its_persisted_browser_client()
+    {
+        var user = await CreatePasswordUserAsync("auth-client-boundary");
+        var clientId = Guid.NewGuid();
+        var login = await LoginAsync(user.Username, clientId);
+        var sessionId = SessionId(login.AccessToken);
+        var beforeValidation = await ReadSessionAsync(sessionId);
+
+        using var matchingBrowser = AuthenticatedClient(login, clientId);
+        using var accepted = await matchingBrowser.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var afterValidation = await ReadSessionAsync(sessionId);
+        Assert.Equal(beforeValidation.LastSeenAt, afterValidation.LastSeenAt);
+
+        using var differentBrowser = AuthenticatedClient(login, Guid.NewGuid());
+        using var rejected = await differentBrowser.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+
+        using var missingBrowser = fixture.CreateClient();
+        missingBrowser.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", login.AccessToken);
+        using var missing = await missingBrowser.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, missing.StatusCode);
     }
 
     [Fact]
@@ -507,7 +536,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ClientId,RefreshTokenHash,Status
+            SELECT ClientId,RefreshTokenHash,Status,LastSeenAt
             FROM dbo.AuthenticationSessions
             WHERE AuthenticationSessionId=@SessionId;
             """;
@@ -515,7 +544,8 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         return new TestSessionRow(
-            reader.GetGuid(0), (byte[])reader[1], reader.GetString(2));
+            reader.GetGuid(0), (byte[])reader[1], reader.GetString(2),
+            reader.GetDateTimeOffset(3));
     }
 
     private Task<int> CountActiveSessionsAsync(Guid userId) =>
@@ -584,7 +614,8 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
 
     private sealed record TestUser(Guid UserId, string Username);
     private sealed record TestSessionRow(
-        Guid ClientId, byte[] RefreshTokenHash, string Status);
+        Guid ClientId, byte[] RefreshTokenHash, string Status,
+        DateTimeOffset LastSeenAt);
     private sealed record LockoutState(int FailedCount, DateTimeOffset? LockoutEnd);
     private sealed record OfflineLeaseIdentity(Guid LeaseId);
     private sealed record OfflineLeaseActiveState(bool Active);

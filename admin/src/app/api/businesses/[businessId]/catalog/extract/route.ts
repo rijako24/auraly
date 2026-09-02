@@ -8,6 +8,9 @@ export async function POST(
 ) {
   const { businessId } = await params;
   const accessToken = request.cookies.get(AUTH_COOKIE_NAMES.accessToken)?.value;
+  const authenticationClientId = request.cookies.get(
+    AUTH_COOKIE_NAMES.clientId,
+  )?.value;
   const businessHeader = request.headers.get("X-Business-Id") ?? businessId;
   const formData = await request.formData();
 
@@ -18,6 +21,9 @@ export async function POST(
       method: "POST",
       headers: {
         ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
+        ...(authenticationClientId && {
+          "X-Auraly-Client-Id": authenticationClientId,
+        }),
         "X-Business-Id": businessHeader,
       },
       body: formData,

@@ -377,26 +377,25 @@ public sealed class SqlAuthenticationSessionStore(
 
     public async Task<bool> IsActiveAsync(
         ParsedAuthenticationToken token,
+        Guid clientId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            UPDATE dbo.AuthenticationSessions
-            SET LastSeenAt=CASE WHEN LastSeenAt<DATEADD(minute,-1,@Now)
-                                THEN @Now ELSE LastSeenAt END,
-                UpdatedAt=CASE WHEN LastSeenAt<DATEADD(minute,-1,@Now)
-                               THEN @Now ELSE UpdatedAt END
-            OUTPUT inserted.AuthenticationSessionId
+            SELECT AuthenticationSessionId
+            FROM dbo.AuthenticationSessions
             WHERE AuthenticationSessionId=@SessionId
               AND UserId=@UserId AND TenantId=@TenantId
+              AND ClientId=@ClientId
               AND Status=N'Active' AND ExpiresAt>@Now
               AND EXISTS(SELECT 1 FROM dbo.Tenants tenant WHERE tenant.TenantId=@TenantId AND tenant.IsActive=1);
             """, connection);
         command.Parameters.AddWithValue("@SessionId", token.AuthenticationSessionId);
         command.Parameters.AddWithValue("@UserId", token.UserId);
         command.Parameters.AddWithValue("@TenantId", token.TenantId);
+        command.Parameters.AddWithValue("@ClientId", clientId);
         command.Parameters.AddWithValue("@Now", now);
         return await command.ExecuteScalarAsync(cancellationToken) is Guid;
     }

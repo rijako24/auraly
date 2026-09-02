@@ -17,9 +17,14 @@ describe("buildBackendProxyHeaders", () => {
       Cookie: "must-not-leak=true",
     });
 
-    assert.deepEqual(buildBackendProxyHeaders(source, "token"), {
+    assert.deepEqual(buildBackendProxyHeaders(
+      source,
+      "token",
+      "10000000-0000-4000-8000-000000000001",
+    ), {
       "Content-Type": "application/json",
       Authorization: "Bearer token",
+      "X-Auraly-Client-Id": "10000000-0000-4000-8000-000000000001",
       "X-Tenant-Id": "tenant-1",
       "X-Business-Id": "business-1",
       "Idempotency-Key": "online-sale-document-1",
