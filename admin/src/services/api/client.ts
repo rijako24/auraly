@@ -4,6 +4,7 @@ import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
 
 import {
   announceSessionReplacement,
+  isActiveLocalPosSession,
   retryAuthenticatedRequest,
   type SessionRefreshResult,
 } from "@/lib/auth-session";
@@ -79,6 +80,11 @@ async function expireWebSession(): Promise<void> {
   } catch {
     // Storage can be unavailable in hardened browsers; navigation still expires the shell.
   }
+  if (isActiveLocalPosSession(
+    window.location.pathname,
+    window.sessionStorage.getItem("auraly.pos.edge-token"),
+    window.localStorage.getItem("auraly.pos.user-session"),
+  )) return;
   const destination = buildLoginRedirect(
     window.location.pathname,
     window.location.search,

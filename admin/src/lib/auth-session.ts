@@ -12,6 +12,18 @@ export type SessionExpiredEventDetail = {
 };
 export type SessionRefreshResult = "refreshed" | "expired" | "unavailable";
 
+export function isActiveLocalPosSession(
+  pathname: string,
+  edgeToken: string | null,
+  userSession: string | null,
+): boolean {
+  return pathname.startsWith("/pos") && Boolean(edgeToken) && Boolean(userSession);
+}
+
+export function shouldRunCloudBackgroundSynchronization(pathname: string): boolean {
+  return pathname.startsWith("/dashboard");
+}
+
 export function announceSessionReplacement(destination: string): void {
   if (typeof window === "undefined") return;
   const event = new CustomEvent<SessionExpiredEventDetail>(SESSION_EXPIRED_EVENT, {

@@ -17,6 +17,20 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     private const string Password = "Auraly-Test-Password-2026!";
 
     [Fact]
+    public async Task Correct_credentials_enter_even_after_previous_failures_and_clear_the_lockout()
+    {
+        var user = await CreatePasswordUserAsync("auth-valid-after-failures");
+        await SetActiveLockoutAsync(user.UserId);
+
+        var login = await LoginAsync(user.Username, Guid.NewGuid());
+
+        Assert.False(string.IsNullOrWhiteSpace(login.AccessToken));
+        var state = await ReadLockoutStateAsync(user.UserId);
+        Assert.Equal(0, state.FailedCount);
+        Assert.Null(state.LockoutEnd);
+    }
+
+    [Fact]
     public async Task Login_is_shared_by_tabs_and_a_different_client_revokes_it()
     {
         var user = await CreatePasswordUserAsync("auth-login");
@@ -533,6 +547,32 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    private async Task SetActiveLockoutAsync(Guid userId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "UPDATE dbo.AppUsers SET AccessFailedCount=5, " +
+            "LockoutEnd=DATEADD(minute,15,SYSUTCDATETIME()) WHERE UserId=@UserId;",
+            connection);
+        command.Parameters.AddWithValue("@UserId", userId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<LockoutState> ReadLockoutStateAsync(Guid userId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT AccessFailedCount,LockoutEnd FROM dbo.AppUsers WHERE UserId=@UserId;",
+            connection);
+        command.Parameters.AddWithValue("@UserId", userId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new LockoutState(
+            reader.GetInt32(0), reader.IsDBNull(1) ? null : reader.GetDateTimeOffset(1));
+    }
+
     private async Task<int> CountAsync(string sql, Guid userId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -545,6 +585,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     private sealed record TestUser(Guid UserId, string Username);
     private sealed record TestSessionRow(
         Guid ClientId, byte[] RefreshTokenHash, string Status);
+    private sealed record LockoutState(int FailedCount, DateTimeOffset? LockoutEnd);
     private sealed record OfflineLeaseIdentity(Guid LeaseId);
     private sealed record OfflineLeaseActiveState(bool Active);
 }

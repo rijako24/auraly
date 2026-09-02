@@ -120,6 +120,7 @@ function LoginForm() {
       if (edgeClient && !forceCloud) {
         try {
           await edgeClient.login(username, password);
+          useAuthStore.getState().clearAuth();
           window.location.replace("/pos");
         } catch (error) {
           if (error instanceof PosEdgeError && error.code === "CloudLoginRequired") {

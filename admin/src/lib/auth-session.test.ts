@@ -2,12 +2,26 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  isActiveLocalPosSession,
   isAuthenticationRequest,
   retryAuthenticatedRequest,
+  shouldRunCloudBackgroundSynchronization,
   shouldRefreshSession,
 } from "./auth-session";
 
 describe("auth session decisions", () => {
+  it("keeps an enrolled POS session independent from a stale web cookie", () => {
+    assert.equal(isActiveLocalPosSession("/pos", "edge", "cashier"), true);
+    assert.equal(isActiveLocalPosSession("/pos", "edge", null), false);
+    assert.equal(isActiveLocalPosSession("/dashboard", "edge", "cashier"), false);
+  });
+
+  it("runs cloud outbox synchronization only inside the cloud workspace", () => {
+    assert.equal(shouldRunCloudBackgroundSynchronization("/dashboard/orders"), true);
+    assert.equal(shouldRunCloudBackgroundSynchronization("/login"), false);
+    assert.equal(shouldRunCloudBackgroundSynchronization("/pos"), false);
+  });
+
   it("refreshes protected web requests after an unauthorized response", () => {
     assert.equal(shouldRefreshSession(401, "/api/businesses"), true);
     assert.equal(shouldRefreshSession(403, "/api/businesses"), false);

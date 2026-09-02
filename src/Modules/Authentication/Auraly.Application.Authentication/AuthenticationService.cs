@@ -148,10 +148,10 @@ public sealed class AuthenticationService(
             request.Username.Trim().ToUpperInvariant(), cancellationToken);
         if (user is null || !user.IsActive || string.IsNullOrWhiteSpace(user.PasswordHash))
             throw new AuthenticationDeniedException("Invalid credentials.");
-        if (user.LockoutEnd is { } lockoutEnd && lockoutEnd > now)
-            throw new AuthenticationDeniedException("The account is temporarily locked.");
         if (!passwordVerifier.Verify(request.Password, user.PasswordHash))
         {
+            if (user.LockoutEnd is { } lockoutEnd && lockoutEnd > now)
+                throw new AuthenticationDeniedException("The account is temporarily locked.");
             await store.RecordFailedLoginAsync(
                 user.UserId, now, MaxFailedAttempts, LockoutDuration, cancellationToken);
             throw new AuthenticationDeniedException("Invalid credentials.");
