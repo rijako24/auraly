@@ -41,6 +41,24 @@ public sealed class FiscalCertificateIdentityPolicyTests
         Assert.False(FiscalCertificateTrustPolicy.IsOfficialRoot(root));
     }
 
+    [Theory]
+    [InlineData("032D6DCFE71F2C57ECADA9A99F2F6CE9825A6550")]
+    [InlineData("71 EB A8 7B 1D 60 D4 95 F5 BA 91 C4 8B 3B 5C 2A 3D FE B4 86")]
+    [InlineData("3977884DA7B83A006AED158D506AAC861BCA1A4F")]
+    [InlineData("1139A49E8484AAF2D90D985EC4741A65DD5D94E2")]
+    [InlineData("6DC08450A95CD32662C0910F8C2DCE230D7466AD")]
+    [InlineData("5463283B6793FF55277CEDE39098E80422F912F7")]
+    [InlineData("EBB08B91DF02D0B9A813CBE10E112CC11A50611C")]
+    [InlineData("4BA80D75903497F45D32EFEFD25F184B362F1DD0")]
+    [InlineData("A08ED8F6DFC49FFD2884E25A576F4EAC980B2481")]
+    [InlineData("F68347D8A59B9312389BCB010BEB7E6C3E067FE5")]
+    public void Official_fiscal_roots_are_explicitly_allowlisted(string thumbprint)
+    {
+        Assert.True(FiscalCertificateTrustPolicy.IsAllowedRootThumbprint(thumbprint));
+        Assert.False(FiscalCertificateTrustPolicy.IsAllowedRootThumbprint(
+            "0000000000000000000000000000000000000000"));
+    }
+
     [Fact]
     public void An_unavailable_revocation_service_does_not_look_like_a_revoked_certificate()
     {

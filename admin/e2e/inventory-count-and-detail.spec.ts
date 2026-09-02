@@ -125,7 +125,13 @@ test.describe("conteo y detalle de inventario", () => {
     const count=operation.getByRole("textbox",{name:"Contar Arroz",exact:true});
     await expect(count).toBeFocused();
     await count.fill("8");
-    await count.press("Enter");
+    await operation.getByRole("button",{name:"Cerrar",exact:true}).click();
+    await expect(operation).toBeHidden();
+    await page.getByRole("button", { name: "Nueva operación" }).click();
+    const restoredCount=operation.getByRole("textbox",{name:"Contar Arroz",exact:true});
+    await expect(restoredCount).toHaveValue("8");
+    await expect(operation.getByRole("combobox",{name:"Motivo"})).toContainText("Conteo físico");
+    await restoredCount.press("Enter");
     await expect(search).toBeFocused();
     await expect(operation.getByRole("textbox",{name:"Recontar Arroz",exact:true})).toBeDisabled();
     await operation.getByRole("button",{name:"Recontar"}).click();

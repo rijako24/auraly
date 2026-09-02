@@ -10,6 +10,8 @@ export type DurableOperationLine = {
   stock: number;
   quantity: string;
   preCount?: string;
+  count?: string;
+  recount?: string;
   cost: string;
   salePrice?: string;
   direction: "INPUT" | "OUTPUT";
@@ -31,12 +33,24 @@ export type DurableInventoryOperationDraft = {
   countDocumentId: string | null;
   conversionType: "SPLIT" | "MERGE";
   valuationBasis?: "Cost" | "SalePrice";
+  countCaptureStage?: "Count" | "Recount";
   lines: DurableOperationLine[];
   updatedAt: string;
 };
 
 export const inventoryDraftKey = (businessId: string, kind: string) =>
   `inventory:${businessId}:${kind}`;
+
+const inventoryActiveKindKey = (businessId: string) =>
+  `inventory:${businessId}:active-kind`;
+
+type InventoryOperationKind = DurableInventoryOperationDraft["kind"];
+type DurableInventoryOperationSelection = {
+  key: string;
+  businessId: string;
+  kind: InventoryOperationKind;
+  updatedAt: string;
+};
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -81,4 +95,25 @@ export async function saveInventoryOperationDraft(
 
 export async function removeInventoryOperationDraft(key: string) {
   await transaction("readwrite", (store) => store.delete(key));
+}
+
+export async function loadActiveInventoryOperationKind(businessId: string) {
+  const key = inventoryActiveKindKey(businessId);
+  const selection = await transaction("readonly", (store) => store.get(key)) as
+    | DurableInventoryOperationSelection
+    | undefined;
+  return selection?.businessId === businessId ? selection.kind : undefined;
+}
+
+export async function saveActiveInventoryOperationKind(
+  businessId: string,
+  kind: InventoryOperationKind,
+) {
+  const key = inventoryActiveKindKey(businessId);
+  await transaction("readwrite", (store) => store.put({
+    key,
+    businessId,
+    kind,
+    updatedAt: new Date().toISOString(),
+  }));
 }

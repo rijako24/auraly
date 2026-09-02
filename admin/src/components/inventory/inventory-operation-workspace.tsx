@@ -3,6 +3,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
 } from "react";
@@ -50,8 +51,11 @@ import {
 } from "@/services/api/inventory";
 import {
   inventoryDraftKey,
+  type DurableInventoryOperationDraft,
+  loadActiveInventoryOperationKind,
   loadInventoryOperationDraft,
   removeInventoryOperationDraft,
+  saveActiveInventoryOperationKind,
   saveInventoryOperationDraft,
 } from "@/lib/operation-draft-store";
 import {
@@ -160,6 +164,8 @@ export function InventoryOperationWorkspace({
   const [conversionType, setConversionType] = useState<"SPLIT" | "MERGE">("SPLIT");
   const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
+  const [activeKindHydrated, setActiveKindHydrated] = useState(Boolean(physicalCountDraft));
+  const latestDraft = useRef<DurableInventoryOperationDraft | null>(null);
 
   const selected = operationOptions.find((option) => option.id === kind)!;
   const allowed = permissions.has(selected.permission);
@@ -175,9 +181,67 @@ export function InventoryOperationWorkspace({
   );
   const initialWarehouseId = warehouses.length === 1 ? warehouses[0].id : "";
   const warehouseIdsKey = warehouses.map((warehouse) => warehouse.id).join("|");
+  const allowedKindsKey = operationOptions
+    .filter(option => permissions.has(option.permission))
+    .map(option => option.id)
+    .join("|");
   const draftKey = inventoryDraftKey(businessId, kind);
+  const hasLocalCapture = Boolean(
+    warehouseId || destinationId || reason || notes.trim() || lines.length,
+  );
+
+  latestDraft.current = hydratedKey === draftKey && hasLocalCapture ? {
+    key: draftKey,
+    businessId,
+    kind,
+    documentId,
+    warehouseId,
+    destinationId,
+    reason,
+    notes,
+    countDocumentId: null,
+    conversionType,
+    valuationBasis,
+    lines,
+    updatedAt: new Date().toISOString(),
+  } : null;
+
+  useEffect(() => () => {
+    const pendingDraft = latestDraft.current;
+    if (pendingDraft)
+      void saveInventoryOperationDraft(pendingDraft);
+  }, []);
 
   useEffect(() => {
+    let active = true;
+    if (physicalCountDraft) {
+      setKind("count");
+      setActiveKindHydrated(true);
+      return () => { active = false; };
+    }
+    setActiveKindHydrated(false);
+    void loadActiveInventoryOperationKind(businessId)
+      .then(storedKind => {
+        if (!active) return;
+        const restored: OperationKind = storedKind &&
+          allowedKindsKey.split("|").includes(storedKind)
+          ? storedKind
+          : initialKind;
+        setKind(restored);
+        setActiveKindHydrated(true);
+        return saveActiveInventoryOperationKind(businessId, restored);
+      })
+      .catch(() => {
+        if (!active) return;
+        setKind(initialKind);
+        setActiveKindHydrated(true);
+        toast.error("No fue posible recuperar el tipo de operación anterior.");
+      });
+    return () => { active = false; };
+  }, [allowedKindsKey, businessId, initialKind, physicalCountDraft]);
+
+  useEffect(() => {
+    if (!activeKindHydrated) return;
     let active = true;
     setHydratedKey(null);
     void loadInventoryOperationDraft(draftKey)
@@ -210,12 +274,18 @@ export function InventoryOperationWorkspace({
         toast.error("No fue posible recuperar el borrador local de inventario.");
       });
     return () => { active = false; };
-  }, [draftKey, initialWarehouseId, warehouseIdsKey]);
+  }, [activeKindHydrated, draftKey, initialWarehouseId, warehouseIdsKey]);
+
+  function selectKind(nextKind: OperationKind) {
+    setKind(nextKind);
+    void saveActiveInventoryOperationKind(businessId, nextKind)
+      .catch(() => toast.error("No fue posible guardar el tipo de operación."));
+  }
 
   useEffect(() => {
     if (hydratedKey !== draftKey) return;
     const timer = window.setTimeout(() => {
-      if (lines.length === 0 && notes.trim() === "") {
+      if (!hasLocalCapture) {
         void removeInventoryOperationDraft(draftKey);
         return;
       }
@@ -244,6 +314,7 @@ export function InventoryOperationWorkspace({
     documentId,
     draftKey,
     hydratedKey,
+    hasLocalCapture,
     kind,
     lines,
     notes,
@@ -331,6 +402,7 @@ export function InventoryOperationWorkspace({
   }
 
   function clear() {
+    latestDraft.current = null;
     void removeInventoryOperationDraft(draftKey);
     setDocumentId(crypto.randomUUID());
     setLines([]);
@@ -480,7 +552,7 @@ export function InventoryOperationWorkspace({
               key={option.id}
               type="button"
               disabled={!enabled || mutation.isPending || Boolean(physicalCountDraft && option.id !== "count")}
-              onClick={() => setKind(option.id)}
+              onClick={() => selectKind(option.id)}
               className={`rounded-xl border p-4 text-left transition ${
                 kind === option.id
                   ? "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-400"

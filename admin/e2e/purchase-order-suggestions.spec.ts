@@ -82,7 +82,10 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await expect(expectedDate).not.toHaveText(initialExpectedDate ?? "");
   expect(partyRequests).toHaveLength(0);
   await dialog.getByRole("combobox", { name: "Seleccionar supplier" }).click();
-  await page.getByRole("option", { name: /Proveedor Andino/ }).click();
+  const supplier = page.getByRole("option", { name: /Proveedor Andino/ });
+  await supplier.hover();
+  await expect(supplier).toHaveAttribute("data-selected", "true");
+  await supplier.click();
   expect(partyRequests).toHaveLength(1);
   expect(partyRequests[0].searchParams.get("role")).toBe("Supplier");
   expect(partyRequests[0].searchParams.get("pageSize")).toBe("10");

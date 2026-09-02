@@ -334,14 +334,32 @@ public static class FiscalCertificateIdentityPolicy
 
 public static class FiscalCertificateTrustPolicy
 {
-    // GSE publishes this CA as "Autoridad Raiz GSE" in its current certification
-    // practices. It is not shipped by the standard Linux trust store used by App Service.
-    private const string GseRootThumbprint = "032D6DCFE71F2C57ECADA9A99F2F6CE9825A6550";
+    // Roots published by Colombian ONAC-accredited certification entities that are
+    // not consistently present in the Linux trust store used by App Service. Public
+    // roots already installed by the operating system are accepted by systemChain.
+    // Keeping exact fingerprints here prevents trusting an arbitrary self-signed
+    // certificate merely because it was bundled in a PKCS#12 file.
+    private static readonly HashSet<string> OfficialRootThumbprints =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "032D6DCFE71F2C57ECADA9A99F2F6CE9825A6550", // GSE
+            "71EBA87B1D60D495F5BA91C48B3B5C2A3DFEB486", // Viafirma
+            "3977884DA7B83A006AED158D506AAC861BCA1A4F", // Andes SCD
+            "1139A49E8484AAF2D90D985EC4741A65DD5D94E2", // Camerfirma Colombia
+            "6DC08450A95CD32662C0910F8C2DCE230D7466AD", // Uanataca Colombia
+            "5463283B6793FF55277CEDE39098E80422F912F7", // Certicamara
+            "EBB08B91DF02D0B9A813CBE10E112CC11A50611C", // PKI Services
+            "4BA80D75903497F45D32EFEFD25F184B362F1DD0", // Lleida.net Colombia
+            "A08ED8F6DFC49FFD2884E25A576F4EAC980B2481", // Olimpia IT
+            "F68347D8A59B9312389BCB010BEB7E6C3E067FE5"  // Thomas Signe
+        };
 
     public static bool IsOfficialRoot(X509Certificate2 certificate) =>
         certificate.SubjectName.RawData.AsSpan().SequenceEqual(certificate.IssuerName.RawData) &&
-        string.Equals(Normalize(certificate.Thumbprint), GseRootThumbprint,
-            StringComparison.OrdinalIgnoreCase);
+        IsAllowedRootThumbprint(certificate.Thumbprint);
+
+    public static bool IsAllowedRootThumbprint(string thumbprint) =>
+        OfficialRootThumbprints.Contains(Normalize(thumbprint));
 
     public static bool IsTrustedChain(
         X509Certificate2 certificate,

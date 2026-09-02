@@ -18,6 +18,25 @@ public sealed class SalesReportingSliceCollection : ICollectionFixture<ServerSli
 public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Read_all_permission_allows_a_platform_actor_without_a_local_tenant_user()
+    {
+        var externalPlatformUserId=Guid.NewGuid();
+        using var scope=fixture.CreateScope();
+        var store=scope.ServiceProvider.GetRequiredService<ISalesReportingStore>();
+        var scopedIdentity=new SalesReportingUserIdentity(
+            externalPlatformUserId,fixture.TenantId,fixture.BusinessId,
+            new HashSet<string>{SalesReportingPermissionCodes.Read});
+        await Assert.ThrowsAsync<SalesReportingForbiddenException>(()=>
+            store.GetSupplierImpactAsync(scopedIdentity,new DateOnly(2026,7,27),
+                new DateOnly(2026,7,27),CancellationToken.None));
+
+        var administratorIdentity=scopedIdentity with {Permissions=new HashSet<string>{
+            SalesReportingPermissionCodes.Read,SalesReportingPermissionCodes.ReadAll}};
+        Assert.NotNull(await store.GetSupplierImpactAsync(administratorIdentity,
+            new DateOnly(2026,7,27),new DateOnly(2026,7,27),CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Read_all_permission_keeps_an_administrator_unscoped_when_their_party_is_also_a_seller()
     {
         var partyId=Guid.NewGuid();var sellerId=Guid.NewGuid();var userId=Guid.NewGuid();var suffix=Guid.NewGuid().ToString("N");

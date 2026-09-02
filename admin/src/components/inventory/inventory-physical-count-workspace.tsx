@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useDeferredValue,
   useMemo,
@@ -51,6 +52,12 @@ import {
   type InventoryReconciliationProduct,
 } from "@/services/api/inventory";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import {
+  inventoryDraftKey,
+  loadInventoryOperationDraft,
+  removeInventoryOperationDraft,
+  saveInventoryOperationDraft,
+} from "@/lib/operation-draft-store";
 
 type Warehouse = { id: string; name: string };
 type ReconciliationSection = "Counted" | "Uncounted";
@@ -230,7 +237,10 @@ export function PhysicalCountCreationForm({
   const [draftDialogOpen, setDraftDialogOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [captureStage, setCaptureStage] = useState<CountCaptureStage>("Count");
+  const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const documentId = useRef(crypto.randomUUID());
+  const persistOnUnmount = useRef(true);
+  const latestPersistence = useRef<() => Promise<void>>(async () => undefined);
   const countRefs = useRef(new Map<string, HTMLInputElement>());
   const recountRefs = useRef(new Map<string, HTMLInputElement>());
   const reasons = useQuery({
@@ -245,6 +255,106 @@ export function PhysicalCountCreationForm({
   const applyValid = Boolean(warehouse && reason && countsComplete && (captureStage === "Count" || recountsComplete));
   const canSave = permissions.has("inventory.physical-counts.capture") && permissions.has("inventory.physical-counts.manage");
   const canApply = permissions.has("inventory.counts.confirm") && permissions.has("inventory.physical-counts.manage");
+  const initialWarehouseId = warehouses.length === 1 ? warehouses[0].id : "";
+  const warehouseIdsKey = warehouses.map(item => item.id).join("|");
+  const localDraftKey = inventoryDraftKey(businessId, "physical-count-capture");
+
+  useEffect(() => {
+    let active = true;
+    setHydratedKey(null);
+    void loadInventoryOperationDraft(localDraftKey)
+      .then(draft => {
+        if (!active) return;
+        const storedWarehouse = warehouseIdsKey.split("|").includes(draft?.warehouseId ?? "")
+          ? draft?.warehouseId ?? ""
+          : initialWarehouseId;
+        if (draft?.kind === "count") {
+          documentId.current = draft.documentId;
+          setWarehouse(storedWarehouse);
+          setReason(draft.reason);
+          setNotes(draft.notes);
+          setCaptureStage(draft.countCaptureStage ?? "Count");
+          setLines(draft.lines.map(line => ({
+            productId: line.productId,
+            productCode: line.productCode,
+            productName: line.productName,
+            unitCode: line.unitCode,
+            systemQuantity: line.systemQuantity ?? line.stock,
+            count: line.count ?? line.quantity,
+            recount: line.recount ?? line.preCount ?? "",
+          })));
+        } else {
+          documentId.current = crypto.randomUUID();
+          setWarehouse(storedWarehouse);
+          setReason("");
+          setNotes("");
+          setCaptureStage("Count");
+          setLines([]);
+        }
+        setHydratedKey(localDraftKey);
+      })
+      .catch(() => {
+        if (!active) return;
+        setHydratedKey(localDraftKey);
+        toast.error("No fue posible recuperar el avance local del conteo.");
+      });
+    return () => { active = false; };
+  }, [initialWarehouseId, localDraftKey, warehouseIdsKey]);
+
+  const persistLocalCapture = useCallback(() => {
+    if (!warehouse && !reason && lines.length === 0 && notes.trim() === "")
+      return removeInventoryOperationDraft(localDraftKey);
+    return saveInventoryOperationDraft({
+      key: localDraftKey,
+      businessId,
+      kind: "count",
+      documentId: documentId.current,
+      warehouseId: warehouse,
+      destinationId: "",
+      reason,
+      notes,
+      countDocumentId: null,
+      conversionType: "SPLIT",
+      countCaptureStage: captureStage,
+      lines: lines.map(line => ({
+        productId: line.productId,
+        productCode: line.productCode,
+        productName: line.productName,
+        unitCode: line.unitCode,
+        stock: line.systemQuantity,
+        quantity: line.count,
+        count: line.count,
+        recount: line.recount,
+        preCount: line.recount,
+        cost: "",
+        direction: "INPUT",
+        systemQuantity: line.systemQuantity,
+      })),
+      updatedAt: new Date().toISOString(),
+    });
+  }, [businessId, captureStage, lines, localDraftKey, notes, reason, warehouse]);
+
+  latestPersistence.current = persistLocalCapture;
+
+  useEffect(() => () => {
+    if (persistOnUnmount.current)
+      void latestPersistence.current();
+  }, []);
+
+  useEffect(() => {
+    if (hydratedKey !== localDraftKey) return;
+    const timer = window.setTimeout(() => {
+      void persistLocalCapture().catch(() =>
+        toast.error("No fue posible guardar el avance local del conteo."));
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [hydratedKey, localDraftKey, persistLocalCapture]);
+
+  function closeAndPreserve() {
+    void persistLocalCapture()
+      .catch(() => toast.error("No fue posible guardar el avance local del conteo."))
+      .finally(onCancel);
+  }
 
   function addProduct(product: InventoryProductItem) {
     setLines(current => current.some(line => line.productId === product.productId)
@@ -280,7 +390,9 @@ export function PhysicalCountCreationForm({
         lines: mergeDraftLines(draft, lines),
       });
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      persistOnUnmount.current = false;
+      await removeInventoryOperationDraft(localDraftKey);
       toast.success(captureStage === "Recount" && !recountsComplete ? "Borrador guardado para continuar el reconteo." : "Borrador guardado y listo para conciliar.");
       setDraftDialogOpen(false);
       onCompleted("drafts");
@@ -302,7 +414,9 @@ export function PhysicalCountCreationForm({
         countedQuantity: numeric(captureStage === "Recount" ? line.recount : line.count),
       })),
     }),
-    onSuccess: value => {
+    onSuccess: async value => {
+      persistOnUnmount.current = false;
+      await removeInventoryOperationDraft(localDraftKey);
       toast.success(`${value.documentNumber} fue enviado para aplicar.`);
       onCompleted("documents");
     },
@@ -359,7 +473,7 @@ export function PhysicalCountCreationForm({
     <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
       <div><p className="text-sm text-muted-foreground">{lines.length} {lines.length === 1 ? "producto" : "productos"} en el conteo</p>{lines.length > 0 && !reason && <p className="mt-1 text-sm text-amber-700">Selecciona el motivo para guardar o aplicar este conteo.</p>}</div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" onClick={onCancel}>Cerrar</Button>
+        <Button variant="outline" onClick={closeAndPreserve}>Cerrar</Button>
         <Button variant="outline" disabled={!canOpenDraftDialog || !canSave || saveDraft.isPending || apply.isPending} onClick={() => setDraftDialogOpen(true)}>
           <Save className="mr-2 h-4 w-4" />Guardar borrador
         </Button>
