@@ -182,7 +182,8 @@ public sealed record AccountingReadinessView(
     DateOnly? EffectiveFrom,
     string? OpeningBalanceMode,
     DateTimeOffset? ActivatedAt,
-    IReadOnlyList<string> BlockingIssues);
+    IReadOnlyList<string> BlockingIssues,
+    bool CanEditOpeningBalances);
 
 public sealed record PosAccountingSettlementConfiguration(
     bool IsAccountingEnabled,

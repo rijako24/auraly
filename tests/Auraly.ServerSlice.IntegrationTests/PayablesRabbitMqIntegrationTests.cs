@@ -70,7 +70,7 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
             var receipt = new ConfirmGoodsReceiptRequest(
                 Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
                 fixture.SupplierId, $"PAY-RABBIT-{Guid.NewGuid():N}",
-                receivedAt.AddDays(-1), receivedAt, true, receivedAt.AddDays(30),
+                receivedAt.AddDays(-1), receivedAt, true, receivedAt.AddDays(29),
                 "COP", "Obligacion para pago por RabbitMQ",
                 [new GoodsReceiptLineRequest(
                     1, fixture.ProductId, "Producto de cartera RabbitMQ", 1m,

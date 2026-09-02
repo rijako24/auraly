@@ -91,10 +91,12 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
             throw new PurchasingForbiddenException("The draft belongs to another business.");
         if (request.DraftId == Guid.Empty) throw new PurchasingValidationException("DraftId is required.");
         if (request.ReceivedAt == default) throw new PurchasingValidationException("ReceivedAt is required.");
+        if (request.SupplierId is not null && request.SupplierInvoiceDate is null)
+            throw new PurchasingValidationException("SupplierInvoiceDate is required as the purchase document issue date.");
         if (request.CreatesPayable && request.DueDate is null)
             throw new PurchasingValidationException("DueDate is required for a credit purchase.");
-        if (request.DueDate < request.ReceivedAt)
-            throw new PurchasingValidationException("DueDate cannot be earlier than ReceivedAt.");
+        if (request.DueDate < request.SupplierInvoiceDate)
+            throw new PurchasingValidationException("DueDate cannot be earlier than SupplierInvoiceDate.");
         if (request.PurchaseEvidenceType is not null &&
             !PurchaseEvidenceTypes.IsValid(request.PurchaseEvidenceType))
             throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");

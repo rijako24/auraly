@@ -121,10 +121,7 @@ function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primaryS
 
   const responsibilityLabels = new Map((responsibilityOptions.data ?? [])
     .map((option) => [option.code, option.label] as const));
-  const catalog = [...new Set([
-    ...(responsibilityOptions.data ?? []).map((option) => option.code),
-    ...(rules.data ?? []).flatMap((rule) => rule.requiredResponsibilities),
-  ])].sort();
+  const catalog = (responsibilityOptions.data ?? []).map((option) => option.code);
   const available = catalog.filter((code) => !responsibilities.has(code));
   const city = cities.data?.find((item) => item.cityId === primarySite?.cityId);
 
@@ -132,24 +129,27 @@ function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primaryS
     <PanelHeader icon={ReceiptText} title="Retenciones y perfil tributario" description={`Define las responsabilidades de este ${role === "customer" ? "cliente" : "proveedor"} para que el motor canónico aplique las reglas vigentes.`}><div className="flex items-center gap-3"><span className="text-sm">Aplicar retenciones</span><Switch checked={appliesWithholding} onCheckedChange={setAppliesWithholding} disabled={!editing}/></div></PanelHeader>
     {profile.isLoading ? <PanelLoading /> : <section className="space-y-4 rounded-2xl border p-5">
       <div className="grid gap-4 md:grid-cols-2">
-        <div className={editing ? "space-y-2" : "grid content-start grid-rows-[auto_3rem_auto] gap-2"}><Label>Responsabilidades tributarias</Label>{editing&&<Select value={responsibilityToAdd} disabled={responsibilityOptions.isLoading||responsibilityOptions.isError||available.length===0} onValueChange={(value) => { setResponsibilityToAdd(""); setResponsibilities((current) => new Set(current).add(value)); }}><SelectTrigger><SelectValue placeholder={responsibilityOptions.isLoading?"Cargando catálogo...":responsibilityOptions.isError?"No fue posible cargar el catálogo":catalog.length===0?"No hay responsabilidades configuradas":"Agregar responsabilidad"}/></SelectTrigger><SelectContent>{available.map((code) => <SelectItem key={code} value={code}>{code} · {responsibilityLabels.get(code) ?? "Responsabilidad configurada"}</SelectItem>)}</SelectContent></Select>}<div className="flex min-h-12 flex-wrap items-center gap-2 rounded-xl border bg-muted/10 p-3">{[...responsibilities].map((code) => <Badge key={code} variant="secondary" className="gap-1">{code} · {responsibilityLabels.get(code) ?? "Responsabilidad configurada"}{editing&&<button type="button" aria-label={`Quitar ${code}`} onClick={() => setResponsibilities((current) => { const next = new Set(current); next.delete(code); return next; })}><X className="h-3 w-3"/></button>}</Badge>)}{responsibilities.size===0&&<span className="text-sm text-muted-foreground">Sin responsabilidades seleccionadas</span>}</div><p className="text-xs text-muted-foreground">Catálogo tributario DIAN aprovisionado por Auraly. <Link className="font-medium text-primary underline underline-offset-2" href="/dashboard/accounting/withholdings" target="_blank">Abrir Retenciones</Link></p></div>
+        <div className={editing ? "space-y-2" : "grid content-start grid-rows-[auto_3rem_auto] gap-2"}><Label>Responsabilidades tributarias</Label>{editing&&<Select value={responsibilityToAdd} disabled={responsibilityOptions.isLoading||responsibilityOptions.isError||available.length===0} onValueChange={(value) => { setResponsibilityToAdd(""); setResponsibilities((current) => new Set(current).add(value)); }}><SelectTrigger><SelectValue placeholder={responsibilityOptions.isLoading?"Cargando catálogo...":responsibilityOptions.isError?"No fue posible cargar el catálogo":catalog.length===0?"No hay responsabilidades configuradas":"Agregar responsabilidad"}/></SelectTrigger><SelectContent>{available.map((code) => <SelectItem key={code} value={code}>{code} · {responsibilityLabels.get(code) ?? "Responsabilidad configurada"}</SelectItem>)}</SelectContent></Select>}<div className="flex min-h-12 flex-wrap items-center gap-2 rounded-xl border bg-muted/10 p-3">{[...responsibilities].map((code) => <Badge key={code} variant="secondary" className="gap-1">{code} · {responsibilityLabels.get(code) ?? "Responsabilidad configurada"}{editing&&<button type="button" aria-label={`Quitar ${code}`} onClick={() => setResponsibilities((current) => { const next = new Set(current); next.delete(code); return next; })}><X className="h-3 w-3"/></button>}</Badge>)}{responsibilities.size===0&&<span className="text-sm text-muted-foreground">Sin responsabilidades seleccionadas</span>}</div><p className="text-xs text-muted-foreground">Catálogo tributario DIAN aprovisionado por Auraly. <Link className="font-medium text-primary underline underline-offset-2" href="/dashboard/accounting?section=withholdings">Abrir Retenciones</Link></p></div>
         <div className="grid content-start grid-rows-[auto_3rem_auto] gap-2"><Label>Ciudad o jurisdicción tributaria</Label><Input className="h-12" value={city?`${city.name} (${city.code})`:cities.isError?"No fue posible cargar la ciudad":primarySite?"Ciudad de la sede no disponible":"Sin sede principal"} readOnly/><p className="text-xs text-muted-foreground">Se sincroniza automáticamente con la ciudad de la sede principal.</p></div>
       </div>
-      <CounterpartyWithholdingRules rules={rules.data ?? []} loading={rules.isLoading} error={rules.isError} role={role}/>
+      <CounterpartyWithholdingRules rules={rules.data ?? []} loading={rules.isLoading} error={rules.isError} role={role} responsibilities={responsibilities} jurisdictionCode={city?.code ?? profile.data?.jurisdictionCode ?? null}/>
     </section>}
   </div>;
 }
 
-export function CounterpartyWithholdingRules({ rules, loading, error, role }: { rules: WithholdingRule[]; loading: boolean; error: boolean; role: "customer" | "supplier" }) {
+export function CounterpartyWithholdingRules({ rules, loading, error, role, responsibilities = new Set(), jurisdictionCode = null }: { rules: WithholdingRule[]; loading: boolean; error: boolean; role: "customer" | "supplier"; responsibilities?: ReadonlySet<string>; jurisdictionCode?: string | null }) {
   const direction = role === "customer" ? "Sale" : "Purchase";
-  const applicable = rules.filter((rule) => rule.isActive && rule.direction === direction);
+  const candidates = rules.filter((rule) => rule.isActive && rule.direction === direction);
+  const applicable = candidates.filter((rule) =>
+    rule.requiredResponsibilities.every((code) => responsibilities.has(code))
+    && (!rule.jurisdictionCode || rule.jurisdictionCode === jurisdictionCode));
   return <div className="space-y-2 border-t pt-4">
-    <Label>Reglas de retención vigentes</Label>
+    <Label>Reglas tributarias aplicables</Label>
     {loading ? <p className="text-sm text-muted-foreground">Cargando reglas…</p>
       : error ? <p className="text-sm text-destructive">No fue posible cargar las reglas de retención.</p>
       : applicable.length ? <div className="flex flex-wrap gap-2">{applicable.map((rule) => <Badge key={rule.ruleId} variant="outline">{rule.name} · {rule.rate}%</Badge>)}</div>
-      : <p className="text-sm text-muted-foreground">No hay reglas activas para {role === "customer" ? "ventas" : "compras"}.</p>}
-    <p className="text-xs text-muted-foreground">El motor evalúa estas reglas; las responsabilidades solo se seleccionan cuando alguna regla las exige.</p>
+      : <p className="text-sm text-muted-foreground">Ninguna regla activa coincide con la operación, responsabilidades y jurisdicción actuales.</p>}
+    <p className="text-xs text-muted-foreground">Esta lista es informativa. El motor confirma vigencia, concepto y base mínima cuando contabiliza cada documento.</p>
   </div>;
 }
 

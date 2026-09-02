@@ -1,6 +1,6 @@
 # Órdenes y recepciones de compra
 
-Fecha de actualización: 2026-08-30
+Fecha de actualización: 2026-09-02
 
 ## Lenguaje de producto
 
@@ -30,6 +30,8 @@ Venta/devolución procesada
 ```
 
 Purchasing es el propietario de la orden y su cumplimiento. Inventario sólo cambia dentro del handler canónico de `GoodsReceipt`. Reporting es el único propietario del cálculo persistido de rotación; compras y catálogo sólo leen su snapshot.
+
+La fecha física de recepción la registra el sistema al guardar o confirmar y no se edita en la interfaz. El usuario sí informa la fecha de emisión del documento de compra. Esa fecha gobierna la causación contable, las retenciones y el inicio de la cuenta por pagar. `Suppliers.DefaultPaymentDueDays` es la condición comercial canónica del proveedor; el vencimiento se calcula como fecha de emisión más ese plazo, se muestra sólo para lectura y vuelve a validarse transaccionalmente en el servidor.
 
 Las tablas de órdenes pertenecen al esquema `purchasing`. Las consultas y mutaciones nuevas se versionan en el proyecto de base de datos mediante procedimientos de los esquemas `purchasing` y `reporting`; los stores y handlers de C# sólo hacen invocaciones parametrizadas y no contienen SQL embebido.
 
@@ -83,7 +85,7 @@ El detalle de producto presenta rotación sólo como información de lectura. La
 - `POST /api/commerce/v1/goods-receipts/confirm`
 - `GET /api/commerce/v1/products/{id}/rotation`
 
-Todos derivan tenant y negocio de la identidad autenticada y validan que bodega, proveedor, producto y orden pertenezcan al mismo alcance.
+Todos derivan tenant y negocio de la identidad autenticada y validan que bodega, proveedor, producto y orden pertenezcan al mismo alcance. En una compra a crédito también validan que el vencimiento coincida con el plazo del proveedor, para que un cliente desactualizado no pueda alterar la condición calculada.
 
 ## Rollback y compatibilidad
 

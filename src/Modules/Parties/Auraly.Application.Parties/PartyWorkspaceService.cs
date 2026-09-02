@@ -130,6 +130,8 @@ public sealed class PartyWorkspaceService(
         ValidateParty(request.Party);
         ValidateSite(request.PrimarySite);
         ValidatePurchaseEvidencePolicy(request.PurchaseEvidencePolicy);
+        if (request.DefaultPaymentDueDays is < 0 or > 3650)
+            throw new PartyValidationException("DefaultPaymentDueDays must be between 0 and 3650.");
         var normalized = Translate(() => PartyIdentityNormalizer.Normalize(
             request.Party.IdentificationTypeCode, request.Party.Identification));
         return store.CreateSupplierAsync(
@@ -161,7 +163,11 @@ public sealed class PartyWorkspaceService(
         if (request.Customer is not null)
             Require(actor, PartyPermissionCodes.ManagePricing);
         if (request.Supplier is not null)
+        {
             ValidatePurchaseEvidencePolicy(request.Supplier.PurchaseEvidencePolicy);
+            if (request.Supplier.DefaultPaymentDueDays is < 0 or > 3650)
+                throw new PartyValidationException("DefaultPaymentDueDays must be between 0 and 3650.");
+        }
         if (request.Seller is not null)
         {
             Translate(() => PartyValidation.NormalizeCode(request.Seller.Code, "SellerCode", 32));

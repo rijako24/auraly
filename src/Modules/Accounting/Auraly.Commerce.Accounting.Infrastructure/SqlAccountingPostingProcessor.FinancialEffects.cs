@@ -334,7 +334,8 @@ public sealed partial class SqlAccountingPostingProcessor
         value.CreatesPayable && value.Withholding.NetAmount > 0
             ? OpenPayableAsync(connection, transaction, value.BusinessId, value.SupplierId,
                 value.DocumentId, "GoodsReceipt", value.DocumentNumber, value.CurrencyCode,
-                value.Withholding.NetAmount, value.DueDate!.Value, value.ReceivedAt, token)
+                value.Withholding.NetAmount, value.DueDate!.Value,
+                value.SupplierInvoiceDate ?? value.ReceivedAt, token)
             : Task.CompletedTask;
 
     private Task ApplyExpenseFinancialEffectsAsync(

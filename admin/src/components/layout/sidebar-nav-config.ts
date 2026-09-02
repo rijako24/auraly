@@ -98,7 +98,6 @@ export const navigation: NavEntry[] = [
   { name: "Notas crédito de venta", href: "/dashboard/sales-returns", icon: Undo2, permission: "sales.returns.read" },
   { name: "Notas débito de venta", href: "/dashboard/sales-debit-notes", icon: ReceiptText, permission: "sales.debit-notes.read" },
   { name: "Cierres de sesión", href: "/dashboard/cash-differences", icon: Scale, permission: "work-sessions.differences.read" },
-  { name: "Retenciones", href: "/dashboard/accounting/withholdings", icon: ReceiptText, permission: "commerce.taxation.withholdings.view" },
   { name: "Suscripción", href: "/dashboard/subscription", icon: Gem, permission: "dashboard.read" },
   { name: "Pagos", href: "/dashboard/payments", icon: CreditCard, permission: "payments.read" },
   { name: "Cuentas por pagar", href: "/dashboard/payables", icon: Landmark, permission: "payables.read" },

@@ -4,11 +4,13 @@
 
 La recepción conserva un único flujo operativo y contable. `PurchaseEvidenceType` determina solamente el respaldo de la compra:
 
-| Tipo | Origen | DIAN | Datos de factura del proveedor |
+| Tipo | Origen | DIAN | Número de factura del proveedor |
 | --- | --- | --- | --- |
-| `SupplierElectronicInvoice` | Factura emitida por el proveedor | No se vuelve a emitir | Obligatorios |
-| `BuyerElectronicSupportDocument` | Documento soporte emitido por el comprador | Sí | No aplican |
-| `InternalReceiptVoucher` | Comprobante interno | No | No aplican |
+| `SupplierElectronicInvoice` | Factura emitida por el proveedor | No se vuelve a emitir | Obligatorio |
+| `BuyerElectronicSupportDocument` | Documento soporte emitido por el comprador | Sí | No aplica |
+| `InternalReceiptVoucher` | Comprobante interno | No | No aplica |
+
+Los tres respaldos requieren una fecha de emisión. Se conserva el nombre técnico compatible `SupplierInvoiceDate`, pero funcionalmente representa la fecha de emisión del documento de compra y no se confunde con `ReceivedAt`, que es la fecha física registrada por el sistema.
 
 No se crean motores ni colas nuevas. La confirmación crea el `DocumentProcessingJob` de recepción existente. El coordinador contable sigue siendo propietario de inventario/costo, IVA y cuenta por pagar. Cuando corresponde documento soporte, la misma transacción crea el root fiscal, el snapshot inmutable y el proceso fiscal que consumen los workers de generación, firma y transporte DIAN existentes.
 
@@ -22,6 +24,8 @@ No se crean motores ni colas nuevas. La confirmación crea el `DocumentProcessin
 - Sin configurar: permite los tres tipos.
 
 La interfaz filtra opciones para orientar al usuario, y persistencia vuelve a validar la política dentro de la transacción para evitar que clientes desactualizados la evadan.
+
+La misma entidad de proveedor conserva `DefaultPaymentDueDays` (30 por defecto, entre 0 y 3650). La recepción calcula el vencimiento desde la fecha de emisión y el servidor rechaza cualquier valor que no coincida con ese plazo.
 
 ## Contabilidad
 

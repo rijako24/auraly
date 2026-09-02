@@ -60,7 +60,7 @@ public sealed class SqlGoodsReceiptStore(
                     "No hay cupo de documentos DIAN. Compra un paquete antes de seleccionar documento soporte electrónico.");
             var support = request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
                 ? await AllocateSupportFiscalAsync(connection, transaction, user.BusinessId,
-                    request.SupplierId, request.ReceivedAt, now, cancellationToken)
+                    request.SupplierId, request.SupplierInvoiceDate!.Value, now, cancellationToken)
                 : null;
             var sequence = await AllocateProcessingSequenceAsync(
                 connection, transaction, user.BusinessId, now, cancellationToken);
@@ -190,6 +190,11 @@ public sealed class SqlGoodsReceiptStore(
                   OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                   OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
               THROW 51104,'The selected evidence type is not allowed by the supplier configuration.',1;
+            IF @CreatesPayable=1 AND NOT EXISTS (
+              SELECT 1 FROM dbo.Suppliers
+              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId
+                AND DATEDIFF(DAY,CAST(@IssueDate AS date),CAST(@DueDate AS date))=DefaultPaymentDueDays)
+              THROW 51105,'DueDate must match the supplier payment term calculated from SupplierInvoiceDate.',1;
             IF EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson)
@@ -207,6 +212,9 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@SupplierId", request.SupplierId);
         command.Parameters.AddWithValue("@PurchaseEvidenceType", request.PurchaseEvidenceType);
+        command.Parameters.AddWithValue("@CreatesPayable", request.CreatesPayable);
+        command.Parameters.AddWithValue("@IssueDate", request.SupplierInvoiceDate!.Value);
+        command.Parameters.AddWithValue("@DueDate", (object?)request.DueDate ?? DBNull.Value);
         command.Parameters.AddWithValue(
             "@ProductsJson",
             JsonSerializer.Serialize(request.Lines.Select(line => line.ProductId).Distinct()));
@@ -214,7 +222,7 @@ public sealed class SqlGoodsReceiptStore(
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (SqlException exception) when (exception.Number is >= 51100 and <= 51104)
+        catch (SqlException exception) when (exception.Number is >= 51100 and <= 51105)
         {
             throw new PurchasingValidationException(exception.Message);
         }
@@ -574,7 +582,7 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
         command.Parameters.AddWithValue("@AuralyNumber", receipt.DocumentNumber);
         command.Parameters.AddWithValue("@FiscalNumber", support.FiscalNumber);
-        command.Parameters.AddWithValue("@IssuedAt", receipt.ReceivedAt);
+        command.Parameters.AddWithValue("@IssuedAt", receipt.SupplierInvoiceDate ?? receipt.ReceivedAt);
         command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
         command.Parameters.AddWithValue("@Now", now);
         command.Parameters.AddWithValue("@SnapshotJson", PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));

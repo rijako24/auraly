@@ -118,12 +118,14 @@ CREATE TABLE [dbo].[Suppliers] (
     [Identification] NVARCHAR(40) NOT NULL,
     [Name] NVARCHAR(200) NOT NULL,
     [PurchaseEvidencePolicy] NVARCHAR(40) NULL,
+    [DefaultPaymentDueDays] INT NOT NULL CONSTRAINT [DF_Suppliers_DefaultPaymentDueDays] DEFAULT (30),
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_Suppliers_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_Suppliers_Parties] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
     CONSTRAINT [UQ_Suppliers_Business_Identification] UNIQUE ([BusinessId], [Identification]),
+    CONSTRAINT [CK_Suppliers_DefaultPaymentDueDays] CHECK ([DefaultPaymentDueDays] BETWEEN 0 AND 3650),
     CONSTRAINT [CK_Suppliers_PurchaseEvidencePolicy] CHECK ([PurchaseEvidencePolicy] IS NULL OR [PurchaseEvidencePolicy] IN
       (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher'))
 );

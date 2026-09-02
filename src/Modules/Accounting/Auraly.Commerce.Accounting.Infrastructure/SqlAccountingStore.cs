@@ -1021,10 +1021,38 @@ public sealed class SqlAccountingStore(
         SqlConnection connection, SqlTransaction transaction, AccountingUserIdentity user,
         CancellationToken cancellationToken)
     {
-        await using var command = new SqlCommand("SELECT COUNT_BIG(1) FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@TenantId AND (Status=N'Ready' OR (Status=N'Configuring' AND EffectiveFrom IS NOT NULL));", connection, transaction);
-        command.Parameters.AddWithValue("@TenantId", user.TenantId);
-        if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) > 0)
-            throw new AccountingConflictException("Los saldos iniciales no se pueden modificar después de activar contabilidad.");
+        if (!await CanEditOpeningBalancesAsync(
+                connection, transaction, user.TenantId, true, cancellationToken))
+            throw new AccountingConflictException(
+                "Los saldos iniciales no se pueden modificar porque la activación está en curso o ya existen movimientos contables.");
+    }
+
+    private static async Task<bool> CanEditOpeningBalancesAsync(
+        SqlConnection connection, SqlTransaction? transaction, Guid tenantId,
+        bool lockSettings, CancellationToken cancellationToken)
+    {
+        var lockHint = lockSettings ? " WITH(UPDLOCK,HOLDLOCK)" : string.Empty;
+        await using var command = new SqlCommand($"""
+            DECLARE @Status nvarchar(16),@OpeningBalanceMode nvarchar(24),
+                    @ActivatedAt datetimeoffset(7);
+            SELECT @Status=Status,@OpeningBalanceMode=OpeningBalanceMode,@ActivatedAt=ActivatedAt
+            FROM dbo.AccountingTenantSettings{lockHint} WHERE TenantId=@TenantId;
+            SELECT CONVERT(bit,CASE
+              WHEN @Status IS NULL OR @Status=N'Disabled' THEN 1
+              WHEN @Status=N'Configuring' AND NOT EXISTS(
+                SELECT 1 FROM dbo.AccountingTenantSettings
+                WHERE TenantId=@TenantId AND EffectiveFrom IS NOT NULL) THEN 1
+              WHEN @Status=N'Ready' AND @OpeningBalanceMode=N'ZeroDeclared'
+               AND NOT EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs
+                              WHERE TenantId=@TenantId AND CreatedAt>=@ActivatedAt)
+               AND NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments
+                              WHERE TenantId=@TenantId AND AcceptedAt>=@ActivatedAt)
+               AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntries
+                              WHERE TenantId=@TenantId AND PostedAt>=@ActivatedAt) THEN 1
+              ELSE 0 END);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     private static async Task<AccountingOpeningBalanceView?> ReadOpeningBalanceAsync(
@@ -1094,11 +1122,17 @@ public sealed class SqlAccountingStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            return new(AccountingActivationStatuses.Disabled, "COP", null, null, null, issues);
-        return new(reader.GetString(0), reader.GetString(1),
-            reader.IsDBNull(2) ? null : DateOnly.FromDateTime(reader.GetDateTime(2)),
-            reader.IsDBNull(3) ? null : reader.GetString(3),
-            reader.IsDBNull(4) ? null : reader.GetDateTimeOffset(4), issues);
+            return new(AccountingActivationStatuses.Disabled, "COP", null, null, null, issues, true);
+        var status = reader.GetString(0);
+        var currency = reader.GetString(1);
+        var storedEffectiveFrom = reader.IsDBNull(2) ? (DateOnly?)null : DateOnly.FromDateTime(reader.GetDateTime(2));
+        var storedOpeningMode = reader.IsDBNull(3) ? null : reader.GetString(3);
+        var activatedAt = reader.IsDBNull(4) ? (DateTimeOffset?)null : reader.GetDateTimeOffset(4);
+        await reader.DisposeAsync();
+        var canEditOpeningBalances = await CanEditOpeningBalancesAsync(
+            connection, null, user.TenantId, false, cancellationToken);
+        return new(status, currency,
+            storedEffectiveFrom, storedOpeningMode, activatedAt, issues, canEditOpeningBalances);
     }
 
     public async Task<AccountingReadinessView> ActivateAsync(
@@ -1118,6 +1152,7 @@ public sealed class SqlAccountingStore(
                 throw new AccountingConflictException(
                     $"Accounting is not ready: {string.Join("; ", issues)}");
             var wasReady = false;
+            var allowReadyReconfiguration = false;
             await using (var current = new SqlCommand("""
                 SELECT Status FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
                 WHERE TenantId=@TenantId;
@@ -1129,11 +1164,20 @@ public sealed class SqlAccountingStore(
                     AccountingActivationStatuses.Ready,
                     StringComparison.Ordinal);
             }
+            if (wasReady)
+            {
+                allowReadyReconfiguration = request.OpeningBalanceMode == "ImportedAndApproved"
+                    && await CanEditOpeningBalancesAsync(
+                        connection, transaction, user.TenantId, true, cancellationToken);
+                if (request.OpeningBalanceMode == "ImportedAndApproved" && !allowReadyReconfiguration)
+                    throw new AccountingConflictException(
+                        "No se puede reemplazar el inicio en cero porque ya existen movimientos contables.");
+            }
             var now = timeProvider.GetUtcNow();
             await using var command = new SqlCommand("""
                 MERGE dbo.AccountingTenantSettings WITH(HOLDLOCK) AS target
                 USING(SELECT @TenantId TenantId) source ON target.TenantId=source.TenantId
-                WHEN MATCHED AND target.Status<>N'Ready' THEN UPDATE SET
+                WHEN MATCHED AND (target.Status<>N'Ready' OR @AllowReadyReconfiguration=1) THEN UPDATE SET
                   Status=@ActivationStatus,FunctionalCurrencyCode=@Currency,EffectiveFrom=@EffectiveFrom,
                   OpeningBalanceMode=@OpeningMode,ActivationRequestedAt=@Now,
                   ActivationRequestedByUserId=@UserId,
@@ -1159,6 +1203,7 @@ public sealed class SqlAccountingStore(
             var activationStatus = request.OpeningBalanceMode == "ImportedAndApproved"
                 ? AccountingActivationStatuses.Configuring : AccountingActivationStatuses.Ready;
             command.Parameters.AddWithValue("@ActivationStatus", activationStatus);
+            command.Parameters.AddWithValue("@AllowReadyReconfiguration", allowReadyReconfiguration);
             command.Parameters.AddWithValue("@UserId", user.UserId);
             command.Parameters.AddWithValue("@Now", now);
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -1171,7 +1216,7 @@ public sealed class SqlAccountingStore(
             await transaction.CommitAsync(cancellationToken);
             return new(activationStatus,
                 request.FunctionalCurrencyCode, request.EffectiveFrom,
-                request.OpeningBalanceMode, now, []);
+                request.OpeningBalanceMode, now, [], activationStatus != AccountingActivationStatuses.Configuring);
         }
         catch
         {

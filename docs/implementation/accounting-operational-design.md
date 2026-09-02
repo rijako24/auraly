@@ -157,6 +157,23 @@ Activation has two catalog-backed modes:
   then publishes them to the existing accounting queue. The tenant remains
   `Configuring` until the accounting processor has posted every opening entry.
 
+Provisioning the Colombian profile leaves `AccountingTenantSettings` in
+`Configuring` without an effective date: accounts, mappings, period and cost
+centers are ready, but document writers remain disabled until an authorized
+user activates accounting explicitly. If the user initially selected
+`ZeroDeclared`, the opening batch can still be replaced by
+`ImportedAndApproved` only while no accounting source document or entry has
+been accepted since that activation. The first movement makes that decision
+immutable.
+
+Withholding rules remain owned by the taxation module and are presented inside
+the accounting workspace. Their required responsibilities and every
+customer/supplier tax profile must reference active values from the canonical
+`tax-responsibility` catalog. Party screens do not assign rules manually: they
+show the rules that currently match direction, responsibilities and
+jurisdiction; the withholding engine remains authoritative for vigency,
+concept and minimum-base evaluation when a document is processed.
+
 The processor uses the same open-period validation, journal validator, voucher
 cursor, immutable source hash and `AccountingEntries`/`AccountingEntryLines`
 writer as every other accounting document. The batch becomes `Posted` in that

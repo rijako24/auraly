@@ -34,7 +34,7 @@ test("saldos iniciales busca cualquier tercero activo sin filtrar por rol", asyn
     if (path.endsWith("/periods")) return json(route, []);
     if (path.endsWith("/mappings")) return json(route, []);
     if (path.endsWith("/category-definitions")) return json(route, []);
-    if (path.endsWith("/readiness")) return json(route, { status: "Disabled", blockingIssues: ["Configura los saldos iniciales."], effectiveFrom: null, openingBalanceMode: null });
+    if (path.endsWith("/readiness")) return json(route, { status: "Disabled", blockingIssues: ["Configura los saldos iniciales."], effectiveFrom: null, openingBalanceMode: null, canEditOpeningBalances: true });
     if (path.endsWith("/opening-balances")) return json(route, null);
     return json(route, []);
   });
@@ -83,7 +83,7 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
       savedBankAccount = { ...route.request().postDataJSON(), accountingAccountCode: "111005", accountingAccountName: "Bancos", accountTypeCode: "Savings", accountTypeName: "Ahorros", currencyCode: "COP", rowVersion: "AQID" };
       return json(route, savedBankAccount);
     }
-    if (path.endsWith("/readiness")) return json(route, { status: "Ready", functionalCurrencyCode: "COP", effectiveFrom: "2026-01-01", openingBalanceMode: "ZeroDeclared", activatedAt: "2026-01-01T00:00:00Z", blockingIssues: [] });
+    if (path.endsWith("/readiness")) return json(route, { status: "Ready", functionalCurrencyCode: "COP", effectiveFrom: "2026-01-01", openingBalanceMode: "ZeroDeclared", activatedAt: "2026-01-01T00:00:00Z", blockingIssues: [], canEditOpeningBalances: false });
     if (path.endsWith("/opening-balances")) return json(route, null);
     return json(route, []);
   });
@@ -91,8 +91,7 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
 
   await authenticate(page);
   await page.goto("/dashboard/accounting");
-  const retentionLink = page.getByRole("link", { name: "Reglas de retención" });
-  await expect(retentionLink).toHaveAttribute("href", "/dashboard/accounting/withholdings");
+  await expect(page.getByRole("link", { name: "Reglas de retención" })).toHaveCount(0);
   await page.getByRole("button", { name: "Cuentas bancarias" }).click();
   const bankForm = page.getByRole("heading", { name: "Nueva cuenta bancaria" }).locator("../..");
   await bankForm.getByText("Banco", { exact: true }).locator("..").locator("input").fill("Banco E2E");
@@ -108,7 +107,7 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
   await expect(bankForm.getByText("Tipo de cuenta", { exact: true }).locator("..").getByRole("combobox")).toContainText("Seleccionar tipo");
   await expect(bankForm.getByText("Cuenta auxiliar del PUC", { exact: true }).locator("..").getByRole("combobox")).toContainText("Seleccionar auxiliar de bancos");
 
-  await retentionLink.click();
+  await page.getByRole("button", { name: "Retenciones" }).click();
   await expect(page.getByRole("heading", { name: "Retenciones" })).toBeVisible();
   await expect(page.getByText("RF-COMPRA · Retefuente compras")).toBeVisible();
   await page.getByRole("button", { name: "Nueva regla" }).click();

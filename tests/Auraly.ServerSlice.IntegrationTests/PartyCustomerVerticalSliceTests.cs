@@ -371,7 +371,8 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(customer);
 
         var supplierRequest = new CreateSupplierRequest(
-            Guid.NewGuid(), fixture.BusinessId, customerRequest.Party, customerRequest.PrimarySite);
+            Guid.NewGuid(), fixture.BusinessId, customerRequest.Party, customerRequest.PrimarySite,
+            PurchaseEvidencePolicy: null, DefaultPaymentDueDays: 15);
         using var supplierResponse = await admin.PostAsJsonAsync(
             "/api/commerce/v1/suppliers", supplierRequest);
         Assert.Equal(HttpStatusCode.Created, supplierResponse.StatusCode);
@@ -420,6 +421,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal("4", item.VerificationDigit);
         Assert.Equal(customer.CustomerId, item.CustomerId);
         Assert.Equal(supplier.SupplierId, item.SupplierId);
+        Assert.Equal(15, item.SupplierDefaultPaymentDueDays);
         Assert.Equal(seller.RoleId, item.SellerId);
         Assert.Equal(carrier.RoleId, item.CarrierId);
 
@@ -433,7 +435,8 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         var update = new UpdatePartyRequest(
             PartyTypes.Organization, "Comercial unificada renovada",
             "Comercial unificada S.A.S.", null, null, "4",
-            "compras@unificada.test", "3007773311", item.RowVersion);
+            "compras@unificada.test", "3007773311", item.RowVersion,
+            Supplier: new UpdateSupplierRoleRequest(null, 45));
         using var updateResponse = await admin.PutAsJsonAsync(
             $"/api/commerce/v1/parties/{item.PartyId:D}", update);
         Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
@@ -441,6 +444,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(updated);
         Assert.Equal("Comercial unificada renovada", updated.DisplayName);
         Assert.Equal("4", updated.VerificationDigit);
+        Assert.Equal(45, updated.SupplierDefaultPaymentDueDays);
 
         using var staleResponse = await admin.PutAsJsonAsync(
             $"/api/commerce/v1/parties/{item.PartyId:D}", update);

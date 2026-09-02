@@ -55,7 +55,7 @@ test.describe("cierre transversal del buscador de productos", () => {
   test("recepcion cierra con Escape, clic exterior y perdida de foco", async ({ page }) => {
     await page.goto("/dashboard/purchasing/goods-receipts");
     await page.getByRole("button", { name: "Nueva entrada" }).click();
-    const dialog = page.getByRole("dialog", { name: /Entrada de mercanc.a/ });
+    const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
     await selectFirst(page, dialog, "Proveedor");
     await selectFirst(page, dialog, "Bodega");
 

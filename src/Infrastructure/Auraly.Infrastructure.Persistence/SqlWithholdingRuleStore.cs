@@ -11,6 +11,20 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlWithholdingRuleStore(
     SqlServerConnectionFactory connections, TimeProvider timeProvider) : IWithholdingRuleStore
 {
+    public async Task<IReadOnlySet<string>> GetActiveResponsibilityCodesAsync(CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT Code FROM reference.Options
+            WHERE CatalogCode=N'tax-responsibility' AND IsActive=1;
+            """, connection);
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) values.Add(reader.GetString(0).Trim().ToUpperInvariant());
+        return values;
+    }
+
     public async Task<IReadOnlyList<WithholdingRule>> ListAsync(
         Guid tenantId, Guid businessId, bool includeInactive, CancellationToken ct)
     {

@@ -44,14 +44,14 @@ async function cleanupTestDrafts(page: Page) {
 }
 
 
-test.describe("borradores y detalle de entradas de mercancia", () => {
+test.describe("borradores y detalle de recepciones de compra", () => {
   test.beforeEach(async ({ page }) => login(page));
   test.setTimeout(120_000);
 
   test("guardar cierra el modal y el borrador se puede recuperar y eliminar", async ({ page }) => {
     await page.goto("/dashboard/purchasing/goods-receipts");
     await page.getByRole("button", { name: "Nueva entrada" }).click();
-    const dialog = page.getByRole("dialog", { name: /Entrada de mercanc.a/ });
+    const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
     await selectFirst(page, dialog, "Proveedor");
     await selectFirst(page, dialog, "Bodega");
 
@@ -70,7 +70,7 @@ test.describe("borradores y detalle de entradas de mercancia", () => {
     await expect(draftRow).toBeVisible({ timeout: 20_000 });
     await draftRow.click();
 
-    const recovered = page.getByRole("dialog", { name: /Entrada de mercanc.a/ });
+    const recovered = page.getByRole("dialog", { name: /Recepción de compra/ });
     await expect(recovered).toBeVisible();
     await expect(field(recovered, "Notas").getByRole("textbox")).toHaveValue(marker);
     await recovered.getByRole("button", { name: "Eliminar borrador" }).click();

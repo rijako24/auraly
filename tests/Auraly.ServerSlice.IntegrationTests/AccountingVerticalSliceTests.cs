@@ -322,6 +322,14 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             defaults.EnsureSuccessStatusCode();
 
         var effectiveOn = new DateOnly(2026, 3, 1);
+        using (var activateInZero = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(effectiveOn, "COP", "ZeroDeclared")))
+        {
+            activateInZero.EnsureSuccessStatusCode();
+            var readiness = await activateInZero.Content.ReadFromJsonAsync<AccountingReadinessView>();
+            Assert.True(readiness!.CanEditOpeningBalances);
+        }
         using (var missing = await accounting.GetAsync(
                    $"/api/commerce/v1/accounting/readiness?effectiveFrom={effectiveOn:yyyy-MM-dd}&openingBalanceMode=ImportedAndApproved"))
         {
@@ -369,6 +377,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             var readiness = await activate.Content.ReadFromJsonAsync<AccountingReadinessView>();
             Assert.Equal(AccountingActivationStatuses.Ready, readiness!.Status);
             Assert.Empty(readiness.BlockingIssues);
+            Assert.False(readiness.CanEditOpeningBalances);
         }
         using var entryResponse = await accounting.GetAsync(
             $"/api/commerce/v1/accounting/entries/by-document/{batchId:D}");
@@ -379,6 +388,26 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(entry.DebitTotal, entry.CreditTotal);
         Assert.Equal(2, entry.Lines.Count);
         Assert.Contains(entry.Lines, line => line.PartyId == supplierPartyId);
+    }
+
+    [Fact]
+    public async Task Withholding_rules_reject_responsibilities_outside_the_canonical_catalog()
+    {
+        using var client = fixture.CreateAdminClient(
+            TaxationPermissionCodes.ViewWithholdingRules,
+            TaxationPermissionCodes.ManageWithholdingRules);
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/taxation/withholding-rules",
+            new SaveWithholdingRuleRequest(
+                fixture.BusinessId, "RF-INVALIDA", "Regla con responsabilidad inválida",
+                WithholdingKinds.IncomeTax, WithholdingDirections.Purchase,
+                WithholdingRecognitionMoments.Accrual, WithholdingBaseKinds.TaxExclusiveAmount,
+                null, null, 2.5m, 0m, ["RESPONSABILIDAD-INVENTADA"],
+                new DateOnly(2026, 1, 1), null, true));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("no existen o están inactivas",
+            await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -471,6 +500,13 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             await SetWarehouseNegativeSalesPolicyAsync(true);
         }
         await AssertBalancedAsync(invoice.DocumentId);
+        using (var readinessAfterMovement = await accounting.GetAsync(
+                   "/api/commerce/v1/accounting/readiness"))
+        {
+            readinessAfterMovement.EnsureSuccessStatusCode();
+            Assert.False((await readinessAfterMovement.Content
+                .ReadFromJsonAsync<AccountingReadinessView>())!.CanEditOpeningBalances);
+        }
 
 
         var cashierId = await CreateCashierAsync();
@@ -687,7 +723,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         var receipt = new ConfirmGoodsReceiptRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
             fixture.SupplierId, $"COMP-{Guid.NewGuid():N}",
-            receivedAt.AddDays(-1), receivedAt, true, receivedAt.AddDays(30),
+            receivedAt.AddDays(-1), receivedAt, true, receivedAt.AddDays(29),
             "COP", "Compra contable mixta",
             [
                 new GoodsReceiptLineRequest(

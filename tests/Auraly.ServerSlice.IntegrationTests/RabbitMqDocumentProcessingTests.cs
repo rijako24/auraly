@@ -170,7 +170,7 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
         return new ConfirmGoodsReceiptRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
             $"RABBIT-{ordinal}-{Guid.NewGuid():N}", received.AddDays(-1), received, true,
-            received.AddDays(30), "cop", "Entrada procesada por RabbitMQ",
+            received.AddDays(29), "cop", "Entrada procesada por RabbitMQ",
             [new GoodsReceiptLineRequest(
                 1, fixture.ProductId, "Producto RabbitMQ", 1m, unitCost,
                 0m, "01", 19m, PurchasingTaxTreatments.DeductibleInputVat)]);

@@ -39,7 +39,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         await ApplyPurchaseOrderFulfillmentAsync(session, receipt, cancellationToken);
         await PersistWithholdingSnapshotAsync(session, receipt, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
-            session, document, receipt.ReceivedAt, ids, timeProvider,
+            session, document, receipt.SupplierInvoiceDate ?? receipt.ReceivedAt, ids, timeProvider,
             cancellationToken);
         await SqlSalesReportingJobWriter.InsertAsync(
             session, document, ids, timeProvider, cancellationToken);
@@ -98,7 +98,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             AddDecimal(command, "@Gross", receipt.Withholding.GrossAmount, 19, 4);
             AddDecimal(command, "@Withholding", receipt.Withholding.WithholdingTotal, 19, 4);
             AddDecimal(command, "@Net", receipt.Withholding.NetAmount, 19, 4);
-            command.Parameters.AddWithValue("@At", receipt.ReceivedAt);
+            command.Parameters.AddWithValue("@At", receipt.SupplierInvoiceDate ?? receipt.ReceivedAt);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 

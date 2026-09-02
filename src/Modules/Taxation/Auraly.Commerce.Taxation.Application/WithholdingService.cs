@@ -11,6 +11,7 @@ public interface IWithholdingRuleStore
         Guid tenantId, Guid businessId, Guid counterpartyId, CancellationToken ct);
     Task<CounterpartyTaxProfileView> SaveProfileAsync(
         Guid tenantId, Guid userId, SaveCounterpartyTaxProfileRequest request, CancellationToken ct);
+    Task<IReadOnlySet<string>> GetActiveResponsibilityCodesAsync(CancellationToken ct);
 }
 
 public sealed class WithholdingService(
@@ -36,6 +37,9 @@ public sealed class WithholdingService(
         if (!string.Equals(request.Moment, WithholdingRecognitionMoments.Accrual, StringComparison.Ordinal))
             throw new TaxationValidationException(
                 "Only accrual withholding is available in the automated document flows.");
+        if (request.RequiredResponsibilities is null)
+            throw new TaxationValidationException("RequiredResponsibilities is required.");
+        var responsibilities = await ValidateResponsibilitiesAsync(request.RequiredResponsibilities, ct);
         var proposed = WithholdingRule.Create(
             ruleId ?? Guid.NewGuid(), user.BusinessId, 1, request.Code, request.Name,
             Parse<WithholdingKind>(request.Kind, nameof(request.Kind)),
@@ -43,7 +47,7 @@ public sealed class WithholdingService(
             Parse<WithholdingRecognitionMoment>(request.Moment, nameof(request.Moment)),
             Parse<WithholdingBaseKind>(request.BaseKind, nameof(request.BaseKind)),
             request.ConceptCode, request.JurisdictionCode, request.Rate, request.MinimumBase,
-            request.RequiredResponsibilities, request.EffectiveFrom, request.EffectiveTo, request.IsActive);
+            responsibilities, request.EffectiveFrom, request.EffectiveTo, request.IsActive);
         var saved = ToView(await store.SaveVersionAsync(
             user.TenantId, user.UserId, ruleId, proposed, ct));
         await synchronization.DispatchPendingAsync(
@@ -76,11 +80,7 @@ public sealed class WithholdingService(
             throw new TaxationValidationException("A tax responsibility cannot exceed 32 characters.");
         var normalized = request with
         {
-            Responsibilities = request.Responsibilities
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(Normalize)
-                .Distinct(StringComparer.Ordinal)
-                .ToArray(),
+            Responsibilities = await ValidateResponsibilitiesAsync(request.Responsibilities, ct),
             JurisdictionCode = string.IsNullOrWhiteSpace(request.JurisdictionCode)
                 ? null : request.JurisdictionCode.Trim().ToUpperInvariant()
         };
@@ -92,6 +92,22 @@ public sealed class WithholdingService(
         await synchronization.DispatchPendingAsync(
             user.TenantId, user.BusinessId, CancellationToken.None);
         return saved;
+    }
+
+    private async Task<IReadOnlyCollection<string>> ValidateResponsibilitiesAsync(
+        IEnumerable<string> values, CancellationToken ct)
+    {
+        var normalized = values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(Normalize)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var active = await store.GetActiveResponsibilityCodesAsync(ct);
+        var invalid = normalized.Where(value => !active.Contains(value)).ToArray();
+        if (invalid.Length > 0)
+            throw new TaxationValidationException(
+                $"Las responsabilidades tributarias no existen o están inactivas: {string.Join(", ", invalid)}.");
+        return normalized;
     }
 
     public async Task<WithholdingCalculationSnapshot> PreviewAsync(

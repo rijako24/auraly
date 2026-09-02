@@ -23,6 +23,7 @@ export interface AccountingReadiness {
   openingBalanceMode: "ZeroDeclared" | "ImportedAndApproved" | null;
   activatedAt: string | null;
   blockingIssues: string[];
+  canEditOpeningBalances: boolean;
 }
 export interface ActivateAccounting {
   effectiveFrom: string;

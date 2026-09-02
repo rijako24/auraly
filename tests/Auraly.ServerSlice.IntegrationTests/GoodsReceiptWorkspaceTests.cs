@@ -365,7 +365,7 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
         return new(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
             $"PRV-{Guid.NewGuid():N}", receivedAt.AddDays(-1), receivedAt, true,
-            receivedAt.AddDays(30), "COP", "Borrador de integraci?n",
+            receivedAt.AddDays(29), "COP", "Borrador de integraci?n",
             [new GoodsReceiptLineRequest(
                 1, fixture.ProductId, "Producto de recepci?n", 1m, 10m, 0m,
                 "01", 19m, PurchasingTaxTreatments.DeductibleInputVat)],

@@ -34,21 +34,21 @@ async function createReceiptProduct(page: Page) {
   return name;
 }
 
-test("recibe mercancia por UI, conserva el foco y procesa inventario", async ({ page }) => {
+test("recibe compra por UI, calcula vencimiento, conserva el foco y procesa inventario", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const productName = await createReceiptProduct(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
   await page.getByRole("button", { name: "Nueva entrada" }).click();
-  const dialog = page.getByRole("dialog", { name: /Entrada de mercanc.a/ });
+  await expect(page.getByRole("heading", { name: "Recepción de compra" })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await selectFirst(page, dialog, "Proveedor");
   await selectFirst(page, dialog, "Bodega");
-  await dialog.getByTestId("goods-receipt-continue").click();
-  await expect(dialog.getByRole("button", { name: /Datos de la recepción/ })).toHaveAttribute(
-    "aria-expanded",
-    "false",
-  );
-  await expect(dialog.getByTestId("goods-receipt-readonly-details")).toHaveCount(0);
+  const evidence = field(dialog, /Tipo de soporte/).getByRole("combobox");
+  await evidence.click();
+  await page.getByRole("option", { name: "Comprobante interno" }).click();
+  await expect(field(dialog, "Fecha de emisión").locator("button")).toBeEnabled();
+  await expect(field(dialog, "Vencimiento calculado").locator("input")).toHaveAttribute("readonly", "");
 
   const search = dialog.getByPlaceholder(/Escanea o busca por c.digo/);
   await dialog.getByRole("button", { name: /Buscar en todo el cat.logo/ }).click();

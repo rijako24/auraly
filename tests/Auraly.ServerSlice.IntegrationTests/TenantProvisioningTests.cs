@@ -190,6 +190,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(1, state.OpenAccountingPeriods);
         Assert.Equal(1, state.DefaultCostCenters);
         Assert.Equal(1, state.AccountingVoucherCursors);
+        Assert.Equal("Configuring", await ReadAccountingStatusAsync(result.TenantId));
         Assert.Equal(6, state.Roles);
         Assert.Equal(3, state.OnlineSalesDocumentSeries);
         Assert.True(await RoleHasPermissionAsync(
@@ -565,6 +566,18 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<string> ReadAccountingStatusAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT Status FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId;",
+            connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return (string)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("Accounting settings were not provisioned."));
     }
 
     private async Task<int> CountTenantUsersAsync(Guid tenantId)

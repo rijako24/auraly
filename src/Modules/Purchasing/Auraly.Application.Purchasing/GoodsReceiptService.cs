@@ -42,18 +42,20 @@ public sealed class GoodsReceiptService(
         if (request.ReceivedAt == default) throw new PurchasingValidationException("ReceivedAt is required.");
         if (!PurchaseEvidenceTypes.IsValid(request.PurchaseEvidenceType))
             throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
+        if (request.SupplierInvoiceDate is null)
+            throw new PurchasingValidationException("SupplierInvoiceDate is required as the purchase document issue date.");
         if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.SupplierElectronicInvoice &&
-            (string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber) || request.SupplierInvoiceDate is null))
+            string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber))
             throw new PurchasingValidationException(
                 "Supplier invoice number and date are required for an electronic supplier invoice.");
         if (request.PurchaseEvidenceType != PurchaseEvidenceTypes.SupplierElectronicInvoice &&
-            (!string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber) || request.SupplierInvoiceDate is not null))
+            !string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber))
             throw new PurchasingValidationException(
-                "Supplier invoice data is only valid for an electronic supplier invoice.");
+                "Supplier invoice number is only valid for an electronic supplier invoice.");
         if (request.CreatesPayable && request.DueDate is null)
             throw new PurchasingValidationException("DueDate is required when the receipt creates a payable.");
-        if (request.DueDate < request.ReceivedAt)
-            throw new PurchasingValidationException("DueDate cannot be earlier than ReceivedAt.");
+        if (request.DueDate < request.SupplierInvoiceDate)
+            throw new PurchasingValidationException("DueDate cannot be earlier than SupplierInvoiceDate.");
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
         if (currency.Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
 
@@ -91,7 +93,7 @@ public sealed class GoodsReceiptService(
             new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
                 "Accrual", request.SupplierId, request.WithholdingConceptCode,
                 request.WithholdingJurisdictionCode, calculation.NetAmount,
-                calculation.TaxAmount, request.ReceivedAt),
+                calculation.TaxAmount, request.SupplierInvoiceDate.Value),
             cancellationToken);
 
 

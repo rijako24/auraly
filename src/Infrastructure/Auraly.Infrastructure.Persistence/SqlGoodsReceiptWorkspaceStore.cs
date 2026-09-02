@@ -540,6 +540,11 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                   OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                   OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
               THROW 51126,'The selected evidence type is not allowed by the supplier configuration.',1;
+            IF @SupplierId IS NOT NULL AND @CreatesPayable=1 AND NOT EXISTS (
+              SELECT 1 FROM dbo.Suppliers
+              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId
+                AND DATEDIFF(DAY,CAST(@IssueDate AS date),CAST(@DueDate AS date))=DefaultPaymentDueDays)
+              THROW 51127,'DueDate must match the supplier payment term calculated from SupplierInvoiceDate.',1;
             IF @ProductsJson<>N'[]' AND EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson) WITH (ProductId UNIQUEIDENTIFIER '$') x
@@ -556,9 +561,12 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@WarehouseId", (object?)request.WarehouseId ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupplierId", (object?)request.SupplierId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PurchaseEvidenceType", (object?)request.PurchaseEvidenceType ?? DBNull.Value);
+        command.Parameters.AddWithValue("@CreatesPayable", request.CreatesPayable);
+        command.Parameters.AddWithValue("@IssueDate", (object?)request.SupplierInvoiceDate ?? DBNull.Value);
+        command.Parameters.AddWithValue("@DueDate", (object?)request.DueDate ?? DBNull.Value);
         command.Parameters.AddWithValue("@ProductsJson", JsonSerializer.Serialize(request.Lines.Select(x => x.ProductId).Distinct()));
         try { await command.ExecuteNonQueryAsync(cancellationToken); }
-        catch (SqlException exception) when (exception.Number is >= 51121 and <= 51126)
+        catch (SqlException exception) when (exception.Number is >= 51121 and <= 51127)
         { throw new PurchasingValidationException(exception.Message); }
     }
 

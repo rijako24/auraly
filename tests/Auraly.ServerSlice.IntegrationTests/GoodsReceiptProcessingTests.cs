@@ -304,7 +304,6 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         {
             DocumentId = Guid.NewGuid(),
             SupplierInvoiceNumber = null,
-            SupplierInvoiceDate = null,
             PurchaseEvidenceType = PurchaseEvidenceTypes.BuyerElectronicSupportDocument
         };
         using var client = fixture.CreateAdminClient(
@@ -358,6 +357,16 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             invalidTax, $"invalid-tax-{Guid.NewGuid():N}");
         using var invalidResponse = await allowed.SendAsync(invalidMessage);
         Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+
+        var invalidDueDate = CreateRequest();
+        invalidDueDate = invalidDueDate with
+        {
+            DueDate = invalidDueDate.SupplierInvoiceDate!.Value.AddDays(31)
+        };
+        using var invalidDueDateMessage = CreateMessage(
+            invalidDueDate, $"invalid-due-date-{Guid.NewGuid():N}");
+        using var invalidDueDateResponse = await allowed.SendAsync(invalidDueDateMessage);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidDueDateResponse.StatusCode);
     }
 
     private ConfirmGoodsReceiptRequest CreateRequest()
@@ -366,7 +375,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         return new ConfirmGoodsReceiptRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
             $"FC-{Guid.NewGuid():N}", received.AddDays(-1), received, true,
-            received.AddDays(30), "cop", "Entrada E2E",
+            received.AddDays(29), "cop", "Entrada E2E",
             [new GoodsReceiptLineRequest(
                 1, fixture.ProductId, "Producto E2E", 10m, 6_000m,
                 10_000m, "01", 19m, PurchasingTaxTreatments.DeductibleInputVat)]);

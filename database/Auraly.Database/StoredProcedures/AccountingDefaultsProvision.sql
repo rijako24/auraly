@@ -15,6 +15,11 @@ BEGIN
     IF @ProfileCode IS NULL
         THROW 51042,'No existe un perfil contable predeterminado activo.',1;
 
+    IF NOT EXISTS (SELECT 1 FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId)
+        INSERT dbo.AccountingTenantSettings(
+            TenantId,Status,FunctionalCurrencyCode,UpdatedAt)
+        VALUES(@TenantId,N'Configuring',N'COP',@Now);
+
     INSERT dbo.AccountingAccounts(
         AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
     SELECT NEWID(),@TenantId,a.AccountCode,a.AccountName,a.AccountType,a.AllowsPosting,a.RequiresParty,1,@Now

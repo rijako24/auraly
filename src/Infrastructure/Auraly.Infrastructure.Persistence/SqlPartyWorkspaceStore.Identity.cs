@@ -72,7 +72,8 @@ public sealed partial class SqlPartyWorkspaceStore
               carrier.CarrierId,carrier.Code,carrier.TransportationMode,carrier.IsActive,
               employee.EmployeeId,employee.IsActive,
               appUser.UserId,appUser.Username,appUser.Email,appUser.IsActive,
-              COALESCE(pricing.ValidFrom,customer.CreatedAt),pricing.ValidUntil,p.RowVersion
+              COALESCE(pricing.ValidFrom,customer.CreatedAt),pricing.ValidUntil,p.RowVersion,
+              supplier.DefaultPaymentDueDays
             FROM dbo.Parties p
             OUTER APPLY(
               SELECT TOP(1) pc.Value
@@ -139,7 +140,7 @@ public sealed partial class SqlPartyWorkspaceStore
         var supplier = reader.IsDBNull(28)
             ? null
             : new SupplierRoleDetail(reader.GetGuid(28), reader.GetBoolean(29),
-                reader.IsDBNull(30) ? null : reader.GetString(30));
+                reader.IsDBNull(30) ? null : reader.GetString(30), reader.GetInt32(50));
         var seller = reader.IsDBNull(31)
             ? null
             : new SellerRoleDetail(

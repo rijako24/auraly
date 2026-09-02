@@ -27,7 +27,8 @@ public sealed record CreateSupplierRequest(
     Guid BusinessId,
     PartyInput Party,
     PartySiteInput PrimarySite,
-    string? PurchaseEvidencePolicy = null);
+    string? PurchaseEvidencePolicy = null,
+    int DefaultPaymentDueDays = 30);
 
 public sealed record UpdatePartyRequest(
     string PartyType,
@@ -45,7 +46,9 @@ public sealed record UpdatePartyRequest(
     UpdateCarrierRoleRequest? Carrier = null,
     UpdateSupplierRoleRequest? Supplier = null);
 
-public sealed record UpdateSupplierRoleRequest(string? PurchaseEvidencePolicy);
+public sealed record UpdateSupplierRoleRequest(
+    string? PurchaseEvidencePolicy,
+    int DefaultPaymentDueDays = 30);
 
 public sealed record UpdateCustomerRoleRequest(
     Guid? PriceChannelId,
@@ -101,7 +104,8 @@ public sealed record PartyWorkspaceItem(
     Guid? CarrierId,
     Guid? EmployeeId,
     Guid? UserId,
-    string? SupplierPurchaseEvidencePolicy);
+    string? SupplierPurchaseEvidencePolicy,
+    int? SupplierDefaultPaymentDueDays);
 
 public sealed record PartyWorkspacePage(
     IReadOnlyCollection<PartyWorkspaceItem> Items,
@@ -153,7 +157,8 @@ public sealed record CustomerRoleDetail(
     DateTimeOffset? ValidUntil);
 
 public sealed record SupplierRoleDetail(
-    Guid SupplierId, bool IsActive, string? PurchaseEvidencePolicy = null);
+    Guid SupplierId, bool IsActive, string? PurchaseEvidencePolicy = null,
+    int DefaultPaymentDueDays = 30);
 
 public sealed record SellerRoleDetail(
     Guid SellerId,

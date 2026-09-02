@@ -79,7 +79,8 @@ public sealed partial class SqlPartyWorkspaceStore(
                    (SELECT TOP(1) c.CarrierId FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId),
                    (SELECT TOP(1) e.EmployeeId FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId),
                    (SELECT TOP(1) u.UserId FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId),
-                   (SELECT TOP(1) s.PurchaseEvidencePolicy FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
+                   (SELECT TOP(1) s.PurchaseEvidencePolicy FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId),
+                   (SELECT TOP(1) s.DefaultPaymentDueDays FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
             FROM dbo.Parties p
             OUTER APPLY(SELECT TOP(1) ps.Name,ci.Name CityName
                         FROM dbo.PartySites ps JOIN dbo.Cities ci ON ci.CityId=ps.CityId
@@ -243,11 +244,11 @@ public sealed partial class SqlPartyWorkspaceStore(
             if(resolvedSupplierId==supplierId)
             {
                 await ExecuteAsync(connection,transaction,"""
-                    INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,PurchaseEvidencePolicy,IsActive,CreatedAt)
-                    VALUES(@SupplierId,@BusinessId,@PartyId,@Identification,@Name,@PurchaseEvidencePolicy,1,@Now);
+                    INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,PurchaseEvidencePolicy,DefaultPaymentDueDays,IsActive,CreatedAt)
+                    VALUES(@SupplierId,@BusinessId,@PartyId,@Identification,@Name,@PurchaseEvidencePolicy,@DefaultPaymentDueDays,1,@Now);
                     """,[P("@SupplierId",supplierId),P("@BusinessId",actor.BusinessId),P("@PartyId",resolvedPartyId),
                     P("@Identification",request.Party.Identification.Trim()),P("@Name",request.Party.DisplayName.Trim()),
-                    P("@PurchaseEvidencePolicy",request.PurchaseEvidencePolicy),P("@Now",now)],ct);
+                    P("@PurchaseEvidencePolicy",request.PurchaseEvidencePolicy),P("@DefaultPaymentDueDays",request.DefaultPaymentDueDays),P("@Now",now)],ct);
                 await InsertSiteAsync(connection,transaction,actor,resolvedPartyId,siteId,request.PrimarySite,now,ct);
             }
             await ExecuteAsync(connection,transaction,"""
@@ -311,12 +312,14 @@ public sealed partial class SqlPartyWorkspaceStore(
             {
                 await using var supplier=connection.CreateCommand(); supplier.Transaction=transaction;
                 supplier.CommandText="""
-                    UPDATE dbo.Suppliers SET PurchaseEvidencePolicy=@PurchaseEvidencePolicy
+                    UPDATE dbo.Suppliers SET PurchaseEvidencePolicy=@PurchaseEvidencePolicy,
+                        DefaultPaymentDueDays=@DefaultPaymentDueDays
                     WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
                     IF @@ROWCOUNT=0 THROW 51063,'The Party is not a supplier in the authenticated business.',1;
                     """;
                 supplier.Parameters.AddRange([P("@PartyId",partyId),P("@BusinessId",actor.BusinessId),
-                    P("@PurchaseEvidencePolicy",request.Supplier.PurchaseEvidencePolicy)]);
+                    P("@PurchaseEvidencePolicy",request.Supplier.PurchaseEvidencePolicy),
+                    P("@DefaultPaymentDueDays",request.Supplier.DefaultPaymentDueDays)]);
                 await supplier.ExecuteNonQueryAsync(ct);
             }
             if(request.Seller is not null)
@@ -458,7 +461,8 @@ public sealed partial class SqlPartyWorkspaceStore(
                    (SELECT TOP(1) c.CarrierId FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId),
                    (SELECT TOP(1) e.EmployeeId FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId),
                    (SELECT TOP(1) u.UserId FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId),
-                   (SELECT TOP(1) s.PurchaseEvidencePolicy FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
+                   (SELECT TOP(1) s.PurchaseEvidencePolicy FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId),
+                   (SELECT TOP(1) s.DefaultPaymentDueDays FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
             FROM dbo.Parties p
             OUTER APPLY(SELECT TOP(1) ps.Name,ci.Name CityName FROM dbo.PartySites ps
                         JOIN dbo.Cities ci ON ci.CityId=ps.CityId WHERE ps.PartyId=p.PartyId AND ps.IsActive=1
@@ -481,7 +485,7 @@ public sealed partial class SqlPartyWorkspaceStore(
         var roles=new List<string>(6); if(Convert.ToBoolean(r.GetValue(11)))roles.Add("Customer"); if(Convert.ToBoolean(r.GetValue(12)))roles.Add("Supplier"); if(Convert.ToBoolean(r.GetValue(13)))roles.Add("Seller"); if(Convert.ToBoolean(r.GetValue(14)))roles.Add("Carrier"); if(Convert.ToBoolean(r.GetValue(15)))roles.Add("Employee"); if(Convert.ToBoolean(r.GetValue(16)))roles.Add("User");
         return new PartyWorkspaceItem(r.GetGuid(0),r.GetString(1),S(r,2),S(r,3),S(r,4),r.GetString(5),S(r,6),S(r,7),S(r,8),
             S(r,9),S(r,10),roles,S(r,17),S(r,18),r.GetBoolean(19),r.GetString(20),Convert.ToBase64String((byte[])r[21]),
-            G(r,22),G(r,23),G(r,24),G(r,25),G(r,26),G(r,27),S(r,28));
+            G(r,22),G(r,23),G(r,24),G(r,25),G(r,26),G(r,27),S(r,28),r.IsDBNull(29)?null:r.GetInt32(29));
     }
 
     private static async Task ValidateScopeAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity a,PartySiteInput s,CancellationToken ct)
