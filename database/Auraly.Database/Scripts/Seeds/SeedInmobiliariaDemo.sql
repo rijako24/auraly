@@ -3,6 +3,12 @@
 -- negocios usan los mismos criterios.
 SET NOCOUNT ON;
 
+IF LOWER(N'$(DeploymentEnvironment)') = N'prod'
+BEGIN
+    PRINT N'SeedInmobiliariaDemo: seed de demostración omitido en producción.';
+    RETURN;
+END;
+
 DECLARE @TenantId UNIQUEIDENTIFIER = '8D91B781-6B75-4FD2-903F-2FD2D537D001';
 DECLARE @BusinessId UNIQUEIDENTIFIER = '8D91B781-6B75-4FD2-903F-2FD2D537D002';
 DECLARE @AgentId UNIQUEIDENTIFIER = '8D91B781-6B75-4FD2-903F-2FD2D537D003';

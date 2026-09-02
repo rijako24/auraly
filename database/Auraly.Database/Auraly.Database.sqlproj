@@ -9,6 +9,10 @@
     <ModelCollation>1033, CI</ModelCollation>
   </PropertyGroup>
   <ItemGroup>
+    <SqlCmdVariable Include="DeploymentEnvironment">
+      <DefaultValue>dev</DefaultValue>
+      <Value>$(SqlCmdVar__DeploymentEnvironment)</Value>
+    </SqlCmdVariable>
     <SqlCmdVariable Include="BootstrapAdminPasswordHash">
       <DefaultValue></DefaultValue>
       <Value>$(SqlCmdVar__BootstrapAdminPasswordHash)</Value>

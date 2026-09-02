@@ -1,6 +1,12 @@
 SET QUOTED_IDENTIFIER ON;
 SET ANSI_NULLS ON;
 
+IF LOWER(N'$(DeploymentEnvironment)') = N'prod'
+BEGIN
+    PRINT N'SeedAndinaProductCategories: seed de demostración omitido en producción.';
+    RETURN;
+END;
+
 -- Authoritative Xion Familia1 catalog supplied by Andina Santander.
 DECLARE @AndinaBusinessId UNIQUEIDENTIFIER = 'A7D1AA00-0000-0000-0000-000000000010';
 DECLARE @XionConnectionId UNIQUEIDENTIFIER = 'A7D1AA00-0000-0000-0000-000000000030';

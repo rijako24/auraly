@@ -1076,6 +1076,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         process.StartInfo.ArgumentList.Add("/Action:Publish");
         process.StartInfo.ArgumentList.Add($"/SourceFile:{dacpac}");
         process.StartInfo.ArgumentList.Add($"/TargetConnectionString:{ConnectionString}");
+        process.StartInfo.ArgumentList.Add("/v:DeploymentEnvironment=dev");
         process.StartInfo.ArgumentList.Add("/p:CreateNewDatabase=True");
         process.StartInfo.ArgumentList.Add("/p:DropObjectsNotInSource=False");
         process.StartInfo.ArgumentList.Add("/p:BlockOnPossibleDataLoss=True");

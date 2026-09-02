@@ -3,8 +3,6 @@ SET NOCOUNT ON;
 
 DECLARE @AuralyTenantId UNIQUEIDENTIFIER = 'A0A10000-0000-0000-0000-000000000000';
 DECLARE @PlatformRoleId UNIQUEIDENTIFIER;
-DECLARE @AdminUserId UNIQUEIDENTIFIER;
-DECLARE @PasswordHash NVARCHAR(500) = NULLIF(N'$(BootstrapAdminPasswordHash)', N'');
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantId=@AuralyTenantId AND TenantKey=N'@auraly')
     THROW 51000, 'SeedAuralyPlatformAdministration requiere el tenant canonico @auraly.', 1;
@@ -57,56 +55,23 @@ BEGIN
     WHERE RoleId=@PlatformRoleId;
 END;
 
--- El administrador raíz recibe el catálogo completo. Los roles delegados se crean desde la aplicación con subconjuntos.
+-- El rol raíz recibe el catálogo completo. La única cuenta administradora inicial
+-- es la persona que acepta la invitación del aprovisionamiento.
 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
 SELECT NEWID(),@PlatformRoleId,permissionValue.PermissionId,SYSUTCDATETIME()
 FROM dbo.Permissions permissionValue
 WHERE NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing WHERE existing.RoleId=@PlatformRoleId AND existing.PermissionId=permissionValue.PermissionId);
 
-SELECT @AdminUserId=UserId FROM dbo.AppUsers WHERE TenantId=@AuralyTenantId AND NormalizedUsername=N'ADMIN';
-IF @AdminUserId IS NULL AND @PasswordHash IS NULL
-    PRINT N'@auraly/admin no creado: suministre BootstrapAdminPasswordHash de forma segura.';
-ELSE IF @AdminUserId IS NULL
-BEGIN
-    SET @AdminUserId=NEWID();
-    INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,PasswordHash,FirstName,LastName,AccessFailedCount,EmailConfirmed,IsActive,CreatedAt)
-    VALUES(@AdminUserId,@AuralyTenantId,N'admin',N'ADMIN',N'admin@auraly.ai',N'ADMIN@AURALY.AI',@PasswordHash,N'Administrador',N'Auraly',0,1,1,SYSUTCDATETIME());
-END
-ELSE
-BEGIN
-    IF @PasswordHash IS NOT NULL AND NOT EXISTS(
-        SELECT 1 FROM dbo.AppUsers WHERE UserId=@AdminUserId AND PasswordHash=@PasswordHash)
-    BEGIN
-        UPDATE dbo.AuthenticationSessions
-        SET Status=N'Revoked',RevokedAt=SYSUTCDATETIME(),RevocationReason=N'PasswordReset',UpdatedAt=SYSUTCDATETIME()
-        WHERE UserId=@AdminUserId AND Status=N'Active';
-
-        UPDATE dbo.RefreshTokens SET RevokedAt=GETUTCDATE()
-        WHERE UserId=@AdminUserId AND RevokedAt IS NULL;
-
-        -- El hash offline deriva de la contraseña en claro durante un login
-        -- autenticado. Al rotar el hash principal debe invalidarse para impedir
-        -- que una caja conserve indefinidamente la credencial anterior.
-        UPDATE dbo.AppUsers
-        SET PosOfflinePasswordSalt=NULL,
-            PosOfflinePasswordHash=NULL,
-            PosOfflinePasswordIterations=NULL,
-            PosOfflinePasswordChangedAt=NULL
-        WHERE UserId=@AdminUserId;
-    END;
-
-    UPDATE dbo.AppUsers
-    SET PasswordHash=COALESCE(@PasswordHash,PasswordHash),IsActive=1,EmailConfirmed=1,
-        AccessFailedCount=0,LockoutEnd=NULL,UpdatedAt=SYSUTCDATETIME()
-    WHERE UserId=@AdminUserId;
-END;
-
-IF @AdminUserId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.UserRoles WHERE UserId=@AdminUserId AND RoleId=@PlatformRoleId AND BusinessId IS NULL)
-    INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt) VALUES(NEWID(),@AdminUserId,@PlatformRoleId,NULL,SYSUTCDATETIME());
--- Retira sin destruir auditoría cualquier identidad técnica obsoleta llamada admin2222.
+-- Retira sin destruir auditoría las identidades técnicas obsoletas. Nunca debe
+-- coincidir con una cuenta creada por una invitación real.
 DECLARE @RetiredUsers TABLE(UserId UNIQUEIDENTIFIER PRIMARY KEY);
 INSERT INTO @RetiredUsers(UserId)
-SELECT UserId FROM dbo.AppUsers WHERE NormalizedUsername=N'ADMIN2222';
+SELECT UserId
+FROM dbo.AppUsers
+WHERE NormalizedUsername=N'ADMIN2222'
+   OR (TenantId=@AuralyTenantId
+       AND NormalizedUsername=N'ADMIN'
+       AND NormalizedEmail=N'ADMIN@AURALY.AI');
 
 UPDATE sessionValue
 SET Status=N'Revoked',RevokedAt=SYSUTCDATETIME(),RevocationReason=N'IdentityRetired',UpdatedAt=SYSUTCDATETIME()
@@ -132,5 +97,5 @@ SET Username=CONCAT(N'retired-',LEFT(REPLACE(CONVERT(NVARCHAR(36),userValue.User
     IsActive=0,AccessFailedCount=0,LockoutEnd=NULL,UpdatedAt=SYSUTCDATETIME()
 FROM dbo.AppUsers userValue
 JOIN @RetiredUsers retired ON retired.UserId=userValue.UserId;
-PRINT N'SeedAuralyPlatformAdministration: @auraly/admin y permisos de plataforma listos; admin2222 retirado.';
+PRINT N'SeedAuralyPlatformAdministration: rol y permisos de plataforma listos; identidades técnicas retiradas.';
 GO

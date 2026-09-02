@@ -3,6 +3,66 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public void Production_database_deployment_skips_demo_tenant_seeds()
+    {
+        var root = FindRepositoryRoot();
+        var databaseRoot = Path.Combine(root, "database", "Auraly.Database");
+        var demoSeeds = new[]
+        {
+            "SeedAdminUser.sql",
+            "SeedDevBusiness.sql",
+            "SeedRadaConcept.sql",
+            "SeedInmobiliariaDemo.sql",
+            "SeedLuisPetitBarber.sql",
+            "SeedSolorzanoBusinessIdentity.sql",
+            "SeedCJDistribuciones.sql",
+            "SeedDigitalShop.sql",
+            "SeedAndinaSantander.sql",
+            "SeedAndinaProductCategories.sql",
+            "SeedMedidental.sql"
+        };
+
+        foreach (var seed in demoSeeds)
+        {
+            var contents = File.ReadAllText(Path.Combine(
+                databaseRoot, "Scripts", "Seeds", seed));
+            Assert.Contains("LOWER(N'$(DeploymentEnvironment)') = N'prod'", contents,
+                StringComparison.Ordinal);
+            Assert.Contains("RETURN;", contents, StringComparison.Ordinal);
+        }
+
+        foreach (var migration in new[]
+                 {
+                     "MigrateDigitalShopWhatsAppToCJ.sql",
+                     "RenameDigitalShopAgentCatalina.sql"
+                 })
+        {
+            var contents = File.ReadAllText(Path.Combine(
+                databaseRoot, "Scripts", "Migrations", migration));
+            Assert.Contains("LOWER(N'$(DeploymentEnvironment)') = N'prod'", contents,
+                StringComparison.Ordinal);
+            Assert.Contains("RETURN;", contents, StringComparison.Ordinal);
+        }
+
+        var auralySeed = File.ReadAllText(Path.Combine(
+            databaseRoot, "Scripts", "Seeds", "SeedAuraly.sql"));
+        Assert.DoesNotContain("seed de demostración omitido", auralySeed,
+            StringComparison.OrdinalIgnoreCase);
+
+        var project = File.ReadAllText(Path.Combine(
+            databaseRoot, "Auraly.Database.sqlproj"));
+        Assert.Contains("SqlCmdVariable Include=\"DeploymentEnvironment\"", project,
+            StringComparison.Ordinal);
+        Assert.Contains("<DefaultValue>dev</DefaultValue>", project,
+            StringComparison.Ordinal);
+
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        Assert.Contains("/v:DeploymentEnvironment=$Environment", pipeline,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Tax_responsibilities_and_certificate_alert_permission_are_seeded_canonically()
     {
         var root = FindRepositoryRoot();
@@ -16,9 +76,37 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("N'O-13'", options, StringComparison.Ordinal);
         Assert.Contains("platform.fiscal_certificates.expiry.read", platform,
             StringComparison.Ordinal);
-        Assert.Contains("PosOfflinePasswordSalt=NULL", platform,
+        Assert.DoesNotContain("INSERT dbo.AppUsers", platform,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("BootstrapAdminPasswordHash", platform,
             StringComparison.Ordinal);
-        Assert.Contains("PosOfflinePasswordHash=NULL", platform,
+        Assert.Contains("NormalizedEmail=N'ADMIN@AURALY.AI'", platform,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Canonical_seed_keeps_roles_and_supplier_but_creates_no_fictitious_people()
+    {
+        var root = FindRepositoryRoot();
+        var databaseRoot = Path.Combine(root, "database", "Auraly.Database");
+        var auraly = File.ReadAllText(Path.Combine(
+            databaseRoot, "Scripts", "Seeds", "SeedAuraly.sql"));
+        var roles = File.ReadAllText(Path.Combine(
+            databaseRoot, "Scripts", "Seeds", "SeedDefaultBusinessRoles.sql"));
+        var accounting = File.ReadAllText(Path.Combine(
+            databaseRoot, "StoredProcedures", "AccountingDefaultsProvision.sql"));
+
+        Assert.DoesNotContain("INSERT INTO dbo.Employees", auraly,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO dbo.EmployeeServices", auraly,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("MERGE dbo.EmployeeWorkingHours", auraly,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RequireEmployee = 0", auraly, StringComparison.Ordinal);
+        Assert.Contains("N'Cajero',N'CASHIER'", roles, StringComparison.Ordinal);
+        Assert.Contains("N'Supervisor',N'SUPERVISOR'", roles, StringComparison.Ordinal);
+        Assert.Contains("N'OCASIONAL'", accounting, StringComparison.Ordinal);
+        Assert.Contains("N'Gasto ocasional / sin proveedor'", accounting,
             StringComparison.Ordinal);
     }
 

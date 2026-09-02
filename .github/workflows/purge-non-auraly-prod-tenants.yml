@@ -1,0 +1,43 @@
+name: Purge non-AURALY production tenants
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Audit lists targets; Apply deletes them transactionally
+        required: true
+        type: choice
+        options:
+          - Audit
+          - Apply
+        default: Audit
+      confirmation:
+        description: Apply requires PURGE_NON_AURALY_PROD
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  purge:
+    name: ${{ inputs.action }} non-AURALY production tenants
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Audit or purge production tenants
+        shell: pwsh
+        run: |
+          ./infrastructure/azure/Remove-NonAuralyProductionTenants.ps1 `
+            -Action '${{ inputs.action }}' `
+            -Confirmation '${{ inputs.confirmation }}'

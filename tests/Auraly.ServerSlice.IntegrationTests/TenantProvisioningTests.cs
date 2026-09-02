@@ -190,7 +190,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(1, state.OpenAccountingPeriods);
         Assert.Equal(1, state.DefaultCostCenters);
         Assert.Equal(1, state.AccountingVoucherCursors);
-        Assert.Equal(5, state.Roles);
+        Assert.Equal(6, state.Roles);
         Assert.Equal(3, state.OnlineSalesDocumentSeries);
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SUPERVISOR", "pos.approvals.receive_notifications"));
@@ -233,6 +233,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(0, await MissingAdministratorPermissionsAsync(result.TenantId));
         Assert.Equal(0, await AccountantPermissionMismatchAsync(result.TenantId));
         Assert.Equal(0, state.UserRoles);
+        Assert.Equal(0, await CountTenantUsersAsync(result.TenantId));
         Assert.Null(state.UserActive);
         Assert.Null(state.PasswordHash);
         Assert.Equal("Pending", state.InvitationStatus);
@@ -306,6 +307,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(acceptedState.UserActive);
         Assert.NotNull(acceptedState.PasswordHash);
         Assert.Equal("Accepted", acceptedState.InvitationStatus);
+        Assert.Equal(1, await CountTenantUsersAsync(result.TenantId));
 
         using (var scope = fixture.CreateScope())
         {
@@ -503,7 +505,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                     AND accountMapping.Category=sourceMapping.Category
                     AND accountMapping.EffectiveTo IS NULL
                    WHERE profile.IsDefault=1 AND profile.IsActive=1)),
-              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ACCOUNTANT',N'ADMINISTRATOR')),
+              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'SELLER',N'ADMINISTRATIVE',N'ACCOUNTANT',N'ADMINISTRATOR')),
               (SELECT COUNT(*) FROM dbo.DocumentSeries ds INNER JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId WHERE b.TenantId=@TenantId AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt',N'SalesDebitNote') AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1),
               (SELECT COUNT(*) FROM dbo.UserRoles WHERE UserId=@UserId),
               (SELECT IsActive FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
@@ -557,6 +559,16 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               AND account.IsActive=1
               AND account.AllowsPosting=1;
             """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountTenantUsersAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT COUNT(*) FROM dbo.AppUsers WHERE TenantId=@TenantId;", connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }

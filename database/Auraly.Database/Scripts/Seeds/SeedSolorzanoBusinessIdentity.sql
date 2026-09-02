@@ -16,6 +16,12 @@
 
 SET NOCOUNT ON;
 
+IF LOWER(N'$(DeploymentEnvironment)') = N'prod'
+BEGIN
+    PRINT N'SeedSolorzanoBusinessIdentity: seed de demostración omitido en producción.';
+    RETURN;
+END;
+
 
 
 DECLARE @SolorzanoTenantId UNIQUEIDENTIFIER = 'FCEE3BA9-E6BF-43E2-8C1A-560CB7246800';

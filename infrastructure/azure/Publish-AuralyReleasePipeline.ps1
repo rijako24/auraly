@@ -399,6 +399,7 @@ function Publish-Database {
             "/TargetServerName:tcp:$($configuration.SqlServer).database.windows.net,1433",
             "/TargetDatabaseName:$($configuration.Database)",
             "/AccessToken:$accessToken",
+            "/v:DeploymentEnvironment=$Environment",
             $bootstrapAdminPasswordHashArgument,
             $whatsAppAccessTokenArgument,
             '/p:BlockOnPossibleDataLoss=True',

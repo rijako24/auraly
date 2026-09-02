@@ -14,6 +14,12 @@
 
 SET NOCOUNT ON;
 
+IF LOWER(N'$(DeploymentEnvironment)') = N'prod'
+BEGIN
+    PRINT N'SeedRadaConcept: seed de demostración omitido en producción.';
+    RETURN;
+END;
+
 
 
 DECLARE @MimosBusinessId UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222';

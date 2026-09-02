@@ -4,7 +4,7 @@
 
 --
 
--- Crea/actualiza el negocio AURALY, el empleado Equipo AURALY y el agente
+-- Crea/actualiza el negocio AURALY y el agente
 
 -- Aly para explicar empleados digitales y agendar demos. Idempotente.
 
@@ -256,57 +256,12 @@ WHERE s.BusinessId = @BusinessId
 
 
 
-IF NOT EXISTS (SELECT 1 FROM dbo.Employees WHERE EmployeeId = @EmployeeId)
-
-BEGIN
-
-    INSERT INTO dbo.Employees (EmployeeId, BusinessId, Name, IsActive, CreatedAt)
-
-    VALUES (@EmployeeId, @BusinessId, N'Equipo AURALY', 1, GETUTCDATE());
-
-END
-
-ELSE
-
-BEGIN
-
-    UPDATE dbo.Employees
-
-    SET BusinessId = @BusinessId,
-
-        Name = N'Equipo AURALY',
-
-        IsActive = 1,
-
-        UpdatedAt = GETUTCDATE()
-
-    WHERE EmployeeId = @EmployeeId;
-
-END
-
-
-
-INSERT INTO dbo.EmployeeServices (EmployeeServiceId, EmployeeId, ServiceId, CreatedAt)
-
-SELECT NEWID(), @EmployeeId, s.ServiceId, GETUTCDATE()
-
-FROM dbo.Services s
-
-WHERE s.BusinessId = @BusinessId
-
-  AND s.IsActive = 1
-
-  AND NOT EXISTS (
-
-      SELECT 1
-
-      FROM dbo.EmployeeServices es
-
-      WHERE es.EmployeeId = @EmployeeId
-
-        AND es.ServiceId = s.ServiceId
-
-  );
+-- Versiones anteriores creaban un empleado ficticio para representar al equipo.
+-- Se retira de la operación sin borrar historia de reservas o auditoría.
+UPDATE dbo.Employees
+SET IsActive = 0,
+    UpdatedAt = GETUTCDATE()
+WHERE EmployeeId = @EmployeeId;
 
 
 
@@ -322,7 +277,7 @@ BEGIN
 
         MinimumLeadTimeMinutes = 0,
 
-        RequireEmployee = 1,
+        RequireEmployee = 0,
 
         EmployeeStrategy = N'least_versatile',
 
@@ -342,7 +297,7 @@ BEGIN
 
     VALUES
 
-        (NEWID(), @BusinessId, 60, 0, 0, 1, N'least_versatile', GETUTCDATE());
+        (NEWID(), @BusinessId, 60, 0, 0, 0, N'least_versatile', GETUTCDATE());
 
 END
 
@@ -412,34 +367,6 @@ WHERE BusinessId = @BusinessId
 
 
 
-MERGE dbo.EmployeeWorkingHours AS target
-
-USING @Hours AS source
-
-   ON target.BusinessId = @BusinessId
-
-  AND target.EmployeeId = @EmployeeId
-
-  AND target.DayOfWeek = source.DayOfWeek
-
-  AND target.OpenTime = source.OpenTime
-
-WHEN MATCHED THEN
-
-    UPDATE SET CloseTime = source.CloseTime,
-
-               IsActive = 1,
-
-               UpdatedAt = GETUTCDATE()
-
-WHEN NOT MATCHED THEN
-
-    INSERT (EmployeeWorkingHourId, BusinessId, EmployeeId, DayOfWeek, OpenTime, CloseTime, IsActive, CreatedAt)
-
-    VALUES (NEWID(), @BusinessId, @EmployeeId, source.DayOfWeek, source.OpenTime, source.CloseTime, 1, GETUTCDATE());
-
-
-
 UPDATE dbo.EmployeeWorkingHours
 
 SET IsActive = 0,
@@ -448,19 +375,7 @@ SET IsActive = 0,
 
 WHERE BusinessId = @BusinessId
 
-  AND EmployeeId = @EmployeeId
-
-  AND NOT EXISTS (
-
-      SELECT 1
-
-      FROM @Hours h
-
-      WHERE h.DayOfWeek = EmployeeWorkingHours.DayOfWeek
-
-        AND h.OpenTime = EmployeeWorkingHours.OpenTime
-
-  );
+  AND EmployeeId = @EmployeeId;
 
 
 
@@ -1570,6 +1485,6 @@ END
 
 
 
-PRINT N'SeedAuraly: negocio AURALY, empleado Equipo AURALY y agente Aly configurados.';
+PRINT N'SeedAuraly: negocio AURALY y agente Aly configurados; empleado ficticio retirado.';
 
 GO

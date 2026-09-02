@@ -1,5 +1,11 @@
 SET NOCOUNT ON;
 
+IF LOWER(N'$(DeploymentEnvironment)') = N'prod'
+BEGIN
+    PRINT N'RenameDigitalShopAgentCatalina: migración de demostración omitida en producción.';
+    RETURN;
+END;
+
 UPDATE dbo.Agents
 SET [Name] = N'Catalina',
     [Description] = N'Vendedora digital de celulares nuevos y usados de Digital Shop.',

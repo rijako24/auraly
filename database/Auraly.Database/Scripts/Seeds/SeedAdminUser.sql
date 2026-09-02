@@ -12,6 +12,12 @@ SET QUOTED_IDENTIFIER ON;
 
 SET NOCOUNT ON;
 
+IF LOWER(N'$(DeploymentEnvironment)') = N'prod'
+BEGIN
+    PRINT N'SeedAdminUser: seed de demostración omitido en producción.';
+    RETURN;
+END;
+
 
 
 DECLARE @TenantId UNIQUEIDENTIFIER;
