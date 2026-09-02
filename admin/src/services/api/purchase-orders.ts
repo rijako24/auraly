@@ -46,6 +46,8 @@ export const purchaseOrdersApi = {
   suggestions: (request: { businessId: string; warehouseId: string; supplierId: string; productIds: string[]; targetCoverageDays?: number }) =>
     apiClient.post<PurchaseOrderSuggestion[]>("/commerce/v1/purchase-orders/suggestions", request),
   saveDraft: (request: SavePurchaseOrderRequest) => apiClient.put<PurchaseOrderDetail>(`/commerce/v1/purchase-orders/${request.purchaseOrderId}/draft`, request),
+  deleteDraft: (id: string, concurrencyToken: string) => apiClient.delete<{ deleted: boolean }>(
+    `/commerce/v1/purchase-orders/${id}/draft?concurrencyToken=${encodeURIComponent(concurrencyToken)}`),
   confirm: (request: Omit<SavePurchaseOrderRequest,"warehouseId"|"supplierId"|"concurrencyToken"> & { warehouseId: string; supplierId: string; draftConcurrencyToken: string | null }) =>
     apiClient.postIdempotent<{ purchaseOrderId: string; documentNumber: string; status: string }>("/commerce/v1/purchase-orders/confirm", request, `purchase-order-${request.purchaseOrderId}`),
   close: (id: string, reason: string, concurrencyToken: string) => apiClient.post<{ closed: boolean }>(`/commerce/v1/purchase-orders/${id}/close`, { reason, concurrencyToken }),

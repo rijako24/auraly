@@ -49,6 +49,19 @@ public sealed class SqlPurchaseOrderStore(SqlServerConnectionFactory connections
         return(await GetAsync(user,request.PurchaseOrderId,ct))!;
     }
 
+    public async Task DeleteDraftAsync(PurchasingUserIdentity user,Guid id,string concurrencyToken,CancellationToken ct)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(ct);
+        await using var command=Procedure("purchasing.PurchaseOrderDraftDelete",connection);
+        command.Parameters.AddWithValue("@TenantId",user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
+        command.Parameters.AddWithValue("@PurchaseOrderId",id);
+        command.Parameters.Add("@RowVersion",SqlDbType.VarBinary,8).Value=DecodeToken(concurrencyToken)!;
+        try { await command.ExecuteNonQueryAsync(ct); }
+        catch(SqlException exception) when(exception.Number==51204)
+        { throw new PurchasingConflictException(exception.Message); }
+    }
+
     public async Task<PurchaseOrderConfirmation> ConfirmAsync(PurchasingUserIdentity user,string idempotencyKey,ConfirmPurchaseOrderRequest request,PurchaseOrderCalculation calculation,CancellationToken ct)
     {
         var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new{request,calculation}));

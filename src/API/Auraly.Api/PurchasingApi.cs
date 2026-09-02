@@ -38,6 +38,16 @@ public static class PurchasingApi
                     : ExecuteAsync(() => service.SaveDraftAsync(context.User.ToPurchasingIdentity(),
                         request, cancellationToken)))
             .RequireAuthorization("purchasing.user");
+        endpoints.MapDelete("/api/commerce/v1/purchase-orders/{purchaseOrderId:guid}/draft",
+            (HttpContext context, Guid purchaseOrderId, string concurrencyToken,
+                PurchaseOrderService service, CancellationToken cancellationToken) =>
+                ExecuteAsync(async () =>
+                {
+                    await service.DeleteDraftAsync(context.User.ToPurchasingIdentity(), purchaseOrderId,
+                        concurrencyToken, cancellationToken);
+                    return new { Deleted = true };
+                }))
+            .RequireAuthorization("purchasing.user");
         endpoints.MapPost("/api/commerce/v1/purchase-orders/confirm",
             async (HttpContext context, ConfirmPurchaseOrderRequest request,
                 PurchaseOrderService service, CancellationToken cancellationToken) =>
@@ -60,6 +70,13 @@ public static class PurchasingApi
                         request, cancellationToken);
                     return new { Closed = true };
                 }))
+            .RequireAuthorization("purchasing.user");
+        endpoints.MapPost(
+                "/api/commerce/v1/goods-receipts/withholding-preview",
+                (HttpContext context, PreviewGoodsReceiptWithholdingRequest request,
+                    GoodsReceiptService service, CancellationToken cancellationToken) =>
+                    ExecuteAsync(() => service.PreviewWithholdingAsync(
+                        context.User.ToPurchasingIdentity(), request, cancellationToken)))
             .RequireAuthorization("purchasing.user");
         endpoints.MapPost(
                 "/api/commerce/v1/goods-receipts/confirm",

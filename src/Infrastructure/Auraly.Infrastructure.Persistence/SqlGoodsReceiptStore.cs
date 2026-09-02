@@ -190,11 +190,6 @@ public sealed class SqlGoodsReceiptStore(
                   OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                   OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
               THROW 51104,'The selected evidence type is not allowed by the supplier configuration.',1;
-            IF @CreatesPayable=1 AND NOT EXISTS (
-              SELECT 1 FROM dbo.Suppliers
-              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId
-                AND DATEDIFF(DAY,CAST(@IssueDate AS date),CAST(@DueDate AS date))=DefaultPaymentDueDays)
-              THROW 51105,'DueDate must match the supplier payment term calculated from SupplierInvoiceDate.',1;
             IF EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson)
@@ -222,7 +217,7 @@ public sealed class SqlGoodsReceiptStore(
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (SqlException exception) when (exception.Number is >= 51100 and <= 51105)
+        catch (SqlException exception) when (exception.Number is >= 51100 and <= 51104)
         {
             throw new PurchasingValidationException(exception.Message);
         }

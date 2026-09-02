@@ -15,6 +15,16 @@ async function selectFirst(page: Page, dialog: Locator, label: RegExp | string) 
   await option.click();
 }
 
+async function chooseAnotherDate(page: Page, scope: Locator, label: string) {
+  const trigger = field(scope, label).getByRole("button").first();
+  const before = await trigger.textContent();
+  await trigger.click();
+  const day = page.locator('[data-radix-popper-content-wrapper]:visible button[aria-label*=" de "]:not(:disabled)').first();
+  await expect(day).toBeVisible();
+  await day.click();
+  await expect(trigger).not.toHaveText(before ?? "");
+}
+
 async function createReceiptProduct(page: Page) {
   const suffix = String(Date.now()).slice(-9);
   const name = `Producto recepción ${suffix}`;
@@ -25,10 +35,11 @@ async function createReceiptProduct(page: Page) {
   await dialog.getByPlaceholder("Referencia del fabricante").fill(`REC-${suffix}`);
   await dialog.getByPlaceholder("Escanea o escribe un código").fill(`779${suffix}`);
   await dialog.getByPlaceholder("Escanea o escribe un código").press("Enter");
+  await selectFirst(page, dialog, "Proveedor principal *");
   await selectFirst(page, dialog, "IVA de venta *");
   await selectFirst(page, dialog, "IVA de compra *");
-  await field(dialog, "Costo base").locator("input").fill("10000");
-  await field(dialog, "Margen sobre el precio antes de IVA").locator("input").fill("20");
+  await field(dialog, /^Costo base \*/).locator("input").fill("10000");
+  await field(dialog, /^Margen sobre el precio antes de IVA \*/).locator("input").fill("20");
   await dialog.getByRole("button", { name: "Crear producto" }).click();
   await expect(dialog).toBeHidden({ timeout: 20_000 });
   return name;
@@ -44,16 +55,18 @@ test("recibe compra por UI, calcula vencimiento, conserva el foco y procesa inve
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await selectFirst(page, dialog, "Proveedor");
   await selectFirst(page, dialog, "Bodega");
-  const evidence = field(dialog, /Tipo de soporte/).getByRole("combobox");
+  const evidence = dialog.getByRole("combobox", { name: "Tipo de soporte" });
   await evidence.click();
   await page.getByRole("option", { name: "Comprobante interno" }).click();
   await expect(field(dialog, "Fecha de emisión").locator("button")).toBeEnabled();
-  await expect(field(dialog, "Vencimiento calculado").locator("input")).toHaveAttribute("readonly", "");
+  await chooseAnotherDate(page, dialog, "Fecha de emisión");
+  await expect(field(dialog, "Fecha de vencimiento").locator("button")).toBeEnabled();
+  await chooseAnotherDate(page, dialog, "Fecha de vencimiento");
 
   const search = dialog.getByPlaceholder(/Escanea o busca por c.digo/);
   await dialog.getByRole("button", { name: /Buscar en todo el cat.logo/ }).click();
   await search.fill(productName);
-  await expect(dialog.getByRole("button").filter({ hasText: productName }).first()).toBeVisible({ timeout: 20_000 });
+  await expect(dialog.getByRole("option", { name: new RegExp(productName) })).toBeVisible({ timeout: 20_000 });
   await search.press("Enter");
 
   const association = page.getByRole("dialog", { name: /Asociar producto al proveedor/ });
@@ -80,8 +93,6 @@ test("recibe compra por UI, calcula vencimiento, conserva el foco y procesa inve
   const documentNumber = ((await toast.textContent()) ?? "").match(/[A-Z]{3}\d{2}-\d{8}/)?.[0];
   expect(documentNumber).toBeTruthy();
   await expect(dialog).toBeHidden({ timeout: 20_000 });
-  await page.waitForTimeout(1_500);
-  await page.reload();
   const row = page.getByRole("row").filter({ hasText: documentNumber! });
-  await expect(row).toContainText("Procesada", { timeout: 30_000 });
+  await expect(row).toContainText("Procesada", { timeout: 45_000 });
 });

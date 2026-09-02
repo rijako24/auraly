@@ -2,7 +2,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 const businessId = "22222222-2222-2222-2222-222222222222";
-const permissions = ["accounting.read", "accounting.configure", "accounting.activate", "parties.read", "commerce.taxation.withholdings.view", "commerce.taxation.withholdings.manage"];
+const permissions = ["accounting.read", "accounting.configure", "accounting.activate", "parties.read", "catalog.update", "commerce.taxation.withholdings.view", "commerce.taxation.withholdings.manage"];
 
 async function authenticate(page: Page) {
   await page.context().addCookies([{ name: "auth_token", value: "e2e", url: process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000", httpOnly: true, sameSite: "Lax" }]);
@@ -108,8 +108,12 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
   await expect(bankForm.getByText("Cuenta auxiliar del PUC", { exact: true }).locator("..").getByRole("combobox")).toContainText("Seleccionar auxiliar de bancos");
 
   await page.getByRole("button", { name: "Retenciones" }).click();
-  await expect(page.getByRole("heading", { name: "Retenciones" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reglas de retención" })).toBeVisible();
   await expect(page.getByText("RF-COMPRA · Retefuente compras")).toBeVisible();
   await page.getByRole("button", { name: "Nueva regla" }).click();
   await expect(page.getByRole("heading", { name: "Nueva regla de retención" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("heading", { name: "Responsabilidades tributarias" })).toBeVisible();
+  await page.getByRole("button", { name: "Nueva responsabilidad" }).click();
+  await expect(page.getByRole("heading", { name: "Nueva responsabilidad tributaria" })).toBeVisible();
 });

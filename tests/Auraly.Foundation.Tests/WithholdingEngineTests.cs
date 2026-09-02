@@ -69,6 +69,27 @@ public sealed class WithholdingEngineTests
     }
 
     [Fact]
+    public void Multiple_responsibilities_classify_the_party_but_do_not_define_rates()
+    {
+        var matching = Rule(
+            WithholdingKind.IncomeTax, WithholdingBaseKind.TaxExclusiveAmount, 2.5m,
+            responsibilities: ["O-13", "O-23"]);
+        var missingOne = Context(100_000m, 19_000m, "11001") with
+        {
+            CounterpartyResponsibilities = new HashSet<string>(["O-13"], StringComparer.OrdinalIgnoreCase)
+        };
+        var hasAll = missingOne with
+        {
+            CounterpartyResponsibilities = new HashSet<string>(["O-13", "O-23"], StringComparer.OrdinalIgnoreCase)
+        };
+
+        Assert.Empty(new WithholdingEngine().Calculate(missingOne, [matching]).Lines);
+        var applied = Assert.Single(new WithholdingEngine().Calculate(hasAll, [matching]).Lines);
+        Assert.Equal(2.5m, applied.Rate);
+        Assert.Equal(2_500m, applied.Amount);
+    }
+
+    [Fact]
     public void Rejects_reteiva_configured_on_invoice_subtotal()
     {
         Assert.Throws<WithholdingRuleException>(() => Rule(

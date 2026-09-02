@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text.Json;
 using Auraly.Application.Purchasing;
+using Auraly.Commerce.Taxation.Contracts;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
@@ -406,6 +407,20 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             FROM dbo.GoodsReceiptLines l
             WHERE l.GoodsReceiptId=@DocumentId
             ORDER BY l.LineNumber;
+
+            SELECT s.GrossAmount,s.WithholdingTotal,s.NetAmount
+            FROM dbo.DocumentWithholdingSnapshots s
+            WHERE s.DocumentId=@DocumentId AND s.DocumentType=N'GoodsReceipt'
+              AND s.BusinessId=@BusinessId;
+
+            SELECT l.RuleId,l.RuleVersion,l.RuleCode,l.Name,l.Kind,l.BaseKind,
+                   l.TaxableBase,l.Rate,l.Amount,l.JurisdictionCode
+            FROM dbo.DocumentWithholdingLines l
+            INNER JOIN dbo.DocumentWithholdingSnapshots s
+              ON s.DocumentId=l.DocumentId AND s.DocumentType=l.DocumentType
+            WHERE l.DocumentId=@DocumentId AND l.DocumentType=N'GoodsReceipt'
+              AND s.BusinessId=@BusinessId
+            ORDER BY l.LineNumber;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
@@ -447,11 +462,31 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.IsDBNull(15) ? null : reader.GetGuid(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16), reader.GetBoolean(17)));
 
+        WithholdingCalculationSnapshot? withholding = null;
+        if (await reader.NextResultAsync(cancellationToken) &&
+            await reader.ReadAsync(cancellationToken))
+        {
+            var withholdingLines = new List<WithholdingLineSnapshot>();
+            var grossAmount = reader.GetDecimal(0);
+            var withholdingTotal = reader.GetDecimal(1);
+            var netPayable = reader.GetDecimal(2);
+            if (await reader.NextResultAsync(cancellationToken))
+                while (await reader.ReadAsync(cancellationToken))
+                    withholdingLines.Add(new WithholdingLineSnapshot(
+                        reader.GetGuid(0), reader.GetInt32(1), reader.GetString(2),
+                        reader.GetString(3), reader.GetString(4), reader.GetString(5),
+                        reader.GetDecimal(6), reader.GetDecimal(7), reader.GetDecimal(8),
+                        reader.IsDBNull(9) ? null : reader.GetString(9)));
+            withholding = new WithholdingCalculationSnapshot(
+                grossAmount, withholdingTotal, netPayable, withholdingLines);
+        }
+
         return new GoodsReceiptDetail(
             documentId, number, status, warehouseId, warehouseName, supplierId,
             supplierName, supplierInvoiceNumber, supplierInvoiceDate, receivedAt,
             createsPayable, dueDate, currencyCode, notes, netAmount, taxAmount,
-            grandTotal, acceptedAt, processedAt, lines, purchaseEvidenceType, purchaseOrderId);
+            grandTotal, acceptedAt, processedAt, lines, purchaseEvidenceType,
+            purchaseOrderId, withholding);
     }
     public async Task<GoodsReceiptDraft?> GetDraftAsync(
         PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken)
@@ -540,11 +575,6 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                   OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                   OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
               THROW 51126,'The selected evidence type is not allowed by the supplier configuration.',1;
-            IF @SupplierId IS NOT NULL AND @CreatesPayable=1 AND NOT EXISTS (
-              SELECT 1 FROM dbo.Suppliers
-              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId
-                AND DATEDIFF(DAY,CAST(@IssueDate AS date),CAST(@DueDate AS date))=DefaultPaymentDueDays)
-              THROW 51127,'DueDate must match the supplier payment term calculated from SupplierInvoiceDate.',1;
             IF @ProductsJson<>N'[]' AND EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson) WITH (ProductId UNIQUEIDENTIFIER '$') x
@@ -566,7 +596,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@DueDate", (object?)request.DueDate ?? DBNull.Value);
         command.Parameters.AddWithValue("@ProductsJson", JsonSerializer.Serialize(request.Lines.Select(x => x.ProductId).Distinct()));
         try { await command.ExecuteNonQueryAsync(cancellationToken); }
-        catch (SqlException exception) when (exception.Number is >= 51121 and <= 51127)
+        catch (SqlException exception) when (exception.Number is >= 51121 and <= 51126)
         { throw new PurchasingValidationException(exception.Message); }
     }
 

@@ -144,6 +144,15 @@ public sealed record GoodsReceiptAcceptance(
     long ProcessingSequence,
     bool IdempotentReplay);
 
+public sealed record PreviewGoodsReceiptWithholdingRequest(
+    Guid BusinessId,
+    Guid SupplierId,
+    DateTimeOffset SupplierInvoiceDate,
+    IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
+    string? WithholdingConceptCode = null,
+    string? WithholdingJurisdictionCode = null,
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice);
+
 public sealed record SaveGoodsReceiptDraftRequest(
     Guid DraftId,
     Guid BusinessId,
@@ -180,7 +189,8 @@ public sealed record GoodsReceiptDetail(
     decimal GrandTotal, DateTimeOffset AcceptedAt, DateTimeOffset? ProcessedAt,
     IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
     string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
-    Guid? PurchaseOrderId = null);
+    Guid? PurchaseOrderId = null,
+    WithholdingCalculationSnapshot? Withholding = null);
 
 public sealed record GoodsReceiptListItem(
     Guid DocumentId, string? DocumentNumber, string Status,

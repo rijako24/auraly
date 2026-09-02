@@ -41,7 +41,7 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions }));
   await page.route("**/api/commerce/v1/purchase-orders?**", route => json(route, { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 }));
   await page.route("**/api/commerce/v1/goods-receipts/options", route => json(route, {
-    warehouses: [{ warehouseId, code: "PPL", name: "Principal" }],
+    warehouses: [{ warehouseId, code: "PPL", name: "Principal" }, { warehouseId: "77777777-7777-7777-7777-777777777777", code: "AUX", name: "Auxiliar" }],
     suppliers: [], purchaseEvidenceTypes: [], withholdingConcepts: [], withholdingJurisdictions: [],
   }));
   await page.route("**/api/commerce/v1/parties?**", route => {
@@ -70,14 +70,30 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   const dialog = page.getByRole("dialog", { name: "Nueva orden de compra" });
 
   await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(0);
+  const orderDate = dialog.getByText("Fecha de orden", { exact: true }).locator("..").getByRole("button").first();
+  const initialOrderDate = await orderDate.textContent();
+  await orderDate.click();
+  await page.locator('[data-radix-popper-content-wrapper]:visible button[aria-label*=" de "]').first().click();
+  await expect(orderDate).not.toHaveText(initialOrderDate ?? "");
+  const expectedDate = dialog.getByText("Entrega esperada", { exact: true }).locator("..").getByRole("button").first();
+  const initialExpectedDate = await expectedDate.textContent();
+  await expectedDate.click();
+  await page.locator('[data-radix-popper-content-wrapper]:visible button[aria-label*=" de "]').first().click();
+  await expect(expectedDate).not.toHaveText(initialExpectedDate ?? "");
   expect(partyRequests).toHaveLength(0);
   await dialog.getByRole("combobox", { name: "Seleccionar supplier" }).click();
   await page.getByRole("option", { name: /Proveedor Andino/ }).click();
   expect(partyRequests).toHaveLength(1);
   expect(partyRequests[0].searchParams.get("role")).toBe("Supplier");
   expect(partyRequests[0].searchParams.get("pageSize")).toBe("10");
-  await dialog.getByText("Bodega", { exact: true }).locator("..").getByRole("combobox").click();
-  await page.getByRole("option", { name: /Principal/ }).click();
+  const warehouse = dialog.getByText("Bodega", { exact: true }).locator("..").getByRole("combobox");
+  await warehouse.click();
+  const auxiliary = page.getByRole("option", { name: /Auxiliar/ });
+  const backgroundBeforeHover = await auxiliary.evaluate(element => getComputedStyle(element).backgroundColor);
+  await auxiliary.hover();
+  await expect.poll(() => auxiliary.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(backgroundBeforeHover);
+  await auxiliary.click();
+  await expect(warehouse).toContainText("Auxiliar");
   await dialog.getByTestId("supplier-product-picker-search").click();
   await expect(dialog.getByText("Escribe al menos una letra, código o referencia para buscar.")).toBeVisible();
   await expect.poll(() => productSearches).toEqual([]);
@@ -108,4 +124,9 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   const restored = page.getByRole("dialog", { name: "Nueva orden de compra" });
   await expect(restored.locator("tbody tr").first()).toContainText("Café tostado");
   await expect(restored.locator("tbody tr").first().locator('input[type="number"]')).toHaveValue("4");
+  await restored.getByRole("button", { name: "Descartar captura" }).click();
+  await expect(restored).toBeHidden();
+  await expect.poll(() => page.evaluate(({ key }) => localStorage.getItem(key), {
+    key: `auraly.purchase-order.entry.${businessId}`,
+  })).toBeNull();
 });

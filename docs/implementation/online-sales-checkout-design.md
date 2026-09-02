@@ -78,6 +78,20 @@ conectar cuentas por cobrar— se rechaza antes de reservar numeración.
 
 El proyecto `Auraly.Database.sqlproj` continúa siendo el único dueño del esquema.
 
+## Retenciones y valor por cobrar
+
+La selección o modificación del cliente solicita una vista previa de la
+liquidación al caso de uso canónico de venta. Tanto el servidor online como POS
+Edge delegan la selección de reglas y el cálculo en `WithholdingEngine`; la UI
+no contiene fórmulas fiscales ni decide reglas por su cuenta.
+
+Al completar la venta, el backend vuelve a validar los datos autoritativos y
+congela la liquidación como snapshot del documento. Inventario, pagos,
+contabilidad e impresión consumen ese mismo resultado y no recalculan la
+retención. El total bruto, las retenciones y el neto por cobrar se presentan en
+la pantalla y en todos los formatos soportados: tirilla, media carta, medio
+oficio y carta.
+
 ## Evidencia ejecutada
 
 - DACPAC: 0 errores y 0 advertencias.

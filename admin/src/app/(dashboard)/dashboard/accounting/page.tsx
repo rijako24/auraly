@@ -86,7 +86,7 @@ export default function AccountingConfigurationPage(){
     {section==="opening"&&(
       <OpeningBalancesSection businessId={businessId} effectiveOn={effectiveFrom} setEffectiveOn={setEffectiveFrom} accounts={postingAccounts} centers={(centers.data??[]).filter(item=>item.isActive)} canEditOpeningBalances={canEditOpeningBalances} refresh={refresh}/>
     )}
-    {section==="withholdings"&&<WithholdingRulesWorkspace/>}
+    {section==="withholdings"&&<WithholdingRulesWorkspace embedded/>}
     {section==="documents"&&(
       <ManualDocumentsSection businessId={businessId} accounts={postingAccounts} centers={centers.data??[]} payables={payables.data?.items??[]} receivables={receivables.data?.items??[]} refresh={refresh}/>
     )}

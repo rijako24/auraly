@@ -288,6 +288,34 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("Total a pagar", html);
     }
 
+    [Theory]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal)]
+    [InlineData(HalfLetterDocumentRenderer.Letter)]
+    public void Every_sheet_format_discriminates_withholdings_and_net_amount(string format)
+    {
+        var receipt = OnlineReceipt() with
+        {
+            Payments = [new OnlineSalesPayment("Cash", 21_300m, null)],
+            WithholdingTotal = 2_500m,
+            NetPayableAmount = 21_300m,
+            Withholdings =
+            [
+                new WithholdingLineSnapshot(
+                    Guid.NewGuid(), 1, "RETEFUENTE", "Retefuente", "IncomeTax",
+                    "TaxExclusiveAmount", 20_000m, 12.5m, 2_500m, null)
+            ]
+        };
+
+        var html = new HalfLetterDocumentRenderer().Render([receipt], format);
+
+        Assert.Contains("Total bruto", html);
+        Assert.Contains("Ret. Retefuente", html);
+        Assert.Contains("Total retenciones", html);
+        Assert.Contains("Total a pagar", html);
+        Assert.Contains("21.300", html);
+    }
+
     [Fact]
     public void Half_legal_uses_legal_paper_and_rotates_every_complete_copy()
     {

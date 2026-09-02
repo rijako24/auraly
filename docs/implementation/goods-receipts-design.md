@@ -31,7 +31,13 @@ Venta/devolución procesada
 
 Purchasing es el propietario de la orden y su cumplimiento. Inventario sólo cambia dentro del handler canónico de `GoodsReceipt`. Reporting es el único propietario del cálculo persistido de rotación; compras y catálogo sólo leen su snapshot.
 
-La fecha física de recepción la registra el sistema al guardar o confirmar y no se edita en la interfaz. El usuario sí informa la fecha de emisión del documento de compra. Esa fecha gobierna la causación contable, las retenciones y el inicio de la cuenta por pagar. `Suppliers.DefaultPaymentDueDays` es la condición comercial canónica del proveedor; el vencimiento se calcula como fecha de emisión más ese plazo, se muestra sólo para lectura y vuelve a validarse transaccionalmente en el servidor.
+La fecha física de recepción la registra el sistema al guardar o confirmar y no se edita en la interfaz. El usuario sí informa la fecha de emisión del documento de compra. Esa fecha gobierna la causación contable, las retenciones y el inicio de la cuenta por pagar. `Suppliers.DefaultPaymentDueDays` es la condición comercial canónica del proveedor y propone el vencimiento como fecha de emisión más ese plazo. El usuario puede ajustarlo para reflejar la condición pactada en el documento concreto; el servidor exige que no sea anterior a la emisión.
+
+La retención se calcula exclusivamente en `WithholdingEngine` por medio de
+`WithholdingService` al confirmar. El documento transporta ese resultado y el
+procesador lo persiste como snapshot inmutable. El detalle de la recepción lee
+ese snapshot para mostrar reglas, tarifas, deducciones y neto por pagar; no
+recalcula valores históricos en Purchasing ni en la interfaz.
 
 Las tablas de órdenes pertenecen al esquema `purchasing`. Las consultas y mutaciones nuevas se versionan en el proyecto de base de datos mediante procedimientos de los esquemas `purchasing` y `reporting`; los stores y handlers de C# sólo hacen invocaciones parametrizadas y no contienen SQL embebido.
 

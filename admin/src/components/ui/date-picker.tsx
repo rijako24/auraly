@@ -38,7 +38,7 @@ export function DatePicker({ value, onChange, placeholder = "Selecciona una fech
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover modal open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button id={id} type="button" variant="outline" disabled={disabled} className={cn("w-full justify-start gap-2 px-3 font-normal", !value && "text-muted-foreground", className)}>
           <CalendarDays className="h-4 w-4 text-primary" />
@@ -63,7 +63,7 @@ export function DatePicker({ value, onChange, placeholder = "Selecciona una fech
             const isToday = sameDay(date, new Date());
             const unavailable = Boolean((min && toInputValue(date) < min) || (max && toInputValue(date) > max));
             return (
-              <button key={`${date.toISOString()}-${index}`} type="button" disabled={unavailable} onClick={() => choose(date)} className={cn(
+              <button key={`${date.toISOString()}-${index}`} type="button" disabled={unavailable} onClick={() => choose(date)} aria-label={formatLongDate(date)} className={cn(
                 "mx-auto flex h-9 w-9 items-center justify-center rounded-lg text-sm transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 !isCurrentMonth && "text-muted-foreground/45",
                 isToday && !selectedDay && "font-semibold text-primary ring-1 ring-primary/30",

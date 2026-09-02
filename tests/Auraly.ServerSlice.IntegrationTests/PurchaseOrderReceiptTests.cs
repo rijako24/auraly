@@ -73,6 +73,29 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Saved_purchase_order_draft_can_be_discarded_with_its_version()
+    {
+        using var client = CreateClient();
+        var orderedAt = new DateTimeOffset(2026, 9, 2, 10, 0, 0, TimeSpan.FromHours(-5));
+        var purchaseOrderId = Guid.NewGuid();
+        var request = new SavePurchaseOrderDraftRequest(
+            purchaseOrderId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+            orderedAt, orderedAt.AddDays(12), "COP", "Borrador descartable", [], null);
+        using var save = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/purchase-orders/{purchaseOrderId:D}/draft", request);
+        save.EnsureSuccessStatusCode();
+        var draft = await save.Content.ReadFromJsonAsync<PurchaseOrderDetail>();
+        Assert.NotNull(draft);
+
+        using var delete = await client.DeleteAsync(
+            $"/api/commerce/v1/purchase-orders/{purchaseOrderId:D}/draft?concurrencyToken={Uri.EscapeDataString(draft.ConcurrencyToken!)}");
+        delete.EnsureSuccessStatusCode();
+        using var get = await client.GetAsync(
+            $"/api/commerce/v1/purchase-orders/{purchaseOrderId:D}");
+        Assert.Equal(HttpStatusCode.NotFound, get.StatusCode);
+    }
+
+    [Fact]
     public async Task Order_can_be_recovered_and_received_in_changed_partial_quantities()
     {
         using var client = CreateClient();

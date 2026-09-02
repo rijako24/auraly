@@ -8,7 +8,18 @@ export interface ReferenceOption {
   sortOrder: number;
 }
 
+export interface CreateReferenceOptionRequest {
+  code: string;
+  label: string;
+  description: string | null;
+}
+
 export const referenceOptionsApi = {
   list: (catalogCode: string) =>
     apiClient.get<ReferenceOption[]>(`/commerce/v1/reference-options/${encodeURIComponent(catalogCode)}`),
+  create: (catalogCode: string, request: CreateReferenceOptionRequest) =>
+    apiClient.post<ReferenceOption>(
+      `/commerce/v1/reference-options/${encodeURIComponent(catalogCode)}`,
+      request,
+    ),
 };

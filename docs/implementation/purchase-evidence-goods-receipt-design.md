@@ -25,7 +25,7 @@ No se crean motores ni colas nuevas. La confirmación crea el `DocumentProcessin
 
 La interfaz filtra opciones para orientar al usuario, y persistencia vuelve a validar la política dentro de la transacción para evitar que clientes desactualizados la evadan.
 
-La misma entidad de proveedor conserva `DefaultPaymentDueDays` (30 por defecto, entre 0 y 3650). La recepción calcula el vencimiento desde la fecha de emisión y el servidor rechaza cualquier valor que no coincida con ese plazo.
+La misma entidad de proveedor conserva `DefaultPaymentDueDays` (30 por defecto, entre 0 y 3650). La recepción propone el vencimiento desde la fecha de emisión; el usuario puede ajustarlo para el documento particular y el servidor sólo rechaza fechas anteriores a la emisión.
 
 ## Contabilidad
 

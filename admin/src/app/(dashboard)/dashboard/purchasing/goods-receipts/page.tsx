@@ -288,7 +288,10 @@ function ReceiptDetailDialog({
         <div className="ml-auto grid w-full max-w-sm gap-2 rounded-2xl bg-slate-950 p-5 text-white">
           <Amount label="Subtotal" value={detail.netAmount} />
           <Amount label="IVA" value={detail.taxAmount} />
-          <Amount label="Total" value={detail.grandTotal} strong />
+          <Amount label="Total bruto" value={detail.grandTotal} />
+          {(detail.withholding?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} (${line.rate}%)`} value={-line.amount} />)}
+          {detail.withholding && detail.withholding.withholdingTotal > 0 && <Amount label="Total retenciones" value={-detail.withholding.withholdingTotal} />}
+          <Amount label={detail.withholding?.withholdingTotal ? "Neto por pagar" : "Total"} value={detail.withholding?.netAmount ?? detail.grandTotal} strong />
         </div>
         {detail.notes && <div className="rounded-2xl border bg-muted/30 p-4">
           <p className="text-xs font-medium uppercase text-muted-foreground">Notas</p>
@@ -366,6 +369,29 @@ function ReceiptEditor({
 
   useEffect(() => setActiveProductIndex(0), [productSearch, includeUnassociated, draft?.supplierId]);
 
+  const withholdingPreview = useQuery({
+    queryKey: [
+      "goods-receipt-withholding-preview", businessId, draft?.supplierId,
+      draft?.supplierInvoiceDate, draft?.purchaseEvidenceType,
+      draft?.withholdingConceptCode, draft?.lines,
+    ],
+    queryFn: () => {
+      if (!businessId || !draft) throw new Error("La recepción no está lista para calcular retenciones.");
+      return goodsReceiptsApi.previewWithholding({
+        businessId, supplierId: draft.supplierId,
+        supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate)!,
+        lines: draft.lines,
+        withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
+        withholdingJurisdictionCode: null,
+        purchaseEvidenceType: draft.purchaseEvidenceType as PurchaseEvidenceType,
+      });
+    },
+    enabled: Boolean(
+      open && businessId && draft?.supplierId && draft.supplierInvoiceDate &&
+      draft.purchaseEvidenceType && draft.lines.length > 0,
+    ),
+    staleTime: 10_000,
+  });
   if (!draft || !businessId) return null;
   const totals = calculateGoodsReceiptTotals(draft.lines);
   const allowedEvidenceTypes = allowedPurchaseEvidenceTypes(selectedSupplier?.supplierPurchaseEvidencePolicy ?? null);
@@ -576,7 +602,7 @@ function ReceiptEditor({
         currencyCode: "COP", notes: draft.notes.trim() || null, lines: draft.lines,
         draftConcurrencyToken: confirmationToken,
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
-        withholdingJurisdictionCode: draft.withholdingJurisdictionCode.trim() || null,
+        withholdingJurisdictionCode: null,
         purchaseEvidenceType: draft.purchaseEvidenceType,
         purchaseOrderId: draft.purchaseOrderId || null,
       });
@@ -675,7 +701,9 @@ function ReceiptEditor({
                 setSelectedSupplier(supplier);
                 if(supplier?.supplierId===draft.supplierId){
                   const issueDate=draft.supplierInvoiceDate||todayInput();
-                  const dueDate=draft.createsPayable?plusDaysFrom(issueDate,supplier.supplierDefaultPaymentDueDays??30):"";
+                  const dueDate=draft.createsPayable
+                    ? draft.dueDate||plusDaysFrom(issueDate,supplier.supplierDefaultPaymentDueDays??30)
+                    : "";
                   if(issueDate!==draft.supplierInvoiceDate||dueDate!==draft.dueDate)change({supplierInvoiceDate:issueDate,dueDate});
                 }
               }}
@@ -721,7 +749,7 @@ function ReceiptEditor({
                   : draft.lines,
                 });
               }}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar soporte" /></SelectTrigger>
+              <SelectTrigger aria-label="Tipo de soporte"><SelectValue placeholder="Seleccionar soporte" /></SelectTrigger>
               <SelectContent>{visibleEvidenceTypes.map((item) =>
                 <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
             </Select>
@@ -757,9 +785,10 @@ function ReceiptEditor({
               </SelectContent>
             </Select>
           </Field>
-          <Field label="Vencimiento calculado">
-            <Input readOnly disabled={!draft.createsPayable} value={draft.dueDate} />
-            <p className="text-xs text-muted-foreground">Fecha de emisión + {selectedSupplier?.supplierDefaultPaymentDueDays??30} días configurados en el proveedor.</p>
+          <Field label="Fecha de vencimiento">
+            <DatePicker disabled={!draft.createsPayable} min={draft.supplierInvoiceDate||undefined}
+              value={draft.dueDate} onChange={(dueDate)=>change({dueDate})} />
+            <p className="text-xs text-muted-foreground">Se propone con los {selectedSupplier?.supplierDefaultPaymentDueDays??30} días configurados en el proveedor, pero puede ajustarse para este documento.</p>
           </Field>
         </section>
         </>}
@@ -913,24 +942,26 @@ function ReceiptEditor({
           <dl className="space-y-2 rounded-2xl bg-slate-950 p-5 text-white">
             <Amount label="Subtotal" value={totals.net} />
             <Amount label="Impuestos" value={totals.tax} />
-            <Amount label="Total recibido" value={totals.total} strong />
+            <Amount label="Total bruto" value={totals.total} />
+            {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} (${line.rate}%)`} value={-line.amount} />)}
+            {withholdingPreview.data && withholdingPreview.data.withholdingTotal > 0 && <Amount label="Retenciones" value={-withholdingPreview.data.withholdingTotal} />}
+            <Amount label="Neto por pagar" value={withholdingPreview.data?.netAmount ?? totals.total} strong />
+            {withholdingPreview.isFetching && <p className="text-right text-xs text-slate-300">Calculando retenciones…</p>}
+            {withholdingPreview.isError && <p className="text-right text-xs text-amber-300">No fue posible obtener la vista previa. La confirmación volverá a validar con el motor.</p>}
           </dl>
         </section>
 
         <section className="grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
-          <Field label="Concepto de retención">
+          <Field label="Concepto fiscal de la compra">
             <Select value={draft.withholdingConceptCode || "__none"} onValueChange={(value) => change({ withholdingConceptCode: value === "__none" ? "" : value })}>
               <SelectTrigger><SelectValue placeholder="Sin concepto" /></SelectTrigger>
               <SelectContent><SelectItem value="__none">Sin concepto</SelectItem>{(options.data?.withholdingConcepts ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
             </Select>
           </Field>
-          <Field label="Municipio para reteICA">
-            <Select value={draft.withholdingJurisdictionCode || "__none"} onValueChange={(value) => change({ withholdingJurisdictionCode: value === "__none" ? "" : value })}>
-              <SelectTrigger><SelectValue placeholder="Sin municipio" /></SelectTrigger>
-              <SelectContent><SelectItem value="__none">Sin municipio</SelectItem>{(options.data?.withholdingJurisdictions ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
-            </Select>
+          <Field label="Jurisdicción para reteICA">
+            <Input readOnly value={withholdingPreview.data?.lines.find(line => line.kind === "IndustryCommerce")?.jurisdictionCode ?? "Automática desde el perfil del proveedor"}/>
           </Field>
-              <p className="text-xs text-muted-foreground md:col-span-2">Al confirmar, el motor tributario aplica las reglas vigentes del proveedor y congela el cálculo en el documento.</p>
+          <p className="text-xs text-muted-foreground md:col-span-2">El concepto identifica la naturaleza de la compra. La jurisdicción y las responsabilidades vienen del perfil del proveedor; el motor tributario calcula la vista previa y vuelve a validarla al confirmar.</p>
         </section>
       </div>
 

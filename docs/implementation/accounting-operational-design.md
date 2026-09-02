@@ -174,6 +174,22 @@ show the rules that currently match direction, responsibilities and
 jurisdiction; the withholding engine remains authoritative for vigency,
 concept and minimum-base evaluation when a document is processed.
 
+The accounting Retentions tab also presents administration of that canonical
+responsibility catalog to users with `catalog.update`. Catalog values are not
+created inside a withholding rule: the rule only selects existing values and
+requires all selected responsibilities on the applicable supplier (purchase)
+or customer (sale). An empty selection means that responsibility does not
+restrict the rule. Creating a catalog value updates the same `reference.Options`
+source consumed by party profiles and withholding validation; it does not create
+a tenant-specific or parallel responsibility store.
+
+Responsibilities are RUT classifications, never rates. A rule models one exact
+fiscal scenario, so its selected responsibilities are conjunctive. Alternative
+legal scenarios use separate rules with their own rate, base, concept and
+effective dates. This avoids treating unrelated RUT qualities as interchangeable;
+in particular, SIMPLE exceptions differ between income/ICA and VAT and cannot be
+implemented as a generic OR across responsibility codes.
+
 The processor uses the same open-period validation, journal validator, voucher
 cursor, immutable source hash and `AccountingEntries`/`AccountingEntryLines`
 writer as every other accounting document. The batch becomes `Posted` in that

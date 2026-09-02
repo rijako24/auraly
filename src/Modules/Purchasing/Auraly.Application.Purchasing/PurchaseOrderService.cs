@@ -11,6 +11,8 @@ public interface IPurchaseOrderStore
     Task<PurchaseOrderReceiptSource?> GetReceiptSourceAsync(PurchasingUserIdentity user, Guid id, CancellationToken cancellationToken);
     Task<PurchaseOrderDetail> SaveDraftAsync(PurchasingUserIdentity user, SavePurchaseOrderDraftRequest request,
         PurchaseOrderCalculation? calculation, CancellationToken cancellationToken);
+    Task DeleteDraftAsync(PurchasingUserIdentity user, Guid id, string concurrencyToken,
+        CancellationToken cancellationToken);
     Task<PurchaseOrderConfirmation> ConfirmAsync(PurchasingUserIdentity user, string idempotencyKey,
         ConfirmPurchaseOrderRequest request, PurchaseOrderCalculation calculation, CancellationToken cancellationToken);
     Task CloseAsync(PurchasingUserIdentity user, Guid id, ClosePurchaseOrderRequest request, CancellationToken cancellationToken);
@@ -98,6 +100,15 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store)
             string.IsNullOrWhiteSpace(request.ConcurrencyToken))
             throw new PurchasingValidationException("A purchase order, reason and concurrency token are required.");
         return store.CloseAsync(user, id, request with { Reason = Normalize(request.Reason, 500)! }, cancellationToken);
+    }
+
+    public Task DeleteDraftAsync(PurchasingUserIdentity user, Guid id, string concurrencyToken,
+        CancellationToken cancellationToken = default)
+    {
+        Require(user, PurchasingPermissionCodes.CreatePurchaseOrders);
+        if (id == Guid.Empty || string.IsNullOrWhiteSpace(concurrencyToken))
+            throw new PurchasingValidationException("A purchase-order draft and concurrency token are required.");
+        return store.DeleteDraftAsync(user, id, concurrencyToken, cancellationToken);
     }
 
     public async Task<IReadOnlyList<PurchaseOrderSuggestion>> SuggestionsAsync(

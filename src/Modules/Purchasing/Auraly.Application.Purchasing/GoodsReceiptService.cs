@@ -22,6 +22,31 @@ public sealed class GoodsReceiptService(
     IDocumentProcessingSignalPublisher signalPublisher,
     WithholdingService withholdingService)
 {
+    public async Task<WithholdingCalculationSnapshot> PreviewWithholdingAsync(
+        PurchasingUserIdentity user,
+        PreviewGoodsReceiptWithholdingRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(request);
+        if (user.BusinessId != request.BusinessId)
+            throw new PurchasingForbiddenException("The goods receipt belongs to another business.");
+        Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
+        if (request.SupplierId == Guid.Empty)
+            throw new PurchasingValidationException("SupplierId is required.");
+        if (request.SupplierInvoiceDate == default)
+            throw new PurchasingValidationException("SupplierInvoiceDate is required.");
+        if (!PurchaseEvidenceTypes.IsValid(request.PurchaseEvidenceType))
+            throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
+        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
+        ValidateEvidenceTaxTreatment(request.PurchaseEvidenceType, normalizedLines);
+        var calculation = Calculate(normalizedLines);
+        return await CalculateWithholdingAsync(
+            user, request.SupplierId, request.WithholdingConceptCode,
+            request.WithholdingJurisdictionCode, calculation,
+            request.SupplierInvoiceDate, cancellationToken);
+    }
+
     public async Task<GoodsReceiptAcceptance> ConfirmAsync(
         PurchasingUserIdentity user,
         string idempotencyKey,
@@ -66,35 +91,12 @@ public sealed class GoodsReceiptService(
             throw new PurchasingValidationException("Every line recovered from a purchase order must retain its order-line reference.");
         if (normalizedLines.Any(line => line.OverReceiptReason?.Trim().Length > 500))
             throw new PurchasingValidationException("OverReceiptReason cannot exceed 500 characters.");
-        if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher &&
-            normalizedLines.Any(line => line.TaxRate > 0 &&
-                line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat))
-            throw new PurchasingValidationException(
-                "An internal receipt voucher cannot recognize deductible input VAT; use CapitalizedCost.");
-        GoodsReceiptCalculation calculation;
-        try
-        {
-            calculation = GoodsReceiptCalculator.Calculate(normalizedLines.Select(line => (
-                line.LineNumber,
-                line.ProductId,
-                line.Description,
-                line.Quantity,
-                line.UnitCost,
-                line.DiscountAmount,
-                line.TaxCode,
-                line.TaxRate,
-                ParseTaxTreatment(line.TaxTreatment))));
-        }
-        catch (ArgumentException exception)
-        {
-            throw new PurchasingValidationException(exception.Message, exception);
-        }
-        var withholding = await withholdingService.CalculateAsync(user.TenantId, user.BusinessId,
-            new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
-                "Accrual", request.SupplierId, request.WithholdingConceptCode,
-                request.WithholdingJurisdictionCode, calculation.NetAmount,
-                calculation.TaxAmount, request.SupplierInvoiceDate.Value),
-            cancellationToken);
+        ValidateEvidenceTaxTreatment(request.PurchaseEvidenceType, normalizedLines);
+        var calculation = Calculate(normalizedLines);
+        var withholding = await CalculateWithholdingAsync(
+            user, request.SupplierId, request.WithholdingConceptCode,
+            request.WithholdingJurisdictionCode, calculation,
+            request.SupplierInvoiceDate.Value, cancellationToken);
 
 
         var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), request with
@@ -113,6 +115,47 @@ public sealed class GoodsReceiptService(
                 "GoodsReceipt"),
             cancellationToken);
         return acceptance;
+    }
+
+    private Task<WithholdingCalculationSnapshot> CalculateWithholdingAsync(
+        PurchasingUserIdentity user,
+        Guid supplierId,
+        string? conceptCode,
+        string? jurisdictionCode,
+        GoodsReceiptCalculation calculation,
+        DateTimeOffset occurredAt,
+        CancellationToken cancellationToken) =>
+        withholdingService.CalculateAsync(user.TenantId, user.BusinessId,
+            new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
+                WithholdingRecognitionMoments.Accrual, supplierId, conceptCode,
+                jurisdictionCode, calculation.NetAmount, calculation.TaxAmount, occurredAt),
+            cancellationToken);
+
+    private static GoodsReceiptCalculation Calculate(
+        IReadOnlyCollection<GoodsReceiptLineRequest> normalizedLines)
+    {
+        try
+        {
+            return GoodsReceiptCalculator.Calculate(normalizedLines.Select(line => (
+                line.LineNumber, line.ProductId, line.Description, line.Quantity,
+                line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
+                ParseTaxTreatment(line.TaxTreatment))));
+        }
+        catch (ArgumentException exception)
+        {
+            throw new PurchasingValidationException(exception.Message, exception);
+        }
+    }
+
+    private static void ValidateEvidenceTaxTreatment(
+        string purchaseEvidenceType,
+        IReadOnlyCollection<GoodsReceiptLineRequest> normalizedLines)
+    {
+        if (purchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher &&
+            normalizedLines.Any(line => line.TaxRate > 0 &&
+                line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat))
+            throw new PurchasingValidationException(
+                "An internal receipt voucher cannot recognize deductible input VAT; use CapitalizedCost.");
     }
 
     private static string? Normalize(string? value, int maximumLength)

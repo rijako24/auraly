@@ -4,6 +4,7 @@ using Auraly.Api;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Purchasing;
+using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
@@ -411,6 +412,63 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Created_tax_responsibility_is_available_to_withholding_rules()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        var responsibilityCode = $"O-T-{suffix}";
+        var ruleCode = $"RF-{suffix}";
+        Guid? ruleId = null;
+        using var client = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Update,
+            TaxationPermissionCodes.ViewWithholdingRules,
+            TaxationPermissionCodes.ManageWithholdingRules);
+        try
+        {
+            using (var option = await client.PostAsJsonAsync(
+                       "/api/commerce/v1/reference-options/tax-responsibility",
+                       new CreateReferenceOptionRequest(
+                           responsibilityCode, "Responsabilidad de prueba", null)))
+            {
+                Assert.Equal(HttpStatusCode.Created, option.StatusCode);
+                var created = await option.Content.ReadFromJsonAsync<ReferenceOption>();
+                Assert.Equal(responsibilityCode, created!.Code);
+            }
+
+            using (var catalog = await client.GetAsync(
+                       "/api/commerce/v1/reference-options/tax-responsibility"))
+            {
+                Assert.Equal(HttpStatusCode.OK, catalog.StatusCode);
+                var options = await catalog.Content.ReadFromJsonAsync<IReadOnlyList<ReferenceOption>>();
+                Assert.Contains(options!, option => option.Code == responsibilityCode);
+            }
+
+            using var rule = await client.PostAsJsonAsync(
+                "/api/commerce/v1/taxation/withholding-rules",
+                new SaveWithholdingRuleRequest(
+                    fixture.BusinessId, ruleCode, "Regla con catálogo compartido",
+                    WithholdingKinds.IncomeTax, WithholdingDirections.Purchase,
+                    WithholdingRecognitionMoments.Accrual,
+                    WithholdingBaseKinds.TaxExclusiveAmount, null, null,
+                    1m, 0m, [responsibilityCode], new DateOnly(2026, 1, 1), null, true));
+            Assert.Equal(HttpStatusCode.Created, rule.StatusCode);
+            ruleId = (await rule.Content.ReadFromJsonAsync<WithholdingRuleView>())!.RuleId;
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var cleanup = new SqlCommand("""
+                DELETE dbo.WithholdingRules WHERE RuleId=@RuleId;
+                DELETE reference.Options
+                WHERE CatalogCode=N'tax-responsibility' AND Code=@Code;
+                """, connection);
+            cleanup.Parameters.AddWithValue("@RuleId", (object?)ruleId ?? Guid.Empty);
+            cleanup.Parameters.AddWithValue("@Code", responsibilityCode);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     [Trait("EngineCertification", "EndToEnd")]
     public async Task Invoice_and_credit_note_post_balanced_once_and_periods_are_controlled()
     {
@@ -443,6 +501,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             AccountingPermissionCodes.PeriodsManage, AccountingPermissionCodes.Retry,
             AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate,
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm,
+            PurchasingPermissionCodes.ReadGoodsReceipts,
             PurchasingPermissionCodes.CreateGoodsReceipts,
             PurchasingPermissionCodes.ConfirmGoodsReceipts,
             PurchasingPermissionCodes.ReadPurchaseReturns,
@@ -981,6 +1040,21 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 10_000m, 0m, "01", 19m,
                 PurchasingTaxTreatments.DeductibleInputVat)],
             WithholdingConceptCode: "MERCANCIA");
+        using (var previewResponse = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/goods-receipts/withholding-preview",
+                   new PreviewGoodsReceiptWithholdingRequest(
+                       withheldReceipt.BusinessId, withheldReceipt.SupplierId,
+                       withheldReceipt.SupplierInvoiceDate!.Value,
+                       withheldReceipt.Lines, withheldReceipt.WithholdingConceptCode,
+                       null, withheldReceipt.PurchaseEvidenceType)))
+        {
+            previewResponse.EnsureSuccessStatusCode();
+            var preview = await previewResponse.Content
+                .ReadFromJsonAsync<WithholdingCalculationSnapshot>();
+            Assert.Equal(6_350m, preview!.WithholdingTotal);
+            Assert.Equal(112_650m, preview.NetAmount);
+            Assert.Equal(3, preview.Lines.Count);
+        }
         using (var message = CreateGoodsReceiptMessage(
             withheldReceipt, $"withholding-{withheldReceipt.DocumentId:N}"))
         using (var response = await accounting.SendAsync(message))
@@ -1002,6 +1076,17 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(112_650m, await ScalarAsync<decimal>(
             "SELECT NetAmount FROM dbo.DocumentWithholdingSnapshots WHERE DocumentId=@Id",
             withheldReceipt.DocumentId));
+        using (var detailResponse = await accounting.GetAsync(
+                   $"/api/commerce/v1/goods-receipts/{withheldReceipt.DocumentId:D}"))
+        {
+            Assert.True(detailResponse.IsSuccessStatusCode,
+                await detailResponse.Content.ReadAsStringAsync());
+            var detail = await detailResponse.Content.ReadFromJsonAsync<GoodsReceiptDetail>();
+            Assert.NotNull(detail?.Withholding);
+            Assert.Equal(6_350m, detail.Withholding.WithholdingTotal);
+            Assert.Equal(112_650m, detail.Withholding.NetAmount);
+            Assert.Equal(3, detail.Withholding.Lines.Count);
+        }
         Assert.Equal(112_650m, await ScalarAsync<decimal>(
             "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id",
             withheldReceipt.DocumentId));

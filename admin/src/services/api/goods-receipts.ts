@@ -82,6 +82,16 @@ export interface GoodsReceiptDetail {
   lines: GoodsReceiptLineSnapshot[];
   purchaseEvidenceType: PurchaseEvidenceType;
   purchaseOrderId: string | null;
+  withholding: {
+    grossAmount: number;
+    withholdingTotal: number;
+    netAmount: number;
+    lines: Array<{
+      ruleId: string; ruleVersion: number; ruleCode: string; name: string;
+      kind: string; baseKind: string; taxableBase: number; rate: number;
+      amount: number; jurisdictionCode: string | null;
+    }>;
+  } | null;
 }
 
 export interface SaveGoodsReceiptDraftRequest {
@@ -173,6 +183,17 @@ export interface GoodsReceiptAcceptance {
   idempotentReplay: boolean;
 }
 
+export interface GoodsReceiptWithholdingCalculation {
+  grossAmount: number;
+  withholdingTotal: number;
+  netAmount: number;
+  lines: Array<{
+    ruleId: string; ruleVersion: number; ruleCode: string; name: string;
+    kind: string; baseKind: string; taxableBase: number; rate: number;
+    amount: number; jurisdictionCode: string | null;
+  }>;
+}
+
 export const goodsReceiptsApi = {
   options: () => apiClient.get<GoodsReceiptOptions>("/commerce/v1/goods-receipts/options"),
   products: (supplierId: string, search?: string, includeUnassociated = false, page = 1, pageSize = 50) =>
@@ -197,6 +218,13 @@ export const goodsReceiptsApi = {
     apiClient.delete<{ deleted: boolean }>(
       `/commerce/v1/goods-receipts/drafts/${draftId}?concurrencyToken=${encodeURIComponent(concurrencyToken)}`,
     ),
+  previewWithholding: (request: {
+    businessId: string; supplierId: string; supplierInvoiceDate: string;
+    lines: GoodsReceiptLine[]; withholdingConceptCode: string | null;
+    withholdingJurisdictionCode: string | null; purchaseEvidenceType: PurchaseEvidenceType;
+  }) => apiClient.post<GoodsReceiptWithholdingCalculation>(
+    "/commerce/v1/goods-receipts/withholding-preview", request,
+  ),
   confirm: (request: {
     documentId: string; businessId: string; warehouseId: string; supplierId: string;
     supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null;

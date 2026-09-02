@@ -303,6 +303,7 @@ export default function PosPage() {
   const [temporaryName, setTemporaryName] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [saleSettlement, setSaleSettlement] = useState<import("@/services/pos/pos-edge-client").PosSaleSettlement | null>(null);
+  const [saleSettlementError, setSaleSettlementError] = useState(false);
   const [inventoryResolution, setInventoryResolution] = useState<PosInventoryValidation | null>(null);
   const [productSearchOpen, setProductSearchOpen] = useState(false);
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
@@ -318,6 +319,29 @@ export default function PosPage() {
     paymentCounts: PosWorkSessionPaymentCount[];
     note: string | null;
   } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!client || !draft?.lines.length) {
+      setSaleSettlement(null);
+      setSaleSettlementError(false);
+      return () => { cancelled = true; };
+    }
+    void client.previewSettlement(draft.draftId.value)
+      .then((value) => {
+        if (!cancelled) {
+          setSaleSettlement(value);
+          setSaleSettlementError(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSaleSettlement(null);
+          setSaleSettlementError(true);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [client, draft]);
   const [printerOpen, setPrinterOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
   const [pricingTransition, setPricingTransition] = useState(false);
@@ -2968,13 +2992,21 @@ export default function PosPage() {
             <dl className="space-y-2 text-sm">
               <TotalRow label="Subtotal" value={draft?.untaxedAmount ?? 0} />
               <TotalRow label="Impuestos" value={draft?.taxAmount ?? 0} />
+              <TotalRow label="Total bruto" value={saleSettlement?.grossAmount ?? draft?.payableAmount ?? 0} />
+              {(saleSettlement?.withholdingTotal ?? 0) > 0 &&
+                <TotalRow label="Retenciones" value={-(saleSettlement?.withholdingTotal ?? 0)} />}
               <div className="border-t border-white/15 pt-3">
-                <dt className="text-sm text-auraly-secondary">Total a pagar</dt>
+                <dt className="text-sm text-auraly-secondary">Neto por cobrar</dt>
                 <dd className="text-right text-3xl font-bold tracking-tight text-auraly-light">
-                  {money.format(draft?.payableAmount ?? 0)}
+                  {money.format(saleSettlement?.netAmount ?? draft?.payableAmount ?? 0)}
                 </dd>
               </div>
             </dl>
+            {saleSettlementError && (
+              <p className="mt-2 rounded-lg bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
+                No fue posible calcular las retenciones en este momento. Al cobrar se validarán nuevamente.
+              </p>
+            )}
             <button
               type="button"
               disabled={!draft?.lines.length || busy}

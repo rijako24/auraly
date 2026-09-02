@@ -361,12 +361,27 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         var invalidDueDate = CreateRequest();
         invalidDueDate = invalidDueDate with
         {
-            DueDate = invalidDueDate.SupplierInvoiceDate!.Value.AddDays(31)
+            DueDate = invalidDueDate.SupplierInvoiceDate!.Value.AddDays(-1)
         };
         using var invalidDueDateMessage = CreateMessage(
             invalidDueDate, $"invalid-due-date-{Guid.NewGuid():N}");
         using var invalidDueDateResponse = await allowed.SendAsync(invalidDueDateMessage);
         Assert.Equal(HttpStatusCode.BadRequest, invalidDueDateResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Receipt_accepts_a_document_due_date_that_overrides_the_supplier_default()
+    {
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var request = CreateRequest();
+        request = request with { DueDate = request.SupplierInvoiceDate!.Value.AddDays(45) };
+        using var message = CreateMessage(request, $"custom-due-date-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(message);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            $"Expected custom due date to be accepted, got {response.StatusCode}: {body}");
     }
 
     private ConfirmGoodsReceiptRequest CreateRequest()

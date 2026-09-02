@@ -87,6 +87,11 @@ de retención no se asignan manualmente al tercero: el motor las resuelve por di
 concepto, jurisdicción, base y responsabilidades requeridas. Los documentos conservan
 snapshot y no dependen del valor actual.
 
+El catálogo se consulta y administra desde Contabilidad → Retenciones →
+Responsabilidades tributarias. La creación exige `catalog.update` y se realiza en el
+maestro, no dentro del formulario de una regla. Una regla exige que el tercero tenga
+todas las responsabilidades seleccionadas; sin selección, no filtra por esta dimensión.
+
 ### PartySites
 
 Representa sedes o establecimientos:
