@@ -157,14 +157,16 @@ ORDER BY Username,UserId;
     $technicalUsers = Invoke-ReaderRows -Connection $connection -CommandText @'
 SELECT COUNT(*) AS Total
 FROM dbo.AppUsers
-WHERE TenantId=@AuralyTenantId AND IsActive=1
-  AND NormalizedUsername=N'ADMIN' AND NormalizedEmail=N'ADMIN@AURALY.AI';
+WHERE TenantId=@AuralyTenantId
+  AND ((NormalizedUsername=N'ADMIN' AND NormalizedEmail=N'ADMIN@AURALY.AI')
+    OR (FirstName=N'Administrador' AND LastName=N'Auraly'
+        AND NormalizedEmail LIKE N'RETIRED+%@INVALID.AURALY.LOCAL'));
 '@ -Parameters @{'@AuralyTenantId'=$canonicalTenantId}
     $fictitiousEmployees = Invoke-ReaderRows -Connection $connection -CommandText @'
 SELECT COUNT(*) AS Total
 FROM dbo.Employees employeeValue
 JOIN dbo.Businesses businessValue ON businessValue.BusinessId=employeeValue.BusinessId
-WHERE businessValue.TenantId=@AuralyTenantId AND employeeValue.IsActive=1
+WHERE businessValue.TenantId=@AuralyTenantId
   AND employeeValue.EmployeeId='A0A10000-0000-0000-0000-000000000003';
 '@ -Parameters @{'@AuralyTenantId'=$canonicalTenantId}
     $occasionalSuppliers = Invoke-ReaderRows -Connection $connection -CommandText @'
@@ -184,8 +186,8 @@ ORDER BY NormalizedName;
 '@ -Parameters @{'@AuralyTenantId'=$canonicalTenantId}
     Write-Output "Active AURALY users: $($activeUsers.Count)"
     foreach ($user in $activeUsers) { Write-Output "USER $($user.UserId) | $($user.Username) | $($user.Email)" }
-    Write-Output "Active obsolete technical administrators: $($technicalUsers[0].Total)"
-    Write-Output "Active fictitious Equipo AURALY employees: $($fictitiousEmployees[0].Total)"
+    Write-Output "Obsolete technical administrator rows: $($technicalUsers[0].Total)"
+    Write-Output "Fictitious Equipo AURALY employee rows: $($fictitiousEmployees[0].Total)"
     Write-Output "Active occasional-expense suppliers: $($occasionalSuppliers[0].Total)"
     Write-Output "Canonical active roles: $($roles.Count) | $($roles.NormalizedName -join ', ')"
     if ($Action -eq 'Audit') {
@@ -327,29 +329,31 @@ ORDER BY fk.object_id,fkc.constraint_column_id;
 
         [void](Invoke-NonQuery -Connection $connection -Transaction $transaction -CommandText @'
 DECLARE @Now DATETIME2(7)=SYSUTCDATETIME();
-DECLARE @RetiredUsers TABLE(UserId UNIQUEIDENTIFIER PRIMARY KEY);
-INSERT @RetiredUsers(UserId)
+CREATE TABLE #RetiredUsers(UserId UNIQUEIDENTIFIER PRIMARY KEY);
+INSERT #RetiredUsers(UserId)
 SELECT UserId
 FROM dbo.AppUsers
 WHERE TenantId=@AuralyTenantId
-  AND NormalizedUsername=N'ADMIN'
-  AND NormalizedEmail=N'ADMIN@AURALY.AI';
+  AND (
+    (NormalizedUsername=N'ADMIN' AND NormalizedEmail=N'ADMIN@AURALY.AI')
+    OR (FirstName=N'Administrador' AND LastName=N'Auraly'
+        AND NormalizedEmail LIKE N'RETIRED+%@INVALID.AURALY.LOCAL'));
 
 UPDATE sessionValue
 SET Status=N'Revoked',RevokedAt=@Now,RevocationReason=N'IdentityRetired',UpdatedAt=@Now
 FROM dbo.AuthenticationSessions sessionValue
-JOIN @RetiredUsers retired ON retired.UserId=sessionValue.UserId
+JOIN #RetiredUsers retired ON retired.UserId=sessionValue.UserId
 WHERE sessionValue.Status=N'Active';
 
 UPDATE tokenValue
 SET RevokedAt=@Now
 FROM dbo.RefreshTokens tokenValue
-JOIN @RetiredUsers retired ON retired.UserId=tokenValue.UserId
+JOIN #RetiredUsers retired ON retired.UserId=tokenValue.UserId
 WHERE tokenValue.RevokedAt IS NULL;
 
 DELETE assignment
 FROM dbo.UserRoles assignment
-JOIN @RetiredUsers retired ON retired.UserId=assignment.UserId;
+JOIN #RetiredUsers retired ON retired.UserId=assignment.UserId;
 
 UPDATE userValue
 SET Username=CONCAT(N'retired-',LEFT(REPLACE(CONVERT(NVARCHAR(36),userValue.UserId),N'-',N''),12)),
@@ -358,18 +362,80 @@ SET Username=CONCAT(N'retired-',LEFT(REPLACE(CONVERT(NVARCHAR(36),userValue.User
     NormalizedEmail=UPPER(CONCAT(N'retired+',REPLACE(CONVERT(NVARCHAR(36),userValue.UserId),N'-',N''),N'@invalid.auraly.local')),
     IsActive=0,AccessFailedCount=0,LockoutEnd=NULL,UpdatedAt=@Now
 FROM dbo.AppUsers userValue
-JOIN @RetiredUsers retired ON retired.UserId=userValue.UserId;
+JOIN #RetiredUsers retired ON retired.UserId=userValue.UserId;
+
+DECLARE @ReplacementUserId UNIQUEIDENTIFIER=(
+  SELECT TOP(1) userValue.UserId
+  FROM dbo.AppUsers userValue
+  JOIN dbo.UserRoles assignment ON assignment.UserId=userValue.UserId
+  JOIN dbo.AppRoles roleValue ON roleValue.RoleId=assignment.RoleId
+  WHERE userValue.TenantId=@AuralyTenantId AND userValue.IsActive=1
+    AND roleValue.NormalizedName=N'ADMINISTRATOR'
+    AND NOT EXISTS(SELECT 1 FROM #RetiredUsers retired WHERE retired.UserId=userValue.UserId)
+  ORDER BY userValue.CreatedAt,userValue.UserId);
+
+IF EXISTS(SELECT 1 FROM #RetiredUsers) AND @ReplacementUserId IS NULL
+  THROW 51000, 'No existe un administrador real de AURALY para reasignar referencias técnicas.', 1;
+
+DELETE tokenValue FROM dbo.RefreshTokens tokenValue JOIN #RetiredUsers retired ON retired.UserId=tokenValue.UserId;
+DELETE sessionValue FROM dbo.AuthenticationSessions sessionValue JOIN #RetiredUsers retired ON retired.UserId=sessionValue.UserId;
+DELETE leaseValue FROM dbo.OfflineAuthenticationLeases leaseValue JOIN #RetiredUsers retired ON retired.UserId=leaseValue.UserId;
+DELETE resetValue FROM dbo.PasswordResetRequests resetValue JOIN #RetiredUsers retired ON retired.UserId=resetValue.UserId;
+DELETE pushValue FROM dbo.PosApprovalPushSubscriptions pushValue JOIN #RetiredUsers retired ON retired.UserId=pushValue.UserId;
+DELETE credentialValue FROM dbo.SupervisorCredentials credentialValue JOIN #RetiredUsers retired ON retired.UserId=credentialValue.UserId;
+DELETE loginValue FROM dbo.UserExternalLogins loginValue JOIN #RetiredUsers retired ON retired.UserId=loginValue.UserId;
+DELETE assignment FROM dbo.UserRoles assignment JOIN #RetiredUsers retired ON retired.UserId=assignment.UserId;
+
+DECLARE @ReferenceSql NVARCHAR(MAX)=N'';
+SELECT @ReferenceSql +=
+  N'UPDATE childValue SET '+QUOTENAME(childColumn.name)+N'=@ReplacementUserId FROM '
+  +QUOTENAME(childSchema.name)+N'.'+QUOTENAME(childTable.name)+N' childValue JOIN #RetiredUsers retired ON retired.UserId=childValue.'+QUOTENAME(childColumn.name)+N';'
+FROM sys.foreign_keys foreignKey
+JOIN sys.foreign_key_columns foreignKeyColumn ON foreignKeyColumn.constraint_object_id=foreignKey.object_id
+JOIN sys.tables childTable ON childTable.object_id=foreignKey.parent_object_id
+JOIN sys.schemas childSchema ON childSchema.schema_id=childTable.schema_id
+JOIN sys.columns childColumn ON childColumn.object_id=foreignKey.parent_object_id AND childColumn.column_id=foreignKeyColumn.parent_column_id
+WHERE foreignKey.referenced_object_id=OBJECT_ID(N'dbo.AppUsers')
+  AND NOT (childSchema.name=N'dbo' AND childTable.name IN(
+    N'RefreshTokens',N'AuthenticationSessions',N'OfflineAuthenticationLeases',N'PasswordResetRequests',
+    N'PosApprovalPushSubscriptions',N'UserExternalLogins',N'UserRoles'))
+  AND NOT (childSchema.name=N'dbo' AND childTable.name=N'SupervisorCredentials' AND childColumn.name=N'UserId')
+  AND NOT (childSchema.name=N'dbo' AND childTable.name=N'AuditLogs');
+EXEC sys.sp_executesql @ReferenceSql,N'@ReplacementUserId UNIQUEIDENTIFIER',
+  @ReplacementUserId=@ReplacementUserId;
+
+DELETE userValue FROM dbo.AppUsers userValue JOIN #RetiredUsers retired ON retired.UserId=userValue.UserId;
 
 DELETE serviceValue
 FROM dbo.EmployeeServices serviceValue
 WHERE serviceValue.EmployeeId='A0A10000-0000-0000-0000-000000000003';
 
+DELETE exceptionValue
+FROM dbo.EmployeeScheduleExceptions exceptionValue
+WHERE exceptionValue.EmployeeId='A0A10000-0000-0000-0000-000000000003';
+
 UPDATE dbo.EmployeeWorkingHours
 SET IsActive=0,UpdatedAt=@Now
 WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003';
 
+DELETE FROM dbo.EmployeeWorkingHours
+WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003';
+
+UPDATE dbo.Reservations SET EmployeeId=NULL
+WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003';
+UPDATE dbo.BusinessAvailabilityBlocks SET EmployeeId=NULL
+WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003';
+UPDATE dbo.BusinessInboundContacts SET EmployeeId=NULL
+WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003';
+
+IF EXISTS(SELECT 1 FROM payroll.Employments WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003')
+  THROW 51000, 'Equipo AURALY tiene vínculos de nómina inesperados; eliminación abortada.', 1;
+
 UPDATE dbo.Employees
 SET IsActive=0,UpdatedAt=@Now
+WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003';
+
+DELETE FROM dbo.Employees
 WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003';
 
 UPDATE scheduling
@@ -398,11 +464,11 @@ FROM dbo.Tenants;
 
         $canonicalState = Invoke-ReaderRows -Connection $connection -Transaction $transaction -CommandText @'
 SELECT
-  (SELECT COUNT(*) FROM dbo.AppUsers WHERE TenantId=@AuralyTenantId AND IsActive=1
-     AND NormalizedUsername=N'ADMIN' AND NormalizedEmail=N'ADMIN@AURALY.AI') AS TechnicalUsers,
-  (SELECT COUNT(*) FROM dbo.Employees employeeValue JOIN dbo.Businesses businessValue ON businessValue.BusinessId=employeeValue.BusinessId
-     WHERE businessValue.TenantId=@AuralyTenantId AND employeeValue.IsActive=1
-       AND employeeValue.EmployeeId='A0A10000-0000-0000-0000-000000000003') AS FictitiousEmployees,
+  (SELECT COUNT(*) FROM dbo.AppUsers WHERE TenantId=@AuralyTenantId
+     AND ((NormalizedUsername=N'ADMIN' AND NormalizedEmail=N'ADMIN@AURALY.AI')
+       OR (FirstName=N'Administrador' AND LastName=N'Auraly' AND NormalizedEmail LIKE N'RETIRED+%@INVALID.AURALY.LOCAL'))) AS TechnicalUsers,
+  (SELECT COUNT(*) FROM dbo.Employees
+     WHERE EmployeeId='A0A10000-0000-0000-0000-000000000003') AS FictitiousEmployees,
   (SELECT COUNT(*) FROM dbo.Suppliers supplierValue JOIN dbo.Businesses businessValue ON businessValue.BusinessId=supplierValue.BusinessId
      WHERE businessValue.TenantId=@AuralyTenantId AND supplierValue.IsActive=1
        AND supplierValue.Identification=N'OCASIONAL' AND supplierValue.Name=N'Gasto ocasional / sin proveedor') AS OccasionalSuppliers,
@@ -420,7 +486,7 @@ SELECT
         foreach ($item in $deletedByTable | Sort-Object Table) {
             Write-Output "DELETED $($item.Rows) | $($item.Table)"
         }
-        Write-Output 'Purge committed: only AURALY remains; technical identity and fictitious employee are inactive; supplier and six roles remain.'
+        Write-Output 'Purge committed: only AURALY remains; technical identity and fictitious employee were physically deleted; supplier and six roles remain.'
     }
     catch {
         try { $transaction.Rollback() } catch { Write-Warning "Rollback reporting failed: $($_.Exception.Message)" }
