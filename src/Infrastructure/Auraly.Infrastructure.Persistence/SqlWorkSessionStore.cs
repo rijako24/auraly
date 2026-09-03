@@ -119,6 +119,16 @@ public sealed partial class SqlWorkSessionStore(
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
+            // A second tab or POS bootstrap can win the unique open-session insert
+            // after this transaction checked for the current user. Recover that
+            // canonical winner instead of surfacing a false conflict. A session
+            // owned by another user/device remains a real conflict because it is
+            // not visible through CurrentAsync(identity).
+            var winner = await CurrentAsync(identity, cancellationToken);
+            if (winner is not null &&
+                winner.BusinessId == request.BusinessId &&
+                winner.WarehouseId == request.WarehouseId)
+                return winner;
             throw new WorkSessionConflictException(
                 "The user or device already has another open work session.");
         }

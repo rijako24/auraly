@@ -29,6 +29,7 @@ import {
 import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
 import { defaultStartRoute } from "@/lib/default-start-route";
+import { runAuthenticationSessionReplacement } from "@/lib/auth-session";
 import { rememberSalesWorkspace } from "@/services/pos/online-pos-client";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ApiError } from "@/types/api";
@@ -106,12 +107,17 @@ function LoginForm() {
           setTenantKeyRequired(true);
           throw new Error("Escribe la clave de tu empresa para acceder a los módulos administrativos.");
         }
-        const response = await authApi.login({
-          tenantKey: effectiveTenantKey,
-          username,
-          password,
-        });
-        establishWebSession();
+        // Fence off requests that still belong to the session being replaced.
+        // The backend revokes that session while this request is in flight, so a
+        // late 401/refresh from it must not expire the login we are creating.
+        const response = await runAuthenticationSessionReplacement(
+          establishWebSession,
+          () => authApi.login({
+            tenantKey: effectiveTenantKey,
+            username,
+            password,
+          }),
+        );
         rememberTenantKey(response.user.tenantKey || effectiveTenantKey);
         setAuth(response.user);
         const redirect = searchParams.get("redirect")

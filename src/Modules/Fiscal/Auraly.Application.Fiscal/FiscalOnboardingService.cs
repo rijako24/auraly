@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.RegularExpressions;
 using Auraly.Contracts.Fiscal;
 
 namespace Auraly.Application.Fiscal;
@@ -77,7 +78,8 @@ public interface IDianNumberingRangeClient
 public sealed class FiscalOnboardingService(
     IFiscalOnboardingStore store,
     IFiscalCredentialVault credentials,
-    IDianNumberingRangeClient numberingRanges)
+    IDianNumberingRangeClient numberingRanges,
+    TimeProvider timeProvider)
 {
     private const int MaximumCertificateBytes = 2 * 1024 * 1024;
 
@@ -108,7 +110,10 @@ public sealed class FiscalOnboardingService(
 
         var certificate = ValidateCertificate(
             request.CertificatePfx,
-            request.CertificatePassword);
+            request.CertificatePassword,
+            current.SupplierTaxId,
+            current.SupplierCheckDigit,
+            timeProvider.GetUtcNow());
         var stored = await credentials.StoreAsync(
             user.TenantId,
             businessId,
@@ -222,7 +227,10 @@ public sealed class FiscalOnboardingService(
 
     private static ValidatedCertificate ValidateCertificate(
         byte[] pfx,
-        string password)
+        string password,
+        string supplierTaxId,
+        string supplierCheckDigit,
+        DateTimeOffset now)
     {
         X509Certificate2Collection collection = [];
         try
@@ -245,10 +253,16 @@ public sealed class FiscalOnboardingService(
         if (collection.OfType<X509Certificate2>().Count(item => item.HasPrivateKey) != 1)
             throw new FiscalConfigurationValidationException(
                 "El archivo debe contener exactamente un certificado con clave privada.");
-        // Product policy: onboarding accepts any parseable PFX/P12 containing one
-        // usable signing key. DIAN remains the authority that accepts or rejects the
-        // certificate for a fiscal submission; Auraly does not gate uploads by issuer,
-        // chain, validity period, subject NIT or declared key-usage extensions.
+        if (now < certificate.NotBefore || now > certificate.NotAfter)
+            throw new FiscalConfigurationValidationException(
+                "El certificado no está vigente.");
+        if (!FiscalCertificateIdentityPolicy.IsAcceptable(
+                supplierTaxId, supplierCheckDigit, certificate.Subject))
+            throw new FiscalConfigurationValidationException(
+                "El NIT del certificado no coincide con el NIT del perfil legal.");
+
+        // Product policy: validate the credential and its legal owner, but do not
+        // gate onboarding by issuer, trust chain or declared key-usage extensions.
         var probe = RandomNumberGenerator.GetBytes(32);
         if (certificate.GetRSAPrivateKey() is RSA rsa)
             _ = rsa.SignHash(probe, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -281,4 +295,31 @@ public sealed class FiscalOnboardingService(
         string Thumbprint,
         DateTimeOffset NotBefore,
         DateTimeOffset NotAfter);
+}
+
+public static class FiscalCertificateIdentityPolicy
+{
+    private static readonly Regex SubjectSerialNumber = new(
+        """(?:^|[,;+])\s*(?:SERIALNUMBER|OID\.2\.5\.4\.5|2\.5\.4\.5)\s*=\s*(?<value>"[^"]*"|[^,;+]*)""",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    public static bool IsAcceptable(
+        string supplierTaxId,
+        string supplierCheckDigit,
+        string certificateSubject)
+    {
+        var expected = Digits(supplierTaxId);
+        if (expected.Length == 0 || string.IsNullOrWhiteSpace(certificateSubject)) return false;
+        var checkDigit = Digits(supplierCheckDigit);
+        var accepted = checkDigit.Length == 0
+            ? new HashSet<string>(StringComparer.Ordinal) { expected }
+            : new HashSet<string>(StringComparer.Ordinal) { expected, expected + checkDigit };
+
+        return SubjectSerialNumber.Matches(certificateSubject)
+            .Select(match => Digits(match.Groups["value"].Value))
+            .Any(accepted.Contains);
+    }
+
+    private static string Digits(string value) =>
+        new((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
 }

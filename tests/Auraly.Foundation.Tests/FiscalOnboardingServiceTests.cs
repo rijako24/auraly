@@ -13,17 +13,17 @@ public sealed class FiscalOnboardingServiceTests
     public async Task Loading_an_untrusted_self_signed_certificate_is_accepted()
     {
         const string password = "certificate-password";
-        const string supplierTaxId = "1002269668";
+        const string supplierTaxId = "100226966";
         var store = new TestOnboardingStore(Configuration(supplierTaxId));
         var vault = new TestCredentialVault();
         var service = new FiscalOnboardingService(
-            store, vault, new TestNumberingRangeClient());
+            store, vault, new TestNumberingRangeClient(), new FixedTimeProvider(Now));
         var request = new SaveDianHabilitationConfiguration(
             Guid.NewGuid().ToString(),
             "software-pin",
             Guid.NewGuid(),
             password,
-            CreatePfx(supplierTaxId, password));
+            CreatePfx(supplierTaxId + "8", password));
         var user = new FiscalConfigurationUser(
             Guid.NewGuid(), Guid.NewGuid(),
             new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
@@ -36,13 +36,13 @@ public sealed class FiscalOnboardingServiceTests
     }
 
     [Fact]
-    public async Task Loading_a_certificate_with_another_nit_is_accepted()
+    public async Task Loading_a_certificate_with_another_nit_is_rejected()
     {
         const string password = "certificate-password";
-        var store = new TestOnboardingStore(Configuration("1002269668"));
+        var store = new TestOnboardingStore(Configuration("100226966"));
         var vault = new TestCredentialVault();
         var service = new FiscalOnboardingService(
-            store, vault, new TestNumberingRangeClient());
+            store, vault, new TestNumberingRangeClient(), new FixedTimeProvider(Now));
         var request = new SaveDianHabilitationConfiguration(
             Guid.NewGuid().ToString(),
             "software-pin",
@@ -54,22 +54,53 @@ public sealed class FiscalOnboardingServiceTests
             Guid.NewGuid(),
             new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
 
-        await service.ConfigureHabilitationAsync(
-            user, store.Configuration.BusinessId, request);
+        var exception = await Assert.ThrowsAsync<FiscalConfigurationValidationException>(() =>
+            service.ConfigureHabilitationAsync(
+                user, store.Configuration.BusinessId, request));
 
-        Assert.True(vault.StoreCalled);
-        Assert.True(store.SaveCalled);
+        Assert.Contains("NIT del certificado", exception.Message);
+        Assert.False(vault.StoreCalled);
+        Assert.False(store.SaveCalled);
+    }
+
+    [Fact]
+    public async Task Loading_an_expired_certificate_is_rejected()
+    {
+        const string password = "certificate-password";
+        const string supplierTaxId = "100226966";
+        var store = new TestOnboardingStore(Configuration(supplierTaxId));
+        var vault = new TestCredentialVault();
+        var service = new FiscalOnboardingService(
+            store, vault, new TestNumberingRangeClient(), new FixedTimeProvider(Now));
+        var request = new SaveDianHabilitationConfiguration(
+            Guid.NewGuid().ToString(),
+            "software-pin",
+            Guid.NewGuid(),
+            password,
+            CreatePfx(supplierTaxId + "8", password, Now.AddDays(-3), Now.AddDays(-2)));
+        var user = new FiscalConfigurationUser(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
+
+        var exception = await Assert.ThrowsAsync<FiscalConfigurationValidationException>(() =>
+            service.ConfigureHabilitationAsync(
+                user, store.Configuration.BusinessId, request));
+
+        Assert.Contains("no está vigente", exception.Message);
+        Assert.False(vault.StoreCalled);
+        Assert.False(store.SaveCalled);
     }
 
     [Fact]
     public async Task Support_document_range_requires_production_and_uses_the_onboarding_store()
     {
-        var inactiveStore = new TestOnboardingStore(Configuration("1002269668"));
+        var inactiveStore = new TestOnboardingStore(Configuration("100226966"));
         var user = new FiscalConfigurationUser(
             Guid.NewGuid(), Guid.NewGuid(),
             new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
         var inactiveService = new FiscalOnboardingService(
-            inactiveStore, new TestCredentialVault(), new TestNumberingRangeClient());
+            inactiveStore, new TestCredentialVault(), new TestNumberingRangeClient(),
+            new FixedTimeProvider(Now));
 
         await Assert.ThrowsAsync<FiscalConfigurationValidationException>(() =>
             inactiveService.ActivateSupportDocumentAsync(
@@ -77,9 +108,10 @@ public sealed class FiscalOnboardingServiceTests
         Assert.False(inactiveStore.SupportActivationCalled);
 
         var activeStore = new TestOnboardingStore(
-            Configuration("1002269668") with { ProductionActive = true });
+            Configuration("100226966") with { ProductionActive = true });
         var activeService = new FiscalOnboardingService(
-            activeStore, new TestCredentialVault(), new TestNumberingRangeClient());
+            activeStore, new TestCredentialVault(), new TestNumberingRangeClient(),
+            new FixedTimeProvider(Now));
 
         await activeService.ActivateSupportDocumentAsync(
             user, activeStore.Configuration.BusinessId, Guid.NewGuid());
@@ -87,7 +119,11 @@ public sealed class FiscalOnboardingServiceTests
         Assert.True(activeStore.SupportActivationCalled);
     }
 
-    private static byte[] CreatePfx(string certificateIdentity, string password)
+    private static byte[] CreatePfx(
+        string certificateIdentity,
+        string password,
+        DateTimeOffset? notBefore = null,
+        DateTimeOffset? notAfter = null)
     {
         using var key = RSA.Create(2048);
         var request = new CertificateRequest(
@@ -98,7 +134,9 @@ public sealed class FiscalOnboardingServiceTests
         request.CertificateExtensions.Add(new X509KeyUsageExtension(
             X509KeyUsageFlags.DigitalSignature,
             critical: true));
-        using var certificate = request.CreateSelfSigned(Now.AddDays(-1), Now.AddDays(1));
+        using var certificate = request.CreateSelfSigned(
+            notBefore ?? Now.AddDays(-1),
+            notAfter ?? Now.AddDays(1));
         return certificate.Export(X509ContentType.Pfx, password);
     }
 
@@ -107,7 +145,7 @@ public sealed class FiscalOnboardingServiceTests
         "Sede principal",
         "Empresa de prueba",
         supplierTaxId,
-        "0",
+        "8",
         FiscalOnboardingStages.NotConfigured,
         null,
         null,
@@ -220,5 +258,10 @@ public sealed class FiscalOnboardingServiceTests
         public Task<IReadOnlyList<ImportedDianNumberingRange>> GetAsync(
             DianNumberingRangeContext context,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 }

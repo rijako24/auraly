@@ -31,6 +31,16 @@ export function isCurrentWebSessionVersion(
   return requestVersion === currentVersion;
 }
 
+export async function runAuthenticationSessionReplacement<T>(
+  advanceBoundary: () => void,
+  login: () => Promise<T>,
+): Promise<T> {
+  advanceBoundary();
+  const result = await login();
+  advanceBoundary();
+  return result;
+}
+
 export function announceSessionReplacement(destination: string): void {
   if (typeof window === "undefined") return;
   const event = new CustomEvent<SessionExpiredEventDetail>(SESSION_EXPIRED_EVENT, {

@@ -223,6 +223,10 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
             new AuthenticationHeaderValue("Bearer", login.AccessToken);
         using var missing = await missingBrowser.GetAsync("/api/v1/auth/me");
         Assert.Equal(HttpStatusCode.Unauthorized, missing.StatusCode);
+
+        using var stillActive = await matchingBrowser.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.OK, stillActive.StatusCode);
+        Assert.Equal("Active", (await ReadSessionAsync(sessionId)).Status);
     }
 
     [Fact]

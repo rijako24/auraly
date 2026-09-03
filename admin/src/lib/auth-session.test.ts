@@ -6,6 +6,7 @@ import {
   isAuthenticationRequest,
   isCurrentWebSessionVersion,
   retryAuthenticatedRequest,
+  runAuthenticationSessionReplacement,
   shouldRunCloudBackgroundSynchronization,
   shouldRefreshSession,
 } from "./auth-session";
@@ -14,6 +15,25 @@ describe("auth session decisions", () => {
   it("never lets a response from the replaced browser session expire the winner", () => {
     assert.equal(isCurrentWebSessionVersion("old", "new"), false);
     assert.equal(isCurrentWebSessionVersion("winner", "winner"), true);
+  });
+
+  it("fences stale requests before login can revoke the previous session", async () => {
+    const events: string[] = [];
+    let finishLogin!: (value: string) => void;
+    const login = new Promise<string>((resolve) => { finishLogin = resolve; });
+
+    const replacement = runAuthenticationSessionReplacement(
+      () => events.push("boundary"),
+      () => {
+        events.push("login");
+        return login;
+      },
+    );
+
+    assert.deepEqual(events, ["boundary", "login"]);
+    finishLogin("authenticated");
+    assert.equal(await replacement, "authenticated");
+    assert.deepEqual(events, ["boundary", "login", "boundary"]);
   });
 
   it("keeps an enrolled POS session independent from a stale web cookie", () => {
