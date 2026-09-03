@@ -39,6 +39,15 @@ recuperación, venta, movimiento y conciliación se resuelve por el `TenantId + 
 propietarios. La base de datos refuerza la pertenencia con una clave foránea compuesta
 y la exclusividad con un índice único filtrado para sesiones abiertas.
 
+La migración inicial puede encontrar sesiones históricas cerradas creadas por usuarios
+de plataforma bajo un tenant ajeno. Se conservan únicamente como auditoría y las claves
+foráneas compuestas de usuario/equipo se crean sin revalidar esas filas; aun sin confianza
+retroactiva, SQL Server exige la relación en toda inserción o actualización futura. El
+pipeline ignora solamente la diferencia de estado `WITH NOCHECK` para que DacFx no intente
+reescribir el pasado. Esta excepción se retira cuando una auditoría confirme cero sesiones
+históricas discordantes en todos los ambientes; no autoriza rutas nuevas ni fallbacks de
+tenant.
+
 El contexto operativo inmutable de una jornada es `TenantId + UserId + WorkSessionId`.
 El `WorkSessionId` solo cambia después de un cierre explícito; un nuevo login desde
 otro navegador reemplaza únicamente la sesión de autenticación y recupera la misma

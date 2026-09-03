@@ -420,6 +420,8 @@ public sealed class DatabaseUpgradeMigrationTests
         var deployReport = pipeline.IndexOf("'/Action:DeployReport'", StringComparison.Ordinal);
         Assert.True(reviewedMigration >= 0 && reviewedMigration < deployReport,
             "La migración de sesiones debe ejecutarse antes del DeployReport para preservar filas existentes.");
+        Assert.Contains("/p:IgnoreWithNocheckOnForeignKeys=True", pipeline,
+            StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
