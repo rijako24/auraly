@@ -390,6 +390,8 @@ public sealed class DatabaseUpgradeMigrationTests
             root, "database", "Auraly.Database", "Tables", "EnrolledDevices.sql"));
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
 
         Assert.Contains("UX_WorkSessions_Tenant_User_Open", workSessions,
             StringComparison.Ordinal);
@@ -413,6 +415,11 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.Contains("20260902_ScopeWorkSessionsByTenant.sql", preDeployment,
             StringComparison.Ordinal);
+        var reviewedMigration = pipeline.IndexOf(
+            "20260902_ScopeWorkSessionsByTenant.sql", StringComparison.Ordinal);
+        var deployReport = pipeline.IndexOf("'/Action:DeployReport'", StringComparison.Ordinal);
+        Assert.True(reviewedMigration >= 0 && reviewedMigration < deployReport,
+            "La migración de sesiones debe ejecutarse antes del DeployReport para preservar filas existentes.");
     }
 
     private static string FindRepositoryRoot()
