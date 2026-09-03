@@ -5,7 +5,34 @@ export type PurchaseTaxTreatment = "DeductibleInputVat" | "CapitalizedCost" | "N
 export type PurchaseEvidenceType =
   | "SupplierElectronicInvoice"
   | "BuyerElectronicSupportDocument"
-  | "InternalReceiptVoucher";
+  | "InternalReceiptVoucher"
+  | "ForeignCommercialInvoice"
+  | "ImportDeclaration";
+export type PurchaseCostKind = "Freight" | "Insurance" | "CustomsDuty" |
+  "CustomsBrokerage" | "Handling" | "OtherDirectCost" | "ImportVat";
+export type PurchaseCostTreatment = "Capitalize" | "Expense";
+export type PurchaseCostAllocationMethod = "Value" | "Quantity" | "Weight" |
+  "Volume" | "Equal" | "Manual" | "None";
+
+export interface GoodsReceiptCostDocument {
+  costDocumentId: string; supplierId: string; purchaseEvidenceType: PurchaseEvidenceType;
+  documentNumber: string; issuedAt: string; createsPayable: boolean; dueDate: string | null;
+  currencyCode: string; exchangeRate: number; exchangeRateDate: string | null;
+  exchangeRateSource: string; withholdingConceptCode?: string | null;
+  withholdingJurisdictionCode?: string | null;
+  lines: Array<{
+    lineNumber: number; costKind: PurchaseCostKind; description: string; amount: number;
+    taxableBaseAmount: number; taxCode: string; taxRate: number; taxAmount: number;
+    taxTreatment: PurchaseTaxTreatment; costTreatment: PurchaseCostTreatment;
+    allocationMethod: PurchaseCostAllocationMethod; eligibleReceiptLineNumbers?: number[] | null;
+    manualAllocations?: Array<{ receiptLineNumber: number; functionalAmount: number }> | null;
+    functionalAmount?: number; functionalTaxAmount?: number; functionalDocumentAmount?: number;
+    allocations?: Array<{ receiptLineNumber: number; functionalAmount: number; allocationMethod: string }>;
+  }>;
+  netAmount?: number; taxAmount?: number; grandTotal?: number;
+  functionalNetAmount?: number; functionalTaxAmount?: number; functionalGrandTotal?: number;
+  withholding?: GoodsReceiptWithholdingCalculation;
+}
 
 export interface GoodsReceiptLine {
   lineNumber: number;
@@ -29,12 +56,19 @@ export interface GoodsReceiptLine {
   overReceiptReason?: string | null;
   orderedQuantity?: number | null;
   remainingQuantity?: number | null;
+  totalGrossWeightKg?: number | null;
+  totalVolumeM3?: number | null;
 }
 
 export interface GoodsReceiptLineSnapshot extends GoodsReceiptLine {
   netAmount: number;
   taxAmount: number;
   lineTotal: number;
+  functionalNetAmount?: number;
+  functionalTaxAmount?: number;
+  functionalLineTotal?: number;
+  allocatedLandedCostAmount?: number;
+  recognizedInventoryCostAmount?: number;
 }
 
 export interface GoodsReceiptDraft {
@@ -57,6 +91,8 @@ export interface GoodsReceiptDraft {
   concurrencyToken: string;
   purchaseEvidenceType: PurchaseEvidenceType | null;
   purchaseOrderId: string | null;
+  exchangeRate: number; exchangeRateDate: string | null; exchangeRateSource: string;
+  additionalCostDocuments: GoodsReceiptCostDocument[] | null;
 }
 
 export interface GoodsReceiptDetail {
@@ -92,6 +128,11 @@ export interface GoodsReceiptDetail {
       amount: number; jurisdictionCode: string | null;
     }>;
   } | null;
+  exchangeRate: number; exchangeRateDate: string | null; exchangeRateSource: string;
+  functionalNetAmount: number; functionalTaxAmount: number; functionalGrandTotal: number;
+  additionalCostDocuments: GoodsReceiptCostDocument[] | null;
+  accountingStatuses: Array<{ sourceDocumentId: string; sourceDocumentType: string;
+    status: string; errorCode: string | null; errorMessage: string | null }> | null;
 }
 
 export interface SaveGoodsReceiptDraftRequest {
@@ -110,6 +151,8 @@ export interface SaveGoodsReceiptDraftRequest {
   concurrencyToken: string | null;
   purchaseEvidenceType: PurchaseEvidenceType | null;
   purchaseOrderId: string | null;
+  exchangeRate: number; exchangeRateDate: string | null; exchangeRateSource: string;
+  additionalCostDocuments: GoodsReceiptCostDocument[] | null;
 }
 
 export interface GoodsReceiptListItem {
@@ -145,6 +188,14 @@ export interface GoodsReceiptOptions {
   purchaseEvidenceTypes: Array<{ code: PurchaseEvidenceType; label: string; description: string | null }>;
   withholdingConcepts: Array<{ code: string; label: string }>;
   withholdingJurisdictions: Array<{ code: string; label: string }>;
+  purchaseCostEvidenceTypes: Array<{ code: PurchaseEvidenceType; label: string; description: string | null }>;
+  purchaseCostKinds: Array<{ code: PurchaseCostKind; label: string; description: string | null }>;
+  purchaseCostTreatments: Array<{ code: PurchaseCostTreatment; label: string; description: string | null }>;
+  purchaseCostAllocationMethods: Array<{ code: PurchaseCostAllocationMethod; label: string; description: string | null }>;
+  purchaseTaxRates: Array<{ code: string; label: string; description: string | null }>;
+  purchaseTaxTreatments: Array<{ code: PurchaseTaxTreatment; label: string; description: string | null }>;
+  purchaseCurrencies: Array<{ code: string; label: string; description: string | null }>;
+  exchangeRateSources: Array<{ code: string; label: string; description: string | null }>;
 }
 
 export interface GoodsReceiptProduct {
@@ -222,8 +273,14 @@ export const goodsReceiptsApi = {
     businessId: string; supplierId: string; supplierInvoiceDate: string;
     lines: GoodsReceiptLine[]; withholdingConceptCode: string | null;
     withholdingJurisdictionCode: string | null; purchaseEvidenceType: PurchaseEvidenceType;
+    exchangeRate: number;
   }) => apiClient.post<GoodsReceiptWithholdingCalculation>(
     "/commerce/v1/goods-receipts/withholding-preview", request,
+  ),
+  previewCostWithholding: (request: {
+    businessId: string; document: GoodsReceiptCostDocument;
+  }) => apiClient.post<GoodsReceiptWithholdingCalculation>(
+    "/commerce/v1/goods-receipts/cost-withholding-preview", request,
   ),
   confirm: (request: {
     documentId: string; businessId: string; warehouseId: string; supplierId: string;
@@ -234,6 +291,8 @@ export const goodsReceiptsApi = {
     withholdingConceptCode: string | null; withholdingJurisdictionCode: string | null;
     purchaseEvidenceType: PurchaseEvidenceType;
     purchaseOrderId: string | null;
+    exchangeRate: number; exchangeRateDate: string | null; exchangeRateSource: string;
+    additionalCostDocuments: GoodsReceiptCostDocument[] | null;
   }) => apiClient.postIdempotent<GoodsReceiptAcceptance>(
     "/commerce/v1/goods-receipts/confirm", request, `goods-receipt-${request.documentId}`,
   ),

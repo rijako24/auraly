@@ -10,6 +10,27 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Workspace_options_expose_persisted_catalogs_required_by_cost_document_selectors()
+    {
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.ReadGoodsReceipts);
+
+        using var response = await client.GetAsync("/api/commerce/v1/goods-receipts/options");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var options = await response.Content.ReadFromJsonAsync<GoodsReceiptWorkspaceOptions>();
+        Assert.NotNull(options);
+        Assert.Contains(options.PurchaseCostEvidenceTypes, item => item.Code == PurchaseEvidenceTypes.ImportDeclaration);
+        Assert.Contains(options.PurchaseCostKinds, item => item.Code == PurchaseCostKinds.Freight);
+        Assert.Contains(options.PurchaseCostTreatments, item => item.Code == PurchaseCostTreatments.Capitalize);
+        Assert.Contains(options.PurchaseCostAllocationMethods, item => item.Code == PurchaseCostAllocationMethods.Weight);
+        Assert.Contains(options.PurchaseCostAllocationMethods, item => item.Code == PurchaseCostAllocationMethods.Manual);
+        Assert.Contains(options.PurchaseTaxRates, item => item.Code == "19");
+        Assert.Contains(options.PurchaseTaxTreatments, item => item.Code == PurchasingTaxTreatments.CapitalizedCost);
+        Assert.Contains(options.PurchaseCurrencies, item => item.Code == "USD");
+        Assert.Contains(options.ExchangeRateSources, item => item.Code == "Negotiated");
+    }
+
+    [Fact]
     public async Task Shared_price_businesses_use_one_weighted_cost_pool_without_moving_other_stock()
     {
         var sharedBusinessId = Guid.NewGuid();
@@ -245,6 +266,154 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(1, await CountAsync("InventoryMovements", request.DocumentId));
         Assert.Equal(1, await CountAsync("Payables", request.DocumentId));
         Assert.Equal(1, await CountAsync("ServerOutboxMessages", request.DocumentId));
+    }
+
+    [Fact]
+    public async Task Freight_invoice_posts_its_own_payable_and_capitalizes_cost_without_duplicating_vat()
+    {
+        var request = CreateRequest();
+        var freightDocumentId = Guid.NewGuid();
+        var freightDocumentNumber = $"FLETE-INTERNACIONAL-{Guid.NewGuid():N}-SOPORTE-TRANSPORTADOR";
+        request = request with
+        {
+            AdditionalCostDocuments =
+            [
+                new GoodsReceiptCostDocumentRequest(
+                    freightDocumentId, fixture.SupplierId,
+                    PurchaseEvidenceTypes.SupplierElectronicInvoice,
+                    freightDocumentNumber, request.ReceivedAt, true,
+                    request.ReceivedAt.AddDays(30), "COP", 1m,
+                    DateOnly.FromDateTime(request.ReceivedAt.Date), "FunctionalCurrency",
+                    [
+                        new GoodsReceiptCostLineRequest(
+                            1, PurchaseCostKinds.Freight, "Flete nacional", 10_000m,
+                            10_000m, "01", 19m, 1_900m,
+                            PurchasingTaxTreatments.DeductibleInputVat,
+                            PurchaseCostTreatments.Capitalize,
+                            PurchaseCostAllocationMethods.Value)
+                    ])
+            ]
+        };
+        var quantityBefore = await ReadNullableDecimalAsync("QuantityOnHand") ?? 0m;
+        var valueBefore = await ReadNullableDecimalAsync("InventoryValue") ?? 0m;
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+
+        using var message = CreateMessage(request, $"freight-{request.DocumentId:N}");
+        using var response = await client.SendAsync(message);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            $"Expected freight receipt to be accepted, got {response.StatusCode}: {body}");
+
+        Assert.Equal(quantityBefore + 10m, await ReadNullableDecimalAsync("QuantityOnHand"));
+        Assert.Equal(valueBefore + 60_000m, await ReadNullableDecimalAsync("InventoryValue"));
+        Assert.Equal("Posted||", await ScalarAsync<string>(
+            "SELECT CONCAT(Status,N'|',COALESCE(LastErrorCode,N''),N'|',COALESCE(LastErrorMessage,N'')) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            request.DocumentId));
+        Assert.Equal(59_500m, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            request.DocumentId));
+        Assert.Equal(11_900m, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+            freightDocumentId));
+        Assert.Equal(freightDocumentNumber, await ScalarAsync<string>(
+            "SELECT DocumentNumber FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+            freightDocumentId));
+        Assert.Equal("Posted", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+            freightDocumentId));
+        Assert.Equal(10_000m, await ScalarAsync<decimal>(
+            "SELECT SUM(FunctionalAmount) FROM purchasing.GoodsReceiptCostAllocations WHERE CostDocumentId=@Id",
+            freightDocumentId));
+        Assert.Equal(1_900m, await ScalarAsync<decimal>(
+            "SELECT FunctionalTaxAmount FROM purchasing.GoodsReceiptCostDocuments WHERE CostDocumentId=@Id",
+            freightDocumentId));
+    }
+
+    [Fact]
+    public async Task Foreign_invoice_and_import_declaration_use_the_negotiated_rate_and_post_import_vat_once()
+    {
+        var request = CreateRequest();
+        var declarationId = Guid.NewGuid();
+        request = request with
+        {
+            SupplierInvoiceNumber = $"USD-{Guid.NewGuid():N}",
+            PurchaseEvidenceType = PurchaseEvidenceTypes.ForeignCommercialInvoice,
+            CurrencyCode = "USD",
+            ExchangeRate = 4_000m,
+            ExchangeRateDate = DateOnly.FromDateTime(request.ReceivedAt.Date),
+            ExchangeRateSource = "Negotiated",
+            Lines =
+            [
+                request.Lines.Single() with
+                {
+                    UnitCost = 2m,
+                    DiscountAmount = 0m,
+                    TaxCode = "00",
+                    TaxRate = 0m,
+                    TaxTreatment = PurchasingTaxTreatments.NotApplicable
+                }
+            ],
+            AdditionalCostDocuments =
+            [
+                new GoodsReceiptCostDocumentRequest(
+                    declarationId, fixture.SupplierId,
+                    PurchaseEvidenceTypes.ImportDeclaration,
+                    $"DECL-{Guid.NewGuid():N}", request.ReceivedAt, true,
+                    request.ReceivedAt.AddDays(30), "COP", 1m,
+                    DateOnly.FromDateTime(request.ReceivedAt.Date), "FunctionalCurrency",
+                    [
+                        new GoodsReceiptCostLineRequest(
+                            1, PurchaseCostKinds.CustomsDuty, "Arancel", 10_000m,
+                            0m, "00", 0m, 0m,
+                            PurchasingTaxTreatments.NotApplicable,
+                            PurchaseCostTreatments.Capitalize,
+                            PurchaseCostAllocationMethods.Value),
+                        new GoodsReceiptCostLineRequest(
+                            2, PurchaseCostKinds.ImportVat, "IVA de importación", 0m,
+                            90_000m, "01", 19m, 17_100m,
+                            PurchasingTaxTreatments.DeductibleInputVat,
+                            PurchaseCostTreatments.Expense,
+                            PurchaseCostAllocationMethods.None)
+                    ])
+            ]
+        };
+        var quantityBefore = await ReadNullableDecimalAsync("QuantityOnHand") ?? 0m;
+        var valueBefore = await ReadNullableDecimalAsync("InventoryValue") ?? 0m;
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+
+        using var message = CreateMessage(request, $"import-{request.DocumentId:N}");
+        using var response = await client.SendAsync(message);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            $"Expected import receipt to be accepted, got {response.StatusCode}: {body}");
+
+        Assert.Equal(quantityBefore + 10m, await ReadNullableDecimalAsync("QuantityOnHand"));
+        Assert.Equal(valueBefore + 90_000m, await ReadNullableDecimalAsync("InventoryValue"));
+        Assert.Equal(20m, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            request.DocumentId));
+        Assert.Equal(80_000m, await ScalarAsync<decimal>(
+            "SELECT FunctionalOriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            request.DocumentId));
+        Assert.Equal(4_000m, await ScalarAsync<decimal>(
+            "SELECT ExchangeRate FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            request.DocumentId));
+        Assert.Equal(27_100m, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+            declarationId));
+        Assert.Equal(10_000m, await ScalarAsync<decimal>(
+            "SELECT SUM(FunctionalAmount) FROM purchasing.GoodsReceiptCostAllocations WHERE CostDocumentId=@Id",
+            declarationId));
+        Assert.Equal(17_100m, await ScalarAsync<decimal>(
+            "SELECT FunctionalTaxAmount FROM purchasing.GoodsReceiptCostDocuments WHERE CostDocumentId=@Id",
+            declarationId));
+        Assert.Equal("Posted", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+            declarationId));
     }
 
     [Fact]

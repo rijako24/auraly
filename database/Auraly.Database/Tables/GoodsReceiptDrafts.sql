@@ -12,6 +12,10 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     [CreatesPayable] BIT NOT NULL,
     [DueDate] DATETIMEOFFSET(7) NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
+    [ExchangeRate] DECIMAL(19,8) NOT NULL CONSTRAINT [DF_GoodsReceiptDrafts_ExchangeRate] DEFAULT 1,
+    [ExchangeRateDate] DATE NULL,
+    [ExchangeRateSource] NVARCHAR(64) NOT NULL CONSTRAINT [DF_GoodsReceiptDrafts_ExchangeRateSource] DEFAULT N'FunctionalCurrency',
+    [AdditionalCostsJson] NVARCHAR(MAX) NULL,
     [Notes] NVARCHAR(1000) NULL,
     [NetAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
@@ -29,7 +33,8 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     CONSTRAINT [CK_GoodsReceiptDrafts_Amounts] CHECK ([NetAmount] >= 0 AND [TaxAmount] >= 0 AND [GrandTotal] = [NetAmount] + [TaxAmount]),
     CONSTRAINT [CK_GoodsReceiptDrafts_Payable] CHECK (([CreatesPayable] = 0) OR ([DueDate] IS NOT NULL)),
     CONSTRAINT [CK_GoodsReceiptDrafts_PurchaseEvidenceType] CHECK ([PurchaseEvidenceType] IS NULL OR [PurchaseEvidenceType] IN
-      (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher'))
+      (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher',N'ForeignCommercialInvoice')),
+    CONSTRAINT [CK_GoodsReceiptDrafts_AdditionalCostsJson] CHECK ([AdditionalCostsJson] IS NULL OR ISJSON([AdditionalCostsJson])=1)
 );
 GO
 CREATE INDEX [IX_GoodsReceiptDrafts_Business_Updated]
@@ -57,6 +62,8 @@ CREATE TABLE [dbo].[GoodsReceiptDraftLines]
     [NetAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [LineTotal] DECIMAL(19,4) NOT NULL,
+    [TotalGrossWeightKg] DECIMAL(19,6) NULL,
+    [TotalVolumeM3] DECIMAL(19,6) NULL,
     CONSTRAINT [PK_GoodsReceiptDraftLines] PRIMARY KEY CLUSTERED ([GoodsReceiptDraftId], [LineNumber]),
     CONSTRAINT [FK_GoodsReceiptDraftLines_Drafts] FOREIGN KEY ([GoodsReceiptDraftId]) REFERENCES [dbo].[GoodsReceiptDrafts] ([GoodsReceiptDraftId]) ON DELETE CASCADE,
     CONSTRAINT [FK_GoodsReceiptDraftLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),

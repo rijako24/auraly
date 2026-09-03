@@ -33,9 +33,10 @@ public sealed class AccountingProcessingCoordinatorTests
 
     private sealed class FixedGate(bool result) : IAccountingProcessingSignalGate
     {
-        public Task<bool> HasPendingWorkAsync(
+        public Task<IReadOnlyList<AccountingPendingWork>> ListPendingWorkAsync(
             Guid businessId, Guid documentId, string documentType,
-            CancellationToken cancellationToken = default) => Task.FromResult(result);
+            CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<AccountingPendingWork>>(
+                result ? [new AccountingPendingWork(documentId, documentType)] : []);
     }
 
     private sealed class RecordingPublisher : IAccountingProcessingSignalPublisher

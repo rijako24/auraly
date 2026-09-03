@@ -8,6 +8,7 @@ using Auraly.Commerce.Accounting.Domain;
 using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Dispatching;
+using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -82,6 +83,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                     await LoadDebitNoteFactsAsync(
                         connection, transaction, source, cancellationToken)),
                 "GoodsReceipt" => await LoadGoodsReceiptFactsAsync(
+                    connection, transaction, source, cancellationToken),
+                "GoodsReceiptCostDocument" => await LoadGoodsReceiptCostDocumentFactsAsync(
                     connection, transaction, source, cancellationToken),
                 "Expense" => await LoadExpenseFactsAsync(
                     connection, transaction, source, cancellationToken),
@@ -574,7 +577,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         bool createsPayable;
         Guid partyId;
         await using (var command = new SqlCommand("""
-            SELECT r.DocumentNumber,r.CurrencyCode,r.GrandTotal,r.CreatesPayable,s.PartyId
+            SELECT r.DocumentNumber,r.CurrencyCode,r.FunctionalGrandTotal,r.CreatesPayable,s.PartyId
             FROM dbo.GoodsReceipts r
             INNER JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
             WHERE r.GoodsReceiptId=@DocumentId AND r.BusinessId=@BusinessId;
@@ -597,21 +600,23 @@ public sealed partial class SqlAccountingPostingProcessor(
             return FinancialFactsResult.Pending(
                 "SettlementSourceMissing",
                 "The goods receipt has no payable and no settlement evidence to credit.");
-        if (!string.Equals(currencyCode, "COP", StringComparison.Ordinal))
-            return FinancialFactsResult.Pending(
-                "ForeignCurrencyUnsupported",
-                $"Currency '{currencyCode}' requires an exchange-rate accounting policy.");
-
         decimal deductibleVat;
         decimal acquisitionAmount;
+        decimal inventory;
         await using (var command = new SqlCommand("""
             SELECT
               COALESCE(SUM(CASE WHEN TaxTreatment=N'DeductibleInputVat'
-                                THEN TaxAmount ELSE 0 END),0),
-              COALESCE(SUM(NetAmount +
+                                THEN FunctionalTaxAmount ELSE 0 END),0),
+              COALESCE(SUM(FunctionalNetAmount +
                     CASE WHEN TaxTreatment=N'CapitalizedCost'
-                         THEN TaxAmount ELSE 0 END),0)
-            FROM dbo.GoodsReceiptLines
+                         THEN FunctionalTaxAmount ELSE 0 END),0),
+              COALESCE(SUM(CASE WHEN movement.LineNumber IS NOT NULL
+                THEN FunctionalNetAmount + CASE WHEN TaxTreatment=N'CapitalizedCost'
+                         THEN FunctionalTaxAmount ELSE 0 END ELSE 0 END),0)
+            FROM dbo.GoodsReceiptLines l
+            LEFT JOIN (SELECT DISTINCT DocumentId,LineNumber FROM dbo.InventoryMovements
+                       WHERE DocumentType=N'GoodsReceipt') movement
+              ON movement.DocumentId=l.GoodsReceiptId AND movement.LineNumber=l.LineNumber
             WHERE GoodsReceiptId=@DocumentId;
             """, connection, transaction))
         {
@@ -622,11 +627,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                     "The goods receipt lines were not found for accounting.");
             deductibleVat = reader.GetDecimal(0);
             acquisitionAmount = reader.GetDecimal(1);
+            inventory = reader.GetDecimal(2);
         }
-
-        var inventory = await InventoryCostAsync(
-            connection, transaction, source.DocumentId, source.DocumentType,
-            cancellationToken);
         var expense = decimal.Round(
             acquisitionAmount - inventory, 4, MidpointRounding.AwayFromZero);
         var accountedTotal = decimal.Round(
@@ -640,6 +642,73 @@ public sealed partial class SqlAccountingPostingProcessor(
             connection, transaction, source, total, cancellationToken);
         return FinancialFactsResult.Ready(FinancialFacts.Purchase(
             number, partyId, inventory, expense, deductibleVat, total, settlements));
+    }
+
+    private static async Task<FinancialFactsResult> LoadGoodsReceiptCostDocumentFactsAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        var payload = GoodsReceiptContractSerializer.DeserializeCostDocument(source.PayloadJson);
+        var document = payload.Document;
+        Guid partyId;
+        await using (var party = new SqlCommand("""
+            SELECT PartyId FROM dbo.Suppliers
+            WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId;
+            """, connection, transaction))
+        {
+            party.Parameters.AddWithValue("@SupplierId", document.SupplierId);
+            party.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            partyId = (Guid)(await party.ExecuteScalarAsync(cancellationToken)
+                ?? throw new InvalidOperationException("The additional-cost supplier was not found for accounting."));
+        }
+
+        var stockReceiptLines = new HashSet<int>();
+        await using (var command = new SqlCommand("""
+            SELECT DISTINCT LineNumber FROM dbo.InventoryMovements
+            WHERE DocumentId=@ReceiptId AND DocumentType=N'GoodsReceipt';
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@ReceiptId", payload.GoodsReceiptId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) stockReceiptLines.Add(reader.GetInt32(0));
+        }
+
+        var debitByCategory = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        static void Add(IDictionary<string, decimal> values, string category, decimal amount)
+        {
+            if (amount == 0) return;
+            values[category] = (values.TryGetValue(category, out var current) ? current : 0m) + amount;
+        }
+        foreach (var line in document.Lines)
+        {
+            var inventory = line.Allocations
+                .Where(value => stockReceiptLines.Contains(value.ReceiptLineNumber))
+                .Sum(value => value.FunctionalAmount);
+            Add(debitByCategory, AccountingCategories.Inventory, inventory);
+            var expensed = line.CostTreatment == PurchaseCostTreatments.Expense
+                ? line.FunctionalAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
+                    ? line.FunctionalTaxAmount : 0m)
+                : line.Allocations.Where(value => !stockReceiptLines.Contains(value.ReceiptLineNumber))
+                    .Sum(value => value.FunctionalAmount);
+            if (expensed > 0)
+                Add(debitByCategory, await ResolveSourceCategoryAsync(connection, transaction,
+                    "PurchaseCostKind", line.CostKind, cancellationToken), expensed);
+            if (line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat)
+                Add(debitByCategory, AccountingCategories.InputVat, line.FunctionalTaxAmount);
+        }
+
+        var settlements = await LoadPurchaseWithholdingSettlementsAsync(
+            connection, transaction, source, document.FunctionalGrandTotal, cancellationToken);
+        var lines = debitByCategory.Select(value => new CategoryLineSpec(
+                value.Key, value.Value, 0, partyId, $"Costo de compra {document.DocumentNumber}"))
+            .Concat(settlements.Select(value => new CategoryLineSpec(
+                value.Category, 0, value.Amount, partyId, $"Costo de compra {document.DocumentNumber}")))
+            .ToArray();
+        if (decimal.Round(lines.Sum(value => value.Debit), 4) != document.FunctionalGrandTotal ||
+            decimal.Round(lines.Sum(value => value.Credit), 4) != document.FunctionalGrandTotal)
+            throw new InvalidOperationException("The additional cost document does not reconcile for accounting.");
+        return FinancialFactsResult.Ready(FinancialFacts.PurchaseCostDocument(
+            document.DocumentNumber, lines));
     }
 
     private static async Task<IReadOnlyList<(string Category, decimal Amount)>>
@@ -765,15 +834,17 @@ public sealed partial class SqlAccountingPostingProcessor(
             source.DocumentId,source.DocumentType,cancellationToken));
         var expense=decimal.Round(acquisitionAmount-inventory,4,
             MidpointRounding.AwayFromZero);
-        if(expense<0 || decimal.Round(inventory+expense+deductibleVat,4)!=total ||
+        if(decimal.Round(inventory+expense+deductibleVat,4)!=total ||
            decimal.Round(payableCredit+supplierCredit,4)!=total)
             throw new InvalidOperationException(
                 "The purchase return does not reconcile with its inventory, tax and financial effects.");
         var settlements=new List<(string Category,decimal Amount)>();
         if(payableCredit>0)settlements.Add((AccountingCategories.AccountsPayable,payableCredit));
         if(supplierCredit>0)settlements.Add((AccountingCategories.SupplierCreditsReceivable,supplierCredit));
-        return FinancialFactsResult.Ready(FinancialFacts.PurchaseReturn(
-            number,partyId,inventory,expense,deductibleVat,total,settlements));
+        return FinancialFactsResult.Ready(expense >= 0
+            ? FinancialFacts.PurchaseReturn(number,partyId,inventory,expense,deductibleVat,total,settlements)
+            : FinancialFacts.PurchaseReturnWithUnrefundedLandedCost(
+                number, partyId, inventory, -expense, deductibleVat, settlements));
     }
     private static async Task<FinancialFacts> LoadPayablePaymentFactsAsync(
         SqlConnection connection,
@@ -1327,11 +1398,33 @@ public sealed partial class SqlAccountingPostingProcessor(
                 [(AccountingCategories.AccountsReceivable, total)], false, false, false, false);
         public static FinancialFacts Purchase(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) =>
             new($"Entrada de mercancia {number}", party, expense, deductibleVat, total, inventory, settlements, false, true, false, false);
+        public static FinancialFacts PurchaseCostDocument(
+            string number, IReadOnlyList<CategoryLineSpec> lines) =>
+            new($"Costo asociado a compra {number}", null, 0, 0, 0, 0, [],
+                false, false, false, false, DirectCategoryLines: lines);
         public static FinancialFacts Expense(string number, Guid? party, decimal untaxed, decimal vat,
             decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements,
             Guid accountId, Guid? costCenter) => new($"Gasto {number}", party, untaxed, vat,
                 total, 0, settlements, false, true, false, false, false, false, costCenter, accountId);
         public static FinancialFacts PurchaseReturn(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", party, expense, deductibleVat, total, inventory, settlements, true, true, false, false);
+        public static FinancialFacts PurchaseReturnWithUnrefundedLandedCost(
+            string number, Guid party, decimal inventory, decimal landedCost,
+            decimal deductibleVat, IReadOnlyList<(string Category, decimal Amount)> settlements)
+        {
+            var description = $"Devolucion de compra {number}";
+            var lines = settlements.Select(value => new CategoryLineSpec(
+                    value.Category, value.Amount, 0, party, description))
+                .Concat([
+                    new CategoryLineSpec(AccountingCategories.PurchasesExpense, landedCost, 0, party, description),
+                    new CategoryLineSpec(AccountingCategories.Inventory, 0, inventory, party, description)
+                ])
+                .Concat(deductibleVat > 0
+                    ? [new CategoryLineSpec(AccountingCategories.InputVat, 0, deductibleVat, party, description)]
+                    : [])
+                .ToArray();
+            return new(description, party, 0, 0, 0, 0, [], false, false, false, false,
+                DirectCategoryLines: lines);
+        }
         public static FinancialFacts PayablePayment(string number, Guid party, decimal total, string settlement) => new($"Pago a proveedor {number}", party, 0, 0, total, 0, [(settlement, total)], false, false, true, false);
         public static FinancialFacts ReceivablePayment(string number, Guid partyId, decimal total, string settlement) => new($"Recaudo de cartera {number}", partyId, 0, 0, total, 0, [(settlement, total)], false, false, false, true);
         public static FinancialFacts CashMovement(

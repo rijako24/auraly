@@ -79,6 +79,13 @@ public static class PurchasingApi
                         context.User.ToPurchasingIdentity(), request, cancellationToken)))
             .RequireAuthorization("purchasing.user");
         endpoints.MapPost(
+                "/api/commerce/v1/goods-receipts/cost-withholding-preview",
+                (HttpContext context, PreviewGoodsReceiptCostWithholdingRequest request,
+                    GoodsReceiptService service, CancellationToken cancellationToken) =>
+                    ExecuteAsync(() => service.PreviewCostWithholdingAsync(
+                        context.User.ToPurchasingIdentity(), request, cancellationToken)))
+            .RequireAuthorization("purchasing.user");
+        endpoints.MapPost(
                 "/api/commerce/v1/goods-receipts/confirm",
                 async (HttpContext context, ConfirmGoodsReceiptRequest request,
                     GoodsReceiptService service, CancellationToken cancellationToken) =>

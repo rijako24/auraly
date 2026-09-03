@@ -64,14 +64,54 @@ async function mockApi(page: Page) {
     if (path.endsWith("/goods-receipts/options")) return json(route, {
       warehouses: [{ warehouseId: primaryWarehouseId, code: "PPL", name: "Principal" }],
       suppliers: [],
-      purchaseEvidenceTypes: [{ code: "InternalReceiptVoucher", label: "Comprobante interno" }],
+      purchaseEvidenceTypes: [
+        { code: "InternalReceiptVoucher", label: "Comprobante interno" },
+        { code: "ForeignCommercialInvoice", label: "Factura comercial extranjera" },
+      ],
       withholdingConcepts: [], withholdingJurisdictions: [],
+      purchaseCostEvidenceTypes: [
+        { code: "SupplierElectronicInvoice", label: "Factura electrónica" },
+        { code: "ImportDeclaration", label: "Declaración de importación" },
+      ],
+      purchaseCostKinds: [
+        { code: "Freight", label: "Flete" },
+        { code: "CustomsDuty", label: "Arancel" },
+        { code: "ImportVat", label: "IVA de importación" },
+        { code: "OtherDirectCost", label: "Otro costo directo" },
+      ],
+      purchaseCostTreatments: [
+        { code: "Capitalize", label: "Mayor valor del inventario" },
+        { code: "Expense", label: "Gasto del período" },
+      ],
+      purchaseCostAllocationMethods: [
+        { code: "Value", label: "Por valor" },
+        { code: "Weight", label: "Por peso" },
+        { code: "Manual", label: "Manual" },
+        { code: "None", label: "No aplica" },
+      ],
+      purchaseTaxRates: [
+        { code: "0", label: "0 %" },
+        { code: "19", label: "19 %" },
+      ],
+      purchaseTaxTreatments: [
+        { code: "DeductibleInputVat", label: "IVA descontable" },
+        { code: "CapitalizedCost", label: "Mayor valor del costo" },
+        { code: "NotApplicable", label: "No aplica" },
+      ],
+      purchaseCurrencies: [
+        { code: "COP", label: "Peso colombiano" },
+        { code: "USD", label: "Dólar estadounidense" },
+      ],
+      exchangeRateSources: [
+        { code: "Negotiated", label: "Tasa pactada" },
+        { code: "OfficialTRM", label: "TRM oficial" },
+      ],
     });
     if (path.endsWith("/goods-receipts/products")) return json(route, {
       items: [{ productId, productCode: "PRD-001", reference: "ARROZ", name: "Arroz premium", supplierProductCode: "AR-1", latestUnitCost: 2_000, averageUnitCost: 1_900, taxCode: "01", taxRate: 0, taxTreatment: "CapitalizedCost", barcodes: [], baseUnitCode: "94", isAssociated: true, purchasePresentationName: "Caja", unitsPerPresentation: 6, isPrimary: true }],
       page: 1, pageSize: 50, totalCount: 1, totalPages: 1,
     });
-    if (path.endsWith("/goods-receipts/withholding-preview")) return json(route, {
+    if (path.endsWith("/goods-receipts/withholding-preview") || path.endsWith("/goods-receipts/cost-withholding-preview")) return json(route, {
       grossAmount: 14_000, withholdingTotal: 0, netAmount: 14_000, lines: [],
     });
     if (path.endsWith("/parties")) return json(route, {
@@ -189,4 +229,40 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await expect(dialog.getByRole("spinbutton", { name: "Cantidad en Caja" })).toHaveValue("7");
   await expect(dialog.getByPlaceholder("Observaciones de recepción")).toHaveValue("recepción persistente");
   await dialog.getByRole("button", { name: "Descartar captura" }).click();
+});
+
+test("recepción simple sigue directa y la importación carga catálogos y conceptos contables", async ({ page }) => {
+  await mockApi(page);
+  await authenticate(page);
+  await page.goto("/dashboard/purchasing/goods-receipts");
+  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  const dialog = page.getByRole("dialog", { name: "Recepción de compra" });
+
+  const supplier = dialog.getByRole("combobox", { name: "Seleccionar supplier" });
+  await supplier.click();
+  await page.getByRole("option", { name: /Proveedor Andino/ }).click();
+  await select(page, field(dialog, "Bodega").getByRole("combobox"), "Principal · PPL");
+  await select(page, dialog.getByRole("combobox", { name: "Tipo de soporte" }), "Comprobante interno");
+  const search = dialog.getByPlaceholder(/Escanea o busca/);
+  await search.fill("Arroz");
+  await page.getByRole("option", { name: /Arroz premium/ }).click();
+
+  await expect(dialog.getByText("Opcional. Si la compra no tiene otros costos, no necesitas hacer nada aquí.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Confirmar entrada" })).toBeEnabled();
+  await expect(dialog.getByText("Valor que entra al inventario", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Total retenciones", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Cuentas por pagar netas", { exact: true })).toBeVisible();
+
+  await select(page, dialog.getByRole("combobox", { name: "Tipo de soporte" }), "Factura comercial extranjera");
+  await select(page, field(dialog, "Moneda").getByRole("combobox"), "Dólar estadounidense");
+  await expect(field(dialog, "Fuente de la tasa").getByRole("combobox")).toContainText("Tasa pactada");
+
+  await dialog.getByRole("button", { name: "Nacionalización" }).click();
+  await expect(dialog.getByRole("paragraph").filter({ hasText: "Declaración de importación" })).toBeVisible();
+  await expect(dialog.getByText("Concepto 1", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Concepto 2", { exact: true })).toBeVisible();
+  await expect(field(dialog, "Concepto").getByRole("combobox").first()).toContainText("Arancel");
+  await expect(field(dialog, "Concepto").getByRole("combobox").nth(1)).toContainText("IVA de importación");
+  await expect(field(dialog, "Tratamiento del IVA").getByRole("combobox")).toContainText("IVA descontable");
+  await expect(dialog.getByText(/El IVA descontable se reconoce separado/)).toBeVisible();
 });

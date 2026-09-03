@@ -31,6 +31,9 @@ public sealed partial class SqlAccountingPostingProcessor
         "GoodsReceipt" => ApplyGoodsReceiptFinancialEffectsAsync(
             connection, transaction,
             GoodsReceiptContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
+        "GoodsReceiptCostDocument" => ApplyGoodsReceiptCostDocumentFinancialEffectsAsync(
+            connection, transaction,
+            GoodsReceiptContractSerializer.DeserializeCostDocument(source.PayloadJson), cancellationToken),
         "Expense" => ApplyExpenseFinancialEffectsAsync(
             connection, transaction,
             ExpenseContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
@@ -334,9 +337,26 @@ public sealed partial class SqlAccountingPostingProcessor
         value.CreatesPayable && value.Withholding.NetAmount > 0
             ? OpenPayableAsync(connection, transaction, value.BusinessId, value.SupplierId,
                 value.DocumentId, "GoodsReceipt", value.DocumentNumber, value.CurrencyCode,
-                value.Withholding.NetAmount, value.DueDate!.Value,
-                value.SupplierInvoiceDate ?? value.ReceivedAt, token)
+                decimal.Round(value.GrandTotal - value.Withholding.WithholdingTotal / value.ExchangeRate, 4),
+                value.DueDate!.Value, value.SupplierInvoiceDate ?? value.ReceivedAt, token,
+                value.Withholding.NetAmount, value.ExchangeRate, value.DocumentId)
             : Task.CompletedTask;
+
+    private Task ApplyGoodsReceiptCostDocumentFinancialEffectsAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        GoodsReceiptCostDocumentAccountingPayload value, CancellationToken token)
+    {
+        var document = value.Document;
+        return document.CreatesPayable && document.Withholding.NetAmount > 0
+            ? OpenPayableAsync(connection, transaction, value.BusinessId, document.SupplierId,
+                document.CostDocumentId, PurchasingDocumentTypes.GoodsReceiptCostDocument,
+                document.DocumentNumber, document.CurrencyCode,
+                decimal.Round(document.GrandTotal -
+                    document.Withholding.WithholdingTotal / document.ExchangeRate, 4),
+                document.DueDate!.Value, document.IssuedAt, token,
+                document.Withholding.NetAmount, document.ExchangeRate, value.GoodsReceiptId)
+            : Task.CompletedTask;
+    }
 
     private Task ApplyExpenseFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
@@ -351,14 +371,18 @@ public sealed partial class SqlAccountingPostingProcessor
         SqlConnection connection, SqlTransaction transaction,
         Guid businessId, Guid supplierId, Guid documentId, string documentType,
         string number, string currency, decimal amount, DateTimeOffset dueDate,
-        DateTimeOffset occurredAt, CancellationToken token)
+        DateTimeOffset occurredAt, CancellationToken token,
+        decimal? functionalAmount = null, decimal exchangeRate = 1,
+        Guid? parentGoodsReceiptId = null)
     {
         await using var command = new SqlCommand("""
             INSERT dbo.Payables
               (PayableId,BusinessId,SupplierId,SourceDocumentId,SourceDocumentType,
-               DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
+               DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,FunctionalOriginalAmount,
+               FunctionalOutstandingAmount,ExchangeRate,ParentGoodsReceiptId,DueDate,Status,CreatedAt)
             VALUES(@PayableId,@BusinessId,@SupplierId,@DocumentId,@DocumentType,
-               @Number,@Currency,@Amount,@Amount,@DueDate,N'Open',@Now);
+               @Number,@Currency,@Amount,@Amount,@FunctionalAmount,@FunctionalAmount,@ExchangeRate,
+               @ParentGoodsReceiptId,@DueDate,N'Open',@Now);
             INSERT dbo.PayableTransactions
               (PayableTransactionId,PayableId,TransactionType,Amount,
                SourceDocumentId,OccurredAt,CreatedAt)
@@ -373,6 +397,12 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@Number", number);
         command.Parameters.AddWithValue("@Currency", currency);
         AddMoney(command, "@Amount", amount);
+        AddMoney(command, "@FunctionalAmount", functionalAmount ?? amount);
+        var rate = command.Parameters.Add("@ExchangeRate", SqlDbType.Decimal);
+        rate.Precision = 19;
+        rate.Scale = 8;
+        rate.Value = exchangeRate;
+        command.Parameters.AddWithValue("@ParentGoodsReceiptId", (object?)parentGoodsReceiptId ?? DBNull.Value);
         command.Parameters.AddWithValue("@DueDate", dueDate);
         command.Parameters.AddWithValue("@At", occurredAt);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());

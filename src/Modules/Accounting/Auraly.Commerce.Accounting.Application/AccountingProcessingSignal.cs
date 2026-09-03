@@ -21,12 +21,14 @@ public interface IAccountingProcessingSignalPublisher
 
 public interface IAccountingProcessingSignalGate
 {
-    Task<bool> HasPendingWorkAsync(
+    Task<IReadOnlyList<AccountingPendingWork>> ListPendingWorkAsync(
         Guid businessId,
         Guid documentId,
         string documentType,
         CancellationToken cancellationToken = default);
 }
+
+public sealed record AccountingPendingWork(Guid DocumentId, string DocumentType);
 
 public sealed class AccountingProcessingCoordinator
 {
@@ -63,14 +65,15 @@ public sealed class AccountingProcessingCoordinator
             throw new ArgumentException(
                 "Business, document and document type are required for accounting processing.");
 
-        if (gate is not null && !await gate.HasPendingWorkAsync(
-                businessId, documentId, documentType, cancellationToken))
-            return;
-
-        await publisher.PublishAsync(
-            new AccountingProcessingSignal(
-                ids.NewId(), businessId, documentId, documentType.Trim()),
-            cancellationToken);
+        var pending = gate is null
+            ? [new AccountingPendingWork(documentId, documentType.Trim())]
+            : await gate.ListPendingWorkAsync(
+                businessId, documentId, documentType.Trim(), cancellationToken);
+        foreach (var work in pending)
+            await publisher.PublishAsync(
+                new AccountingProcessingSignal(
+                    ids.NewId(), businessId, work.DocumentId, work.DocumentType),
+                cancellationToken);
     }
 }
 
@@ -84,6 +87,7 @@ public static class AccountingProcessingPolicy
         "SalesReturn",
         "SalesDebitNote",
         "GoodsReceipt",
+        "GoodsReceiptCostDocument",
         "PurchaseReturn",
         "PayablePayment",
         "ReceivablePayment",

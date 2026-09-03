@@ -13,7 +13,9 @@ public interface IGoodsReceiptStore
         string idempotencyKey,
         ConfirmGoodsReceiptRequest request,
         GoodsReceiptCalculation calculation,
+        GoodsReceiptCostCalculation costCalculation,
         WithholdingCalculationSnapshot withholding,
+        IReadOnlyDictionary<Guid, WithholdingCalculationSnapshot> additionalWithholdings,
         CancellationToken cancellationToken);
 }
 
@@ -38,13 +40,55 @@ public sealed class GoodsReceiptService(
             throw new PurchasingValidationException("SupplierInvoiceDate is required.");
         if (!PurchaseEvidenceTypes.IsValid(request.PurchaseEvidenceType))
             throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
+        if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.ImportDeclaration)
+            throw new PurchasingValidationException("An import declaration must be added as a nationalization cost document.");
         var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
         ValidateEvidenceTaxTreatment(request.PurchaseEvidenceType, normalizedLines);
         var calculation = Calculate(normalizedLines);
+        if (request.ExchangeRate <= 0)
+            throw new PurchasingValidationException("ExchangeRate must be positive.");
         return await CalculateWithholdingAsync(
             user, request.SupplierId, request.WithholdingConceptCode,
-            request.WithholdingJurisdictionCode, calculation,
+            request.WithholdingJurisdictionCode,
+            FunctionalCalculation(
+                decimal.Round(calculation.NetAmount * request.ExchangeRate, 4,
+                    MidpointRounding.AwayFromZero),
+                decimal.Round(calculation.TaxAmount * request.ExchangeRate, 4,
+                    MidpointRounding.AwayFromZero)),
             request.SupplierInvoiceDate, cancellationToken);
+    }
+
+    public async Task<WithholdingCalculationSnapshot> PreviewCostWithholdingAsync(
+        PurchasingUserIdentity user,
+        PreviewGoodsReceiptCostWithholdingRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(request);
+        if (user.BusinessId != request.BusinessId)
+            throw new PurchasingForbiddenException("The cost document belongs to another business.");
+        Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
+        var document = request.Document ?? throw new PurchasingValidationException("Document is required.");
+        if (document.SupplierId == Guid.Empty || document.IssuedAt == default ||
+            document.ExchangeRate <= 0 || document.Lines is null || document.Lines.Count == 0)
+            throw new PurchasingValidationException("Supplier, issue date, exchange rate and lines are required.");
+        if (!PurchaseEvidenceTypes.IsValid(document.PurchaseEvidenceType))
+            throw new PurchasingValidationException("The cost document evidence type is invalid.");
+        if (document.Lines.Any(line => line.Amount < 0 || line.TaxAmount < 0 ||
+            line.TaxableBaseAmount < 0 || line.TaxRate is < 0 or > 100))
+            throw new PurchasingValidationException("The cost document contains invalid amounts.");
+        if (document.PurchaseEvidenceType == PurchaseEvidenceTypes.ForeignCommercialInvoice &&
+            document.Lines.Any(line => line.TaxAmount != 0))
+            throw new PurchasingValidationException("A foreign invoice cannot recognize Colombian input VAT.");
+        var calculation = FunctionalCalculation(
+            decimal.Round(document.Lines.Sum(line => line.Amount) * document.ExchangeRate, 4,
+                MidpointRounding.AwayFromZero),
+            decimal.Round(document.Lines.Sum(line => line.TaxAmount) * document.ExchangeRate, 4,
+                MidpointRounding.AwayFromZero));
+        return await CalculateWithholdingAsync(
+            user, document.SupplierId, document.WithholdingConceptCode,
+            document.WithholdingJurisdictionCode, calculation,
+            document.IssuedAt, cancellationToken);
     }
 
     public async Task<GoodsReceiptAcceptance> ConfirmAsync(
@@ -69,11 +113,13 @@ public sealed class GoodsReceiptService(
             throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
         if (request.SupplierInvoiceDate is null)
             throw new PurchasingValidationException("SupplierInvoiceDate is required as the purchase document issue date.");
-        if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.SupplierElectronicInvoice &&
+        if (request.PurchaseEvidenceType is PurchaseEvidenceTypes.SupplierElectronicInvoice or
+                PurchaseEvidenceTypes.ForeignCommercialInvoice &&
             string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber))
             throw new PurchasingValidationException(
                 "Supplier invoice number and date are required for an electronic supplier invoice.");
-        if (request.PurchaseEvidenceType != PurchaseEvidenceTypes.SupplierElectronicInvoice &&
+        if (request.PurchaseEvidenceType is not (PurchaseEvidenceTypes.SupplierElectronicInvoice or
+                PurchaseEvidenceTypes.ForeignCommercialInvoice) &&
             !string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber))
             throw new PurchasingValidationException(
                 "Supplier invoice number is only valid for an electronic supplier invoice.");
@@ -93,20 +139,44 @@ public sealed class GoodsReceiptService(
             throw new PurchasingValidationException("OverReceiptReason cannot exceed 500 characters.");
         ValidateEvidenceTaxTreatment(request.PurchaseEvidenceType, normalizedLines);
         var calculation = Calculate(normalizedLines);
-        var withholding = await CalculateWithholdingAsync(
-            user, request.SupplierId, request.WithholdingConceptCode,
-            request.WithholdingJurisdictionCode, calculation,
-            request.SupplierInvoiceDate.Value, cancellationToken);
-
-
-        var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), request with
+        var normalizedRequest = request with
         {
             CurrencyCode = currency,
             SupplierInvoiceNumber = Normalize(request.SupplierInvoiceNumber, 80),
             Notes = Normalize(request.Notes, 1000),
+            ExchangeRateSource = Normalize(request.ExchangeRateSource, 64) ?? "FunctionalCurrency",
             Lines = normalizedLines.Select(line => line with
-            { OverReceiptReason = Normalize(line.OverReceiptReason, 500) }).ToArray()
-        }, calculation, withholding, cancellationToken);
+            { OverReceiptReason = Normalize(line.OverReceiptReason, 500) }).ToArray(),
+            AdditionalCostDocuments = NormalizeAdditionalDocuments(request.AdditionalCostDocuments)
+        };
+        if ((normalizedRequest.AdditionalCostDocuments ?? []).Select(value => value.CostDocumentId)
+            .Append(request.DocumentId).Distinct().Count() !=
+            (normalizedRequest.AdditionalCostDocuments?.Count ?? 0) + 1)
+            throw new PurchasingValidationException("Document ids must be unique within the receipt.");
+        if ((normalizedRequest.AdditionalCostDocuments ?? []).Any(value =>
+            value.SupplierId == request.SupplierId &&
+            string.Equals(value.DocumentNumber, normalizedRequest.SupplierInvoiceNumber,
+                StringComparison.OrdinalIgnoreCase)))
+            throw new PurchasingValidationException(
+                "The primary supplier invoice cannot be repeated as an additional cost document.");
+        var costCalculation = GoodsReceiptCostCalculator.Calculate(normalizedRequest, calculation);
+        var withholding = await CalculateWithholdingAsync(
+            user, request.SupplierId, request.WithholdingConceptCode,
+            request.WithholdingJurisdictionCode, FunctionalCalculation(
+                costCalculation.FunctionalNetAmount, costCalculation.FunctionalTaxAmount),
+            request.SupplierInvoiceDate.Value, cancellationToken);
+        var additionalWithholdings = new Dictionary<Guid, WithholdingCalculationSnapshot>();
+        foreach (var document in costCalculation.AdditionalDocuments)
+        {
+            additionalWithholdings[document.Request.CostDocumentId] = await CalculateWithholdingAsync(
+                user, document.Request.SupplierId, document.Request.WithholdingConceptCode,
+                document.Request.WithholdingJurisdictionCode,
+                FunctionalCalculation(document.FunctionalNetAmount, document.FunctionalTaxAmount),
+                document.Request.IssuedAt, cancellationToken);
+        }
+
+        var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), normalizedRequest,
+            calculation, costCalculation, withholding, additionalWithholdings, cancellationToken);
         await signalPublisher.PublishAsync(
             new DocumentProcessingSignal(
                 acceptance.MovementId,
@@ -147,6 +217,23 @@ public sealed class GoodsReceiptService(
         }
     }
 
+    private static GoodsReceiptCalculation FunctionalCalculation(decimal net, decimal tax) =>
+        new([], net, tax, decimal.Round(net + tax, 4, MidpointRounding.AwayFromZero));
+
+    private static IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? NormalizeAdditionalDocuments(
+        IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? documents) =>
+        documents?.Select(document => document with
+        {
+            DocumentNumber = Normalize(document.DocumentNumber, 80)!,
+            CurrencyCode = document.CurrencyCode.Trim().ToUpperInvariant(),
+            ExchangeRateSource = Normalize(document.ExchangeRateSource, 64) ?? "FunctionalCurrency",
+            Lines = document.Lines.Select(line => line with
+            {
+                Description = Normalize(line.Description, 250)!,
+                TaxCode = Normalize(line.TaxCode, 32)!.ToUpperInvariant()
+            }).ToArray()
+        }).ToArray();
+
     private static void ValidateEvidenceTaxTreatment(
         string purchaseEvidenceType,
         IReadOnlyCollection<GoodsReceiptLineRequest> normalizedLines)
@@ -156,6 +243,10 @@ public sealed class GoodsReceiptService(
                 line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat))
             throw new PurchasingValidationException(
                 "An internal receipt voucher cannot recognize deductible input VAT; use CapitalizedCost.");
+        if (purchaseEvidenceType == PurchaseEvidenceTypes.ForeignCommercialInvoice &&
+            normalizedLines.Any(line => line.TaxRate > 0))
+            throw new PurchasingValidationException(
+                "A foreign commercial invoice cannot recognize Colombian input VAT; record import VAT on the import declaration.");
     }
 
     private static string? Normalize(string? value, int maximumLength)

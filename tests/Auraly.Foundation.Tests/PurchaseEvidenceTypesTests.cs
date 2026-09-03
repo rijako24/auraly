@@ -5,10 +5,10 @@ namespace Auraly.Foundation.Tests;
 public sealed class PurchaseEvidenceTypesTests
 {
     [Theory]
-    [InlineData(null, 3)]
-    [InlineData(PurchaseEvidenceTypes.SupplierElectronicInvoice, 2)]
-    [InlineData(PurchaseEvidenceTypes.BuyerElectronicSupportDocument, 2)]
-    [InlineData(PurchaseEvidenceTypes.InternalReceiptVoucher, 1)]
+    [InlineData(null, 4)]
+    [InlineData(PurchaseEvidenceTypes.SupplierElectronicInvoice, 3)]
+    [InlineData(PurchaseEvidenceTypes.BuyerElectronicSupportDocument, 3)]
+    [InlineData(PurchaseEvidenceTypes.InternalReceiptVoucher, 2)]
     public void Supplier_policy_limits_receipt_choices_and_always_keeps_internal_voucher(
         string? policy,
         int expectedCount)
@@ -17,6 +17,7 @@ public sealed class PurchaseEvidenceTypesTests
 
         Assert.Equal(expectedCount, allowed.Count);
         Assert.Contains(PurchaseEvidenceTypes.InternalReceiptVoucher, allowed);
+        Assert.Contains(PurchaseEvidenceTypes.ForeignCommercialInvoice, allowed);
         if (policy is not null)
             Assert.Contains(policy, allowed);
     }

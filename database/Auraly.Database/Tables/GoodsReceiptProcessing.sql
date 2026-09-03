@@ -26,6 +26,12 @@ CREATE TABLE [dbo].[GoodsReceipts]
     [NetAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [GrandTotal] DECIMAL(19,4) NOT NULL,
+    [ExchangeRate] DECIMAL(19,8) NOT NULL CONSTRAINT [DF_GoodsReceipts_ExchangeRate] DEFAULT 1,
+    [ExchangeRateDate] DATE NOT NULL CONSTRAINT [DF_GoodsReceipts_ExchangeRateDate] DEFAULT CONVERT(date,'20000101'),
+    [ExchangeRateSource] NVARCHAR(64) NOT NULL CONSTRAINT [DF_GoodsReceipts_ExchangeRateSource] DEFAULT N'FunctionalCurrency',
+    [FunctionalNetAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceipts_FunctionalNet] DEFAULT 0,
+    [FunctionalTaxAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceipts_FunctionalTax] DEFAULT 0,
+    [FunctionalGrandTotal] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceipts_FunctionalTotal] DEFAULT 0,
     [Status] NVARCHAR(24) NOT NULL,
     [ConfirmedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [AcceptedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -45,7 +51,7 @@ CREATE TABLE [dbo].[GoodsReceipts]
     CONSTRAINT [CK_GoodsReceipts_Payable] CHECK (([CreatesPayable] = 0) OR ([DueDate] IS NOT NULL)),
     CONSTRAINT [CK_GoodsReceipts_Status] CHECK ([Status] IN (N'Accepted', N'Processed'))
     ,CONSTRAINT [CK_GoodsReceipts_PurchaseEvidenceType] CHECK ([PurchaseEvidenceType] IN
-      (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher'))
+      (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher',N'ForeignCommercialInvoice'))
     ,CONSTRAINT [CK_GoodsReceipts_SupportFiscalData] CHECK (
       ([PurchaseEvidenceType]=N'BuyerElectronicSupportDocument' AND [SupportFiscalSeriesId] IS NOT NULL AND [SupportFiscalAuthorizationId] IS NOT NULL AND [SupportFiscalNumber] IS NOT NULL)
       OR ([PurchaseEvidenceType]<>N'BuyerElectronicSupportDocument' AND [SupportFiscalSeriesId] IS NULL AND [SupportFiscalAuthorizationId] IS NULL AND [SupportFiscalNumber] IS NULL))
@@ -87,12 +93,19 @@ CREATE TABLE [dbo].[GoodsReceiptLines]
     [NetAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [LineTotal] DECIMAL(19,4) NOT NULL,
+    [TotalGrossWeightKg] DECIMAL(19,6) NULL,
+    [TotalVolumeM3] DECIMAL(19,6) NULL,
+    [FunctionalNetAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_FunctionalNet] DEFAULT 0,
+    [FunctionalTaxAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_FunctionalTax] DEFAULT 0,
+    [FunctionalLineTotal] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_FunctionalTotal] DEFAULT 0,
+    [AllocatedLandedCostAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_LandedCost] DEFAULT 0,
+    [RecognizedInventoryCostAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_RecognizedCost] DEFAULT 0,
     CONSTRAINT [PK_GoodsReceiptLines] PRIMARY KEY CLUSTERED ([GoodsReceiptId], [LineNumber]),
     CONSTRAINT [FK_GoodsReceiptLines_Receipts] FOREIGN KEY ([GoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts] ([GoodsReceiptId]),
     CONSTRAINT [FK_GoodsReceiptLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [FK_GoodsReceiptLines_PurchaseOrderLine] FOREIGN KEY ([PurchaseOrderLineId]) REFERENCES [purchasing].[PurchaseOrderLines] ([LineId]),
     CONSTRAINT [CK_GoodsReceiptLines_OverReceipt] CHECK (([OverReceiptAuthorized]=0 AND [OverReceiptReason] IS NULL) OR ([OverReceiptAuthorized]=1 AND [PurchaseOrderLineId] IS NOT NULL AND [OverReceiptReason] IS NOT NULL)),
-    CONSTRAINT [CK_GoodsReceiptLines_Amounts] CHECK ([LineNumber] > 0 AND [Quantity] > 0 AND [PresentationQuantity] > 0 AND [UnitsPerPresentation] > 0 AND [Quantity] = [PresentationQuantity] * [UnitsPerPresentation] AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [LineTotal] = [NetAmount] + [TaxAmount]),
+    CONSTRAINT [CK_GoodsReceiptLines_Amounts] CHECK ([LineNumber] > 0 AND [Quantity] > 0 AND [PresentationQuantity] > 0 AND [UnitsPerPresentation] > 0 AND [Quantity] = [PresentationQuantity] * [UnitsPerPresentation] AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [LineTotal] = [NetAmount] + [TaxAmount] AND ([TotalGrossWeightKg] IS NULL OR [TotalGrossWeightKg]>0) AND ([TotalVolumeM3] IS NULL OR [TotalVolumeM3]>0) AND [AllocatedLandedCostAmount]>=0 AND [RecognizedInventoryCostAmount]>=0),
     CONSTRAINT [CK_GoodsReceiptLines_TaxTreatment] CHECK ([TaxTreatment] IN (N'DeductibleInputVat', N'CapitalizedCost', N'NotApplicable'))
 );
 GO
@@ -102,6 +115,82 @@ CREATE INDEX [IX_GoodsReceiptLines_PurchaseOrderLine]
     ON [dbo].[GoodsReceiptLines] ([PurchaseOrderLineId], [GoodsReceiptId])
     INCLUDE ([Quantity])
     WHERE [PurchaseOrderLineId] IS NOT NULL;
+GO
+
+CREATE TABLE [purchasing].[GoodsReceiptCostDocuments]
+(
+    [CostDocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [GoodsReceiptId] UNIQUEIDENTIFIER NOT NULL,
+    [SupplierId] UNIQUEIDENTIFIER NOT NULL,
+    [PurchaseEvidenceType] NVARCHAR(40) NOT NULL,
+    [DocumentNumber] NVARCHAR(80) NOT NULL,
+    [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
+    [CreatesPayable] BIT NOT NULL,
+    [DueDate] DATETIMEOFFSET(7) NULL,
+    [CurrencyCode] CHAR(3) NOT NULL,
+    [ExchangeRate] DECIMAL(19,8) NOT NULL,
+    [ExchangeRateDate] DATE NOT NULL,
+    [ExchangeRateSource] NVARCHAR(64) NOT NULL,
+    [NetAmount] DECIMAL(19,4) NOT NULL,
+    [TaxAmount] DECIMAL(19,4) NOT NULL,
+    [GrandTotal] DECIMAL(19,4) NOT NULL,
+    [FunctionalNetAmount] DECIMAL(19,4) NOT NULL,
+    [FunctionalTaxAmount] DECIMAL(19,4) NOT NULL,
+    [FunctionalGrandTotal] DECIMAL(19,4) NOT NULL,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [PK_GoodsReceiptCostDocuments] PRIMARY KEY ([CostDocumentId]),
+    CONSTRAINT [FK_GoodsReceiptCostDocuments_Receipt] FOREIGN KEY ([GoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts]([GoodsReceiptId]),
+    CONSTRAINT [FK_GoodsReceiptCostDocuments_Supplier] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers]([SupplierId]),
+    CONSTRAINT [UQ_GoodsReceiptCostDocuments_SupplierNumber] UNIQUE ([SupplierId],[DocumentNumber]),
+    CONSTRAINT [CK_GoodsReceiptCostDocuments_Evidence] CHECK ([PurchaseEvidenceType] IN (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher',N'ForeignCommercialInvoice',N'ImportDeclaration')),
+    CONSTRAINT [CK_GoodsReceiptCostDocuments_Amounts] CHECK ([ExchangeRate]>0 AND [NetAmount]>=0 AND [TaxAmount]>=0 AND [GrandTotal]=[NetAmount]+[TaxAmount] AND [FunctionalNetAmount]>=0 AND [FunctionalTaxAmount]>=0 AND [FunctionalGrandTotal]=[FunctionalNetAmount]+[FunctionalTaxAmount]),
+    CONSTRAINT [CK_GoodsReceiptCostDocuments_Payable] CHECK ([CreatesPayable]=0 OR [DueDate] IS NOT NULL)
+);
+GO
+CREATE INDEX [IX_GoodsReceiptCostDocuments_Receipt] ON [purchasing].[GoodsReceiptCostDocuments]([GoodsReceiptId],[IssuedAt]);
+GO
+
+CREATE TABLE [purchasing].[GoodsReceiptCostLines]
+(
+    [CostDocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [LineNumber] INT NOT NULL,
+    [CostKind] NVARCHAR(32) NOT NULL,
+    [DescriptionSnapshot] NVARCHAR(250) NOT NULL,
+    [Amount] DECIMAL(19,4) NOT NULL,
+    [TaxableBaseAmount] DECIMAL(19,4) NOT NULL,
+    [TaxCode] NVARCHAR(32) NOT NULL,
+    [TaxRate] DECIMAL(9,6) NOT NULL,
+    [TaxAmount] DECIMAL(19,4) NOT NULL,
+    [TaxTreatment] NVARCHAR(32) NOT NULL,
+    [CostTreatment] NVARCHAR(16) NOT NULL,
+    [AllocationMethod] NVARCHAR(16) NOT NULL,
+    [FunctionalAmount] DECIMAL(19,4) NOT NULL,
+    [FunctionalTaxableBaseAmount] DECIMAL(19,4) NOT NULL,
+    [FunctionalTaxAmount] DECIMAL(19,4) NOT NULL,
+    [FunctionalDocumentAmount] DECIMAL(19,4) NOT NULL,
+    CONSTRAINT [PK_GoodsReceiptCostLines] PRIMARY KEY ([CostDocumentId],[LineNumber]),
+    CONSTRAINT [FK_GoodsReceiptCostLines_Document] FOREIGN KEY ([CostDocumentId]) REFERENCES [purchasing].[GoodsReceiptCostDocuments]([CostDocumentId]),
+    CONSTRAINT [CK_GoodsReceiptCostLines_Kind] CHECK ([CostKind] IN (N'Freight',N'Insurance',N'CustomsDuty',N'CustomsBrokerage',N'Handling',N'OtherDirectCost',N'ImportVat')),
+    CONSTRAINT [CK_GoodsReceiptCostLines_Treatment] CHECK ([TaxTreatment] IN (N'DeductibleInputVat',N'CapitalizedCost',N'NotApplicable') AND [CostTreatment] IN (N'Capitalize',N'Expense')),
+    CONSTRAINT [CK_GoodsReceiptCostLines_Allocation] CHECK ([AllocationMethod] IN (N'Value',N'Quantity',N'Weight',N'Volume',N'Equal',N'Manual',N'None') AND ([CostTreatment]=N'Capitalize' OR [AllocationMethod]=N'None')),
+    CONSTRAINT [CK_GoodsReceiptCostLines_Amounts] CHECK ([LineNumber]>0 AND [Amount]>=0 AND [TaxableBaseAmount]>=0 AND [TaxRate] BETWEEN 0 AND 100 AND [TaxAmount]>=0 AND [FunctionalAmount]>=0 AND [FunctionalTaxAmount]>=0 AND [FunctionalDocumentAmount]=[FunctionalAmount]+[FunctionalTaxAmount])
+);
+GO
+
+CREATE TABLE [purchasing].[GoodsReceiptCostAllocations]
+(
+    [CostDocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [CostLineNumber] INT NOT NULL,
+    [GoodsReceiptId] UNIQUEIDENTIFIER NOT NULL,
+    [ReceiptLineNumber] INT NOT NULL,
+    [AllocationMethod] NVARCHAR(16) NOT NULL,
+    [AllocationFactor] DECIMAL(19,12) NOT NULL,
+    [FunctionalAmount] DECIMAL(19,4) NOT NULL,
+    CONSTRAINT [PK_GoodsReceiptCostAllocations] PRIMARY KEY ([CostDocumentId],[CostLineNumber],[ReceiptLineNumber]),
+    CONSTRAINT [FK_GoodsReceiptCostAllocations_CostLine] FOREIGN KEY ([CostDocumentId],[CostLineNumber]) REFERENCES [purchasing].[GoodsReceiptCostLines]([CostDocumentId],[LineNumber]),
+    CONSTRAINT [FK_GoodsReceiptCostAllocations_ReceiptLine] FOREIGN KEY ([GoodsReceiptId],[ReceiptLineNumber]) REFERENCES [dbo].[GoodsReceiptLines]([GoodsReceiptId],[LineNumber]),
+    CONSTRAINT [CK_GoodsReceiptCostAllocations_Value] CHECK ([AllocationFactor]>=0 AND [FunctionalAmount]>=0)
+);
 GO
 
 CREATE TABLE [dbo].[SupplierCostObservations]
@@ -155,10 +244,14 @@ CREATE TABLE [dbo].[Payables]
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(64) NOT NULL,
-    [DocumentNumber] NVARCHAR(40) NOT NULL,
+    [DocumentNumber] NVARCHAR(80) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
     [OriginalAmount] DECIMAL(19,4) NOT NULL,
     [OutstandingAmount] DECIMAL(19,4) NOT NULL,
+    [FunctionalOriginalAmount] DECIMAL(19,4) NULL,
+    [FunctionalOutstandingAmount] DECIMAL(19,4) NULL,
+    [ExchangeRate] DECIMAL(19,8) NOT NULL CONSTRAINT [DF_Payables_ExchangeRate] DEFAULT 1,
+    [ParentGoodsReceiptId] UNIQUEIDENTIFIER NULL,
     [DueDate] DATETIMEOFFSET(7) NOT NULL,
     [Status] NVARCHAR(24) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -166,9 +259,10 @@ CREATE TABLE [dbo].[Payables]
     CONSTRAINT [PK_Payables] PRIMARY KEY CLUSTERED ([PayableId]),
     CONSTRAINT [FK_Payables_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_Payables_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
-    CONSTRAINT [FK_Payables_SourceJob] FOREIGN KEY ([SourceDocumentId], [SourceDocumentType]) REFERENCES [dbo].[DocumentProcessingJobs] ([DocumentId], [DocumentType]),
+    CONSTRAINT [FK_Payables_SourceJob] FOREIGN KEY ([SourceDocumentId], [SourceDocumentType]) REFERENCES [dbo].[AccountingPostingJobs] ([SourceDocumentId], [SourceDocumentType]),
+    CONSTRAINT [FK_Payables_ParentGoodsReceipt] FOREIGN KEY ([ParentGoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts]([GoodsReceiptId]),
     CONSTRAINT [UQ_Payables_Source] UNIQUE ([SourceDocumentId], [SourceDocumentType]),
-    CONSTRAINT [CK_Payables_Amounts] CHECK ([OriginalAmount] > 0 AND [OutstandingAmount] >= 0),
+    CONSTRAINT [CK_Payables_Amounts] CHECK ([OriginalAmount] > 0 AND [OutstandingAmount] >= 0 AND ([FunctionalOriginalAmount] IS NULL OR [FunctionalOriginalAmount]>0) AND ([FunctionalOutstandingAmount] IS NULL OR [FunctionalOutstandingAmount]>=0) AND [ExchangeRate]>0),
     CONSTRAINT [CK_Payables_Status] CHECK ([Status] IN (N'Open', N'PartiallyPaid', N'Paid', N'Cancelled'))
 );
 GO

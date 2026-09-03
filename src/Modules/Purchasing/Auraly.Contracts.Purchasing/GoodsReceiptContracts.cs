@@ -23,6 +23,7 @@ public static class PurchasingPermissionCodes
 public static class PurchasingDocumentTypes
 {
     public const string GoodsReceipt = AuralyDocumentTypes.GoodsReceipt;
+    public const string GoodsReceiptCostDocument = "GoodsReceiptCostDocument";
     public const string PurchaseReturn = AuralyDocumentTypes.PurchaseReturn;
 }
 
@@ -38,19 +39,73 @@ public static class PurchaseEvidenceTypes
     public const string SupplierElectronicInvoice = "SupplierElectronicInvoice";
     public const string BuyerElectronicSupportDocument = "BuyerElectronicSupportDocument";
     public const string InternalReceiptVoucher = "InternalReceiptVoucher";
+    public const string ForeignCommercialInvoice = "ForeignCommercialInvoice";
+    public const string ImportDeclaration = "ImportDeclaration";
 
     public static bool IsValid(string? value) => value is
-        SupplierElectronicInvoice or BuyerElectronicSupportDocument or InternalReceiptVoucher;
+        SupplierElectronicInvoice or BuyerElectronicSupportDocument or InternalReceiptVoucher or
+        ForeignCommercialInvoice or ImportDeclaration;
 
     public static IReadOnlyList<string> AllowedFor(string? supplierPolicy) => supplierPolicy switch
     {
-        SupplierElectronicInvoice => [SupplierElectronicInvoice, InternalReceiptVoucher],
-        BuyerElectronicSupportDocument => [BuyerElectronicSupportDocument, InternalReceiptVoucher],
-        InternalReceiptVoucher => [InternalReceiptVoucher],
-        null => [SupplierElectronicInvoice, BuyerElectronicSupportDocument, InternalReceiptVoucher],
+        SupplierElectronicInvoice => [SupplierElectronicInvoice, InternalReceiptVoucher, ForeignCommercialInvoice],
+        BuyerElectronicSupportDocument => [BuyerElectronicSupportDocument, InternalReceiptVoucher, ForeignCommercialInvoice],
+        InternalReceiptVoucher => [InternalReceiptVoucher, ForeignCommercialInvoice],
+        null => [SupplierElectronicInvoice, BuyerElectronicSupportDocument, InternalReceiptVoucher, ForeignCommercialInvoice],
         _ => []
     };
 }
+
+public static class PurchaseCostKinds
+{
+    public const string Freight = "Freight";
+    public const string Insurance = "Insurance";
+    public const string CustomsDuty = "CustomsDuty";
+    public const string CustomsBrokerage = "CustomsBrokerage";
+    public const string Handling = "Handling";
+    public const string OtherDirectCost = "OtherDirectCost";
+    public const string ImportVat = "ImportVat";
+
+    public static bool IsValid(string? value) => value is Freight or Insurance or CustomsDuty or
+        CustomsBrokerage or Handling or OtherDirectCost or ImportVat;
+}
+
+public static class PurchaseCostTreatments
+{
+    public const string Capitalize = "Capitalize";
+    public const string Expense = "Expense";
+    public static bool IsValid(string? value) => value is Capitalize or Expense;
+}
+
+public static class PurchaseCostAllocationMethods
+{
+    public const string Value = "Value";
+    public const string Quantity = "Quantity";
+    public const string Weight = "Weight";
+    public const string Volume = "Volume";
+    public const string Equal = "Equal";
+    public const string Manual = "Manual";
+    public const string None = "None";
+    public static bool IsValid(string? value) => value is Value or Quantity or Weight or Volume or Equal or Manual or None;
+}
+
+public sealed record GoodsReceiptCostManualAllocationRequest(int ReceiptLineNumber, decimal FunctionalAmount);
+
+public sealed record GoodsReceiptCostLineRequest(
+    int LineNumber, string CostKind, string Description, decimal Amount,
+    decimal TaxableBaseAmount, string TaxCode, decimal TaxRate, decimal TaxAmount,
+    string TaxTreatment, string CostTreatment, string AllocationMethod,
+    IReadOnlyCollection<int>? EligibleReceiptLineNumbers = null,
+    IReadOnlyCollection<GoodsReceiptCostManualAllocationRequest>? ManualAllocations = null);
+
+public sealed record GoodsReceiptCostDocumentRequest(
+    Guid CostDocumentId, Guid SupplierId, string PurchaseEvidenceType,
+    string DocumentNumber, DateTimeOffset IssuedAt, bool CreatesPayable,
+    DateTimeOffset? DueDate, string CurrencyCode, decimal ExchangeRate,
+    DateOnly? ExchangeRateDate, string ExchangeRateSource,
+    IReadOnlyCollection<GoodsReceiptCostLineRequest> Lines,
+    string? WithholdingConceptCode = null,
+    string? WithholdingJurisdictionCode = null);
 
 public sealed record GoodsReceiptLineRequest(
     int LineNumber,
@@ -66,7 +121,9 @@ public sealed record GoodsReceiptLineRequest(
     decimal PresentationQuantity = 1,
     decimal UnitsPerPresentation = 1,
     Guid? PurchaseOrderLineId = null,
-    string? OverReceiptReason = null);
+    string? OverReceiptReason = null,
+    decimal? TotalGrossWeightKg = null,
+    decimal? TotalVolumeM3 = null);
 
 public sealed record ConfirmGoodsReceiptRequest(
     Guid DocumentId,
@@ -85,7 +142,11 @@ public sealed record ConfirmGoodsReceiptRequest(
     string? WithholdingConceptCode = null,
     string? WithholdingJurisdictionCode = null,
     string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
-    Guid? PurchaseOrderId = null);
+    Guid? PurchaseOrderId = null,
+    decimal ExchangeRate = 1,
+    DateOnly? ExchangeRateDate = null,
+    string ExchangeRateSource = "FunctionalCurrency",
+    IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -105,7 +166,40 @@ public sealed record GoodsReceiptLineSnapshot(
     decimal UnitsPerPresentation = 1,
     Guid? PurchaseOrderLineId = null,
     string? OverReceiptReason = null,
-    bool OverReceiptAuthorized = false);
+    bool OverReceiptAuthorized = false,
+    decimal? TotalGrossWeightKg = null,
+    decimal? TotalVolumeM3 = null,
+    decimal FunctionalNetAmount = 0,
+    decimal FunctionalTaxAmount = 0,
+    decimal FunctionalLineTotal = 0,
+    decimal AllocatedLandedCostAmount = 0,
+    decimal RecognizedInventoryCostAmount = 0);
+
+public sealed record GoodsReceiptCostAllocationSnapshot(
+    int CostLineNumber, int ReceiptLineNumber, decimal Factor,
+    decimal FunctionalAmount, string AllocationMethod);
+
+public sealed record GoodsReceiptCostLineSnapshot(
+    int LineNumber, string CostKind, string Description, decimal Amount,
+    decimal TaxableBaseAmount, string TaxCode, decimal TaxRate, decimal TaxAmount,
+    string TaxTreatment, string CostTreatment, string AllocationMethod,
+    decimal FunctionalAmount, decimal FunctionalTaxableBaseAmount,
+    decimal FunctionalTaxAmount, decimal FunctionalDocumentAmount,
+    IReadOnlyList<GoodsReceiptCostAllocationSnapshot> Allocations);
+
+public sealed record GoodsReceiptCostDocumentSnapshot(
+    Guid CostDocumentId, Guid SupplierId, string PurchaseEvidenceType,
+    string DocumentNumber, DateTimeOffset IssuedAt, bool CreatesPayable,
+    DateTimeOffset? DueDate, string CurrencyCode, decimal ExchangeRate,
+    DateOnly ExchangeRateDate, string ExchangeRateSource,
+    decimal NetAmount, decimal TaxAmount, decimal GrandTotal,
+    decimal FunctionalNetAmount, decimal FunctionalTaxAmount, decimal FunctionalGrandTotal,
+    WithholdingCalculationSnapshot Withholding,
+    IReadOnlyList<GoodsReceiptCostLineSnapshot> Lines);
+
+public sealed record GoodsReceiptCostDocumentAccountingPayload(
+    Guid TenantId, Guid BusinessId, Guid GoodsReceiptId,
+    GoodsReceiptCostDocumentSnapshot Document);
 
 public sealed record GoodsReceiptDocumentPayload(
     Guid TenantId,
@@ -134,7 +228,14 @@ public sealed record GoodsReceiptDocumentPayload(
     string? SupplierNameSnapshot = null,
     string? WarehouseNameSnapshot = null,
     string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
-    Guid? PurchaseOrderId = null);
+    Guid? PurchaseOrderId = null,
+    decimal ExchangeRate = 1,
+    DateOnly? ExchangeRateDate = null,
+    string ExchangeRateSource = "FunctionalCurrency",
+    decimal FunctionalNetAmount = 0,
+    decimal FunctionalTaxAmount = 0,
+    decimal FunctionalGrandTotal = 0,
+    IReadOnlyList<GoodsReceiptCostDocumentSnapshot>? AdditionalCostDocuments = null);
 
 public sealed record GoodsReceiptAcceptance(
     Guid DocumentId,
@@ -151,7 +252,12 @@ public sealed record PreviewGoodsReceiptWithholdingRequest(
     IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
     string? WithholdingConceptCode = null,
     string? WithholdingJurisdictionCode = null,
-    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice);
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
+    decimal ExchangeRate = 1);
+
+public sealed record PreviewGoodsReceiptCostWithholdingRequest(
+    Guid BusinessId,
+    GoodsReceiptCostDocumentRequest Document);
 
 public sealed record SaveGoodsReceiptDraftRequest(
     Guid DraftId,
@@ -168,7 +274,11 @@ public sealed record SaveGoodsReceiptDraftRequest(
     IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
     string? ConcurrencyToken,
     string? PurchaseEvidenceType = null,
-    Guid? PurchaseOrderId = null);
+    Guid? PurchaseOrderId = null,
+    decimal ExchangeRate = 1,
+    DateOnly? ExchangeRateDate = null,
+    string ExchangeRateSource = "FunctionalCurrency",
+    IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null);
 
 public sealed record GoodsReceiptDraft(
     Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
@@ -178,7 +288,11 @@ public sealed record GoodsReceiptDraft(
     decimal GrandTotal, IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
     DateTimeOffset UpdatedAt, string ConcurrencyToken,
     string? PurchaseEvidenceType = null,
-    Guid? PurchaseOrderId = null);
+    Guid? PurchaseOrderId = null,
+    decimal ExchangeRate = 1,
+    DateOnly? ExchangeRateDate = null,
+    string ExchangeRateSource = "FunctionalCurrency",
+    IReadOnlyList<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null);
 
 public sealed record GoodsReceiptDetail(
     Guid DocumentId, string DocumentNumber, string Status,
@@ -190,7 +304,19 @@ public sealed record GoodsReceiptDetail(
     IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
     string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
     Guid? PurchaseOrderId = null,
-    WithholdingCalculationSnapshot? Withholding = null);
+    WithholdingCalculationSnapshot? Withholding = null,
+    decimal ExchangeRate = 1,
+    DateOnly? ExchangeRateDate = null,
+    string ExchangeRateSource = "FunctionalCurrency",
+    decimal FunctionalNetAmount = 0,
+    decimal FunctionalTaxAmount = 0,
+    decimal FunctionalGrandTotal = 0,
+    IReadOnlyList<GoodsReceiptCostDocumentSnapshot>? AdditionalCostDocuments = null,
+    IReadOnlyList<GoodsReceiptAccountingStatus>? AccountingStatuses = null);
+
+public sealed record GoodsReceiptAccountingStatus(
+    Guid SourceDocumentId, string SourceDocumentType, string Status,
+    string? ErrorCode, string? ErrorMessage);
 
 public sealed record GoodsReceiptListItem(
     Guid DocumentId, string? DocumentNumber, string Status,
@@ -208,7 +334,15 @@ public sealed record GoodsReceiptWorkspaceOptions(
     IReadOnlyList<GoodsReceiptSupplierOption> Suppliers,
     IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseEvidenceTypes,
     IReadOnlyList<GoodsReceiptTaxOption> WithholdingConcepts,
-    IReadOnlyList<GoodsReceiptTaxOption> WithholdingJurisdictions);
+    IReadOnlyList<GoodsReceiptTaxOption> WithholdingJurisdictions,
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseCostEvidenceTypes,
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseCostKinds,
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseCostTreatments,
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseCostAllocationMethods,
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseTaxRates,
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseTaxTreatments,
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseCurrencies,
+    IReadOnlyList<PurchaseEvidenceTypeOption> ExchangeRateSources);
 
 public sealed record GoodsReceiptWarehouseOption(Guid WarehouseId, string Code, string Name);
 public sealed record GoodsReceiptSupplierOption(
@@ -252,6 +386,13 @@ public static class GoodsReceiptContractSerializer
     public static GoodsReceiptDocumentPayload Deserialize(string payload) =>
         JsonSerializer.Deserialize<GoodsReceiptDocumentPayload>(payload, Options)
         ?? throw new InvalidOperationException("The goods receipt payload is invalid.");
+
+    public static string SerializeCostDocument(GoodsReceiptCostDocumentAccountingPayload payload) =>
+        JsonSerializer.Serialize(payload, Options);
+
+    public static GoodsReceiptCostDocumentAccountingPayload DeserializeCostDocument(string payload) =>
+        JsonSerializer.Deserialize<GoodsReceiptCostDocumentAccountingPayload>(payload, Options)
+        ?? throw new InvalidOperationException("The goods receipt cost document payload is invalid.");
 }
 
 public sealed record PurchaseReturnLineRequest(int OriginalLineNumber, decimal Quantity);

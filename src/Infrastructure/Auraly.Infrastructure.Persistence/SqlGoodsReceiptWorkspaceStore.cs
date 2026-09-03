@@ -50,6 +50,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             WHERE country.Code=N'CO' AND country.IsActive=1
               AND division.IsActive=1 AND city.IsActive=1
             ORDER BY city.Name,division.Name,city.Code;
+            SELECT CatalogCode,Code,Label,Description
+            FROM reference.Options
+            WHERE CatalogCode IN(N'purchase-cost-evidence-type',N'purchase-cost-kind',
+              N'purchase-cost-treatment',N'purchase-cost-allocation-method',
+              N'purchase-tax-rate',N'purchase-tax-treatment',N'purchase-currency',
+              N'exchange-rate-source') AND IsActive=1
+            ORDER BY CatalogCode,SortOrder,Label;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -78,7 +85,24 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         var jurisdictions = new List<GoodsReceiptTaxOption>();
         while (await reader.ReadAsync(cancellationToken))
             jurisdictions.Add(new(reader.GetString(0), reader.GetString(1)));
-        return new(warehouses, suppliers, evidenceTypes, concepts, jurisdictions);
+        await reader.NextResultAsync(cancellationToken);
+        var references = new Dictionary<string, List<PurchaseEvidenceTypeOption>>(StringComparer.Ordinal);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var catalog = reader.GetString(0);
+            if (!references.TryGetValue(catalog, out var values))
+                references[catalog] = values = [];
+            values.Add(new(reader.GetString(1), reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3)));
+        }
+        List<PurchaseEvidenceTypeOption> Options(string catalog) =>
+            references.TryGetValue(catalog, out var values) ? values : [];
+        return new(warehouses, suppliers, evidenceTypes, concepts, jurisdictions,
+            Options("purchase-cost-evidence-type"), Options("purchase-cost-kind"),
+            Options("purchase-cost-treatment"), Options("purchase-cost-allocation-method"),
+            Options("purchase-tax-rate"), Options("purchase-tax-treatment"),
+            Options("purchase-currency"),
+            Options("exchange-rate-source"));
     }
 
     public async Task<GoodsReceiptProductPage> FindProductsAsync(
@@ -481,12 +505,49 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 grossAmount, withholdingTotal, netPayable, withholdingLines);
         }
 
+        await reader.DisposeAsync();
+        GoodsReceiptDocumentPayload? immutable = null;
+        await using (var payloadCommand = new SqlCommand("""
+            SELECT PayloadJson FROM dbo.DocumentProcessingPayloads
+            WHERE DocumentId=@DocumentId AND DocumentType=N'GoodsReceipt' AND BusinessId=@BusinessId;
+            """, connection))
+        {
+            payloadCommand.Parameters.AddWithValue("@DocumentId", documentId);
+            payloadCommand.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            var payloadJson = await payloadCommand.ExecuteScalarAsync(cancellationToken) as string;
+            if (payloadJson is not null) immutable = GoodsReceiptContractSerializer.Deserialize(payloadJson);
+        }
+        var accountingStatuses = new List<GoodsReceiptAccountingStatus>();
+        await using (var accountingCommand = new SqlCommand("""
+            SELECT j.SourceDocumentId,j.SourceDocumentType,j.Status,j.LastErrorCode,j.LastErrorMessage
+            FROM dbo.AccountingPostingJobs j
+            WHERE j.BusinessId=@BusinessId AND
+              (j.SourceDocumentId=@DocumentId OR j.SourceDocumentId IN
+                (SELECT CostDocumentId FROM purchasing.GoodsReceiptCostDocuments WHERE GoodsReceiptId=@DocumentId))
+            ORDER BY CASE WHEN j.SourceDocumentId=@DocumentId THEN 0 ELSE 1 END,j.OccurredAt,j.SourceDocumentId;
+            """, connection))
+        {
+            accountingCommand.Parameters.AddWithValue("@DocumentId", documentId);
+            accountingCommand.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            await using var accountingReader = await accountingCommand.ExecuteReaderAsync(cancellationToken);
+            while (await accountingReader.ReadAsync(cancellationToken))
+                accountingStatuses.Add(new(accountingReader.GetGuid(0), accountingReader.GetString(1),
+                    accountingReader.GetString(2), accountingReader.IsDBNull(3) ? null : accountingReader.GetString(3),
+                    accountingReader.IsDBNull(4) ? null : accountingReader.GetString(4)));
+        }
+
         return new GoodsReceiptDetail(
             documentId, number, status, warehouseId, warehouseName, supplierId,
             supplierName, supplierInvoiceNumber, supplierInvoiceDate, receivedAt,
             createsPayable, dueDate, currencyCode, notes, netAmount, taxAmount,
-            grandTotal, acceptedAt, processedAt, lines, purchaseEvidenceType,
-            purchaseOrderId, withholding);
+            grandTotal, acceptedAt, processedAt, immutable?.Lines ?? lines, purchaseEvidenceType,
+            purchaseOrderId, withholding ?? immutable?.Withholding,
+            immutable?.ExchangeRate ?? 1, immutable?.ExchangeRateDate,
+            immutable?.ExchangeRateSource ?? "FunctionalCurrency",
+            immutable?.FunctionalNetAmount ?? netAmount,
+            immutable?.FunctionalTaxAmount ?? taxAmount,
+            immutable?.FunctionalGrandTotal ?? grandTotal,
+            immutable?.AdditionalCostDocuments, accountingStatuses);
     }
     public async Task<GoodsReceiptDraft?> GetDraftAsync(
         PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken)
@@ -567,10 +628,40 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             IF @SupplierId IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
               THROW 51123,'The supplier is outside the authenticated business.',1;
+            IF EXISTS (
+              SELECT 1 FROM OPENJSON(@CostDocumentsJson)
+              WITH (SupplierId uniqueidentifier '$.SupplierId') x
+              LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId AND s.IsActive=1
+              WHERE s.SupplierId IS NULL)
+              THROW 51127,'An additional-cost supplier is outside the authenticated business.',1;
+            IF @CurrencyCode<>N'COP' AND NOT EXISTS (
+              SELECT 1 FROM reference.Options
+              WHERE CatalogCode=N'exchange-rate-source' AND Code=@ExchangeRateSource AND IsActive=1)
+              THROW 51128,'The exchange-rate source is not active in the canonical catalog.',1;
+            IF EXISTS (
+              SELECT 1 FROM OPENJSON(@CostDocumentsJson)
+              WITH (CurrencyCode nvarchar(3) '$.CurrencyCode',ExchangeRateSource nvarchar(64) '$.ExchangeRateSource') x
+              LEFT JOIN reference.Options optionValue
+                ON optionValue.CatalogCode=N'exchange-rate-source'
+               AND optionValue.Code=x.ExchangeRateSource AND optionValue.IsActive=1
+              WHERE UPPER(x.CurrencyCode)<>N'COP' AND optionValue.OptionId IS NULL)
+              THROW 51129,'An additional document has an exchange-rate source outside the canonical catalog.',1;
+            IF EXISTS (
+              SELECT 1 FROM OPENJSON(@CostDocumentsJson)
+              WITH (SupplierId uniqueidentifier '$.SupplierId',PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
+              INNER JOIN dbo.Suppliers supplier
+                ON supplier.SupplierId=x.SupplierId AND supplier.BusinessId=@BusinessId AND supplier.IsActive=1
+              WHERE NOT (
+                x.PurchaseEvidenceType IN (N'ForeignCommercialInvoice',N'ImportDeclaration')
+                OR supplier.PurchaseEvidencePolicy IS NULL
+                OR supplier.PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND x.PurchaseEvidenceType=N'InternalReceiptVoucher'
+                OR supplier.PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND x.PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
+                OR supplier.PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND x.PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
+              THROW 51130,'An additional document evidence type is not allowed by its supplier configuration.',1;
             IF @SupplierId IS NOT NULL AND @PurchaseEvidenceType IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers
               WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1
-                AND (PurchaseEvidencePolicy IS NULL
+                AND (@PurchaseEvidenceType=N'ForeignCommercialInvoice' OR PurchaseEvidencePolicy IS NULL
                   OR PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND @PurchaseEvidenceType=N'InternalReceiptVoucher'
                   OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                   OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
@@ -594,9 +685,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@CreatesPayable", request.CreatesPayable);
         command.Parameters.AddWithValue("@IssueDate", (object?)request.SupplierInvoiceDate ?? DBNull.Value);
         command.Parameters.AddWithValue("@DueDate", (object?)request.DueDate ?? DBNull.Value);
+        command.Parameters.AddWithValue("@CurrencyCode", request.CurrencyCode);
+        command.Parameters.AddWithValue("@ExchangeRateSource", request.ExchangeRateSource);
         command.Parameters.AddWithValue("@ProductsJson", JsonSerializer.Serialize(request.Lines.Select(x => x.ProductId).Distinct()));
+        command.Parameters.AddWithValue("@CostDocumentsJson",
+            JsonSerializer.Serialize(request.AdditionalCostDocuments ?? []));
         try { await command.ExecuteNonQueryAsync(cancellationToken); }
-        catch (SqlException exception) when (exception.Number is >= 51121 and <= 51126)
+        catch (SqlException exception) when (exception.Number is >= 51121 and <= 51130)
         { throw new PurchasingValidationException(exception.Message); }
     }
 
@@ -626,10 +721,12 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         const string sql = """
             INSERT dbo.GoodsReceiptDrafts
               (GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,PurchaseOrderId,PurchaseEvidenceType,SupplierInvoiceNumber,
-               SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,Notes,
+               SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,ExchangeRate,
+               ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson,Notes,
                NetAmount,TaxAmount,GrandTotal,CreatedByUserId,UpdatedByUserId,CreatedAt,UpdatedAt)
             VALUES(@Id,@BusinessId,@WarehouseId,@SupplierId,@PurchaseOrderId,@PurchaseEvidenceType,@InvoiceNumber,@InvoiceDate,@ReceivedAt,
-                   @CreatesPayable,@DueDate,@Currency,@Notes,@Net,@Tax,@Total,@UserId,@UserId,@Now,@Now);
+                   @CreatesPayable,@DueDate,@Currency,@ExchangeRate,@ExchangeRateDate,@ExchangeRateSource,
+                   @AdditionalCostsJson,@Notes,@Net,@Tax,@Total,@UserId,@UserId,@Now,@Now);
             """;
         await using var command = DraftCommand(sql, connection, transaction, user, request, calculation, now);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -644,7 +741,9 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             UPDATE dbo.GoodsReceiptDrafts
             SET WarehouseId=@WarehouseId,SupplierId=@SupplierId,PurchaseOrderId=@PurchaseOrderId,PurchaseEvidenceType=@PurchaseEvidenceType,SupplierInvoiceNumber=@InvoiceNumber,
                 SupplierInvoiceDate=@InvoiceDate,ReceivedAt=@ReceivedAt,CreatesPayable=@CreatesPayable,
-                DueDate=@DueDate,CurrencyCode=@Currency,Notes=@Notes,NetAmount=@Net,TaxAmount=@Tax,
+                DueDate=@DueDate,CurrencyCode=@Currency,ExchangeRate=@ExchangeRate,
+                ExchangeRateDate=@ExchangeRateDate,ExchangeRateSource=@ExchangeRateSource,
+                AdditionalCostsJson=@AdditionalCostsJson,Notes=@Notes,NetAmount=@Net,TaxAmount=@Tax,
                 GrandTotal=@Total,UpdatedByUserId=@UserId,UpdatedAt=@Now
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId AND RowVersion=@RowVersion;
             """;
@@ -672,6 +771,15 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@CreatesPayable", request.CreatesPayable);
         command.Parameters.AddWithValue("@DueDate", (object?)request.DueDate ?? DBNull.Value);
         command.Parameters.AddWithValue("@Currency", request.CurrencyCode);
+        AddDecimal(command, "@ExchangeRate", request.ExchangeRate, 19, 8);
+        command.Parameters.AddWithValue("@ExchangeRateDate",
+            request.ExchangeRateDate is DateOnly exchangeDate
+                ? exchangeDate.ToDateTime(TimeOnly.MinValue) : DBNull.Value);
+        command.Parameters.AddWithValue("@ExchangeRateSource", request.ExchangeRateSource);
+        command.Parameters.AddWithValue("@AdditionalCostsJson",
+            request.AdditionalCostDocuments is { Count: > 0 }
+                ? JsonSerializer.Serialize(request.AdditionalCostDocuments,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)) : DBNull.Value);
         command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
         AddDecimal(command, "@Net", calculation?.NetAmount ?? 0, 19, 4);
         AddDecimal(command, "@Tax", calculation?.TaxAmount ?? 0, 19, 4);
@@ -700,10 +808,10 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             INSERT dbo.GoodsReceiptDraftLines
               (GoodsReceiptDraftId,LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,
                DiscountAmount,TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,
-               PurchaseOrderLineId,OverReceiptReason)
+               PurchaseOrderLineId,OverReceiptReason,TotalGrossWeightKg,TotalVolumeM3)
             VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,
                    @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation,
-                   @PurchaseOrderLineId,@OverReceiptReason);
+                   @PurchaseOrderLineId,@OverReceiptReason,@Weight,@Volume);
             """;
         foreach (var line in calculation.Lines)
         {
@@ -727,6 +835,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             AddDecimal(command, "@UnitsPerPresentation", source.UnitsPerPresentation, 19, 6);
             command.Parameters.AddWithValue("@PurchaseOrderLineId", (object?)source.PurchaseOrderLineId ?? DBNull.Value);
             command.Parameters.AddWithValue("@OverReceiptReason", (object?)source.OverReceiptReason ?? DBNull.Value);
+            AddNullableDecimal(command, "@Weight", source.TotalGrossWeightKg, 19, 6);
+            AddNullableDecimal(command, "@Volume", source.TotalVolumeM3, 19, 6);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
@@ -738,12 +848,14 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         const string sql = """
             SELECT GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,SupplierInvoiceNumber,
                    SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,Notes,
-                   NetAmount,TaxAmount,GrandTotal,UpdatedAt,RowVersion,PurchaseEvidenceType,PurchaseOrderId
+                   NetAmount,TaxAmount,GrandTotal,UpdatedAt,RowVersion,PurchaseEvidenceType,PurchaseOrderId,
+                   ExchangeRate,ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson
             FROM dbo.GoodsReceiptDrafts
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId;
             SELECT LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
                    TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,
-                   PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,PurchaseOrderLineId,OverReceiptReason
+                   PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,PurchaseOrderLineId,OverReceiptReason,
+                   TotalGrossWeightKg,TotalVolumeM3
             FROM dbo.GoodsReceiptDraftLines
             WHERE GoodsReceiptDraftId=@Id ORDER BY LineNumber;
             """;
@@ -765,7 +877,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             Net = reader.GetDecimal(11), Tax = reader.GetDecimal(12), Total = reader.GetDecimal(13),
             Updated = reader.GetDateTimeOffset(14), Token = Convert.ToBase64String(reader.GetFieldValue<byte[]>(15)),
             EvidenceType = reader.IsDBNull(16) ? null : reader.GetString(16),
-            OrderId = reader.IsDBNull(17) ? (Guid?)null : reader.GetGuid(17)
+            OrderId = reader.IsDBNull(17) ? (Guid?)null : reader.GetGuid(17),
+            ExchangeRate = reader.GetDecimal(18),
+            ExchangeDate = reader.IsDBNull(19) ? (DateOnly?)null : DateOnly.FromDateTime(reader.GetDateTime(19)),
+            ExchangeSource = reader.GetString(20),
+            AdditionalCosts = reader.IsDBNull(21) ? null :
+                JsonSerializer.Deserialize<IReadOnlyList<GoodsReceiptCostDocumentRequest>>(
+                    reader.GetString(21), new JsonSerializerOptions(JsonSerializerDefaults.Web))
         };
         await reader.NextResultAsync(cancellationToken);
         var lines = new List<GoodsReceiptLineSnapshot>();
@@ -776,11 +894,14 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.GetString(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
                 reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14),
                 reader.IsDBNull(15) ? null : reader.GetGuid(15),
-                reader.IsDBNull(16) ? null : reader.GetString(16)));
+                reader.IsDBNull(16) ? null : reader.GetString(16), false,
+                reader.IsDBNull(17) ? null : reader.GetDecimal(17),
+                reader.IsDBNull(18) ? null : reader.GetDecimal(18)));
         return new(header.Id, header.Business, header.Warehouse, header.Supplier, header.Invoice,
             header.InvoiceDate, header.Received, header.Payable, header.Due, header.Currency,
             header.Notes, header.Net, header.Tax, header.Total, lines, header.Updated, header.Token,
-            header.EvidenceType, header.OrderId);
+            header.EvidenceType, header.OrderId, header.ExchangeRate, header.ExchangeDate,
+            header.ExchangeSource, header.AdditionalCosts);
     }
 
     private static byte[] ParseToken(string value)
@@ -796,5 +917,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         parameter.Precision = precision;
         parameter.Scale = scale;
         parameter.Value = value;
+    }
+
+    private static void AddNullableDecimal(SqlCommand command, string name, decimal? value, byte precision, byte scale)
+    {
+        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
+        parameter.Precision = precision;
+        parameter.Scale = scale;
+        parameter.Value = (object?)value ?? DBNull.Value;
     }
 }

@@ -31,6 +31,11 @@ public static class AccountingCategories
     public const string SupplierCreditsReceivable = "SupplierCreditsReceivable";
     public const string InputVat = "InputVat";
     public const string PurchasesExpense = "PurchasesExpense";
+    public const string PurchaseFreightExpense = "PurchaseFreightExpense";
+    public const string PurchaseInsuranceExpense = "PurchaseInsuranceExpense";
+    public const string CustomsExpense = "CustomsExpense";
+    public const string PurchaseHandlingExpense = "PurchaseHandlingExpense";
+    public const string OtherPurchaseDirectExpense = "OtherPurchaseDirectExpense";
     public const string WithholdingIncomeTaxPayable = "WithholdingIncomeTaxPayable";
     public const string WithholdingVatPayable = "WithholdingVatPayable";
     public const string WithholdingIcaPayable = "WithholdingIcaPayable";

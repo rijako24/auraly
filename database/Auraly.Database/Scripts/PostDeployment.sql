@@ -165,3 +165,4 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Seeds\SeedDispatchReasons.sql
 :r .\Migrations\BackfillCanonicalInventoryBalances.sql
 :r .\Migrations\MigrateTenantProductsAndBusinessPrices.sql
+:r .\Migrations\BackfillGoodsReceiptFunctionalCurrency.sql

@@ -28,10 +28,17 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             receipt.TenantId != document.TenantId.Value)
             throw new InvalidOperationException("The goods receipt envelope does not match its payload.");
 
-        if (receipt.Withholding.GrossAmount != receipt.GrandTotal ||
+        var receiptFunctionalTotal = receipt.FunctionalGrandTotal == 0 && receipt.GrandTotal > 0
+            ? receipt.GrandTotal : receipt.FunctionalGrandTotal;
+        if (receipt.Withholding.GrossAmount != receiptFunctionalTotal ||
             receipt.Withholding.WithholdingTotal != receipt.Withholding.Lines.Sum(line => line.Amount) ||
-            receipt.Withholding.NetAmount + receipt.Withholding.WithholdingTotal != receipt.GrandTotal)
+            receipt.Withholding.NetAmount + receipt.Withholding.WithholdingTotal != receiptFunctionalTotal)
             throw new InvalidOperationException("The immutable withholding snapshot does not reconcile.");
+        foreach (var costDocument in receipt.AdditionalCostDocuments ?? [])
+            if (costDocument.Withholding.GrossAmount != costDocument.FunctionalGrandTotal ||
+                costDocument.Withholding.WithholdingTotal != costDocument.Withholding.Lines.Sum(line => line.Amount) ||
+                costDocument.Withholding.NetAmount + costDocument.Withholding.WithholdingTotal != costDocument.FunctionalGrandTotal)
+                throw new InvalidOperationException("An additional-cost withholding snapshot does not reconcile.");
 
         var session = sessions.Current;
         foreach (var line in receipt.Lines.OrderBy(line => line.LineNumber))
@@ -41,6 +48,19 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, receipt.SupplierInvoiceDate ?? receipt.ReceivedAt, ids, timeProvider,
             cancellationToken);
+        foreach (var costDocument in receipt.AdditionalCostDocuments ?? [])
+        {
+            await PersistWithholdingSnapshotAsync(session, receipt.BusinessId,
+                costDocument.CostDocumentId, PurchasingDocumentTypes.GoodsReceiptCostDocument,
+                costDocument.IssuedAt, costDocument.Withholding, cancellationToken);
+            var payload = GoodsReceiptContractSerializer.SerializeCostDocument(
+                new GoodsReceiptCostDocumentAccountingPayload(
+                    receipt.TenantId, receipt.BusinessId, receipt.DocumentId, costDocument));
+            await SqlAccountingPostingJobWriter.InsertSourceAsync(
+                session, receipt.TenantId, receipt.BusinessId, costDocument.CostDocumentId,
+                PurchasingDocumentTypes.GoodsReceiptCostDocument, payload, costDocument.IssuedAt,
+                ids, timeProvider, cancellationToken);
+        }
         await SqlSalesReportingJobWriter.InsertAsync(
             session, document, ids, timeProvider, cancellationToken);
         await InsertOutboxAsync(session, receipt, document.Payload, cancellationToken);
@@ -86,33 +106,44 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         SqlDocumentProcessingSessionAccessor.Session session,
         GoodsReceiptDocumentPayload receipt,
         CancellationToken cancellationToken)
+        => await PersistWithholdingSnapshotAsync(session, receipt.BusinessId, receipt.DocumentId,
+            PurchasingDocumentTypes.GoodsReceipt, receipt.SupplierInvoiceDate ?? receipt.ReceivedAt,
+            receipt.Withholding, cancellationToken);
+
+    private static async Task PersistWithholdingSnapshotAsync(
+        SqlDocumentProcessingSessionAccessor.Session session, Guid businessId,
+        Guid documentId, string documentType, DateTimeOffset recognizedAt,
+        Auraly.Commerce.Taxation.Contracts.WithholdingCalculationSnapshot withholding,
+        CancellationToken cancellationToken)
     {
         await using (var command = new SqlCommand("""
             INSERT dbo.DocumentWithholdingSnapshots
               (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt)
-            VALUES(@DocumentId,N'GoodsReceipt',@BusinessId,@Gross,@Withholding,@Net,@At);
+            VALUES(@DocumentId,@DocumentType,@BusinessId,@Gross,@Withholding,@Net,@At);
             """, session.Connection, session.Transaction))
         {
-            command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
-            command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
-            AddDecimal(command, "@Gross", receipt.Withholding.GrossAmount, 19, 4);
-            AddDecimal(command, "@Withholding", receipt.Withholding.WithholdingTotal, 19, 4);
-            AddDecimal(command, "@Net", receipt.Withholding.NetAmount, 19, 4);
-            command.Parameters.AddWithValue("@At", receipt.SupplierInvoiceDate ?? receipt.ReceivedAt);
+            command.Parameters.AddWithValue("@DocumentId", documentId);
+            command.Parameters.AddWithValue("@DocumentType", documentType);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
+            AddDecimal(command, "@Gross", withholding.GrossAmount, 19, 4);
+            AddDecimal(command, "@Withholding", withholding.WithholdingTotal, 19, 4);
+            AddDecimal(command, "@Net", withholding.NetAmount, 19, 4);
+            command.Parameters.AddWithValue("@At", recognizedAt);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        for (var index = 0; index < receipt.Withholding.Lines.Count; index++)
+        for (var index = 0; index < withholding.Lines.Count; index++)
         {
-            var line = receipt.Withholding.Lines[index];
+            var line = withholding.Lines[index];
             await using var command = new SqlCommand("""
                 INSERT dbo.DocumentWithholdingLines
                   (DocumentId,DocumentType,LineNumber,RuleId,RuleVersion,RuleCode,Name,Kind,
                    BaseKind,TaxableBase,Rate,Amount,JurisdictionCode)
-                VALUES(@DocumentId,N'GoodsReceipt',@Line,@RuleId,@Version,@Code,@Name,@Kind,
+                VALUES(@DocumentId,@DocumentType,@Line,@RuleId,@Version,@Code,@Name,@Kind,
                    @BaseKind,@Base,@Rate,@Amount,@Jurisdiction);
                 """, session.Connection, session.Transaction);
-            command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
+            command.Parameters.AddWithValue("@DocumentId", documentId);
+            command.Parameters.AddWithValue("@DocumentType", documentType);
             command.Parameters.AddWithValue("@Line", index + 1);
             command.Parameters.AddWithValue("@RuleId", line.RuleId);
             command.Parameters.AddWithValue("@Version", line.RuleVersion);
@@ -137,14 +168,27 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         var inventoryTarget = await SqlProductLinkResolution.ResolveInventoryAsync(session, receipt.BusinessId, line.ProductId, cancellationToken);
         var inventoryLine = line with { ProductId = inventoryTarget.ProductId, Quantity = line.Quantity * inventoryTarget.Factor };
         var state = await LoadLineStateAsync(session, receipt, line, inventoryTarget.ProductId, cancellationToken);
-        var acquisitionAmount = line.NetAmount +
-            (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
-                ? line.TaxAmount
-                : 0m);
+        // Accepted receipts may remain queued while the compatible schema/code rollout occurs.
+        // Their older immutable payload has no functional-cost fields, so preserve the
+        // original COP valuation instead of interpreting missing JSON members as zero.
+        var legacyPayload = receipt.FunctionalGrandTotal == 0m && receipt.GrandTotal > 0m;
+        var recognizedInventoryCost = legacyPayload
+            ? line.NetAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
+                ? line.TaxAmount : 0m)
+            : line.RecognizedInventoryCostAmount;
+        var supplierCost = legacyPayload
+            ? line.NetAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
+                ? line.TaxAmount : 0m)
+            : line.FunctionalNetAmount +
+              (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
+                  ? line.FunctionalTaxAmount : 0m);
         var acquisitionUnitCost = decimal.Round(
-            acquisitionAmount / line.Quantity,
+            recognizedInventoryCost / line.Quantity,
             6,
             MidpointRounding.AwayFromZero);
+        var supplierUnitCost = decimal.Round(
+            supplierCost / line.Quantity,
+            6, MidpointRounding.AwayFromZero);
         var priceFormationCost = acquisitionUnitCost;
         if (state.ManageStock)
         {
@@ -157,7 +201,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
                 priceFormationCost = projectedValuation.AverageUnitCostAfter * inventoryTarget.Factor;
         }
         await RecordSupplierCostAsync(
-            session, receipt, line, acquisitionUnitCost, state.PreviousObservedUnitCost,
+            session, receipt, line, supplierUnitCost, state.PreviousObservedUnitCost,
             cancellationToken);
         await CreatePriceProposalAsync(
             session, receipt, line, priceFormationCost, state, cancellationToken);
@@ -290,7 +334,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
         command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         AddDecimal(command, "@UnitCost", acquisitionUnitCost, 19, 6);
-        command.Parameters.AddWithValue("@Currency", receipt.CurrencyCode);
+        command.Parameters.AddWithValue("@Currency", "COP");
         command.Parameters.AddWithValue("@ObservedAt", receipt.ReceivedAt);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         var previous = command.Parameters.Add("@PreviousCost", SqlDbType.Decimal);

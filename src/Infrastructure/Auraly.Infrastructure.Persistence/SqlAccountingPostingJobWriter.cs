@@ -1,6 +1,9 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
 using Microsoft.Data.SqlClient;
+using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Auraly.Infrastructure.Persistence;
 
@@ -55,6 +58,50 @@ internal static class SqlAccountingPostingJobWriter
         command.Parameters.AddWithValue("@BusinessId", document.BusinessId.Value);
         command.Parameters.AddWithValue("@DocumentId", document.DocumentId.Value);
         command.Parameters.AddWithValue("@DocumentType", document.DocumentType);
+        command.Parameters.AddWithValue("@OccurredAt", occurredAt);
+        command.Parameters.AddWithValue("@CreatedAt", timeProvider.GetUtcNow());
+        var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (inserted is < 0 or > 2)
+            throw new InvalidOperationException("An invalid number of accounting jobs was created.");
+    }
+
+    public static async Task InsertSourceAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        Guid tenantId, Guid businessId, Guid documentId, string documentType,
+        string payload, DateTimeOffset occurredAt, IAuralyIdGenerator ids,
+        TimeProvider timeProvider, CancellationToken cancellationToken)
+    {
+        var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        const string sql = """
+            INSERT dbo.AccountingSourceDocuments
+              (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
+               PayloadHash,OccurredAt,AcceptedAt)
+            SELECT @DocumentId,@DocumentType,@TenantId,@BusinessId,@Payload,@PayloadHash,
+                   @OccurredAt,@CreatedAt
+            FROM dbo.AccountingTenantSettings settings
+            WHERE settings.TenantId=@TenantId AND settings.Status=N'Ready'
+              AND settings.EffectiveFrom<=CONVERT(date,@OccurredAt)
+              AND NOT EXISTS (SELECT 1 FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)
+                WHERE s.SourceDocumentId=@DocumentId AND s.SourceDocumentType=@DocumentType);
+
+            INSERT dbo.AccountingPostingJobs
+              (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+               SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
+            SELECT @JobId,s.TenantId,s.BusinessId,s.SourceDocumentId,s.SourceDocumentType,
+                   s.PayloadHash,s.OccurredAt,N'Pending',0,@CreatedAt
+            FROM dbo.AccountingSourceDocuments s
+            WHERE s.SourceDocumentId=@DocumentId AND s.SourceDocumentType=@DocumentType
+              AND NOT EXISTS (SELECT 1 FROM dbo.AccountingPostingJobs j WITH(UPDLOCK,HOLDLOCK)
+                WHERE j.SourceDocumentId=@DocumentId AND j.SourceDocumentType=@DocumentType);
+            """;
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@JobId", ids.NewId());
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@DocumentType", documentType);
+        command.Parameters.AddWithValue("@Payload", payload);
+        command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = payloadHash;
         command.Parameters.AddWithValue("@OccurredAt", occurredAt);
         command.Parameters.AddWithValue("@CreatedAt", timeProvider.GetUtcNow());
         var inserted = await command.ExecuteNonQueryAsync(cancellationToken);

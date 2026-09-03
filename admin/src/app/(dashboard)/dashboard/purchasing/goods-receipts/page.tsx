@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   ArchiveRestore, Barcode, ChevronDown, CircleAlert, CircleDollarSign, PackagePlus, Plus, Save,
   Search, Trash2, Truck, Warehouse, X,
@@ -36,7 +36,8 @@ import {
 import {
   goodsReceiptsApi, type GoodsReceiptDetail, type GoodsReceiptDraft, type GoodsReceiptLine,
   type GoodsReceiptListItem, type GoodsReceiptProduct, type GoodsReceiptStatus,
-  type SaveGoodsReceiptDraftRequest, type PurchaseEvidenceType,
+  type SaveGoodsReceiptDraftRequest, type PurchaseEvidenceType, type GoodsReceiptCostDocument,
+  type PurchaseCostAllocationMethod, type PurchaseCostKind,
 } from "@/services/api/goods-receipts";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -50,6 +51,7 @@ import {
 } from "@/lib/goods-receipt-calculator";
 
 type PendingSupplierChange = { supplier: PartyWorkspaceItem };
+type GoodsReceiptCostLine = GoodsReceiptCostDocument["lines"][number];
 
 type EditorDraft = {
   draftId: string; warehouseId: string; supplierId: string;
@@ -59,6 +61,8 @@ type EditorDraft = {
   withholdingConceptCode: string; withholdingJurisdictionCode: string;
   lines: GoodsReceiptLine[]; concurrencyToken: string | null;
   purchaseOrderId: string;
+  currencyCode: string; exchangeRate: number; exchangeRateDate: string; exchangeRateSource: string;
+  additionalCostDocuments: GoodsReceiptCostDocument[];
 };
 
 const statusLabels: Record<GoodsReceiptStatus, string> = {
@@ -73,9 +77,9 @@ const purchaseEvidenceLabels: Record<string, string> = {
   SupplierElectronicInvoice: "Factura electrónica del proveedor",
   BuyerElectronicSupportDocument: "Documento soporte electrónico",
   InternalReceiptVoucher: "Comprobante interno",
+  ForeignCommercialInvoice: "Factura comercial del exterior",
+  ImportDeclaration: "Declaración de importación",
 };
-
-
 export default function GoodsReceiptsPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
@@ -144,7 +148,12 @@ export default function GoodsReceiptsPage() {
     if (localDraftKey) {
       try {
         const remembered = localStorage.getItem(localDraftKey);
-        if (remembered) { setEditor(JSON.parse(remembered) as EditorDraft); return; }
+        if (remembered) {
+          const stored = JSON.parse(remembered) as Partial<EditorDraft>;
+          setEditor({ ...emptyDraft(), ...stored,
+            additionalCostDocuments: stored.additionalCostDocuments ?? [] });
+          return;
+        }
       } catch { localStorage.removeItem(localDraftKey); }
     }
     rememberLocalDraft(emptyDraft());
@@ -256,6 +265,7 @@ function ReceiptDetailDialog({
                   <th className="px-4 py-3 text-right">Cantidad</th>
                   <th className="px-4 py-3 text-right">Costo unitario</th>
                   <th className="px-4 py-3 text-right">IVA</th>
+                  <th className="px-4 py-3 text-right">Costo puesto</th>
                   <th className="px-4 py-3 text-right">Total</th>
                 </tr>
               </thead>
@@ -279,6 +289,11 @@ function ReceiptDetailDialog({
                       {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}
                     </p>
                   </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatCurrency((line.recognizedInventoryCostAmount ?? line.netAmount) / line.quantity)}
+                    {(line.allocatedLandedCostAmount ?? 0) > 0 &&
+                      <p className="text-xs text-muted-foreground">Incluye +{formatCurrency((line.allocatedLandedCostAmount ?? 0) / line.quantity)}</p>}
+                  </td>
                   <td className="px-4 py-3 text-right font-medium tabular-nums">{formatCurrency(line.lineTotal)}</td>
                 </tr>)}
               </tbody>
@@ -286,13 +301,41 @@ function ReceiptDetailDialog({
           </div>
         </div>
         <div className="ml-auto grid w-full max-w-sm gap-2 rounded-2xl bg-slate-950 p-5 text-white">
-          <Amount label="Subtotal" value={detail.netAmount} />
-          <Amount label="IVA" value={detail.taxAmount} />
-          <Amount label="Total bruto" value={detail.grandTotal} />
+          <p className="pb-1 text-xs font-semibold uppercase tracking-wide text-slate-300">Factura principal · COP contable</p>
+          <Amount label="Subtotal" value={detail.functionalNetAmount ?? detail.netAmount} />
+          <Amount label="IVA" value={detail.functionalTaxAmount ?? detail.taxAmount} />
+          <Amount label="Total bruto" value={detail.functionalGrandTotal ?? detail.grandTotal} />
           {(detail.withholding?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} (${line.rate}%)`} value={-line.amount} />)}
           {detail.withholding && detail.withholding.withholdingTotal > 0 && <Amount label="Total retenciones" value={-detail.withholding.withholdingTotal} />}
-          <Amount label={detail.withholding?.withholdingTotal ? "Neto por pagar" : "Total"} value={detail.withholding?.netAmount ?? detail.grandTotal} strong />
+          <Amount label={detail.withholding?.withholdingTotal ? "Neto por pagar" : "Total"} value={detail.withholding?.netAmount ?? detail.functionalGrandTotal ?? detail.grandTotal} strong />
+          {detail.currencyCode !== "COP" && <p className="pt-2 text-xs text-slate-300">Documento original: {detail.grandTotal} {detail.currencyCode} · tasa {detail.exchangeRate} ({detail.exchangeRateSource})</p>}
         </div>
+        <section className="rounded-2xl border p-4">
+          <h3 className="font-semibold">Estado contable</h3>
+          {(detail.accountingStatuses ?? []).length === 0
+            ? <p className="mt-1 text-sm text-muted-foreground">La contabilidad no está activa o el movimiento aún está entrando al motor.</p>
+            : <div className="mt-3 grid gap-2 md:grid-cols-2">{detail.accountingStatuses!.map((posting) => {
+              const cost = detail.additionalCostDocuments?.find((document) => document.costDocumentId === posting.sourceDocumentId);
+              return <div key={posting.sourceDocumentId} className="flex items-start justify-between gap-3 rounded-xl bg-muted/30 p-3">
+                <div><p className="text-sm font-medium">{cost?.documentNumber ?? detail.documentNumber}</p>{posting.errorMessage && <p className="text-xs text-amber-700">{posting.errorMessage}</p>}</div>
+                <Badge variant={posting.status === "Posted" ? "secondary" : "outline"}>{posting.status === "Posted" ? "Contabilizado" : posting.status === "AccountingPendingConfiguration" ? "Requiere configuración" : "Pendiente"}</Badge>
+              </div>;
+            })}</div>}
+        </section>
+        {(detail.additionalCostDocuments ?? []).length > 0 && <section className="space-y-3">
+          <div><h3 className="font-semibold">Facturas y costos asociados</h3>
+            <p className="text-sm text-muted-foreground">Cada documento conserva su proveedor, vencimiento, IVA y contabilización independiente.</p></div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {detail.additionalCostDocuments!.map((document) => <div key={document.costDocumentId} className="rounded-2xl border p-4">
+              <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{document.documentNumber}</p><p className="text-xs text-muted-foreground">{purchaseEvidenceLabels[document.purchaseEvidenceType]}</p></div><Badge variant="outline">{document.currencyCode}</Badge></div>
+              <div className="mt-3 space-y-1 text-sm">{document.lines.map((line) => <div key={line.lineNumber} className="flex justify-between gap-3"><span>{line.description}</span><span>{formatCurrency(line.functionalAmount ?? line.amount)}</span></div>)}
+                <div className="flex justify-between"><span>IVA del documento</span><span>{formatCurrency(document.functionalTaxAmount ?? 0)}</span></div>
+                {(document.withholding?.lines ?? []).map(line => <div key={`${line.ruleId}-${line.ruleVersion}`} className="flex justify-between text-amber-700"><span>{line.name} ({line.rate}%)</span><span>-{formatCurrency(line.amount)}</span></div>)}
+                <div className="flex justify-between"><span>Total bruto en COP</span><span>{formatCurrency(document.functionalGrandTotal ?? 0)}</span></div>
+                <div className="flex justify-between border-t pt-2 font-semibold"><span>Neto por pagar</span><span>{formatCurrency(document.withholding?.netAmount ?? document.functionalGrandTotal ?? 0)}</span></div></div>
+            </div>)}
+          </div>
+        </section>}
         {detail.notes && <div className="rounded-2xl border bg-muted/30 p-4">
           <p className="text-xs font-medium uppercase text-muted-foreground">Notas</p>
           <p className="mt-1 text-sm">{detail.notes}</p>
@@ -384,6 +427,7 @@ function ReceiptEditor({
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: null,
         purchaseEvidenceType: draft.purchaseEvidenceType as PurchaseEvidenceType,
+        exchangeRate: draft.currencyCode === "COP" ? 1 : draft.exchangeRate,
       });
     },
     enabled: Boolean(
@@ -392,13 +436,97 @@ function ReceiptEditor({
     ),
     staleTime: 10_000,
   });
+  const costWithholdingPreviews = useQueries({
+    queries: (draft?.additionalCostDocuments ?? []).map((document) => ({
+      queryKey: ["goods-receipt-cost-withholding-preview", businessId, document],
+      queryFn: () => goodsReceiptsApi.previewCostWithholding({
+        businessId: businessId!, document: serializeCostDocuments([document])[0],
+      }),
+      enabled: Boolean(open && businessId && document.supplierId && document.issuedAt &&
+        document.exchangeRate > 0 && document.lines.length > 0),
+      staleTime: 10_000,
+    })),
+  });
   if (!draft || !businessId) return null;
   const totals = calculateGoodsReceiptTotals(draft.lines);
+  const mainRate = draft.currencyCode === "COP" ? 1 : draft.exchangeRate;
+  const mainInventoryCost = draft.lines.reduce((sum, line) => {
+    const calculated = calculateGoodsReceiptLine(line);
+    return sum + (calculated.net + (line.taxTreatment === "CapitalizedCost" ? calculated.tax : 0)) * mainRate;
+  }, 0);
+  const additionalSummary = draft.additionalCostDocuments.reduce((summary, document, index) => {
+    const rate = document.currencyCode === "COP" ? 1 : document.exchangeRate;
+    const preview = costWithholdingPreviews[index]?.data;
+    for (const line of document.lines) {
+      const base = line.amount * rate;
+      const capitalizedTax = line.taxTreatment === "CapitalizedCost" ? line.taxAmount * rate : 0;
+      if (line.costTreatment === "Capitalize") summary.capitalized += base + capitalizedTax;
+      else summary.expensed += base + capitalizedTax;
+      if (line.taxTreatment === "DeductibleInputVat") summary.deductibleVat += line.taxAmount * rate;
+    }
+    const gross = document.lines.reduce((sum, line) => sum + line.amount + line.taxAmount, 0) * rate;
+    summary.gross += gross;
+    summary.withheld += preview?.withholdingTotal ?? 0;
+    summary.payable += preview?.netAmount ?? gross;
+    return summary;
+  }, { capitalized: 0, expensed: 0, deductibleVat: 0, gross: 0, withheld: 0, payable: 0 });
+  const mainDeductibleVat = draft.lines.reduce((sum, line) => {
+    const calculated = calculateGoodsReceiptLine(line);
+    return sum + (line.taxTreatment === "DeductibleInputVat" ? calculated.tax * mainRate : 0);
+  }, 0);
+  const totalWithheld = (withholdingPreview.data?.withholdingTotal ?? 0) + additionalSummary.withheld;
+  const totalPayable = (draft.createsPayable
+    ? (withholdingPreview.data?.netAmount ?? totals.total * mainRate) : 0) + additionalSummary.payable;
   const allowedEvidenceTypes = allowedPurchaseEvidenceTypes(selectedSupplier?.supplierPurchaseEvidencePolicy ?? null);
   const visibleEvidenceTypes = options.data?.purchaseEvidenceTypes.filter((item) =>
     allowedEvidenceTypes.includes(item.code)) ?? [];
 
   const change = (values: Partial<EditorDraft>) => onChange({ ...draft, ...values });
+
+  const addCostDocument = (evidence: PurchaseEvidenceType = "SupplierElectronicInvoice") => {
+    const importDocument = evidence === "ImportDeclaration";
+    change({ additionalCostDocuments: [...draft.additionalCostDocuments, {
+      costDocumentId: crypto.randomUUID(), supplierId: "", purchaseEvidenceType: evidence,
+      documentNumber: "", issuedAt: todayInput(), createsPayable: true,
+      dueDate: plusDaysFrom(todayInput(), 30), currencyCode: "COP", exchangeRate: 1,
+      exchangeRateDate: todayInput(), exchangeRateSource: "FunctionalCurrency",
+      lines: importDocument ? [
+        newCostLine(1, "CustomsDuty", "Arancel", "Capitalize", "Value"),
+        { ...newCostLine(2, "ImportVat", "IVA de importación", "Expense", "None"),
+          taxCode: "01", taxRate: 19, taxTreatment: "DeductibleInputVat" },
+      ] : [newCostLine(1, "Freight", "Flete de compra", "Capitalize", "Value")],
+    }] });
+  };
+  const updateCostDocument = (id: string, values: Partial<GoodsReceiptCostDocument>) =>
+    change({ additionalCostDocuments: draft.additionalCostDocuments.map((document) =>
+      document.costDocumentId === id ? { ...document, ...values } : document) });
+  const updateCostLine = (document: GoodsReceiptCostDocument, lineNumber: number,
+    values: Partial<GoodsReceiptCostLine>) =>
+    updateCostDocument(document.costDocumentId, {
+      lines: document.lines.map((line) => line.lineNumber === lineNumber ? { ...line, ...values } : line),
+    });
+  const addCostLine = (document: GoodsReceiptCostDocument) => {
+    const next = Math.max(0, ...document.lines.map((line) => line.lineNumber)) + 1;
+    updateCostDocument(document.costDocumentId, {
+      lines: [...document.lines, newCostLine(next, "OtherDirectCost", "Otro costo directo", "Capitalize", "Value")],
+    });
+  };
+  const removeCostLine = (document: GoodsReceiptCostDocument, lineNumber: number) =>
+    updateCostDocument(document.costDocumentId, {
+      lines: document.lines.filter((line) => line.lineNumber !== lineNumber),
+    });
+  const updateManualAllocation = (
+    document: GoodsReceiptCostDocument, line: GoodsReceiptCostLine,
+    receiptLineNumber: number, functionalAmount: number,
+  ) => updateCostLine(document, line.lineNumber, {
+    eligibleReceiptLineNumbers: draft.lines.map((item) => item.lineNumber),
+    manualAllocations: draft.lines.map((item) => ({
+      receiptLineNumber: item.lineNumber,
+      functionalAmount: item.lineNumber === receiptLineNumber ? functionalAmount :
+        line.manualAllocations?.find((allocation) =>
+          allocation.receiptLineNumber === item.lineNumber)?.functionalAmount ?? 0,
+    })),
+  });
 
   const applySupplierChange = (supplier: PartyWorkspaceItem) => {
     const supplierId = supplier.supplierId ?? "";
@@ -426,15 +554,18 @@ function ReceiptEditor({
   const request = (): SaveGoodsReceiptDraftRequest => ({
     draftId: draft.draftId, businessId,
     warehouseId: draft.warehouseId || null, supplierId: draft.supplierId || null,
-    supplierInvoiceNumber: draft.purchaseEvidenceType === "SupplierElectronicInvoice"
+    supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
       ? draft.supplierInvoiceNumber.trim() || null : null,
     supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
     receivedAt: new Date().toISOString(), createsPayable: draft.createsPayable,
     dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
-    currencyCode: "COP", notes: draft.notes.trim() || null,
+    currencyCode: draft.currencyCode, notes: draft.notes.trim() || null,
     lines: draft.lines, concurrencyToken: draft.concurrencyToken,
     purchaseEvidenceType: draft.purchaseEvidenceType || null,
     purchaseOrderId: draft.purchaseOrderId || null,
+    exchangeRate: draft.exchangeRate, exchangeRateDate: draft.exchangeRateDate || null,
+    exchangeRateSource: draft.exchangeRateSource,
+    additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments),
   });
 
   const persist = async (notify = true) => {
@@ -580,8 +711,8 @@ function ReceiptEditor({
       toast.error("Indica la fecha de emisión del documento de compra.");
       return;
     }
-    if (draft.purchaseEvidenceType === "SupplierElectronicInvoice" && !draft.supplierInvoiceNumber.trim()) {
-      toast.error("La factura electrónica requiere el número de factura.");
+    if (["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType) && !draft.supplierInvoiceNumber.trim()) {
+      toast.error("La factura requiere el número del documento del proveedor.");
       return;
     }
     try {
@@ -594,17 +725,20 @@ function ReceiptEditor({
       const accepted = await confirm.mutateAsync({
         documentId: draft.draftId, businessId, warehouseId: draft.warehouseId,
         supplierId: draft.supplierId,
-        supplierInvoiceNumber: draft.purchaseEvidenceType === "SupplierElectronicInvoice"
+        supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
           ? draft.supplierInvoiceNumber.trim() || null : null,
         supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
         receivedAt: new Date().toISOString(), createsPayable: draft.createsPayable,
         dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
-        currencyCode: "COP", notes: draft.notes.trim() || null, lines: draft.lines,
+        currencyCode: draft.currencyCode, notes: draft.notes.trim() || null, lines: draft.lines,
         draftConcurrencyToken: confirmationToken,
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: null,
         purchaseEvidenceType: draft.purchaseEvidenceType,
         purchaseOrderId: draft.purchaseOrderId || null,
+        exchangeRate: draft.exchangeRate, exchangeRateDate: draft.exchangeRateDate || null,
+        exchangeRateSource: draft.exchangeRateSource,
+        additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments),
       });
       toast.success(`${accepted.documentNumber} fue confirmada y enviada al motor.`, {
         duration: 12000,
@@ -636,6 +770,10 @@ function ReceiptEditor({
       </DialogHeader>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        {options.isError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          No fue posible cargar los catálogos de recepción. Los campos dependientes quedan bloqueados para evitar guardar códigos inválidos; vuelve a intentar antes de confirmar.
+        </div>}
         <section className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
           <Field label="Orden de compra (opcional)">
             <Select value={draft.purchaseOrderId || "__none"} onValueChange={async (value) => {
@@ -743,7 +881,10 @@ function ReceiptEditor({
                 }
                 change({ purchaseEvidenceType: value,
                 supplierInvoiceNumber: value === "SupplierElectronicInvoice" ? draft.supplierInvoiceNumber : "",
-                lines: value === "InternalReceiptVoucher"
+                lines: value === "ForeignCommercialInvoice"
+                  ? draft.lines.map((line) => ({ ...line, taxRate: 0, taxCode: "00",
+                    taxTreatment: "NotApplicable" as const }))
+                  : value === "InternalReceiptVoucher"
                   ? draft.lines.map((line) => line.taxRate > 0 && line.taxTreatment === "DeductibleInputVat"
                     ? { ...line, taxTreatment: "CapitalizedCost" as const } : line)
                   : draft.lines,
@@ -754,7 +895,7 @@ function ReceiptEditor({
                 <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
             </Select>
           </Field>
-          {draft.purchaseEvidenceType === "SupplierElectronicInvoice" &&
+          {["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType) &&
           <Field label="Factura del proveedor">
             <Input value={draft.supplierInvoiceNumber}
               onChange={(event) => change({ supplierInvoiceNumber: event.target.value })}
@@ -767,6 +908,26 @@ function ReceiptEditor({
               dueDate:draft.createsPayable?plusDaysFrom(value,selectedSupplier?.supplierDefaultPaymentDueDays??30):"",
             })} />
           </Field>
+          <Field label="Moneda">
+            <Select value={draft.currencyCode} onValueChange={(currencyCode) => change({
+              currencyCode, exchangeRate: currencyCode === "COP" ? 1 : draft.exchangeRate,
+              exchangeRateDate: currencyCode === "COP" ? draft.supplierInvoiceDate : (draft.exchangeRateDate || draft.supplierInvoiceDate),
+              exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" :
+                (draft.exchangeRateSource === "FunctionalCurrency"
+                  ? options.data?.exchangeRateSources[0]?.code ?? "" : draft.exchangeRateSource),
+            })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>
+              {(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}
+            </SelectContent></Select>
+          </Field>
+          {draft.currencyCode !== "COP" && <>
+            <Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={draft.exchangeRate}
+              onValueChange={(value) => change({ exchangeRate: value ?? 0 })} /></Field>
+            <Field label="Fecha de la tasa"><DatePicker value={draft.exchangeRateDate} onChange={(exchangeRateDate) => change({ exchangeRateDate })} /></Field>
+            <Field label="Fuente de la tasa"><Select value={draft.exchangeRateSource} onValueChange={(exchangeRateSource) => change({ exchangeRateSource })}>
+              <SelectTrigger disabled={options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger>
+              <SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
+            </Select></Field>
+          </>}
           {draft.purchaseEvidenceType === "BuyerElectronicSupportDocument" &&
             <p className="self-end rounded-lg bg-primary/5 p-3 text-sm text-muted-foreground md:col-span-2">
               Auraly asignará numeración, generará el CUDS y enviará el documento soporte a la DIAN.
@@ -935,17 +1096,93 @@ function ReceiptEditor({
           </div>
         </section>
 
-        <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_18rem]">
+        <section className="space-y-4 rounded-2xl border p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h3 className="font-semibold">Facturas y otros costos</h3>
+              <p className="text-sm text-muted-foreground">Agrega flete, seguro o nacionalización. Cada tarjeta crea su propia cuenta por pagar; el IVA se reconoce en su documento y nunca se vuelve a aplicar al costo prorrateado.</p></div>
+            <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => addCostDocument()}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
+              <Button type="button" variant="outline" onClick={() => addCostDocument("ImportDeclaration")}><Plus className="mr-2 h-4 w-4" />Nacionalización</Button></div>
+          </div>
+          {draft.additionalCostDocuments.map((document, documentIndex) => {
+            const withholding = costWithholdingPreviews[documentIndex];
+            const rate = document.currencyCode === "COP" ? 1 : document.exchangeRate;
+            const documentNet = document.lines.reduce((sum, line) => sum + line.amount, 0);
+            const documentTax = document.lines.reduce((sum, line) => sum + line.taxAmount, 0);
+            const functionalGross = (documentNet + documentTax) * rate;
+            const evidenceLabel = options.data?.purchaseCostEvidenceTypes.find((item) =>
+              item.code === document.purchaseEvidenceType)?.label ?? document.purchaseEvidenceType;
+            return <div key={document.costDocumentId} className="space-y-4 rounded-2xl bg-muted/25 p-4">
+              <div className="flex items-center justify-between"><div><p className="font-semibold">{document.documentNumber || "Documento sin número"}</p><p className="text-xs text-muted-foreground">{evidenceLabel}</p></div>
+                <Button type="button" size="icon" variant="ghost" aria-label="Eliminar factura adicional" onClick={() => change({ additionalCostDocuments: draft.additionalCostDocuments.filter((value) => value.costDocumentId !== document.costDocumentId) })}><Trash2 className="h-4 w-4" /></Button></div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <Field label="Proveedor"><PartyRoleSelect role="Supplier" value={document.supplierId} placeholder="Buscar proveedor" onChange={(supplierId) => updateCostDocument(document.costDocumentId, { supplierId })} /></Field>
+                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument(document.costDocumentId, { purchaseEvidenceType })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                <Field label="Número"><Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument(document.costDocumentId, { documentNumber: event.target.value })} /></Field>
+                <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument(document.costDocumentId, { issuedAt })} /></Field>
+                <Field label="Moneda"><Select value={document.currencyCode} onValueChange={(currencyCode) => updateCostDocument(document.costDocumentId, { currencyCode, exchangeRate: currencyCode === "COP" ? 1 : document.exchangeRate, exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" : (document.exchangeRateSource === "FunctionalCurrency" ? options.data?.exchangeRateSources[0]?.code ?? "" : document.exchangeRateSource) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                {document.currencyCode !== "COP" && <><Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={document.exchangeRate} onValueChange={(value) => updateCostDocument(document.costDocumentId, { exchangeRate: value ?? 0 })} /></Field><Field label="Fecha de la tasa"><DatePicker value={document.exchangeRateDate?.slice(0, 10) ?? document.issuedAt.slice(0, 10)} onChange={(exchangeRateDate) => updateCostDocument(document.costDocumentId, { exchangeRateDate })} /></Field><Field label="Fuente de la tasa"><Select value={document.exchangeRateSource} onValueChange={(exchangeRateSource) => updateCostDocument(document.costDocumentId, { exchangeRateSource })}><SelectTrigger disabled={options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger><SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field></>}
+                <Field label="Condición"><Input readOnly value="Crédito · cuenta por pagar independiente" /></Field>
+                {document.createsPayable && <Field label="Vencimiento"><DatePicker min={document.issuedAt.slice(0, 10)} value={document.dueDate?.slice(0, 10) ?? ""} onChange={(dueDate) => updateCostDocument(document.costDocumentId, { dueDate })} /></Field>}
+                <Field label="Concepto para retención"><Select value={document.withholdingConceptCode || "__none"} onValueChange={(value) => updateCostDocument(document.costDocumentId, { withholdingConceptCode: value === "__none" ? null : value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none">Sin concepto</SelectItem>{(options.data?.withholdingConcepts ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+              </div>
+              <div className="space-y-3">
+                {document.lines.map((line) => {
+                  const allocationLabel = options.data?.purchaseCostAllocationMethods.find((item) => item.code === line.allocationMethod)?.label ?? line.allocationMethod;
+                  const capitalizedTax = line.taxTreatment === "CapitalizedCost" ? line.taxAmount : 0;
+                  const manualTarget = (line.amount + capitalizedTax) * rate;
+                  const manualAssigned = line.manualAllocations?.reduce((sum, allocation) => sum + allocation.functionalAmount, 0) ?? 0;
+                  return <div key={line.lineNumber} className="space-y-3 rounded-xl border bg-background p-3">
+                    <div className="flex items-center justify-between"><p className="text-sm font-semibold">Concepto {line.lineNumber}</p>
+                      {document.lines.length > 1 && <Button type="button" size="icon" variant="ghost" aria-label={`Eliminar concepto ${line.lineNumber}`} onClick={() => removeCostLine(document, line.lineNumber)}><Trash2 className="h-4 w-4" /></Button>}</div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <Field label="Concepto"><Select value={line.costKind} onValueChange={(costKind: PurchaseCostKind) => updateCostLine(document, line.lineNumber, { costKind, description: options.data?.purchaseCostKinds.find((item) => item.code === costKind)?.label ?? costKind, ...(costKind === "ImportVat" ? { amount: 0, taxCode: "01", taxRate: 19, taxTreatment: "DeductibleInputVat" as const, costTreatment: "Expense" as const, allocationMethod: "None" as const } : {}) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostKinds.length)}><SelectValue placeholder="Cargando conceptos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostKinds ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                      <Field label="Valor antes de IVA"><FormattedNumberInput kind="currency" value={line.amount} onValueChange={(value) => updateCostLine(document, line.lineNumber, { amount: value ?? 0, taxableBaseAmount: document.purchaseEvidenceType === "ImportDeclaration" ? line.taxableBaseAmount : value ?? 0, taxAmount: Math.round((document.purchaseEvidenceType === "ImportDeclaration" ? line.taxableBaseAmount : value ?? 0) * line.taxRate) / 100 })} /></Field>
+                      <Field label="IVA del documento"><Select value={String(line.taxRate)} onValueChange={(value) => { const taxRate = Number(value); updateCostLine(document, line.lineNumber, { taxRate, taxAmount: Math.round(line.taxableBaseAmount * taxRate) / 100, taxTreatment: taxRate ? (line.taxTreatment === "CapitalizedCost" ? "CapitalizedCost" : "DeductibleInputVat") : "NotApplicable" }); }}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseTaxRates.length)}><SelectValue placeholder="Cargando tarifas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseTaxRates ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                      {document.purchaseEvidenceType === "ImportDeclaration" && <Field label="Base aduanera del IVA"><FormattedNumberInput kind="currency" value={line.taxableBaseAmount} onValueChange={(value) => updateCostLine(document, line.lineNumber, { taxableBaseAmount: value ?? 0, taxAmount: Math.round((value ?? 0) * line.taxRate) / 100 })} /></Field>}
+                      {line.taxRate > 0 && <Field label="Tratamiento del IVA"><Select value={line.taxTreatment} onValueChange={(taxTreatment: "DeductibleInputVat" | "CapitalizedCost") => updateCostLine(document, line.lineNumber, { taxTreatment })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseTaxTreatments.length)}><SelectValue placeholder="Cargando tratamientos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseTaxTreatments ?? []).filter((item) => item.code !== "NotApplicable").map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>}
+                      <Field label="Tratamiento del costo"><Select value={line.costTreatment} onValueChange={(costTreatment: "Capitalize" | "Expense") => updateCostLine(document, line.lineNumber, { costTreatment, allocationMethod: costTreatment === "Expense" ? "None" : (line.allocationMethod === "None" ? "Value" : line.allocationMethod), eligibleReceiptLineNumbers: null, manualAllocations: null })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostTreatments.length)}><SelectValue placeholder="Cargando tratamientos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostTreatments ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                      {line.costTreatment === "Capitalize" && <Field label="Cómo prorratear"><Select value={line.allocationMethod} onValueChange={(allocationMethod: PurchaseCostAllocationMethod) => updateCostLine(document, line.lineNumber, { allocationMethod, eligibleReceiptLineNumbers: allocationMethod === "Manual" ? draft.lines.map((item) => item.lineNumber) : null, manualAllocations: allocationMethod === "Manual" ? draft.lines.map((item) => ({ receiptLineNumber: item.lineNumber, functionalAmount: 0 })) : null })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostAllocationMethods.length)}><SelectValue placeholder="Cargando métodos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostAllocationMethods ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>}
+                    </div>
+                    {(line.allocationMethod === "Weight" || line.allocationMethod === "Volume") && <div className="grid gap-2 rounded-xl bg-muted/25 p-3 md:grid-cols-2"><p className="text-sm text-muted-foreground md:col-span-2">Indica el {line.allocationMethod === "Weight" ? "peso bruto total" : "volumen total"} de cada producto; el motor usará esa proporción.</p>{draft.lines.map((product) => <Field key={product.productId} label={product.description}><Input aria-label={`${line.allocationMethod === "Weight" ? "Peso" : "Volumen"} de ${product.description}`} type="number" min="0.000001" step="0.001" value={(line.allocationMethod === "Weight" ? product.totalGrossWeightKg : product.totalVolumeM3) ?? ""} onChange={(event) => updateLine(product.productId, line.allocationMethod === "Weight" ? { totalGrossWeightKg: Number(event.target.value) } : { totalVolumeM3: Number(event.target.value) })} /></Field>)}</div>}
+                    {line.allocationMethod === "Manual" && <div className="grid gap-2 rounded-xl bg-muted/25 p-3 md:grid-cols-2"><p className="text-sm text-muted-foreground md:col-span-2">Distribuye exactamente {formatCurrency(manualTarget)} COP. La diferencia debe quedar en cero.</p>{draft.lines.map((product) => <Field key={product.productId} label={product.description}><FormattedNumberInput kind="currency" value={line.manualAllocations?.find((allocation) => allocation.receiptLineNumber === product.lineNumber)?.functionalAmount ?? 0} onValueChange={(value) => updateManualAllocation(document, line, product.lineNumber, value ?? 0)} /></Field>)}<p className={`text-sm font-medium md:col-span-2 ${Math.abs(manualTarget - manualAssigned) < 0.0001 ? "text-emerald-700" : "text-amber-700"}`}>Diferencia pendiente: {formatCurrency(manualTarget - manualAssigned)} COP</p></div>}
+                    <div className="grid gap-3 text-sm md:grid-cols-3"><DocumentTotal label="Base" value={line.amount} suffix={document.currencyCode} /><DocumentTotal label="IVA" value={line.taxAmount} suffix={document.currencyCode} /><DocumentTotal label={line.costTreatment === "Capitalize" ? `Al inventario · ${allocationLabel}` : "Al gasto"} value={(line.amount + capitalizedTax) * rate} suffix="COP" /></div>
+                  </div>;
+                })}
+                <Button type="button" variant="outline" size="sm" onClick={() => addCostLine(document)}><Plus className="mr-2 h-4 w-4" />Agregar concepto</Button>
+              </div>
+              <div className="grid gap-3 rounded-xl border bg-background p-3 text-sm md:grid-cols-2 xl:grid-cols-5">
+                <DocumentTotal label="Subtotal" value={documentNet} suffix={document.currencyCode} />
+                <DocumentTotal label="IVA del documento" value={documentTax} suffix={document.currencyCode} />
+                <DocumentTotal label="Total bruto" value={documentNet + documentTax} suffix={document.currencyCode} />
+                {document.currencyCode !== "COP" && <DocumentTotal label="Reconocido en COP" value={functionalGross} suffix="COP" />}
+                <DocumentTotal label="Retenciones" value={-(withholding.data?.withholdingTotal ?? 0)} suffix="COP" />
+                <DocumentTotal label="Neto por pagar" value={withholding.data?.netAmount ?? functionalGross} suffix="COP" strong />
+                <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">El IVA descontable se reconoce separado; únicamente las bases y los impuestos marcados como mayor valor se llevan al costo o gasto.</p>
+                {withholding.isFetching && <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">Calculando retenciones con el motor tributario…</p>}
+                {withholding.isError && <p className="text-xs text-amber-700 md:col-span-2 xl:col-span-5">La vista previa no está disponible; la confirmación volverá a validarla.</p>}
+              </div>
+            </div>;
+          })}
+          {draft.additionalCostDocuments.length === 0 && <p className="rounded-xl bg-muted/30 p-4 text-sm text-muted-foreground">Opcional. Si la compra no tiene otros costos, no necesitas hacer nada aquí.</p>}
+        </section>
+
+        <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_23rem]">
           <Textarea value={draft.notes} onChange={(event) => change({ notes: event.target.value })}
             className="h-full min-h-[8.5rem] resize-none"
             placeholder="Observaciones de recepción" maxLength={1000} />
           <dl className="space-y-2 rounded-2xl bg-slate-950 p-5 text-white">
-            <Amount label="Subtotal" value={totals.net} />
-            <Amount label="Impuestos" value={totals.tax} />
-            <Amount label="Total bruto" value={totals.total} />
-            {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} (${line.rate}%)`} value={-line.amount} />)}
-            {withholdingPreview.data && withholdingPreview.data.withholdingTotal > 0 && <Amount label="Retenciones" value={-withholdingPreview.data.withholdingTotal} />}
-            <Amount label="Neto por pagar" value={withholdingPreview.data?.netAmount ?? totals.total} strong />
+            <p className="pb-1 text-xs font-semibold uppercase tracking-wide text-slate-300">Resumen consolidado · COP</p>
+            <Amount label="Mercancía antes de IVA" value={totals.net * mainRate} />
+            <Amount label="Costos capitalizados" value={additionalSummary.capitalized} />
+            <Amount label="Valor que entra al inventario" value={mainInventoryCost + additionalSummary.capitalized} />
+            {additionalSummary.expensed > 0 && <Amount label="Costos llevados al gasto" value={additionalSummary.expensed} />}
+            <Amount label="IVA descontable separado" value={mainDeductibleVat + additionalSummary.deductibleVat} />
+            <Amount label="Total bruto de documentos" value={totals.total * mainRate + additionalSummary.gross} />
+            {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} mercancía (${line.rate}%)`} value={-line.amount} />)}
+            {additionalSummary.withheld > 0 && <Amount label="Retenciones otras facturas" value={-additionalSummary.withheld} />}
+            <Amount label="Total retenciones" value={-totalWithheld} />
+            <Amount label="Cuentas por pagar netas" value={totalPayable} strong />
+            <p className="pt-2 text-xs text-slate-300">Las retenciones reducen lo adeudado al proveedor; no reducen el costo ni el IVA reconocido.</p>
             {withholdingPreview.isFetching && <p className="text-right text-xs text-slate-300">Calculando retenciones…</p>}
             {withholdingPreview.isError && <p className="text-right text-xs text-amber-300">No fue posible obtener la vista previa. La confirmación volverá a validar con el motor.</p>}
           </dl>
@@ -1040,6 +1277,8 @@ function emptyDraft(): EditorDraft {
     receivedAt: localDateTime(), createsPayable: true, dueDate: plusDaysFrom(todayInput(),30),
     notes: "", lines: [], concurrencyToken: null,
     withholdingConceptCode: "", withholdingJurisdictionCode: "", purchaseOrderId: "",
+    currencyCode: "COP", exchangeRate: 1, exchangeRateDate: todayInput(),
+    exchangeRateSource: "FunctionalCurrency", additionalCostDocuments: [],
   };
 }
 
@@ -1059,10 +1298,15 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
       preferredPresentationName: line.preferredPresentationName,
       preferredUnitsPerPresentation: line.preferredUnitsPerPresentation,
       presentationQuantity: line.presentationQuantity, unitsPerPresentation: line.unitsPerPresentation,
+      totalGrossWeightKg: line.totalGrossWeightKg, totalVolumeM3: line.totalVolumeM3,
     })),
     withholdingConceptCode: "", withholdingJurisdictionCode: "",
     purchaseOrderId: draft.purchaseOrderId ?? "",
     concurrencyToken: draft.concurrencyToken,
+    currencyCode: draft.currencyCode, exchangeRate: draft.exchangeRate ?? 1,
+    exchangeRateDate: draft.exchangeRateDate ?? draft.supplierInvoiceDate?.slice(0, 10) ?? todayInput(),
+    exchangeRateSource: draft.exchangeRateSource ?? "FunctionalCurrency",
+    additionalCostDocuments: draft.additionalCostDocuments ?? [],
   };
 }
 
@@ -1089,11 +1333,32 @@ function todayInput() {
 }
 
 function toIsoOrNull(value: string) { return value ? new Date(value).toISOString() : null; }
+function serializeCostDocuments(documents: GoodsReceiptCostDocument[]) {
+  return documents.map((document) => ({ ...document,
+    issuedAt: toIsoOrNull(document.issuedAt)!,
+    dueDate: document.createsPayable && document.dueDate ? toIsoOrNull(document.dueDate) : null,
+  }));
+}
+
+function newCostLine(
+  lineNumber: number,
+  costKind: PurchaseCostKind,
+  description: string,
+  costTreatment: "Capitalize" | "Expense",
+  allocationMethod: PurchaseCostAllocationMethod,
+): GoodsReceiptCostLine {
+  return {
+    lineNumber, costKind, description, amount: 0, taxableBaseAmount: 0,
+    taxCode: "00", taxRate: 0, taxAmount: 0, taxTreatment: "NotApplicable",
+    costTreatment, allocationMethod,
+  };
+}
+
 function allowedPurchaseEvidenceTypes(policy: string | null) {
-  if (policy === "SupplierElectronicInvoice") return ["SupplierElectronicInvoice", "InternalReceiptVoucher"];
-  if (policy === "BuyerElectronicSupportDocument") return ["BuyerElectronicSupportDocument", "InternalReceiptVoucher"];
-  if (policy === "InternalReceiptVoucher") return ["InternalReceiptVoucher"];
-  return ["SupplierElectronicInvoice", "BuyerElectronicSupportDocument", "InternalReceiptVoucher"];
+  if (policy === "SupplierElectronicInvoice") return ["SupplierElectronicInvoice", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
+  if (policy === "BuyerElectronicSupportDocument") return ["BuyerElectronicSupportDocument", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
+  if (policy === "InternalReceiptVoucher") return ["InternalReceiptVoucher", "ForeignCommercialInvoice"];
+  return ["SupplierElectronicInvoice", "BuyerElectronicSupportDocument", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
 }
 
 function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
@@ -1103,6 +1368,12 @@ function Amount({ label, value, strong = false }: { label: string; value: number
   return <div className={`flex justify-between ${strong ? "border-t border-white/20 pt-3 text-lg" : "text-sm"}`}>
     <dt className="text-slate-300">{label}</dt><dd className="font-semibold">{formatCurrency(value)}</dd>
   </div>;
+}
+function DocumentTotal({ label, value, suffix, strong = false }: {
+  label: string; value: number; suffix: string; strong?: boolean;
+}) {
+  return <div><p className="text-xs text-muted-foreground">{label}</p>
+    <p className={strong ? "font-bold" : "font-semibold"}>{formatCurrency(value)} {suffix}</p></div>;
 }
 function Summary({ icon: Icon, label, value }: {
   icon: typeof PackagePlus; label: string; value: string;

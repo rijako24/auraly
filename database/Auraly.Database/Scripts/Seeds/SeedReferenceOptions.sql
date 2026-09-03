@@ -99,7 +99,44 @@ VALUES
 ('68000000-0000-0000-0000-000000000006',N'tenant-identification-type',N'PPT',N'Permiso por Protección Temporal',N'NaturalPerson',60),
 ('69000000-0000-0000-0000-000000000001',N'purchase-evidence-type',N'SupplierElectronicInvoice',N'Factura electrónica del proveedor',N'La factura la emite el proveedor; Auraly no genera un documento fiscal.',10),
 ('69000000-0000-0000-0000-000000000002',N'purchase-evidence-type',N'BuyerElectronicSupportDocument',N'Documento soporte electrónico',N'Auraly genera, firma y envía el documento soporte a la DIAN.',20),
-('69000000-0000-0000-0000-000000000003',N'purchase-evidence-type',N'InternalReceiptVoucher',N'Comprobante interno',N'Registra la entrada y sus efectos contables sin emitir un documento fiscal.',30);
+('69000000-0000-0000-0000-000000000003',N'purchase-evidence-type',N'InternalReceiptVoucher',N'Comprobante interno',N'Registra la entrada y sus efectos contables sin emitir un documento fiscal.',30),
+('69000000-0000-0000-0000-000000000004',N'purchase-evidence-type',N'ForeignCommercialInvoice',N'Factura comercial del exterior',N'Registra la factura del proveedor extranjero con su moneda y tasa de cambio; no reconoce IVA colombiano.',40),
+('69000000-0000-0000-0000-000000000005',N'purchase-evidence-type',N'ImportDeclaration',N'Declaración de importación',N'Registra aranceles e IVA de importación sin volver a gravar los demás costos.',50);
+
+INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
+VALUES
+('6B000000-0000-0000-0000-000000000001',N'purchase-cost-evidence-type',N'SupplierElectronicInvoice',N'Factura electrónica',NULL,10),
+('6B000000-0000-0000-0000-000000000002',N'purchase-cost-evidence-type',N'ForeignCommercialInvoice',N'Factura del exterior',NULL,20),
+('6B000000-0000-0000-0000-000000000003',N'purchase-cost-evidence-type',N'ImportDeclaration',N'Declaración de importación',NULL,30),
+('6B000000-0000-0000-0000-000000000004',N'purchase-cost-evidence-type',N'InternalReceiptVoucher',N'Comprobante interno',NULL,40),
+('6C000000-0000-0000-0000-000000000001',N'purchase-cost-kind',N'Freight',N'Flete',NULL,10),
+('6C000000-0000-0000-0000-000000000002',N'purchase-cost-kind',N'Insurance',N'Seguro',NULL,20),
+('6C000000-0000-0000-0000-000000000003',N'purchase-cost-kind',N'CustomsDuty',N'Arancel',NULL,30),
+('6C000000-0000-0000-0000-000000000004',N'purchase-cost-kind',N'CustomsBrokerage',N'Agencia de aduanas',NULL,40),
+('6C000000-0000-0000-0000-000000000005',N'purchase-cost-kind',N'Handling',N'Manejo',NULL,50),
+('6C000000-0000-0000-0000-000000000006',N'purchase-cost-kind',N'OtherDirectCost',N'Otro costo directo',NULL,60),
+('6C000000-0000-0000-0000-000000000007',N'purchase-cost-kind',N'ImportVat',N'IVA de importación',NULL,70),
+('6D000000-0000-0000-0000-000000000001',N'purchase-cost-treatment',N'Capitalize',N'Llevar al costo del producto',NULL,10),
+('6D000000-0000-0000-0000-000000000002',N'purchase-cost-treatment',N'Expense',N'Llevar al gasto',NULL,20),
+('6E000000-0000-0000-0000-000000000001',N'purchase-cost-allocation-method',N'Value',N'Por valor',NULL,10),
+('6E000000-0000-0000-0000-000000000002',N'purchase-cost-allocation-method',N'Quantity',N'Por cantidad',NULL,20),
+('6E000000-0000-0000-0000-000000000003',N'purchase-cost-allocation-method',N'Weight',N'Por peso',NULL,30),
+('6E000000-0000-0000-0000-000000000004',N'purchase-cost-allocation-method',N'Volume',N'Por volumen',NULL,40),
+('6E000000-0000-0000-0000-000000000005',N'purchase-cost-allocation-method',N'Equal',N'Partes iguales',NULL,50),
+('6E000000-0000-0000-0000-000000000006',N'purchase-cost-allocation-method',N'Manual',N'Reparto manual',N'Asigna el valor exacto en COP a cada producto recibido.',60),
+('6F000000-0000-0000-0000-000000000001',N'purchase-tax-rate',N'0',N'Sin IVA',NULL,10),
+('6F000000-0000-0000-0000-000000000002',N'purchase-tax-rate',N'5',N'5 % descontable',NULL,20),
+('6F000000-0000-0000-0000-000000000003',N'purchase-tax-rate',N'19',N'19 % descontable',NULL,30),
+('6F100000-0000-0000-0000-000000000001',N'purchase-tax-treatment',N'DeductibleInputVat',N'IVA descontable',N'Se reconoce separado del costo del inventario.',10),
+('6F100000-0000-0000-0000-000000000002',N'purchase-tax-treatment',N'CapitalizedCost',N'Mayor valor del costo',N'Se capitaliza cuando el impuesto no es recuperable.',20),
+('6F100000-0000-0000-0000-000000000003',N'purchase-tax-treatment',N'NotApplicable',N'No aplica',N'Usado cuando la línea no causa impuesto.',30),
+('70000000-0000-0000-0000-000000000001',N'purchase-currency',N'COP',N'COP · peso colombiano',NULL,10),
+('70000000-0000-0000-0000-000000000002',N'purchase-currency',N'USD',N'USD · dólar estadounidense',NULL,20),
+('70000000-0000-0000-0000-000000000003',N'purchase-currency',N'EUR',N'EUR · euro',NULL,30),
+('71000000-0000-0000-0000-000000000001',N'exchange-rate-source',N'Negotiated',N'Tasa pactada',N'Tasa negociada y soportada con el proveedor o intermediario.',10),
+('71000000-0000-0000-0000-000000000002',N'exchange-rate-source',N'OfficialTRM',N'TRM oficial',N'Tasa representativa del mercado aplicable al reconocimiento.',20),
+('71000000-0000-0000-0000-000000000003',N'exchange-rate-source',N'ImportDeclaration',N'Declaración de importación',N'Tasa consignada en la declaración de importación.',30),
+('71000000-0000-0000-0000-000000000004',N'exchange-rate-source',N'SupplierDocument',N'Documento del proveedor',N'Tasa consignada en el soporte del proveedor.',40);
 
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
 VALUES
@@ -126,7 +163,10 @@ WHEN NOT MATCHED BY SOURCE
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',
         N'accounting-withholding-kind',N'accounting-opening-balance-mode',
-        N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type',N'tax-responsibility')
+        N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type',N'tax-responsibility',
+        N'purchase-cost-evidence-type',N'purchase-cost-kind',N'purchase-cost-treatment',
+        N'purchase-cost-allocation-method',N'purchase-tax-rate',N'purchase-tax-treatment',
+        N'purchase-currency',N'exchange-rate-source')
 THEN UPDATE SET target.IsActive=0,target.UpdatedAt=@Now;
 
 MERGE worksessions.CashClosurePaymentMethodMappings AS target
