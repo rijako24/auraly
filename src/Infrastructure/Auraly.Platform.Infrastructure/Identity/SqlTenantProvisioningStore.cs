@@ -201,7 +201,7 @@ public sealed class SqlTenantProvisioningStore(
 
                 INSERT dbo.TenantUserInvitations
                   (InvitationId,TenantId,UserId,DeliveryEmail,TokenHash,ExpiresAt,Status,CreatedAt)
-                VALUES(@InvitationId,@TenantId,NULL,@InvitationEmail,@ActivationHash,DATEADD(day,2,@Now),N'Pending',@Now);
+                VALUES(@InvitationId,@TenantId,NULL,@InvitationEmail,@ActivationHash,DATEADD(day,3,@Now),N'Pending',@Now);
                 INSERT dbo.TenantProvisioningOutboxMessages
                   (MessageId,TenantId,Type,Payload,OccurredAt,AttemptCount)
                 VALUES(@OutboxId,@TenantId,N'TenantAdministratorInvitation',@InvitationPayload,@Now,0);
@@ -527,6 +527,103 @@ public sealed class SqlTenantProvisioningStore(
             await reader.DisposeAsync();
             await transaction.CommitAsync(cancellationToken);
             return result;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    public async Task<ResendTenantInvitationResult?> ResendInvitationAsync(
+        Guid tenantId,
+        Guid actorUserId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var connection = (SqlConnection)db.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+            await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            Guid invitationId = Guid.Empty;
+            string deliveryEmail = string.Empty;
+            string? activationToken = null;
+            var invitationFound = false;
+            await using (var read = new SqlCommand("""
+                SELECT TOP(1) i.InvitationId,i.DeliveryEmail,
+                       JSON_VALUE(o.Payload,N'$.activationToken')
+                FROM dbo.TenantUserInvitations i WITH(UPDLOCK,HOLDLOCK)
+                OUTER APPLY(
+                    SELECT TOP(1) m.Payload
+                    FROM dbo.TenantProvisioningOutboxMessages m WITH(UPDLOCK,HOLDLOCK)
+                    WHERE m.TenantId=i.TenantId
+                      AND m.Type=N'TenantAdministratorInvitation'
+                      AND JSON_VALUE(m.Payload,N'$.invitationId')=CONVERT(nvarchar(36),i.InvitationId)
+                    ORDER BY m.OccurredAt DESC,m.MessageId DESC
+                ) o
+                WHERE i.TenantId=@TenantId AND i.Status IN(N'Pending',N'Expired')
+                ORDER BY i.CreatedAt DESC,i.InvitationId DESC;
+                """, connection, transaction))
+            {
+                read.Parameters.AddWithValue("@TenantId", tenantId);
+                await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+                if (await reader.ReadAsync(cancellationToken))
+                {
+                    invitationId = reader.GetGuid(0);
+                    deliveryEmail = reader.GetString(1);
+                    activationToken = reader.IsDBNull(2) ? null : reader.GetString(2);
+                    invitationFound = true;
+                }
+            }
+
+            if (!invitationFound)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(activationToken) || activationToken.Length != 64)
+                activationToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            var expiresAt = now.AddDays(3);
+            var tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(activationToken));
+            var messageId = ids.NewId();
+            await using var write = new SqlCommand("""
+                UPDATE dbo.TenantUserInvitations
+                SET TokenHash=@TokenHash,ExpiresAt=@ExpiresAt,Status=N'Pending'
+                WHERE InvitationId=@InvitationId AND UserId IS NULL;
+                IF @@ROWCOUNT<>1 THROW 51035,'La invitación ya fue aceptada o no está disponible.',1;
+                INSERT dbo.TenantProvisioningOutboxMessages
+                  (MessageId,TenantId,Type,Payload,OccurredAt,AttemptCount)
+                VALUES(@MessageId,@TenantId,N'TenantAdministratorInvitation',@Payload,@Now,0);
+                INSERT dbo.AuditLogs
+                  (AuditLogId,UserId,TenantId,BusinessId,Action,EntityType,EntityId,Timestamp)
+                SELECT @AuditLogId,@ActorUserId,@TenantId,p.PrimaryBusinessId,
+                       N'TenantInvitationResent',N'TenantUserInvitation',
+                       CONVERT(nvarchar(100),@InvitationId),@Now
+                FROM dbo.TenantLegalProfiles p WHERE p.TenantId=@TenantId;
+                """, connection, transaction);
+            write.Parameters.AddWithValue("@InvitationId", invitationId);
+            write.Parameters.AddWithValue("@TenantId", tenantId);
+            write.Parameters.AddWithValue("@MessageId", messageId);
+            write.Parameters.AddWithValue("@AuditLogId", ids.NewId());
+            write.Parameters.AddWithValue("@ActorUserId", actorUserId);
+            write.Parameters.AddWithValue("@Now", now);
+            write.Parameters.AddWithValue("@ExpiresAt", expiresAt);
+            write.Parameters.Add("@TokenHash", SqlDbType.VarBinary, 32).Value = tokenHash;
+            write.Parameters.AddWithValue("@Payload", JsonSerializer.Serialize(new
+            {
+                invitationId,
+                tenantId,
+                email = deliveryEmail,
+                activationToken
+            }));
+            await write.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new ResendTenantInvitationResult(
+                tenantId, deliveryEmail, expiresAt, "Pending");
         }
         catch
         {

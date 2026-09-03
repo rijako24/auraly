@@ -33,6 +33,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const [testSetId, setTestSetId] = useState("");
   const [certificatePassword, setCertificatePassword] = useState("");
   const [certificate, setCertificate] = useState<File | null>(null);
+  const [credentialError, setCredentialError] = useState("");
   const [selectedSupportRangeId, setSelectedSupportRangeId] = useState("");
   const [supportConfirmed, setSupportConfirmed] = useState(false);
   const [editingCredentials, setEditingCredentials] = useState(false);
@@ -78,6 +79,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
     if (!certificate) return toast.error("Selecciona el certificado PFX o P12.");
     setSaving(true);
     try {
+      setCredentialError("");
       const result = await fiscalConfigurationApi.configureHabilitation(businessId, {
         softwareIdentificationCode: softwareId,
         softwarePin,
@@ -92,7 +94,9 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
       setEditingCredentials(false);
       toast.success("Credenciales DIAN verificadas y almacenadas de forma segura.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible guardar la configuración.");
+      const message = error instanceof Error ? error.message : "No fue posible guardar la configuración.";
+      setCredentialError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -199,10 +203,11 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
               <Field label="Software ID"><Input required disabled={!editingCredentials} value={softwareId} onChange={(event) => setSoftwareId(event.target.value)} /></Field>
               <Field label="TestSetId"><Input required disabled={!editingCredentials} value={testSetId} onChange={(event) => setTestSetId(event.target.value)} /></Field>
               <Field label="PIN del software"><Input required={editingCredentials} disabled={!editingCredentials} type="password" autoComplete="new-password" value={editingCredentials ? softwarePin : "••••••••"} onChange={(event) => setSoftwarePin(event.target.value)} /></Field>
-              <Field label="Certificado PFX/P12"><Input required={editingCredentials} disabled={!editingCredentials} accept=".pfx,.p12,application/x-pkcs12" type="file" onChange={(event) => setCertificate(event.target.files?.[0] ?? null)} /></Field>
+              <Field label="Certificado PFX/P12"><Input required={editingCredentials} disabled={!editingCredentials} accept=".pfx,.p12,application/x-pkcs12" type="file" onChange={(event) => { setCertificate(event.target.files?.[0] ?? null); setCredentialError(""); }} /></Field>
               <Field label="Contraseña del certificado"><Input required={editingCredentials} disabled={!editingCredentials} type="password" autoComplete="new-password" value={editingCredentials ? certificatePassword : "••••••••"} onChange={(event) => setCertificatePassword(event.target.value)} /></Field>
               <div className="flex items-end">{value.hasCertificate && !editingCredentials ? <Button className="w-full" variant="outline" disabled={!canManage} type="button" onClick={() => setEditingCredentials(true)}><Pencil className="mr-2 h-4 w-4" />Editar configuración</Button> : <Button className="w-full" disabled={!canManage || saving} type="submit">{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileKey2 className="mr-2 h-4 w-4" />} Validar y guardar</Button>}</div>
             </form>
+            {credentialError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-900">{credentialError}</p>}
             {value.hasCertificate && <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">Certificado ••••{value.certificateThumbprintSuffix} válido hasta {formatDate(value.certificateValidTo)}. El PIN, la contraseña y la clave privada nunca se muestran.</p>}
           </CardContent>
         </Card>

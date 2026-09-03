@@ -570,6 +570,68 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
+    public async Task Order_printer_renders_every_document_in_a_batch_larger_than_the_visible_page()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-order-batch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw,
+                "Tirilla",
+                80,
+                "Pedidos",
+                OrdersPrinterName: "Pedidos",
+                OrdersOutputFormat: PrintTemplateFormats.HalfLetter));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurableOrderDocumentPrinter(
+                store, new HalfLetterDocumentRenderer(), rendered);
+            var receipts = Enumerable.Range(1, 50).Select(index =>
+                new OnlineSalesReceipt(
+                    Guid.NewGuid(),
+                    index % 2 == 0
+                        ? PosSaleDocumentTypes.Invoice
+                        : PosSaleDocumentTypes.Receipt,
+                    $"PED-{index:000}",
+                    index % 2 == 0 ? $"FE-{index:000}" : null,
+                    DateTimeOffset.UtcNow,
+                    $"900000{index:000}",
+                    [new OnlineSalesReceiptLine(
+                        "P-1", "Producto", 1, 10m, 0, 0, 10m)],
+                    [new OnlineSalesPayment(
+                        "Cash", 10m, null, null, null, null, null)],
+                    10m,
+                    0,
+                    10m,
+                    null,
+                    null,
+                    null,
+                    $"Cliente {index}"))
+                .ToArray();
+
+            await printer.PrintAsync(
+                receipts,
+                "Pedidos",
+                PrintTemplateFormats.HalfLetter,
+                CancellationToken.None);
+
+            Assert.Single(rendered.Documents);
+            Assert.Equal(50, CountOccurrences(
+                rendered.Documents[0], "<section class=\"sheet"));
+            Assert.Contains("PED-001", rendered.Documents[0], StringComparison.Ordinal);
+            Assert.Contains("PED-050", rendered.Documents[0], StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Closure_and_cash_movements_always_use_invoice_printer_as_receipt()
     {
         var directory = Path.Combine(
@@ -696,6 +758,18 @@ public sealed class PosConfigurationTests
         null,
         80,
         PosSaleDocumentTypes.Receipt);
+
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        var offset = 0;
+        while ((offset = source.IndexOf(value, offset, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            offset += value.Length;
+        }
+        return count;
+    }
 
     private sealed class RecordingRawPrintJob : IWindowsRawPrintJob
     {

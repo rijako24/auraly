@@ -74,6 +74,9 @@ export interface TenantProvisioningLegalIdentityCatalog {
   entityTypes: TenantProvisioningLegalIdentityOption[];
   identificationTypes: TenantProvisioningLegalIdentityOption[];
 }
+export interface ResendTenantInvitationResult {
+  tenantId: string; deliveryEmail: string; expiresAt: string; status: string;
+}
 export interface TenantCommercialSubscription {
   subscriptionId: string; planCode: string; planName: string; billingPeriod: "Monthly" | "Annual";
   status: string; currentPeriodStart: string; currentPeriodEnd: string;
@@ -145,6 +148,8 @@ export const tenantsApi = {
   },
   deactivate: (id: string) => apiClient.delete(`/tenants/${id}`),
   activate: (id: string) => apiClient.post(`/tenants/${id}/activate`, {}),
+  resendAdministratorInvitation: (id: string) =>
+    apiClient.post<ResendTenantInvitationResult>(`/tenants/${id}/administrator-invitation/resend`, {}),
   listDevices: (id: string) => apiClient.get<TenantEnrolledDevice[]>(`/tenants/${id}/devices`),
   deactivateDevice: (id: string, deviceId: string) => apiClient.delete(`/tenants/${id}/devices/${deviceId}`),
   billingPolicy: () => apiClient.get<PlatformBillingPolicy>("/tenants/billing-policy"),

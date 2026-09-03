@@ -59,8 +59,6 @@ import {
 } from "@/services/pos/online-pos-bootstrap";
 import {
   forgetSalesWorkspace,
-  recalledOnlinePosClient,
-  rememberOnlinePosClient,
   OnlinePosClient,
   type SalesWorkspaceOption,
   rememberedSalesWorkspaceKey,
@@ -161,7 +159,7 @@ function describeWorkspaceBootstrapError(caught: unknown): string {
     if (statusCode === 401)
       return "Tu sesión ya no es válida para Punto de venta. Inicia sesión nuevamente.";
     if (statusCode === 403)
-      return "Tu usuario no tiene permiso para facturar en esta empresa.";
+      return message || "Tu usuario no tiene permiso para facturar en esta empresa.";
     if (message) return message;
   }
 
@@ -498,8 +496,6 @@ export default function PosPage() {
       setSetupError(null);
       try {
         const edgeToken = readEdgeTokenFromLaunch();
-        const cachedOnlineClient = recalledOnlinePosClient();
-
         if (edgeToken) {
           if (active) setEdgeEnrollmentToken(edgeToken);
           try {
@@ -561,13 +557,6 @@ export default function PosPage() {
           }
         }
 
-        if (cachedOnlineClient) {
-          if (active) {
-            setClient(cachedOnlineClient);
-            setSetupLoading(false);
-          }
-        }
-
         const serverBootstrap = await loadSalesWorkspaceBootstrap();
         if (!active) return;
         setEdgeEnrollmentRequired(Boolean(edgeToken));
@@ -591,7 +580,6 @@ export default function PosPage() {
               displayName,
               edgeToken,
             );
-            rememberOnlinePosClient(onlineClient);
             setClient(onlineClient);
           }
         }
@@ -2300,7 +2288,6 @@ export default function PosPage() {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectSalesWorkspace(option, workspaceChanging);
       const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName, edgeEnrollmentToken);
-      rememberOnlinePosClient(onlineClient);
       setDraft(null);
       setTemporaries([]);
       setSelectedCustomer(null);

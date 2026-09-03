@@ -45,7 +45,7 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Opens_a_work_session_in_an_assigned_business_of_another_tenant()
+    public async Task Rejects_a_work_session_in_an_assigned_business_of_another_tenant()
     {
         var tenantId = Guid.NewGuid();
         var businessId = Guid.NewGuid();
@@ -62,12 +62,17 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
                 "/api/commerce/v1/work-sessions/current",
                 new OpenWorkSessionRequest(businessId, warehouseId, null));
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var session = await response.Content.ReadFromJsonAsync<WorkSessionView>();
-            Assert.NotNull(session);
-            Assert.Equal(businessId, session.BusinessId);
-            Assert.Equal(warehouseId, session.WarehouseId);
-            Assert.Equal(fixture.UserId, session.UserId);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            var detail = await response.Content.ReadAsStringAsync();
+            Assert.Contains("no pertenece al tenant seleccionado", detail);
+
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var count = new SqlCommand(
+                "SELECT COUNT(*) FROM dbo.WorkSessions WHERE BusinessId=@BusinessId;",
+                connection);
+            count.Parameters.AddWithValue("@BusinessId", businessId);
+            Assert.Equal(0, Convert.ToInt32(await count.ExecuteScalarAsync()));
         }
         finally
         {

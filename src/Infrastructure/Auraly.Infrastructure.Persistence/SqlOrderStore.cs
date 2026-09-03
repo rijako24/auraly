@@ -364,12 +364,14 @@ public sealed class SqlOrderStore(
               @Now,@ExpiresAt
             FROM dbo.WorkSessions ws
             WHERE ws.WorkSessionId=@WorkSessionId
+              AND ws.TenantId=@TenantId
               AND ws.BusinessId=@BusinessId
               AND ws.UserId=@UserId
               AND ws.Status=N'Open';
             """,
             [
                 P("@ClaimId", id), P("@BusinessId", actor.BusinessId),
+                P("@TenantId", actor.TenantId),
                 P("@OrderId", orderId), P("@WorkSessionId", workSessionId),
                 P("@DeviceId", actor.DeviceId), P("@UserId", actor.UserId),
                 P("@Now", now), P("@ExpiresAt", expires)
@@ -562,7 +564,7 @@ public sealed class SqlOrderStore(
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             INNER JOIN dbo.WorkSessions ws
               ON ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=o.BusinessId
-             AND ws.UserId=@UserId AND ws.Status=N'Open'
+             AND ws.TenantId=@TenantId AND ws.UserId=@UserId AND ws.Status=N'Open'
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId AND b.TenantId=@TenantId;
             """;

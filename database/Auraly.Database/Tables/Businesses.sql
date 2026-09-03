@@ -14,7 +14,8 @@ CREATE TABLE [dbo].[Businesses] (
     [UpdatedAt] DATETIME2 NULL,
     CONSTRAINT [FK_Businesses_Tenants] FOREIGN KEY ([TenantId])
         REFERENCES [dbo].[Tenants] ([TenantId])
-        ON DELETE NO ACTION
+        ON DELETE NO ACTION,
+    CONSTRAINT [UQ_Businesses_Business_Tenant] UNIQUE ([BusinessId],[TenantId])
 );
 
 GO

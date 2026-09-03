@@ -3,6 +3,7 @@ using Auraly.Application.Organization;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
 using Auraly.BuildingBlocks.Application.Synchronization;
+using Auraly.Contracts.Authentication;
 
 namespace Auraly.Api;
 
@@ -99,7 +100,7 @@ public static class SalesWorkspaceClaimsPrincipalExtensions
         this ClaimsPrincipal principal) =>
         new(
             RequiredGuid(principal, ClaimTypes.NameIdentifier),
-            RequiredGuid(principal, "tenant_id"),
+            RequiredGuid(principal, AuthenticationDefaults.IdentityTenantIdClaim),
             principal.FindAll("permission").Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));
 

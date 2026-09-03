@@ -216,10 +216,6 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<PosCashMovementServerClient>();
         builder.Services.AddSingleton<PosWorkSessionClosureServerClient>();
-        builder.Services.AddSingleton<PosWorkSessionClosurePrinter>();
-        builder.Services.AddSingleton<IPosWorkSessionClosurePrinter>(sp =>
-            sp.GetRequiredService<PosWorkSessionClosurePrinter>());
-        builder.Services.AddSingleton<PosCashMovementTicketPrinter>();
         builder.Services.AddSingleton(sp => new PosOfflineWorkSessionClosureStore(
             connectionString,
             sp.GetRequiredService<TimeProvider>()));
@@ -444,24 +440,6 @@ public static class PosEdgeHostApplication
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         });
-        edge.MapPost("/print/work-session-closure", async (
-            WorkSessionClosureView closure,
-            IPosWorkSessionClosurePrinter printer,
-            CancellationToken ct) =>
-        {
-            try
-            {
-                await printer.PrintAsync(closure, ct);
-                return Results.NoContent();
-            }
-            catch (Exception exception) when (exception is IOException or InvalidOperationException)
-            {
-                return Results.Problem(
-                    exception.Message,
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
-        });
-
         edge.MapPost("/enrollment/redeem", async (
             LocalPosEnrollmentRequest request,
             PosEdgeEnrollmentClient client,
@@ -609,30 +587,6 @@ public static class PosEdgeHostApplication
                     exception.Message,
                     statusCode: StatusCodes.Status409Conflict,
                     title: exception.Code);
-            }
-        });
-        edge.MapPost("/print/cash-movement", async (
-            PosCashMovementTicket request,
-            PosCashMovementTicketPrinter printer,
-            CancellationToken ct) =>
-        {
-            try
-            {
-                await printer.PrintAsync(request, ct);
-                return Results.NoContent();
-            }
-            catch (ArgumentException exception)
-            {
-                return Results.ValidationProblem(new Dictionary<string, string[]>
-                {
-                    [nameof(request)] = [exception.Message]
-                });
-            }
-            catch (Exception exception) when (exception is IOException or InvalidOperationException)
-            {
-                return Results.Problem(
-                    exception.Message,
-                    statusCode: StatusCodes.Status409Conflict);
             }
         });
         edge.MapGet("/approvals/{approvalRequestId:guid}", async (

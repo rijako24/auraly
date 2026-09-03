@@ -32,10 +32,13 @@ public sealed class PosCashMovementTicketTests
         Assert.Contains(expectedTitle, raw);
         Assert.Contains("MOTIVO: Base inicial", raw);
         Assert.Contains("FIRMA:", raw);
+        Assert.Contains("\n\n\nFIRMA:", raw);
+        Assert.DoesNotContain(ticket.DocumentId.ToString("D"), raw);
         Assert.Contains("Carol Cairo", raw);
         Assert.Contains(expectedTitle, html);
         Assert.Contains("Entregado por administraci", html);
         Assert.Contains("class=\"signature\"", html);
+        Assert.DoesNotContain(ticket.DocumentId.ToString("D"), html);
         Assert.Contains("@page{size:80mm", html);
         Assert.DoesNotContain("<strong>Bodega:</strong>", html);
         Assert.DoesNotContain("Bodega que no debe imprimirse", html);

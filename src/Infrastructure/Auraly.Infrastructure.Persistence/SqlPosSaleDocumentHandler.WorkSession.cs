@@ -12,7 +12,7 @@ public sealed partial class SqlPosSaleDocumentHandler
         CancellationToken cancellationToken)
     {
         var session = await FindWorkSessionAsync(
-            processing, request.WorkSessionId, cancellationToken);
+            processing, request, cancellationToken);
         if (session is null)
             throw new InvalidOperationException(
                 "The sale references a work session that does not exist.");
@@ -35,9 +35,14 @@ public sealed partial class SqlPosSaleDocumentHandler
         {
             await using var touch = new SqlCommand("""
                 UPDATE dbo.WorkSessions SET LastActivityAt=@Now
-                WHERE WorkSessionId=@WorkSessionId AND Status=N'Open';
+                WHERE WorkSessionId=@WorkSessionId
+                  AND TenantId=@TenantId AND UserId=@UserId
+                  AND BusinessId=@BusinessId AND Status=N'Open';
                 """, processing.Connection, processing.Transaction);
             touch.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
+            touch.Parameters.AddWithValue("@TenantId", request.TenantId);
+            touch.Parameters.AddWithValue("@UserId", request.SoldByUserId);
+            touch.Parameters.AddWithValue("@BusinessId", request.BusinessId);
             touch.Parameters.AddWithValue("@Now", now);
             if (await touch.ExecuteNonQueryAsync(cancellationToken) != 1)
                 throw new DBConcurrencyException(
@@ -62,15 +67,20 @@ public sealed partial class SqlPosSaleDocumentHandler
 
     private static async Task<WorkSessionState?> FindWorkSessionAsync(
         SqlDocumentProcessingSessionAccessor.Session processing,
-        Guid workSessionId,
+        PosSaleUploadRequest request,
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
             SELECT BusinessId,WarehouseId,UserId,Status
             FROM dbo.WorkSessions WITH (UPDLOCK,HOLDLOCK)
-            WHERE WorkSessionId=@WorkSessionId;
+            WHERE WorkSessionId=@WorkSessionId
+              AND TenantId=@TenantId AND UserId=@UserId
+              AND BusinessId=@BusinessId;
             """, processing.Connection, processing.Transaction);
-        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        command.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
+        command.Parameters.AddWithValue("@TenantId", request.TenantId);
+        command.Parameters.AddWithValue("@UserId", request.SoldByUserId);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         return new WorkSessionState(

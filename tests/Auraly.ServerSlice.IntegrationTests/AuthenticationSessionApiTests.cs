@@ -230,6 +230,24 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Refresh_from_another_client_is_denied_without_revoking_the_active_session()
+    {
+        var user = await CreatePasswordUserAsync("auth-refresh-client-boundary");
+        var clientId = Guid.NewGuid();
+        var login = await LoginAsync(user.Username, clientId);
+        var sessionId = SessionId(login.AccessToken);
+
+        using var mismatchedRefresh = CreateRefreshRequest(login, Guid.NewGuid());
+        using var rejected = await fixture.CreateClient().SendAsync(mismatchedRefresh);
+        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+        Assert.Equal("Active", (await ReadSessionAsync(sessionId)).Status);
+
+        using var originalBrowser = AuthenticatedClient(login, clientId);
+        using var stillAccepted = await originalBrowser.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.OK, stillAccepted.StatusCode);
+    }
+
+    [Fact]
     public async Task Enrolled_pos_login_revokes_the_previous_browser_before_it_can_close_the_work_session()
     {
         var user = await CreatePasswordUserAsync("auth-pos-handoff");

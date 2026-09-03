@@ -203,8 +203,8 @@ public sealed class SqlReceivablesStore(
         }
         if(request.WorkSessionId is Guid sessionId)
         {
-            await using var session=new SqlCommand("SELECT COUNT_BIG(1) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK) WHERE WorkSessionId=@Id AND BusinessId=@BusinessId AND UserId=@UserId AND Status=N'Open'",c,t);
-            session.Parameters.AddWithValue("@Id",sessionId);session.Parameters.AddWithValue("@BusinessId",user.BusinessId);session.Parameters.AddWithValue("@UserId",user.UserId);
+            await using var session=new SqlCommand("SELECT COUNT_BIG(1) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK) WHERE WorkSessionId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId AND UserId=@UserId AND Status=N'Open'",c,t);
+            session.Parameters.AddWithValue("@Id",sessionId);session.Parameters.AddWithValue("@TenantId",user.TenantId);session.Parameters.AddWithValue("@BusinessId",user.BusinessId);session.Parameters.AddWithValue("@UserId",user.UserId);
             if(Convert.ToInt64(await session.ExecuteScalarAsync(token))!=1) throw new ReceivablesValidationException("The work session is not open for this user.");
         }
     }

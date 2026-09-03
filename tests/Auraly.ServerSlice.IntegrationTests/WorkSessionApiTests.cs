@@ -84,6 +84,118 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Pos_rejects_an_administratively_selected_tenant_that_the_user_does_not_own()
+    {
+        var userId = await CreateUserAsync("work-session-platform-context");
+        var activeTenantId = Guid.NewGuid();
+        var activeBusinessId = Guid.NewGuid();
+        var activeWarehouseId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT dbo.Tenants(TenantId,TenantKey,Name,Email,IsActive)
+                VALUES(@TenantId,@TenantKey,N'Tenant operativo',@Email,1);
+                INSERT dbo.Businesses
+                  (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive)
+                VALUES
+                  (@BusinessId,@TenantId,N'Sede operativa',N'',N'',N'',@BusinessEmail,N'',1);
+                INSERT dbo.Warehouses
+                  (WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsActive,CreatedAt)
+                VALUES
+                  (@WarehouseId,@BusinessId,N'PRINCIPAL',N'Bodega operativa',0,1,SYSDATETIMEOFFSET());
+                """;
+            insert.Parameters.AddWithValue("@TenantId", activeTenantId);
+            insert.Parameters.AddWithValue("@TenantKey", $"@platform-{activeTenantId:N}");
+            insert.Parameters.AddWithValue("@Email", $"platform-{activeTenantId:N}@test.local");
+            insert.Parameters.AddWithValue("@BusinessEmail", $"business-{activeBusinessId:N}@test.local");
+            insert.Parameters.AddWithValue("@BusinessId", activeBusinessId);
+            insert.Parameters.AddWithValue("@WarehouseId", activeWarehouseId);
+            await insert.ExecuteNonQueryAsync();
+
+            await using var invalidSession = connection.CreateCommand();
+            invalidSession.CommandText = """
+                INSERT dbo.WorkSessions
+                  (WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
+                   OpenedAt,LastActivityAt,Status)
+                VALUES
+                  (NEWID(),@TenantId,@BusinessId,@WarehouseId,@UserId,NULL,
+                   SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Open');
+                """;
+            invalidSession.Parameters.AddWithValue("@TenantId", activeTenantId);
+            invalidSession.Parameters.AddWithValue("@BusinessId", activeBusinessId);
+            invalidSession.Parameters.AddWithValue("@WarehouseId", activeWarehouseId);
+            invalidSession.Parameters.AddWithValue("@UserId", userId);
+            var constraint = await Assert.ThrowsAsync<SqlException>(
+                () => invalidSession.ExecuteNonQueryAsync());
+            Assert.Contains("FK_WorkSessions_UserTenant", constraint.Message,
+                StringComparison.Ordinal);
+        }
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open);
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", activeTenantId.ToString("D"));
+
+        using var response = await client.GetAsync(
+            "/api/commerce/v1/work-sessions/current");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains(
+            "no pertenece al tenant seleccionado",
+            await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+
+        using var openResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/work-sessions/current",
+            new OpenWorkSessionRequest(activeBusinessId, activeWarehouseId, null));
+        Assert.Equal(HttpStatusCode.Forbidden, openResponse.StatusCode);
+        Assert.Equal(0, await CountOpenSessionsAsync(userId));
+
+        client.DefaultRequestHeaders.Remove("X-Tenant-Id");
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", fixture.TenantId.ToString("D"));
+        var ownTenantSession = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, null));
+        Assert.Equal(fixture.TenantId, ownTenantSession.TenantId);
+        Assert.Equal(1, await CountOpenSessionsAsync(userId));
+    }
+
+    [Fact]
+    public async Task Enrolling_the_current_machine_attaches_it_to_the_existing_online_session()
+    {
+        var userId = await CreateUserAsync("work-session-device-attach");
+        var deviceId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT dbo.EnrolledDevices
+                  (DeviceId,TenantId,Name,CredentialSalt,CredentialHash,
+                   CredentialIterations,IsActive,CreatedAt)
+                VALUES
+                  (@DeviceId,@TenantId,N'Equipo de prueba',0x01,0x02,100000,1,SYSDATETIMEOFFSET());
+                """;
+            insert.Parameters.AddWithValue("@DeviceId", deviceId);
+            insert.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await insert.ExecuteNonQueryAsync();
+        }
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open);
+
+        var openedOnline = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, null));
+        var resumedFromDevice = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, deviceId));
+
+        Assert.Equal(openedOnline.WorkSessionId, resumedFromDevice.WorkSessionId);
+        Assert.Equal(deviceId, resumedFromDevice.DeviceId);
+        Assert.Equal(1, await CountOpenSessionsAsync(userId));
+    }
+
+    [Fact]
     public async Task Work_session_rejects_scopes_outside_the_authenticated_context()
     {
         var userId = await CreateUserAsync("work-session-scope");
@@ -178,6 +290,70 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(0, preview.CreditSalesCount);
         Assert.Equal(0m, preview.CreditSalesAmount);
         Assert.Equal(0, preview.ReturnCount);
+    }
+
+    [Fact]
+    public async Task Closure_uses_accepted_cash_documents_while_async_projections_are_pending()
+    {
+        var userId = await CreateUserAsync("work-session-accepted-cash");
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ManageCash);
+        var opened = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, null));
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var reasons = await client.GetFromJsonAsync<CashMovementReasonView[]>(
+                $"/api/commerce/v1/work-sessions/cash-reasons?businessId={fixture.BusinessId:D}&direction=In");
+            var reason = Assert.Single(reasons!, value => value.Code == "OTHER_INCOME");
+            var documentId = Guid.NewGuid();
+            using var movement = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/cash-movements")
+            {
+                Content = JsonContent.Create(new ConfirmCashMovementRequest(
+                    documentId,
+                    fixture.BusinessId,
+                    opened.WorkSessionId,
+                    reason.ReasonId,
+                    35_000m,
+                    DateTimeOffset.UtcNow,
+                    "Ingreso pendiente de proyección",
+                    null,
+                    null))
+            };
+            movement.Headers.Add("Idempotency-Key", $"cash-{documentId:N}");
+            using var accepted = await client.SendAsync(movement);
+            Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+
+            using var previewResponse = await client.GetAsync(
+                $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview");
+            previewResponse.EnsureSuccessStatusCode();
+            var preview = await previewResponse.Content
+                .ReadFromJsonAsync<WorkSessionClosurePreviewView>();
+            Assert.NotNull(preview);
+            Assert.Equal(35_000m, preview.TotalOther);
+            Assert.Equal(35_000m, preview.ExpectedCash);
+
+            var closure = await CloseAsync(
+                client,
+                opened.WorkSessionId,
+                $"close-{Guid.NewGuid():N}",
+                new CloseWorkSessionRequest(35_000m, "Cierre sin esperar proyecciones"));
+            Assert.Equal(35_000m, closure.TotalOther);
+            Assert.Equal(35_000m, closure.ExpectedCash);
+            Assert.Equal(35_000m, closure.CountedCash);
+        }
+        finally
+        {
+            fixture.DrainDocumentSignals();
+            fixture.ResumeDocumentProcessing();
+        }
     }
 
     [Fact]

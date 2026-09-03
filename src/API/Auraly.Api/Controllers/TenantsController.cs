@@ -22,7 +22,8 @@ public sealed class TenantsController(
     IPlatformBillingPolicyStore billingPolicy,
     ITenantCommercialSubscriptionStore commercialSubscriptions,
     TenantRenewalOrderService tenantRenewalOrders,
-    TenantSubscriptionCheckoutService subscriptionCheckout) : ControllerBase
+    TenantSubscriptionCheckoutService subscriptionCheckout,
+    Auraly.Application.Tenants.TenantInvitationService tenantInvitations) : ControllerBase
 {
     private const long MaxLogoBytes = 4 * 1024 * 1024;
     private const long MaxLogoRequestBytes = MaxLogoBytes + 64 * 1024;
@@ -108,6 +109,28 @@ public sealed class TenantsController(
     {
         await tenantService.ActivateAsync(tenantId, ct);
         return NoContent();
+    }
+
+    [HttpPost("{tenantId:guid}/administrator-invitation/resend")]
+    [PermissionAuthorize("tenants.users.manage")]
+    public async Task<ActionResult<ResendTenantInvitationResult>> ResendAdministratorInvitation(
+        Guid tenantId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await tenantInvitations.ResendAsync(
+                tenantId, User.GetUserId(), ct));
+        }
+        catch (Auraly.Application.Tenants.TenantInvitationException exception)
+        {
+            return Conflict(new ProblemDetails
+            {
+                Status = StatusCodes.Status409Conflict,
+                Title = exception.Code,
+                Detail = exception.Message
+            });
+        }
     }
 
     [HttpDelete("{tenantId:guid}")]

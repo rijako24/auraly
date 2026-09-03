@@ -81,6 +81,7 @@ public sealed class JwtAuthenticationTokenIssuer : IAuthenticationTokenIssuer
             new(AuthenticationDefaults.SessionIdClaim,
                 identity.AuthenticationSessionId.ToString("D")),
             new(AuthenticationDefaults.TenantIdClaim, user.TenantId.ToString("D")),
+            new(AuthenticationDefaults.IdentityTenantIdClaim, user.TenantId.ToString("D")),
             new("username", user.Username),
             new("full_name", $"{user.FirstName} {user.LastName}".Trim())
         };
@@ -308,9 +309,6 @@ public sealed class SqlAuthenticationSessionStore(
         }
         if (state.ClientId != command.Identity.ClientId)
         {
-            await RevokeByIdAsync(
-                connection, transaction, command.Identity.AuthenticationSessionId,
-                "RefreshClientMismatch", command.Now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             throw new AuthenticationDeniedException(
                 "The refresh token client does not match the active session.");

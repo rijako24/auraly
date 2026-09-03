@@ -112,10 +112,10 @@ public sealed class PosWorkSessionClosureApiTests(ServerSliceFixture fixture)
                    @CredentialSalt,@CredentialHash,@CredentialIterations,1,SYSUTCDATETIME());
 
                 INSERT dbo.WorkSessions
-                  (WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+                  (WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
                    OpenedAt,LastActivityAt,Status)
                 VALUES
-                  (@WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
+                  (@WorkSessionId,@TenantId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
                    SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Open');
                 """;
             command.Parameters.AddWithValue("@UserId", userId);

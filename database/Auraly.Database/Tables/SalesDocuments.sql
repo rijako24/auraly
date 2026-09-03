@@ -47,6 +47,8 @@ CREATE TABLE [dbo].[SalesDocuments]
     CONSTRAINT [FK_SalesDocuments_SoldByUser] FOREIGN KEY ([SoldByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [FK_SalesDocuments_WorkSession] FOREIGN KEY ([WorkSessionId])
         REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
+    CONSTRAINT [FK_SalesDocuments_WorkSessionBusiness] FOREIGN KEY ([WorkSessionId],[BusinessId])
+        REFERENCES [dbo].[WorkSessions] ([WorkSessionId],[BusinessId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Document] UNIQUE ([BusinessId], [DocumentId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [FK_SalesDocuments_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),

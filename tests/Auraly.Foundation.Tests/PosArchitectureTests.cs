@@ -39,24 +39,26 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
-    public void Cached_online_pos_still_refreshes_workspace_options()
+    public void Online_pos_rebuilds_its_client_from_a_fresh_workspace_bootstrap()
     {
         var repositoryRoot = FindRepositoryRoot();
         var page = File.ReadAllText(Path.Combine(
             repositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
-        var cachedClientStart = page.IndexOf(
-            "if (cachedOnlineClient)", StringComparison.Ordinal);
+        var bootstrapStart = page.IndexOf(
+            "const bootstrap = async () =>", StringComparison.Ordinal);
         var bootstrapCall = page.IndexOf(
             "const serverBootstrap = await loadSalesWorkspaceBootstrap();",
-            cachedClientStart,
+            bootstrapStart,
+            StringComparison.Ordinal);
+        var onlineClientCreation = page.IndexOf(
+            "const onlineClient = new OnlinePosClient(",
+            bootstrapCall,
             StringComparison.Ordinal);
 
-        Assert.True(cachedClientStart >= 0, "The cached online client branch was not found.");
-        Assert.True(bootstrapCall > cachedClientStart, "The workspace bootstrap call was not found after the cached client branch.");
-        Assert.DoesNotContain(
-            "return;",
-            page[cachedClientStart..bootstrapCall],
-            StringComparison.Ordinal);
+        Assert.True(bootstrapStart >= 0, "The POS bootstrap was not found.");
+        Assert.True(bootstrapCall > bootstrapStart, "The fresh workspace bootstrap call was not found.");
+        Assert.True(onlineClientCreation > bootstrapCall, "The online client was not rebuilt from the fresh bootstrap.");
+        Assert.DoesNotContain("cachedOnlineClient", page, StringComparison.Ordinal);
     }
 
     [Fact]

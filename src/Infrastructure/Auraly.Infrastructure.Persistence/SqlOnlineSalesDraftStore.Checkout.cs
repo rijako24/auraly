@@ -51,6 +51,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             JOIN dbo.WorkSessions ws
               ON ws.WorkSessionId=d.WorkSessionId AND ws.BusinessId=d.BusinessId
              AND ws.WarehouseId=d.WarehouseId AND ws.UserId=d.UserId
+             AND ws.TenantId=b.TenantId
              AND ws.Status=N'Open'
             JOIN dbo.FiscalSeries s
               ON s.BusinessId=d.BusinessId AND s.DeviceId IS NULL

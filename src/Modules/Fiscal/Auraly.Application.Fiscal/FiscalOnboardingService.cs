@@ -243,7 +243,7 @@ public sealed class FiscalOnboardingService(
         catch (CryptographicException)
         {
             throw new FiscalConfigurationValidationException(
-                "El PFX/P12 o su contraseña no son válidos.");
+                "No fue posible abrir el PFX/P12: la contraseña es incorrecta o el archivo está dañado.");
         }
 
         using var certificate = collection.OfType<X509Certificate2>()
@@ -253,9 +253,12 @@ public sealed class FiscalOnboardingService(
         if (collection.OfType<X509Certificate2>().Count(item => item.HasPrivateKey) != 1)
             throw new FiscalConfigurationValidationException(
                 "El archivo debe contener exactamente un certificado con clave privada.");
-        if (now < certificate.NotBefore || now > certificate.NotAfter)
+        if (now < certificate.NotBefore)
             throw new FiscalConfigurationValidationException(
-                "El certificado no está vigente.");
+                $"El certificado todavía no está vigente; inicia el {certificate.NotBefore:yyyy-MM-dd HH:mm} UTC.");
+        if (now > certificate.NotAfter)
+            throw new FiscalConfigurationValidationException(
+                $"El certificado está vencido desde el {certificate.NotAfter:yyyy-MM-dd HH:mm} UTC.");
         if (!FiscalCertificateIdentityPolicy.IsAcceptable(
                 supplierTaxId, supplierCheckDigit, certificate.Subject))
             throw new FiscalConfigurationValidationException(

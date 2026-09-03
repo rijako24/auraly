@@ -16,6 +16,21 @@ public sealed class TenantInvitationService(
     IPasswordHasher passwordHasher,
     TimeProvider clock)
 {
+    public async Task<ResendTenantInvitationResult> ResendAsync(
+        Guid tenantId,
+        Guid actorUserId,
+        CancellationToken cancellationToken = default)
+    {
+        if (tenantId == Guid.Empty)
+            throw new TenantInvitationException(
+                "InvalidTenant", "La organización es obligatoria.");
+        return await store.ResendInvitationAsync(
+                tenantId, actorUserId, clock.GetUtcNow(), cancellationToken)
+            ?? throw new TenantInvitationException(
+                "InvitationUnavailable",
+                "La invitación ya fue aceptada o no está disponible.");
+    }
+
     public async Task<AcceptTenantInvitationResult> AcceptAsync(
         AcceptTenantInvitationRequest request,
         CancellationToken cancellationToken = default)

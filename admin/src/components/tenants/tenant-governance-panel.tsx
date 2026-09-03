@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, MonitorSmartphone, Save, ShieldOff, UserRoundCheck, UsersRound } from "lucide-react";
+import { AlertTriangle, MailPlus, MonitorSmartphone, Save, ShieldOff, UserRoundCheck, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +72,14 @@ export function TenantGovernancePanel({ tenant }: { tenant: Tenant }) {
     onSuccess: async () => { setSelectedDevice(null); toast.success("Caja desenrolada", { description: "El cupo quedó disponible para enrolar otra caja." }); await refresh(); },
     onError: () => toast.error("No fue posible desenrolar la caja."),
   });
+  const resendInvitation = useMutation({
+    mutationFn: () => tenantsApi.resendAdministratorInvitation(tenant.tenantId),
+    onSuccess: (result) => toast.success("Invitación reenviada", {
+      description: `Enviada a ${result.deliveryEmail}. El enlace estará activo durante 3 días.`,
+    }),
+    onError: (failure) => toast.error(
+      failure instanceof Error ? failure.message : "No fue posible reenviar la invitación."),
+  });
 
   const overUsers = tenant.activeUserCount > tenant.maximumUsers;
   const overDevices = tenant.activeEnrolledDeviceCount > tenant.maximumEnrolledDevices;
@@ -106,7 +114,7 @@ export function TenantGovernancePanel({ tenant }: { tenant: Tenant }) {
     </section>
 
     {canReadUsers && <section className="rounded-2xl border bg-card p-6 shadow-sm">
-      <div><p className="text-xs font-semibold uppercase tracking-wide text-primary">Acceso</p><h2 className="mt-1 text-xl font-semibold">Usuarios del tenant</h2><p className="mt-1 text-sm text-muted-foreground">La consulta y la administración son permisos independientes.</p></div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">Acceso</p><h2 className="mt-1 text-xl font-semibold">Usuarios del tenant</h2><p className="mt-1 text-sm text-muted-foreground">La consulta y la administración son permisos independientes.</p></div>{canManageUsers && tenant.activeUserCount === 0 && <Button type="button" variant="outline" disabled={resendInvitation.isPending} onClick={() => resendInvitation.mutate()}><MailPlus className="mr-2 h-4 w-4" />{resendInvitation.isPending ? "Reenviando…" : "Reenviar invitación"}</Button>}</div>
       <div className="mt-5 overflow-hidden rounded-xl border">
         <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 bg-muted/50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><span>Usuario</span><span>Estado</span><span>Acción</span></div>
         {userItems.map((user) => <div key={user.userId} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-t px-4 py-3">

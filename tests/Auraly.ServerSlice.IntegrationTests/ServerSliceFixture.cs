@@ -902,10 +902,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              @DeniedSalt, @DeniedHash, @DeniedIterations, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.WorkSessions
-            (WorkSessionId, BusinessId, WarehouseId, UserId, DeviceId,
+            (WorkSessionId, TenantId, BusinessId, WarehouseId, UserId, DeviceId,
              OpenedAt, LastActivityAt, Status)
             VALUES
-            (@WorkSessionId, @BusinessId, @WarehouseId, @UserId, @DeviceId,
+            (@WorkSessionId, @TenantId, @BusinessId, @WarehouseId, @UserId, @DeviceId,
              SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), N'Open');
 
             INSERT INTO dbo.FiscalAuthorizations

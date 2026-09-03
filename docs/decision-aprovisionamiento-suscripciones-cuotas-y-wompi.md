@@ -52,6 +52,14 @@ La periodicidad comercial admite `Annual` y `Monthly`. `Annual` es la selección
 10. El fulfillment crea o vincula idempotentemente la empresa aprovisionada como cliente de la empresa facturadora de Auraly, usando la identidad y los datos fiscales verificados del wizard. Esa relación es la destinataria de los cobros y facturas de suscripción.
 11. Suscripción y entitlements se crean durablemente y luego el outbox envía la invitación al administrador.
 
+La invitación del administrador permanece vigente durante tres días completos desde
+su creación. Si vence, la activación responde de forma explícita `InvitationExpired`
+y no oculta la causa como una invitación genéricamente inválida. Mientras el tenant
+no tenga administrador aceptado, plataforma puede reenviarla desde el detalle del
+tenant con `tenants.users.manage`: se reutilizan la misma invitación opaca y el mismo
+outbox de correo, se extiende su vigencia otros tres días y se audita
+`TenantInvitationResent`. Un reenvío nunca crea otro usuario ni otra ruta de alta.
+
 Hay dos entradas al mismo motor. La entrada pública `/register` es anónima porque todavía no existe identidad ni tenant: crea un borrador protegido por token opaco, exige pago verificado y nunca expone exención. La entrada interna `/dashboard/tenants/new` es autenticada; únicamente un usuario de plataforma con `tenants.create` y `tenants.provisioning.payment.waive` puede aprovisionar sin Wompi. La decisión se valida en servidor y el navegador no envía una bandera de confianza para omitir el cobro.
 
 La experiencia elegida es el Widget oficial de Wompi abierto como modal desde el último paso, no un iframe propio ni una pestaña nueva. Así el comprador permanece visualmente en el wizard y Wompi presenta sus medios de pago. La public key, referencia, COP, valor en centavos, expiración y firma de integridad provienen de la cotización del servidor; la private key y los secretos nunca llegan al navegador.

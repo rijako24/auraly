@@ -169,7 +169,9 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             "Sede principal", "Calle 1 # 2-3", "3001234567", $"sede-{suffix}@auraly.test",
             "America/Bogota", "LatestReceiptCost", email, 10, 3);
 
-        using var admin = fixture.CreateAdminClient("tenants.create", "tenants.update", "tenants.provisioning.payment.waive");
+        using var admin = fixture.CreateAdminClient(
+            "tenants.create", "tenants.update", "tenants.users.manage",
+            "tenants.provisioning.payment.waive");
         using var created = await admin.PostAsJsonAsync("/api/v1/tenants", Waived(request));
         var creationBody = await created.Content.ReadAsStringAsync();
         Assert.True(created.StatusCode == HttpStatusCode.Created, $"Expected Created but received {created.StatusCode}: {creationBody}");
@@ -292,8 +294,35 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         }
 
         var token = await ReadInvitationTokenAsync(result.TenantId);
+        var invitationWindow = await ReadInvitationWindowAsync(result.TenantId);
+        Assert.Equal(TimeSpan.FromDays(3), invitationWindow.ExpiresAt - invitationWindow.CreatedAt);
         var username = $"admin-{suffix}";
         using var publicClient = fixture.CreateClient();
+        await ExpireInvitationAsync(result.TenantId);
+        using (var expired = await publicClient.PostAsJsonAsync(
+                   "/api/v1/auth/invitations/accept",
+                   new AcceptTenantInvitationRequest(
+                       token, "CC", $"10{Random.Shared.Next(10000000, 99999999)}",
+                       "Administrador", suffix, username, "3007654321", "Calle 1 # 2-3",
+                       Password, Password)))
+        {
+            Assert.Equal(HttpStatusCode.Gone, expired.StatusCode);
+            Assert.Contains("expiró", await expired.Content.ReadAsStringAsync(),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        using (var resent = await admin.PostAsync(
+                   $"/api/v1/tenants/{result.TenantId:D}/administrator-invitation/resend",
+                   null))
+        {
+            resent.EnsureSuccessStatusCode();
+            var value = await resent.Content.ReadFromJsonAsync<ResendTenantInvitationResult>();
+            Assert.NotNull(value);
+            Assert.Equal(email, value!.DeliveryEmail);
+            Assert.True(value.ExpiresAt >= DateTimeOffset.UtcNow.AddDays(3).AddMinutes(-1));
+            Assert.Equal("Pending", value.Status);
+        }
+        Assert.Equal(token, await ReadInvitationTokenAsync(result.TenantId));
+        Assert.Equal(2, await CountInvitationDeliveriesAsync(result.TenantId));
         using var accepted = await publicClient.PostAsJsonAsync(
             "/api/v1/auth/invitations/accept",
             new AcceptTenantInvitationRequest(
@@ -353,6 +382,14 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                 "Administrador", suffix, username, "3007654321", "Calle 1 # 2-3",
                 Password, Password));
         Assert.Equal(HttpStatusCode.Conflict, reused.StatusCode);
+
+        using var resendAccepted = await admin.PostAsync(
+            $"/api/v1/tenants/{result.TenantId:D}/administrator-invitation/resend",
+            null);
+        var resendAcceptedBody = await resendAccepted.Content.ReadAsStringAsync();
+        Assert.True(
+            resendAccepted.StatusCode == HttpStatusCode.Conflict,
+            $"Expected Conflict but received {resendAccepted.StatusCode}: {resendAcceptedBody}");
 
         using var loginRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
         {
@@ -543,6 +580,48 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         using var json = JsonDocument.Parse(payload!);
         return json.RootElement.GetProperty("activationToken").GetString()
             ?? throw new InvalidOperationException("Invitation token is missing.");
+    }
+
+    private async Task<(DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt)>
+        ReadInvitationWindowAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT TOP(1) CreatedAt,ExpiresAt
+            FROM dbo.TenantUserInvitations
+            WHERE TenantId=@TenantId ORDER BY CreatedAt DESC;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return (reader.GetFieldValue<DateTimeOffset>(0),
+            reader.GetFieldValue<DateTimeOffset>(1));
+    }
+
+    private async Task ExpireInvitationAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE dbo.TenantUserInvitations
+            SET ExpiresAt=DATEADD(minute,-1,SYSDATETIMEOFFSET())
+            WHERE TenantId=@TenantId AND Status=N'Pending';
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task<int> CountInvitationDeliveriesAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.TenantProvisioningOutboxMessages
+            WHERE TenantId=@TenantId AND Type=N'TenantAdministratorInvitation';
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private async Task<int> CountGeneralCashAccountsAsync(Guid tenantId)

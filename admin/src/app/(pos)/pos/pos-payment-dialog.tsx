@@ -23,6 +23,7 @@ import {
   parseMoneyDraft,
 } from "./pos-money-input";
 import { usePosReferenceOptions } from "./use-pos-reference-options";
+import { initialTransferBankAccountId } from "./pos-transfer-settlement";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -83,6 +84,7 @@ export function PosPaymentDialog({
   const [accountingEnabled, setAccountingEnabled] = useState(false);
   const [settlementConfigurationLoaded, setSettlementConfigurationLoaded] = useState(false);
   const cardApprovalRef = useRef<HTMLInputElement>(null);
+  const transferReferenceRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
   const settlement = useMemo(
     () => calculatePaymentSettlement(total, payments),
@@ -106,8 +108,6 @@ export function PosPaymentDialog({
     return () => { active = false; };
   }, [client]);
 
-  const principalBankAccountId = bankAccounts.find(account => account.isPrimary)?.bankAccountId ?? null;
-
   const openTransferCapture = useCallback((paymentId: string, payment?: PaymentRow) => {
     if (!settlementConfigurationLoaded) {
       setCreditError("No fue posible consultar la configuración de transferencias. Intenta nuevamente.");
@@ -120,12 +120,18 @@ export function PosPaymentDialog({
     setCreditError(null);
     setTransferCapture({
       paymentId,
-      bankAccountId: payment?.bankAccountId ?? principalBankAccountId ?? "",
+      bankAccountId: initialTransferBankAccountId(bankAccounts, payment?.bankAccountId),
       reference: payment?.reference ?? "",
       notes: payment?.notes ?? "",
     });
     return true;
-  }, [accountingEnabled, bankAccounts.length, principalBankAccountId, settlementConfigurationLoaded]);
+  }, [accountingEnabled, bankAccounts, settlementConfigurationLoaded]);
+
+  const activeTransferPaymentId = transferCapture?.paymentId;
+  useEffect(() => {
+    if (!activeTransferPaymentId) return;
+    window.requestAnimationFrame(() => transferReferenceRef.current?.focus());
+  }, [activeTransferPaymentId]);
 
   function update(id: string, value: Partial<PaymentRow>) {
     setPayments((current) =>
@@ -482,8 +488,8 @@ export function PosPaymentDialog({
           <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4" data-pos-focus-surface="modal">
             <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="transfer-capture-title">
               <div className="flex items-start justify-between gap-3"><div><h3 id="transfer-capture-title" className="text-lg font-bold text-slate-950">Datos de la transferencia</h3><p className="mt-1 text-sm text-slate-500">Registra el soporte del movimiento. La cuenta principal es solo la selección inicial.</p></div><button type="button" onClick={() => setTransferCapture(null)} aria-label="Cerrar datos de transferencia" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"><X className="h-5 w-5"/></button></div>
-              {accountingEnabled && <label className="mt-5 block text-sm font-medium text-slate-700">Cuenta bancaria<Select value={transferCapture.bankAccountId} onValueChange={bankAccountId => setTransferCapture(current => current ? { ...current, bankAccountId } : null)}><SelectTrigger className="mt-1 h-11"><SelectValue placeholder="Selecciona la cuenta"/></SelectTrigger><SelectContent>{bankAccounts.map(account => <SelectItem key={account.bankAccountId} value={account.bankAccountId}>{account.displayName} · {account.accountNumber}</SelectItem>)}</SelectContent></Select></label>}
-              <label className={`${accountingEnabled ? "mt-4" : "mt-5"} block text-sm font-medium text-slate-700`}>Referencia<input autoFocus={!accountingEnabled} required maxLength={160} value={transferCapture.reference} onChange={event => setTransferCapture(current => current ? { ...current, reference: event.target.value } : null)} className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-base font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Número o referencia del comprobante"/></label>
+              {accountingEnabled && <label className="mt-5 block text-sm font-medium text-slate-700">Cuenta bancaria<Select value={transferCapture.bankAccountId} onValueChange={bankAccountId => { setTransferCapture(current => current ? { ...current, bankAccountId } : null); window.requestAnimationFrame(() => transferReferenceRef.current?.focus()); }}><SelectTrigger className="mt-1 h-11"><SelectValue placeholder="Selecciona la cuenta"/></SelectTrigger><SelectContent>{bankAccounts.map(account => <SelectItem key={account.bankAccountId} value={account.bankAccountId}>{account.displayName} · {account.accountNumber}</SelectItem>)}</SelectContent></Select></label>}
+              <label className={`${accountingEnabled ? "mt-4" : "mt-5"} block text-sm font-medium text-slate-700`}>Referencia<input ref={transferReferenceRef} required maxLength={160} value={transferCapture.reference} onChange={event => setTransferCapture(current => current ? { ...current, reference: event.target.value } : null)} className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-base font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Número o referencia del comprobante"/></label>
               <label className="mt-4 block text-sm font-medium text-slate-700">Nota <span className="font-normal text-slate-400">(opcional)</span><textarea maxLength={500} rows={3} value={transferCapture.notes} onChange={event => setTransferCapture(current => current ? { ...current, notes: event.target.value } : null)} className="mt-1 w-full resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Detalle útil para identificar la transferencia"/></label>
               <button type="button" onClick={saveTransferCapture} disabled={!transferCapture.reference.trim() || (accountingEnabled && !transferCapture.bankAccountId)} className="mt-4 h-11 w-full rounded-xl bg-teal-700 font-bold text-white disabled:opacity-45">Guardar transferencia</button>
             </div>

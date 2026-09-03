@@ -42,6 +42,7 @@ CREATE TABLE [dbo].[SalesReturns]
     CONSTRAINT [FK_SalesReturns_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SalesReturns_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_SalesReturns_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
+    CONSTRAINT [FK_SalesReturns_WorkSessionBusiness] FOREIGN KEY ([WorkSessionId],[BusinessId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId],[BusinessId]),
     CONSTRAINT [FK_SalesReturns_OriginalDocument] FOREIGN KEY ([OriginalDocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesReturns_OriginalPayment] FOREIGN KEY ([OriginalDocumentId],[OriginalPaymentNumber]) REFERENCES [dbo].[SalesPayments] ([DocumentId],[PaymentNumber]),
     CONSTRAINT [FK_SalesReturns_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),

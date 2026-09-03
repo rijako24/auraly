@@ -58,6 +58,11 @@ CREATE INDEX [IX_AppUsers_TenantId] ON [dbo].[AppUsers] ([TenantId]);
 
 GO
 
+CREATE UNIQUE INDEX [UQ_AppUsers_User_Tenant]
+    ON [dbo].[AppUsers] ([UserId], [TenantId]);
+
+GO
+
 CREATE UNIQUE INDEX [UX_AppUsers_PartyId] ON [dbo].[AppUsers] ([PartyId])
     WHERE [PartyId] IS NOT NULL;
 

@@ -47,33 +47,49 @@ public sealed partial class SqlWorkSessionStore(
                 if (current.BusinessId != request.BusinessId ||
                     current.WarehouseId != request.WarehouseId)
                     throw new WorkSessionConflictException(
-                        "The user already has an open work session in another context.");
+                        "El usuario ya tiene una sesión de trabajo abierta en otra sede o bodega.");
+                if (current.DeviceId is not null && request.DeviceId is not null &&
+                    current.DeviceId != request.DeviceId)
+                    throw new WorkSessionConflictException(
+                        "La sesión de trabajo ya está vinculada a otro equipo enrolado.");
 
                 var now = timeProvider.GetUtcNow();
                 await using var touch = new SqlCommand("""
                     UPDATE dbo.WorkSessions
-                    SET LastActivityAt=@Now
-                    WHERE WorkSessionId=@WorkSessionId AND Status=N'Open';
+                    SET LastActivityAt=@Now,
+                        DeviceId=COALESCE(DeviceId,@DeviceId)
+                    WHERE WorkSessionId=@WorkSessionId
+                      AND TenantId=@TenantId AND UserId=@UserId
+                      AND Status=N'Open';
                     """, connection, transaction);
                 touch.Parameters.AddWithValue("@Now", now);
                 touch.Parameters.AddWithValue("@WorkSessionId", current.WorkSessionId);
+                touch.Parameters.AddWithValue("@TenantId", identity.TenantId);
+                touch.Parameters.AddWithValue("@UserId", identity.UserId);
+                touch.Parameters.AddWithValue(
+                    "@DeviceId", (object?)request.DeviceId ?? DBNull.Value);
                 if (await touch.ExecuteNonQueryAsync(cancellationToken) != 1)
                     throw new DBConcurrencyException("The work session changed concurrently.");
                 await transaction.CommitAsync(cancellationToken);
-                return current with { LastActivityAt = now };
+                return current with
+                {
+                    LastActivityAt = now,
+                    DeviceId = current.DeviceId ?? request.DeviceId
+                };
             }
 
             var workSessionId = ids.NewId();
             var openedAt = timeProvider.GetUtcNow();
             await using var insert = new SqlCommand("""
                 INSERT dbo.WorkSessions
-                  (WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+                  (WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
                    OpenedAt,LastActivityAt,Status)
                 VALUES
-                  (@WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
+                  (@WorkSessionId,@TenantId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
                    @OpenedAt,@OpenedAt,N'Open');
                 """, connection, transaction);
             insert.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+            insert.Parameters.AddWithValue("@TenantId", identity.TenantId);
             insert.Parameters.AddWithValue("@BusinessId", request.BusinessId);
             insert.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
             insert.Parameters.AddWithValue("@UserId", identity.UserId);
@@ -114,7 +130,8 @@ public sealed partial class SqlWorkSessionStore(
                 request.DeviceId,
                 openedAt,
                 openedAt,
-                "Open");
+                "Open",
+                identity.TenantId);
         }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
@@ -127,10 +144,11 @@ public sealed partial class SqlWorkSessionStore(
             var winner = await CurrentAsync(identity, cancellationToken);
             if (winner is not null &&
                 winner.BusinessId == request.BusinessId &&
-                winner.WarehouseId == request.WarehouseId)
+                winner.WarehouseId == request.WarehouseId &&
+                (request.DeviceId is null || winner.DeviceId == request.DeviceId))
                 return winner;
             throw new WorkSessionConflictException(
-                "The user or device already has another open work session.");
+                "El usuario o el equipo ya tiene una sesión de trabajo abierta en otra sede o bodega.");
         }
         catch
         {
@@ -173,9 +191,9 @@ public sealed partial class SqlWorkSessionStore(
                     "The work session is not open and has no closure receipt.");
 
             var expectedTotals = await ReadTotalsAsync(
-                connection, transaction, workSessionId, cancellationToken);
+                connection, transaction, identity, workSessionId, cancellationToken);
             var metrics = await ReadSalesMetricsAsync(
-                connection, transaction, workSessionId, cancellationToken);
+                connection, transaction, identity, workSessionId, cancellationToken);
             var totals = ReconcileTotals(expectedTotals, request);
             var totalSales = totals.Sum(value => value.SalesAmount);
             var totalRefunds = totals.Sum(value => value.RefundAmount);
@@ -255,10 +273,14 @@ public sealed partial class SqlWorkSessionStore(
             await using var close = new SqlCommand("""
                 UPDATE dbo.WorkSessions
                 SET Status=N'Closed',ClosedAt=@ClosedAt,LastActivityAt=@ClosedAt
-                WHERE WorkSessionId=@WorkSessionId AND Status=N'Open';
+                WHERE WorkSessionId=@WorkSessionId
+                  AND TenantId=@TenantId AND UserId=@UserId
+                  AND Status=N'Open';
                 """, connection, transaction);
             close.Parameters.AddWithValue("@ClosedAt", closedAt);
             close.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+            close.Parameters.AddWithValue("@TenantId", identity.TenantId);
+            close.Parameters.AddWithValue("@UserId", identity.UserId);
             if (await close.ExecuteNonQueryAsync(cancellationToken) != 1)
                 throw new DBConcurrencyException("The work session changed concurrently.");
             await transaction.CommitAsync(cancellationToken);
@@ -294,9 +316,9 @@ public sealed partial class SqlWorkSessionStore(
         if (!string.Equals(session.Status, "Open", StringComparison.Ordinal))
             throw new WorkSessionConflictException("The work session is not open.");
         var totals = await ReadTotalsAsync(
-            connection, transaction, workSessionId, cancellationToken);
+            connection, transaction, identity, workSessionId, cancellationToken);
         var metrics = await ReadSalesMetricsAsync(
-            connection, transaction, workSessionId, cancellationToken);
+            connection, transaction, identity, workSessionId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         var totalSales = totals.Sum(value => value.SalesAmount);
         var totalRefunds = totals.Sum(value => value.RefundAmount);
@@ -386,12 +408,12 @@ public sealed partial class SqlWorkSessionStore(
         var sql = $"""
             SELECT s.WorkSessionId,s.BusinessId,b.Name,s.WarehouseId,w.Name,
                    s.UserId,CONCAT(u.FirstName,N' ',u.LastName),s.DeviceId,
-                   s.OpenedAt,s.LastActivityAt,s.Status
+                   s.OpenedAt,s.LastActivityAt,s.Status,b.TenantId
             FROM dbo.WorkSessions s{hint}
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
-            WHERE s.UserId=@UserId AND b.TenantId=@TenantId AND s.Status=N'Open';
+            WHERE s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open';
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
@@ -410,13 +432,14 @@ public sealed partial class SqlWorkSessionStore(
         await using var command = new SqlCommand("""
             SELECT s.WorkSessionId,s.BusinessId,b.Name,s.WarehouseId,w.Name,
                    s.UserId,CONCAT(u.FirstName,N' ',u.LastName),s.DeviceId,
-                   s.OpenedAt,s.LastActivityAt,s.Status
+                   s.OpenedAt,s.LastActivityAt,s.Status,b.TenantId
             FROM dbo.WorkSessions s WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
-            WHERE s.WorkSessionId=@WorkSessionId AND s.UserId=@UserId
-              AND b.TenantId=@TenantId;
+            WHERE s.WorkSessionId=@WorkSessionId
+              AND s.TenantId=@TenantId AND s.UserId=@UserId
+              AND b.TenantId=s.TenantId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
@@ -430,47 +453,103 @@ public sealed partial class SqlWorkSessionStore(
         reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5),
         reader.GetString(6).Trim(), reader.IsDBNull(7) ? null : reader.GetGuid(7),
         reader.GetFieldValue<DateTimeOffset>(8),
-        reader.GetFieldValue<DateTimeOffset>(9), reader.GetString(10));
+        reader.GetFieldValue<DateTimeOffset>(9), reader.GetString(10),
+        reader.GetGuid(11));
 
     private static async Task<IReadOnlyList<WorkSessionPaymentTotal>> ReadTotalsAsync(
         SqlConnection connection,
         SqlTransaction transaction,
+        WorkSessionIdentity identity,
         Guid workSessionId,
         CancellationToken cancellationToken)
     {
         var values = new List<WorkSessionPaymentTotal>();
         await using var command = new SqlCommand("""
-            WITH PaymentMovements AS
+            WITH SessionScope AS
             (
-                SELECT COALESCE(mapping.ClosureMethodCode,p.MethodCode) AS PaymentMethodCode,
-                       N'SalePayment' AS MovementType,p.Amount
+                SELECT WorkSessionId,BusinessId
+                FROM dbo.WorkSessions
+                WHERE WorkSessionId=@WorkSessionId
+                  AND TenantId=@TenantId
+                  AND UserId=@UserId
+            ),
+            PaymentMovements AS
+            (
+                SELECT COALESCE(mapping.ClosureMethodCode,payment.MethodCode) AS PaymentMethodCode,
+                       N'SalePayment' AS MovementType,payment.Amount
+                FROM dbo.SalesDocuments d
+                INNER JOIN SessionScope session
+                  ON session.WorkSessionId=d.WorkSessionId
+                 AND session.BusinessId=d.BusinessId
+                INNER JOIN dbo.DocumentProcessingPayloads payload
+                  ON payload.DocumentId=d.DocumentId AND payload.DocumentType=d.DocumentType
+                CROSS APPLY OPENJSON(payload.PayloadJson,N'$.payments')
+                  WITH
+                  (
+                    MethodCode NVARCHAR(32) N'$.methodCode',
+                    Amount DECIMAL(19,4) N'$.amount'
+                  ) payment
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
+                  ON mapping.PaymentMethodCode=payment.MethodCode
+                WHERE d.WorkSessionId=@WorkSessionId
+                UNION ALL
+                SELECT COALESCE(mapping.ClosureMethodCode,p.MethodCode),
+                       N'SalePayment',p.Amount
                 FROM dbo.SalesPayments p
                 INNER JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
+                INNER JOIN SessionScope session
+                  ON session.WorkSessionId=d.WorkSessionId
+                 AND session.BusinessId=d.BusinessId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=p.MethodCode
                 WHERE d.WorkSessionId=@WorkSessionId
+                  AND NOT EXISTS
+                  (
+                    SELECT 1 FROM dbo.DocumentProcessingPayloads payload
+                    WHERE payload.DocumentId=d.DocumentId
+                      AND payload.DocumentType=d.DocumentType
+                  )
                 UNION ALL
                 SELECT N'Credit',N'SalePayment',CreditAmount
-                FROM dbo.SalesDocuments
-                WHERE WorkSessionId=@WorkSessionId AND CreditAmount>0
+                FROM dbo.SalesDocuments d
+                INNER JOIN SessionScope session
+                  ON session.WorkSessionId=d.WorkSessionId
+                 AND session.BusinessId=d.BusinessId
+                WHERE d.CreditAmount>0
                 UNION ALL
-                SELECT CASE WHEN s.SettlementType=N'CustomerCredit' THEN N'Credit'
-                            ELSE COALESCE(mapping.ClosureMethodCode,s.MethodCode) END,
-                       N'Refund',-s.Amount
-                FROM dbo.SalesReturnSettlements s
-                INNER JOIN dbo.SalesReturns r ON r.ReturnId=s.ReturnId
-                INNER JOIN dbo.WorkSessions ws ON ws.WorkSessionId=@WorkSessionId
+                SELECT COALESCE(mapping.ClosureMethodCode,r.RefundMethodCode),
+                       N'Refund',-r.TotalAmount
+                FROM dbo.SalesReturns r
+                INNER JOIN SessionScope session
+                  ON session.WorkSessionId=r.WorkSessionId
+                 AND session.BusinessId=r.BusinessId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
-                  ON mapping.PaymentMethodCode=s.MethodCode
-                WHERE r.CreatedByUserId=ws.UserId AND r.ReturnedAt>=ws.OpenedAt
-                  AND (ws.ClosedAt IS NULL OR r.ReturnedAt<=ws.ClosedAt)
+                  ON mapping.PaymentMethodCode=r.RefundMethodCode
+                WHERE r.EconomicResolution=N'Refund'
+                  AND r.Status IN(N'Accepted',N'Processed')
+                UNION ALL
+                SELECT N'Cash',
+                       CASE WHEN document.Direction=N'In' THEN N'CashIn' ELSE N'CashOut' END,
+                       CASE WHEN document.Direction=N'In' THEN document.Amount ELSE -document.Amount END
+                FROM dbo.CashMovementDocuments document
+                INNER JOIN SessionScope session
+                  ON session.WorkSessionId=document.WorkSessionId
+                 AND session.BusinessId=document.BusinessId
+                WHERE document.Status IN(N'Accepted',N'Processed')
                 UNION ALL
                 SELECT COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode),movement.MovementType,movement.Amount
                 FROM dbo.WorkSessionMovements movement
+                INNER JOIN SessionScope session
+                  ON session.WorkSessionId=movement.WorkSessionId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=movement.PaymentMethodCode
-                WHERE movement.WorkSessionId=@WorkSessionId
-                  AND movement.MovementType NOT IN(N'SalePayment',N'Refund')
+                WHERE movement.MovementType NOT IN(N'SalePayment',N'Refund')
+                  AND NOT EXISTS
+                  (
+                    SELECT 1 FROM dbo.CashMovementDocuments document
+                    WHERE document.DocumentId=movement.DocumentId
+                      AND document.WorkSessionId=movement.WorkSessionId
+                  )
             ),
             Totals AS
             (
@@ -511,6 +590,8 @@ public sealed partial class SqlWorkSessionStore(
             ORDER BY COALESCE(closureOption.SortOrder,1000),total.PaymentMethodCode;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        command.Parameters.AddWithValue("@TenantId", identity.TenantId);
+        command.Parameters.AddWithValue("@UserId", identity.UserId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             values.Add(new WorkSessionPaymentTotal(
@@ -520,22 +601,29 @@ public sealed partial class SqlWorkSessionStore(
     }
 
     private static async Task<SalesMetrics> ReadSalesMetricsAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid workSessionId,
+        SqlConnection connection, SqlTransaction transaction, WorkSessionIdentity identity,
+        Guid workSessionId,
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT COUNT_BIG(*),
-                   COALESCE(SUM(CASE WHEN CreditAmount>0 THEN 1 ELSE 0 END),0),
-                   COALESCE(SUM(CreditAmount),0),
+            SELECT COUNT_BIG(d.DocumentId),
+                   COALESCE(SUM(CASE WHEN d.CreditAmount>0 THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(d.CreditAmount),0),
                    (SELECT COUNT_BIG(*) FROM dbo.SalesReturns r
-                    INNER JOIN dbo.WorkSessions ws ON ws.WorkSessionId=@WorkSessionId
-                    WHERE r.CreatedByUserId=ws.UserId AND r.ReturnedAt>=ws.OpenedAt
-                      AND (ws.ClosedAt IS NULL OR r.ReturnedAt<=ws.ClosedAt)
+                    WHERE r.WorkSessionId=s.WorkSessionId
+                      AND r.BusinessId=s.BusinessId
                       AND r.Status IN(N'Accepted',N'Processed'))
-            FROM dbo.SalesDocuments
-            WHERE WorkSessionId=@WorkSessionId;
+            FROM dbo.WorkSessions s
+            LEFT JOIN dbo.SalesDocuments d
+              ON d.WorkSessionId=s.WorkSessionId AND d.BusinessId=s.BusinessId
+            WHERE s.WorkSessionId=@WorkSessionId
+              AND s.TenantId=@TenantId
+              AND s.UserId=@UserId
+            GROUP BY s.WorkSessionId,s.BusinessId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        command.Parameters.AddWithValue("@TenantId", identity.TenantId);
+        command.Parameters.AddWithValue("@UserId", identity.UserId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
         return new SalesMetrics(

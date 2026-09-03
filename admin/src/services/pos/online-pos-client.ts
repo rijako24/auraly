@@ -56,6 +56,11 @@ import {
   loadBrowserPrinterConfiguration,
 } from "./pos-edge-client";
 import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
+import { resolvePosReceiptPrintRoute } from "./pos-receipt-print-routing";
+import {
+  posWorkspaceOptionsCacheKey,
+  posWorkspaceStorageKey,
+} from "./pos-operational-context";
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
 import { referenceOptionsApi } from "@/services/api/reference-options";
@@ -170,22 +175,27 @@ type OnlineCheckoutResponse = {
   isDuplicate: boolean;
 };
 
-const WORKSPACE_STORAGE_KEY = "auraly.pos.sales-workspace";
 const WORKSPACE_OFFLINE_STORE = "seller-workspaces";
 
-// Survives client-side navigation only. The server remains authoritative for
-// authorization, workspace and every POS operation.
-let activeOnlinePosClient: OnlinePosClient | null = null;
-
-export function rememberOnlinePosClient(client: OnlinePosClient): void {
-  activeOnlinePosClient = client;
-}
-
-export function recalledOnlinePosClient(): OnlinePosClient | null {
-  return activeOnlinePosClient;
+function currentPosStorageScope(): { tenantId: string | null; userId: string | null } {
+  let userId: string | null = null;
+  try {
+    const auth = JSON.parse(window.localStorage.getItem("auth-state") ?? "null") as
+      | { state?: { user?: { userId?: string } } }
+      | null;
+    userId = auth?.state?.user?.userId ?? null;
+  } catch {
+    userId = null;
+  }
+  return {
+    tenantId: window.localStorage.getItem("selected_tenant_id"),
+    userId,
+  };
 }
 
 export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[]> {
+  const scope = currentPosStorageScope();
+  const cacheKey = posWorkspaceOptionsCacheKey(scope.tenantId, scope.userId);
   try {
     const values = await request<SalesWorkspaceOption[]>(
       "/api/commerce/v1/pos/workspace/options",
@@ -194,18 +204,23 @@ export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[
     const database = await openSalesOfflineDatabase();
     try {
       await new Promise<void>((resolve, reject) => {
-        const operation = database.transaction(WORKSPACE_OFFLINE_STORE, "readwrite").objectStore(WORKSPACE_OFFLINE_STORE).put({ key: "available", values, updatedAt: new Date().toISOString() });
+        if (!cacheKey) {
+          resolve();
+          return;
+        }
+        const operation = database.transaction(WORKSPACE_OFFLINE_STORE, "readwrite").objectStore(WORKSPACE_OFFLINE_STORE).put({ key: cacheKey, values, updatedAt: new Date().toISOString() });
         operation.onsuccess = () => resolve();
         operation.onerror = () => reject(operation.error);
       });
     } finally { database.close(); }
     return values;
   } catch (error) {
+    if (!cacheKey) throw error;
     const { openSalesOfflineDatabase } = await import("@/lib/sales-offline-database");
     const database = await openSalesOfflineDatabase();
     try {
       const cached = await new Promise<{ values: SalesWorkspaceOption[] } | undefined>((resolve, reject) => {
-        const operation = database.transaction(WORKSPACE_OFFLINE_STORE, "readonly").objectStore(WORKSPACE_OFFLINE_STORE).get("available");
+        const operation = database.transaction(WORKSPACE_OFFLINE_STORE, "readonly").objectStore(WORKSPACE_OFFLINE_STORE).get(cacheKey);
         operation.onsuccess = () => resolve(operation.result);
         operation.onerror = () => reject(operation.error);
       });
@@ -240,32 +255,41 @@ export async function selectSalesWorkspace(
       }),
     },
   );
-  window.localStorage.setItem(
-    WORKSPACE_STORAGE_KEY,
-    salesWorkspaceKey(selected.businessId, selected.warehouseId),
-  );
+  const scope = currentPosStorageScope();
+  const storageKey = posWorkspaceStorageKey(scope.tenantId, scope.userId);
+  if (storageKey)
+    window.localStorage.setItem(
+      storageKey,
+      salesWorkspaceKey(selected.businessId, selected.warehouseId),
+    );
   return { ...selected, workSessionId: session.workSessionId };
 }
 export function rememberSalesWorkspace(option: Pick<SalesWorkspaceOption,"businessId"|"warehouseId">): void {
   try {
-    window.localStorage.setItem(
-      WORKSPACE_STORAGE_KEY,
-      salesWorkspaceKey(option.businessId, option.warehouseId),
-    );
+    const scope = currentPosStorageScope();
+    const storageKey = posWorkspaceStorageKey(scope.tenantId, scope.userId);
+    if (storageKey)
+      window.localStorage.setItem(
+        storageKey,
+        salesWorkspaceKey(option.businessId, option.warehouseId),
+      );
   } catch { /* IndexedDB remains the durable offline source. */ }
 }
 export function rememberedSalesWorkspaceKey(): string | null {
   try {
-    return window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    const scope = currentPosStorageScope();
+    const storageKey = posWorkspaceStorageKey(scope.tenantId, scope.userId);
+    return storageKey ? window.localStorage.getItem(storageKey) : null;
   } catch {
     return null;
   }
 }
 
 export function forgetSalesWorkspace(): void {
-  activeOnlinePosClient = null;
   try {
-    window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+    const scope = currentPosStorageScope();
+    const storageKey = posWorkspaceStorageKey(scope.tenantId, scope.userId);
+    if (storageKey) window.localStorage.removeItem(storageKey);
   } catch {
     // Storage is only a convenience; the server remains authoritative.
   }
@@ -340,7 +364,7 @@ export class OnlinePosClient implements PosClient {
     workflow: "pos" | "orders" = "pos",
     browserPreview: Window | null = null,
   ) {
-    if (this.edgeSessionToken && workflow === "orders") {
+    if (this.edgeSessionToken) {
       const edge = this.localEdge();
       const branding = await tenantsApi.getBranding().catch(() => null);
       const jobs = receipts.map((receipt) => edge.printReceipt(receipt, branding));
@@ -739,9 +763,11 @@ export class OnlinePosClient implements PosClient {
     credit: PosCreditTerms | null = null,
     fiscalHabilitationOnly = false,
   ) {
-    const browserPreview = fiscalHabilitationOnly
-      ? null
-      : openHalfLetterPrintPreview();
+    const printRoute = resolvePosReceiptPrintRoute(
+      this.edgeSessionToken,
+      fiscalHabilitationOnly,
+    );
+    const browserPreview = printRoute === "browser" ? openHalfLetterPrintPreview() : null;
     try {
       const result = await request<OnlineCheckoutResponse>(
         `/api/commerce/v1/pos/drafts/${draftId}/complete`,
@@ -768,8 +794,8 @@ export class OnlinePosClient implements PosClient {
         nextDocumentNumber: null,
         nextFiscalNumber: null,
         receipt: result.receipt,
-        printPreviewOpened: !fiscalHabilitationOnly,
-        printedDirectly: false,
+        printPreviewOpened: printRoute === "browser",
+        printedDirectly: printRoute === "installed-pos",
       } satisfies PosCompleteSaleResult;
     } catch (error) {
       closePrintPreview(browserPreview);

@@ -22,11 +22,36 @@ El contexto de facturación queda definido por:
 - operación: `WorkSessionId`;
 - equipo offline opcional: `DeviceId`.
 
-Una sesión de trabajo pertenece a un usuario, una sede y una bodega. El equipo que
+Una sesión de trabajo pertenece a un tenant, un usuario, una sede y una bodega. El equipo que
 originó una operación se conserva en el documento, pero no es propietario de la
-sesión. El mismo usuario no puede mantener dos sesiones abiertas y recupera la
-existente al autenticarse desde otro cliente. Un equipo enrolado tampoco puede
-mantener dos sesiones abiertas.
+sesión. Dentro del mismo tenant, el usuario no puede mantener dos sesiones abiertas
+y recupera la existente al autenticarse desde otro cliente. Un equipo enrolado
+tampoco puede mantener dos sesiones abiertas.
+
+Un usuario de plataforma puede conservar el mismo `UserId` al administrar otros
+tenants, pero ese selector administrativo no cambia el tenant propietario del usuario.
+Punto de Venta usa siempre `AppUsers.TenantId`, conservado en el claim inmutable
+`identity_tenant_id`. Si el tenant seleccionado no coincide, la entrada al POS se
+rechaza antes de cargar la sede o abrir una sesión; nunca se cambia silenciosamente al
+tenant propietario. Un usuario del tenant Auraly puede operar el POS de Auraly, pero
+no el de un tenant que solamente está administrando. Por eso toda apertura,
+recuperación, venta, movimiento y conciliación se resuelve por el `TenantId + UserId`
+propietarios. La base de datos refuerza la pertenencia con una clave foránea compuesta
+y la exclusividad con un índice único filtrado para sesiones abiertas.
+
+El contexto operativo inmutable de una jornada es `TenantId + UserId + WorkSessionId`.
+El `WorkSessionId` solo cambia después de un cierre explícito; un nuevo login desde
+otro navegador reemplaza únicamente la sesión de autenticación y recupera la misma
+jornada abierta del usuario en el tenant. Los documentos con contexto de caja deben
+coincidir además en `BusinessId`, cuya pertenencia al tenant se refuerza con claves
+foráneas compuestas.
+
+La sesión de autenticación se identifica por `TenantId + UserId + ClientId`. El login
+es el único flujo ordinario que reemplaza otra autenticación activa para ese usuario y
+tenant. El middleware y las peticiones protegidas solo aceptan o deniegan; una
+renovación presentada desde otro `ClientId` se rechaza sin revocar la sesión legítima.
+También pueden finalizarla el logout explícito, su vencimiento o una desactivación
+administrativa del usuario o tenant.
 
 ## Online y offline
 
@@ -35,6 +60,14 @@ mantener dos sesiones abiertas.
 - Edge: el equipo se enrola para un tenant, sincroniza su configuración y añade su
   `DeviceId` a la sesión. El login, catálogo, borradores, series, facturas y outbox
   necesarios permanecen disponibles localmente.
+
+Una aplicación instalada que todavía no está enrolada conserva el modo online: los
+motivos de entrada y salida se consultan al servidor y los movimientos se confirman
+en el motor documental de la API; el host local atiende los periféricos, incluida la
+impresión directa de ventas online sin abrir el diálogo del navegador. Después
+del enrolamiento, esos motivos se leen de SQLite y cada entrada o salida se confirma
+primero en SQLite y su outbox para sincronizarse de forma idempotente. La UI selecciona
+uno de estos clientes según el estado de enrolamiento y no mezcla sus escrituras.
 
 La primera configuración muestra explícitamente si la instalación está enrolada y
 ofrece el enrolamiento solo cuando todavía no lo está. Al confirmar el enrolamiento,

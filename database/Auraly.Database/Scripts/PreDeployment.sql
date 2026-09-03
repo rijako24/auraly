@@ -37,6 +37,8 @@ GO
 :r .\Migrations\20260829_RemoveFiscalSeriesAllocationState.sql
 :r .\Migrations\20260831_EnforceExclusiveUserSessions.sql
 GO
+:r .\Migrations\20260902_ScopeWorkSessionsByTenant.sql
+GO
 :r .\Migrations\MoveDispatchReasonsToOwnedSchema.sql
 GO
 
@@ -44,19 +46,18 @@ GO
 -- Aquí puedes agregar validaciones, limpieza, etc.
 
 IF OBJECT_ID(N'dbo.PriceChannels', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PriceChannels', N'Strategy') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PriceChannels', N'Value') IS NOT NULL
 BEGIN
-    UPDATE dbo.PriceChannels
-    SET Strategy = N'TieredProductPrice',
-        Value = NULL
-    WHERE Strategy = N'FixedSpecialPrice';
+    EXEC sys.sp_executesql N'
+        UPDATE dbo.PriceChannels
+        SET Strategy = N''TieredProductPrice'', Value = NULL
+        WHERE Strategy = N''FixedSpecialPrice'';
 
-    -- PercentageBelowBasePrice era una segunda representación del mismo
-    -- cálculo que PercentageOverBasePrice con signo negativo. Se normaliza
-    -- antes de reemplazar los checks para conservar todos los canales.
-    UPDATE dbo.PriceChannels
-    SET Strategy = N'PercentageOverBasePrice',
-        Value = -ABS(COALESCE(Value, 0))
-    WHERE Strategy = N'PercentageBelowBasePrice';
+        UPDATE dbo.PriceChannels
+        SET Strategy = N''PercentageOverBasePrice'',
+            Value = -ABS(COALESCE(Value, 0))
+        WHERE Strategy = N''PercentageBelowBasePrice'';';
 END;
 
 -- La caja conserva cada captura como una línea independiente. El índice

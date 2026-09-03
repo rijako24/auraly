@@ -289,6 +289,22 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             printers.EnsureSuccessStatusCode();
             using var scale = await client.PostAsync("/edge/v1/scale/read", null);
             Assert.Equal(HttpStatusCode.ServiceUnavailable, scale.StatusCode);
+            var now = DateTimeOffset.UtcNow;
+            using var cashMovement = await client.PostAsJsonAsync(
+                "/edge/v1/print/cash-movement",
+                new PosCashMovementTicket(
+                    Guid.NewGuid(), "In", "Base", 10m, now,
+                    null, null, "Cajero"));
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, cashMovement.StatusCode);
+            using var closure = await client.PostAsJsonAsync(
+                "/edge/v1/print/work-session-closure",
+                new WorkSessionClosureView(
+                    Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Sede",
+                    Guid.NewGuid(), "Bodega", Guid.NewGuid(), "Cajero", null,
+                    now.AddHours(-8), now, 10m, 0, 0, 10m, 10m, 10m, 0, null,
+                    [new WorkSessionPaymentTotal(
+                        "Cash", 10m, 0, 0, 10m, 10m, 0)]));
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, closure.StatusCode);
             Assert.Equal(
                 HttpStatusCode.NotFound,
                 (await client.GetAsync("/edge/v1/drafts/active")).StatusCode);

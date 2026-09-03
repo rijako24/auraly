@@ -725,6 +725,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
               ON s.WorkSessionId=@WorkSessionId
              AND s.BusinessId=b.BusinessId
              AND s.WarehouseId=w.WarehouseId
+             AND s.TenantId=@TenantId
              AND s.UserId=@UserId
              AND s.Status=N'Open'
             WHERE b.TenantId=@TenantId

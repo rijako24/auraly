@@ -254,15 +254,15 @@ public sealed class DatabaseUpgradeMigrationTests
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
 
-        Assert.Contains("Strategy = N'FixedMarginOverAverageCost'", migration,
+        Assert.Contains("Strategy = N''FixedMarginOverAverageCost''", migration,
             StringComparison.Ordinal);
         Assert.Contains("Value IS NULL OR Value < 0", migration,
             StringComparison.Ordinal);
         Assert.Contains("WHEN Value IS NULL OR Value < 0 THEN 0", migration,
             StringComparison.Ordinal);
-        Assert.Contains("Strategy = N'PercentageOverAverageCost'", migration,
+        Assert.Contains("Strategy = N''PercentageOverAverageCost''", migration,
             StringComparison.Ordinal);
-        Assert.Contains("Strategy = N'ProductMarginAdjustment'", migration,
+        Assert.Contains("Strategy = N''ProductMarginAdjustment''", migration,
             StringComparison.Ordinal);
         Assert.DoesNotContain("\nGO", migration.Replace("\r\n", "\n"),
             StringComparison.Ordinal);
@@ -284,9 +284,9 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("NOCHECK CONSTRAINT CK_PriceChannels_Strategy", migration, StringComparison.Ordinal);
         Assert.Contains("NOCHECK CONSTRAINT CK_PriceChannels_Value", migration, StringComparison.Ordinal);
         Assert.DoesNotContain("DROP CONSTRAINT CK_PriceChannels", migration, StringComparison.Ordinal);
-        Assert.Contains("Strategy = N'MarginOverLatestCost'", migration, StringComparison.Ordinal);
+        Assert.Contains("Strategy = N''MarginOverLatestCost''", migration, StringComparison.Ordinal);
         Assert.Contains("100 * Value / (100 + Value)", migration, StringComparison.Ordinal);
-        Assert.Contains("WHERE Strategy = N'PercentageOverAverageCost'", migration, StringComparison.Ordinal);
+        Assert.Contains("WHERE Strategy = N''PercentageOverAverageCost''", migration, StringComparison.Ordinal);
         Assert.DoesNotContain("\nGO", migration.Replace("\r\n", "\n"), StringComparison.Ordinal);
         Assert.Contains(migrationName, preDeployment, StringComparison.Ordinal);
     }
@@ -369,6 +369,49 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("20260831_EnforceExclusiveUserSessions.sql", preDeployment,
             StringComparison.Ordinal);
         Assert.DoesNotContain("DROP INDEX [UX_WorkSessions_User_Open]", migration,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Work_session_schema_enforces_tenant_user_and_business_scope()
+    {
+        var root = FindRepositoryRoot();
+        var workSessions = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "WorkSessions.sql"));
+        var sales = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "SalesDocuments.sql"));
+        var cash = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "CashMovementDocuments.sql"));
+        var returns = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "SalesReturns.sql"));
+        var users = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "AppUsers.sql"));
+        var devices = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "EnrolledDevices.sql"));
+        var preDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+
+        Assert.Contains("UX_WorkSessions_Tenant_User_Open", workSessions,
+            StringComparison.Ordinal);
+        Assert.Contains("FK_WorkSessions_BusinessTenant", workSessions,
+            StringComparison.Ordinal);
+        Assert.Contains("FK_WorkSessions_BusinessWarehouse", workSessions,
+            StringComparison.Ordinal);
+        Assert.Contains("FK_WorkSessions_UserTenant", workSessions,
+            StringComparison.Ordinal);
+        Assert.Contains("FK_WorkSessions_DeviceTenant", workSessions,
+            StringComparison.Ordinal);
+        Assert.Contains("UQ_AppUsers_User_Tenant", users,
+            StringComparison.Ordinal);
+        Assert.Contains("UQ_EnrolledDevices_Device_Tenant", devices,
+            StringComparison.Ordinal);
+        Assert.Contains("FK_SalesDocuments_WorkSessionBusiness", sales,
+            StringComparison.Ordinal);
+        Assert.Contains("FK_CashMovementDocuments_SessionBusiness", cash,
+            StringComparison.Ordinal);
+        Assert.Contains("FK_SalesReturns_WorkSessionBusiness", returns,
+            StringComparison.Ordinal);
+        Assert.Contains("20260902_ScopeWorkSessionsByTenant.sql", preDeployment,
             StringComparison.Ordinal);
     }
 

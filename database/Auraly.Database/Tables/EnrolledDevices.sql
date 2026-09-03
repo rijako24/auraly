@@ -19,3 +19,7 @@ GO
 CREATE INDEX [IX_EnrolledDevices_Tenant_Active]
     ON [dbo].[EnrolledDevices] ([TenantId], [IsActive], [Name]);
 GO
+
+CREATE UNIQUE INDEX [UQ_EnrolledDevices_Device_Tenant]
+    ON [dbo].[EnrolledDevices] ([DeviceId], [TenantId]);
+GO

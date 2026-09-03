@@ -314,12 +314,13 @@ public sealed class SqlSalesReturnStore(
             await using var session = new SqlCommand("""
                 SELECT COUNT_BIG(*) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
                 WHERE WorkSessionId=@Id AND BusinessId=@BusinessId AND WarehouseId=@WarehouseId
-                  AND UserId=@UserId AND Status=N'Open';
+                  AND TenantId=@TenantId AND UserId=@UserId AND Status=N'Open';
                 """, connection, transaction);
             session.Parameters.AddWithValue("@Id", request.WorkSessionId.Value);
             session.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             session.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
             session.Parameters.AddWithValue("@UserId", user.UserId);
+            session.Parameters.AddWithValue("@TenantId", user.TenantId);
             if (Convert.ToInt64(await session.ExecuteScalarAsync(cancellationToken)) != 1)
                 throw new SalesReturnValidationException("La devolución en efectivo requiere la sesión de caja abierta del usuario.");
             return new(null, null, null, null);

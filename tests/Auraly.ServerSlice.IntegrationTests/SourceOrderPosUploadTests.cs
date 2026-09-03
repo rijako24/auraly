@@ -19,15 +19,16 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
             await using var seed = seedConnection.CreateCommand();
             seed.CommandText = """
                 INSERT dbo.WorkSessions(
-                  WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+                  WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
                   OpenedAt,LastActivityAt,ClosedAt,Status)
                 VALUES(
-                  @WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
+                  @WorkSessionId,@TenantId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
                   DATEADD(hour,-2,SYSDATETIMEOFFSET()),
                   DATEADD(hour,-1,SYSDATETIMEOFFSET()),
                   DATEADD(hour,-1,SYSDATETIMEOFFSET()),N'Closed');
                 """;
             seed.Parameters.AddWithValue("@WorkSessionId", originalWorkSessionId);
+            seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
             seed.Parameters.AddWithValue("@UserId", fixture.UserId);

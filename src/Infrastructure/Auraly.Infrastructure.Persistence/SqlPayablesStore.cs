@@ -315,7 +315,7 @@ public sealed class SqlPayablesStore(
             IF @WorkSessionId IS NOT NULL AND NOT EXISTS(
               SELECT 1 FROM dbo.WorkSessions
               WHERE WorkSessionId=@WorkSessionId AND BusinessId=@BusinessId
-                AND UserId=@UserId AND Status=N'Open')
+                AND TenantId=@TenantId AND UserId=@UserId AND Status=N'Open')
               THROW 51202,'The work session is not open for the authenticated user.',1;
             """, connection, transaction))
         {

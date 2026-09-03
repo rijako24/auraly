@@ -86,7 +86,7 @@ public sealed class FiscalOnboardingServiceTests
             service.ConfigureHabilitationAsync(
                 user, store.Configuration.BusinessId, request));
 
-        Assert.Contains("no está vigente", exception.Message);
+        Assert.Contains("está vencido", exception.Message);
         Assert.False(vault.StoreCalled);
         Assert.False(store.SaveCalled);
     }

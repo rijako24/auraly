@@ -90,10 +90,11 @@ public sealed class SqlPosOrderActorResolver(
         await using (var read = new SqlCommand("""
             SELECT WorkSessionId,BusinessId,WarehouseId,DeviceId
             FROM dbo.WorkSessions WITH (UPDLOCK,HOLDLOCK)
-            WHERE UserId=@UserId AND Status=N'Open';
+            WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Open';
             """, connection, transaction))
         {
             read.Parameters.AddWithValue("@UserId", context.UserId);
+            read.Parameters.AddWithValue("@TenantId", device.TenantId);
             await using var reader = await read.ExecuteReaderAsync(cancellationToken);
             if (await reader.ReadAsync(cancellationToken))
             {
@@ -113,13 +114,14 @@ public sealed class SqlPosOrderActorResolver(
         var now = timeProvider.GetUtcNow();
         await using var insert = new SqlCommand("""
             INSERT dbo.WorkSessions
-              (WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+              (WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
                OpenedAt,LastActivityAt,Status)
             VALUES
-              (@WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
+              (@WorkSessionId,@TenantId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
                @Now,@Now,N'Open');
             """, connection, transaction);
         insert.Parameters.AddWithValue("@WorkSessionId", context.WorkSessionId);
+        insert.Parameters.AddWithValue("@TenantId", device.TenantId);
         insert.Parameters.AddWithValue("@BusinessId", context.BusinessId);
         insert.Parameters.AddWithValue("@WarehouseId", context.WarehouseId);
         insert.Parameters.AddWithValue("@UserId", context.UserId);

@@ -385,7 +385,7 @@ public static class WorkSessionClaimsPrincipalExtensions
         this ClaimsPrincipal principal) =>
         new(
             RequiredGuid(principal, ClaimTypes.NameIdentifier),
-            RequiredGuid(principal, "tenant_id"),
+            RequiredGuid(principal, Auraly.Contracts.Authentication.AuthenticationDefaults.IdentityTenantIdClaim),
             principal.FindAll("permission")
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));

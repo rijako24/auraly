@@ -66,7 +66,8 @@ public sealed record WorkSessionView(
     Guid? DeviceId,
     DateTimeOffset OpenedAt,
     DateTimeOffset LastActivityAt,
-    string Status);
+    string Status,
+    Guid TenantId);
 
 public sealed record WorkSessionPaymentTotal(
     string PaymentMethodCode,

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Claims;
+using Auraly.Contracts.Authentication;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Auraly.Api;
@@ -33,19 +34,50 @@ internal sealed class ExecutionContextMiddleware(
         }
         executionContext.SetUser(userId);
 
+        if (!TryGuid(context.User, AuthenticationDefaults.IdentityTenantIdClaim,
+                out var identityTenantId))
+        {
+            if (!TryGuid(context.User, AuthenticationDefaults.TenantIdClaim,
+                    out identityTenantId))
+            {
+                await Problem(context, 401,
+                    "La sesión no contiene el tenant propietario del usuario.");
+                return;
+            }
+            var authenticatedIdentity = context.User.Identities
+                .First(candidate => candidate.IsAuthenticated);
+            authenticatedIdentity.AddClaim(new Claim(
+                AuthenticationDefaults.IdentityTenantIdClaim,
+                identityTenantId.ToString("D")));
+        }
+
         var hasTenantHeader = context.Request.Headers.TryGetValue(
             "X-Tenant-Id", out var tenantHeader);
-        var hasBusinessHeader = context.Request.Headers.ContainsKey("X-Business-Id");
-
-        Guid tenantId;
+        Guid? selectedTenantId = null;
         if (hasTenantHeader)
         {
-            if (!Guid.TryParse(tenantHeader.ToString(), out tenantId))
+            if (!Guid.TryParse(tenantHeader.ToString(), out var parsedTenantId))
             {
                 await Problem(context, 400, "El identificador del tenant no es válido.");
                 return;
             }
+            selectedTenantId = parsedTenantId;
         }
+
+        Guid tenantId;
+        if (UsesIdentityTenant(context.Request.Path))
+        {
+            if (selectedTenantId is { } requestedTenant && requestedTenant != identityTenantId)
+            {
+                await Problem(context, 403,
+                    "El usuario autenticado no pertenece al tenant seleccionado. " +
+                    "Cambia al tenant que le corresponde o inicia sesión con un usuario de ese tenant.");
+                return;
+            }
+            tenantId = identityTenantId;
+        }
+        else if (selectedTenantId is { } requestedTenant)
+            tenantId = requestedTenant;
         else if (!TryGuid(context.User, "tenant_id", out tenantId))
         {
             await Problem(context, 401, "La sesión no contiene un tenant de identidad válido.");
@@ -126,6 +158,10 @@ internal sealed class ExecutionContextMiddleware(
         string claimType,
         out Guid value) =>
         Guid.TryParse(principal.FindFirstValue(claimType), out value);
+
+    private static bool UsesIdentityTenant(PathString path) =>
+        path.StartsWithSegments("/api/commerce/v1/pos") ||
+        path.StartsWithSegments("/api/commerce/v1/work-sessions");
 
     private static Task Problem(HttpContext context, int status, string detail)
     {

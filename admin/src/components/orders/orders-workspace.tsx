@@ -35,9 +35,11 @@ import {
 } from "@/components/ui/select";
 import {
   type CommerceOrderDetail,
+  type CommerceOrderFilters,
   type CommerceOrderListItem,
   type CommerceOrderPage,
 } from "@/services/orders/commerce-orders-client";
+import { loadAllMatchingOrders } from "@/services/orders/order-batch-selection";
 import type { PosSettlementConfiguration } from "@/services/pos/pos-edge-client";
 import { Textarea } from "@/components/ui/textarea";
 import { getOrderAvailability } from "./order-availability";
@@ -64,18 +66,9 @@ type OrdersWorkspaceProps = {
   compact?: boolean;
   connected?: boolean;
   showHeader?: boolean;
-  loadPage: (filters: {
+  loadPage: (filters: CommerceOrderFilters & {
     page: number;
     pageSize: number;
-    orderNumber?: string;
-    customer?: string;
-    product?: string;
-    status?: string;
-    createdFrom?: string;
-    createdTo?: string;
-    source?: number;
-    routeId?: string;
-    onlyMine?: boolean;
   }) => Promise<CommerceOrderPage>;
   loadDetail: (orderId: string) => Promise<CommerceOrderDetail>;
   loadSettlementConfiguration?: () => Promise<PosSettlementConfiguration>;
@@ -143,7 +136,9 @@ export function OrdersWorkspace({
   const [createdFrom, setCreatedFrom] = useState(localToday);
   const [createdTo, setCreatedTo] = useState(localToday);
   const [routeId, setRouteId] = useState("All");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Map<string, CommerceOrderListItem>>(new Map());
+  const [allMatchingSelected, setAllMatchingSelected] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
   const [detail, setDetail] = useState<CommerceOrderDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
@@ -161,6 +156,22 @@ export function OrdersWorkspace({
   );
   const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
   const pageSize = compact ? 8 : 20;
+
+  const orderFilters = useMemo<Omit<CommerceOrderFilters, "page" | "pageSize">>(() => ({
+    orderNumber: query || undefined,
+    customer: customer || undefined,
+    product: product || undefined,
+    status: status === "All" ? undefined : status,
+    createdFrom: createdFrom
+      ? new Date(`${createdFrom}T00:00:00`).toISOString()
+      : undefined,
+    createdTo: createdTo
+      ? new Date(`${createdTo}T23:59:59.999`).toISOString()
+      : undefined,
+    routeId: routeId === "All" ? undefined : routeId,
+    onlyMine: onlyMine || undefined,
+    source,
+  }), [createdFrom, createdTo, customer, onlyMine, product, query, routeId, source, status]);
 
   const openTransfer = useCallback(async () => {
     if (!loadSettlementConfiguration) {
@@ -194,28 +205,19 @@ export function OrdersWorkspace({
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const next = await loadPage({
-        page,
-        pageSize,
-        orderNumber: query || undefined,
-        customer: customer || undefined,
-        product: product || undefined,
-        status: status === "All" ? undefined : status,
-        createdFrom: createdFrom
-          ? new Date(`${createdFrom}T00:00:00`).toISOString()
-          : undefined,
-        createdTo: createdTo
-          ? new Date(`${createdTo}T23:59:59.999`).toISOString()
-          : undefined,
-        routeId: routeId === "All" ? undefined : routeId,
-        onlyMine: onlyMine || undefined,
-        source,
-      });
+      const next = await loadPage({ ...orderFilters, page, pageSize });
       setData(next);
       onCountChange?.(next.totalCount);
       setSelected((current) => {
-        const visible = new Set(next.items.map((item) => item.orderId));
-        return new Set([...current].filter((id) => visible.has(id)));
+        const updated = new Map(current);
+        for (const item of next.items) {
+          if (!updated.has(item.orderId)) continue;
+          if (isAvailableForThisSession(item, activeOrderId))
+            updated.set(item.orderId, item);
+          else
+            updated.delete(item.orderId);
+        }
+        return updated;
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No fue posible consultar los pedidos.");
@@ -224,19 +226,12 @@ export function OrdersWorkspace({
     }
   }, [
     connected,
-    createdFrom,
-    createdTo,
-    customer,
+    activeOrderId,
     loadPage,
+    orderFilters,
     page,
     pageSize,
-    product,
-    query,
-    routeId,
-    onlyMine,
     onCountChange,
-    source,
-    status,
   ]);
 
   useEffect(() => {
@@ -263,15 +258,35 @@ export function OrdersWorkspace({
     };
   }, [connected, refresh]);
 
-  const selectedOrders = useMemo(
-    () => (data?.items ?? []).filter((item) => selected.has(item.orderId)),
-    [data?.items, selected],
-  );
-  const selectable = (data?.items ?? []).filter((order) =>
-    isAvailableForThisSession(order, activeOrderId));
-  const allSelected =
-    selectable.length > 0 &&
-    selectable.every((item) => selected.has(item.orderId));
+  const selectedOrders = useMemo(() => [...selected.values()], [selected]);
+
+  useEffect(() => {
+    setSelected(new Map());
+    setAllMatchingSelected(false);
+    setPage(1);
+  }, [orderFilters]);
+
+  async function toggleSelectAllMatching() {
+    if (allMatchingSelected) {
+      setSelected(new Map());
+      setAllMatchingSelected(false);
+      return;
+    }
+    setSelectingAll(true);
+    setError(null);
+    try {
+      const matches = await loadAllMatchingOrders(loadPage, orderFilters);
+      const available = matches.filter((order) =>
+        isAvailableForThisSession(order, activeOrderId));
+      setSelected(new Map(available.map((order) => [order.orderId, order])));
+      setAllMatchingSelected(true);
+      setNotice(`${available.length} pedidos disponibles seleccionados en todas las páginas.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible seleccionar todos los pedidos.");
+    } finally {
+      setSelectingAll(false);
+    }
+  }
 
   async function showDetail(orderId: string) {
     setWorking(true);
@@ -306,7 +321,8 @@ export function OrdersWorkspace({
     const available = selectedOrders.filter((order) =>
       isAvailableForThisSession(order, activeOrderId));
     if (available.length !== selectedOrders.length) {
-      setSelected(new Set(available.map((order) => order.orderId)));
+      setSelected(new Map(available.map((order) => [order.orderId, order])));
+      setAllMatchingSelected(false);
       setError("La selección cambió: uno o más pedidos ya no están disponibles para esta sesión.");
       await refresh();
       return;
@@ -382,7 +398,8 @@ export function OrdersWorkspace({
           ? `${completed} ${completed === 1 ? "pedido emitido" : "pedidos emitidos"} correctamente.`
           : `${completed} emitidos y ${failed} pendientes de revisar.`,
       );
-      setSelected(new Set());
+      setSelected(new Map());
+      setAllMatchingSelected(false);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No fue posible facturar los pedidos.");
@@ -576,17 +593,12 @@ export function OrdersWorkspace({
           <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:flex-row md:flex-nowrap md:items-center md:px-4">
             <label className="flex w-full shrink-0 items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
               <Checkbox
-                checked={allSelected}
-                onCheckedChange={() =>
-                  setSelected(
-                    allSelected
-                      ? new Set()
-                      : new Set(selectable.map((item) => item.orderId)),
-                  )
-                }
+                checked={allMatchingSelected ? true : selected.size > 0 ? "indeterminate" : false}
+                disabled={selectingAll}
+                onCheckedChange={() => void toggleSelectAllMatching()}
                 className="h-5 w-5 rounded-md"
               />
-              Seleccionar disponibles
+              {selectingAll ? "Seleccionando…" : "Seleccionar disponibles"}
             </label>
             <span className="hidden h-7 w-px bg-slate-200 md:block" aria-hidden="true" />
             <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:flex-nowrap md:items-center">
@@ -647,7 +659,7 @@ export function OrdersWorkspace({
               </Select>
               <Button
                 type="button"
-                disabled={!selectedOrders.length || working || transferLoading || !onInvoiceSelected}
+                disabled={!selectedOrders.length || working || selectingAll || transferLoading || !onInvoiceSelected}
                 onClick={() => void invoiceSelected()}
                 className="col-span-2 w-full bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
               >
@@ -689,14 +701,15 @@ export function OrdersWorkspace({
                       <Checkbox
                         checked={checked}
                         disabled={!availability.canUseInCurrentSession}
-                        onCheckedChange={() =>
+                        onCheckedChange={() => {
                           setSelected((current) => {
-                            const next = new Set(current);
+                            const next = new Map(current);
                             if (next.has(order.orderId)) next.delete(order.orderId);
-                            else next.add(order.orderId);
+                            else next.set(order.orderId, order);
                             return next;
-                          })
-                        }
+                          });
+                          setAllMatchingSelected(false);
+                        }}
                         className="h-5 w-5 rounded-md"
                         aria-label={`Seleccionar ${order.orderNumber}`}
                       />

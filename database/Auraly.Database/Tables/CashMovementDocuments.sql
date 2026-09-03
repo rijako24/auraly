@@ -32,6 +32,8 @@ CREATE TABLE [dbo].[CashMovementDocuments]
         REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_CashMovementDocuments_Sessions] FOREIGN KEY ([WorkSessionId])
         REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
+    CONSTRAINT [FK_CashMovementDocuments_SessionBusiness] FOREIGN KEY ([WorkSessionId],[BusinessId])
+        REFERENCES [dbo].[WorkSessions] ([WorkSessionId],[BusinessId]),
     CONSTRAINT [FK_CashMovementDocuments_Reasons] FOREIGN KEY ([BusinessId],[ReasonId])
         REFERENCES [dbo].[CashMovementReasons] ([BusinessId],[ReasonId]),
     CONSTRAINT [FK_CashMovementDocuments_Series] FOREIGN KEY ([DocumentSeriesId])

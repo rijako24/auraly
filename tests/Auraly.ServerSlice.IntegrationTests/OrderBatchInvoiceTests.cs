@@ -402,10 +402,10 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
               N'Lote',N'Pedidos',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.WorkSessions(
-              WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+              WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
               OpenedAt,LastActivityAt,Status)
             VALUES(
-              @WorkSessionId,@BusinessId,@WarehouseId,@UserId,NULL,
+              @WorkSessionId,@TenantId,@BusinessId,@WarehouseId,@UserId,NULL,
               SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Open');
 
             INSERT dbo.Warehouses(

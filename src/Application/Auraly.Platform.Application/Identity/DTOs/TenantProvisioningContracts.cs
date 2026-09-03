@@ -68,6 +68,12 @@ public sealed record AcceptTenantInvitationResult(
     string Email,
     string Status);
 
+public sealed record ResendTenantInvitationResult(
+    Guid TenantId,
+    string DeliveryEmail,
+    DateTimeOffset ExpiresAt,
+    string Status);
+
 public sealed record TenantInvitationPasswordMaterial(
     string PasswordHash,
     byte[] OfflineSalt,
@@ -87,6 +93,12 @@ public interface ITenantProvisioningStore
         byte[] tokenHash,
         TenantInvitationAdministratorProfile profile,
         TenantInvitationPasswordMaterial password,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+
+    Task<ResendTenantInvitationResult?> ResendInvitationAsync(
+        Guid tenantId,
+        Guid actorUserId,
         DateTimeOffset now,
         CancellationToken cancellationToken);
 }

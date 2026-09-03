@@ -1,5 +1,6 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
 using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Pos.Edge.Host;
@@ -34,6 +35,10 @@ internal static class PosPeripheralModule
         services.AddSingleton<ConfigurablePosReceiptPrinter>();
         services.AddSingleton<IPosReceiptPrinter>(sp =>
             sp.GetRequiredService<ConfigurablePosReceiptPrinter>());
+        services.AddSingleton<PosCashMovementTicketPrinter>();
+        services.AddSingleton<PosWorkSessionClosurePrinter>();
+        services.AddSingleton<IPosWorkSessionClosurePrinter>(sp =>
+            sp.GetRequiredService<PosWorkSessionClosurePrinter>());
         services.AddSingleton<PosCashDrawer>();
         services.AddSingleton<PosScaleReader>();
         return services;
@@ -104,6 +109,51 @@ internal static class PosPeripheralModule
                     request.DocumentType,
                     request.CompanyName,
                     request.CompanyLogoSource), ct);
+                return Results.NoContent();
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
+
+        edge.MapPost("/print/cash-movement", async (
+            PosCashMovementTicket request,
+            PosCashMovementTicketPrinter printer,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                await printer.PrintAsync(request, ct);
+                return Results.NoContent();
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    [nameof(request)] = [exception.Message]
+                });
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
+
+        edge.MapPost("/print/work-session-closure", async (
+            WorkSessionClosureView closure,
+            IPosWorkSessionClosurePrinter printer,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                await printer.PrintAsync(closure, ct);
                 return Results.NoContent();
             }
             catch (Exception exception) when (

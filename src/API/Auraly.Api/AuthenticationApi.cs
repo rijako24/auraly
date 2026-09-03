@@ -128,7 +128,15 @@ public static class AuthenticationApi
         }
         catch (Microsoft.Data.SqlClient.SqlException exception) when (exception.Number is >= 51031 and <= 51034)
         {
-            return Results.Problem(exception.Message, statusCode: exception.Number == 51031 ? 404 : 409, title: "InvitationUnavailable");
+            return exception.Number switch
+            {
+                51031 => Results.Problem(exception.Message, statusCode: 404,
+                    title: "InvitationNotFound"),
+                51033 => Results.Problem(exception.Message, statusCode: 410,
+                    title: "InvitationExpired"),
+                _ => Results.Problem(exception.Message, statusCode: 409,
+                    title: "InvitationUnavailable")
+            };
         }
     }
 

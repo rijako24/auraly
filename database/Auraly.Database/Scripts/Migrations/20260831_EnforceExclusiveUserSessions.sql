@@ -30,13 +30,14 @@ IF OBJECT_ID(N'dbo.WorkSessions', N'U') IS NOT NULL
 BEGIN
     IF EXISTS
     (
-        SELECT UserId
-        FROM dbo.WorkSessions
-        WHERE Status=N'Open'
-        GROUP BY UserId
+        SELECT business.TenantId,session.UserId
+        FROM dbo.WorkSessions session
+        INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
+        WHERE session.Status=N'Open'
+        GROUP BY business.TenantId,session.UserId
         HAVING COUNT_BIG(1)>1
     )
-        THROW 51000,N'Hay usuarios con más de una WorkSession abierta; deben cerrarse operativamente antes del despliegue.',1;
+        THROW 51000,N'Hay usuarios con más de una WorkSession abierta dentro del mismo tenant; deben cerrarse operativamente antes del despliegue.',1;
 
     /* El índice pertenece al modelo del DACPAC. Aquí solo se valida el dato;
        SQLPackage reemplaza la definición antigua sin una segunda eliminación. */

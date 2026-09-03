@@ -4,6 +4,7 @@ public static class AuthenticationDefaults
 {
     public const string SessionIdClaim = "sid";
     public const string TenantIdClaim = "tenant_id";
+    public const string IdentityTenantIdClaim = "identity_tenant_id";
     public const string PermissionClaim = "permission";
     public const string ClientIdHeader = "X-Auraly-Client-Id";
 }
