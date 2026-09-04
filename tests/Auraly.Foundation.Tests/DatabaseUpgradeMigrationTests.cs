@@ -19,7 +19,9 @@ public sealed class DatabaseUpgradeMigrationTests
 
         Assert.Contains("20260904_MigratePromotionAndChannelPricing.sql", preDeployment,
             StringComparison.Ordinal);
-        Assert.Contains("sp_rename N'dbo.ResolvedPriceChannelItems'", migration,
+        Assert.Contains("INSERT dbo.PriceChannelItemMigration", migration,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("sp_rename N'dbo.ResolvedPriceChannelItems'", migration,
             StringComparison.Ordinal);
         Assert.Contains("DELETE FROM dbo.CatalogSyncSessions", migration,
             StringComparison.Ordinal);
@@ -32,6 +34,10 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("INSERT pricing.PromotionBusinessScopes", completion,
             StringComparison.Ordinal);
         Assert.Contains("DROP TABLE dbo.PromotionBusinessScopeMigration", completion,
+            StringComparison.Ordinal);
+        Assert.Contains("INSERT dbo.PriceChannelItems", completion,
+            StringComparison.Ordinal);
+        Assert.Contains("DROP TABLE dbo.ResolvedPriceChannelItems", completion,
             StringComparison.Ordinal);
         Assert.Contains("SET TenantId=promotion.TenantId", migration,
             StringComparison.Ordinal);

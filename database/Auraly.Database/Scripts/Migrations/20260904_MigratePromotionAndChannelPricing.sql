@@ -4,18 +4,40 @@ SET XACT_ABORT ON;
 
 BEGIN TRANSACTION;
 
--- PriceChannelItems is the configured tier table. Preserve existing configured
--- rows while removing the old name that implied a materialized product matrix.
+-- PriceChannelItems is the configured tier table. Stage existing configured
+-- rows because the DACPAC deployment plan is calculated before pre-deployment
+-- runs and must remain responsible for creating the canonically named table.
 IF OBJECT_ID(N'dbo.ResolvedPriceChannelItems', N'U') IS NOT NULL
    AND OBJECT_ID(N'dbo.PriceChannelItems', N'U') IS NULL
 BEGIN
-    EXEC sys.sp_rename N'dbo.ResolvedPriceChannelItems', N'PriceChannelItems';
+    IF OBJECT_ID(N'dbo.PriceChannelItemMigration', N'U') IS NULL
+    BEGIN
+        CREATE TABLE dbo.PriceChannelItemMigration
+        (
+            PriceChannelItemId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+            PriceChannelId UNIQUEIDENTIFIER NOT NULL,
+            ProductId UNIQUEIDENTIFIER NOT NULL,
+            MinimumQuantity DECIMAL(19,6) NOT NULL,
+            Amount DECIMAL(19,4) NOT NULL,
+            CurrencyCode CHAR(3) NOT NULL,
+            ValidFrom DATETIMEOFFSET(7) NOT NULL,
+            ValidUntil DATETIMEOFFSET(7) NULL,
+            IsActive BIT NOT NULL,
+            CreatedAt DATETIMEOFFSET(7) NOT NULL
+        );
+    END;
 
-    IF COL_LENGTH(N'dbo.PriceChannelItems', N'ResolvedPriceChannelItemId') IS NOT NULL
-        EXEC sys.sp_rename
-            N'dbo.PriceChannelItems.ResolvedPriceChannelItemId',
-            N'PriceChannelItemId',
-            N'COLUMN';
+    EXEC sys.sp_executesql N'
+        INSERT dbo.PriceChannelItemMigration
+          (PriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,
+           CurrencyCode,ValidFrom,ValidUntil,IsActive,CreatedAt)
+        SELECT item.ResolvedPriceChannelItemId,item.PriceChannelId,item.ProductId,
+               item.MinimumQuantity,item.Amount,item.CurrencyCode,item.ValidFrom,
+               item.ValidUntil,item.IsActive,item.CreatedAt
+        FROM dbo.ResolvedPriceChannelItems item
+        WHERE NOT EXISTS(
+            SELECT 1 FROM dbo.PriceChannelItemMigration migration
+            WHERE migration.PriceChannelItemId=item.ResolvedPriceChannelItemId);';
 END;
 
 -- Catalog synchronization sessions are short-lived cursors. Existing sessions
