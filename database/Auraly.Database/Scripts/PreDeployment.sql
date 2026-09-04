@@ -10,8 +10,6 @@ Pre-Deployment Script Template
 --------------------------------------------------------------------------------------
 */
 
-:r .\Migrations\20260730_CollapseOrganizationScope.sql
-GO
 :r .\Migrations\20260801_CreateFiscalDocumentRoot.sql
 GO
 :r .\Migrations\20260802_RemoveCashRegisterContext.sql

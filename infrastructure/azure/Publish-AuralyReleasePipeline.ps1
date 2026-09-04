@@ -358,6 +358,12 @@ function Publish-Database {
         $accessToken = if ($tokenResponse.accessToken) { $tokenResponse.accessToken } else { $tokenResponse.token }
         if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'Azure no devolvio token para SQL.' }
 
+        # El modelo organizacional retirado se limpia antes de calcular el plan;
+        # así un despliegue interrumpido no deja al DACPAC planificando contra
+        # columnas de compatibilidad que ya no son fuente de verdad.
+        Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260730_CollapseOrganizationScope.sql') `
+            -AccessToken $accessToken
         # Esta migracion retira una columna solo despues de preservar su valor.
         # Se ejecuta antes del DeployReport para que BlockOnPossibleDataLoss siga
         # protegiendo cualquier otra eliminacion no revisada del DACPAC.

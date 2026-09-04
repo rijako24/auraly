@@ -9,14 +9,30 @@ public sealed class DatabaseUpgradeMigrationTests
             FindRepositoryRoot(), "database", "Auraly.Database", "Scripts",
             "Migrations", "20260730_CollapseOrganizationScope.sql"));
 
-        Assert.Contains("DECLARE @HasCompleteLegacyOrganizationScope bit",
+        Assert.Contains("BusinessId on each canonical table already",
             migration, StringComparison.Ordinal);
-        Assert.Contains("COL_LENGTH(N'dbo.Warehouses', N'BusinessId') IS NOT NULL",
+        Assert.Contains("@DropLegacyLocationForeignKeys",
             migration, StringComparison.Ordinal);
-        Assert.Contains("@HasCompleteLegacyOrganizationScope = 0",
+        Assert.Contains("@DropLegacyLocationColumns",
             migration, StringComparison.Ordinal);
-        Assert.Contains("@DropRemainingLocationForeignKeys", migration,
+        Assert.DoesNotContain("l.BusinessId", migration,
             StringComparison.Ordinal);
+
+        var pipeline = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "infrastructure", "azure",
+            "Publish-AuralyReleasePipeline.ps1"));
+        var migrationIndex = pipeline.IndexOf(
+            "20260730_CollapseOrganizationScope.sql", StringComparison.Ordinal);
+        var reportIndex = pipeline.IndexOf(
+            "'/Action:DeployReport'", StringComparison.Ordinal);
+        Assert.True(migrationIndex >= 0 && migrationIndex < reportIndex,
+            "The legacy organization cleanup must run before DACPAC planning.");
+
+        var preDeployment = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "database", "Auraly.Database", "Scripts",
+            "PreDeployment.sql"));
+        Assert.DoesNotContain("20260730_CollapseOrganizationScope.sql",
+            preDeployment, StringComparison.Ordinal);
     }
 
     [Fact]

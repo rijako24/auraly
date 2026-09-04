@@ -366,7 +366,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         finally
         {
             await ExecuteAsync(
-                "UPDATE dbo.Products SET TaxProfileId=NULL WHERE ProductId=@ProductId; DELETE dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId;",
+                "UPDATE dbo.Products SET ProductCode=NULL,TaxProfileId=NULL WHERE ProductId=@ProductId; DELETE dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId;",
                 new SqlParameter("@ProductId", fixture.ProductId),
                 new SqlParameter("@TaxProfileId", taxProfileId));
         }

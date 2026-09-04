@@ -126,14 +126,14 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         var persistedEditedLine = withNewLine.Lines.Single(value => value.LineId == line.LineId);
         Assert.Equal(12_000m, persistedEditedLine.UnitPrice);
         Assert.Equal(2_000m, persistedEditedLine.Discount);
-        Assert.Equal(line.PriceSource, persistedEditedLine.PriceSource);
+        Assert.Equal("Manual", persistedEditedLine.PriceSource);
         Assert.Equal(10_000m, withNewLine.Lines.Single(value => value.LineId != line.LineId).UnitPrice);
 
         var reloaded = await OpenAsync(client, new(
             fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));
         Assert.Equal(withNewLine.DraftId, reloaded.DraftId);
         Assert.Equal(12_000m, reloaded.Lines.Single(value => value.LineId == line.LineId).UnitPrice);
-        Assert.Equal(line.PriceSource, reloaded.Lines.Single(value => value.LineId == line.LineId).PriceSource);
+        Assert.Equal("Manual", reloaded.Lines.Single(value => value.LineId == line.LineId).PriceSource);
 
         using var cleanup = Mutation(
             HttpMethod.Post,
