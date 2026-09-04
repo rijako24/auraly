@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE_NAMES } from "@/lib/auth-cookies";
+import { readBackendProxyBody } from "@/lib/backend-proxy-body";
 import { buildBackendProxyHeaders } from "@/lib/backend-proxy-headers";
 import { getBackendRequestUrl } from "@/lib/backend-request-url";
 
@@ -62,20 +63,13 @@ async function proxy(
     authenticationClientId,
   );
 
-  let body: string | undefined;
-  if (method !== "GET") {
-    try {
-      body = await request.text();
-    } catch {
-      body = undefined;
-    }
-  }
+  const body = await readBackendProxyBody(request, method);
 
   try {
     const res = await fetch(url, {
       method,
       headers,
-      body: body || undefined,
+      body,
     });
 
     const responseHeaders = new Headers();

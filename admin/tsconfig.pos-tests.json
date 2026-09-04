@@ -72,6 +72,8 @@
     "src/lib/auth-cookies.test.ts",
     "src/lib/auth-login-error.ts",
     "src/lib/auth-login-error.test.ts",
+    "src/lib/backend-proxy-body.ts",
+    "src/lib/backend-proxy-body.test.ts",
     "src/lib/backend-proxy-headers.ts",
     "src/lib/backend-proxy-headers.test.ts",
     "src/lib/backend-request-url.ts",
