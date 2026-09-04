@@ -220,8 +220,23 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await dialog.getByPlaceholder("Observaciones de recepción").fill("recepción persistente");
   await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
   await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("auraly-purchasing-work", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const stored = await new Promise<unknown>((resolve, reject) => {
+      const request = database.transaction("goods-receipt-drafts", "readonly")
+        .objectStore("goods-receipt-drafts").get("goods-receipt:33333333-3333-3333-3333-333333333333:22222222-2222-2222-2222-222222222222");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return Boolean(stored);
+  })).toBe(true);
+  await page.reload();
   await page.getByRole("button", { name: "Nueva entrada" }).click();
-  await dialog.getByRole("button", { name: /Datos de la recepción/ }).click();
   await expect(dialog.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Proveedor Andino");
   await expect(field(dialog, "Bodega").getByRole("combobox")).toContainText("Principal");
   await expect(dialog.getByRole("combobox", { name: "Tipo de soporte" })).toContainText("Comprobante interno");
@@ -244,27 +259,41 @@ test("recepción simple sigue directa y la importación carga catálogos y conce
   await select(page, field(dialog, "Bodega").getByRole("combobox"), "Principal · PPL");
   await select(page, dialog.getByRole("combobox", { name: "Tipo de soporte" }), "Comprobante interno");
   const search = dialog.getByPlaceholder(/Escanea o busca/);
+  await dialog.getByRole("button", { name: "Buscar en todo el catálogo" }).click();
+  await expect(search).toBeFocused();
   await search.fill("Arroz");
   await page.getByRole("option", { name: /Arroz premium/ }).click();
 
-  await expect(dialog.getByText("Opcional. Si la compra no tiene otros costos, no necesitas hacer nada aquí.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Facturas y otros costos/ })).toHaveAttribute("aria-expanded", "false");
   await expect(dialog.getByText(/Factura .* COP/)).toBeVisible();
   await expect(dialog.getByText(/Al inventario .* COP/)).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Confirmar entrada" })).toBeEnabled();
-  await expect(dialog.getByText("Valor que entra al inventario", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Resumen de la compra", { exact: false })).toBeVisible();
+  await expect(dialog.getByText("Total factura", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Total retenciones", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("Cuentas por pagar netas", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Neto por pagar", { exact: true })).toBeVisible();
 
   await select(page, dialog.getByRole("combobox", { name: "Tipo de soporte" }), "Factura comercial extranjera");
   await select(page, field(dialog, "Moneda").getByRole("combobox"), "Dólar estadounidense");
   await expect(field(dialog, "Fuente de la tasa").getByRole("combobox")).toContainText("Tasa pactada");
 
-  await dialog.getByRole("button", { name: "Nacionalización" }).click();
-  await expect(dialog.getByRole("paragraph").filter({ hasText: "Declaración de importación" })).toBeVisible();
-  await expect(dialog.getByText("Concepto 1", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("Concepto 2", { exact: true })).toBeVisible();
-  await expect(field(dialog, "Concepto").getByRole("combobox").first()).toContainText("Arancel");
-  await expect(field(dialog, "Concepto").getByRole("combobox").nth(1)).toContainText("IVA de importación");
-  await expect(field(dialog, "Tratamiento del IVA").getByRole("combobox")).toContainText("IVA descontable");
-  await expect(dialog.getByText(/El IVA descontable se reconoce separado/)).toBeVisible();
+  await dialog.getByRole("button", { name: /Facturas y otros costos/ }).click();
+  await dialog.getByRole("button", { name: "Agregar nacionalización" }).click();
+  const costs = page.getByRole("dialog", { name: "Agregar nacionalización" });
+  await expect(costs).toBeVisible();
+  await expect(costs.getByText(/^Concepto 1$/)).toHaveCount(0);
+  await expect(field(costs, "Concepto").getByRole("combobox").first()).toContainText("Arancel");
+  await expect(field(costs, "Concepto").getByRole("combobox").nth(1)).toContainText("IVA de importación");
+  await expect(field(costs, "Tratamiento del IVA").getByRole("combobox")).toContainText("IVA descontable");
+  await expect(costs.getByText(/El IVA descontable se reconoce separado/)).toBeVisible();
+  await costs.getByRole("combobox", { name: "Seleccionar supplier" }).click();
+  await page.getByRole("option", { name: /Proveedor Andino/ }).click();
+  await field(costs, "Número").getByRole("textbox").fill("DECL-9001");
+  await costs.getByRole("button", { name: "Agregar documento" }).click();
+  await expect(costs).toBeHidden();
+  const declarationRow = dialog.getByText("DECL-9001", { exact: true }).locator("xpath=ancestor::tr");
+  await expect(declarationRow).toContainText("Proveedor Andino");
+  await expect(dialog.getByRole("columnheader", { name: "Antes de IVA" })).toBeVisible();
+  await declarationRow.getByRole("button", { name: "Ver" }).click();
+  await expect(page.getByRole("dialog", { name: "Editar nacionalización" })).toBeVisible();
 });

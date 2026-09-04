@@ -198,6 +198,58 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Draft_preserves_additional_invoices_and_import_declarations()
+    {
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.ReadGoodsReceipts,
+            PurchasingPermissionCodes.CreateGoodsReceipts);
+        var request = CreateDraft();
+        var freightId = Guid.NewGuid();
+        var declarationId = Guid.NewGuid();
+        request = request with
+        {
+            AdditionalCostDocuments =
+            [
+                new GoodsReceiptCostDocumentRequest(
+                    freightId, fixture.SupplierId, PurchaseEvidenceTypes.SupplierElectronicInvoice,
+                    $"FLETE-{Guid.NewGuid():N}", request.ReceivedAt, true, request.DueDate,
+                    "COP", 1m, DateOnly.FromDateTime(request.ReceivedAt.Date), "FunctionalCurrency",
+                    [new GoodsReceiptCostLineRequest(
+                        1, PurchaseCostKinds.Freight, "Flete", 10m, 10m, "01", 19m, 1.9m,
+                        PurchasingTaxTreatments.DeductibleInputVat,
+                        PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)]),
+                new GoodsReceiptCostDocumentRequest(
+                    declarationId, fixture.SupplierId, PurchaseEvidenceTypes.ImportDeclaration,
+                    $"DECL-{Guid.NewGuid():N}", request.ReceivedAt, true, request.DueDate,
+                    "COP", 1m, DateOnly.FromDateTime(request.ReceivedAt.Date), "FunctionalCurrency",
+                    [new GoodsReceiptCostLineRequest(
+                        1, PurchaseCostKinds.CustomsDuty, "Arancel", 5m, 0m, "00", 0m, 0m,
+                        PurchasingTaxTreatments.NotApplicable,
+                        PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)])
+            ]
+        };
+
+        using var savedResponse = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}", request);
+        var savedBody = await savedResponse.Content.ReadAsStringAsync();
+        Assert.True(savedResponse.IsSuccessStatusCode, savedBody);
+
+        var recovered = await client.GetFromJsonAsync<GoodsReceiptDraft>(
+            $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}");
+        Assert.NotNull(recovered);
+        Assert.Equal(2, recovered.AdditionalCostDocuments?.Count);
+        Assert.Contains(recovered.AdditionalCostDocuments!, document =>
+            document.CostDocumentId == freightId && document.Lines.Single().CostKind == PurchaseCostKinds.Freight);
+        Assert.Contains(recovered.AdditionalCostDocuments!, document =>
+            document.CostDocumentId == declarationId && document.PurchaseEvidenceType == PurchaseEvidenceTypes.ImportDeclaration);
+
+        using var deleted = await client.DeleteAsync(
+            $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}" +
+            $"?concurrencyToken={Uri.EscapeDataString(recovered.ConcurrencyToken)}");
+        Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+    }
+
+    [Fact]
     public async Task Workspace_is_scoped_and_confirmation_atomically_removes_the_draft()
     {
         using var client = fixture.CreateAdminClient(

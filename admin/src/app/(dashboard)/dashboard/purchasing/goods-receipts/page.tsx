@@ -42,13 +42,16 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
-import type { PartyWorkspaceItem } from "@/services/api/parties";
+import { partiesApi, type PartyWorkspaceItem } from "@/services/api/parties";
 import { tenantCommercialApi } from "@/services/api/tenants";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
 import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
   nextGoodsReceiptQuantityIndex,
 } from "@/lib/goods-receipt-calculator";
+import {
+  goodsReceiptDraftKey, loadGoodsReceiptDraft, removeGoodsReceiptDraft, saveGoodsReceiptDraft,
+} from "@/lib/goods-receipt-draft-store";
 
 type PendingSupplierChange = { supplier: PartyWorkspaceItem };
 type GoodsReceiptCostLine = GoodsReceiptCostDocument["lines"][number];
@@ -63,6 +66,7 @@ type EditorDraft = {
   purchaseOrderId: string;
   currencyCode: string; exchangeRate: number; exchangeRateDate: string; exchangeRateSource: string;
   additionalCostDocuments: GoodsReceiptCostDocument[];
+  pendingCostDocument?: GoodsReceiptCostDocument | null;
 };
 
 const statusLabels: Record<GoodsReceiptStatus, string> = {
@@ -82,6 +86,7 @@ const purchaseEvidenceLabels: Record<string, string> = {
 };
 export default function GoodsReceiptsPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const userId = useAuthStore((state) => state.user?.userId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canCreate = permissions.has("purchasing.goods-receipts.create");
   const canConfirm = permissions.has("purchasing.goods-receipts.confirm");
@@ -96,16 +101,32 @@ export default function GoodsReceiptsPage() {
     page, pageSize, search: search.trim() || undefined,
     status: status === "all" ? undefined : status,
   });
-  const localDraftKey = businessId ? `auraly.goods-receipt.entry.${businessId}` : null;
+  const localDraftKey = businessId && userId ? goodsReceiptDraftKey(userId, businessId) : null;
+  const legacyLocalDraftKey = businessId ? `auraly.goods-receipt.entry.${businessId}` : null;
+  const localWriteQueue = useRef(Promise.resolve());
+  const localStorageFailureShown = useRef(false);
 
   const rememberLocalDraft = (next: EditorDraft) => {
     setEditor(next);
-    if (localDraftKey) localStorage.setItem(localDraftKey, JSON.stringify(next));
   };
   const clearLocalDraft = () => {
-    if (localDraftKey) localStorage.removeItem(localDraftKey);
+    if (localDraftKey) localWriteQueue.current = localWriteQueue.current
+      .then(() => removeGoodsReceiptDraft(localDraftKey))
+      .catch(() => { toast.error("No fue posible limpiar la recuperación local de esta recepción."); });
     setEditor(undefined);
   };
+
+  useEffect(() => {
+    if (!editor || !localDraftKey) return;
+    localWriteQueue.current = localWriteQueue.current
+      .then(() => saveGoodsReceiptDraft(localDraftKey, editor))
+      .catch(() => {
+        if (!localStorageFailureShown.current) {
+          localStorageFailureShown.current = true;
+          toast.error("No fue posible guardar la recuperación automática en este dispositivo.");
+        }
+      });
+  }, [editor, localDraftKey]);
 
   const columns = useMemo<ColumnDef<GoodsReceiptListItem>[]>(() => [
     {
@@ -143,18 +164,25 @@ export default function GoodsReceiptsPage() {
     },
   ], []);
 
-  const newEntry = () => {
-    if (!businessId) return;
-    if (localDraftKey) {
-      try {
-        const remembered = localStorage.getItem(localDraftKey);
-        if (remembered) {
-          const stored = JSON.parse(remembered) as Partial<EditorDraft>;
-          setEditor({ ...emptyDraft(), ...stored,
-            additionalCostDocuments: stored.additionalCostDocuments ?? [] });
-          return;
+  const newEntry = async () => {
+    if (!businessId || !localDraftKey) return;
+    try {
+      let stored = await loadGoodsReceiptDraft<Partial<EditorDraft>>(localDraftKey);
+      if (!stored && legacyLocalDraftKey) {
+        const legacy = localStorage.getItem(legacyLocalDraftKey);
+        if (legacy) {
+          stored = JSON.parse(legacy) as Partial<EditorDraft>;
+          await saveGoodsReceiptDraft(localDraftKey, stored);
+          localStorage.removeItem(legacyLocalDraftKey);
         }
-      } catch { localStorage.removeItem(localDraftKey); }
+      }
+      if (stored) {
+        setEditor({ ...emptyDraft(), ...stored,
+          additionalCostDocuments: stored.additionalCostDocuments ?? [] });
+        return;
+      }
+    } catch {
+      toast.error("No fue posible recuperar la captura guardada en este dispositivo.");
     }
     rememberLocalDraft(emptyDraft());
   };
@@ -183,7 +211,7 @@ export default function GoodsReceiptsPage() {
           costo promedio, cuenta por pagar y propuesta de precio en el orden del negocio.
         </p>
       </div>
-      {canCreate && <Button onClick={newEntry}><Plus className="mr-2 h-4 w-4" /> Nueva entrada</Button>}
+      {canCreate && <Button onClick={() => void newEntry()}><Plus className="mr-2 h-4 w-4" /> Nueva entrada</Button>}
     </header>
 
     <section className="grid gap-3 md:grid-cols-3">
@@ -382,7 +410,11 @@ function ReceiptEditor({
   const [supplierProductCode, setSupplierProductCode] = useState("");
   const [purchasePresentationName, setPurchasePresentationName] = useState("Unidad");
   const [unitsPerPresentation, setUnitsPerPresentation] = useState(1);
-  const [detailsExpanded, setDetailsExpanded] = useState(() => !draft?.lines.length);
+  const [costsExpanded, setCostsExpanded] = useState(false);
+  const [editingCostDocument, setEditingCostDocument] = useState<GoodsReceiptCostDocument | undefined>(
+    () => draft?.pendingCostDocument ?? undefined,
+  );
+  const [costSupplierNames, setCostSupplierNames] = useState<Record<string, string>>({});
   const [pendingSupplierChange, setPendingSupplierChange] = useState<PendingSupplierChange>();
   const [selectedSupplier, setSelectedSupplier] = useState<PartyWorkspaceItem | null>(null);
   const products = useGoodsReceiptProducts(
@@ -447,6 +479,18 @@ function ReceiptEditor({
       staleTime: 10_000,
     })),
   });
+  const costSupplierIds = [...new Set((draft?.additionalCostDocuments ?? [])
+    .map((document) => document.supplierId).filter(Boolean))];
+  const costSupplierQueries = useQueries({
+    queries: costSupplierIds.map((supplierId) => ({
+      queryKey: ["goods-receipt-cost-supplier", businessId, supplierId],
+      queryFn: async () => (await partiesApi.page({
+        page: 1, pageSize: 1, role: "Supplier", roleId: supplierId, isActive: true,
+      })).items[0] ?? null,
+      enabled: Boolean(open && businessId && supplierId),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
   if (!draft || !businessId) return null;
   const totals = calculateGoodsReceiptTotals(draft.lines);
   const mainRate = draft.currencyCode === "COP" ? 1 : draft.exchangeRate;
@@ -477,15 +521,28 @@ function ReceiptEditor({
   const totalWithheld = (withholdingPreview.data?.withholdingTotal ?? 0) + additionalSummary.withheld;
   const totalPayable = (draft.createsPayable
     ? (withholdingPreview.data?.netAmount ?? totals.total * mainRate) : 0) + additionalSummary.payable;
+  const hasExtendedSummary = draft.currencyCode !== "COP" || draft.additionalCostDocuments.length > 0;
+  const resolvedCostSupplierNames = Object.fromEntries(costSupplierIds.map((supplierId, index) => [
+    supplierId,
+    costSupplierNames[supplierId] ?? costSupplierQueries[index]?.data?.displayName ?? "Proveedor seleccionado",
+  ]));
   const allowedEvidenceTypes = allowedPurchaseEvidenceTypes(selectedSupplier?.supplierPurchaseEvidencePolicy ?? null);
   const visibleEvidenceTypes = options.data?.purchaseEvidenceTypes.filter((item) =>
     allowedEvidenceTypes.includes(item.code)) ?? [];
 
   const change = (values: Partial<EditorDraft>) => onChange({ ...draft, ...values });
+  const editCostDocument = (document: GoodsReceiptCostDocument) => {
+    setEditingCostDocument(document);
+    change({ pendingCostDocument: document });
+  };
+  const closeCostDocument = () => {
+    setEditingCostDocument(undefined);
+    change({ pendingCostDocument: null });
+  };
 
   const addCostDocument = (evidence: PurchaseEvidenceType = "SupplierElectronicInvoice") => {
     const importDocument = evidence === "ImportDeclaration";
-    change({ additionalCostDocuments: [...draft.additionalCostDocuments, {
+    editCostDocument({
       costDocumentId: crypto.randomUUID(), supplierId: "", purchaseEvidenceType: evidence,
       documentNumber: "", issuedAt: todayInput(), createsPayable: true,
       dueDate: plusDaysFrom(todayInput(), 30), currencyCode: "COP", exchangeRate: 1,
@@ -495,25 +552,27 @@ function ReceiptEditor({
         { ...newCostLine(2, "ImportVat", "IVA de importación", "Expense", "None"),
           taxCode: "01", taxRate: 19, taxTreatment: "DeductibleInputVat" },
       ] : [newCostLine(1, "Freight", "Flete de compra", "Capitalize", "Value")],
-    }] });
+    });
   };
-  const updateCostDocument = (id: string, values: Partial<GoodsReceiptCostDocument>) =>
-    change({ additionalCostDocuments: draft.additionalCostDocuments.map((document) =>
-      document.costDocumentId === id ? { ...document, ...values } : document) });
+  const updateCostDocument = (values: Partial<GoodsReceiptCostDocument>) => {
+    if (!editingCostDocument) return;
+    editCostDocument({ ...editingCostDocument, ...values });
+  };
   const updateCostLine = (document: GoodsReceiptCostDocument, lineNumber: number,
     values: Partial<GoodsReceiptCostLine>) =>
-    updateCostDocument(document.costDocumentId, {
+    updateCostDocument({
       lines: document.lines.map((line) => line.lineNumber === lineNumber ? { ...line, ...values } : line),
     });
   const addCostLine = (document: GoodsReceiptCostDocument) => {
     const next = Math.max(0, ...document.lines.map((line) => line.lineNumber)) + 1;
-    updateCostDocument(document.costDocumentId, {
+    updateCostDocument({
       lines: [...document.lines, newCostLine(next, "OtherDirectCost", "Otro costo directo", "Capitalize", "Value")],
     });
   };
   const removeCostLine = (document: GoodsReceiptCostDocument, lineNumber: number) =>
-    updateCostDocument(document.costDocumentId, {
-      lines: document.lines.filter((line) => line.lineNumber !== lineNumber),
+    updateCostDocument({
+      lines: document.lines.filter((line) => line.lineNumber !== lineNumber)
+        .map((line, index) => ({ ...line, lineNumber: index + 1 })),
     });
   const updateManualAllocation = (
     document: GoodsReceiptCostDocument, line: GoodsReceiptCostLine,
@@ -527,6 +586,22 @@ function ReceiptEditor({
           allocation.receiptLineNumber === item.lineNumber)?.functionalAmount ?? 0,
     })),
   });
+  const saveCostDocument = () => {
+    if (!editingCostDocument) return;
+    if (!editingCostDocument.supplierId || !editingCostDocument.documentNumber.trim() ||
+        !editingCostDocument.issuedAt || editingCostDocument.lines.length === 0) {
+      toast.error("Completa proveedor, número, fecha y al menos un concepto.");
+      return;
+    }
+    const exists = draft.additionalCostDocuments.some((document) =>
+      document.costDocumentId === editingCostDocument.costDocumentId);
+    change({ additionalCostDocuments: exists
+      ? draft.additionalCostDocuments.map((document) => document.costDocumentId === editingCostDocument.costDocumentId
+        ? editingCostDocument : document)
+      : [...draft.additionalCostDocuments, editingCostDocument], pendingCostDocument: null });
+    setEditingCostDocument(undefined);
+    setCostsExpanded(true);
+  };
 
   const applySupplierChange = (supplier: PartyWorkspaceItem) => {
     const supplierId = supplier.supplierId ?? "";
@@ -824,13 +899,6 @@ function ReceiptEditor({
           </Field>
           <p className="mt-2 text-xs text-muted-foreground">Puedes recibir directamente sin orden. Si eliges una, Auraly propone únicamente su saldo pendiente.</p>
         </section>
-        <button type="button" onClick={() => setDetailsExpanded((current) => !current)}
-          className="flex w-full items-center justify-between rounded-2xl border bg-muted/20 px-4 py-3 text-left"
-          aria-expanded={detailsExpanded}>
-          <span><strong className="block">Datos de la recepción</strong><small className="text-muted-foreground">Proveedor, bodega, soporte y condición de pago</small></span>
-          <ChevronDown className={`h-5 w-5 transition-transform ${detailsExpanded ? "rotate-180" : ""}`} />
-        </button>
-        {detailsExpanded && <>
         <section className="grid items-start gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
           <Field label="Proveedor">
             <PartyRoleSelect role="Supplier" value={draft.supplierId} placeholder="Buscar proveedor"
@@ -952,7 +1020,6 @@ function ReceiptEditor({
             <p className="text-xs text-muted-foreground">Se propone con los {selectedSupplier?.supplierDefaultPaymentDueDays??30} días configurados en el proveedor, pero puede ajustarse para este documento.</p>
           </Field>
         </section>
-        </>}
         <section className="rounded-2xl border">
           <div ref={productPickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
           <div className="grid gap-3 border-b p-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
@@ -970,7 +1037,11 @@ function ReceiptEditor({
             </div>
             <Button type="button" variant={includeUnassociated ? "secondary" : "outline"}
               disabled={!draft.supplierId || !!draft.purchaseOrderId}
-              onClick={() => { setIncludeUnassociated((current) => !current); setProductMenuOpen(true); }}>
+              onClick={() => {
+                setIncludeUnassociated((current) => !current);
+                setProductMenuOpen(true);
+                requestAnimationFrame(() => scanRef.current?.focus());
+              }}>
               <Search className="mr-2 h-4 w-4" />
               {includeUnassociated ? "Ver productos del proveedor" : "Buscar en todo el catálogo"}
             </Button>
@@ -1102,33 +1173,64 @@ function ReceiptEditor({
         </section>
 
         <section className="space-y-4 rounded-2xl border p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><h3 className="font-semibold">Facturas y otros costos</h3>
-              <p className="text-sm text-muted-foreground">Agrega flete, seguro o nacionalización. Cada tarjeta crea su propia cuenta por pagar; el IVA se reconoce en su documento y nunca se vuelve a aplicar al costo prorrateado.</p></div>
-            <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => addCostDocument()}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
-              <Button type="button" variant="outline" onClick={() => addCostDocument("ImportDeclaration")}><Plus className="mr-2 h-4 w-4" />Nacionalización</Button></div>
-          </div>
-          {draft.additionalCostDocuments.map((document, documentIndex) => {
-            const withholding = costWithholdingPreviews[documentIndex];
+          <button type="button" onClick={() => setCostsExpanded((current) => !current)}
+            className="flex w-full items-center justify-between gap-4 text-left"
+            aria-expanded={costsExpanded}>
+            <span><strong className="block">Facturas y otros costos</strong>
+              <small className="text-muted-foreground">Opcional · flete, seguro, gastos directos y nacionalización</small></span>
+            <span className="flex items-center gap-2">
+              {draft.additionalCostDocuments.length > 0 && <Badge variant="secondary">{draft.additionalCostDocuments.length}</Badge>}
+              <ChevronDown className={`h-5 w-5 transition-transform ${costsExpanded ? "rotate-180" : ""}`} />
+            </span>
+          </button>
+          {costsExpanded && <div className="space-y-5 border-t pt-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <p className="max-w-3xl text-sm text-muted-foreground">Cada documento conserva su proveedor, vencimiento, IVA, retención y cuenta por pagar. Solo el valor marcado como capitalizable se distribuye al inventario.</p>
+              <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => addCostDocument()}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
+                <Button type="button" variant="outline" onClick={() => addCostDocument("ImportDeclaration")}><Plus className="mr-2 h-4 w-4" />Agregar nacionalización</Button></div>
+            </div>
+            <CostDocumentGrid title="Facturas adicionales"
+              documents={draft.additionalCostDocuments.filter((document) => document.purchaseEvidenceType !== "ImportDeclaration")}
+              supplierNames={resolvedCostSupplierNames}
+              onOpen={(document) => editCostDocument(structuredClone(document))}
+              onRemove={(id) => change({ additionalCostDocuments: draft.additionalCostDocuments.filter((document) => document.costDocumentId !== id) })} />
+            <CostDocumentGrid title="Nacionalización"
+              documents={draft.additionalCostDocuments.filter((document) => document.purchaseEvidenceType === "ImportDeclaration")}
+              supplierNames={resolvedCostSupplierNames}
+              onOpen={(document) => editCostDocument(structuredClone(document))}
+              onRemove={(id) => change({ additionalCostDocuments: draft.additionalCostDocuments.filter((document) => document.costDocumentId !== id) })} />
+          </div>}
+          {editingCostDocument && [editingCostDocument].map((document) => {
+            const committedIndex = draft.additionalCostDocuments.findIndex((item) => item.costDocumentId === document.costDocumentId);
+            const withholding = committedIndex >= 0 ? costWithholdingPreviews[committedIndex] : undefined;
             const rate = document.currencyCode === "COP" ? 1 : document.exchangeRate;
             const documentNet = document.lines.reduce((sum, line) => sum + line.amount, 0);
             const documentTax = document.lines.reduce((sum, line) => sum + line.taxAmount, 0);
             const functionalGross = (documentNet + documentTax) * rate;
             const evidenceLabel = options.data?.purchaseCostEvidenceTypes.find((item) =>
               item.code === document.purchaseEvidenceType)?.label ?? document.purchaseEvidenceType;
-            return <div key={document.costDocumentId} className="space-y-4 rounded-2xl bg-muted/25 p-4">
-              <div className="flex items-center justify-between"><div><p className="font-semibold">{document.documentNumber || "Documento sin número"}</p><p className="text-xs text-muted-foreground">{evidenceLabel}</p></div>
-                <Button type="button" size="icon" variant="ghost" aria-label="Eliminar factura adicional" onClick={() => change({ additionalCostDocuments: draft.additionalCostDocuments.filter((value) => value.costDocumentId !== document.costDocumentId) })}><Trash2 className="h-4 w-4" /></Button></div>
+            return <Dialog key={document.costDocumentId} open onOpenChange={(value) => !value && closeCostDocument()}>
+              <DialogContent className="flex max-h-[92dvh] max-w-6xl flex-col overflow-hidden p-0">
+              <DialogHeader className="border-b px-6 py-5">
+                <DialogTitle>{committedIndex >= 0 ? "Editar" : "Agregar"} {document.purchaseEvidenceType === "ImportDeclaration" ? "nacionalización" : "factura adicional"}</DialogTitle>
+                <DialogDescription>{evidenceLabel}. Captura sus conceptos, impuestos, distribución y vencimiento independiente.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 overflow-y-auto px-6 py-5">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Field label="Proveedor"><PartyRoleSelect role="Supplier" value={document.supplierId} placeholder="Buscar proveedor" onChange={(supplierId) => updateCostDocument(document.costDocumentId, { supplierId })} /></Field>
-                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument(document.costDocumentId, { purchaseEvidenceType })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
-                <Field label="Número"><Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument(document.costDocumentId, { documentNumber: event.target.value })} /></Field>
-                <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument(document.costDocumentId, { issuedAt })} /></Field>
-                <Field label="Moneda"><Select value={document.currencyCode} onValueChange={(currencyCode) => updateCostDocument(document.costDocumentId, { currencyCode, exchangeRate: currencyCode === "COP" ? 1 : document.exchangeRate, exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" : (document.exchangeRateSource === "FunctionalCurrency" ? options.data?.exchangeRateSources[0]?.code ?? "" : document.exchangeRateSource) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
-                {document.currencyCode !== "COP" && <><Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={document.exchangeRate} onValueChange={(value) => updateCostDocument(document.costDocumentId, { exchangeRate: value ?? 0 })} /></Field><Field label="Fecha de la tasa"><DatePicker value={document.exchangeRateDate?.slice(0, 10) ?? document.issuedAt.slice(0, 10)} onChange={(exchangeRateDate) => updateCostDocument(document.costDocumentId, { exchangeRateDate })} /></Field><Field label="Fuente de la tasa"><Select value={document.exchangeRateSource} onValueChange={(exchangeRateSource) => updateCostDocument(document.costDocumentId, { exchangeRateSource })}><SelectTrigger disabled={options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger><SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field></>}
+                <Field label="Proveedor"><PartyRoleSelect role="Supplier" value={document.supplierId} placeholder="Buscar proveedor"
+                  onResolved={(supplier) => supplier && setCostSupplierNames((names) => ({ ...names, [supplier.supplierId ?? supplier.partyId]: supplier.displayName }))}
+                  onChange={(supplierId, supplier) => {
+                    if (supplier) setCostSupplierNames((names) => ({ ...names, [supplierId]: supplier.displayName }));
+                    updateCostDocument({ supplierId });
+                  }} /></Field>
+                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument({ purchaseEvidenceType })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                <Field label="Número"><Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} /></Field>
+                <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
+                <Field label="Moneda"><Select value={document.currencyCode} onValueChange={(currencyCode) => updateCostDocument({ currencyCode, exchangeRate: currencyCode === "COP" ? 1 : document.exchangeRate, exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" : (document.exchangeRateSource === "FunctionalCurrency" ? options.data?.exchangeRateSources[0]?.code ?? "" : document.exchangeRateSource) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                {document.currencyCode !== "COP" && <><Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={document.exchangeRate} onValueChange={(value) => updateCostDocument({ exchangeRate: value ?? 0 })} /></Field><Field label="Fecha de la tasa"><DatePicker value={document.exchangeRateDate?.slice(0, 10) ?? document.issuedAt.slice(0, 10)} onChange={(exchangeRateDate) => updateCostDocument({ exchangeRateDate })} /></Field><Field label="Fuente de la tasa"><Select value={document.exchangeRateSource} onValueChange={(exchangeRateSource) => updateCostDocument({ exchangeRateSource })}><SelectTrigger disabled={options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger><SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field></>}
                 <Field label="Condición"><Input readOnly value="Crédito · cuenta por pagar independiente" /></Field>
-                {document.createsPayable && <Field label="Vencimiento"><DatePicker min={document.issuedAt.slice(0, 10)} value={document.dueDate?.slice(0, 10) ?? ""} onChange={(dueDate) => updateCostDocument(document.costDocumentId, { dueDate })} /></Field>}
-                <Field label="Concepto para retención"><Select value={document.withholdingConceptCode || "__none"} onValueChange={(value) => updateCostDocument(document.costDocumentId, { withholdingConceptCode: value === "__none" ? null : value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none">Sin concepto</SelectItem>{(options.data?.withholdingConcepts ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                {document.createsPayable && <Field label="Vencimiento"><DatePicker min={document.issuedAt.slice(0, 10)} value={document.dueDate?.slice(0, 10) ?? ""} onChange={(dueDate) => updateCostDocument({ dueDate })} /></Field>}
+                <Field label="Concepto para retención"><Select value={document.withholdingConceptCode || "__none"} onValueChange={(value) => updateCostDocument({ withholdingConceptCode: value === "__none" ? null : value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none">Sin concepto</SelectItem>{(options.data?.withholdingConcepts ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
               </div>
               <div className="space-y-3">
                 {document.lines.map((line) => {
@@ -1137,7 +1239,7 @@ function ReceiptEditor({
                   const manualTarget = (line.amount + capitalizedTax) * rate;
                   const manualAssigned = line.manualAllocations?.reduce((sum, allocation) => sum + allocation.functionalAmount, 0) ?? 0;
                   return <div key={line.lineNumber} className="space-y-3 rounded-xl border bg-background p-3">
-                    <div className="flex items-center justify-between"><p className="text-sm font-semibold">Concepto {line.lineNumber}</p>
+                    <div className="flex justify-end">
                       {document.lines.length > 1 && <Button type="button" size="icon" variant="ghost" aria-label={`Eliminar concepto ${line.lineNumber}`} onClick={() => removeCostLine(document, line.lineNumber)}><Trash2 className="h-4 w-4" /></Button>}</div>
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                       <Field label="Concepto"><Select value={line.costKind} onValueChange={(costKind: PurchaseCostKind) => updateCostLine(document, line.lineNumber, { costKind, description: options.data?.purchaseCostKinds.find((item) => item.code === costKind)?.label ?? costKind, ...(costKind === "ImportVat" ? { amount: 0, taxCode: "01", taxRate: 19, taxTreatment: "DeductibleInputVat" as const, costTreatment: "Expense" as const, allocationMethod: "None" as const } : {}) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostKinds.length)}><SelectValue placeholder="Cargando conceptos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostKinds ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
@@ -1160,15 +1262,20 @@ function ReceiptEditor({
                 <DocumentTotal label="IVA del documento" value={documentTax} suffix={document.currencyCode} />
                 <DocumentTotal label="Total bruto" value={documentNet + documentTax} suffix={document.currencyCode} />
                 {document.currencyCode !== "COP" && <DocumentTotal label="Reconocido en COP" value={functionalGross} suffix="COP" />}
-                <DocumentTotal label="Retenciones" value={-(withholding.data?.withholdingTotal ?? 0)} suffix="COP" />
-                <DocumentTotal label="Neto por pagar" value={withholding.data?.netAmount ?? functionalGross} suffix="COP" strong />
+                <DocumentTotal label="Retenciones" value={-(withholding?.data?.withholdingTotal ?? 0)} suffix="COP" />
+                <DocumentTotal label="Neto por pagar" value={withholding?.data?.netAmount ?? functionalGross} suffix="COP" strong />
                 <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">El IVA descontable se reconoce separado; únicamente las bases y los impuestos marcados como mayor valor se llevan al costo o gasto.</p>
-                {withholding.isFetching && <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">Calculando retenciones con el motor tributario…</p>}
-                {withholding.isError && <p className="text-xs text-amber-700 md:col-span-2 xl:col-span-5">La vista previa no está disponible; la confirmación volverá a validarla.</p>}
+                {withholding?.isFetching && <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">Calculando retenciones con el motor tributario…</p>}
+                {withholding?.isError && <p className="text-xs text-amber-700 md:col-span-2 xl:col-span-5">La vista previa no está disponible; la confirmación volverá a validarla.</p>}
               </div>
-            </div>;
+              </div>
+              <DialogFooter className="border-t px-6 py-4">
+                <Button type="button" variant="outline" onClick={closeCostDocument}>Cancelar</Button>
+                <Button type="button" onClick={saveCostDocument}>{committedIndex >= 0 ? "Guardar cambios" : "Agregar documento"}</Button>
+              </DialogFooter>
+              </DialogContent>
+            </Dialog>;
           })}
-          {draft.additionalCostDocuments.length === 0 && <p className="rounded-xl bg-muted/30 p-4 text-sm text-muted-foreground">Opcional. Si la compra no tiene otros costos, no necesitas hacer nada aquí.</p>}
         </section>
 
         <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_23rem]">
@@ -1176,18 +1283,28 @@ function ReceiptEditor({
             className="h-full min-h-[8.5rem] resize-none"
             placeholder="Observaciones de recepción" maxLength={1000} />
           <dl className="space-y-2 rounded-2xl bg-slate-950 p-5 text-white">
-            <p className="pb-1 text-xs font-semibold uppercase tracking-wide text-slate-300">Resumen consolidado · COP</p>
-            <Amount label="Mercancía antes de IVA" value={totals.net * mainRate} />
-            <Amount label="Costos capitalizados" value={additionalSummary.capitalized} />
-            <Amount label="Valor que entra al inventario" value={mainInventoryCost + additionalSummary.capitalized} />
-            {additionalSummary.expensed > 0 && <Amount label="Costos llevados al gasto" value={additionalSummary.expensed} />}
-            <Amount label="IVA descontable separado" value={mainDeductibleVat + additionalSummary.deductibleVat} />
-            <Amount label="Total bruto de documentos" value={totals.total * mainRate + additionalSummary.gross} />
-            {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} mercancía (${line.rate}%)`} value={-line.amount} />)}
-            {additionalSummary.withheld > 0 && <Amount label="Retenciones otras facturas" value={-additionalSummary.withheld} />}
-            <Amount label="Total retenciones" value={-totalWithheld} />
-            <Amount label="Cuentas por pagar netas" value={totalPayable} strong />
-            <p className="pt-2 text-xs text-slate-300">Las retenciones reducen lo adeudado al proveedor; no reducen el costo ni el IVA reconocido.</p>
+            <p className="pb-1 text-xs font-semibold uppercase tracking-wide text-slate-300">{hasExtendedSummary ? "Resumen consolidado · COP" : "Resumen de la compra"}</p>
+            {!hasExtendedSummary ? <>
+              <Amount label="Subtotal antes de IVA" value={totals.net} />
+              <Amount label="IVA de compra" value={totals.tax} />
+              <Amount label="Total factura" value={totals.total} />
+              {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} (${line.rate}%)`} value={-line.amount} />)}
+              <Amount label="Total retenciones" value={-(withholdingPreview.data?.withholdingTotal ?? 0)} />
+              <Amount label={draft.createsPayable ? "Neto por pagar" : "Total pagado"}
+                value={draft.createsPayable ? (withholdingPreview.data?.netAmount ?? totals.total) : totals.total} strong />
+            </> : <>
+              <Amount label="Mercancía antes de IVA" value={totals.net * mainRate} />
+              <Amount label="Costos capitalizados" value={additionalSummary.capitalized} />
+              <Amount label="Valor que entra al inventario" value={mainInventoryCost + additionalSummary.capitalized} />
+              {additionalSummary.expensed > 0 && <Amount label="Costos llevados al gasto" value={additionalSummary.expensed} />}
+              <Amount label="IVA descontable separado" value={mainDeductibleVat + additionalSummary.deductibleVat} />
+              <Amount label="Total bruto de documentos" value={totals.total * mainRate + additionalSummary.gross} />
+              {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} mercancía (${line.rate}%)`} value={-line.amount} />)}
+              {additionalSummary.withheld > 0 && <Amount label="Retenciones otras facturas" value={-additionalSummary.withheld} />}
+              <Amount label="Total retenciones" value={-totalWithheld} />
+              <Amount label="Cuentas por pagar netas" value={totalPayable} strong />
+            </>}
+            <p className="pt-2 text-xs text-slate-300">Las retenciones reducen lo adeudado; no reducen el costo ni el IVA reconocido.</p>
             {withholdingPreview.isFetching && <p className="text-right text-xs text-slate-300">Calculando retenciones…</p>}
             {withholdingPreview.isError && <p className="text-right text-xs text-amber-300">No fue posible obtener la vista previa. La confirmación volverá a validar con el motor.</p>}
           </dl>
@@ -1364,6 +1481,40 @@ function allowedPurchaseEvidenceTypes(policy: string | null) {
   if (policy === "BuyerElectronicSupportDocument") return ["BuyerElectronicSupportDocument", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
   if (policy === "InternalReceiptVoucher") return ["InternalReceiptVoucher", "ForeignCommercialInvoice"];
   return ["SupplierElectronicInvoice", "BuyerElectronicSupportDocument", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
+}
+
+function CostDocumentGrid({ title, documents, supplierNames, onOpen, onRemove }: {
+  title: string; documents: GoodsReceiptCostDocument[]; supplierNames: Record<string, string>;
+  onOpen: (document: GoodsReceiptCostDocument) => void; onRemove: (id: string) => void;
+}) {
+  return <section className="overflow-hidden rounded-xl border">
+    <div className="flex items-center justify-between bg-muted/40 px-4 py-3">
+      <h4 className="text-sm font-semibold">{title}</h4>
+      <span className="text-xs text-muted-foreground">{documents.length} documento{documents.length === 1 ? "" : "s"}</span>
+    </div>
+    {documents.length === 0
+      ? <p className="px-4 py-5 text-sm text-muted-foreground">No hay documentos agregados.</p>
+      : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm">
+          <thead className="border-t bg-muted/20 text-left text-xs text-muted-foreground">
+            <tr><th className="px-4 py-2">Proveedor</th><th>Número</th><th>Vencimiento</th>
+              <th className="text-right">Antes de IVA</th><th className="text-right">IVA</th>
+              <th className="text-right">Total</th><th className="w-28" /></tr>
+          </thead>
+          <tbody>{documents.map((document) => {
+            const subtotal = document.lines.reduce((sum, line) => sum + line.amount, 0);
+            const tax = document.lines.reduce((sum, line) => sum + line.taxAmount, 0);
+            return <tr key={document.costDocumentId} className="border-t">
+              <td className="px-4 py-3 font-medium">{supplierNames[document.supplierId] ?? "Proveedor seleccionado"}</td>
+              <td>{document.documentNumber || "Sin número"}</td><td>{document.dueDate?.slice(0, 10) || "Contado"}</td>
+              <td className="text-right">{formatCurrency(subtotal)} {document.currencyCode}</td>
+              <td className="text-right">{formatCurrency(tax)} {document.currencyCode}</td>
+              <td className="text-right font-semibold">{formatCurrency(subtotal + tax)} {document.currencyCode}</td>
+              <td className="px-2 text-right"><Button type="button" size="sm" variant="ghost" onClick={() => onOpen(document)}>Ver</Button>
+                <Button type="button" size="icon" variant="ghost" aria-label={`Eliminar ${document.documentNumber || "documento"}`} onClick={() => onRemove(document.costDocumentId)}><Trash2 className="h-4 w-4" /></Button></td>
+            </tr>;
+          })}</tbody>
+        </table></div>}
+  </section>;
 }
 
 function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
