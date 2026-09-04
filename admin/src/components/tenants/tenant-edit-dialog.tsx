@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { tenantsApi } from "@/services/api/tenants";
 import type { Tenant } from "@/types/entities";
-import { sanitizeTenantIdentification, validateTenantIdentification } from "@/lib/tenant-legal-identity";
+import { calculateTenantVerificationDigit, sanitizeTenantIdentification, supportsTenantVerificationDigit, validateTenantIdentification } from "@/lib/tenant-legal-identity";
 
 type Props = { tenant: Tenant; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<unknown> };
 type TenantEditForm = {
@@ -37,12 +37,13 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
   const availableIdentificationTypes = (identificationTypes.data ?? [])
     .filter(item => item.description === form.entityType);
   const identityMatches = availableIdentificationTypes.some(item => item.code === form.identificationTypeCode);
+  const calculatedVerificationDigit = calculateTenantVerificationDigit(form.identificationTypeCode, form.identification);
   const identityError = form.identification
-    ? validateTenantIdentification(form.identificationTypeCode, form.identification, form.identificationTypeCode === "NIT" ? form.verificationDigit : null)
+    ? validateTenantIdentification(form.identificationTypeCode, form.identification, form.identificationTypeCode === "NIT" && calculatedVerificationDigit !== null ? String(calculatedVerificationDigit) : null)
     : null;
   const valid = Boolean(form.name.trim() && form.email.trim() && form.legalName.trim()
     && form.identification.trim() && identityMatches && !identityError
-    && (form.identificationTypeCode !== "NIT" || form.verificationDigit.trim()));
+    && (form.identificationTypeCode !== "NIT" || calculatedVerificationDigit !== null));
 
   async function save() {
     if (!valid || saving) return;
@@ -51,7 +52,7 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
     try {
       await tenantsApi.update(tenant.tenantId, {
         name: form.name.trim(), email: form.email.trim(), legalName: form.legalName.trim(),
-        nit: form.identification.trim(), verificationDigit: form.identificationTypeCode === "NIT" ? form.verificationDigit.trim() : null,
+        nit: form.identification.trim(), verificationDigit: form.identificationTypeCode === "NIT" && calculatedVerificationDigit !== null ? String(calculatedVerificationDigit) : null,
         entityType: form.entityType, identificationTypeCode: form.identificationTypeCode,
         inventoryCostBasis: form.inventoryCostBasis as Tenant["inventoryCostBasis"],
       });
@@ -82,7 +83,7 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
           <Field label="Nombre comercial"><Input value={form.name} onChange={event => set("name", event.target.value)} /></Field>
           <Field label={form.entityType === "NaturalPerson" ? "Nombre completo" : "Razón social"}><Input value={form.legalName} onChange={event => set("legalName", event.target.value)} /></Field>
           <Field label="Número de identificación"><Input inputMode={form.identificationTypeCode === "PA" || form.identificationTypeCode === "DE" ? "text" : "numeric"} maxLength={32} value={form.identification} onChange={event => set("identification", sanitizeTenantIdentification(form.identificationTypeCode, event.target.value))} />{identityError && form.identificationTypeCode !== "NIT" && <p className="text-xs text-destructive">{identityError}</p>}</Field>
-          {form.identificationTypeCode === "NIT" && <Field label="Dígito de verificación"><Input inputMode="numeric" maxLength={1} value={form.verificationDigit} onChange={event => set("verificationDigit", event.target.value.replace(/\D/g, "").slice(0, 1))} />{identityError && <p className="text-xs text-destructive">{identityError}</p>}</Field>}
+          {supportsTenantVerificationDigit(form.identificationTypeCode) && <Field label="Dígito de verificación (calculado)"><Input aria-readonly="true" readOnly value={calculatedVerificationDigit ?? ""} className="bg-muted" />{identityError && <p className="text-xs text-destructive">{identityError}</p>}<p className="text-xs text-muted-foreground">Se calcula automáticamente y no se puede modificar.</p></Field>}
           <Field label="Correo empresarial" className="sm:col-span-2"><Input type="email" value={form.email} onChange={event => set("email", event.target.value)} /></Field>
           <Field label="Base para formar costos" className="sm:col-span-2"><Select value={form.inventoryCostBasis} onValueChange={value => set("inventoryCostBasis", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="LatestReceiptCost">Último costo recibido</SelectItem><SelectItem value="WeightedAverageCost">Costo promedio ponderado</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Define la base que usa el tenant al preparar precios. El costo promedio consolida las sedes que comparten precios.</p></Field>
         </section>

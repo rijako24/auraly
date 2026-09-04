@@ -29,7 +29,8 @@ public sealed class SqlFiscalOnboardingStore(
                 THROW 51021,'Business is outside the authenticated tenant.',1;
 
             SELECT b.Name,COALESCE(NULLIF(p.LegalName,N''),b.Name),
-                   COALESCE(p.Nit,N''),COALESCE(p.VerificationDigit,N''),
+                   COALESCE(p.Nit,N''),
+                   COALESCE(NULLIF(i.SupplierCheckDigit,N''),NULLIF(p.VerificationDigit,N''),N''),
                    i.SoftwareIdentificationCode,i.TestSetId,i.CertificateThumbprint,
                    i.ValidFrom,i.ValidTo,i.Environment,
                    accepted.AcceptedAt,
@@ -47,6 +48,7 @@ public sealed class SqlFiscalOnboardingStore(
             LEFT JOIN dbo.TenantLegalProfiles p ON p.TenantId=b.TenantId
             OUTER APPLY(
                 SELECT TOP(1) SoftwareIdentificationCode,TestSetId,CertificateThumbprint,
+                       SupplierCheckDigit,
                        ValidFrom,ValidTo,Environment
                 FROM dbo.FiscalIssuerConfigurations configuration
                 JOIN dbo.Businesses configuredBusiness

@@ -26,3 +26,13 @@ export function calculateNitVerificationDigit(nit: string) {
   const remainder = sum % 11;
   return remainder === 0 || remainder === 1 ? remainder : 11 - remainder;
 }
+
+export function supportsTenantVerificationDigit(type: string) {
+  return numericIdentificationTypes.has(type);
+}
+
+export function calculateTenantVerificationDigit(type: string, identification: string) {
+  return supportsTenantVerificationDigit(type)
+    ? calculateNitVerificationDigit(identification)
+    : null;
+}

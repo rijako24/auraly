@@ -132,5 +132,7 @@
     ,"src/lib/inventory-operation-launch.test.ts"
     ,"src/lib/party-user-role-selection.ts"
     ,"src/lib/party-user-role-selection.test.ts"
+    ,"src/lib/tenant-legal-identity.ts"
+    ,"src/lib/tenant-legal-identity.test.ts"
   ]
 }
