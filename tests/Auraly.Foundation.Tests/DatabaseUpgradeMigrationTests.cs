@@ -9,9 +9,11 @@ public sealed class DatabaseUpgradeMigrationTests
             FindRepositoryRoot(), "database", "Auraly.Database", "Scripts",
             "Migrations", "20260730_CollapseOrganizationScope.sql"));
 
-        Assert.Contains("COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NOT NULL",
+        Assert.Contains("DECLARE @HasCompleteLegacyOrganizationScope bit",
             migration, StringComparison.Ordinal);
-        Assert.Contains("COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NULL",
+        Assert.Contains("COL_LENGTH(N'dbo.Warehouses', N'BusinessId') IS NOT NULL",
+            migration, StringComparison.Ordinal);
+        Assert.Contains("@HasCompleteLegacyOrganizationScope = 0",
             migration, StringComparison.Ordinal);
         Assert.Contains("@DropRemainingLocationForeignKeys", migration,
             StringComparison.Ordinal);

@@ -3,8 +3,28 @@
   BusinessLocations level only after proving that every persisted relationship
   resolves to the same Business.
 */
+DECLARE @HasCompleteLegacyOrganizationScope bit = CASE WHEN
+    COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.Warehouses', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.Warehouses', N'LocationId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.CashRegisters', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.CashRegisters', N'LocationId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PosDevices', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PosDevices', N'LocationId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PosEnrollmentSessions', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PosEnrollmentSessions', N'LocationId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.DocumentSeries', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.DocumentSeries', N'LocationId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.CashSessions', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.CashSessions', N'LocationId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.SalesDocuments', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.SalesDocuments', N'LocationId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.SalesDrafts', N'BusinessId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.SalesDrafts', N'LocationId') IS NOT NULL
+    THEN 1 ELSE 0 END;
+
 IF OBJECT_ID(N'dbo.BusinessLocations', N'U') IS NOT NULL
-   AND COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NOT NULL
+   AND @HasCompleteLegacyOrganizationScope = 1
 BEGIN
     EXEC sys.sp_executesql N'IF EXISTS (
         SELECT 1
@@ -118,7 +138,7 @@ END;
 -- unmodeled table behind because releases intentionally preserve objects that
 -- are not in the DACPAC. Finish that cleanup without re-reading removed fields.
 IF OBJECT_ID(N'dbo.BusinessLocations', N'U') IS NOT NULL
-   AND COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NULL
+   AND @HasCompleteLegacyOrganizationScope = 0
 BEGIN
     DECLARE @DropRemainingLocationForeignKeys nvarchar(max)=N'';
     SELECT @DropRemainingLocationForeignKeys +=
