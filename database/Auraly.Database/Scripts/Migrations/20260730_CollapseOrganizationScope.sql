@@ -4,6 +4,7 @@
   resolves to the same Business.
 */
 IF OBJECT_ID(N'dbo.BusinessLocations', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NOT NULL
 BEGIN
     EXEC sys.sp_executesql N'IF EXISTS (
         SELECT 1
@@ -111,4 +112,22 @@ BEGIN
     EXEC sys.sp_executesql @DropColumns;
 
     DROP TABLE dbo.BusinessLocations;';
+END;
+
+-- A deployment interrupted after removing the legacy columns can leave the
+-- unmodeled table behind because releases intentionally preserve objects that
+-- are not in the DACPAC. Finish that cleanup without re-reading removed fields.
+IF OBJECT_ID(N'dbo.BusinessLocations', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NULL
+BEGIN
+    DECLARE @DropRemainingLocationForeignKeys nvarchar(max)=N'';
+    SELECT @DropRemainingLocationForeignKeys +=
+        N'ALTER TABLE '+QUOTENAME(OBJECT_SCHEMA_NAME(parent_object_id))+
+        N'.'+QUOTENAME(OBJECT_NAME(parent_object_id))+
+        N' DROP CONSTRAINT '+QUOTENAME(name)+N';'
+    FROM sys.foreign_keys
+    WHERE referenced_object_id=OBJECT_ID(N'dbo.BusinessLocations');
+    EXEC sys.sp_executesql @DropRemainingLocationForeignKeys;
+
+    DROP TABLE dbo.BusinessLocations;
 END;

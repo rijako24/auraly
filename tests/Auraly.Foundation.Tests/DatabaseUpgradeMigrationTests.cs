@@ -3,6 +3,21 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public void Organization_scope_cutover_is_safe_after_legacy_columns_were_removed()
+    {
+        var migration = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "database", "Auraly.Database", "Scripts",
+            "Migrations", "20260730_CollapseOrganizationScope.sql"));
+
+        Assert.Contains("COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NOT NULL",
+            migration, StringComparison.Ordinal);
+        Assert.Contains("COL_LENGTH(N'dbo.BusinessLocations', N'BusinessId') IS NULL",
+            migration, StringComparison.Ordinal);
+        Assert.Contains("@DropRemainingLocationForeignKeys", migration,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pricing_cutover_preserves_historical_scope_and_expires_ambiguous_catalog_sessions()
     {
         var root = FindRepositoryRoot();
