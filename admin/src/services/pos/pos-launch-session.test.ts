@@ -78,7 +78,7 @@ test("enrollment is the single owner of installed runtime selection", () => {
     false,
   );
 });
-test("connected Auraly orders use the installed orders printer", () => {
-  assert.equal(resolvePosOrderPrintRoute("edge-session"), "installed-pos");
+test("order printing selects the installed transport without changing issuance ownership", () => {
+  assert.equal(resolvePosOrderPrintRoute("edge-session"), "installed-app");
   assert.equal(resolvePosOrderPrintRoute(null), "browser");
 });

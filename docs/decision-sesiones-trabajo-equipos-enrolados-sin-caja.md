@@ -22,11 +22,13 @@ El contexto de facturación queda definido por:
 - operación: `WorkSessionId`;
 - equipo offline opcional: `DeviceId`.
 
-Una sesión de trabajo pertenece a un tenant, un usuario, una sede y una bodega. El equipo que
-originó una operación se conserva en el documento, pero no es propietario de la
-sesión. Dentro del mismo tenant, el usuario no puede mantener dos sesiones abiertas
-y recupera la existente al autenticarse desde otro cliente. Un equipo enrolado
-tampoco puede mantener dos sesiones abiertas.
+Una sesión de trabajo pertenece a un tenant, un usuario y una sede. `WarehouseId`
+pertenece al documento e inventario, no a la sesión; una jornada puede incluir
+operaciones válidas de varias bodegas de la misma sede. En web existe una sesión
+abierta por `TenantId + BusinessId + UserId`, sin dispositivo. En Edge la identidad es
+`TenantId + BusinessId + DeviceId + UserId`: el mismo usuario puede mantener una
+sesión local independiente por equipo enrolado y una sesión web sin que sus cierres
+mezclen dinero.
 
 Un usuario de plataforma puede conservar el mismo `UserId` al administrar otros
 tenants, pero ese selector administrativo no cambia el tenant propietario del usuario.
@@ -48,7 +50,8 @@ reescribir el pasado. Esta excepción se retira cuando una auditoría confirme c
 históricas discordantes en todos los ambientes; no autoriza rutas nuevas ni fallbacks de
 tenant.
 
-El contexto operativo inmutable de una jornada es `TenantId + UserId + WorkSessionId`.
+El contexto operativo inmutable de una jornada es
+`TenantId + BusinessId + UserId + WorkSessionId`, y añade `DeviceId` en Edge.
 El `WorkSessionId` solo cambia después de un cierre explícito; un nuevo login desde
 otro navegador reemplaza únicamente la sesión de autenticación y recupera la misma
 jornada abierta del usuario en el tenant. Los documentos con contexto de caja deben
@@ -67,8 +70,10 @@ administrativa del usuario o tenant.
 - Online: el usuario selecciona sede y bodega, abre una sesión sin dispositivo y el
   servidor asigna los consecutivos de forma transaccional.
 - Edge: el equipo se enrola para un tenant, sincroniza su configuración y añade su
-  `DeviceId` a la sesión. El login, catálogo, borradores, series, facturas y outbox
-  necesarios permanecen disponibles localmente.
+  `DeviceId` a la sesión. Entrar al POS —no el login— abre o recupera primero la
+  sesión en SQLite con su ID definitivo y encola `WorkSessionOpened`. El servidor
+  registra exactamente ese ID y nunca lo sustituye. La cola conserva el orden global
+  apertura, documentos/movimientos y cierre, incluso entre dos jornadas consecutivas.
 
 Una aplicación instalada que todavía no está enrolada conserva el modo online: los
 motivos de entrada y salida se consultan al servidor y los movimientos se confirman

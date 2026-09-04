@@ -202,7 +202,6 @@ public interface IPosWorkSessionClosurePrinter
 
 public sealed class PosWorkSessionClosurePrinter(
     PosPrinterConfigurationStore configuration,
-    IWindowsRawPrintJob rawPrintJob,
     IWindowsRenderedPrintJob renderedPrintJob,
     PosWorkstationIdentity? workstation = null)
     : IPosWorkSessionClosurePrinter
@@ -221,21 +220,15 @@ public sealed class PosWorkSessionClosurePrinter(
         var companyName = workstation?.CompanyName ?? closure.BusinessName;
         var companyLogoSource = workstation?.CompanyLogoSource;
         var documentName = $"Cierre-{closure.WorkSessionClosureId:N}";
-        if (WindowsPrinterOutput.RequiresRenderedDocument(printerName) ||
-            !string.IsNullOrWhiteSpace(companyLogoSource))
-            return renderedPrintJob.PrintAsync(
-                printerName,
-                documentName,
-                WorkSessionClosureReceiptRenderer.RenderHtml(
-                    closure, companyName, companyLogoSource,
-                    settings.ReceiptPaperWidthMillimeters),
-                configuration.ReceiptOutputDirectory,
-                settings.ReceiptPaperWidthMillimeters,
-                cancellationToken);
-        var bytes = WorkSessionClosureReceiptRenderer.Render(
-            closure, settings.ReceiptPaperWidthMillimeters, companyName);
-        rawPrintJob.Print(printerName, documentName, bytes);
-        return Task.CompletedTask;
+        return renderedPrintJob.PrintAsync(
+            printerName,
+            documentName,
+            WorkSessionClosureReceiptRenderer.RenderHtml(
+                closure, companyName, companyLogoSource,
+                settings.ReceiptPaperWidthMillimeters),
+            configuration.ReceiptOutputDirectory,
+            settings.ReceiptPaperWidthMillimeters,
+            cancellationToken);
     }
 }
 
@@ -362,6 +355,8 @@ internal static class WorkSessionClosureReceiptRenderer
     private static readonly byte[] Initialize = [0x1B, 0x40];
     private static readonly byte[] AlignLeft = [0x1B, 0x61, 0x00];
     private static readonly byte[] AlignCenter = [0x1B, 0x61, 0x01];
+    private static readonly byte[] BoldOn = [0x1B, 0x45, 0x01];
+    private static readonly byte[] BoldOff = [0x1B, 0x45, 0x00];
     private static readonly byte[] DoubleHeight = [0x1D, 0x21, 0x10];
     private static readonly byte[] NormalSize = [0x1D, 0x21, 0x00];
     private static readonly byte[] Cut = [0x1D, 0x56, 0x41, 0x03];
@@ -380,39 +375,40 @@ internal static class WorkSessionClosureReceiptRenderer
         using var stream = new MemoryStream();
         Write(stream, Initialize);
         Write(stream, AlignCenter);
-        Line(stream, companyName ?? value.BusinessName);
-        Line(stream, $"SEDE: {value.BusinessName}");
-        Line(stream, "ARQUEO DE CAJA");
-        Line(stream, "CIERRE CONFIRMADO");
+        Write(stream, DoubleHeight);
+        BoldLine(stream, companyName ?? value.BusinessName);
+        Write(stream, NormalSize);
+        BoldLine(stream, "Arqueo de caja - Cierre confirmado");
+        Wrapped(stream, $"Sede: {Location(value)}", columns);
         Line(stream, new string('-', columns));
         Write(stream, AlignLeft);
-        Wrapped(stream, $"USUARIO QUE TRABAJO: {value.UserName}", columns);
-        Line(stream, $"APERTURA: {Date(value.OpenedAt)}");
-        Line(stream, $"CIERRE:   {Date(value.ClosedAt)}");
-        Line(stream, $"DURACION: {Duration(value.OpenedAt, value.ClosedAt)}");
+        Wrapped(stream, $"Usuario que trabajo: {value.UserName}", columns);
+        Line(stream, $"Apertura: {Date(value.OpenedAt)}");
+        Line(stream, $"Cierre:   {Date(value.ClosedAt)}");
+        Line(stream, $"Duracion: {Duration(value.OpenedAt, value.ClosedAt)}");
         Line(stream, new string('-', columns));
-        Line(stream, Pair("NUMERO DE VENTAS", value.SalesCount.ToString(CultureInfo.InvariantCulture), columns));
-        Line(stream, Pair("VENTAS A CARTERA", value.CreditSalesCount.ToString(CultureInfo.InvariantCulture), columns));
-        Line(stream, Pair("NUM. DEVOLUCIONES", value.ReturnCount.ToString(CultureInfo.InvariantCulture), columns));
-        Line(stream, Pair("VENTAS", Money(value.TotalSales), columns));
-        Line(stream, Pair("DEVOLUCIONES", Money(value.TotalRefunds), columns));
-        Line(stream, Pair("VALOR A CARTERA", Money(value.CreditSalesAmount), columns));
-        Line(stream, Pair("ENTRADAS DE CAJA", Money(CashEntries(value)), columns));
-        Line(stream, Pair("SALIDAS DE CAJA", Money(CashExits(value)), columns));
+        Line(stream, Pair("Numero de ventas", value.SalesCount.ToString(CultureInfo.InvariantCulture), columns));
+        Line(stream, Pair("Ventas a cartera", value.CreditSalesCount.ToString(CultureInfo.InvariantCulture), columns));
+        Line(stream, Pair("Num. devoluciones", value.ReturnCount.ToString(CultureInfo.InvariantCulture), columns));
+        Line(stream, Pair("Ventas", Money(value.TotalSales), columns));
+        Line(stream, Pair("Devoluciones", Money(value.TotalRefunds), columns));
+        Line(stream, Pair("Valor a cartera", Money(value.CreditSalesAmount), columns));
+        Line(stream, Pair("Entradas de caja", Money(CashEntries(value)), columns));
+        Line(stream, Pair("Salidas de caja", Money(CashExits(value)), columns));
         Line(stream, new string('-', columns));
-        Line(stream, "CONCILIACION POR MEDIO");
+        BoldLine(stream, "Conciliacion por medio");
         foreach (var payment in value.PaymentTotals)
         {
-            Wrapped(stream, PaymentMethodName(payment.PaymentMethodCode).ToUpperInvariant(), columns);
-            Line(stream, Pair("  VENTAS", Money(payment.SalesAmount), columns));
-            Line(stream, Pair("  DEVOLUCIONES", Money(payment.RefundAmount), columns));
+            BoldWrapped(stream, PaymentMethodName(payment.PaymentMethodCode), columns);
+            Line(stream, Pair("  Ventas", Money(payment.SalesAmount), columns));
+            Line(stream, Pair("  Devoluciones", Money(payment.RefundAmount), columns));
             if (IsCash(payment.PaymentMethodCode))
             {
-                Line(stream, Pair("  ENTRADAS", Money(Math.Max(0, payment.OtherAmount)), columns));
-                Line(stream, Pair("  SALIDAS", Money(Math.Abs(Math.Min(0, payment.OtherAmount))), columns));
+                BoldLine(stream, Pair("  Entradas", Money(Math.Max(0, payment.OtherAmount)), columns));
+                BoldLine(stream, Pair("  Salidas", Money(Math.Abs(Math.Min(0, payment.OtherAmount))), columns));
                 Line(stream, new string('-', columns));
-                Line(stream, Pair("  EFECTIVO ESPERADO", Money(value.ExpectedCash), columns));
-                Line(stream, Pair("  EFECTIVO CONTADO", Money(value.CountedCash ?? 0), columns));
+                BoldLine(stream, Pair("  Efectivo esperado", Money(value.ExpectedCash), columns));
+                BoldLine(stream, Pair("  Efectivo contado", Money(value.CountedCash ?? 0), columns));
                 Line(stream, new string('-', columns));
             }
         }
@@ -424,7 +420,7 @@ internal static class WorkSessionClosureReceiptRenderer
         if (!string.IsNullOrWhiteSpace(value.Note))
         {
             Line(stream, new string('-', columns));
-            Wrapped(stream, "NOTA: " + value.Note, columns);
+            Wrapped(stream, "Nota: " + value.Note, columns);
         }
         Line(stream, new string('-', columns));
         Line(stream, string.Empty);
@@ -441,11 +437,10 @@ internal static class WorkSessionClosureReceiptRenderer
     {
         if (paperWidthMillimeters is not (58 or 80))
             throw new ArgumentOutOfRangeException(nameof(paperWidthMillimeters));
-        var contentWidthMillimeters = paperWidthMillimeters - 8;
         var payments = string.Join(string.Empty, value.PaymentTotals.Select(payment =>
         {
             var cashDetails = IsCash(payment.PaymentMethodCode)
-                ? $"<div class=\"payment-details\"><span>Entradas <strong>{Money(Math.Max(0, payment.OtherAmount))}</strong></span><span>Salidas <strong>{Money(Math.Abs(Math.Min(0, payment.OtherAmount)))}</strong></span></div><div class=\"cash-reconciliation\"><span>Efectivo esperado <strong>{Money(value.ExpectedCash)}</strong></span><span>Efectivo contado <strong>{Money(value.CountedCash ?? 0)}</strong></span></div>"
+                ? $"<div class=\"payment-details\"><span>Entradas <strong>{Money(Math.Max(0, payment.OtherAmount))}</strong></span><span>Salidas <strong>{Money(Math.Abs(Math.Min(0, payment.OtherAmount)))}</strong></span></div>"
                 : string.Empty;
             return $"<section class=\"payment\" data-payment-method=\"{Encode(payment.PaymentMethodCode)}\"><h3>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</h3><div class=\"payment-details\"><span>Ventas <strong>{Money(payment.SalesAmount)}</strong></span><span>Devoluciones <strong>{Money(payment.RefundAmount)}</strong></span></div>{cashDetails}</section>";
         }));
@@ -455,16 +450,31 @@ internal static class WorkSessionClosureReceiptRenderer
         var logo = string.IsNullOrWhiteSpace(companyLogoSource)
             ? string.Empty
             : $"<img class=\"brand-logo\" src=\"{Encode(companyLogoSource)}\" alt=\"Logo de {Encode(companyName ?? value.BusinessName)}\">";
-        return $$"""
+        var html = $$"""
 <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de sesión de venta</title>
-<style>@page{size:{{paperWidthMillimeters}}mm auto;margin:4mm}*{box-sizing:border-box}body{width:{{contentWidthMillimeters}}mm;font:10px/1.35 Arial,sans-serif;color:#111;margin:auto}.brand-logo{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{text-align:center;font-size:16px;margin:3px 0}h2{text-align:center;font-size:11px;margin:3px 0}h3{font-size:11px;margin:8px 0 3px;text-transform:uppercase}.session-details{font-size:11px;line-height:1.5}table{width:100%;border-collapse:collapse;margin:8px 0}td{padding:3px 1px;border-bottom:1px solid #ddd;text-align:right;font-size:10px;font-variant-numeric:tabular-nums}td:first-child{text-align:left}.count-row td{font-size:12px;font-weight:700}.payment{border-top:1px dashed #777;padding:4px 0}.payment h3{font-size:10px;margin:2px 0}.payment-details,.cash-reconciliation{display:block}.payment-details span,.cash-reconciliation span{display:flex;justify-content:space-between;gap:8px;width:100%;padding:2px 0}.payment-details strong,.cash-reconciliation strong{margin-left:auto;text-align:right;font-variant-numeric:tabular-nums}.cash-reconciliation{border:1px solid #111;margin-top:4px;padding:4px}.difference{font-size:16px;border:2px solid #111;padding:7px;text-align:center;margin-top:10px}</style></head><body>
-{{logo}}<h1>{{Encode(companyName ?? value.BusinessName)}}</h1><h2>ARQUEO DE CAJA · CIERRE CONFIRMADO</h2><h2>Sede: {{Encode(value.BusinessName)}}</h2>
+<style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters}}mm;font:11px/1.35 ui-monospace,Consolas,monospace;color:#111;margin:0;padding:5mm 3mm 2mm 2mm}.brand-logo{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:9px}h1{font:800 19px/1.2 Arial,sans-serif;margin:3px 0;text-transform:uppercase}header h2{font-size:12px;margin:7px 0 4px;text-transform:uppercase}.scope{margin:3px 0}.section-title{font-size:11px;margin:13px 0 6px;padding-bottom:4px;border-bottom:1px dashed #777;text-transform:uppercase}.session-details{text-align:left;font-size:11px;line-height:1.5;margin-top:10px}.rows{width:100%;border-collapse:collapse;margin:0}.rows td{padding:3px 1px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums}.rows td:first-child{width:64%;text-align:left}.count-row td{font-size:12px;font-weight:800}.payment{border-bottom:1px dashed #aaa;padding:5px 0}.payment h3{font-size:11px;margin:2px 0 4px;text-transform:uppercase}.payment-details span{display:flex;justify-content:space-between;gap:8px;width:100%;padding:2px 1px}.payment-details span>strong{font-variant-numeric:tabular-nums;text-align:right}.difference{display:flex;justify-content:space-between;font-size:16px;border:2px solid #111;padding:8px;margin-top:12px;font-weight:800}.note{margin-top:9px;padding:6px;border:1px dashed #777}</style></head><body>
+<header>{{logo}}<h1>{{Encode(companyName ?? value.BusinessName)}}</h1><h2>Arqueo de caja · Cierre confirmado</h2><p class="scope">Sede: {{Encode(Location(value))}}</p>
 <p class="session-details"><strong>Usuario que trabajó:</strong> {{Encode(value.UserName)}}<br><strong>Apertura:</strong> {{Date(value.OpenedAt)}}<br><strong>Cierre:</strong> {{Date(value.ClosedAt)}}<br><strong>Duración:</strong> {{Duration(value.OpenedAt, value.ClosedAt)}}</p>
-<table><tbody><tr class="count-row"><td>Número de ventas</td><td>{{value.SalesCount}}</td></tr><tr class="count-row"><td>Ventas a cartera</td><td>{{value.CreditSalesCount}}</td></tr><tr class="count-row"><td>Devoluciones</td><td>{{value.ReturnCount}}</td></tr><tr><td>Total ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Total devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Valor a cartera</td><td>{{Money(value.CreditSalesAmount)}}</td></tr><tr><td>Entradas de caja</td><td>{{Money(CashEntries(value))}}</td></tr><tr><td>Salidas de caja</td><td>{{Money(CashExits(value))}}</td></tr></tbody></table>
-<h3>Todos los medios de pago</h3>{{payments}}
-<p class="difference"><strong>{{Encode(DifferenceLabel(value.CashDifference ?? 0))}}:</strong> {{SignedMoney(value.CashDifference ?? 0)}}</p>{{note}}
+</header>
+<h2 class="section-title">Actividad del turno</h2><table class="rows"><tbody><tr class="count-row"><td>Número de ventas</td><td>{{value.SalesCount}}</td></tr><tr class="count-row"><td>Ventas a cartera</td><td>{{value.CreditSalesCount}}</td></tr><tr class="count-row"><td>Devoluciones</td><td>{{value.ReturnCount}}</td></tr></tbody></table>
+<h2 class="section-title">Detalle por medio de pago</h2>{{payments}}
+<h2 class="section-title">Totales del turno</h2><table class="rows"><tbody><tr><td>Ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Valor a cartera</td><td>{{Money(value.CreditSalesAmount)}}</td></tr><tr><td>Entradas de caja</td><td>{{Money(CashEntries(value))}}</td></tr><tr><td>Salidas de caja</td><td>{{Money(CashExits(value))}}</td></tr><tr><td>Efectivo esperado</td><td>{{Money(value.ExpectedCash)}}</td></tr><tr><td>Efectivo contado</td><td>{{Money(value.CountedCash ?? 0)}}</td></tr></tbody></table>
+<div class="difference"><strong>{{Encode(DifferenceLabel(value.CashDifference ?? 0))}}</strong><strong>{{SignedMoney(value.CashDifference ?? 0)}}</strong></div>{{note}}
 </body></html>
 """;
+        return html
+            .Replace(
+                "</style>",
+                ".platform-footer{margin-top:10px;text-align:center;font:700 12px/1.4 Arial,sans-serif}</style>",
+                StringComparison.Ordinal)
+            .Replace(
+                "</body>",
+                "<footer class=\"platform-footer\">www.auralyapp.co</footer></body>",
+                StringComparison.Ordinal)
+            .Replace(
+                "<html lang=\"es\">",
+                $"<html lang=\"es\" data-auraly-report=\"{PosPrintTemplateCatalog.WorkSessionClosure.Code}\" data-auraly-report-version=\"{PosPrintTemplateCatalog.WorkSessionClosure.Version}\">",
+                StringComparison.Ordinal);
     }
 
     private static string Date(DateTimeOffset value) =>
@@ -503,6 +513,7 @@ internal static class WorkSessionClosureReceiptRenderer
         value.PaymentTotals.Sum(payment => Math.Max(0, payment.OtherAmount));
     private static decimal CashExits(WorkSessionClosureView value) =>
         value.PaymentTotals.Sum(payment => Math.Abs(Math.Min(0, payment.OtherAmount)));
+    private static string Location(WorkSessionClosureView value) => value.BusinessName;
     private static string Encode(string value) => WebUtility.HtmlEncode(value);
     private static string Pair(string label, string value, int columns)
     {
@@ -516,6 +527,18 @@ internal static class WorkSessionClosureReceiptRenderer
         for (var offset = 0; offset < text.Length; offset += columns)
             Line(stream, text.Substring(offset, Math.Min(columns, text.Length - offset)));
         if (text.Length == 0) Line(stream, string.Empty);
+    }
+    private static void BoldWrapped(Stream stream, string value, int columns)
+    {
+        Write(stream, BoldOn);
+        Wrapped(stream, value, columns);
+        Write(stream, BoldOff);
+    }
+    private static void BoldLine(Stream stream, string value)
+    {
+        Write(stream, BoldOn);
+        Line(stream, value);
+        Write(stream, BoldOff);
     }
     private static void Line(Stream stream, string value)
     {

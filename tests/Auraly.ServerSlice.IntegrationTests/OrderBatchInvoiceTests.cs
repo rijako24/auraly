@@ -162,17 +162,19 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
             Assert.Equal("Invoiced", result.Status);
             Assert.NotNull(result.DocumentId);
             Assert.NotNull(result.DocumentNumber);
+            Assert.NotNull(result.Receipt);
+            Assert.Equal(result.DocumentId, result.Receipt!.DocumentId);
         });
         Assert.Equal(
             2,
             first.Results.Select(result => result.DocumentId).Distinct().Count());
-
         var replay = await InvoiceAsync(client, command, idempotencyKey);
         Assert.True(replay.IsReplay);
         Assert.Equal(first.OperationId, replay.OperationId);
         Assert.Equal(
             first.Results.Select(result => result.DocumentId),
             replay.Results.Select(result => result.DocumentId));
+        Assert.All(replay.Results, result => Assert.NotNull(result.Receipt));
 
         var invoicedPage = await client.GetFromJsonAsync<OrderPage>(
             "/api/commerce/v1/orders?page=1&pageSize=20&status=Invoiced");
@@ -215,6 +217,55 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal(2, reader.GetInt32(3));
         Assert.Equal(0, reader.GetInt32(4));
         Assert.Equal(0, reader.GetInt32(5));
+    }
+
+    [Fact]
+    public async Task Sales_receipt_is_returned_with_order_emission_without_a_fiscal_lookup()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var command = new InvoiceOrdersRequest(
+            workSessionId,
+            fixture.WarehouseId,
+            userId,
+            [orderId],
+            "Cash",
+            null,
+            DocumentType: "SalesReceipt");
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var response = await InvoiceAsync(
+                client,
+                command,
+                $"sales-receipt-{Guid.NewGuid():N}");
+            var result = Assert.Single(response.Results);
+            var receipt = Assert.IsType<Auraly.Contracts.Sales.OnlineSalesReceipt>(
+                result.Receipt);
+
+            Assert.Equal("Invoiced", result.Status);
+            Assert.Equal("SalesReceipt", receipt.DocumentType);
+            Assert.Equal(result.DocumentId, receipt.DocumentId);
+            Assert.Null(receipt.Cufe);
+            Assert.Null(receipt.QrPayload);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in fixture.DrainDocumentSignals())
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
     }
 
     [Theory]

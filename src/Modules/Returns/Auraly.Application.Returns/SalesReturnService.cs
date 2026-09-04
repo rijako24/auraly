@@ -49,8 +49,9 @@ public sealed class SalesReturnService(
             !SalesReturnRefundMethods.All.Contains(request.RefundMethodCode!))
             throw new SalesReturnValidationException("The refund method is invalid.");
         if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
-            request.RefundMethodCode != SalesReturnRefundMethods.Cash && request.WorkSessionId is not null)
-            throw new SalesReturnValidationException("Only a cash refund can affect a work session.");
+            (request.WorkSessionId is null || request.WorkSessionId == Guid.Empty))
+            throw new SalesReturnValidationException(
+                "A refund requires the operational work session of the user.");
         var cardRefund = request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             request.RefundMethodCode is SalesReturnRefundMethods.DebitCard or SalesReturnRefundMethods.CreditCard;
         var transferRefund = request.EconomicResolution == ReturnEconomicResolutions.Refund &&

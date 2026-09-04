@@ -1,11 +1,15 @@
 "use client";
 
-import { PencilLine, ShieldCheck } from "lucide-react";
+import { CircleDollarSign, PencilLine, ShieldCheck } from "lucide-react";
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PosDraftLine, PosDraftLineUpdate } from "@/services/pos/pos-edge-client";
-import { formatMoneyValue, parseMoneyDraft } from "./pos-money-input";
-import { lineDiscountPercent, lineMarginPercent, nextFocusableIndex, nextGridPosition, salePriceForMargin, type GridDirection } from "./pos-line-editor-calculation";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "./pos-money-input";
+import { lineDiscountPercent, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin, type GridDirection } from "./pos-line-editor-calculation";
 
 type EditableLine = {
   lineId: string;
@@ -32,6 +36,8 @@ export function PosLineEditorDialog({
   onCancel: () => void;
 }) {
   const [drafts, setDrafts] = useState<EditableLine[]>(() => lines.map(toEditable));
+  const [chargeOpen, setChargeOpen] = useState(false);
+  const [additionalCharge, setAdditionalCharge] = useState("");
   const discountInputs = useRef<Array<HTMLInputElement | null>>([]);
 
   useEffect(() => {
@@ -119,6 +125,32 @@ export function PosLineEditorDialog({
     if (valid && !busy) await onConfirm(parsed);
   }
 
+  const distributeAdditionalCharge = () => {
+    const amount = parseMoneyDraft(additionalCharge);
+    if (amount <= 0) return;
+    const allocations = new Map(prorateAdditionalSaleValue(
+      drafts.map(line => ({
+        lineId: line.lineId,
+        quantity: line.quantity,
+        unitPrice: parseMoneyDraft(line.unitPrice),
+      })),
+      amount,
+    ).map(line => [line.lineId, line]));
+    setDrafts(current => current.map(line => {
+      const allocation = allocations.get(line.lineId)!;
+      const discount = parseMoneyDraft(line.discount);
+      const cost = parseMoneyDraft(line.unitCost);
+      return {
+        ...line,
+        unitPrice: preciseMoneyDraft(allocation.unitPrice),
+        margin: decimalDraft(lineMarginPercent(
+          cost, line.quantity, allocation.unitPrice, discount, line.taxRate)),
+      };
+    }));
+    setAdditionalCharge("");
+    setChargeOpen(false);
+  };
+
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/70 sm:items-center sm:p-4">
     <form role="dialog" aria-modal="true" aria-labelledby="pos-line-editor-title" aria-keyshortcuts="Enter Escape" onSubmit={submit} onKeyDown={(event)=>{
       if (moveInGrid(event)) return;
@@ -142,6 +174,10 @@ export function PosLineEditorDialog({
         <span className="hidden items-center gap-2 rounded-full border border-teal-300/30 bg-teal-300/10 px-3 py-1.5 text-xs font-semibold text-teal-100 sm:flex"><ShieldCheck className="h-4 w-4"/>Solo este documento</span>
       </header>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">
+        <section className="flex flex-col gap-4 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-teal-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-700 text-white"><CircleDollarSign className="h-5 w-5" /></span><div><strong className="text-slate-950">Distribuir cargo adicional</strong><p className="mt-1 text-sm text-slate-600">Suma un valor a la venta y lo reparte por igual por cada unidad, respetando la cantidad de cada línea.</p></div></div>
+          <Button type="button" variant="outline" className="shrink-0 border-teal-300 bg-white" onClick={() => setChargeOpen(true)}>Agregar y distribuir</Button>
+        </section>
         {drafts.map((line, index) => {
           const price = parseMoneyDraft(line.unitPrice);
           const discount = parseMoneyDraft(line.discount);
@@ -173,6 +209,14 @@ export function PosLineEditorDialog({
         </div>
       </footer>
     </form>
+    <Dialog open={chargeOpen} onOpenChange={setChargeOpen}>
+      <DialogContent className="max-w-md" onKeyDown={event => event.stopPropagation()}>
+        <DialogHeader><DialogTitle>Distribuir cargo adicional</DialogTitle><DialogDescription>El valor se dividirá entre la suma de todas las cantidades y aumentará el precio de venta unitario de cada línea.</DialogDescription></DialogHeader>
+        <div className="space-y-2"><Label htmlFor="additional-sale-charge">Valor total que deseas agregar</Label><Input id="additional-sale-charge" autoFocus inputMode="decimal" value={additionalCharge} onChange={event => setAdditionalCharge(formatMoneyDraft(event.target.value))} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); distributeAdditionalCharge(); } }} placeholder="0" className="h-12 text-lg font-bold" /></div>
+        <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">Cantidad total: <strong>{drafts.reduce((sum, line) => sum + line.quantity, 0)}</strong>{parseMoneyDraft(additionalCharge) > 0 && <> · Incremento por unidad: <strong>{formatMoneyValue(parseMoneyDraft(additionalCharge) / drafts.reduce((sum, line) => sum + line.quantity, 0))}</strong></>}</div>
+        <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setChargeOpen(false)}>Cancelar</Button><Button type="button" disabled={parseMoneyDraft(additionalCharge) <= 0} onClick={distributeAdditionalCharge}>Distribuir en las líneas</Button></div>
+      </DialogContent>
+    </Dialog>
   </div>;
 }
 
@@ -194,6 +238,13 @@ function toEditable(line: PosDraftLine): EditableLine {
 function inclusive(value: number, taxRate: number) { return value * (1 + taxRate / 100); }
 function exclusive(value: number, taxRate: number) { return value / (1 + taxRate / 100); }
 function decimalDraft(value: number) { return String(Math.round(value * 100) / 100).replace(".", ","); }
+function preciseMoneyDraft(value: number) {
+  return new Intl.NumberFormat("es-CO", {
+    useGrouping: true,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6,
+  }).format(value);
+}
 
 function percentage(discount: number, maximum: number): string {
   if (!maximum) return "0";

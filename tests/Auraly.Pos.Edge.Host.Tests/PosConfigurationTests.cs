@@ -59,6 +59,7 @@ public sealed class PosConfigurationTests
                 Path.Combine(directory, "keys"));
             store.Save(enrollment);
             var runtime = new PosEdgeRuntimeContext(
+                new TenantId(enrollment.TenantId),
                 new BusinessId(enrollment.BusinessId),
                 new WarehouseId(enrollment.WarehouseId),
                 new DeviceId(enrollment.DeviceId),
@@ -166,7 +167,6 @@ public sealed class PosConfigurationTests
                 new EscPosReceiptRenderer(),
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
-                raw,
                 rendered,
                 documents);
 
@@ -178,7 +178,7 @@ public sealed class PosConfigurationTests
             Assert.Contains("<!doctype html>", rendered.Documents[0],
                 StringComparison.OrdinalIgnoreCase);
             var now = DateTimeOffset.UtcNow;
-            await new PosWorkSessionClosurePrinter(store, raw, rendered).PrintAsync(
+            await new PosWorkSessionClosurePrinter(store, rendered).PrintAsync(
                 new WorkSessionClosureView(
                     Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Negocio",
                     Guid.NewGuid(), "Bodega", Guid.NewGuid(), "Cajero", null,
@@ -187,7 +187,7 @@ public sealed class PosConfigurationTests
                 CancellationToken.None);
 
             Assert.Equal(2, rendered.PrinterNames.Count);
-            Assert.Contains("ARQUEO DE CAJA", rendered.Documents[1],
+            Assert.Contains("Arqueo de caja", rendered.Documents[1],
                 StringComparison.Ordinal);
         }
         finally
@@ -239,6 +239,48 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
+    public async Task Orders_workflow_honors_its_configured_sheet_format_and_printer()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-orders-sheet-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw,
+                "Tirilla",
+                80,
+                "Media carta",
+                PosPrinterName: "Factura POS",
+                OrdersPrinterName: "Pedidos media carta",
+                OrdersOutputFormat: PrintTemplateFormats.HalfLetter));
+            var raw = new RecordingRawPrintJob();
+            var rendered = new RecordingRenderedPrintJob();
+            var documents = new ConfigurableOrderDocumentPrinter(
+                store, new HalfLetterDocumentRenderer(), rendered);
+            var printer = new ConfigurablePosReceiptPrinter(
+                store,
+                new EscPosReceiptRenderer(),
+                new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(),
+                rendered,
+                documents);
+
+            await printer.PrintOrdersReceiptAsync(Receipt());
+
+            Assert.Empty(raw.PrinterNames);
+            Assert.Equal(["Pedidos media carta"], rendered.PrinterNames);
+            Assert.Contains("Comprobante de venta", rendered.Documents.Single());
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Configured_sheet_format_is_sent_to_the_local_printer_without_browser_dialog()
     {
         var directory = Path.Combine(
@@ -264,7 +306,6 @@ public sealed class PosConfigurationTests
                 new EscPosReceiptRenderer(),
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
-                new RecordingRawPrintJob(),
                 rendered,
                 documents);
 
@@ -469,6 +510,7 @@ public sealed class PosConfigurationTests
                 "Media carta",
                 PosPrinterName: "Factura POS",
                 OrdersPrinterName: "Pedidos POS",
+                OrdersOutputFormat: PrintTemplateFormats.Receipt,
                 OrdersReceiptPaperWidthMillimeters: 58));
             var raw = new RecordingRawPrintJob();
             var rendered = new RecordingRenderedPrintJob();
@@ -479,7 +521,6 @@ public sealed class PosConfigurationTests
                 new EscPosReceiptRenderer(),
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
-                raw,
                 rendered,
                 documents);
             var receipt = Receipt();
@@ -505,7 +546,7 @@ public sealed class PosConfigurationTests
                 null,
                 "Cliente"));
             var now = DateTimeOffset.UtcNow;
-            await new PosWorkSessionClosurePrinter(store, raw, rendered).PrintAsync(
+            await new PosWorkSessionClosurePrinter(store, rendered).PrintAsync(
                 new WorkSessionClosureView(
                     Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Negocio",
                     Guid.NewGuid(), "Bodega", Guid.NewGuid(), "Cajero", null,
@@ -513,9 +554,11 @@ public sealed class PosConfigurationTests
                     [new WorkSessionPaymentTotal("Cash", 10m, 0, 0, 10m, 10m, 0)]),
                 CancellationToken.None);
 
+            Assert.Empty(raw.PrinterNames);
             Assert.Equal(
                 new[] { "Factura POS", "Pedidos POS", "Factura POS" },
-                raw.PrinterNames);
+                rendered.PrinterNames);
+            Assert.Contains("class=\"tax-table\"", rendered.Documents[0]);
         }
         finally
         {
@@ -656,12 +699,12 @@ public sealed class PosConfigurationTests
             var now = DateTimeOffset.UtcNow;
 
             await new PosCashMovementTicketPrinter(
-                store, raw, rendered, workstation).PrintAsync(
+                store, rendered, workstation).PrintAsync(
                 new PosCashMovementTicket(
                     Guid.NewGuid(), "In", "Base", 10m, now, null, null, "Cajero"),
                 CancellationToken.None);
             await new PosWorkSessionClosurePrinter(
-                store, raw, rendered, workstation).PrintAsync(
+                store, rendered, workstation).PrintAsync(
                 new WorkSessionClosureView(
                     Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Sede",
                     Guid.NewGuid(), "Bodega", Guid.NewGuid(), "Cajero", null,

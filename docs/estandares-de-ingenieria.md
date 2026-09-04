@@ -202,6 +202,8 @@ Las reglas concretas del motor conversacional viven exclusivamente en `docs/agen
 - Todos los motivos operativos provienen de `BusinessReasons`. `ReasonType` determina en qué procesos y selectores aparece cada motivo; `ReasonTemplates` contiene únicamente los valores iniciales del perfil y el tenant materializa filas editables por sede. No se crean listas paralelas de motivos por módulo.
 - Mantener limites server/client de Next.js y consultar la documentacion instalada de la version del repositorio antes de usar APIs que puedan haber cambiado.
 - Cubrir flujos criticos y estados de error, no solo el happy path.
+- Todo cambio de frontend termina con una auditoria funcional de la pantalla real, manual o automatizada segun el riesgo. Debe comprobar carga, vacio, error, permisos y deshabilitados; teclado, foco, labels y contraste; calculos visibles; guardar/reabrir; y el journey principal completo. Compilar, hacer type-check o mirar el JSX no sustituye esta auditoria. Si el entorno no permite ejecutarla, la entrega declara exactamente el bloqueo.
+- En esa auditoria se traza cada `select`, combobox, radio group y dropdown de negocio desde tabla/seed hasta query/API y componente. Se comprueba con datos reales que carga opciones activas, respeta orden y scope, conserva valores historicos inactivos solo en lectura y no contiene un arreglo, mapa o `switch` paralelo en UI. Las opciones tecnicas puramente visuales deben quedar justificadas como tales.
 
 ## 15. Estrategia de pruebas
 
@@ -269,6 +271,7 @@ Antes de entregar, verificar:
 - [ ] No se mezclaron cambios ajenos ni se sobrescribio trabajo existente.
 - [ ] Documentacion y decisiones canonicas quedaron sincronizadas.
 - [ ] Se realizo la auditoria posterior del diff y se corrigieron sus hallazgos antes de entregar.
+- [ ] Si hubo frontend, se audito funcionalmente la pantalla y cada selector de negocio cargo desde su fuente canonica persistida.
 
 ### Auditoria posterior a cada implementacion
 

@@ -9,7 +9,7 @@
 --   1. Admin user, rol y tenant base
 --   2. Configuracion agentic del agente Mimo Bot (AgentType, Agent,
 --      PromptSections, KnowledgeSources, link a WhatsApp)
---   3. Categorias de servicio iniciales para negocios sin catalogo
+--   3. Los negocios nuevos conservan vacio su catalogo de servicios
 --   4. Recursos y empleados de prueba para el negocio dev
 --   5. Negocio dev (tenant 2222, attachments y datos base)
 --   6. Politica de agendamiento (settings y horarios por dia de la semana)
@@ -47,6 +47,10 @@
 :r .\Migrations\MigrateSuppliersToParties.sql
 :r .\Migrations\RemoveLegacyTriggers.sql
 :r .\Migrations\ClassifySystemWarehouses.sql
+:r .\Migrations\20260903_BackfillLegacyDamageWarehouses.sql
+:r .\Migrations\20260903_AlignWorkSessionOperationalScope.sql
+:r .\Migrations\20260903_BackfillDispatchSettlementWorkSessions.sql
+:r .\Migrations\AddTenantInventoryCostBasis.sql
 :r .\Migrations\BackfillPreparedProductPrices.sql
 :r .\Migrations\MigratePricePublicationAuditOrigins.sql
 :r .\Migrations\RemoveLegacyFiscalConfiguration.sql
@@ -59,7 +63,7 @@ GO
 :r .\Seeds\SeedCatalogPermissions.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
 :r .\Seeds\SeedDevBusiness.sql
-:r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql
+:r .\Migrations\20260903_RemoveGlobalServiceDemoSeed.sql
 :r .\Migrations\MigrateIniciacionJardinService2026.sql
 :r .\Migrations\MigrateBabySpaServiceKeywords2026.sql
 :r .\Seeds\SeedWorkSessionPermissions.sql
@@ -166,3 +170,4 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Migrations\BackfillCanonicalInventoryBalances.sql
 :r .\Migrations\MigrateTenantProductsAndBusinessPrices.sql
 :r .\Migrations\BackfillGoodsReceiptFunctionalCurrency.sql
+:r .\Migrations\ClassifySystemWarehouses.sql

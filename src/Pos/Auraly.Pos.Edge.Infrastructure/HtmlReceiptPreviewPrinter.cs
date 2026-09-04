@@ -47,9 +47,15 @@ public sealed class HtmlReceiptPreviewRenderer
                 "Receipt width must be 58 or 80 mm.");
 
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
+        var template = PosPrintTemplateCatalog.ForSale(receipt.DocumentType);
+        var bodyFontSize = isFiscal ? 12 : 11;
         var issuedBy = isFiscal
             ? "Factura emitida por Auraly"
             : "Comprobante emitido por Auraly";
+        var displayNumber = Encode(PosReceiptPresentation.DisplayNumber(receipt));
+        var documentHeader = isFiscal
+            ? $"<div class=\"title\">N.º {displayNumber}</div>"
+            : $"<div class=\"title\">{Encode(PosReceiptPresentation.Title(receipt))}</div><div class=\"title\">N.º {displayNumber}</div>";
         var qrSvg = string.Empty;
         if (isFiscal)
         {
@@ -60,9 +66,8 @@ public sealed class HtmlReceiptPreviewRenderer
                 pixelsPerModule: 4, darkColorHex: "#061f22", lightColorHex: "#ffffff",
                 drawQuietZones: true, sizingMode: SvgQRCode.SizingMode.ViewBoxAttribute);
         }
-        var fiscalNumber = isFiscal ? Pair("Número DIAN", Encode(receipt.FiscalNumber!)) : string.Empty;
         var fiscalFooter = isFiscal
-            ? $"<div class=\"cufe\"><strong>CUFE</strong><br>{Encode(receipt.Cufe!)}</div><div class=\"qr\">{qrSvg}</div><p class=\"center muted\">Representación gráfica</p>"
+            ? $"<div class=\"cufe\"><strong>CUFE</strong><br>{Encode(receipt.Cufe!)}</div><div class=\"qr\">{qrSvg}</div>"
             : string.Empty;
 
         var lines = string.Join(
@@ -85,27 +90,28 @@ public sealed class HtmlReceiptPreviewRenderer
                 })
                 .OrderBy(value => value.TaxCode, StringComparer.Ordinal)
                 .ThenBy(value => value.TaxRate)
-                .Select(tax => Pair(
-                    $"{TaxName(tax.TaxCode)} {Rate(tax.TaxRate)}% · base {Money(tax.Base)}",
-                    Money(tax.Amount))));
+                .Select(tax =>
+                    $"<tr><td>{Encode(TaxName(tax.TaxCode))} {Rate(tax.TaxRate)}%</td>" +
+                    $"<td>{Money(tax.Base)}</td><td>{Money(tax.Amount)}</td></tr>"));
         var withholdingLines = string.Join(
             Environment.NewLine,
             (receipt.Withholdings ?? []).Select(withholding =>
                 Pair($"Ret. {withholding.Name} ({Rate(withholding.Rate)}%)", $"-{Money(withholding.Amount)}")));
         var withholdings = receipt.WithholdingTotal <= 0
             ? string.Empty
-            : $"<div class=\"section-title\">Retenciones</div>{withholdingLines}{Pair("Total retenciones", $"-{Money(receipt.WithholdingTotal)}")}";
+            : $"{Pair("Total bruto", Money(receipt.PayableAmount))}<div class=\"section-title\">Retenciones</div>{withholdingLines}{Pair("Total retenciones", $"-{Money(receipt.WithholdingTotal)}")}";
         var netPayable = receipt.WithholdingTotal > 0
             ? receipt.NetPayableAmount
             : receipt.PayableAmount;
 
         var companyName = Encode(receipt.CompanyName ?? string.Empty);
+        var scope = Scope(receipt.BusinessName);
         var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
             ? string.Empty
             : $"<img class=\"brand-logo\" src=\"{Encode(receipt.CompanyLogoSource)}\" alt=\"Logo de {companyName}\">";
         return $$"""
             <!doctype html>
-            <html lang="es">
+            <html lang="es" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}">
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -119,28 +125,34 @@ public sealed class HtmlReceiptPreviewRenderer
                   margin: 18px auto;
                   background: white;
                   color: #061f22;
-                  font: 12px/1.35 ui-monospace, "Cascadia Mono", Consolas, monospace;
+                  font: {{bodyFontSize}}px/1.35 ui-monospace, "Cascadia Mono", Consolas, monospace;
                   box-shadow: 0 16px 45px rgba(6,31,34,.18);
                 }
-                .receipt { padding: 5mm 4mm 7mm; }
+                .receipt { padding: 5mm 3mm 2mm 2mm; }
                 .center { text-align: center; }
-                .brand { font: 800 23px/1 system-ui, sans-serif; letter-spacing: -.04em; }
+                header > * + * { margin-top: 5px; }
+                .brand { font: 800 23px/1 system-ui, sans-serif; letter-spacing: -.04em; text-transform: uppercase; }
                 .brand-logo { display: block; max-width: 48mm; max-height: 18mm; object-fit: contain; margin: 0 auto 3mm; }
-                .title { margin-top: 5px; font-weight: 800; text-transform: uppercase; }
+                .title { margin-top: 6px; font-size: 13px; font-weight: 800; text-transform: uppercase; }
+                .scope { margin-top: 4px; overflow-wrap: anywhere; }
                 .muted { color: #49666a; }
-                .rule { border: 0; border-top: 1px dashed #789093; margin: 10px 0; }
+                .rule { border: 0; border-top: 1px dashed #789093; margin: 8px 0; }
                 .line { margin: 9px 0; break-inside: avoid; }
                 .product { font-weight: 800; overflow-wrap: anywhere; }
                 .pair { display: flex; justify-content: space-between; gap: 10px; }
                 .pair strong, .amount { white-space: nowrap; font-variant-numeric: tabular-nums; }
                 .discount { color: #9a4b08; font-size: 11px; }
                 .section-title { margin: 7px 0 3px; font-weight: 900; text-transform: uppercase; }
+                .tax-table { width: 100%; border-collapse: collapse; margin: 4px 0; }
+                .tax-table th { padding: 3px 0; border-bottom: 1px solid #789093; text-align: right; font-size: 10px; }
+                .tax-table th:first-child, .tax-table td:first-child { text-align: left; }
+                .tax-table td { padding: 3px 0; text-align: right; font-variant-numeric: tabular-nums; }
                 .total { margin-top: 5px; font-size: 16px; font-weight: 900; }
                 .cufe { overflow-wrap: anywhere; font-size: 9px; }
-                .qr { width: 38mm; max-width: 100%; margin: 10px auto 5px; }
+                .qr { width: 38mm; max-width: 100%; margin: 6px auto 4px; }
                 .qr svg { display: block; width: 100%; height: auto; }
                 .platform-footer { margin-top: 10px; text-align: center; font: 10px/1.4 system-ui, sans-serif; color: #49666a; }
-                .platform-footer strong { color: #065f5b; }
+                .platform-footer strong { color: #065f5b; font-size: 12px; }
                 .actions {
                   position: sticky;
                   top: 0;
@@ -171,23 +183,23 @@ public sealed class HtmlReceiptPreviewRenderer
                 <header class="center">
                   {{companyLogo}}
                   <div class="brand">{{companyName}}</div>
-                  <div class="title">{{(isFiscal ? "Factura electrónica de venta" : "Comprobante de venta")}}</div>
-                  <div class="muted">{{Encode(receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture))}}</div>
+                  {{documentHeader}}
+                  <div class="muted">{{Encode(receipt.IssuedAt.ToLocalTime().ToString("dd/MM/yyyy, h:mm:ss tt", ColombianCulture))}}</div>
+                  {{(string.IsNullOrWhiteSpace(scope) ? string.Empty : $"<div class=\"scope muted\">{Encode(scope)}</div>")}}
                 </header>
                 <hr class="rule">
-                {{Pair("N.º de ticket", Encode(receipt.DocumentNumber))}}
-                {{fiscalNumber}}
-                <div class="pair"><span>Adquirente</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>
+                <div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName ?? receipt.CustomerIdentification)}}</strong></div>
+                <div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>
                 <hr class="rule">
                 {{lines}}
                 <hr class="rule">
+                <div class="section-title">Resumen e impuestos</div>
+                <table class="tax-table"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{{taxes}}</tbody></table>
                 {{Pair("Subtotal", Money(receipt.UntaxedAmount))}}
-                <div class="section-title">Impuestos por tarifa</div>
-                {{taxes}}
                 {{Pair("Total impuestos", Money(receipt.TaxAmount))}}
-                {{Pair("Total bruto", Money(receipt.PayableAmount))}}
                 {{withholdings}}
-                <div class="pair total"><span>Total a pagar</span><strong>{{Money(netPayable)}}</strong></div>
+                <hr class="rule">
+                <div class="pair total"><span>Total</span><strong>{{Money(netPayable)}}</strong></div>
                 <hr class="rule">
                 <div class="section-title">Medios de pago</div>
                 {{payments}}
@@ -223,6 +235,11 @@ public sealed class HtmlReceiptPreviewRenderer
 
     private static string Pair(string label, string value) =>
         $"<div class=\"pair\"><span>{Encode(label)}</span><strong>{value}</strong></div>";
+
+    private static string Scope(string? businessName)
+    {
+        return string.IsNullOrWhiteSpace(businessName) ? string.Empty : $"Sede: {businessName}";
+    }
 
     private static string PaymentName(string code) => code switch
     {

@@ -39,6 +39,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       const detail = (event as CustomEvent<SessionExpiredEventDetail>).detail;
       setExpired(detail ?? {
         destination: "/login",
+        title: "Sesión finalizada",
         message: "Esta sesión ya no está activa. Inicia sesión nuevamente para continuar.",
       });
     };
@@ -61,7 +62,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
               <LogOut className="h-6 w-6" aria-hidden="true" />
             </div>
             <DialogTitle className="text-xl text-slate-950">
-              Sesión iniciada en otro lugar
+              {expired?.title}
             </DialogTitle>
             <DialogDescription className="pt-2 text-base leading-6 text-slate-600">
               {expired?.message}

@@ -7,7 +7,6 @@ public sealed class PosEdgeAuthenticationService(
     PosIdentitySynchronizer identitySynchronization,
     PosOfflineLeaseClient offlineLeases,
     PosOfflineLeaseStore offlineLeaseStore,
-    PosWorkSessionOpenServerClient workSessions,
     ILogger<PosEdgeAuthenticationService> logger)
 {
     public async Task<PosLocalUserSession> LoginAsync(
@@ -15,34 +14,25 @@ public sealed class PosEdgeAuthenticationService(
         CancellationToken cancellationToken = default)
     {
         var login = await LoginLocalAsync(request, cancellationToken);
-        var session = login.Session;
         try
         {
-            // A connected login on an enrolled POS is the canonical handoff to
-            // this device. The server acquisition revokes every online browser
-            // session for the same user before the POS starts operating.
+            // Authentication may refresh the signed offline lease while connected.
+            // Operational WorkSessions are deliberately opened only by the POS
+            // entry point and are never acquired or replaced here.
             if (login.AcquiredLease is null)
             {
                 var lease = await offlineLeases.AcquireAsync(request, cancellationToken);
                 await offlineLeaseStore.SaveAsync(lease, cancellationToken);
                 await identities.ApplyLeaseUserAsync(lease.User, cancellationToken);
             }
-            var active = await workSessions.OpenOrResumeAsync(
-                session, cancellationToken);
-            if (active.WorkSessionId != session.WorkSessionId)
-            {
-                await identities.AssignWorkSessionAsync(
-                    session.SessionId, active.WorkSessionId, cancellationToken);
-                session = session with { WorkSessionId = active.WorkSessionId };
-            }
         }
         catch (HttpRequestException error)
         {
             logger.LogWarning(
                 error,
-                "The server authentication handoff or work session could not be activated; local offline login remains available.");
+                "The server authentication lease could not be refreshed; local offline login remains available.");
         }
-        return session;
+        return login.Session;
     }
 
     private async Task<LocalLoginResult> LoginLocalAsync(

@@ -71,6 +71,7 @@ internal sealed class PosSynchronizationWork(
     PosEdgeOutboxUploader uploader,
     PosCashMovementServerClient cashMovements,
     PosWorkSessionClosureUploader closures,
+    PosWorkSessionOpenUploader workSessionOpenings,
     PosUnifiedOutboxDispatcher outbox,
     PosFiscalStatusSynchronizer fiscalStatuses,
     PosFiscalProvisioningSynchronizer fiscalProvisioning,
@@ -103,6 +104,8 @@ internal sealed class PosSynchronizationWork(
                         {
                             var dispatched = route switch
                             {
+                                PosUnifiedOutboxRoute.WorkSessionOpened =>
+                                    await workSessionOpenings.UploadNextAsync(cancellationToken),
                                 PosUnifiedOutboxRoute.Sale =>
                                     await uploader.UploadNextAsync(cancellationToken),
                                 PosUnifiedOutboxRoute.CashMovement =>

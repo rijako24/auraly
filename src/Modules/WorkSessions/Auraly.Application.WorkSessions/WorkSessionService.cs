@@ -16,6 +16,12 @@ public interface IWorkSessionStore
         OpenWorkSessionRequest request,
         CancellationToken cancellationToken);
 
+    Task<WorkSessionView> RegisterDeviceOpenAsync(
+        WorkSessionIdentity identity,
+        RegisterDeviceWorkSessionRequest request,
+        Guid deviceId,
+        CancellationToken cancellationToken);
+
     Task<WorkSessionClosureView> CloseAsync(
         WorkSessionIdentity identity,
         Guid workSessionId,
@@ -79,6 +85,9 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken = default)
     {
         Demand(identity, WorkSessionPermissionCodes.Read);
+        if (identity.BusinessId is not { } businessId || businessId == Guid.Empty)
+            throw new WorkSessionForbiddenException(
+                "The authenticated web context lacks a valid business.");
         return store.CurrentAsync(identity, cancellationToken);
     }
 
@@ -89,34 +98,38 @@ public sealed class WorkSessionService(
     {
         Demand(identity, WorkSessionPermissionCodes.Open);
         ValidateOpen(request);
-        return await store.OpenOrResumeAsync(identity, request, cancellationToken);
+        if (identity.BusinessId != request.BusinessId)
+            throw new WorkSessionForbiddenException(
+                "The requested business does not match the authenticated context.");
+        return await store.OpenOrResumeAsync(
+            identity,
+            request with { WarehouseId = null, DeviceId = null },
+            cancellationToken);
     }
 
-    public async Task<WorkSessionView> OpenOrResumeDeviceAsync(
+    public Task<WorkSessionView> RegisterDeviceOpenAsync(
         WorkSessionIdentity identity,
-        DeviceOpenWorkSessionRequest request,
+        RegisterDeviceWorkSessionRequest request,
         Guid deviceId,
         CancellationToken cancellationToken = default)
     {
-        if (request.UserId == Guid.Empty)
-            throw new WorkSessionValidationException(
-                "UserId is required.");
-        if (request.UserId != identity.UserId)
+        ValidateDeviceIdentity(identity);
+        if (request.UserId == Guid.Empty || request.UserId != identity.UserId)
             throw new WorkSessionForbiddenException(
                 "The local user does not match the requested work session.");
-        if (deviceId == Guid.Empty)
-            throw new WorkSessionValidationException("DeviceId is required.");
-        var open = new OpenWorkSessionRequest(
-            request.BusinessId, request.WarehouseId, deviceId);
-        ValidateOpen(open);
-        return await store.OpenOrResumeAsync(identity, open, cancellationToken);
+        if (request.WorkSessionId == Guid.Empty || request.BusinessId == Guid.Empty ||
+            request.OpenedAt == default || deviceId == Guid.Empty)
+            throw new WorkSessionValidationException(
+                "WorkSessionId, BusinessId, OpenedAt and DeviceId are required.");
+        return store.RegisterDeviceOpenAsync(
+            identity, request, deviceId, cancellationToken);
     }
 
     private static void ValidateOpen(OpenWorkSessionRequest request)
     {
-        if (request.BusinessId == Guid.Empty || request.WarehouseId == Guid.Empty)
+        if (request.BusinessId == Guid.Empty)
             throw new WorkSessionValidationException(
-                "BusinessId and WarehouseId are required.");
+                "BusinessId is required.");
         if (request.DeviceId == Guid.Empty)
             throw new WorkSessionValidationException(
                 "DeviceId must be null or a valid identifier.");

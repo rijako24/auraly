@@ -236,7 +236,7 @@ internal sealed partial class AuralyDesktopUpdater(
         if (pendingUpdate is null) return;
         AuralyPendingUpdateStore.StartInstaller(pendingUpdate.InstallerPath);
         shutdown.Cancel();
-        Application.Exit();
+        System.Windows.Forms.Application.Exit();
     }
 
     private void PostStatus(

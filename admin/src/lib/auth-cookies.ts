@@ -31,7 +31,7 @@ export function getAccessTokenCookieOptions() {
 }
 
 export function getRefreshTokenCookieOptions() {
-  return getAuthCookieOptions(7 * 24 * 60 * 60);
+  return getAuthCookieOptions(24 * 60 * 60);
 }
 
 export function getAuthenticationClientCookieOptions() {

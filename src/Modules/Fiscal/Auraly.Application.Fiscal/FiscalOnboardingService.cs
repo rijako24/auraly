@@ -118,7 +118,7 @@ public sealed class FiscalOnboardingService(
             user.TenantId,
             businessId,
             request.SoftwarePin.Trim(),
-            request.CertificatePfx,
+            certificate.NormalizedPfx,
             request.CertificatePassword,
             certificate.NotBefore,
             certificate.NotAfter,
@@ -232,13 +232,10 @@ public sealed class FiscalOnboardingService(
         string supplierCheckDigit,
         DateTimeOffset now)
     {
-        X509Certificate2Collection collection = [];
+        X509Certificate2Collection collection;
         try
         {
-            collection.Import(
-                pfx,
-                password,
-                X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+            collection = FiscalPkcs12Importer.Import(pfx, password);
         }
         catch (CryptographicException)
         {
@@ -246,39 +243,50 @@ public sealed class FiscalOnboardingService(
                 "No fue posible abrir el PFX/P12: la contraseña es incorrecta o el archivo está dañado.");
         }
 
-        using var certificate = collection.OfType<X509Certificate2>()
-            .SingleOrDefault(item => item.HasPrivateKey)
-            ?? throw new FiscalConfigurationValidationException(
-                "El certificado debe contener exactamente una clave privada.");
-        if (collection.OfType<X509Certificate2>().Count(item => item.HasPrivateKey) != 1)
-            throw new FiscalConfigurationValidationException(
-                "El archivo debe contener exactamente un certificado con clave privada.");
-        if (now < certificate.NotBefore)
-            throw new FiscalConfigurationValidationException(
-                $"El certificado todavía no está vigente; inicia el {certificate.NotBefore:yyyy-MM-dd HH:mm} UTC.");
-        if (now > certificate.NotAfter)
-            throw new FiscalConfigurationValidationException(
-                $"El certificado está vencido desde el {certificate.NotAfter:yyyy-MM-dd HH:mm} UTC.");
-        if (!FiscalCertificateIdentityPolicy.IsAcceptable(
-                supplierTaxId, supplierCheckDigit, certificate.Subject))
-            throw new FiscalConfigurationValidationException(
-                "El NIT del certificado no coincide con el NIT del perfil legal.");
+        try
+        {
+            using var certificate = collection.OfType<X509Certificate2>()
+                .SingleOrDefault(item => item.HasPrivateKey)
+                ?? throw new FiscalConfigurationValidationException(
+                    "El certificado debe contener exactamente una clave privada.");
+            if (collection.OfType<X509Certificate2>().Count(item => item.HasPrivateKey) != 1)
+                throw new FiscalConfigurationValidationException(
+                    "El archivo debe contener exactamente un certificado con clave privada.");
+            if (now < certificate.NotBefore)
+                throw new FiscalConfigurationValidationException(
+                    $"El certificado todavía no está vigente; inicia el {certificate.NotBefore:yyyy-MM-dd HH:mm} UTC.");
+            if (now > certificate.NotAfter)
+                throw new FiscalConfigurationValidationException(
+                    $"El certificado está vencido desde el {certificate.NotAfter:yyyy-MM-dd HH:mm} UTC.");
+            if (!FiscalCertificateIdentityPolicy.IsAcceptable(
+                    supplierTaxId, supplierCheckDigit, certificate.Subject))
+                throw new FiscalConfigurationValidationException(
+                    "El NIT del certificado no coincide con el NIT del perfil legal.");
 
-        // Product policy: validate the credential and its legal owner, but do not
-        // gate onboarding by issuer, trust chain or declared key-usage extensions.
-        var probe = RandomNumberGenerator.GetBytes(32);
-        if (certificate.GetRSAPrivateKey() is RSA rsa)
-            _ = rsa.SignHash(probe, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        else if (certificate.GetECDsaPrivateKey() is ECDsa ecdsa)
-            _ = ecdsa.SignHash(probe);
-        else
-            throw new FiscalConfigurationValidationException(
-                "La clave privada del certificado no usa un algoritmo de firma compatible.");
+            // Product policy: validate the credential and its legal owner, but do not
+            // gate onboarding by issuer, trust chain or declared key-usage extensions.
+            var probe = RandomNumberGenerator.GetBytes(32);
+            if (certificate.GetRSAPrivateKey() is RSA rsa)
+                _ = rsa.SignHash(probe, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            else if (certificate.GetECDsaPrivateKey() is ECDsa ecdsa)
+                _ = ecdsa.SignHash(probe);
+            else
+                throw new FiscalConfigurationValidationException(
+                    "La clave privada del certificado no usa un algoritmo de firma compatible.");
 
-        return new ValidatedCertificate(
-            certificate.Thumbprint.Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant(),
-            certificate.NotBefore,
-            certificate.NotAfter);
+            var normalizedPfx = collection.Export(X509ContentType.Pkcs12, password)
+                ?? throw new FiscalConfigurationValidationException(
+                    "No fue posible normalizar el certificado para almacenarlo de forma segura.");
+            return new ValidatedCertificate(
+                certificate.Thumbprint.Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant(),
+                certificate.NotBefore,
+                certificate.NotAfter,
+                normalizedPfx);
+        }
+        finally
+        {
+            collection.DisposeAll();
+        }
     }
 
     private static void ValidateBusiness(Guid businessId)
@@ -297,7 +305,8 @@ public sealed class FiscalOnboardingService(
     private sealed record ValidatedCertificate(
         string Thumbprint,
         DateTimeOffset NotBefore,
-        DateTimeOffset NotAfter);
+        DateTimeOffset NotAfter,
+        byte[] NormalizedPfx);
 }
 
 public static class FiscalCertificateIdentityPolicy

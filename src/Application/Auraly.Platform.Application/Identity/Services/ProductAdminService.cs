@@ -23,17 +23,26 @@ public sealed class ProductAdminService : IProductAdminService
         Guid businessId,
         PagedRequest request,
         bool includeInactive = false,
+        ProductListFilters? filters = null,
         CancellationToken ct = default)
     {
         await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        var categories = await _unitOfWork.ProductCategories.ListAsync(businessId, true, ct);
+        var categoryIds = ResolveCategoryFilter(categories, filters);
         var (items, totalCount) = await _unitOfWork.Products.GetPagedByBusinessIdAsync(
             businessId,
             request.Page,
             request.PageSize,
             request.Search,
             includeInactive,
+            new ProductListFilter(
+                categoryIds,
+                filters?.SupplierId,
+                filters?.BrandId,
+                filters?.ManagesInventory,
+                filters?.AllowsFractionalSale,
+                filters?.IsWeighable),
             ct);
-        var categories = await _unitOfWork.ProductCategories.ListAsync(businessId, true, ct);
         var categoryById = categories.ToDictionary(category => category.ProductCategoryId);
 
         string? ResolveArea(Guid? categoryId)
@@ -55,6 +64,35 @@ public sealed class ProductAdminService : IProductAdminService
             totalCount,
             request.Page,
             request.PageSize);
+    }
+
+    private static IReadOnlyCollection<Guid>? ResolveCategoryFilter(
+        IReadOnlyList<ProductCategory> categories,
+        ProductListFilters? filters)
+    {
+        var selected = new[]
+        {
+            filters?.AreaId, filters?.LineId, filters?.GroupId, filters?.SubgroupId
+        }.Where(value => value.HasValue).Select(value => value!.Value).ToArray();
+        if (selected.Length == 0) return null;
+
+        var byParent = categories.ToLookup(category => category.ParentProductCategoryId);
+        HashSet<Guid> Descendants(Guid root)
+        {
+            if (!categories.Any(category => category.ProductCategoryId == root)) return [];
+            var result = new HashSet<Guid> { root };
+            var pending = new Queue<Guid>();
+            pending.Enqueue(root);
+            while (pending.TryDequeue(out var parent))
+                foreach (var child in byParent[parent])
+                    if (result.Add(child.ProductCategoryId)) pending.Enqueue(child.ProductCategoryId);
+            return result;
+        }
+
+        var allowed = Descendants(selected[0]);
+        foreach (var categoryId in selected.Skip(1))
+            allowed.IntersectWith(Descendants(categoryId));
+        return allowed;
     }
 
     public async Task<ProductDto> UpdateStatusAsync(

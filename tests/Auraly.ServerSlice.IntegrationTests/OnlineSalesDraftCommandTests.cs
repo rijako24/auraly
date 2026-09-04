@@ -237,23 +237,24 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new ChangeOnlineSalesDraftQuantityRequest(2m, discounted.Version));
         Assert.Equal(15_000m, changed.PayableAmount);
 
-        var volumePriced = await MutateAsync<OnlineSalesDraft>(
+        var withAnotherLine = await MutateAsync<OnlineSalesDraft>(
             client,
             HttpMethod.Post,
             $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
             new AddOnlineSalesDraftItemRequest(barcode, 1m, changed.Version));
-        Assert.Equal(2, volumePriced.Lines.Count);
-        Assert.All(volumePriced.Lines, line => Assert.Equal(7_000m, line.UnitPrice));
-        Assert.Equal(20_000m, volumePriced.PayableAmount);
+        Assert.Equal(2, withAnotherLine.Lines.Count);
+        Assert.Equal(8_000m, withAnotherLine.Lines.Single(line => line.LineId == customerLine.LineId).UnitPrice);
+        Assert.Equal(7_000m, withAnotherLine.Lines.Single(line => line.LineId != customerLine.LineId).UnitPrice);
+        Assert.Equal(22_000m, withAnotherLine.PayableAmount);
 
         var removed = await MutateAsync<OnlineSalesDraft>(
             client,
             HttpMethod.Post,
             $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/lines/{customerLine.LineId:D}/remove",
-            new RemoveOnlineSalesDraftLineRequest(volumePriced.Version));
+            new RemoveOnlineSalesDraftLineRequest(withAnotherLine.Version));
         var remaining = Assert.Single(removed.Lines);
-        Assert.Equal(8_000m, remaining.UnitPrice);
-        Assert.Equal(8_000m, removed.PayableAmount);
+        Assert.Equal(7_000m, remaining.UnitPrice);
+        Assert.Equal(7_000m, removed.PayableAmount);
 
         var emptied = await MutateAsync<OnlineSalesDraft>(
             client,

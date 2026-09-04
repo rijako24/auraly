@@ -500,7 +500,11 @@ export default function PosPage() {
           if (active) setEdgeEnrollmentToken(edgeToken);
           try {
             const edgeClient = new PosEdgeClient(edgeToken, readEdgeUserSession());
-            const health = await edgeClient.health();
+            let health = await edgeClient.health();
+            if (health.userId && !health.workSessionId) {
+              await edgeClient.openWorkSession();
+              health = await edgeClient.health();
+            }
             if (active) {
               setEdgePermissions(health.permissions ?? []);
               setSynchronization({
@@ -644,13 +648,15 @@ export default function PosPage() {
           window.sessionStorage.getItem("auraly.pos.complete-enrollment") === "1"
         ) {
           try {
-            const session = await client.completeEnrollment();
+            let session = await client.completeEnrollment();
+            session = await client.openWorkSession();
             window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
             if (active) {
               setWorkstation((current) => ({
                 ...current,
                 userDisplayName: session.displayName,
                 userId: session.userId,
+                workSessionId: session.workSessionId,
               }));
               setEdgePermissions(session.permissions);
               setEdgeLoginState(null);
@@ -1970,7 +1976,9 @@ export default function PosPage() {
             [result.receipt],
             {
               businessId: workstation.businessId,
+              businessName: workstation.businessName,
               warehouseId: workstation.warehouseId,
+              warehouseName: workstation.warehouseName,
               workSessionId: workstation.workSessionId ?? "",
             },
           );
@@ -2978,10 +2986,11 @@ export default function PosPage() {
             </button>
             <dl className="space-y-2 text-sm">
               <TotalRow label="Subtotal" value={draft?.untaxedAmount ?? 0} />
-              <TotalRow label="Impuestos" value={draft?.taxAmount ?? 0} />
-              <TotalRow label="Total bruto" value={saleSettlement?.grossAmount ?? draft?.payableAmount ?? 0} />
-              {(saleSettlement?.withholdingTotal ?? 0) > 0 &&
-                <TotalRow label="Retenciones" value={-(saleSettlement?.withholdingTotal ?? 0)} />}
+              <TotalRow label="Total impuestos" value={draft?.taxAmount ?? 0} />
+              {(saleSettlement?.withholdingTotal ?? 0) > 0 && <>
+                <TotalRow label="Total bruto" value={saleSettlement?.grossAmount ?? draft?.payableAmount ?? 0} />
+                <TotalRow label="Retenciones" value={-(saleSettlement?.withholdingTotal ?? 0)} />
+              </>}
               <div className="border-t border-white/15 pt-3">
                 <dt className="text-sm text-auraly-secondary">Neto por cobrar</dt>
                 <dd className="text-right text-3xl font-bold tracking-tight text-auraly-light">

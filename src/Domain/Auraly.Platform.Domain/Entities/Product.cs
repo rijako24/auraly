@@ -13,6 +13,7 @@ public class Product
     /// </summary>
     public Guid BusinessId { get; set; }
     public Guid? ProductCategoryId { get; set; }
+    public Guid? ProductBrandId { get; set; }
     public Guid? IntegrationConnectionId { get; set; }
     public string? ExternalProductId { get; set; }
     public ProductSource Source { get; set; } = ProductSource.Local;
@@ -31,6 +32,8 @@ public class Product
     public bool HasPublishedPrice { get; set; }
     public string Currency { get; set; } = "COP";
     public bool ManageStock { get; set; }
+    public bool AllowsFractionalSale { get; set; }
+    public bool IsWeighable { get; set; }
     public decimal? StockQuantity { get; set; }
     public decimal? ConversionMaximumLossPercent { get; set; }
     public bool IsActive { get; set; } = true;

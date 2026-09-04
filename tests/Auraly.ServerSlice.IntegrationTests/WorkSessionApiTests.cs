@@ -34,7 +34,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Opening_another_context_requires_explicitly_closing_the_active_work_session()
+    public async Task Changing_document_warehouse_does_not_change_the_web_work_session()
     {
         var userId = await CreateUserAsync("work-session-context-switch");
         var otherWarehouseId = Guid.NewGuid();
@@ -60,11 +60,12 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
 
         var first = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
-        using var conflict = await client.PostAsJsonAsync(
-            "/api/commerce/v1/work-sessions/current",
-            new OpenWorkSessionRequest(fixture.BusinessId, otherWarehouseId, null));
+        var resumed = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, otherWarehouseId, Guid.NewGuid()));
 
-        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        Assert.Equal(first.WorkSessionId, resumed.WorkSessionId);
+        Assert.Null(resumed.WarehouseId);
+        Assert.Null(resumed.DeviceId);
         Assert.Equal(1, await CountOpenSessionsAsync(userId));
         await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
         await verifyConnection.OpenAsync();
@@ -161,25 +162,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Enrolling_the_current_machine_attaches_it_to_the_existing_online_session()
+    public async Task Enrolled_device_registers_the_exact_local_id_separately_from_web()
     {
         var userId = await CreateUserAsync("work-session-device-attach");
-        var deviceId = Guid.NewGuid();
-        await using (var connection = new SqlConnection(fixture.ConnectionString))
-        {
-            await connection.OpenAsync();
-            await using var insert = connection.CreateCommand();
-            insert.CommandText = """
-                INSERT dbo.EnrolledDevices
-                  (DeviceId,TenantId,Name,CredentialSalt,CredentialHash,
-                   CredentialIterations,IsActive,CreatedAt)
-                VALUES
-                  (@DeviceId,@TenantId,N'Equipo de prueba',0x01,0x02,100000,1,SYSDATETIMEOFFSET());
-                """;
-            insert.Parameters.AddWithValue("@DeviceId", deviceId);
-            insert.Parameters.AddWithValue("@TenantId", fixture.TenantId);
-            await insert.ExecuteNonQueryAsync();
-        }
         using var client = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
@@ -187,16 +172,36 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
 
         var openedOnline = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
-        var resumedFromDevice = await OpenAsync(client, new OpenWorkSessionRequest(
-            fixture.BusinessId, fixture.WarehouseId, deviceId));
+        var localId = Guid.NewGuid();
+        var openedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        using var deviceClient = fixture.CreateClient();
+        using var firstRegistration = CreateDeviceOpenRequest(
+            fixture.DeviceId, ServerSliceFixture.DeviceSecret,
+            new RegisterDeviceWorkSessionRequest(
+                userId, localId, fixture.BusinessId, openedAt));
+        using var firstResponse = await deviceClient.SendAsync(firstRegistration);
+        firstResponse.EnsureSuccessStatusCode();
+        var registered = await firstResponse.Content.ReadFromJsonAsync<WorkSessionView>();
 
-        Assert.Equal(openedOnline.WorkSessionId, resumedFromDevice.WorkSessionId);
-        Assert.Equal(deviceId, resumedFromDevice.DeviceId);
-        Assert.Equal(1, await CountOpenSessionsAsync(userId));
+        using var replayRegistration = CreateDeviceOpenRequest(
+            fixture.DeviceId, ServerSliceFixture.DeviceSecret,
+            new RegisterDeviceWorkSessionRequest(
+                userId, localId, fixture.BusinessId, openedAt));
+        using var replayResponse = await deviceClient.SendAsync(replayRegistration);
+        replayResponse.EnsureSuccessStatusCode();
+        var replay = await replayResponse.Content.ReadFromJsonAsync<WorkSessionView>();
+
+        Assert.NotNull(registered);
+        Assert.Equal(localId, registered.WorkSessionId);
+        Assert.Equal(localId, replay!.WorkSessionId);
+        Assert.NotEqual(openedOnline.WorkSessionId, registered.WorkSessionId);
+        Assert.Equal(fixture.DeviceId, registered.DeviceId);
+        Assert.Null(registered.WarehouseId);
+        Assert.Equal(2, await CountOpenSessionsAsync(userId));
     }
 
     [Fact]
-    public async Task Work_session_rejects_scopes_outside_the_authenticated_context()
+    public async Task Web_work_session_rejects_an_out_of_scope_business_and_ignores_device_input()
     {
         var userId = await CreateUserAsync("work-session-scope");
         using var client = fixture.CreateUserClient(
@@ -209,13 +214,11 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                        Guid.NewGuid(), fixture.WarehouseId, null)))
             Assert.Equal(HttpStatusCode.Forbidden, otherBusiness.StatusCode);
 
-        using (var unknownDevice = await client.PostAsJsonAsync(
-                   "/api/commerce/v1/work-sessions/current",
-                   new OpenWorkSessionRequest(
-                       fixture.BusinessId, fixture.WarehouseId, Guid.NewGuid())))
-            Assert.Equal(HttpStatusCode.Forbidden, unknownDevice.StatusCode);
-
-        Assert.Equal(0, await CountOpenSessionsAsync(userId));
+        var opened = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, Guid.NewGuid()));
+        Assert.Null(opened.DeviceId);
+        Assert.Null(opened.WarehouseId);
+        Assert.Equal(1, await CountOpenSessionsAsync(userId));
     }
 
     [Fact]
@@ -404,7 +407,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(opened.WorkSessionId, resumed.WorkSessionId);
         Assert.Equal(userId, opened.UserId);
         Assert.Equal(fixture.BusinessId, opened.BusinessId);
-        Assert.Equal(fixture.WarehouseId, opened.WarehouseId);
+        Assert.Null(opened.WarehouseId);
         Assert.Equal("Open", opened.Status);
 
         using (var currentResponse = await client.GetAsync(
@@ -647,6 +650,21 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             Content = JsonContent.Create(request)
         };
         message.Headers.Add("Idempotency-Key", key);
+        return message;
+    }
+
+    private static HttpRequestMessage CreateDeviceOpenRequest(
+        Guid deviceId,
+        string deviceSecret,
+        RegisterDeviceWorkSessionRequest request)
+    {
+        var message = new HttpRequestMessage(
+            HttpMethod.Post, "/api/pos/v1/work-sessions/opened")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("X-Auraly-Device-Id", deviceId.ToString("D"));
+        message.Headers.Add("X-Auraly-Device-Secret", deviceSecret);
         return message;
     }
 

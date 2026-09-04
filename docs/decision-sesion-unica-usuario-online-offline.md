@@ -17,12 +17,13 @@ Volver al primer cliente invalida a su vez el login del segundo.
 La sesión de autenticación y la `WorkSession` son conceptos separados:
 
 - `AuthenticationSession` controla identidad, acceso único, renovación y revocación.
-- `WorkSession` registra la operación de facturación, sede, bodega y cierre financiero.
+- `WorkSession` registra la operación de facturación, sede, canal/dispositivo y cierre
+  financiero; la bodega pertenece a cada documento.
 
 Login y logout no cierran una `WorkSession`: autenticarse y abrir/cerrar operación
-son responsabilidades distintas. La única `WorkSession` abierta del usuario se
-recupera desde cualquier cliente autorizado y solo termina mediante el cierre
-operativo explícito.
+son responsabilidades distintas. La sesión web se recupera desde cualquier navegador
+autorizado. Cada Edge recupera su propia sesión local por usuario/dispositivo. Todas
+terminan únicamente mediante el cierre operativo explícito.
 
 ## Online
 
@@ -30,11 +31,28 @@ El servidor adquiere atómicamente una concesión exclusiva por usuario. La sesi
 identificador, hash del token de renovación, cliente durable, fechas de emisión,
 expiración, último contacto, revocación y versión de concurrencia.
 
-Una sesión abandonada expira. Un supervisor autorizado puede revocarla. La
+Una sesión abandonada expira después de 24 horas continuas sin renovación. El
+token de acceso dura 15 minutos y la primera petición posterior lo renueva; cada
+renovación desplaza atómicamente otras 24 horas la ventana de inactividad. La
+validación del middleware no renueva, revoca ni cambia la sesión. Un supervisor autorizado puede revocarla. La
 revocación queda auditada y los tokens dejan de renovarse.
 La rotación del token de renovación es atómica. Una solicitud paralela que llegue
 con el secreto inmediatamente anterior recibe conflicto y no revoca la sesión que
 otra solicitud acaba de renovar; las pestañas del cliente ganador siguen operando.
+
+El login elimina primero del navegador la identidad, tenant y negocio persistidos
+por el usuario anterior. La respuesta exitosa reemplaza en una sola respuesta las
+cookies `HttpOnly` de acceso y renovación conservando el `ClientId` durable del
+navegador; no existe un intervalo intermedio con cookies parcialmente instaladas.
+
+Los errores conservan semántica estricta: un permiso insuficiente es `403`, una
+autenticación ausente o expirada es `401`, y solo una renovación cuya sesión fue
+revocada con `ReplacedByNewLogin` devuelve `409 AuthenticationSessionReplaced`.
+El cliente muestra el aviso «sesión iniciada en otro lugar» exclusivamente para
+ese último código. Un `401` de un recurso, incluso después de una renovación
+exitosa, nunca demuestra por sí solo que ocurrió otro login y no puede invalidar
+la sesión vigente. Una expiración real usa el título neutral «Sesión finalizada»;
+el encabezado del cuadro tampoco puede atribuirla a otro login.
 
 ## Edge offline
 
@@ -73,3 +91,7 @@ la serie central del servidor o a la serie técnica del dispositivo Edge.
 10. Logout offline sobrevive al reinicio sin cerrar la `WorkSession`.
 11. La fecha histórica de la autorización no bloquea un Edge ya enrolado.
 12. Manipular firma, fecha de inicio, usuario o dispositivo invalida la autorización.
+13. Dos envíos simultáneos del formulario de login crean una sola sesión ganadora.
+14. Un `401` de un recurso tras renovar no muestra conflicto de login ni cierra la sesión.
+15. Una sesión reemplazada devuelve el código explícito `AuthenticationSessionReplaced`.
+16. Login y cada renovación dejan exactamente 24 horas de ventana de inactividad.

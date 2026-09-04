@@ -10,6 +10,10 @@ public sealed class EscPosReceiptRenderer
     private static readonly byte[] Initialize = [0x1B, 0x40];
     private static readonly byte[] AlignLeft = [0x1B, 0x61, 0x00];
     private static readonly byte[] AlignCenter = [0x1B, 0x61, 0x01];
+    private static readonly byte[] BoldOn = [0x1B, 0x45, 0x01];
+    private static readonly byte[] BoldOff = [0x1B, 0x45, 0x00];
+    private static readonly byte[] DoubleHeight = [0x1D, 0x21, 0x10];
+    private static readonly byte[] NormalSize = [0x1D, 0x21, 0x00];
     private static readonly byte[] Cut = [0x1D, 0x56, 0x41, 0x03];
 
     public byte[] Render(PosReceipt receipt)
@@ -26,29 +30,39 @@ public sealed class EscPosReceiptRenderer
         using var stream = new MemoryStream();
         Write(stream, Initialize);
         Write(stream, AlignCenter);
-        WriteLine(stream, (receipt.CompanyName ?? string.Empty).ToUpperInvariant());
+        Write(stream, DoubleHeight);
+        WriteBoldLine(stream, string.IsNullOrWhiteSpace(receipt.CompanyName)
+            ? "Auraly"
+            : receipt.CompanyName);
+        Write(stream, NormalSize);
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
-        WriteLine(stream, isFiscal ? "FACTURA ELECTRONICA DE VENTA" : "COMPROBANTE DE VENTA");
-        WriteLine(stream, $"N. TICKET: {receipt.DocumentNumber}");
-        if (isFiscal) WriteLine(stream, $"NUMERO DIAN: {receipt.FiscalNumber}");
-        WriteLine(stream, receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture));
-        WriteLine(stream, $"ADQUIRENTE: {receipt.CustomerIdentification}");
+        WriteBoldLine(stream, PosReceiptPresentation.Title(receipt));
+        WriteBoldLine(stream, PosReceiptPresentation.DisplayNumber(receipt));
+        WriteLine(stream, receipt.IssuedAt.ToLocalTime()
+            .ToString("dd/MM/yyyy, h:mm:ss tt", CultureInfo.GetCultureInfo("es-CO")));
+        var scope = Scope(receipt.BusinessName, receipt.WarehouseName);
+        if (!string.IsNullOrWhiteSpace(scope))
+            WriteWrapped(stream, scope, columns);
         WriteLine(stream, new string('-', columns));
         Write(stream, AlignLeft);
+        WriteBoldLine(stream, Pair("Cliente", receipt.CustomerName ?? receipt.CustomerIdentification, columns));
+        WriteBoldLine(stream, Pair("Identificacion", receipt.CustomerIdentification, columns));
+        WriteLine(stream, new string('-', columns));
         foreach (var line in receipt.Lines)
         {
-            WriteWrapped(stream, $"{line.ProductCode} {line.Description}", columns);
+            WriteBoldWrapped(stream, line.Description, columns);
             WriteLine(
                 stream,
                 Right(
                     $"{Quantity(line.Quantity)} x {Money(line.UnitPrice)}  {Money(line.Total)}",
                     columns));
             if (line.Discount > 0)
-                WriteLine(stream, Right($"DESCUENTO {Money(line.Discount)}", columns));
+                WriteLine(stream, Right($"Descuento {Money(line.Discount)}", columns));
         }
         WriteLine(stream, new string('-', columns));
-        WriteLine(stream, Pair("SUBTOTAL", Money(receipt.UntaxedAmount), columns));
-        WriteLine(stream, "IMPUESTOS POR TARIFA");
+        WriteLine(stream, Pair("Subtotal", Money(receipt.UntaxedAmount), columns));
+        WriteBoldLine(stream, "Impuestos por tarifa");
+        WriteBoldLine(stream, TaxRow("Impuesto", "Base", "Valor", columns));
         foreach (var tax in receipt.Lines
                      .GroupBy(line => new { line.TaxCode, line.TaxRate })
                      .Select(group => new
@@ -61,25 +75,28 @@ public sealed class EscPosReceiptRenderer
                      .OrderBy(value => value.TaxCode, StringComparer.Ordinal)
                      .ThenBy(value => value.TaxRate))
         {
-            WriteWrapped(stream, $"  {TaxName(tax.TaxCode)} {Rate(tax.TaxRate)}%", columns);
-            WriteLine(stream, Pair("    BASE", Money(tax.Base), columns));
-            WriteLine(stream, Pair("    IMPUESTO", Money(tax.Amount), columns));
+            WriteLine(stream, TaxRow(
+                $"{TaxName(tax.TaxCode)} {Rate(tax.TaxRate)}%",
+                Money(tax.Base),
+                Money(tax.Amount),
+                columns));
         }
-        WriteLine(stream, Pair("TOTAL IMPUESTOS", Money(receipt.TaxAmount), columns));
-        WriteLine(stream, Pair("TOTAL BRUTO", Money(receipt.PayableAmount), columns));
+        WriteLine(stream, Pair("Total impuestos", Money(receipt.TaxAmount), columns));
+        if (receipt.WithholdingTotal > 0)
+            WriteLine(stream, Pair("Total bruto", Money(receipt.PayableAmount), columns));
         foreach (var withholding in receipt.Withholdings ?? [])
             WriteLine(stream, Pair(
-                $"RET. {withholding.Name.ToUpperInvariant()}",
+                $"Ret. {withholding.Name}",
                 $"-{Money(withholding.Amount)}", columns));
         if (receipt.WithholdingTotal > 0)
-            WriteLine(stream, Pair("TOTAL RETENCIONES", $"-{Money(receipt.WithholdingTotal)}", columns));
-        WriteLine(stream, Pair(
-            "TOTAL A PAGAR",
+            WriteLine(stream, Pair("Total retenciones", $"-{Money(receipt.WithholdingTotal)}", columns));
+        WriteBoldLine(stream, Pair(
+            "Total",
             Money(receipt.WithholdingTotal > 0 ? receipt.NetPayableAmount : receipt.PayableAmount),
             columns));
-        WriteLine(stream, "MEDIOS DE PAGO");
+        WriteBoldLine(stream, "Medios de pago");
         foreach (var payment in receipt.Payments)
-            WriteLine(stream, Pair(PaymentName(payment.MethodCode).ToUpperInvariant(), Money(payment.Amount), columns));
+            WriteBoldLine(stream, Pair(PaymentName(payment.MethodCode), Money(payment.Amount), columns));
         WriteLine(stream, new string('-', columns));
         if (isFiscal)
         {
@@ -90,7 +107,7 @@ public sealed class EscPosReceiptRenderer
             WriteLine(stream, "Representacion grafica");
         }
         Write(stream, AlignCenter);
-        WriteLine(stream, isFiscal
+        WriteBoldLine(stream, isFiscal
             ? "Factura emitida por Auraly"
             : "Comprobante emitido por Auraly");
         WriteLine(stream, "www.auralyapp.co");
@@ -110,8 +127,21 @@ public sealed class EscPosReceiptRenderer
     private static string Right(string value, int columns) =>
         value.Length >= columns ? value[..columns] : value.PadLeft(columns);
 
+    private static string TaxRow(string tax, string taxBase, string amount, int columns)
+    {
+        var taxColumns = columns == 32 ? 8 : 10;
+        var valueColumns = (columns - taxColumns) / 2;
+        return Fit(tax, taxColumns).PadRight(taxColumns) +
+               Fit(taxBase, valueColumns).PadLeft(valueColumns) +
+               Fit(amount, columns - taxColumns - valueColumns)
+                   .PadLeft(columns - taxColumns - valueColumns);
+    }
+
+    private static string Fit(string value, int columns) =>
+        value.Length <= columns ? value : value[..columns];
+
     private static string Money(decimal value) =>
-        value.ToString("0.00", CultureInfo.InvariantCulture);
+        "$ " + value.ToString("N0", CultureInfo.GetCultureInfo("es-CO"));
 
     private static string Quantity(decimal value) =>
         value.ToString("0.###", CultureInfo.InvariantCulture);
@@ -142,12 +172,33 @@ public sealed class EscPosReceiptRenderer
         _ => code
     };
 
+    private static string Scope(string? businessName, string? warehouseName)
+    {
+        var business = string.IsNullOrWhiteSpace(businessName) ? null : $"Sede: {businessName}";
+        var warehouse = string.IsNullOrWhiteSpace(warehouseName) ? null : warehouseName;
+        return string.Join(" - ", new[] { business, warehouse }.Where(value => value is not null));
+    }
+
     private static void WriteWrapped(Stream stream, string value, int columns)
     {
         var text = Normalize(value);
         for (var offset = 0; offset < text.Length; offset += columns)
             WriteLine(stream, text.Substring(offset, Math.Min(columns, text.Length - offset)));
         if (text.Length == 0) WriteLine(stream, string.Empty);
+    }
+
+    private static void WriteBoldWrapped(Stream stream, string value, int columns)
+    {
+        Write(stream, BoldOn);
+        WriteWrapped(stream, value, columns);
+        Write(stream, BoldOff);
+    }
+
+    private static void WriteBoldLine(Stream stream, string value)
+    {
+        Write(stream, BoldOn);
+        WriteLine(stream, value);
+        Write(stream, BoldOff);
     }
 
     private static void WriteLine(Stream stream, string value)
@@ -188,6 +239,20 @@ public sealed class EscPosReceiptRenderer
     }
 
     private static void Write(Stream stream, ReadOnlySpan<byte> bytes) => stream.Write(bytes);
+}
+
+internal static class PosReceiptPresentation
+{
+    public static string Title(PosReceipt receipt) =>
+        PosSaleDocumentTypes.IsFiscal(receipt.DocumentType)
+            ? "Factura electronica de venta"
+            : "Comprobante de venta";
+
+    public static string DisplayNumber(PosReceipt receipt) =>
+        PosSaleDocumentTypes.IsFiscal(receipt.DocumentType) &&
+        !string.IsNullOrWhiteSpace(receipt.FiscalNumber)
+            ? receipt.FiscalNumber
+            : receipt.DocumentNumber;
 }
 
 public sealed class FileReceiptPrinter(

@@ -113,10 +113,32 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         Assert.Equal(4_500m, reader.GetDecimal(6));
         await reader.DisposeAsync();
 
+        using var addSameProduct = Mutation(
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{changed.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest(code, 1m, changed.Version),
+            $"generic-add-again-{Guid.NewGuid():N}");
+        using var addSameProductResponse = await client.SendAsync(addSameProduct);
+        addSameProductResponse.EnsureSuccessStatusCode();
+        var withNewLine = await addSameProductResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>()
+            ?? throw new InvalidOperationException("The updated draft response was empty.");
+        Assert.Equal(2, withNewLine.Lines.Count);
+        var persistedEditedLine = withNewLine.Lines.Single(value => value.LineId == line.LineId);
+        Assert.Equal(12_000m, persistedEditedLine.UnitPrice);
+        Assert.Equal(2_000m, persistedEditedLine.Discount);
+        Assert.Equal(line.PriceSource, persistedEditedLine.PriceSource);
+        Assert.Equal(10_000m, withNewLine.Lines.Single(value => value.LineId != line.LineId).UnitPrice);
+
+        var reloaded = await OpenAsync(client, new(
+            fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));
+        Assert.Equal(withNewLine.DraftId, reloaded.DraftId);
+        Assert.Equal(12_000m, reloaded.Lines.Single(value => value.LineId == line.LineId).UnitPrice);
+        Assert.Equal(line.PriceSource, reloaded.Lines.Single(value => value.LineId == line.LineId).PriceSource);
+
         using var cleanup = Mutation(
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{changed.DraftId:D}/reset",
-            new ResetOnlineSalesDraftRequest(changed.Version),
+            $"/api/commerce/v1/pos/drafts/{reloaded.DraftId:D}/reset",
+            new ResetOnlineSalesDraftRequest(reloaded.Version),
             Guid.NewGuid().ToString("D"));
         using var cleanupResponse = await client.SendAsync(cleanup);
         cleanupResponse.EnsureSuccessStatusCode();

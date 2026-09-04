@@ -4,8 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 
 import type { PosClient } from "@/services/pos/pos-edge-client";
 
+export type PosReferenceOptionsClient = Pick<
+  PosClient,
+  "mode" | "referenceOptions" | "printCashDenominationCount"
+>;
+
 export function usePosReferenceOptions(
-  client: PosClient,
+  client: PosReferenceOptionsClient,
   catalogCode: string,
   enabled = true,
 ) {

@@ -28,6 +28,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (!res.ok) {
+      const problem = await readProblem(res);
+      if (res.status === 409 && problem?.title === "AuthenticationSessionReplaced")
+        return sessionReplacedResponse();
       if (res.status === 400 || res.status === 401 || res.status === 403)
         return expiredResponse();
       return temporarilyUnavailableResponse();
@@ -53,6 +56,24 @@ export async function POST(request: NextRequest) {
     console.error("[auth/refresh]", error);
     return temporarilyUnavailableResponse();
   }
+}
+
+async function readProblem(response: Response): Promise<{ title?: string } | null> {
+  try { return await response.json() as { title?: string }; }
+  catch { return null; }
+}
+
+function sessionReplacedResponse() {
+  const response = NextResponse.json(
+    {
+      code: "AuthenticationSessionReplaced",
+      message: "La sesión fue reemplazada por un nuevo inicio de sesión.",
+    },
+    { status: 409 },
+  );
+  response.cookies.delete(AUTH_COOKIE_NAMES.accessToken);
+  response.cookies.delete(AUTH_COOKIE_NAMES.refreshToken);
+  return response;
 }
 
 function temporarilyUnavailableResponse() {

@@ -23,7 +23,11 @@ public sealed partial class SqlWorkSessionStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         return await ReadOpenAsync(
-            connection, null, identity, lockRow: false, cancellationToken);
+            connection, null, identity,
+            identity.BusinessId ?? throw new WorkSessionForbiddenException(
+                "The authenticated web context lacks a valid business."),
+            deviceId: null,
+            lockRow: false, cancellationToken);
     }
 
     public async Task<WorkSessionView> OpenOrResumeAsync(
@@ -41,17 +45,13 @@ public sealed partial class SqlWorkSessionStore(
             var scope = await ValidateScopeAsync(
                 connection, transaction, identity, request, cancellationToken);
             var current = await ReadOpenAsync(
-                connection, transaction, identity, lockRow: true, cancellationToken);
+                connection, transaction, identity, request.BusinessId, request.DeviceId,
+                lockRow: true, cancellationToken);
             if (current is not null)
             {
-                if (current.BusinessId != request.BusinessId ||
-                    current.WarehouseId != request.WarehouseId)
+                if (current.BusinessId != request.BusinessId)
                     throw new WorkSessionConflictException(
-                        "El usuario ya tiene una sesión de trabajo abierta en otra sede o bodega.");
-                if (current.DeviceId is not null && request.DeviceId is not null &&
-                    current.DeviceId != request.DeviceId)
-                    throw new WorkSessionConflictException(
-                        "La sesión de trabajo ya está vinculada a otro equipo enrolado.");
+                        "El contexto operativo ya tiene una sesión abierta en otra sede.");
 
                 var now = timeProvider.GetUtcNow();
                 await using var touch = new SqlCommand("""
@@ -85,13 +85,12 @@ public sealed partial class SqlWorkSessionStore(
                   (WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
                    OpenedAt,LastActivityAt,Status)
                 VALUES
-                  (@WorkSessionId,@TenantId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
+                  (@WorkSessionId,@TenantId,@BusinessId,NULL,@UserId,@DeviceId,
                    @OpenedAt,@OpenedAt,N'Open');
                 """, connection, transaction);
             insert.Parameters.AddWithValue("@WorkSessionId", workSessionId);
             insert.Parameters.AddWithValue("@TenantId", identity.TenantId);
             insert.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-            insert.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
             insert.Parameters.AddWithValue("@UserId", identity.UserId);
             insert.Parameters.AddWithValue(
                 "@DeviceId", (object?)request.DeviceId ?? DBNull.Value);
@@ -123,8 +122,8 @@ public sealed partial class SqlWorkSessionStore(
                 workSessionId,
                 request.BusinessId,
                 scope.BusinessName,
-                request.WarehouseId,
-                scope.WarehouseName,
+                null,
+                null,
                 identity.UserId,
                 scope.UserName,
                 request.DeviceId,
@@ -142,19 +141,100 @@ public sealed partial class SqlWorkSessionStore(
             // owned by another user/device remains a real conflict because it is
             // not visible through CurrentAsync(identity).
             var winner = await CurrentAsync(identity, cancellationToken);
+            if (request.DeviceId is not null)
+                winner = await ReadCurrentForDeviceAsync(
+                    identity, request.BusinessId, request.DeviceId.Value, cancellationToken);
             if (winner is not null &&
                 winner.BusinessId == request.BusinessId &&
-                winner.WarehouseId == request.WarehouseId &&
-                (request.DeviceId is null || winner.DeviceId == request.DeviceId))
+                winner.DeviceId == request.DeviceId)
                 return winner;
             throw new WorkSessionConflictException(
-                "El usuario o el equipo ya tiene una sesión de trabajo abierta en otra sede o bodega.");
+                "El usuario web o el equipo enrolado ya tiene una sesión de trabajo abierta en otra sede.");
         }
         catch
         {
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
+    }
+
+    public async Task<WorkSessionView> RegisterDeviceOpenAsync(
+        WorkSessionIdentity identity,
+        RegisterDeviceWorkSessionRequest request,
+        Guid deviceId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            var scope = await ValidateScopeAsync(
+                connection,
+                transaction,
+                identity,
+                new OpenWorkSessionRequest(request.BusinessId, DeviceId: deviceId),
+                cancellationToken);
+            var existing = await ReadByExactIdAsync(
+                connection, transaction, identity, request.WorkSessionId,
+                deviceId, cancellationToken);
+            if (existing is not null)
+            {
+                if (existing.BusinessId != request.BusinessId)
+                    throw new WorkSessionConflictException(
+                        "La sesión local ya existe con otra sede.");
+                await transaction.CommitAsync(cancellationToken);
+                return existing;
+            }
+
+            var current = await ReadOpenAsync(
+                connection, transaction, identity, request.BusinessId, deviceId,
+                lockRow: true, cancellationToken);
+            if (current is not null)
+                throw new WorkSessionConflictException(
+                    "El equipo enrolado ya tiene otra sesión de trabajo abierta.");
+
+            await using var insert = new SqlCommand("""
+                INSERT dbo.WorkSessions
+                  (WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
+                   OpenedAt,LastActivityAt,Status)
+                VALUES
+                  (@WorkSessionId,@TenantId,@BusinessId,NULL,@UserId,@DeviceId,
+                   @OpenedAt,@OpenedAt,N'Open');
+                """, connection, transaction);
+            insert.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
+            insert.Parameters.AddWithValue("@TenantId", identity.TenantId);
+            insert.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+            insert.Parameters.AddWithValue("@UserId", identity.UserId);
+            insert.Parameters.AddWithValue("@DeviceId", deviceId);
+            insert.Parameters.AddWithValue("@OpenedAt", request.OpenedAt);
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new WorkSessionView(
+                request.WorkSessionId, request.BusinessId, scope.BusinessName,
+                null, null, identity.UserId, scope.UserName, deviceId,
+                request.OpenedAt, request.OpenedAt, "Open", identity.TenantId);
+        }
+        catch
+        {
+            if (transaction.Connection is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    private async Task<WorkSessionView?> ReadCurrentForDeviceAsync(
+        WorkSessionIdentity identity,
+        Guid businessId,
+        Guid deviceId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        return await ReadOpenAsync(
+            connection, null, identity, businessId, deviceId,
+            lockRow: false, cancellationToken);
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -367,7 +447,7 @@ public sealed partial class SqlWorkSessionStore(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT b.Name,w.Name,CONCAT(u.FirstName,N' ',u.LastName),
+            SELECT b.Name,CONCAT(u.FirstName,N' ',u.LastName),
                    CASE WHEN @DeviceId IS NULL OR EXISTS
                    (
                        SELECT 1 FROM dbo.EnrolledDevices d
@@ -377,30 +457,29 @@ public sealed partial class SqlWorkSessionStore(
             FROM dbo.AppUsers u
             INNER JOIN dbo.Businesses b
               ON b.BusinessId=@BusinessId AND b.TenantId=@TenantId AND b.IsActive=1
-            INNER JOIN dbo.Warehouses w
-              ON w.BusinessId=b.BusinessId AND w.WarehouseId=@WarehouseId AND w.IsActive=1
-            WHERE u.UserId=@UserId AND u.IsActive=1;
+            WHERE u.UserId=@UserId AND u.TenantId=@TenantId AND u.IsActive=1;
             """, connection, transaction);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
         command.Parameters.AddWithValue("@TenantId", identity.TenantId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue(
             "@DeviceId", (object?)request.DeviceId ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             throw new WorkSessionForbiddenException(
-                "The business, warehouse or user is outside the authenticated tenant.");
-        if (reader.GetInt32(3) != 1)
+                "The business or user is outside the authenticated tenant.");
+        if (reader.GetInt32(2) != 1)
             throw new WorkSessionForbiddenException(
                 "The enrolled device is not active in the authenticated tenant.");
-        return new ScopeNames(reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim());
+        return new ScopeNames(reader.GetString(0), reader.GetString(1).Trim());
     }
 
     private static async Task<WorkSessionView?> ReadOpenAsync(
         SqlConnection connection,
         SqlTransaction? transaction,
         WorkSessionIdentity identity,
+        Guid businessId,
+        Guid? deviceId,
         bool lockRow,
         CancellationToken cancellationToken)
     {
@@ -411,13 +490,18 @@ public sealed partial class SqlWorkSessionStore(
                    s.OpenedAt,s.LastActivityAt,s.Status,b.TenantId
             FROM dbo.WorkSessions s{hint}
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
-            INNER JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
+            LEFT JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
-            WHERE s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open';
+            WHERE s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open'
+              AND s.BusinessId=@BusinessId
+              AND ((@DeviceId IS NULL AND s.DeviceId IS NULL)
+                OR (@DeviceId IS NOT NULL AND s.DeviceId=@DeviceId));
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
         command.Parameters.AddWithValue("@TenantId", identity.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@DeviceId", (object?)deviceId ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? MapSession(reader) : null;
     }
@@ -435,7 +519,7 @@ public sealed partial class SqlWorkSessionStore(
                    s.OpenedAt,s.LastActivityAt,s.Status,b.TenantId
             FROM dbo.WorkSessions s WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
-            INNER JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
+            LEFT JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
             WHERE s.WorkSessionId=@WorkSessionId
               AND s.TenantId=@TenantId AND s.UserId=@UserId
@@ -448,9 +532,39 @@ public sealed partial class SqlWorkSessionStore(
         return await reader.ReadAsync(cancellationToken) ? MapSession(reader) : null;
     }
 
+    private static async Task<WorkSessionView?> ReadByExactIdAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        Guid deviceId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT s.WorkSessionId,s.BusinessId,b.Name,s.WarehouseId,w.Name,
+                   s.UserId,CONCAT(u.FirstName,N' ',u.LastName),s.DeviceId,
+                   s.OpenedAt,s.LastActivityAt,s.Status,s.TenantId
+            FROM dbo.WorkSessions s WITH (UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.Businesses b
+              ON b.BusinessId=s.BusinessId AND b.TenantId=s.TenantId
+            LEFT JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
+            INNER JOIN dbo.AppUsers u
+              ON u.UserId=s.UserId AND u.TenantId=s.TenantId
+            WHERE s.WorkSessionId=@WorkSessionId AND s.TenantId=@TenantId
+              AND s.UserId=@UserId AND s.DeviceId=@DeviceId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        command.Parameters.AddWithValue("@TenantId", identity.TenantId);
+        command.Parameters.AddWithValue("@UserId", identity.UserId);
+        command.Parameters.AddWithValue("@DeviceId", deviceId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? MapSession(reader) : null;
+    }
+
     private static WorkSessionView MapSession(SqlDataReader reader) => new(
         reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
-        reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5),
+        reader.IsDBNull(3) ? null : reader.GetGuid(3),
+        reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetGuid(5),
         reader.GetString(6).Trim(), reader.IsDBNull(7) ? null : reader.GetGuid(7),
         reader.GetFieldValue<DateTimeOffset>(8),
         reader.GetFieldValue<DateTimeOffset>(9), reader.GetString(10),
@@ -649,7 +763,7 @@ public sealed partial class SqlWorkSessionStore(
             FROM dbo.WorkSessionClosures c
             INNER JOIN dbo.WorkSessions s ON s.WorkSessionId=c.WorkSessionId
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
-            INNER JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
+            LEFT JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
             LEFT JOIN dbo.AccountingPostingJobs j
               ON j.SourceDocumentId=c.WorkSessionClosureId
@@ -671,7 +785,9 @@ public sealed partial class SqlWorkSessionStore(
         while (await reader.ReadAsync(cancellationToken))
             rows.Add(new WorkSessionCashDifferenceView(
                 reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3),
-                reader.GetGuid(4), reader.GetString(5), reader.GetGuid(6), reader.GetString(7),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.GetGuid(6), reader.GetString(7),
                 reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10),
                 reader.GetDecimal(11), reader.GetString(12), reader.GetString(13),
                 reader.IsDBNull(14) ? null : reader.GetGuid(14),
@@ -915,6 +1031,5 @@ public sealed partial class SqlWorkSessionStore(
 
     private sealed record ScopeNames(
         string BusinessName,
-        string WarehouseName,
         string UserName);
 }

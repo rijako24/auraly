@@ -132,12 +132,12 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
 
             INSERT dbo.Orders(
-              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,SellerId,
+              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,SellerId,WarehouseId,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,
               ExternalDocumentNumber,CustomAttributesJson,CreatedAt)
             VALUES(
-              @OrderId,@BusinessId,1,0,2,@CustomerId,@SellerId,
+              @OrderId,@BusinessId,1,0,2,@CustomerId,@SellerId,@WarehouseId,
               N'Cliente edición',N'900100200',N'COP',
               20000,1000,19000,1,@OrderNumber,@Attributes,SYSUTCDATETIME());
 
@@ -277,12 +277,12 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
               N'Pedidos',N'Prueba',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.Orders(
-              OrderId,BusinessId,Source,FulfillmentMode,Status,
+              OrderId,BusinessId,Source,FulfillmentMode,Status,WarehouseId,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,
               ExternalDocumentNumber,CreatedAt)
             VALUES(
-              @OrderId,@BusinessId,0,0,2,
+              @OrderId,@BusinessId,0,0,2,@WarehouseId,
               N'Cliente pedido',N'123456789',N'COP',
               20000,1000,19000,1,N'PED-PRUEBA-01',DATEADD(day,-4,SYSUTCDATETIME()));
 
@@ -308,6 +308,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             new("@Username", $"orders-{userId:N}"),
             new("@OrderId", orderId),
             new("@BusinessId", fixture.BusinessId),
+            new("@WarehouseId", fixture.WarehouseId),
             new("@ItemId", itemId),
             new("@ProductId", fixture.ProductId),
             new("@TaxProfileId", taxProfileId));
@@ -394,14 +395,14 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
               N'Relevo',N'Pedido',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.Orders(
-              OrderId,BusinessId,Source,FulfillmentMode,Status,
+              OrderId,BusinessId,Source,FulfillmentMode,Status,WarehouseId,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,
               ExternalDocumentNumber,CreatedAt)
             VALUES
-              (@FirstOrderId,@BusinessId,0,0,2,N'Cliente A',N'1001',N'COP',
+              (@FirstOrderId,@BusinessId,0,0,2,@WarehouseId,N'Cliente A',N'1001',N'COP',
                10000,0,10000,1,N'PED-CAMBIO-A',SYSUTCDATETIME()),
-              (@SecondOrderId,@BusinessId,0,0,2,N'Cliente B',N'1002',N'COP',
+              (@SecondOrderId,@BusinessId,0,0,2,@WarehouseId,N'Cliente B',N'1002',N'COP',
                12000,0,12000,1,N'PED-CAMBIO-B',SYSUTCDATETIME());
 
             INSERT dbo.OrderItems(
@@ -422,6 +423,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             new("@FirstOrderId", firstOrderId),
             new("@SecondOrderId", secondOrderId),
             new("@BusinessId", fixture.BusinessId),
+            new("@WarehouseId", fixture.WarehouseId),
             new("@ProductId", fixture.ProductId));
 
         using var client = fixture.CreateUserClient(

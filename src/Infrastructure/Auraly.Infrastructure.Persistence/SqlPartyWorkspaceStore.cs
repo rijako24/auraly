@@ -24,8 +24,15 @@ public sealed partial class SqlPartyWorkspaceStore(
                    OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
                    OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId)
                    OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId))
-              AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%' OR p.Identification LIKE N'%'+@Search+N'%' OR p.NormalizedIdentification LIKE N'%'+@Search+N'%'
-                   OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.IsActive=1 AND pc.Value LIKE N'%'+@Search+N'%'))
+              AND (@Search IS NULL OR NOT EXISTS(
+                   SELECT 1 FROM STRING_SPLIT(@Search,N' ') term
+                   WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
+                     AND NOT (p.DisplayName LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR p.Identification LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR p.NormalizedIdentification LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc
+                                        WHERE pc.PartyId=p.PartyId AND pc.IsActive=1
+                                          AND pc.Value LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'))))
               AND (@Role IS NULL
                    OR @Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
                    OR @Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
@@ -93,8 +100,15 @@ public sealed partial class SqlPartyWorkspaceStore(
                    OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
                    OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId)
                    OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId))
-              AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%' OR p.Identification LIKE N'%'+@Search+N'%' OR p.NormalizedIdentification LIKE N'%'+@Search+N'%'
-                   OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.IsActive=1 AND pc.Value LIKE N'%'+@Search+N'%'))
+              AND (@Search IS NULL OR NOT EXISTS(
+                   SELECT 1 FROM STRING_SPLIT(@Search,N' ') term
+                   WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
+                     AND NOT (p.DisplayName LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR p.Identification LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR p.NormalizedIdentification LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc
+                                        WHERE pc.PartyId=p.PartyId AND pc.IsActive=1
+                                          AND pc.Value LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'))))
               AND (@Role IS NULL
                    OR @Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
                    OR @Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)

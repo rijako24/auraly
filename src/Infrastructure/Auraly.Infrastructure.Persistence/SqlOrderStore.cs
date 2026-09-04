@@ -360,9 +360,14 @@ public sealed class SqlOrderStore(
               OrderClaimId,BusinessId,WarehouseId,OrderId,WorkSessionId,DeviceId,UserId,
               ClaimedAt,ExpiresAt)
             SELECT
-              @ClaimId,@BusinessId,ws.WarehouseId,@OrderId,@WorkSessionId,@DeviceId,@UserId,
+              @ClaimId,@BusinessId,
+              COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(
+                CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,
+                '$.WarehouseId'))),
+              @OrderId,@WorkSessionId,@DeviceId,@UserId,
               @Now,@ExpiresAt
             FROM dbo.WorkSessions ws
+            INNER JOIN dbo.Orders o ON o.OrderId=@OrderId AND o.BusinessId=@BusinessId
             WHERE ws.WorkSessionId=@WorkSessionId
               AND ws.TenantId=@TenantId
               AND ws.BusinessId=@BusinessId

@@ -23,6 +23,9 @@ public sealed class OrderRecoveryService(
         if (!order.CanInvoice)
             throw new OrderConflictException(
                 "El pedido no está disponible para facturar.");
+        if (order.WarehouseId is null)
+            throw new OrderConflictException(
+                "El pedido no tiene una bodega de venta asignada y no puede recuperarse.");
         if (order.Lines.Any(line => line.ProductId is null))
             throw new OrderConflictException(
                 "El pedido tiene productos sin equivalencia en el catálogo de Auraly.");

@@ -590,7 +590,7 @@ export function OrdersWorkspace({
 
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
-          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:flex-row md:flex-nowrap md:items-center md:px-4">
+          <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:px-4 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
             <label className="flex w-full shrink-0 items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
               <Checkbox
                 checked={allMatchingSelected ? true : selected.size > 0 ? "indeterminate" : false}
@@ -600,10 +600,10 @@ export function OrdersWorkspace({
               />
               {selectingAll ? "Seleccionando…" : "Seleccionar disponibles"}
             </label>
-            <span className="hidden h-7 w-px bg-slate-200 md:block" aria-hidden="true" />
-            <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:flex-nowrap md:items-center">
+            <div className="grid min-w-0 gap-3 2xl:grid-cols-[minmax(20rem,1fr)_auto] 2xl:items-center">
+              <div className="min-w-0">
                 <div
-                  className="grid w-full min-w-0 shrink-0 grid-cols-1 rounded-xl border border-slate-200 bg-white p-1 sm:min-w-[20rem] sm:grid-cols-2 md:w-auto"
+                  className="grid w-full min-w-0 grid-cols-1 rounded-xl border border-slate-200 bg-white p-1 sm:grid-cols-2"
                   aria-label="Tipo de documento para los pedidos seleccionados"
                 >
                   <button
@@ -631,49 +631,47 @@ export function OrdersWorkspace({
                     Comprobante de venta
                   </button>
                 </div>
-              <span className="hidden min-w-0 flex-1 whitespace-nowrap text-xs text-slate-500 xl:inline">
-                Los clientes que exigen factura electrónica siempre se facturan.
-              </span>
-              <div className="grid w-full shrink-0 grid-cols-[auto_minmax(0,1fr)] gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-row">
-              {onConfigurePrinting && (
-                <Button type="button" variant="outline" size="icon"
-                  title="Configurar plantillas e impresoras"
-                  aria-label="Configurar plantillas e impresoras"
-                  onClick={onConfigurePrinting}>
-                  <Printer className="h-4 w-4" />
-                </Button>
-              )}
-              <Select value={paymentMethod} onValueChange={(value) => {
-                setPaymentMethod(value);
-                if (value === "Transfer") void openTransfer();
-              }}>
-                <SelectTrigger className="w-full sm:w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Cash">Efectivo</SelectItem>
-                  <SelectItem value="DebitCard">Tarjeta débito</SelectItem>
-                  <SelectItem value="CreditCard">Tarjeta crédito</SelectItem>
-                  <SelectItem value="Transfer">Transferencia</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button
-                type="button"
-                disabled={!selectedOrders.length || working || selectingAll || transferLoading || !onInvoiceSelected}
-                onClick={() => void invoiceSelected()}
-                className="col-span-2 w-full bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
-              >
-                {working ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Receipt className="mr-2 h-4 w-4" />
+              </div>
+              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:items-center 2xl:justify-end">
+                {onConfigurePrinting && (
+                  <Button type="button" variant="outline" size="icon"
+                    title="Configurar plantillas e impresoras"
+                    aria-label="Configurar plantillas e impresoras"
+                    onClick={onConfigurePrinting}>
+                    <Printer className="h-4 w-4" />
+                  </Button>
                 )}
-                {documentType === "SalesInvoice"
-                  ? "Facturar seleccionados"
-                  : "Emitir comprobantes"} ({selectedOrders.length})
-              </Button>
+                <Select value={paymentMethod} onValueChange={(value) => {
+                  setPaymentMethod(value);
+                  if (value === "Transfer") void openTransfer();
+                }}>
+                  <SelectTrigger className="w-full sm:w-44">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Cash">Efectivo</SelectItem>
+                    <SelectItem value="DebitCard">Tarjeta débito</SelectItem>
+                    <SelectItem value="CreditCard">Tarjeta crédito</SelectItem>
+                    <SelectItem value="Transfer">Transferencia</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  disabled={!selectedOrders.length || working || selectingAll || transferLoading || !onInvoiceSelected}
+                  onClick={() => void invoiceSelected()}
+                  className="col-span-2 w-full whitespace-nowrap bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
+                >
+                  {working ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Receipt className="mr-2 h-4 w-4" />
+                  )}
+                  {documentType === "SalesInvoice"
+                    ? "Facturar seleccionados"
+                    : "Emitir comprobantes"} ({selectedOrders.length})
+                </Button>
+              </div>
             </div>
-          </div>
           </div>
         )}
 

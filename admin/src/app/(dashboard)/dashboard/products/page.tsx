@@ -3,7 +3,7 @@
 import { KeyboardEvent, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BarChart3, CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, Truck } from "lucide-react";
+import { ArrowLeft, BarChart3, ChevronDown, CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, SlidersHorizontal, Truck, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ProductLearningSection } from "@/components/products/product-learning-section";
@@ -29,12 +29,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useProductConfiguration,
   usePromoteProductAlias,
   useReviewProductAlias,
   useProducts,
+  useProductCategories,
   useUpdateProductStatus,
 } from "@/hooks/use-products";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
@@ -45,6 +47,8 @@ import {
   type ProductAlias,
   productsApi,
 } from "@/services/api/products";
+import { productMerchandisingApi } from "@/services/api/product-merchandising";
+import { partiesApi } from "@/services/api/parties";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 interface ProductFormState {
@@ -72,6 +76,14 @@ function productToForm(product: Product): ProductFormState {
   };
 }
 
+type TriState = "all" | "yes" | "no";
+
+function TriStateFilter({ label, value, onChange }: { label: string; value: TriState; onChange: (value: TriState) => void }) {
+  return <fieldset className="space-y-2"><legend className="text-sm font-medium">{label}</legend><div className="inline-flex rounded-lg border bg-muted/30 p-1" role="group" aria-label={label}>{(["all", "yes", "no"] as const).map(option => <Button key={option} type="button" size="sm" variant={value === option ? "default" : "ghost"} className="h-8 px-3" onClick={() => onChange(option)}>{option === "all" ? "Todos" : option === "yes" ? "Sí" : "No"}</Button>)}</div></fieldset>;
+}
+
+const triValue = (value: TriState): boolean | undefined => value === "all" ? undefined : value === "yes";
+
 export default function ProductsPage() {
   const queryClient = useQueryClient();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
@@ -79,6 +91,15 @@ export default function ProductsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [includeInactive, setIncludeInactive] = useState(true);
+  const [areaId, setAreaId] = useState<string>();
+  const [lineId, setLineId] = useState<string>();
+  const [groupId, setGroupId] = useState<string>();
+  const [subgroupId, setSubgroupId] = useState<string>();
+  const [supplierId, setSupplierId] = useState<string>();
+  const [brandId, setBrandId] = useState<string>();
+  const [managesInventory, setManagesInventory] = useState<TriState>("all");
+  const [allowsFractionalSale, setAllowsFractionalSale] = useState<TriState>("all");
+  const [isWeighable, setIsWeighable] = useState<TriState>("all");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("details");
   const [form, setForm] = useState<ProductFormState>(emptyForm);
@@ -87,7 +108,24 @@ export default function ProductsPage() {
     pageSize: 20,
     search: search || undefined,
     includeInactive,
+    areaId, lineId, groupId, subgroupId, supplierId, brandId,
+    managesInventory: triValue(managesInventory),
+    allowsFractionalSale: triValue(allowsFractionalSale),
+    isWeighable: triValue(isWeighable),
   });
+  const categoriesQuery = useProductCategories(false);
+  const brandsQuery = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands, staleTime: 5 * 60 * 1000 });
+  const suppliersQuery = useQuery({
+    queryKey: ["product-filter-suppliers", businessId], enabled: !!businessId, staleTime: 5 * 60 * 1000,
+    queryFn: async () => { const items: Awaited<ReturnType<typeof partiesApi.page>>["items"] = []; let current = 1; let totalPages = 1; do { const result = await partiesApi.page({ page: current, pageSize: 200, role: "Supplier", isActive: true }); items.push(...result.items); totalPages = result.totalPages; current += 1; } while (current <= totalPages); return items.filter(item => item.supplierId).sort((left, right) => left.displayName.localeCompare(right.displayName, "es", { sensitivity: "base" })); },
+  });
+  const categories = categoriesQuery.data ?? [];
+  const areas = categories.filter(item => item.depth === 0);
+  const lines = categories.filter(item => item.depth === 1 && (!areaId || item.parentProductCategoryId === areaId));
+  const groups = categories.filter(item => item.depth === 2 && (!lineId || item.parentProductCategoryId === lineId));
+  const subgroups = categories.filter(item => item.depth === 3 && (!groupId || item.parentProductCategoryId === groupId));
+  const activeFilterCount = [search.trim() || undefined, areaId, lineId, groupId, subgroupId, supplierId, brandId, managesInventory !== "all" ? managesInventory : undefined, allowsFractionalSale !== "all" ? allowsFractionalSale : undefined, isWeighable !== "all" ? isWeighable : undefined, includeInactive ? undefined : "active"].filter(Boolean).length;
+  const resetFilters = () => { setSearch(""); setAreaId(undefined); setLineId(undefined); setGroupId(undefined); setSubgroupId(undefined); setSupplierId(undefined); setBrandId(undefined); setManagesInventory("all"); setAllowsFractionalSale("all"); setIsWeighable("all"); setIncludeInactive(true); setPage(1); };
   const configurationQuery = useProductConfiguration(selectedProduct?.productId);
   const rotationQuery = useQuery({
     queryKey: ["product-rotation", businessId, selectedProduct?.productId],
@@ -390,10 +428,17 @@ export default function ProductsPage() {
       </div>
 
 
-      <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 sm:flex-row sm:items-center">
-        <div className="relative flex-1">
+      <details className="group rounded-xl border bg-card">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+          <span className="flex items-center gap-2 font-medium"><SlidersHorizontal className="h-4 w-4"/>Filtros {activeFilterCount > 0 && <Badge variant="secondary">{activeFilterCount} activos</Badge>}</span>
+          <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180"/>
+        </summary>
+        <div className="space-y-5 border-t p-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="space-y-2 md:col-span-2 xl:col-span-4"><Label htmlFor="product-filter-search">Producto o SKU</Label><div className="relative">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
+            id="product-filter-search"
             className="pl-9"
             value={search}
             onChange={(event) => {
@@ -402,8 +447,13 @@ export default function ProductsPage() {
             }}
             placeholder="Buscar por nombre o SKU"
           />
-        </div>
-        <label className="flex items-center gap-2 text-sm">
+            </div></div>
+            {([['Área', areaId, areas, (value:string|undefined)=>{setAreaId(value);setLineId(undefined);setGroupId(undefined);setSubgroupId(undefined)}],['Línea', lineId, lines, (value:string|undefined)=>{setLineId(value);setGroupId(undefined);setSubgroupId(undefined)}],['Grupo', groupId, groups, (value:string|undefined)=>{setGroupId(value);setSubgroupId(undefined)}],['Subgrupo', subgroupId, subgroups, setSubgroupId]] as const).map(([label,value,options,onChange])=><div key={label} className="space-y-2"><Label>{label}</Label><Select value={value ?? "all"} onValueChange={next=>{onChange(next === "all" ? undefined : next);setPage(1)}}><SelectTrigger><SelectValue placeholder={`Todos los ${label.toLocaleLowerCase("es")}`}/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{options.map(option=><SelectItem key={option.productCategoryId} value={option.productCategoryId}>{option.name}</SelectItem>)}</SelectContent></Select></div>)}
+            <div className="space-y-2"><Label>Proveedor</Label><Select value={supplierId ?? "all"} onValueChange={value=>{setSupplierId(value === "all" ? undefined : value);setPage(1)}}><SelectTrigger><SelectValue placeholder="Todos"/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{suppliersQuery.data?.map(item=><SelectItem key={item.supplierId!} value={item.supplierId!}>{item.displayName}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-2"><Label>Marca</Label><Select value={brandId ?? "all"} onValueChange={value=>{setBrandId(value === "all" ? undefined : value);setPage(1)}}><SelectTrigger><SelectValue placeholder="Todas"/></SelectTrigger><SelectContent><SelectItem value="all">Todas</SelectItem>{brandsQuery.data?.map(item=><SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+          <div className="flex flex-wrap gap-5"><TriStateFilter label="Controla inventario" value={managesInventory} onChange={value=>{setManagesInventory(value);setPage(1)}}/><TriStateFilter label="Permite venta fraccionada" value={allowsFractionalSale} onChange={value=>{setAllowsFractionalSale(value);setPage(1)}}/><TriStateFilter label="Producto de balanza" value={isWeighable} onChange={value=>{setIsWeighable(value);setPage(1)}}/></div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><label className="flex items-center gap-2 text-sm">
           <Switch
             checked={includeInactive}
             onCheckedChange={(checked) => {
@@ -412,8 +462,9 @@ export default function ProductsPage() {
             }}
           />
           Incluir inactivos
-        </label>
-      </div>
+          </label><Button type="button" variant="ghost" disabled={activeFilterCount === 0} onClick={resetFilters}><X className="mr-2 h-4 w-4"/>Limpiar filtros</Button></div>
+        </div>
+      </details>
 
       {isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">

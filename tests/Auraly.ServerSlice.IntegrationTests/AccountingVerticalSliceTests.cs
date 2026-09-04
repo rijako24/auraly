@@ -71,7 +71,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         {
             var request = new SettleDispatchRequest(
                 invoice.CommercialSnapshot.PayableAmount - 1_000m,
-                "Faltante entregado por el transportador", $"settle-{dispatchId:N}");
+                "Faltante entregado por el transportador", $"settle-{dispatchId:N}",
+                fixture.WorkSessionId);
             using var settle = await accounting.PostAsJsonAsync(
                 $"/api/commerce/v1/dispatches/{dispatchId:D}/settle", request);
             Assert.True(settle.IsSuccessStatusCode,
@@ -179,7 +180,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Transfer,
             "Reintegro por transferencia",
             [new ConfirmSalesReturnLineRequest(1, .1m, ReturnInventoryDispositions.Sellable)],
-            null, null, "Other", null, SalesReturnScopes.Partial, bankAccountId,
+            fixture.WorkSessionId, null, "Other", null, SalesReturnScopes.Partial, bankAccountId,
             "TR-RETURN-2000", "Reintegro confirmado por el banco");
         using (var returns = fixture.CreateAdminClient(
                    SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm))
@@ -191,7 +192,9 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         {
             message.Headers.Add("Idempotency-Key", $"bank-return-{salesReturn.ReturnId:N}");
             using var response = await returns.SendAsync(message);
-            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var responseBody = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                $"Expected Accepted but received {response.StatusCode}: {responseBody}");
         }
         await AssertBalancedAsync(salesReturn.ReturnId);
         Assert.Equal(1_190m, await AccountAmountAsync(salesReturn.ReturnId, "111005", false));

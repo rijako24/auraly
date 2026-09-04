@@ -67,7 +67,7 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
-    public async Task Document_line_edits_are_atomic_and_preserve_catalog_price()
+    public async Task Document_line_edits_are_atomic_and_update_only_line_values()
     {
         await WithStoreAsync(async (store, _, scope, _) =>
         {
@@ -86,7 +86,7 @@ public sealed class PosDraftStoreTests
             Assert.Equal(12_000m, updated.Lines[0].UnitPrice);
             Assert.Equal(10_000m, updated.Lines[0].BaseUnitPrice);
             Assert.Equal(4_500m, updated.Lines[0].DocumentUnitCost);
-            Assert.Equal("ManualOverride", updated.Lines[0].PriceSource);
+            Assert.Equal(first.Lines[0].PriceSource, updated.Lines[0].PriceSource);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 store.UpdateLinesAsync(

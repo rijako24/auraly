@@ -7,8 +7,8 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PosCashMovementTicketTests
 {
     [Theory]
-    [InlineData("In", "ENTRADA DE DINERO")]
-    [InlineData("Out", "SALIDA DE DINERO")]
+    [InlineData("In", "Entrada de dinero")]
+    [InlineData("Out", "Salida de dinero")]
     public void Ticket_contains_professional_movement_details_and_signature(
         string direction,
         string expectedTitle)
@@ -25,24 +25,35 @@ public sealed class PosCashMovementTicketTests
         var workstation = new PosWorkstationIdentity(
             "02", "Sede principal", "Bodega que no debe imprimirse", "Carol Cairo", "Auraly", null);
 
-        var raw = Encoding.ASCII.GetString(
-            PosCashMovementTicketPrinter.RenderRaw(ticket, workstation, 80));
+        var rawBytes = PosCashMovementTicketPrinter.RenderRaw(ticket, workstation, 80);
+        var raw = Encoding.ASCII.GetString(rawBytes);
         var html = PosCashMovementTicketPrinter.RenderHtml(ticket, workstation, 80);
 
         Assert.Contains(expectedTitle, raw);
-        Assert.Contains("MOTIVO: Base inicial", raw);
-        Assert.Contains("FIRMA:", raw);
-        Assert.Contains("\n\n\nFIRMA:", raw);
+        Assert.Contains("Motivo: Base inicial", raw);
+        Assert.Contains("Firma:", raw);
+        Assert.Contains("\n\n\nFirma:", raw);
         Assert.DoesNotContain(ticket.DocumentId.ToString("D"), raw);
         Assert.Contains("Carol Cairo", raw);
+        Assert.Equal(new byte[] { 0x1B, 0x40, 0x1B, 0x61, 0x01 }, rawBytes.Take(5).ToArray());
+        Assert.Contains("\u001bE\u0001Valor", raw);
         Assert.Contains(expectedTitle, html);
+        var expectedTemplate = direction == "In" ? "cash-entry" : "cash-exit";
+        Assert.Contains($"data-auraly-report=\"{expectedTemplate}\"", html);
+        Assert.Contains("data-auraly-report-version=\"1\"", html);
+        Assert.Contains("font:700 12px/1.4 Arial", html);
+        Assert.Contains("www.auralyapp.co", html);
         Assert.Contains("Entregado por administraci", html);
         Assert.Contains("class=\"signature\"", html);
         Assert.DoesNotContain(ticket.DocumentId.ToString("D"), html);
         Assert.Contains("@page{size:80mm", html);
-        Assert.DoesNotContain("<strong>Bodega:</strong>", html);
-        Assert.DoesNotContain("Bodega que no debe imprimirse", html);
-        Assert.DoesNotContain("Bodega que no debe imprimirse", raw);
+        Assert.Contains("body{width:80mm", html);
+        Assert.Contains("padding:5mm 3mm 2mm 2mm", html);
+        Assert.DoesNotContain("body{text-transform:uppercase", html);
+        Assert.Contains("text-transform:uppercase", html);
+        Assert.Contains("text-align:center", html);
+        Assert.Contains("Sede: Sede principal - Bodega que no debe imprimirse", html);
+        Assert.Contains("Sede: Sede principal - Bodega que no", raw);
         Assert.True(html.IndexOf("class=\"amount\"", StringComparison.Ordinal) <
                     html.IndexOf("class=\"signature\"", StringComparison.Ordinal));
         Assert.True(html.IndexOf("Responsable:", StringComparison.Ordinal) <
@@ -62,11 +73,12 @@ public sealed class PosCashMovementTicketTests
             PosCashMovementTicketPrinter.RenderRaw(ticket, workstation, 58));
         var html = PosCashMovementTicketPrinter.RenderHtml(ticket, workstation, 58);
 
-        Assert.DoesNotContain("REFERENCIA", raw);
-        Assert.DoesNotContain("OBSERVACION", raw);
+        Assert.DoesNotContain("Referencia", raw);
+        Assert.DoesNotContain("Observacion", raw);
         Assert.DoesNotContain("Referencia", html);
         Assert.DoesNotContain("Observación", html);
-        Assert.Contains("FIRMA:", raw);
+        Assert.Contains("Firma:", raw);
         Assert.Contains("@page{size:58mm", html);
+        Assert.Contains("body{width:58mm", html);
     }
 }

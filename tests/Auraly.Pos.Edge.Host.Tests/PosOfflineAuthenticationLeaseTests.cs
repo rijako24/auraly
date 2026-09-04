@@ -218,7 +218,7 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
             new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
 
         Assert.Equal(_userId, session.UserId);
-        Assert.Equal(_clock.GetUtcNow().AddHours(12), session.ExpiresAt);
+        Assert.Equal(_clock.GetUtcNow().AddHours(24), session.ExpiresAt);
     }
 
     public Task InitializeAsync() => Task.CompletedTask;

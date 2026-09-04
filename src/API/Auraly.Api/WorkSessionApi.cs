@@ -251,13 +251,13 @@ public static class WorkSessionApi
 
         var deviceOpenGroup = endpoints.MapGroup("/api/pos/v1")
             .RequireAuthorization("pos.enrolled");
-        deviceOpenGroup.MapPost("/work-sessions/current", async (
+        deviceOpenGroup.MapPost("/work-sessions/opened", async (
             HttpContext context,
-            DeviceOpenWorkSessionRequest request,
+            RegisterDeviceWorkSessionRequest request,
             WorkSessionService service,
             CancellationToken cancellationToken) =>
             await Handle(async () => Results.Ok(
-                await service.OpenOrResumeDeviceAsync(
+                await service.RegisterDeviceOpenAsync(
                     context.User.ToDeviceWorkSessionIdentity() with
                     {
                         UserId = request.UserId
@@ -388,7 +388,8 @@ public static class WorkSessionClaimsPrincipalExtensions
             RequiredGuid(principal, Auraly.Contracts.Authentication.AuthenticationDefaults.IdentityTenantIdClaim),
             principal.FindAll("permission")
                 .Select(claim => claim.Value)
-                .ToHashSet(StringComparer.Ordinal));
+                .ToHashSet(StringComparer.Ordinal),
+            RequiredGuid(principal, "business_id"));
     public static WorkSessionIdentity ToDeviceWorkSessionIdentity(
         this ClaimsPrincipal principal) =>
         new(

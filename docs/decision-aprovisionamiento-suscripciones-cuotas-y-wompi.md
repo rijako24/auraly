@@ -60,6 +60,14 @@ tenant con `tenants.users.manage`: se reutilizan la misma invitación opaca y el
 outbox de correo, se extiende su vigencia otros tres días y se audita
 `TenantInvitationResent`. Un reenvío nunca crea otro usuario ni otra ruta de alta.
 
+La aceptación resuelve la identidad del administrador por
+`TenantId + país + tipo + identificación`. Si una migración ya creó esa `Party`
+como cliente u otro rol comercial y todavía no tiene `AppUser`, la misma
+transacción la reutiliza, completa sus datos de contacto y sede, conserva sus
+roles y crea el acceso Administrador. No se duplica el tercero. Si la `Party` ya
+tiene usuario, o correo/nombre de usuario pertenecen a otra cuenta del tenant,
+la activación responde conflicto explícito.
+
 Hay dos entradas al mismo motor. La entrada pública `/register` es anónima porque todavía no existe identidad ni tenant: crea un borrador protegido por token opaco, exige pago verificado y nunca expone exención. La entrada interna `/dashboard/tenants/new` es autenticada; únicamente un usuario de plataforma con `tenants.create` y `tenants.provisioning.payment.waive` puede aprovisionar sin Wompi. La decisión se valida en servidor y el navegador no envía una bandera de confianza para omitir el cobro.
 
 La experiencia elegida es el Widget oficial de Wompi abierto como modal desde el último paso, no un iframe propio ni una pestaña nueva. Así el comprador permanece visualmente en el wizard y Wompi presenta sus medios de pago. La public key, referencia, COP, valor en centavos, expiración y firma de integridad provienen de la cotización del servidor; la private key y los secretos nunca llegan al navegador.

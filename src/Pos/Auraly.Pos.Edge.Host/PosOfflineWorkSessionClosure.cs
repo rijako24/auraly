@@ -133,13 +133,10 @@ public sealed class PosOfflineWorkSessionClosureStore(
               AND NOT EXISTS
               (
                 SELECT 1 FROM Outbox prior
-                WHERE Outbox.WorkSessionId IS NOT NULL
-                  AND prior.WorkSessionId=Outbox.WorkSessionId
-                  AND prior.Status<>'Uploaded'
-                  AND (prior.CreatedAt<Outbox.CreatedAt OR
-                       (prior.CreatedAt=Outbox.CreatedAt AND prior.MessageId<Outbox.MessageId))
+                WHERE prior.Status<>'Uploaded'
+                  AND prior.LocalSequence<Outbox.LocalSequence
               )
-            ORDER BY CreatedAt LIMIT 1;
+            ORDER BY LocalSequence LIMIT 1;
             """;
         read.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionClosure);
         read.Parameters.AddWithValue("$now", now.ToString("O"));
@@ -242,6 +239,7 @@ public sealed class PosOfflineWorkSessionClosureService(
     PosEdgeSaleStore sales,
     PosCashMovementStore cashMovements,
     PosLocalIdentityStore identities,
+    PosLocalWorkSessionStore workSessions,
     PosOfflineWorkSessionClosureStore store,
     PosEdgeRuntimeContext runtime,
     PosWorkstationIdentity workstation,
@@ -265,8 +263,8 @@ public sealed class PosOfflineWorkSessionClosureService(
             session.WorkSessionId,
             runtime.BusinessId.Value,
             workstation.BusinessName,
-            runtime.WarehouseId.Value,
-            workstation.WarehouseName,
+            null,
+            null,
             session.UserId,
             session.DisplayName,
             openedAt,
@@ -341,8 +339,16 @@ public sealed class PosOfflineWorkSessionClosureService(
         PosLocalUserSession session,
         DateTimeOffset closedAt,
         CancellationToken cancellationToken) =>
-        identities.MarkWorkSessionClosedAsync(
+        MarkClosedCoreAsync(session, closedAt, cancellationToken);
+
+    private async Task MarkClosedCoreAsync(
+        PosLocalUserSession session,
+        DateTimeOffset closedAt,
+        CancellationToken cancellationToken)
+    {
+        await workSessions.MarkClosedAsync(
             session.WorkSessionId, session.UserId, closedAt, cancellationToken);
+    }
 
     private static IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals(
         IReadOnlyList<PosLocalWorkSessionSale> sales,

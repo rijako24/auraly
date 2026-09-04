@@ -41,7 +41,7 @@ public sealed partial class PosLocalIdentityStore(
 {
     private const int MaximumFailures = 5;
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan SessionDuration = TimeSpan.FromHours(12);
+    private static readonly TimeSpan SessionDuration = TimeSpan.FromHours(24);
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -371,25 +371,6 @@ public sealed partial class PosLocalIdentityStore(
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var workSessionId = ids.NewId();
-        await using (var previousSession = connection.CreateCommand())
-        {
-            previousSession.Transaction = transaction;
-            previousSession.CommandText = """
-                SELECT WorkSessionId
-                FROM PosLocalUserSessions
-                WHERE UserId=$userId
-                  AND WorkSessionId NOT IN (
-                      SELECT WorkSessionId FROM PosClosedWorkSessions)
-                ORDER BY StartedAt DESC
-                LIMIT 1;
-                """;
-            previousSession.Parameters.AddWithValue("$userId", user.UserId.ToString("D"));
-            var previousWorkSession = await previousSession.ExecuteScalarAsync(cancellationToken);
-            if (previousWorkSession is string value && Guid.TryParse(value, out var existing))
-                workSessionId = existing;
-        }
-
         await using (var close = connection.CreateCommand())
         {
             close.Transaction = transaction;
@@ -419,7 +400,9 @@ public sealed partial class PosLocalIdentityStore(
                 VALUES($session,$workSession,$user,$hash,$now,$expires);
                 """;
             insert.Parameters.AddWithValue("$session", sessionId.ToString("D"));
-            insert.Parameters.AddWithValue("$workSession", workSessionId.ToString("D"));
+            // Authentication does not open an operational cash session. The POS
+            // entry point assigns the locally-created WorkSession explicitly.
+            insert.Parameters.AddWithValue("$workSession", Guid.Empty.ToString("D"));
             insert.Parameters.AddWithValue("$user", user.UserId.ToString("D"));
             insert.Parameters.AddWithValue("$hash", TokenHash(token));
             insert.Parameters.AddWithValue("$now", Format(now));
@@ -431,7 +414,7 @@ public sealed partial class PosLocalIdentityStore(
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new PosLocalUserSession(
-            sessionId, workSessionId, user.UserId, user.Username, user.DisplayName,
+            sessionId, Guid.Empty, user.UserId, user.Username, user.DisplayName,
             permissions, expiresAt, token);
     }
 
@@ -458,8 +441,18 @@ public sealed partial class PosLocalIdentityStore(
         var userId = Guid.Parse(reader.GetString(2));
         var username = reader.GetString(3);
         var displayName = reader.GetString(4);
-        var expires = DateTimeOffset.Parse(reader.GetString(5));
+        var expires = timeProvider.GetUtcNow().Add(SessionDuration);
         await reader.CloseAsync();
+        await using (var touch = connection.CreateCommand())
+        {
+            touch.CommandText = """
+                UPDATE PosLocalUserSessions SET ExpiresAt=$expires
+                WHERE SessionId=$session AND EndedAt IS NULL;
+                """;
+            touch.Parameters.AddWithValue("$expires", Format(expires));
+            touch.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+            await touch.ExecuteNonQueryAsync(cancellationToken);
+        }
         var permissions = await ReadPermissionsAsync(
             connection, null, userId, cancellationToken);
         return new PosLocalUserSession(
@@ -547,7 +540,7 @@ public sealed partial class PosLocalIdentityStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT MIN(StartedAt) FROM PosLocalUserSessions
+            SELECT OpenedAt FROM PosLocalWorkSessions
             WHERE WorkSessionId=$workSession;
             """;
         command.Parameters.AddWithValue("$workSession", workSessionId.ToString("D"));
@@ -555,32 +548,6 @@ public sealed partial class PosLocalIdentityStore(
         return value is null
             ? timeProvider.GetUtcNow()
             : DateTimeOffset.Parse(value);
-    }
-
-    public async Task MarkWorkSessionClosedAsync(
-        Guid workSessionId,
-        Guid userId,
-        DateTimeOffset closedAt,
-        CancellationToken cancellationToken = default)
-    {
-        await using var connection = new SqliteConnection(connectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.Transaction = (SqliteTransaction)transaction;
-        command.CommandText = """
-            INSERT INTO PosClosedWorkSessions(WorkSessionId,UserId,ClosedAt)
-            VALUES($workSession,$user,$closed)
-            ON CONFLICT(WorkSessionId) DO NOTHING;
-            UPDATE PosLocalUserSessions
-            SET EndedAt=COALESCE(EndedAt,$closed),EndReason='WorkSessionClosed'
-            WHERE WorkSessionId=$workSession;
-            """;
-        command.Parameters.AddWithValue("$workSession", workSessionId.ToString("D"));
-        command.Parameters.AddWithValue("$user", userId.ToString("D"));
-        command.Parameters.AddWithValue("$closed", Format(closedAt));
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
     }
 
     private static async Task UpgradeWorkSessionsAsync(

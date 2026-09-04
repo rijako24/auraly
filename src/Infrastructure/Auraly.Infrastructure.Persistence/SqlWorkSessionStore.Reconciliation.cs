@@ -20,7 +20,7 @@ public sealed partial class SqlWorkSessionStore
             FROM dbo.WorkSessionClosures closure
             INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
             INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
-            INNER JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=session.WarehouseId
+            LEFT JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=session.WarehouseId
             INNER JOIN dbo.AppUsers cashier ON cashier.UserId=session.UserId
             WHERE business.TenantId=@TenantId AND closure.ClosedAt>=@From AND closure.ClosedAt<@Until
               AND (@Status IS NULL OR closure.ReconciliationStatus=@Status)
@@ -54,7 +54,9 @@ public sealed partial class SqlWorkSessionStore
         while (await reader.ReadAsync(cancellationToken))
             items.Add(new WorkSessionClosureListItem(
                 reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3),
-                reader.GetGuid(4), reader.GetString(5), reader.GetGuid(6), reader.GetString(7),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.GetGuid(6), reader.GetString(7),
                 reader.GetDateTimeOffset(8), reader.GetDateTimeOffset(9), reader.GetInt64(10),
                 reader.GetInt32(11), reader.GetInt64(12), reader.GetDecimal(13), reader.GetDecimal(14),
                 reader.GetDecimal(15), reader.GetString(16), reader.GetString(17), []));

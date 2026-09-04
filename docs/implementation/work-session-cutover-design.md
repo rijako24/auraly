@@ -20,9 +20,9 @@ solo aporta identidad local, credenciales, sincronización y numeración offline
 ## Sesión de trabajo
 
 `WorkSessions` es el límite operativo común para ventas online y Edge. SQL Server
-impide que un usuario tenga dos sesiones abiertas y que un equipo enrolado tenga dos
-sesiones abiertas. La sesión conserva sede, bodega, usuario, equipo opcional, apertura,
-actividad y cierre.
+impide duplicados por usuario web y por usuario/equipo enrolado. La sesión conserva
+sede, usuario, equipo opcional, apertura, actividad y cierre. La bodega pertenece a
+cada documento y no forma parte de la identidad de la sesión.
 
 Los movimientos de medios de pago se atribuyen a la sesión. El cierre genera una
 evidencia durable en `WorkSessionClosures`. Login y logout no abren ni cierran la
@@ -59,10 +59,12 @@ permite generar consecutivos locales sin conexión.
 
 ## POS Edge
 
-La base SQLite conserva el equipo, la sesión del usuario, catálogo, series, documentos,
-facturas temporales, outbox y recibos remotos. El login offline abre o recupera una
-sesión local para el mismo usuario. Cerrar y volver a abrir la aplicación recupera la
-venta activa y no consume otro consecutivo.
+La base SQLite conserva el equipo, autenticación local, sesiones operativas, catálogo,
+series, documentos, facturas temporales, outbox y recibos remotos. El login solo
+autentica. Entrar al POS abre o recupera la sesión del usuario en ese dispositivo,
+genera localmente su ID definitivo y encola su alta antes de aceptar documentos.
+Cerrar y volver a abrir la aplicación recupera la venta activa y no consume otro
+consecutivo. El servidor confirma el mismo ID; nunca genera ni sustituye uno de Edge.
 
 Las dos lecturas internas de la columna histórica de dispositivo existen solamente en
 el actualizador de esquema SQLite. No forman parte del dominio ni de contratos nuevos;
@@ -96,5 +98,7 @@ DacFx completa el modelo sin desactivar la protección.
 - La base del servidor no conserva `RegisterId`, `CashSessionId` ni `CashierShiftId`
   en las tablas comerciales migradas.
 - El POS Edge no accede directamente a SQL Server.
-- Usuario, sede, bodega y dispositivo se vuelven a validar en backend.
+- Usuario, sede, bodega del documento y dispositivo se vuelven a validar en backend.
+- La cola Edge preserva orden global por dispositivo entre apertura, movimientos,
+  cierre y la apertura siguiente.
 - Online y offline comparten el flujo comercial, fiscal y de procesamiento documental.

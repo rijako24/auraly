@@ -4,9 +4,9 @@ namespace Auraly.Pos.Edge.Infrastructure;
 
 public sealed class PosLocalDeviceIdentityRecovery(string databasePath)
 {
-    public Guid? ReadSingleDeviceId()
+    public IReadOnlyList<Guid> ReadActiveDeviceIds()
     {
-        if (!File.Exists(databasePath)) return null;
+        if (!File.Exists(databasePath)) return [];
         using var connection = new SqliteConnection(
             $"Data Source={databasePath};Mode=ReadOnly;Cache=Private;Pooling=False");
         connection.Open();
@@ -16,7 +16,7 @@ public sealed class PosLocalDeviceIdentityRecovery(string databasePath)
             FROM sqlite_master
             WHERE type='table' AND name='DocumentSeriesCursors';
             """;
-        if (Convert.ToInt64(tableCommand.ExecuteScalar()) == 0) return null;
+        if (Convert.ToInt64(tableCommand.ExecuteScalar()) == 0) return [];
 
         using var command = connection.CreateCommand();
         command.CommandText = """
@@ -26,19 +26,25 @@ public sealed class PosLocalDeviceIdentityRecovery(string databasePath)
             ORDER BY DeviceId;
             """;
         using var reader = command.ExecuteReader();
-        Guid? recovered = null;
+        var recovered = new List<Guid>();
         while (reader.Read())
         {
             if (!Guid.TryParse(reader.GetString(0), out var candidate) ||
                 candidate == Guid.Empty)
                 throw new InvalidDataException(
                     "La identidad local de esta caja no es válida.");
-            if (recovered.HasValue && recovered.Value != candidate)
-                throw new InvalidDataException(
-                    "La base local contiene más de una identidad de caja y no puede recuperarse automáticamente.");
-            recovered = candidate;
+            if (!recovered.Contains(candidate)) recovered.Add(candidate);
         }
         return recovered;
+    }
+
+    public Guid? ReadSingleDeviceId()
+    {
+        var candidates = ReadActiveDeviceIds();
+        if (candidates.Count > 1)
+            throw new InvalidDataException(
+                "La base local contiene más de una identidad de caja y no puede recuperarse automáticamente.");
+        return candidates.Count == 0 ? null : candidates[0];
     }
 
     public void Retire(Guid deviceId)

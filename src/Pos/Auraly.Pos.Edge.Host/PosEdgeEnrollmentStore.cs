@@ -73,7 +73,9 @@ public sealed class PosEdgeEnrollmentStore(
             ["PosEdge:BusinessId"] = package.BusinessId.ToString("D"),
             ["PosEdge:WarehouseId"] = package.WarehouseId.ToString("D"),
             ["PosEdge:BusinessName"] = package.BusinessName,
-            ["PosEdge:CompanyName"] = package.CompanyName ?? package.BusinessName,
+            ["PosEdge:CompanyName"] = string.IsNullOrWhiteSpace(package.CompanyName)
+                ? package.BusinessName
+                : package.CompanyName,
             ["PosEdge:CompanyLogoSource"] = package.CompanyLogoSource,
             ["PosEdge:WarehouseCode"] = package.WarehouseCode,
             ["PosEdge:WarehouseName"] = package.WarehouseName,
@@ -202,21 +204,30 @@ public sealed class PosEdgeEnrollmentClient(
         CancellationToken cancellationToken = default)
     {
         var installationId = $"{Environment.MachineName}:{Environment.UserName}";
-        var existingDeviceId = store.Load()?.DeviceId ??
-                               identityRecovery.ReadSingleDeviceId();
-        PosEnrollmentPackage package;
-        try
+        var storedDeviceId = store.Load()?.DeviceId;
+        var candidates = storedDeviceId.HasValue
+            ? [storedDeviceId.Value]
+            : identityRecovery.ReadActiveDeviceIds();
+        PosEnrollmentPackage? package = null;
+        foreach (var existingDeviceId in candidates)
         {
-            package = await RedeemFromServerAsync(
-                request, installationId, existingDeviceId, cancellationToken);
+            try
+            {
+                package = await RedeemFromServerAsync(
+                    request, installationId, existingDeviceId, cancellationToken);
+                foreach (var obsoleteDeviceId in candidates.Where(
+                             candidate => candidate != existingDeviceId))
+                    identityRecovery.Retire(obsoleteDeviceId);
+                break;
+            }
+            catch (PosEnrollmentServerException exception) when (IsRetiredDevice(exception))
+            {
+                identityRecovery.Retire(existingDeviceId);
+            }
         }
-        catch (PosEnrollmentServerException exception) when (
-            existingDeviceId.HasValue && IsRetiredDevice(exception))
-        {
-            package = await RedeemFromServerAsync(
-                request, installationId, null, cancellationToken);
-            identityRecovery.Retire(existingDeviceId.Value);
-        }
+
+        package ??= await RedeemFromServerAsync(
+            request, installationId, null, cancellationToken);
         package = await CacheCompanyLogoAsync(package, cancellationToken);
         store.Save(package);
         return new LocalPosEnrollmentResult(

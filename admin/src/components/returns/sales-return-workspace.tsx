@@ -69,11 +69,11 @@ export function SalesReturnWorkspace({ embedded = false, onCashRefundConfirmed }
       <Button variant={onlyAvailable ? "secondary" : "outline"} onClick={() => { setOnlyAvailable((value) => !value); setPage(1); }}>Solo con saldo</Button>
     </section>
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={list.data?.page} pageSize={list.data?.pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }} onRowClick={canCreate ? open : undefined} />
-    <SalesReturnEditor key={selected?.documentId ?? "none"} sale={selected} open={!!selected} canConfirm={canConfirm} embedded={embedded} onCashRefundConfirmed={onCashRefundConfirmed} onClose={() => setSelected(undefined)} />
+    <SalesReturnEditor key={selected?.documentId ?? "none"} sale={selected} open={!!selected} canConfirm={canConfirm} onCashRefundConfirmed={onCashRefundConfirmed} onClose={() => setSelected(undefined)} />
   </div>;
 }
 
-function SalesReturnEditor({ sale, open, canConfirm, embedded, onCashRefundConfirmed, onClose }: { sale?: ReturnableSale; open: boolean; canConfirm: boolean; embedded: boolean; onCashRefundConfirmed?: () => void | Promise<void>; onClose: () => void }) {
+function SalesReturnEditor({ sale, open, canConfirm, onCashRefundConfirmed, onClose }: { sale?: ReturnableSale; open: boolean; canConfirm: boolean; onCashRefundConfirmed?: () => void | Promise<void>; onClose: () => void }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const confirm = useConfirmSalesReturn();
   const reasonsQuery = useQuery({queryKey:["business-reasons","SalesReturn"],queryFn:()=>inventoryApi.businessReasons("SalesReturn"),enabled:open});
@@ -159,10 +159,8 @@ function SalesReturnEditor({ sale, open, canConfirm, embedded, onCashRefundConfi
     if (transferRefund && !settlementReference.trim()) { toast.error("Registra la referencia de la transferencia."); setTransferDialogOpen(true); return; }
     if (transferRefund && accountingEnabled && !selectedBankAccountId) { toast.error("Configura o selecciona la cuenta bancaria de salida."); return; }
     if (economicResolution === "Refund") {
-      if (resolutionMethod === "Cash" && embedded) {
-        try { workSessionId = (await salesReturnsApi.openWorkSession(businessId, sale.warehouseId)).workSessionId; }
-        catch { toast.error("No fue posible abrir la sesión del usuario en la bodega de la venta."); return; }
-      }
+      try { workSessionId = (await salesReturnsApi.openWorkSession(businessId)).workSessionId; }
+      catch { toast.error("No fue posible abrir la sesión operativa del usuario para registrar la devolución."); return; }
     }
     try {
       const result = await confirm.mutateAsync({

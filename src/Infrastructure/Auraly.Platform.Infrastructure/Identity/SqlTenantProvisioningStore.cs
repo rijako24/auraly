@@ -447,26 +447,74 @@ public sealed class SqlTenantProvisioningStore(
                 IF EXISTS(SELECT 1 FROM dbo.AppUsers WITH(UPDLOCK,HOLDLOCK)
                           WHERE TenantId=@TenantId AND NormalizedUsername=@NormalizedUsername)
                     THROW 51034,'Ya existe un usuario con este nombre de usuario.',1;
-                IF EXISTS(SELECT 1 FROM dbo.Parties WITH(UPDLOCK,HOLDLOCK)
-                          WHERE TenantId=@TenantId AND IdentificationCountryId=@CountryId
-                            AND IdentificationTypeCode=@IdentificationType
-                            AND NormalizedIdentification=@NormalizedIdentification)
-                    THROW 51034,'Ya existe un tercero con esta identificación en la organización.',1;
+                SELECT @PartyId=PartyId
+                FROM dbo.Parties WITH(UPDLOCK,HOLDLOCK)
+                WHERE TenantId=@TenantId AND IdentificationCountryId=@CountryId
+                  AND IdentificationTypeCode=@IdentificationType
+                  AND NormalizedIdentification=@NormalizedIdentification;
+                IF @PartyId IS NOT NULL AND EXISTS(
+                    SELECT 1 FROM dbo.AppUsers WITH(UPDLOCK,HOLDLOCK)
+                    WHERE TenantId=@TenantId AND PartyId=@PartyId)
+                    THROW 51034,'El tercero con esta identificación ya tiene un usuario asociado.',1;
                 SELECT @AdminRoleId=RoleId FROM dbo.AppRoles WITH(UPDLOCK,HOLDLOCK)
                 WHERE TenantId=@TenantId AND NormalizedName=N'ADMINISTRATOR' AND IsActive=1;
                 IF @AdminRoleId IS NULL THROW 51034,'El rol Administrador no está configurado.',1;
 
-                INSERT dbo.Parties
-                  (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
-                   Identification,NormalizedIdentification,DisplayName,FirstName,LastName,
-                   CompletionStatus,IsActive,CreatedBy,CreatedAt)
-                VALUES(@PartyId,@TenantId,N'NaturalPerson',@CountryId,@IdentificationType,
-                       @Identification,@NormalizedIdentification,@DisplayName,@FirstName,@LastName,
-                       N'Complete',1,@UserId,@Now);
-                INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
-                VALUES
-                  (@EmailContactId,@PartyId,N'Email',@Email,@NormalizedEmail,1,1,@Now),
-                  (@PhoneContactId,@PartyId,N'Phone',@Phone,@NormalizedPhone,1,1,@Now);
+                IF @PartyId IS NULL
+                BEGIN
+                    SET @PartyId=@NewPartyId;
+                    INSERT dbo.Parties
+                      (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
+                       Identification,NormalizedIdentification,DisplayName,FirstName,LastName,
+                       CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                    VALUES(@PartyId,@TenantId,N'NaturalPerson',@CountryId,@IdentificationType,
+                           @Identification,@NormalizedIdentification,@DisplayName,@FirstName,@LastName,
+                           N'Complete',1,@UserId,@Now);
+                END
+                ELSE
+                    UPDATE dbo.Parties
+                    SET PartyType=N'NaturalPerson',Identification=@Identification,
+                        DisplayName=@DisplayName,FirstName=@FirstName,LastName=@LastName,
+                        CompletionStatus=N'Complete',IsActive=1,UpdatedBy=@UserId,UpdatedAt=@Now
+                    WHERE PartyId=@PartyId AND TenantId=@TenantId;
+
+                IF EXISTS(SELECT 1 FROM dbo.PartyContacts
+                          WHERE PartyId=@PartyId AND ContactType=N'Email'
+                            AND NormalizedValue=@NormalizedEmail)
+                BEGIN
+                    UPDATE dbo.PartyContacts SET IsPrimary=0
+                    WHERE PartyId=@PartyId AND ContactType=N'Email' AND IsPrimary=1 AND IsActive=1
+                      AND NormalizedValue<>@NormalizedEmail;
+                    UPDATE dbo.PartyContacts SET Value=@Email,IsPrimary=1,IsActive=1
+                    WHERE PartyId=@PartyId AND ContactType=N'Email' AND NormalizedValue=@NormalizedEmail;
+                END
+                ELSE IF EXISTS(SELECT 1 FROM dbo.PartyContacts
+                               WHERE PartyId=@PartyId AND ContactType=N'Email'
+                                 AND IsPrimary=1 AND IsActive=1)
+                    UPDATE dbo.PartyContacts SET Value=@Email,NormalizedValue=@NormalizedEmail
+                    WHERE PartyId=@PartyId AND ContactType=N'Email' AND IsPrimary=1 AND IsActive=1;
+                ELSE
+                    INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
+                    VALUES(@EmailContactId,@PartyId,N'Email',@Email,@NormalizedEmail,1,1,@Now);
+
+                IF EXISTS(SELECT 1 FROM dbo.PartyContacts
+                          WHERE PartyId=@PartyId AND ContactType=N'Phone'
+                            AND NormalizedValue=@NormalizedPhone)
+                BEGIN
+                    UPDATE dbo.PartyContacts SET IsPrimary=0
+                    WHERE PartyId=@PartyId AND ContactType=N'Phone' AND IsPrimary=1 AND IsActive=1
+                      AND NormalizedValue<>@NormalizedPhone;
+                    UPDATE dbo.PartyContacts SET Value=@Phone,IsPrimary=1,IsActive=1
+                    WHERE PartyId=@PartyId AND ContactType=N'Phone' AND NormalizedValue=@NormalizedPhone;
+                END
+                ELSE IF EXISTS(SELECT 1 FROM dbo.PartyContacts
+                               WHERE PartyId=@PartyId AND ContactType=N'Phone'
+                                 AND IsPrimary=1 AND IsActive=1)
+                    UPDATE dbo.PartyContacts SET Value=@Phone,NormalizedValue=@NormalizedPhone
+                    WHERE PartyId=@PartyId AND ContactType=N'Phone' AND IsPrimary=1 AND IsActive=1;
+                ELSE
+                    INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
+                    VALUES(@PhoneContactId,@PartyId,N'Phone',@Phone,@NormalizedPhone,1,1,@Now);
                 INSERT dbo.AppUsers
                   (UserId,TenantId,PartyId,Username,NormalizedUsername,Email,NormalizedEmail,
                    PasswordHash,PosOfflinePasswordSalt,PosOfflinePasswordHash,PosOfflinePasswordIterations,
@@ -475,11 +523,24 @@ public sealed class SqlTenantProvisioningStore(
                 VALUES(@UserId,@TenantId,@PartyId,@Username,@NormalizedUsername,@Email,@NormalizedEmail,
                        @PasswordHash,@OfflineSalt,@OfflineHash,@OfflineIterations,@ChangedAt,
                        @FirstName,@LastName,@Phone,1,1,@Now);
-                INSERT dbo.PartySites
-                  (PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
-                   AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
-                VALUES(@SiteId,@PartyId,N'PRINCIPAL',N'Principal',@CountryId,@DivisionId,@CityId,
-                       @Address,1,1,@UserId,@Now);
+                IF EXISTS(SELECT 1 FROM dbo.PartySites
+                          WHERE PartyId=@PartyId AND IsPrimary=1 AND IsActive=1)
+                    UPDATE dbo.PartySites
+                    SET CountryId=@CountryId,AdministrativeDivisionId=@DivisionId,CityId=@CityId,
+                        AddressLine=@Address,UpdatedAt=@Now
+                    WHERE PartyId=@PartyId AND IsPrimary=1 AND IsActive=1;
+                ELSE IF EXISTS(SELECT 1 FROM dbo.PartySites
+                               WHERE PartyId=@PartyId AND Code=N'PRINCIPAL')
+                    UPDATE dbo.PartySites
+                    SET CountryId=@CountryId,AdministrativeDivisionId=@DivisionId,CityId=@CityId,
+                        AddressLine=@Address,IsPrimary=1,IsActive=1,UpdatedAt=@Now
+                    WHERE PartyId=@PartyId AND Code=N'PRINCIPAL';
+                ELSE
+                    INSERT dbo.PartySites
+                      (PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+                       AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                    VALUES(@SiteId,@PartyId,N'PRINCIPAL',N'Principal',@CountryId,@DivisionId,@CityId,
+                           @Address,1,1,@UserId,@Now);
                 INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
                 VALUES(@UserRoleId,@UserId,@AdminRoleId,NULL,@Now,@UserId);
                 UPDATE dbo.TenantUserInvitations
@@ -502,7 +563,8 @@ public sealed class SqlTenantProvisioningStore(
             command.Parameters.AddWithValue("@Now", now);
             command.Parameters.AddWithValue("@AuditLogId", ids.NewId());
             command.Parameters.AddWithValue("@UserId", ids.NewId());
-            command.Parameters.AddWithValue("@PartyId", ids.NewId());
+            command.Parameters.Add("@PartyId", SqlDbType.UniqueIdentifier).Value = DBNull.Value;
+            command.Parameters.AddWithValue("@NewPartyId", ids.NewId());
             command.Parameters.AddWithValue("@EmailContactId", ids.NewId());
             command.Parameters.AddWithValue("@PhoneContactId", ids.NewId());
             command.Parameters.AddWithValue("@SiteId", ids.NewId());

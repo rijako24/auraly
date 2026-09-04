@@ -100,6 +100,9 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
     {
         Require(actor, DispatchPermissionCodes.Settle); Required(dispatchId, "DispatchId"); Idempotency(request.IdempotencyKey);
         if (request.CashReceived < 0) throw new DispatchValidationException("CashReceived cannot be negative.");
+        if (request.WorkSessionId is null || request.WorkSessionId == Guid.Empty)
+            throw new DispatchValidationException(
+                "WorkSessionId is required to receive dispatch money.");
         return store.SettleAsync(actor, dispatchId, request with { Notes = Text(request.Notes, 500), IdempotencyKey = request.IdempotencyKey.Trim() }, ct);
     }
 

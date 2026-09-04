@@ -10,6 +10,7 @@ public interface IProductAdminService
         Guid businessId,
         PagedRequest request,
         bool includeInactive = false,
+        ProductListFilters? filters = null,
         CancellationToken ct = default);
 
     Task<ProductDto> UpdateStatusAsync(

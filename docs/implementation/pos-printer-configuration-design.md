@@ -48,17 +48,20 @@ Cada perfil define:
 
 Los modos conectados son:
 
-- `WindowsRaw`: entrega bytes ESC/POS a una impresora térmica Windows. Es el
-  modo de producción para una caja enrolada con hardware compatible.
+- `WindowsRaw`: conserva el nombre compatible del perfil de impresión directa,
+  pero los documentos se renderizan antes de entregarse silenciosamente a la
+  impresora Windows. Así QR, tablas, tipografía y espaciado no dependen de las
+  variantes ESC/POS de cada fabricante. Los comandos crudos quedan reservados
+  para periféricos como apertura de cajón.
 - `BrowserPreview`: genera una representación HTML de ancho real, con CUFE y
   QR, la abre y presenta el diálogo de impresión. Desde allí se puede escoger
   Microsoft XPS Document Writer, PDF o una impresora normal.
 - `File`: conserva el trabajo ESC/POS en disco para diagnóstico y pruebas sin
   hardware.
 
-Microsoft XPS Document Writer no debe recibir bytes ESC/POS: es una impresora
-gráfica. Por eso Auraly usa `BrowserPreview` para XPS y conserva
-`WindowsRaw` para una térmica compatible.
+Microsoft XPS Document Writer y las impresoras térmicas reciben el mismo
+documento renderizado cuando la aplicación instalada imprime directamente.
+`BrowserPreview` se reserva para el navegador y abre el diálogo del sistema.
 
 ## Flujo
 
@@ -71,6 +74,36 @@ gráfica. Por eso Auraly usa `BrowserPreview` para XPS y conserva
 6. El lanzador abre la vista y esta invoca el diálogo de impresión.
 7. Una falla de impresión no renumera ni elimina la venta; permite reimpresión
    desde el snapshot original.
+
+## Plantilla canónica
+
+Venta, entrada de dinero, salida de dinero, conteo de denominaciones y cierre conservan una sola
+definición documental por tipo. Navegador y POS Edge son transportes: no poseen
+una versión funcional distinta del reporte. En venta, la misma definición de
+contenido alimenta tirilla, media carta, medio oficio y carta; el formato solo
+decide tamaño, paginación y rotación.
+
+### Versionado de reportes impresos
+
+El catálogo canónico de plantillas vive en `PosPrintTemplateCatalog`. La versión
+1 aprobada incluye `sales-invoice`, `sales-receipt`, `work-session-closure`,
+`cash-entry` y `cash-exit`. El HTML conserva el código y la versión como metadatos
+no visibles (`data-auraly-report` y `data-auraly-report-version`) para diagnóstico
+y regresión sin agregar texto técnico a la tirilla.
+
+Un ajuste compatible que corrija el transporte, la nitidez o el soporte de otra
+impresora sin alterar contenido ni composición conserva la versión. Todo cambio
+intencional en campos, jerarquía, orden, márgenes o composición aprobada crea una
+nueva versión en el catálogo y sus pruebas; no se modifica silenciosamente la
+versión publicada. Navegador, aplicación instalada, caja enrolada y formatos de
+hoja consumen la misma versión documental: el transporte nunca crea una versión
+paralela.
+
+Todas las salidas operativas usan contenido con capitalización natural, títulos
+de documento y sección destacados, alineación clara y jerarquía en negrita para
+totales, medios de pago y valores de efectivo. La impresión directa conserva el
+mismo orden, campos y composición que la representación web. Una regresión debe
+comparar ambos transportes y los cuatro formatos antes de publicar.
 
 ## Alcance implementado
 
@@ -87,8 +120,9 @@ gráfica. Por eso Auraly usa `BrowserPreview` para XPS y conserva
   pago, CUFE, QR, hora de emisión, paginación y el crédito de emisión de Auraly;
 - líneas, impuestos, totales, pagos, CUFE y QR;
 - apertura de vista previa;
-- impresión ESC/POS existente;
+- impresión directa de documentos renderizados y comandos ESC/POS periféricos;
 - reimpresión por F6 desde el snapshot original;
+- tirilla de conteo de denominaciones con usuario, hora, cantidades, subtotales y total;
 - pruebas del contenido y escritura atómica.
 
 ## Siguiente incremento de configuración

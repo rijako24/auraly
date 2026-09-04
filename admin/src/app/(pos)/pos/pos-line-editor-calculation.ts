@@ -28,6 +28,29 @@ export function nextFocusableIndex(currentIndex: number, length: number, backwar
   return (currentIndex + direction + length) % length;
 }
 
+export type ProratableSaleLine = {
+  lineId: string;
+  quantity: number;
+  unitPrice: number;
+};
+
+export function prorateAdditionalSaleValue(
+  lines: readonly ProratableSaleLine[],
+  additionalValue: number,
+): Array<ProratableSaleLine & { allocatedValue: number }> {
+  if (!Number.isFinite(additionalValue) || additionalValue <= 0)
+    throw new Error("El valor adicional debe ser mayor que cero.");
+  if (!lines.length || lines.some(line => !Number.isFinite(line.quantity) || line.quantity <= 0))
+    throw new Error("Todas las líneas deben tener una cantidad válida.");
+  const totalQuantity = lines.reduce((sum, line) => sum + line.quantity, 0);
+  const unitIncrement = additionalValue / totalQuantity;
+  return lines.map(line => ({
+    ...line,
+    unitPrice: round(line.unitPrice + unitIncrement, 6),
+    allocatedValue: round(unitIncrement * line.quantity, 6),
+  }));
+}
+
 export type GridDirection = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 
 export function nextGridPosition(

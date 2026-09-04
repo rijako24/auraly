@@ -108,7 +108,11 @@ public sealed record ReorderDispatchDocumentsRequest(IReadOnlyCollection<Guid> O
 public sealed record DispatchExpenseInput(string Category, decimal Amount, string? Description, string? EvidenceUrl, string IdempotencyKey, DateTimeOffset OccurredAt);
 public sealed record ReviewDispatchExpenseRequest(string Decision, decimal? ApprovedAmount, string? Notes, string IdempotencyKey);
 public sealed record CloseDispatchRouteRequest(decimal DeclaredCash, string? DifferenceReason, string IdempotencyKey);
-public sealed record SettleDispatchRequest(decimal CashReceived, string? Notes, string IdempotencyKey);
+public sealed record SettleDispatchRequest(
+    decimal CashReceived,
+    string? Notes,
+    string IdempotencyKey,
+    Guid? WorkSessionId = null);
 
 public sealed record DispatchDeliveryPaymentDetail(Guid PaymentId, string ApplicationType, string? PaymentMethod, decimal Amount, string? Reference, string? EvidenceUrl);
 public sealed record DispatchDeliveryReturnDetail(Guid ReturnLineId, int OriginalLineNumber, Guid ProductId, string ProductCode, string Description, decimal Quantity, string InventoryDisposition, string ReasonCode, string ReasonDescription);

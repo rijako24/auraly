@@ -71,9 +71,9 @@ public sealed class DispatchSettlementHostedService(
             await using (var reader = await select.ExecuteReaderAsync(token))
                 if (await reader.ReadAsync(token))
                     value = new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-                        reader.GetGuid(3), reader.GetDateTimeOffset(4), reader.GetInt32(5) + 1,
-                        reader.GetGuid(6), reader.GetGuid(7), reader.GetString(8),
-                        reader.GetGuid(9), reader.GetString(10));
+                        reader.GetGuid(3), reader.GetGuid(4), reader.GetDateTimeOffset(5),
+                        reader.GetInt32(6) + 1, reader.GetGuid(7), reader.GetGuid(8),
+                        reader.GetString(9), reader.GetGuid(10), reader.GetString(11));
             if (value is null)
             {
                 await transaction.CommitAsync(token);
@@ -114,6 +114,7 @@ public sealed class DispatchSettlementHostedService(
                         item.SourceDocumentId, operation.RequestedAt, ReturnEconomicResolutions.CustomerCredit,
                         null, item.NotDelivered ? "Mercancía no entregada en despacho" : "Devolución registrada durante la entrega",
                         item.Lines.Select(line => new ConfirmSalesReturnLineRequest(line.LineNumber, line.Quantity, line.Disposition)).ToArray(),
+                        WorkSessionId: operation.WorkSessionId,
                         ReasonCode: item.ReasonCode,
                         Notes: $"Liquidación automática del despacho {operation.DispatchNumber}."), token);
                 await documentWorker.ProcessOneAsync(new DocumentProcessingSignal(
@@ -364,7 +365,7 @@ public sealed class DispatchSettlementHostedService(
         return new Guid(bytes.AsSpan(0, 16));
     }
 
-    private sealed record Operation(Guid Id, Guid BusinessId, Guid DispatchId, Guid RequestedBy,
+    private sealed record Operation(Guid Id, Guid BusinessId, Guid DispatchId, Guid WorkSessionId, Guid RequestedBy,
         DateTimeOffset RequestedAt, int Attempts, Guid TenantId, Guid WarehouseId,
         string DispatchNumber, Guid SettlementId, string TransporterName);
     private sealed record ReturnLine(int LineNumber, decimal Quantity, string Disposition);

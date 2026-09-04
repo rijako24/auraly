@@ -384,6 +384,14 @@ public sealed class DatabaseUpgradeMigrationTests
             root, "database", "Auraly.Database", "Tables", "CashMovementDocuments.sql"));
         var returns = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Tables", "SalesReturns.sql"));
+        var dispatchSettlements = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "DispatchSettlementOperations.sql"));
+        var dispatchBackfill = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260903_BackfillDispatchSettlementWorkSessions.sql"));
+        var damageBackfill = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260903_BackfillLegacyDamageWarehouses.sql"));
         var users = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Tables", "AppUsers.sql"));
         var devices = File.ReadAllText(Path.Combine(
@@ -393,7 +401,11 @@ public sealed class DatabaseUpgradeMigrationTests
         var pipeline = File.ReadAllText(Path.Combine(
             root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
 
-        Assert.Contains("UX_WorkSessions_Tenant_User_Open", workSessions,
+        Assert.Contains("UX_WorkSessions_Web_User_Open", workSessions,
+            StringComparison.Ordinal);
+        Assert.Contains("UX_WorkSessions_Device_User_Open", workSessions,
+            StringComparison.Ordinal);
+        Assert.Contains("[WarehouseId] UNIQUEIDENTIFIER NULL", workSessions,
             StringComparison.Ordinal);
         Assert.Contains("FK_WorkSessions_BusinessTenant", workSessions,
             StringComparison.Ordinal);
@@ -413,6 +425,16 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.Contains("FK_SalesReturns_WorkSessionBusiness", returns,
             StringComparison.Ordinal);
+        Assert.Contains("[WorkSessionId] UNIQUEIDENTIFIER NOT NULL", dispatchSettlements,
+            StringComparison.Ordinal);
+        Assert.Contains("ALTER COLUMN WorkSessionId UNIQUEIDENTIFIER NOT NULL", dispatchBackfill,
+            StringComparison.Ordinal);
+        Assert.Contains("INSERT dbo.WorkSessions", dispatchBackfill,
+            StringComparison.Ordinal);
+        Assert.Contains("operation.DocumentType=N'Damage'", damageBackfill,
+            StringComparison.Ordinal);
+        Assert.Contains("operation.DestinationWarehouseId IS NULL", damageBackfill,
+            StringComparison.Ordinal);
         Assert.Contains("20260902_ScopeWorkSessionsByTenant.sql", preDeployment,
             StringComparison.Ordinal);
         var reviewedMigration = pipeline.IndexOf(
@@ -420,8 +442,41 @@ public sealed class DatabaseUpgradeMigrationTests
         var deployReport = pipeline.IndexOf("'/Action:DeployReport'", StringComparison.Ordinal);
         Assert.True(reviewedMigration >= 0 && reviewedMigration < deployReport,
             "La migración de sesiones debe ejecutarse antes del DeployReport para preservar filas existentes.");
+        var dispatchMigration = pipeline.IndexOf(
+            "20260903_BackfillDispatchSettlementWorkSessions.sql", StringComparison.Ordinal);
+        var damageMigration = pipeline.IndexOf(
+            "20260903_BackfillLegacyDamageWarehouses.sql", StringComparison.Ordinal);
+        Assert.True(damageMigration >= 0 && damageMigration < reviewedMigration,
+            "Las averías históricas deben resolverse antes del DeployReport.");
+        Assert.True(dispatchMigration > reviewedMigration && dispatchMigration < deployReport,
+            "La migración de liquidaciones debe asociar sesiones antes del DeployReport.");
         Assert.Contains("/p:IgnoreWithNocheckOnForeignKeys=True", pipeline,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void System_warehouse_migration_backfills_the_orders_warehouse_after_business_seeds()
+    {
+        var root = FindRepositoryRoot();
+        var databaseRoot = Path.Combine(root, "database", "Auraly.Database");
+        var migration = File.ReadAllText(Path.Combine(
+            databaseRoot, "Scripts", "Migrations", "ClassifySystemWarehouses.sql"));
+        var postDeployment = File.ReadAllText(Path.Combine(
+            databaseRoot, "Scripts", "PostDeployment.sql"));
+
+        Assert.Contains("b.BusinessId,N'PED',N'Bodega de pedidos'", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("w.BusinessId=b.BusinessId AND w.Code=N'PED'", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive", migration,
+            StringComparison.Ordinal);
+
+        var lastBusinessSeed = postDeployment.LastIndexOf(
+            ":r .\\Seeds\\SeedMedidental.sql", StringComparison.Ordinal);
+        var finalWarehouseBackfill = postDeployment.LastIndexOf(
+            ":r .\\Migrations\\ClassifySystemWarehouses.sql", StringComparison.Ordinal);
+        Assert.True(lastBusinessSeed >= 0 && finalWarehouseBackfill > lastBusinessSeed,
+            "La bodega interna de pedidos debe garantizarse después de crear todos los negocios sembrados.");
     }
 
     private static string FindRepositoryRoot()

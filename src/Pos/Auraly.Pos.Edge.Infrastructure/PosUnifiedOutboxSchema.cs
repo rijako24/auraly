@@ -15,6 +15,7 @@ public static class PosUnifiedOutboxSchema
             command.CommandText = """
             CREATE TABLE IF NOT EXISTS Outbox(
               MessageId TEXT NOT NULL PRIMARY KEY,
+              LocalSequence INTEGER NULL,
               DocumentId TEXT NOT NULL,
               WorkSessionId TEXT NULL,
               Type TEXT NOT NULL,
@@ -47,6 +48,7 @@ public static class PosUnifiedOutboxSchema
         var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["WorkSessionId"] = "TEXT NULL",
+            ["LocalSequence"] = "INTEGER NULL",
             ["NextAttemptAt"] = "TEXT NULL",
             ["LeaseAcquiredAt"] = "TEXT NULL",
             ["LastAttemptAt"] = "TEXT NULL",
@@ -64,12 +66,33 @@ public static class PosUnifiedOutboxSchema
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+            CREATE TABLE IF NOT EXISTS PosOutboxSequence(
+              Singleton INTEGER NOT NULL PRIMARY KEY CHECK(Singleton=1),
+              NextValue INTEGER NOT NULL);
+            UPDATE Outbox
+            SET LocalSequence=(SELECT COUNT(1) FROM Outbox prior WHERE prior.rowid<=Outbox.rowid)
+            WHERE LocalSequence IS NULL;
+            INSERT INTO PosOutboxSequence(Singleton,NextValue)
+            VALUES(1,COALESCE((SELECT MAX(LocalSequence) FROM Outbox),0))
+            ON CONFLICT(Singleton) DO UPDATE SET
+              NextValue=MAX(NextValue,excluded.NextValue);
+            CREATE TRIGGER IF NOT EXISTS TR_Outbox_AssignLocalSequence
+            AFTER INSERT ON Outbox
+            WHEN NEW.LocalSequence IS NULL
+            BEGIN
+              UPDATE PosOutboxSequence SET NextValue=NextValue+1 WHERE Singleton=1;
+              UPDATE Outbox SET LocalSequence=(
+                SELECT NextValue FROM PosOutboxSequence WHERE Singleton=1)
+              WHERE rowid=NEW.rowid;
+            END;
             CREATE UNIQUE INDEX IF NOT EXISTS IX_Outbox_DocumentId
               ON Outbox(DocumentId);
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_Outbox_LocalSequence
+              ON Outbox(LocalSequence);
             CREATE INDEX IF NOT EXISTS IX_Outbox_WorkSessionId_CreatedAt
               ON Outbox(WorkSessionId,CreatedAt);
             CREATE INDEX IF NOT EXISTS IX_Outbox_Dispatch
-              ON Outbox(Status,NextAttemptAt,CreatedAt);
+              ON Outbox(Status,NextAttemptAt,LocalSequence);
             """;
             await command.ExecuteNonQueryAsync(cancellationToken);
         }

@@ -51,6 +51,18 @@ export interface ProductCategoryPayload {
   isActive?: boolean;
 }
 
+export interface ProductListFilters {
+  areaId?: string;
+  lineId?: string;
+  groupId?: string;
+  subgroupId?: string;
+  supplierId?: string;
+  brandId?: string;
+  managesInventory?: boolean;
+  allowsFractionalSale?: boolean;
+  isWeighable?: boolean;
+}
+
 export interface ProductAlias {
   productAliasId: string;
   productId: string;
@@ -163,7 +175,7 @@ export const productsApi = {
   listCategories: (businessId: string, includeInactive = false) => apiClient.get<ProductCategory[]>(`/businesses/${businessId}/product-categories`, { includeInactive }),
   createCategory: (businessId: string, request: ProductCategoryPayload) => apiClient.post<ProductCategory>(`/businesses/${businessId}/product-categories`, request),
   updateCategory: (businessId: string, categoryId: string, request: ProductCategoryPayload) => apiClient.put<ProductCategory>(`/businesses/${businessId}/product-categories/${categoryId}`, request),
-  list: (businessId: string, params?: Partial<PagedRequest> & { includeInactive?: boolean }) => apiClient.get<PagedResponse<Product>>(`/businesses/${businessId}/products`, withPagedDefaults(params)),
+  list: (businessId: string, params?: Partial<PagedRequest> & ProductListFilters & { includeInactive?: boolean }) => apiClient.get<PagedResponse<Product>>(`/businesses/${businessId}/products`, withPagedDefaults(params ? { ...params } : undefined)),
   getConfiguration: async (businessId: string, productId: string): Promise<ProductConfiguration> => {
     const [aliases, searchTerms] = await Promise.all([
       apiClient.get<ProductAlias[]>(`/businesses/${businessId}/products/${productId}/aliases`),

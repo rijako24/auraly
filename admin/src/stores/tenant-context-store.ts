@@ -12,6 +12,7 @@ interface TenantContextState {
   isLoaded: boolean;
   setTenants: (tenants: ExecutionTenant[]) => void;
   selectTenant: (tenantId: string) => void;
+  establishIdentityTenant: (tenantId: string) => void;
   resetSession: () => void;
 }
 
@@ -53,6 +54,10 @@ export const useTenantContextStore = create<TenantContextState>((set, get) => ({
     if (!get().tenants.some((tenant) => tenant.tenantId === tenantId)) return;
     persistTenantId(tenantId);
     set({ selectedTenantId: tenantId });
+  },
+  establishIdentityTenant: (tenantId) => {
+    persistTenantId(tenantId);
+    set({ tenants: [], selectedTenantId: tenantId, isLoaded: false });
   },
   resetSession: () =>
     set({ tenants: [], selectedTenantId: persistedTenantId(), isLoaded: false }),

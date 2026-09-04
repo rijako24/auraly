@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowRightLeft, Banknote, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, CreditCard, Landmark, Loader2, ReceiptText, Scale, X } from "lucide-react";
+import { AlertCircle, ArrowRightLeft, Banknote, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, CreditCard, Landmark, Loader2, ReceiptText, Scale, TimerReset, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,13 +15,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { workSessionDifferencesApi, type ClosurePaymentVerification, type ReconcileClosureRequest, type WorkSessionClosure } from "@/services/api/work-session-differences";
-import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
+import { referenceOptionsApi } from "@/services/api/reference-options";
+import { tenantsApi } from "@/services/api/tenants";
+import { PosCashClosureDialog } from "@/app/(pos)/pos/pos-cash-closure-dialog";
+import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession, type PosAuthorizedClosurePreview, type PosWorkSessionPaymentCount } from "@/services/pos/pos-edge-client";
+import { cashDenominationCountHtml, formatWorkSessionCountInput, normalizeWorkSessionCountInput, printCashDenominationCount, printWorkSessionClosure, workSessionClosureHtml, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
+import { useAuthStore } from "@/stores/auth-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 const isoDate = (value: Date) => value.toISOString().slice(0, 10);
 const result = (difference: number | null) => difference == null ? "Sin conteo" : difference > 0 ? `Sobrante ${money.format(difference)}` : difference < 0 ? `Faltante ${money.format(Math.abs(difference))}` : "Cuadra";
 const accountingStatusLabels: Record<string, string> = { AccountingDisabled: "No requiere asiento", AccountingPendingConfiguration: "Falta configuración contable", NotRequired: "No requiere asiento", Pending: "Pendiente de contabilizar", Processing: "Contabilizando", Posted: "Contabilizado", Failed: "Error contable" };
 const accountingStatusName = (value: string) => accountingStatusLabels[value] ?? "Pendiente de contabilizar";
+const referenceOptionsClient = {
+  mode: "online" as const,
+  referenceOptions: referenceOptionsApi.list,
+  printCashDenominationCount: async (ticket: Parameters<PosEdgeClient["printCashDenominationCount"]>[0]) => {
+    const edgeToken = readEdgeTokenFromLaunch();
+    if (edgeToken)
+      return new PosEdgeClient(edgeToken, readEdgeUserSession()).printCashDenominationCount(ticket);
+    return printCashDenominationCount(cashDenominationCountHtml(ticket));
+  },
+};
 
 export default function CashClosuresPage() {
   const today = useMemo(() => new Date(), []);
@@ -36,6 +51,7 @@ export default function CashClosuresPage() {
 
   return <div className="space-y-5">
     <header className="rounded-3xl bg-gradient-to-r from-slate-950 via-teal-950 to-cyan-700 p-6 text-white shadow-lg"><p className="text-xs font-bold uppercase tracking-[.2em] text-teal-200">Control y conciliación</p><h1 className="mt-2 text-3xl font-black">Cierres de sesión</h1><p className="mt-2 max-w-3xl text-sm text-teal-50/80">Revisa el efectivo y confirma cada comprobante de tarjeta o transferencia antes de conciliar.</p></header>
+    <ActiveWorkSessionPanel lastClosedAt={rows[0]?.closedAt ?? null} />
     <div className="grid gap-4 sm:grid-cols-3"><Summary title="Cierres en esta página" value={String(rows.length)} icon={<Scale className="h-5 w-5" />} /><Summary title="Pendientes" value={String(pending)} icon={<Clock3 className="h-5 w-5 text-amber-600" />} /><Summary title="Conciliados" value={String(rows.length - pending)} icon={<CheckCircle2 className="h-5 w-5 text-emerald-600" />} /></div>
     <Card className="overflow-hidden rounded-3xl"><CardHeader className="gap-4 border-b sm:flex-row sm:items-end sm:justify-between"><div><CardTitle>Historial de cierres</CardTitle><p className="mt-1 text-sm text-muted-foreground">Cada cierre conserva el cuadre y su resultado contable.</p></div><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label>Desde</Label><DatePicker value={from} onChange={value => { setFrom(value); setPage(1); }} className="sm:w-52" /></div><div className="space-y-1.5"><Label>Hasta</Label><DatePicker value={to} onChange={value => { setTo(value); setPage(1); }} className="sm:w-52" /></div></div></CardHeader><CardContent className="p-0">
       {closures.isLoading && <div className="flex items-center justify-center gap-2 p-10 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Consultando cierres…</div>}{closures.isError && <p className="p-8 text-center text-sm text-destructive">No fue posible consultar los cierres.</p>}{!closures.isLoading && !rows.length && <p className="p-10 text-center text-sm text-muted-foreground">No hay cierres en el periodo.</p>}
@@ -43,6 +59,101 @@ export default function CashClosuresPage() {
       {!!closures.data && <div className="flex items-center justify-between border-t p-4"><small className="text-muted-foreground">{closures.data.totalItems} cierres</small><div className="flex gap-2"><Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(value => value - 1)}>Anterior</Button><Button variant="outline" size="sm" disabled={page * 50 >= closures.data.totalItems} onClick={() => setPage(value => value + 1)}>Siguiente</Button></div></div>}
     </CardContent></Card>{selected && <ReconciliationDialog closure={selected} onClose={() => setSelected(null)} />}
   </div>;
+}
+
+function ActiveWorkSessionPanel({ lastClosedAt }: { lastClosedAt: string | null }) {
+  const queryClient = useQueryClient();
+  const canClose = useAuthStore(state => state.user?.permissions.includes("work-sessions.close") ?? false);
+  const current = useQuery({
+    queryKey: ["work-session-current"],
+    queryFn: workSessionDifferencesApi.current,
+    staleTime: 0,
+  });
+  const [preview, setPreview] = useState<PosAuthorizedClosurePreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const operationId = useRef<string | null>(null);
+  const active = current.data;
+
+  const openClosure = async () => {
+    if (!active) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setPreview({
+        authorizationToken: crypto.randomUUID(),
+        preview: await workSessionDifferencesApi.previewCurrent(active.workSessionId),
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible preparar el cierre.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const close = async (paymentCounts: PosWorkSessionPaymentCount[], note: string | null) => {
+    if (!active) return;
+    setBusy(true);
+    setSubmitted(true);
+    setError(null);
+    operationId.current ??= crypto.randomUUID();
+    try {
+      const closure = await workSessionDifferencesApi.closeCurrent(
+        active.workSessionId, paymentCounts, note, operationId.current);
+      const branding = await tenantsApi.getBranding().catch(() => null);
+      const printable = {
+        ...closure,
+        companyName: branding?.displayName ?? branding?.legalName ?? closure.businessName,
+        logoUrl: branding?.logoUrl ?? null,
+      };
+      const edgeToken = readEdgeTokenFromLaunch();
+      if (edgeToken) {
+        await new PosEdgeClient(edgeToken, readEdgeUserSession())
+          .printWorkSessionClosure(printable)
+          .catch(() => printWorkSessionClosure(workSessionClosureHtml(printable)));
+      } else {
+        await printWorkSessionClosure(workSessionClosureHtml(printable));
+      }
+      setPreview(null);
+      setSubmitted(false);
+      operationId.current = null;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["work-session-current"] }),
+        queryClient.invalidateQueries({ queryKey: ["work-session-closures"] }),
+      ]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible cerrar e imprimir la sesión.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (current.isLoading)
+    return <Card className="rounded-3xl"><CardContent className="flex items-center gap-3 p-6 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Consultando la sesión operativa…</CardContent></Card>;
+  if (current.isError)
+    return <Card className="rounded-3xl border-red-200"><CardContent className="flex items-center justify-between gap-4 p-6"><span className="text-sm text-red-800">No fue posible consultar la sesión activa.</span><Button variant="outline" onClick={() => void current.refetch()}>Reintentar</Button></CardContent></Card>;
+  if (!active)
+    return <Card className="rounded-3xl border-dashed"><CardContent className="flex items-center gap-4 p-6"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-600"><TimerReset className="h-5 w-5" /></span><div><Badge variant="secondary" className="mb-2">Caja cerrada</Badge><strong className="block">No tienes una sesión operativa abierta</strong><p className="mt-1 text-sm text-muted-foreground">{lastClosedAt ? `Último cierre: ${new Date(lastClosedAt).toLocaleString("es-CO")}. ` : ""}Se abrirá automáticamente cuando inicies una operación que maneje dinero.</p></div></CardContent></Card>;
+
+  return <>
+    <Card className="overflow-hidden rounded-3xl border-teal-200 bg-gradient-to-r from-white via-teal-50/70 to-cyan-50 shadow-sm">
+      <CardContent className="grid gap-5 p-6 md:grid-cols-[auto_1fr_auto] md:items-center">
+        <span className="grid h-14 w-14 place-items-center rounded-2xl bg-teal-700 text-white shadow-md"><TimerReset className="h-6 w-6" /></span>
+        <div><Badge className="mb-2 bg-emerald-100 text-emerald-900 hover:bg-emerald-100">Sesión activa</Badge><h2 className="text-xl font-black text-slate-950">{active.businessName}</h2><div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600"><span>Abierta <strong className="text-slate-900">{new Date(active.openedAt).toLocaleString("es-CO")}</strong></span><span>Duración <strong className="text-slate-900">{elapsed(active.openedAt)}</strong></span><span>Responsable <strong className="text-slate-900">{active.userName}</strong></span></div><p className="mt-2 text-sm text-slate-600">Ventas, devoluciones, recaudos y movimientos de dinero seguirán acumulándose aquí hasta el cierre.</p>{error && <p className="mt-3 text-sm font-medium text-red-700">{error}</p>}</div>
+        {canClose ? <Button className="h-12 px-6" disabled={busy} onClick={() => void openClosure()}>{busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Preparando…</> : "Cerrar sesión ahora"}</Button> : <p className="max-w-48 text-sm text-muted-foreground">No tienes permiso para cerrar esta sesión.</p>}
+      </CardContent>
+    </Card>
+    {preview && <PosCashClosureDialog client={referenceOptionsClient} value={preview} busy={busy} submitted={submitted} onClose={() => { if (!busy) { setPreview(null); setSubmitted(false); operationId.current = null; } }} onConfirm={close} />}
+  </>;
+}
+
+function elapsed(openedAt: string): string {
+  const totalMinutes = Math.max(0, Math.floor((Date.now() - new Date(openedAt).getTime()) / 60_000));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return days ? `${days} d ${hours} h` : hours ? `${hours} h ${minutes} min` : `${minutes} min`;
 }
 
 type VerificationStatus = "Verified" | "Missing";

@@ -160,6 +160,13 @@ public static class AuthenticationApi
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "AuthenticationDenied");
         }
+        catch (AuthenticationSessionReplacedException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "AuthenticationSessionReplaced");
+        }
         catch (AuthenticationSessionConflictException exception)
         {
             return Results.Problem(

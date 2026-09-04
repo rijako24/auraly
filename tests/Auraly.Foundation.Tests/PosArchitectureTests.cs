@@ -477,7 +477,7 @@ public sealed class PosArchitectureTests
         Assert.Contains("Posición inicial", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Dividir el valor por 1.000", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Probar balanza", peripheralDialog, StringComparison.Ordinal);
-        Assert.Contains("receiptBrandMarkup(branding)", onlineClient, StringComparison.Ordinal);
+        Assert.Contains("receiptBrandMarkup(branding ??", onlineClient, StringComparison.Ordinal);
         Assert.DoesNotContain("<h1>Auraly</h1>", onlineClient, StringComparison.Ordinal);
     }
 

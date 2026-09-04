@@ -261,6 +261,24 @@ Cambiar cualquier valor recalcula inmediatamente:
 
 El servidor vuelve a calcular al confirmar.
 
+#### Distribución de un cargo adicional
+
+Desde **Editar líneas** se puede capturar un valor adicional para esta venta. El
+editor divide ese valor entre la suma de las cantidades y aumenta con ese importe
+el precio unitario visible de cada línea; por tanto, una línea con seis unidades
+recibe seis veces la asignación de una línea con una unidad. Los precios y totales
+recalculados quedan primero en el editor y solo pasan al borrador al ejecutar
+**Aplicar cambios** o su atajo Enter.
+
+La distribución no crea un total externo, no cambia el catálogo ni modifica el
+precio maestro: actualiza directamente el precio unitario público de cada detalle
+del borrador. En modo web queda persistido en `SalesDraftLines`; en una caja
+enrolada queda persistido en `PosDraftLines` de SQLite. Recargar la vista, reiniciar
+el proceso o capturar otro producto no revaloriza las líneas existentes. Si el
+mismo producto se captura después, se crea otra línea con su precio normal. El
+servidor conserva la autoridad de recalcular base, impuesto y total a partir del
+precio unitario de cada línea.
+
 ### 5.3 Productos no codificados
 
 Se permite una línea manual solo con permiso y tipo de producto apropiado. Antes de cobrar se muestra una revisión de códigos no encontrados o productos no codificados.

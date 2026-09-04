@@ -24,18 +24,20 @@ public static class WorkSessionAccountingDocumentTypes
 public sealed record WorkSessionIdentity(
     Guid UserId,
     Guid TenantId,
-    IReadOnlySet<string> Permissions);
+    IReadOnlySet<string> Permissions,
+    Guid? BusinessId = null);
 
 public sealed record OpenWorkSessionRequest(
     Guid BusinessId,
-    Guid WarehouseId,
-    Guid? DeviceId,
+    Guid? WarehouseId = null,
+    Guid? DeviceId = null,
     decimal OpeningCash = 0);
 
-public sealed record DeviceOpenWorkSessionRequest(
+public sealed record RegisterDeviceWorkSessionRequest(
     Guid UserId,
+    Guid WorkSessionId,
     Guid BusinessId,
-    Guid WarehouseId);
+    DateTimeOffset OpenedAt);
 
 public sealed record CloseWorkSessionRequest(
     decimal? CountedCash,
@@ -59,8 +61,8 @@ public sealed record WorkSessionView(
     Guid WorkSessionId,
     Guid BusinessId,
     string BusinessName,
-    Guid WarehouseId,
-    string WarehouseName,
+    Guid? WarehouseId,
+    string? WarehouseName,
     Guid UserId,
     string UserName,
     Guid? DeviceId,
@@ -84,8 +86,8 @@ public sealed record WorkSessionClosureView(
     Guid WorkSessionId,
     Guid BusinessId,
     string BusinessName,
-    Guid WarehouseId,
-    string WarehouseName,
+    Guid? WarehouseId,
+    string? WarehouseName,
     Guid UserId,
     string UserName,
     Guid? DeviceId,
@@ -109,8 +111,8 @@ public sealed record WorkSessionClosurePreviewView(
     Guid WorkSessionId,
     Guid BusinessId,
     string BusinessName,
-    Guid WarehouseId,
-    string WarehouseName,
+    Guid? WarehouseId,
+    string? WarehouseName,
     Guid UserId,
     string UserName,
     DateTimeOffset OpenedAt,
@@ -131,7 +133,7 @@ public sealed record WorkSessionCashDifferencePayload(
     Guid WorkSessionId,
     Guid TenantId,
     Guid BusinessId,
-    Guid WarehouseId,
+    Guid? WarehouseId,
     Guid UserId,
     string UserName,
     decimal ExpectedCash,
@@ -151,7 +153,7 @@ public sealed record WorkSessionClosureDifferencePayload(
     Guid WorkSessionId,
     Guid TenantId,
     Guid BusinessId,
-    Guid WarehouseId,
+    Guid? WarehouseId,
     Guid UserId,
     string UserName,
     IReadOnlyList<WorkSessionClosureDifferenceLine> Lines,
@@ -162,8 +164,8 @@ public sealed record WorkSessionCashDifferenceView(
     Guid WorkSessionId,
     Guid BusinessId,
     string BusinessName,
-    Guid WarehouseId,
-    string WarehouseName,
+    Guid? WarehouseId,
+    string? WarehouseName,
     Guid UserId,
     string UserName,
     DateTimeOffset ClosedAt,
@@ -180,8 +182,8 @@ public sealed record WorkSessionClosureListItem(
     Guid WorkSessionId,
     Guid BusinessId,
     string BusinessName,
-    Guid WarehouseId,
-    string WarehouseName,
+    Guid? WarehouseId,
+    string? WarehouseName,
     Guid UserId,
     string UserName,
     DateTimeOffset OpenedAt,

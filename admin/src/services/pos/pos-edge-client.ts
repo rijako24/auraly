@@ -292,6 +292,8 @@ export type PosPrintableReceipt = {
   fiscalStatus: string;
   withholdingTotal: number;
   netPayableAmount: number;
+  companyName?: string | null;
+  companyLogoSource?: string | null;
   withholdings: Array<{
     ruleCode: string;
     name: string;
@@ -300,6 +302,8 @@ export type PosPrintableReceipt = {
     rate: number;
     amount: number;
   }> | null;
+  businessName?: string | null;
+  warehouseName?: string | null;
 };
 
 export type PosCompleteSaleResult = {
@@ -437,8 +441,8 @@ export type PosWorkSessionClosure = {
   workSessionId: string;
   businessId: string;
   businessName: string;
-  warehouseId: string;
-  warehouseName: string;
+  warehouseId: string | null;
+  warehouseName: string | null;
   userId: string;
   userName: string;
   deviceId: string | null;
@@ -485,6 +489,19 @@ export type PosReferenceOption = {
   label: string;
   description: string | null;
   sortOrder: number;
+};
+
+export type PosCashDenominationCount = {
+  businessName: string;
+  userName: string;
+  countedAt: string;
+  lines: Array<{
+    label: string;
+    value: number;
+    quantity: number;
+    subtotal: number;
+  }>;
+  total: number;
 };
 export type PosBankAccount = {
   bankAccountId:string;displayName:string;bankName:string;accountNumber:string;
@@ -592,6 +609,7 @@ export interface PosClient {
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
   printCashMovement(ticket: PosCashMovementTicket): Promise<void>;
+  printCashDenominationCount(ticket: PosCashDenominationCount): Promise<void>;
   previewWorkSessionClosure(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosAuthorizedClosurePreview>;
   closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure>;
 }
@@ -608,6 +626,7 @@ export class PosEdgeError extends Error {
 
 export type PosLocalUserSession = {
   sessionId: string;
+  workSessionId: string;
   userId: string;
   username: string;
   displayName: string;
@@ -761,13 +780,17 @@ export class PosEdgeClient implements PosClient {
     return this.requestVoid("/edge/v1/cash-drawer/open", { method: "POST" });
   }
 
-  printReceipt(receipt: PosPrintableReceipt, branding?: TenantBranding | null) {
-    return this.requestVoid("/edge/v1/print/receipt", {
+  printReceipt(
+    receipt: PosPrintableReceipt,
+    branding?: TenantBranding | null,
+    workflow: "pos" | "orders" = "pos",
+  ) {
+    return this.requestVoid(`/edge/v1/print/receipt?workflow=${workflow}`, {
       method: "POST",
       body: JSON.stringify({
         ...receipt,
-        companyName: branding?.displayName ?? branding?.legalName ?? null,
-        companyLogoSource: branding?.logoUrl ?? null,
+        companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName ?? null,
+        companyLogoSource: branding?.logoUrl ?? receipt.companyLogoSource ?? null,
       }),
     });
   }
@@ -858,6 +881,12 @@ export class PosEdgeClient implements PosClient {
         .catch(() => undefined);
     return result.closure;
   }
+
+  printCashDenominationCount(ticket: PosCashDenominationCount) {
+    return this.requestVoid("/edge/v1/print/cash-denomination-count", {
+      method: "POST", body: JSON.stringify(ticket),
+    });
+  }
   settlementConfiguration() {
     return this.request<PosSettlementConfiguration>("/edge/v1/settlement-configuration");
   }
@@ -889,6 +918,12 @@ export class PosEdgeClient implements PosClient {
     this.userSessionToken = session.token;
     window.localStorage.setItem("auraly.pos.user-session", session.token);
     return session;
+  }
+
+  openWorkSession() {
+    return this.request<PosLocalUserSession>("/edge/v1/work-sessions/current", {
+      method: "POST",
+    });
   }
 
   async logout() {

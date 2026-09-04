@@ -418,7 +418,7 @@ internal static class AuralyDesktopVisuals
 {
     public static Icon LoadIcon()
     {
-        return Icon.ExtractAssociatedIcon(Application.ExecutablePath)
+        return Icon.ExtractAssociatedIcon(System.Windows.Forms.Application.ExecutablePath)
                ?? (Icon)SystemIcons.Application.Clone();
     }
 }

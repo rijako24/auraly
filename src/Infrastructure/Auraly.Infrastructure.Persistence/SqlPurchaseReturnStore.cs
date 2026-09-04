@@ -291,7 +291,7 @@ public sealed class SqlPurchaseReturnStore(
                        l.NetAmount,l.TaxAmount,l.LineTotal,
                        COALESCE(SUM(prl.Quantity),0),COALESCE(SUM(prl.DiscountAmount),0),
                        COALESCE(SUM(prl.NetAmount),0),COALESCE(SUM(prl.TaxAmount),0),
-                       COALESCE(SUM(prl.LineTotal),0)
+                       COALESCE(SUM(prl.LineTotal),0),l.RecognizedInventoryCostAmount
                 FROM dbo.GoodsReceiptLines l WITH (UPDLOCK,HOLDLOCK)
                 LEFT JOIN dbo.PurchaseReturnLines prl WITH (UPDLOCK,HOLDLOCK)
                   ON prl.OriginalGoodsReceiptId=l.GoodsReceiptId
@@ -299,7 +299,7 @@ public sealed class SqlPurchaseReturnStore(
                 WHERE l.GoodsReceiptId=@ReceiptId AND l.LineNumber=@Line
                 GROUP BY l.ProductId,l.DescriptionSnapshot,l.Quantity,l.UnitCost,
                          l.DiscountAmount,l.TaxCode,l.TaxRate,l.TaxTreatment,
-                         l.NetAmount,l.TaxAmount,l.LineTotal;
+                         l.NetAmount,l.TaxAmount,l.LineTotal,l.RecognizedInventoryCostAmount;
                 """,connection,transaction);
             command.Parameters.AddWithValue("@ReceiptId",request.OriginalGoodsReceiptId);
             command.Parameters.AddWithValue("@Line",requested.OriginalLineNumber);
@@ -321,10 +321,7 @@ public sealed class SqlPurchaseReturnStore(
                 throw new PurchasingConflictException(
                     $"Line {requested.OriginalLineNumber} exceeds its quantity available to return: {exception.ParamName}.");
             }
-            var recognizedAmount=allocation.NetAmount+
-                (reader.GetString(7)==PurchasingTaxTreatments.CapitalizedCost
-                    ? allocation.TaxAmount:0m);
-            var recognizedCost=decimal.Round(recognizedAmount/allocation.Quantity,6,
+            var recognizedCost=decimal.Round(reader.GetDecimal(16)/reader.GetDecimal(2),6,
                 MidpointRounding.AwayFromZero);
             result.Add(new PurchaseReturnLineSnapshot(++lineNumber,
                 requested.OriginalLineNumber,reader.GetGuid(0),reader.GetString(1),

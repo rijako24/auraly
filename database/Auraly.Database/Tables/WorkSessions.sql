@@ -3,7 +3,10 @@ CREATE TABLE [dbo].[WorkSessions]
     [WorkSessionId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
+    -- Historical sessions retain their warehouse snapshot. New sessions are
+    -- scoped by tenant, business, user and optional enrolled device; inventory
+    -- documents continue to own and validate their WarehouseId independently.
+    [WarehouseId] UNIQUEIDENTIFIER NULL,
     [UserId] UNIQUEIDENTIFIER NOT NULL,
     [DeviceId] UNIQUEIDENTIFIER NULL,
     [OpenedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -37,15 +40,16 @@ CREATE TABLE [dbo].[WorkSessions]
 );
 GO
 
-CREATE UNIQUE INDEX [UX_WorkSessions_Tenant_User_Open]
-    ON [dbo].[WorkSessions] ([TenantId],[UserId]) WHERE [Status]=N'Open';
+CREATE UNIQUE INDEX [UX_WorkSessions_Web_User_Open]
+    ON [dbo].[WorkSessions] ([TenantId],[BusinessId],[UserId])
+    WHERE [Status]=N'Open' AND [DeviceId] IS NULL;
 GO
 
-CREATE UNIQUE INDEX [UX_WorkSessions_Device_Open]
-    ON [dbo].[WorkSessions] ([DeviceId], [BusinessId])
+CREATE UNIQUE INDEX [UX_WorkSessions_Device_User_Open]
+    ON [dbo].[WorkSessions] ([TenantId],[BusinessId],[DeviceId],[UserId])
     WHERE [Status]=N'Open' AND [DeviceId] IS NOT NULL;
 GO
 
-CREATE INDEX [IX_WorkSessions_Business_Warehouse_Opened]
-    ON [dbo].[WorkSessions] ([BusinessId],[WarehouseId],[OpenedAt] DESC);
+CREATE INDEX [IX_WorkSessions_Business_Opened]
+    ON [dbo].[WorkSessions] ([TenantId],[BusinessId],[OpenedAt] DESC);
 GO

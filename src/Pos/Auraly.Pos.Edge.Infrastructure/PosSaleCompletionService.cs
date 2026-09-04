@@ -44,7 +44,10 @@ public sealed record PosReceipt(
     string? CompanyLogoSource = null,
     decimal WithholdingTotal = 0m,
     decimal NetPayableAmount = 0m,
-    IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null);
+    IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null,
+    string? CustomerName = null,
+    string? BusinessName = null,
+    string? WarehouseName = null);
 
 public interface IPosReceiptPrinter
 {
@@ -216,9 +219,11 @@ public sealed class PosSaleCompletionService(
         if (command.Payments.Count == 0 ||
             command.Payments.Sum(payment => payment.Amount) != withholding.NetAmount)
             throw new InvalidOperationException("Payments must equal the payable amount.");
+        var customer = draft.CustomerId is null || catalog is null
+            ? null
+            : await catalog.GetCustomerAsync(draft.CustomerId.Value, ct);
         if (command.DocumentType == PosSaleDocumentTypes.Receipt && draft.CustomerId is not null)
         {
-            var customer = catalog is null ? null : await catalog.GetCustomerAsync(draft.CustomerId.Value, ct);
             if (customer?.RequiresElectronicInvoice == true)
                 throw new InvalidOperationException(
                     "Este cliente esta configurado para recibir siempre factura electronica.");
@@ -295,7 +300,8 @@ public sealed class PosSaleCompletionService(
             immutable.CommercialSnapshot.DocumentType,
             WithholdingTotal: immutable.CommercialSnapshot.Withholding?.WithholdingTotal ?? 0m,
             NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
-            Withholdings: immutable.CommercialSnapshot.Withholding?.Lines);
+            Withholdings: immutable.CommercialSnapshot.Withholding?.Lines,
+            CustomerName: customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification);
 
         // Issuance owns the sale lifecycle. Printing is a post-effect and must
         // never keep an already issued sale or its next draft in limbo.
@@ -388,7 +394,8 @@ public sealed class PosSaleCompletionService(
             immutable.CommercialSnapshot.DocumentType,
             WithholdingTotal: immutable.CommercialSnapshot.Withholding?.WithholdingTotal ?? 0m,
             NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
-            Withholdings: immutable.CommercialSnapshot.Withholding?.Lines);
+            Withholdings: immutable.CommercialSnapshot.Withholding?.Lines,
+            CustomerName: immutable.CommercialSnapshot.CustomerIdentification);
 
         await printer.PrintAsync(payload, ct);
         await sales.RecordReprintAsync(

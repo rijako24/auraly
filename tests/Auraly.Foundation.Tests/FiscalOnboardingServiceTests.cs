@@ -2,6 +2,9 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
+using Org.BouncyCastle.Asn1.Pkcs;
+using Org.BouncyCastle.Pkcs;
+using Org.BouncyCastle.Security;
 
 namespace Auraly.Foundation.Tests;
 
@@ -36,6 +39,35 @@ public sealed class FiscalOnboardingServiceTests
     }
 
     [Fact]
+    public async Task Loading_a_legacy_rc2_pkcs12_is_accepted_and_normalized()
+    {
+        const string password = "legacy-certificate-password";
+        const string supplierTaxId = "100226966";
+        var store = new TestOnboardingStore(Configuration(supplierTaxId));
+        var vault = new TestCredentialVault();
+        var service = new FiscalOnboardingService(
+            store, vault, new TestNumberingRangeClient(), new FixedTimeProvider(Now));
+        var modernPfx = CreatePfx(supplierTaxId + "8", password);
+        var request = new SaveDianHabilitationConfiguration(
+            Guid.NewGuid().ToString(), "software-pin", Guid.NewGuid(), password,
+            ReencodeWithLegacyRc2(modernPfx, password));
+        var user = new FiscalConfigurationUser(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
+
+        await service.ConfigureHabilitationAsync(
+            user, store.Configuration.BusinessId, request);
+
+        Assert.NotNull(vault.StoredCertificatePfx);
+        var normalized = new X509Certificate2Collection();
+        normalized.Import(
+            vault.StoredCertificatePfx!, password,
+            X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+        Assert.Single(normalized.OfType<X509Certificate2>().Where(value => value.HasPrivateKey));
+        foreach (var certificate in normalized) certificate.Dispose();
+    }
+
+    [Fact]
     public async Task Loading_a_certificate_with_another_nit_is_rejected()
     {
         const string password = "certificate-password";
@@ -59,6 +91,33 @@ public sealed class FiscalOnboardingServiceTests
                 user, store.Configuration.BusinessId, request));
 
         Assert.Contains("NIT del certificado", exception.Message);
+        Assert.False(vault.StoreCalled);
+        Assert.False(store.SaveCalled);
+    }
+
+    [Fact]
+    public async Task Loading_a_certificate_with_the_wrong_password_reports_the_credential_error()
+    {
+        const string supplierTaxId = "100226966";
+        var store = new TestOnboardingStore(Configuration(supplierTaxId));
+        var vault = new TestCredentialVault();
+        var service = new FiscalOnboardingService(
+            store, vault, new TestNumberingRangeClient(), new FixedTimeProvider(Now));
+        var request = new SaveDianHabilitationConfiguration(
+            Guid.NewGuid().ToString(),
+            "software-pin",
+            Guid.NewGuid(),
+            "wrong-password",
+            CreatePfx(supplierTaxId + "8", "correct-password"));
+        var user = new FiscalConfigurationUser(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
+
+        var exception = await Assert.ThrowsAsync<FiscalConfigurationValidationException>(() =>
+            service.ConfigureHabilitationAsync(
+                user, store.Configuration.BusinessId, request));
+
+        Assert.Contains("contraseña es incorrecta", exception.Message);
         Assert.False(vault.StoreCalled);
         Assert.False(store.SaveCalled);
     }
@@ -138,6 +197,26 @@ public sealed class FiscalOnboardingServiceTests
             notBefore ?? Now.AddDays(-1),
             notAfter ?? Now.AddDays(1));
         return certificate.Export(X509ContentType.Pfx, password);
+    }
+
+    private static byte[] ReencodeWithLegacyRc2(byte[] pfx, string password)
+    {
+        var source = new Pkcs12StoreBuilder().Build();
+        using (var input = new MemoryStream(pfx, writable: false))
+            source.Load(input, password.ToCharArray());
+        var legacy = new Pkcs12StoreBuilder()
+            .SetCertAlgorithm(PkcsObjectIdentifiers.PbewithShaAnd40BitRC2Cbc)
+            .Build();
+        foreach (string alias in source.Aliases)
+        {
+            if (source.IsKeyEntry(alias))
+                legacy.SetKeyEntry(alias, source.GetKey(alias), source.GetCertificateChain(alias));
+            else if (source.IsCertificateEntry(alias))
+                legacy.SetCertificateEntry(alias, source.GetCertificate(alias));
+        }
+        using var output = new MemoryStream();
+        legacy.Save(output, password.ToCharArray(), new SecureRandom());
+        return output.ToArray();
     }
 
     private static FiscalOnboardingConfiguration Configuration(string supplierTaxId) => new(
@@ -222,6 +301,7 @@ public sealed class FiscalOnboardingServiceTests
     private sealed class TestCredentialVault : IFiscalCredentialVault
     {
         public bool StoreCalled { get; private set; }
+        public byte[]? StoredCertificatePfx { get; private set; }
 
         public Task<FiscalCredentialReference> StoreAsync(
             Guid tenantId,
@@ -235,6 +315,7 @@ public sealed class FiscalOnboardingServiceTests
             CancellationToken cancellationToken)
         {
             StoreCalled = true;
+            StoredCertificatePfx = certificatePfx;
             return Task.FromResult(new FiscalCredentialReference(
                 "ProtectedDatabase",
                 "fiscal://test/pin",

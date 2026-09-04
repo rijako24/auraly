@@ -166,7 +166,7 @@ public sealed class PosSynchronizationEventLogTests
     }
 
     [Fact]
-    public async Task Unified_outbox_preserves_session_dependencies_without_blocking_other_cashiers()
+    public async Task Unified_outbox_preserves_device_chronology_across_consecutive_sessions()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-unified-outbox-{Guid.NewGuid():N}.db");
         var connectionString = $"Data Source={path}";
@@ -187,7 +187,10 @@ public sealed class PosSynchronizationEventLogTests
             var dispatcher = new PosUnifiedOutboxDispatcher(
                 connectionString, new FixedTimeProvider(now));
 
-            Assert.Equal(PosUnifiedOutboxRoute.CashMovement, await dispatcher.NextAsync());
+            Assert.Null(await dispatcher.NextAsync());
+            dispatcher = new PosUnifiedOutboxDispatcher(
+                connectionString, new FixedTimeProvider(now.AddMinutes(1)));
+            Assert.Equal(PosUnifiedOutboxRoute.Sale, await dispatcher.NextAsync());
         }
         finally
         {
@@ -235,6 +238,7 @@ public sealed class PosSynchronizationEventLogTests
             }
             Assert.Contains("WorkSessionId", columns);
             Assert.Contains("NextAttemptAt", columns);
+            Assert.Contains("LocalSequence", columns);
             await using (var command = upgraded.CreateCommand())
             {
                 command.CommandText = "SELECT COUNT(*) FROM Outbox WHERE MessageId=$id AND Status='Pending';";

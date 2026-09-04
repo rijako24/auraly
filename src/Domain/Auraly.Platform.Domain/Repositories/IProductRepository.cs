@@ -2,6 +2,14 @@ using Auraly.Platform.Domain.Entities;
 
 namespace Auraly.Platform.Domain.Repositories;
 
+public sealed record ProductListFilter(
+    IReadOnlyCollection<Guid>? CategoryIds = null,
+    Guid? SupplierId = null,
+    Guid? BrandId = null,
+    bool? ManagesInventory = null,
+    bool? AllowsFractionalSale = null,
+    bool? IsWeighable = null);
+
 public interface IProductRepository
 {
     Task<IReadOnlyList<Product>> SearchAsync(
@@ -27,6 +35,7 @@ public interface IProductRepository
         int pageSize,
         string? search = null,
         bool includeInactive = false,
+        ProductListFilter? filter = null,
         CancellationToken ct = default);
 
     Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default);

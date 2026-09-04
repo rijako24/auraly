@@ -34,23 +34,29 @@ public sealed class EscPosReceiptRendererTests
             "abc123",
             qr,
             width,
-            CompanyName: "Comercializadora Uno");
+            CompanyName: "Comercializadora Uno",
+            BusinessName: "Sede principal",
+            WarehouseName: "Bodega de venta");
 
         var bytes = new EscPosReceiptRenderer().Render(receipt);
         var printable = Encoding.UTF8.GetString(bytes);
 
         Assert.Contains("FV100", printable);
-        Assert.Contains("COMERCIALIZADORA UNO", printable);
+        Assert.Contains("Comercializadora Uno", printable);
+        Assert.Contains("Sede: Sede principal - Bodega", printable);
+        Assert.True(ContainsSequence(bytes, [0x1D, 0x21, 0x10]));
         Assert.Contains("VTA03-00000100", printable);
         Assert.Contains("CUFE: abc123", printable);
         Assert.Contains(qr, printable);
-        Assert.Contains("23205.00", printable);
-        Assert.Contains("IMPUESTOS POR TARIFA", printable);
+        Assert.Contains("$ 23.205", printable);
+        Assert.Contains("Impuestos por tarifa", printable);
         Assert.Contains("IVA 19%", printable);
-        Assert.Contains("MEDIOS DE PAGO", printable);
-        Assert.Contains("EFECTIVO", printable);
-        Assert.Contains("TRANSFERENCIA", printable);
+        Assert.Contains("Medios de pago", printable);
+        Assert.Contains("Efectivo", printable);
+        Assert.Contains("Transferencia", printable);
         Assert.Contains("Factura emitida por Auraly", printable);
+        Assert.Equal(new byte[] { 0x1B, 0x40, 0x1B, 0x61, 0x01 }, bytes.Take(5).ToArray());
+        Assert.Contains("\u001bE\u0001Total", printable);
         Assert.Contains("www.auralyapp.co", printable);
         Assert.Equal(new byte[] { 0x1D, 0x56, 0x41, 0x03 }, bytes.TakeLast(4).ToArray());
     }
@@ -125,6 +131,10 @@ public sealed class EscPosReceiptRendererTests
         var html = new HtmlReceiptPreviewRenderer().Render(receipt);
 
         Assert.Contains("<title>Comercializadora Uno VTA01-00000042</title>", html);
+        Assert.Contains("data-auraly-report=\"sales-invoice\"", html);
+        Assert.Contains("data-auraly-report-version=\"1\"", html);
+        Assert.Contains("font: 12px/1.35", html);
+        Assert.Contains("font-size: 12px", html);
         Assert.Contains("Comercializadora Uno", html);
         Assert.Contains("data:image/png;base64,AA==", html);
         Assert.Contains("@page { size: 80mm auto;", html);
@@ -135,11 +145,13 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("abc123", html);
         Assert.Contains("<svg", html);
         Assert.Contains("Efectivo", html);
-        Assert.Contains("Impuestos por tarifa", html);
+        Assert.Contains("Resumen e impuestos", html);
         Assert.Contains("IVA 19%", html);
         Assert.Contains("Medios de pago", html);
         Assert.Contains("Factura emitida por Auraly", html);
         Assert.Contains("www.auralyapp.co", html);
+        Assert.DoesNotContain("body { text-transform: uppercase", html);
+        Assert.Contains("text-align: center", html);
     }
 
     [Fact]
@@ -196,15 +208,19 @@ public sealed class EscPosReceiptRendererTests
         var esc = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(receipt));
         var html = new HtmlReceiptPreviewRenderer().Render(receipt);
 
-        Assert.Contains("COMPROBANTE DE VENTA", esc);
+        Assert.Contains("Comprobante de venta", esc);
         Assert.Contains("CVI03-00000042", esc);
-        Assert.DoesNotContain("NUMERO DIAN", esc);
+        Assert.DoesNotContain("Numero DIAN", esc);
         Assert.DoesNotContain("CUFE", esc);
         Assert.DoesNotContain("searchqr", esc);
         Assert.Contains("Comprobante emitido por Auraly", esc);
         Assert.DoesNotContain("Factura emitida por Auraly", esc);
         Assert.Contains("Comprobante de venta", html);
         Assert.Contains("CVI03-00000042", html);
+        Assert.Contains("data-auraly-report=\"sales-receipt\"", html);
+        Assert.Contains("data-auraly-report-version=\"1\"", html);
+        Assert.Contains("font: 11px/1.35", html);
+        Assert.Contains("font-size: 12px", html);
         Assert.DoesNotContain("Número DIAN", html);
         Assert.DoesNotContain("CUFE", html);
         Assert.DoesNotContain("<svg", html);
@@ -243,6 +259,9 @@ public sealed class EscPosReceiptRendererTests
         Assert.DoesNotContain("dashed", html);
         Assert.Equal(2, html.Split("VTA01-00000999").Length - 1);
         Assert.Equal(2, html.Split("Cliente prueba").Length - 1);
+        Assert.Equal(2, html.Split("data-auraly-report=\"sales-invoice\"").Length - 1);
+        Assert.Equal(2, html.Split("data-auraly-report-version=\"1\"").Length - 1);
+        Assert.Contains(".platform strong { color: #065f5b; font-size: 1.15em; }", html);
         Assert.Contains("data:image/svg+xml;base64", html);
         Assert.Contains("Impuestos por tarifa", html);
         Assert.Contains("IVA 19%", html);
@@ -253,6 +272,8 @@ public sealed class EscPosReceiptRendererTests
         Assert.Equal(2, html.Split("Factura emitida por Auraly").Length - 1);
         Assert.Equal(2, html.Split("www.auralyapp.co").Length - 1);
         Assert.Equal(2, html.Split("Página 1 de 1").Length - 1);
+        Assert.DoesNotContain("text-transform: uppercase", html);
+        Assert.Contains("text-align: right", html);
     }
 
     [Fact]
@@ -277,15 +298,15 @@ public sealed class EscPosReceiptRendererTests
         var esc = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(receipt));
         var html = new HtmlReceiptPreviewRenderer().Render(receipt);
 
-        Assert.Contains("TOTAL BRUTO", esc);
-        Assert.Contains("RET. RETEFUENTE", esc);
-        Assert.Contains("-2500.00", esc);
-        Assert.Contains("TOTAL A PAGAR", esc);
-        Assert.Contains("116500.00", esc);
+        Assert.Contains("Total bruto", esc);
+        Assert.Contains("Ret. Retefuente", esc);
+        Assert.Contains("-$ 2.500", esc);
+        Assert.Contains("Total", esc);
+        Assert.Contains("$ 116.500", esc);
         Assert.Contains("Total bruto", html);
         Assert.Contains("Ret. Retefuente", html);
         Assert.Contains("Total retenciones", html);
-        Assert.Contains("Total a pagar", html);
+        Assert.Contains("Total", html);
     }
 
     [Theory]
@@ -358,10 +379,12 @@ public sealed class EscPosReceiptRendererTests
         var html = new HalfLetterDocumentRenderer().Render(
             [receipt], HalfLetterDocumentRenderer.Letter);
 
-        Assert.Contains("COMPROBANTE DE VENTA", html);
+        Assert.Contains("Comprobante de venta", html);
+        Assert.Contains("data-auraly-report=\"sales-receipt\"", html);
+        Assert.Contains("data-auraly-report-version=\"1\"", html);
         Assert.Contains("Representación gráfica del comprobante de venta", html);
         Assert.Contains("Comprobante emitido por Auraly", html);
-        Assert.DoesNotContain("FACTURA ELECTRÓNICA DE VENTA", html);
+        Assert.DoesNotContain("Factura electrónica de venta", html);
         Assert.DoesNotContain("Número DIAN", html);
         Assert.DoesNotContain("CUFE", html);
         Assert.DoesNotContain("QR DIAN", html);
@@ -453,6 +476,16 @@ public sealed class EscPosReceiptRendererTests
             80,
             CompanyName: "Comercializadora Uno",
             CompanyLogoSource: "data:image/png;base64,AA==");
+
+    private static bool ContainsSequence(byte[] source, byte[] expected)
+    {
+        for (var index = 0; index <= source.Length - expected.Length; index++)
+        {
+            if (source.AsSpan(index, expected.Length).SequenceEqual(expected))
+                return true;
+        }
+        return false;
+    }
 
     private sealed class RecordingReceiptPreviewLauncher : IReceiptPreviewLauncher
     {

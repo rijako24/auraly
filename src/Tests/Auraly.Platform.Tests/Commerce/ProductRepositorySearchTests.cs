@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Auraly.Platform.Domain.Entities;
+using Auraly.Platform.Domain.Repositories;
 using Auraly.Platform.Infrastructure.Data;
 using Auraly.Platform.Infrastructure.Data.ReadModels;
 using Auraly.Platform.Infrastructure.Repositories;
@@ -161,6 +162,41 @@ public sealed class ProductRepositorySearchTests
 
         result.Items.Should().ContainSingle();
         result.Items[0].StockQuantity.Should().Be(-3m);
+    }
+
+    [Fact]
+    public async Task Product_list_applies_classification_brand_and_tri_state_filters_before_paging()
+    {
+        await using var context = CreateContext();
+        var businessId = Guid.NewGuid();
+        var categoryId = Guid.NewGuid();
+        var brandId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
+        var matching = Product(businessId, "PRODUCTO FILTRADO", "FILTER-1", active: true);
+        matching.ProductCategoryId = categoryId;
+        matching.ProductBrandId = brandId;
+        matching.ManageStock = true;
+        matching.AllowsFractionalSale = false;
+        matching.IsWeighable = true;
+        var excluded = Product(businessId, "PRODUCTO EXCLUIDO", "FILTER-2", active: true);
+        excluded.ProductCategoryId = categoryId;
+        excluded.ProductBrandId = brandId;
+        excluded.ManageStock = false;
+        excluded.AllowsFractionalSale = false;
+        excluded.IsWeighable = true;
+        context.Products.AddRange(matching, excluded);
+        Publish(context, matching, 10m);
+        Publish(context, excluded, 10m);
+        await context.SaveChangesAsync();
+
+        var result = await new ProductRepository(context).GetPagedByBusinessIdAsync(
+            businessId, 1, 20, includeInactive: true,
+            filter: new ProductListFilter(
+                [categoryId], BrandId: brandId, ManagesInventory: true,
+                AllowsFractionalSale: false, IsWeighable: true));
+
+        result.TotalCount.Should().Be(1);
+        result.Items.Should().ContainSingle(product => product.ProductId == matching.ProductId);
     }
 
     private static ApplicationDbContext CreateContext()

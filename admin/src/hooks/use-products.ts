@@ -8,7 +8,7 @@ import {
 } from "@/services/api/products";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-export function useProducts(params?: { page?: number; pageSize?: number; search?: string; includeInactive?: boolean }) {
+export function useProducts(params?: { page?: number; pageSize?: number; search?: string; includeInactive?: boolean } & import("@/services/api/products").ProductListFilters) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
     queryKey: ["products", businessId, params],

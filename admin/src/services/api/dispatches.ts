@@ -53,5 +53,10 @@ export const dispatchesApi = {
   addExpense: offlineExpense,
   reviewExpense: (id:string,expenseId:string,request:{decision:"Approved"|"Rejected";approvedAmount:number|null;notes:string|null;idempotencyKey:string}) => rememberedExecution(apiClient.put<DispatchExecution>(`/commerce/v1/dispatches/${id}/expenses/${expenseId}/review`,request)),
   closeRoute: (id:string,declaredCash:number,differenceReason:string|null) => rememberedExecution(apiClient.post<DispatchExecution>(`/commerce/v1/dispatches/${id}/close-route`,{declaredCash,differenceReason,idempotencyKey:crypto.randomUUID()})),
-  settle: (id:string,cashReceived:number,notes:string|null) => rememberedExecution(apiClient.post<DispatchExecution>(`/commerce/v1/dispatches/${id}/settle`,{cashReceived,notes,idempotencyKey:crypto.randomUUID()})),
+  settle: async (id:string,cashReceived:number,notes:string|null) => {
+    const businessId=window.localStorage.getItem("selected_business_id");
+    if(!businessId)throw new Error("Selecciona la sede antes de recibir el dinero del despacho.");
+    const session=await apiClient.post<{workSessionId:string}>("/commerce/v1/work-sessions/current",{businessId,warehouseId:null,deviceId:null});
+    return rememberedExecution(apiClient.post<DispatchExecution>(`/commerce/v1/dispatches/${id}/settle`,{cashReceived,notes,idempotencyKey:crypto.randomUUID(),workSessionId:session.workSessionId}));
+  },
 };

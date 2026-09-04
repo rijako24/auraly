@@ -52,7 +52,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Administrative_cash_refund_is_accounted_without_opening_or_affecting_a_cashier_shift()
+    public async Task Refund_without_an_operational_work_session_is_rejected()
     {
         var original = WithUblSnapshot(fixture.CreateValidRequest(9_504));
         using (var pos = fixture.CreateClient())
@@ -75,18 +75,14 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         using var message = Message(
             request, $"sales-return-admin-cash-{request.ReturnId:N}");
         using var response = await user.SendAsync(message);
-        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
-            await response.Content.ReadAsStringAsync());
-        Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
-
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("operational work session", await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id AND WorkSessionId IS NOT NULL",
+            "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id",
             request.ReturnId));
         Assert.Equal(0, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'sales-return:',REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))",
-            request.ReturnId));
-        Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id AND MethodCode=N'Cash'",
             request.ReturnId));
     }
 
@@ -112,7 +108,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             "Reversión del pago original con tarjeta",
             [new ConfirmSalesReturnLineRequest(
                 1, .25m, ReturnInventoryDispositions.Sellable)],
-            null, 1, "Other", null, SalesReturnScopes.Partial);
+            fixture.WorkSessionId, 1, "Other", null, SalesReturnScopes.Partial);
         using var user = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
         using var message = Message(request, $"sales-return-card-{request.ReturnId:N}");

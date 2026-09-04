@@ -1,20 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Calculator, Coins, LockKeyhole } from "lucide-react";
+import { Calculator, Coins, LockKeyhole, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { PosAuthorizedClosurePreview, PosClient, PosWorkSessionPaymentCount } from "@/services/pos/pos-edge-client";
+import type { PosAuthorizedClosurePreview, PosWorkSessionPaymentCount } from "@/services/pos/pos-edge-client";
 import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
-import { usePosReferenceOptions } from "./use-pos-reference-options";
+import { usePosReferenceOptions, type PosReferenceOptionsClient } from "./use-pos-reference-options";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
 export function PosCashClosureDialog({ client, value, busy, submitted, onClose, onConfirm }: {
-  client: PosClient;
+  client: PosReferenceOptionsClient;
   value: PosAuthorizedClosurePreview;
   busy: boolean;
   submitted: boolean;
@@ -48,7 +48,7 @@ export function PosCashClosureDialog({ client, value, busy, submitted, onClose, 
           <div className="flex items-start gap-3">
             <span className="grid h-11 w-11 place-items-center rounded-xl bg-teal-100 text-teal-800"><LockKeyhole className="h-5 w-5" /></span>
             <div>
-              <DialogTitle>Cerrar sesión de venta</DialogTitle>
+              <DialogTitle>Cerrar sesión operativa</DialogTitle>
               <DialogDescription className="mt-1">
                 Conteo ciego: registra efectivo y tarjetas. Los valores del sistema se revelan únicamente en el comprobante final.
               </DialogDescription>
@@ -112,13 +112,14 @@ export function PosCashClosureDialog({ client, value, busy, submitted, onClose, 
         <footer className="flex flex-wrap justify-end gap-2 border-t bg-slate-50 px-6 py-4">
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancelar</Button>
           <Button type="button" disabled={busy || !valid} onClick={() => void onConfirm(paymentCounts, note.trim() || null)}>
-            {busy ? "Cerrando e imprimiendo…" : submitted ? "Reintentar cierre" : "Cerrar sesión de venta"}
+            {busy ? "Cerrando e imprimiendo…" : submitted ? "Reintentar cierre" : "Cerrar sesión operativa"}
           </Button>
         </footer>
       </DialogContent>
       {calculatorOpen && (
         <CashCountCalculator
           client={client}
+          session={value.preview}
           onCancel={() => setCalculatorOpen(false)}
           onLoad={(amount) => {
             setCounted((current) => ({ ...current, Cash: String(amount) }));
@@ -130,15 +131,40 @@ export function PosCashClosureDialog({ client, value, busy, submitted, onClose, 
   );
 }
 
-function CashCountCalculator({ client, onCancel, onLoad }: { client: PosClient; onCancel: () => void; onLoad: (amount: number) => void }) {
+function CashCountCalculator({ client, session, onCancel, onLoad }: { client: PosReferenceOptionsClient; session: PosAuthorizedClosurePreview["preview"]; onCancel: () => void; onLoad: (amount: number) => void }) {
   const denominations = usePosReferenceOptions(client, "cash-denomination");
   const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
   const rows = denominations.data ?? [];
   const total = rows.reduce((sum, denomination) => {
     const value = Number(denomination.code);
     const quantity = Number(quantities[denomination.code] ?? 0);
     return sum + (Number.isFinite(value * quantity) ? value * quantity : 0);
   }, 0);
+  const countedLines = rows.map(denomination => ({
+    label: denomination.label,
+    value: Number(denomination.code),
+    quantity: Number(quantities[denomination.code] ?? 0),
+    subtotal: Number(denomination.code) * Number(quantities[denomination.code] ?? 0),
+  })).filter(line => line.quantity > 0);
+  const printCount = async () => {
+    setPrinting(true);
+    setPrintError(null);
+    try {
+      await client.printCashDenominationCount({
+        businessName: session.businessName,
+        userName: session.userName,
+        countedAt: new Date().toISOString(),
+        lines: countedLines,
+        total,
+      });
+    } catch (caught) {
+      setPrintError(caught instanceof Error ? caught.message : "No fue posible imprimir el conteo.");
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
@@ -162,8 +188,9 @@ function CashCountCalculator({ client, onCancel, onLoad }: { client: PosClient; 
             })}</div></section>;
           })}
           <div className="sticky bottom-0 flex items-center justify-between rounded-2xl bg-slate-950 p-5 text-white shadow-xl"><span><small className="block text-slate-300">Efectivo contado</small><strong className="text-sm">Total calculado</strong></span><strong className="text-3xl tabular-nums text-teal-300">{money.format(total)}</strong></div>
+          {printError && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{printError}</p>}
         </div>
-        <footer className="flex justify-end gap-2 border-t bg-slate-50 px-6 py-4"><Button type="button" variant="outline" onClick={onCancel}>Cancelar</Button><Button type="button" disabled={!rows.length} onClick={() => onLoad(total)}>Cargar efectivo</Button></footer>
+        <footer className="flex flex-wrap justify-end gap-2 border-t bg-slate-50 px-6 py-4"><Button type="button" variant="outline" onClick={onCancel}>Cancelar</Button><Button type="button" variant="outline" disabled={!countedLines.length || printing} onClick={() => void printCount()}><Printer className="mr-2 h-4 w-4" />{printing ? "Imprimiendo…" : "Imprimir conteo"}</Button><Button type="button" disabled={!rows.length} onClick={() => onLoad(total)}>Cargar efectivo</Button></footer>
       </DialogContent>
     </Dialog>
   );

@@ -425,6 +425,11 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(seller.RoleId, item.SellerId);
         Assert.Equal(carrier.RoleId, item.CarrierId);
 
+        var multiTermPage = await admin.GetFromJsonAsync<PartyWorkspacePage>(
+            "/api/commerce/v1/parties?page=1&pageSize=10&search=Comercial%203331");
+        Assert.NotNull(multiTermPage);
+        Assert.Contains(multiTermPage.Items, value => value.PartyId == customer.PartyId);
+
         var supplierPage = await admin.GetFromJsonAsync<PartyWorkspacePage>(
             $"/api/commerce/v1/parties?page=1&pageSize=1&role=Supplier&roleId={supplier.SupplierId:D}");
         Assert.Equal(customer.PartyId, Assert.Single(supplierPage!.Items).PartyId);

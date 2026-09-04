@@ -294,41 +294,59 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                     ])
             ]
         };
-        var quantityBefore = await ReadNullableDecimalAsync("QuantityOnHand") ?? 0m;
-        var valueBefore = await ReadNullableDecimalAsync("InventoryValue") ?? 0m;
-        using var client = fixture.CreateAdminClient(
-            PurchasingPermissionCodes.CreateGoodsReceipts,
-            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var previousShares = await ScalarAsync<bool>(
+            "SELECT SharesProductPrices FROM dbo.Businesses WHERE BusinessId=@BusinessId", request.DocumentId);
+        var previousCostBasis = await ScalarAsync<string>(
+            "SELECT InventoryCostBasis FROM dbo.Tenants WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)", request.DocumentId);
+        await SetPrimaryCostPolicyAsync(false, "WeightedAverageCost");
 
-        using var message = CreateMessage(request, $"freight-{request.DocumentId:N}");
-        using var response = await client.SendAsync(message);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
-            $"Expected freight receipt to be accepted, got {response.StatusCode}: {body}");
+        try
+        {
+            using var client = fixture.CreateAdminClient(
+                PurchasingPermissionCodes.CreateGoodsReceipts,
+                PurchasingPermissionCodes.ConfirmGoodsReceipts);
 
-        Assert.Equal(quantityBefore + 10m, await ReadNullableDecimalAsync("QuantityOnHand"));
-        Assert.Equal(valueBefore + 60_000m, await ReadNullableDecimalAsync("InventoryValue"));
-        Assert.Equal("Posted||", await ScalarAsync<string>(
-            "SELECT CONCAT(Status,N'|',COALESCE(LastErrorCode,N''),N'|',COALESCE(LastErrorMessage,N'')) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
-            request.DocumentId));
-        Assert.Equal(59_500m, await ScalarAsync<decimal>(
-            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
-            request.DocumentId));
-        Assert.Equal(11_900m, await ScalarAsync<decimal>(
-            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
-            freightDocumentId));
-        Assert.Equal(freightDocumentNumber, await ScalarAsync<string>(
-            "SELECT DocumentNumber FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
-            freightDocumentId));
-        Assert.Equal("Posted", await ScalarAsync<string>(
-            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
-            freightDocumentId));
-        Assert.Equal(10_000m, await ScalarAsync<decimal>(
-            "SELECT SUM(FunctionalAmount) FROM purchasing.GoodsReceiptCostAllocations WHERE CostDocumentId=@Id",
-            freightDocumentId));
-        Assert.Equal(1_900m, await ScalarAsync<decimal>(
-            "SELECT FunctionalTaxAmount FROM purchasing.GoodsReceiptCostDocuments WHERE CostDocumentId=@Id",
-            freightDocumentId));
+            using var message = CreateMessage(request, $"freight-{request.DocumentId:N}");
+            using var response = await client.SendAsync(message);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                $"Expected freight receipt to be accepted, got {response.StatusCode}: {body}");
+
+            var processingJob = await ReadJobAsync(request.DocumentId);
+            Assert.True(processingJob.Status == "Completed", processingJob.LastError ?? processingJob.Status);
+
+            Assert.Equal(10m, await ScalarAsync<decimal>(
+                "SELECT SUM(QuantityChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND DocumentType=N'GoodsReceipt'",
+                request.DocumentId));
+            Assert.Equal(60_000m, await ScalarAsync<decimal>(
+                "SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND DocumentType=N'GoodsReceipt'",
+                request.DocumentId));
+            Assert.Equal("Posted||", await ScalarAsync<string>(
+                "SELECT CONCAT(Status,N'|',COALESCE(LastErrorCode,N''),N'|',COALESCE(LastErrorMessage,N'')) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+                request.DocumentId));
+            Assert.Equal(59_500m, await ScalarAsync<decimal>(
+                "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+                request.DocumentId));
+            Assert.Equal(11_900m, await ScalarAsync<decimal>(
+                "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+                freightDocumentId));
+            Assert.Equal(freightDocumentNumber, await ScalarAsync<string>(
+                "SELECT DocumentNumber FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+                freightDocumentId));
+            Assert.Equal("Posted", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+                freightDocumentId));
+            Assert.Equal(10_000m, await ScalarAsync<decimal>(
+                "SELECT SUM(FunctionalAmount) FROM purchasing.GoodsReceiptCostAllocations WHERE CostDocumentId=@Id",
+                freightDocumentId));
+            Assert.Equal(1_900m, await ScalarAsync<decimal>(
+                "SELECT FunctionalTaxAmount FROM purchasing.GoodsReceiptCostDocuments WHERE CostDocumentId=@Id",
+                freightDocumentId));
+        }
+        finally
+        {
+            await SetPrimaryCostPolicyAsync(previousShares, previousCostBasis);
+        }
     }
 
     [Fact]
@@ -692,6 +710,23 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@Quantity", quantity);
         command.Parameters.AddWithValue("@Average", average);
         command.Parameters.AddWithValue("@Value", value);
+        command.Parameters.AddWithValue("@SharesPrices", sharesPrices);
+        command.Parameters.AddWithValue("@CostBasis", costBasis);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task SetPrimaryCostPolicyAsync(bool sharesPrices, string costBasis)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.Businesses SET SharesProductPrices=@SharesPrices
+            WHERE BusinessId=@BusinessId;
+            UPDATE dbo.Tenants SET InventoryCostBasis=@CostBasis
+            WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
+            """;
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@SharesPrices", sharesPrices);
         command.Parameters.AddWithValue("@CostBasis", costBasis);
         await command.ExecuteNonQueryAsync();

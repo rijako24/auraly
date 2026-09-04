@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest, workSessionPaymentMethodName, workSessionPaymentMethodRequiresCount } from "./pos-work-session-close";
+import { cashDenominationCountHtml, formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest, workSessionPaymentMethodName, workSessionPaymentMethodRequiresCount } from "./pos-work-session-close";
 
 test("online closure uses the authenticated server work-session endpoints", () => {
   const preview = workSessionClosurePreviewRequest("session/1", "draft-1", "approval-1", "operation-1");
@@ -18,7 +18,10 @@ test("closure print view is a receipt with user and every payment breakdown", ()
   assert.match(html, /Comercializadora &amp; Uno/);
   assert.match(html, /Sede: Sede &lt;Uno&gt; · Principal/);
   assert.match(html, /https:\/\/media\.test\/logo\.png/);
-  assert.match(html, /ARQUEO DE CAJA · CIERRE CONFIRMADO/);
+  assert.match(html, /Arqueo de caja · Cierre confirmado/);
+  assert.doesNotMatch(html, /body\s*\{[^}]*text-transform:\s*uppercase/);
+  assert.match(html, /header, footer \{ text-align: center/);
+  assert.match(html, /payment\[data-payment-method="Cash"\] h3\{font-weight:800/);
   assert.match(html, /Usuario que trabajó: <strong>Ana<\/strong>/);
   assert.match(html, /Detalle por medio de pago/);
   assert.match(html, /Transferencia/);
@@ -59,4 +62,20 @@ test("closure money inputs format Colombian thousands while typing", () => {
   assert.equal(normalizeWorkSessionCountInput("$ 1.250.000"), "1250000");
   assert.equal(formatWorkSessionCountInput("1250000"), "1.250.000");
   assert.equal(formatWorkSessionCountInput(""), "");
+});
+
+test("cash denomination count prints the responsible user and every counted row", () => {
+  const html = cashDenominationCountHtml({
+    businessName: "Sede <Centro>",
+    userName: "Ana & Uno",
+    countedAt: "2026-09-03T20:30:00Z",
+    lines: [{ label: "Billete 50.000", value: 50_000, quantity: 2, subtotal: 100_000 }],
+    total: 100_000,
+  });
+  assert.match(html, /Conteo de efectivo/);
+  assert.match(html, /Sede &lt;Centro&gt;/);
+  assert.match(html, /Ana &amp; Uno/);
+  assert.match(html, /Billete 50.000/);
+  assert.match(html, /100\.000/);
+  assert.doesNotMatch(html, /text-transform:\s*uppercase/);
 });

@@ -6,6 +6,7 @@ BEGIN
            operation.DispatchSettlementOperationId,
            operation.BusinessId,
            operation.DispatchId,
+           operation.WorkSessionId,
            operation.RequestedBy,
            operation.RequestedAt,
            operation.Attempts,

@@ -304,25 +304,25 @@ public sealed class SqlSalesReturnStore(
         ConfirmSalesReturnRequest request, decimal requestedAmount,
         CancellationToken cancellationToken)
     {
-        if (request.RefundMethodCode == SalesReturnRefundMethods.Cash)
+        if (request.WorkSessionId is null)
+            throw new SalesReturnValidationException(
+                "La devolución de dinero requiere la sesión operativa abierta del usuario.");
+        await using (var session = new SqlCommand("""
+            SELECT COUNT_BIG(*) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
+            WHERE WorkSessionId=@Id AND BusinessId=@BusinessId
+              AND TenantId=@TenantId AND UserId=@UserId AND Status=N'Open';
+            """, connection, transaction))
         {
-            // Administrative cash refunds are accounted without belonging to a
-            // cashier shift. Only the POS supplies a WorkSessionId and affects
-            // that drawer's closure.
-            if (request.WorkSessionId is null)
-                return new(null, null, null, null);
-            await using var session = new SqlCommand("""
-                SELECT COUNT_BIG(*) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
-                WHERE WorkSessionId=@Id AND BusinessId=@BusinessId AND WarehouseId=@WarehouseId
-                  AND TenantId=@TenantId AND UserId=@UserId AND Status=N'Open';
-                """, connection, transaction);
             session.Parameters.AddWithValue("@Id", request.WorkSessionId.Value);
             session.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-            session.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
             session.Parameters.AddWithValue("@UserId", user.UserId);
             session.Parameters.AddWithValue("@TenantId", user.TenantId);
             if (Convert.ToInt64(await session.ExecuteScalarAsync(cancellationToken)) != 1)
-                throw new SalesReturnValidationException("La devolución en efectivo requiere la sesión de caja abierta del usuario.");
+                throw new SalesReturnValidationException(
+                    "La devolución requiere la sesión operativa abierta del usuario.");
+        }
+        if (request.RefundMethodCode == SalesReturnRefundMethods.Cash)
+        {
             return new(null, null, null, null);
         }
 

@@ -89,7 +89,7 @@ public sealed class HalfLetterDocumentRenderer
                 .caption { margin-top: 1mm; color: #64748b; font-size: 6.2pt; }
                 .footer { display: grid; grid-template-columns: 1fr auto auto; align-items: end; gap: 3mm; margin-top: auto; padding-top: 1.5mm; border-top: .2mm solid #94a3b8; color: #64748b; font-size: 6.2pt; }
                 .platform { text-align: center; color: #334155; }
-                .platform strong { color: #065f5b; }
+                .platform strong { color: #065f5b; font-size: 1.15em; }
                 .page-number { white-space: nowrap; text-align: right; }
                 .letter .document { font-size: 9pt; }
                 .letter h1 { font-size: 16pt; }
@@ -130,9 +130,10 @@ public sealed class HalfLetterDocumentRenderer
     private static string RenderCopy(OnlineSalesReceipt receipt)
     {
         var isInvoice = receipt.DocumentType == PosSaleDocumentTypes.Invoice;
+        var template = PosPrintTemplateCatalog.ForSale(receipt.DocumentType);
         var documentName = isInvoice
-            ? "FACTURA ELECTRÓNICA DE VENTA"
-            : "COMPROBANTE DE VENTA";
+            ? "Factura electrónica de venta"
+            : "Comprobante de venta";
         var representationName = isInvoice
             ? "Representación gráfica de factura electrónica"
             : "Representación gráfica del comprobante de venta";
@@ -143,7 +144,7 @@ public sealed class HalfLetterDocumentRenderer
             ? string.Empty
             : $"<div class=\"pair\"><span>Número DIAN</span><strong>{Encode(receipt.FiscalNumber)}</strong></div>";
         var rows = string.Join("", receipt.Lines.Select(line =>
-            $"<tr><td>{Encode(line.ProductCode)} · {Encode(line.Description)}</td><td class=\"numeric\">{Quantity(line.Quantity)}</td><td class=\"numeric\">{Money(line.UnitPrice)}</td><td class=\"numeric\">{Money(line.Total)}</td></tr>"));
+            $"<tr><td>{Encode(line.Description)}</td><td class=\"numeric\">{Quantity(line.Quantity)}</td><td class=\"numeric\">{Money(line.UnitPrice)}</td><td class=\"numeric\">{Money(line.Total)}</td></tr>"));
         var qr = !isInvoice || string.IsNullOrWhiteSpace(receipt.QrPayload)
             ? string.Empty
             : $"<img class=\"qr\" alt=\"QR DIAN\" src=\"data:image/svg+xml;base64,{QrBase64(receipt.QrPayload)}\">";
@@ -176,7 +177,7 @@ public sealed class HalfLetterDocumentRenderer
         var issuedAt = receipt.IssuedAt.ToString("d/M/yyyy, h:mm:ss tt", ColombianCulture);
 
         return $$"""
-          <article class="document"><div class="document-content">
+          <article class="document" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
             <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>N.º de ticket</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
             <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{fiscalNumber}}</section>
             <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>

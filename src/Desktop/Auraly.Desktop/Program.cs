@@ -50,7 +50,7 @@ internal static class Program
                 AppContext.BaseDirectory,
                 configuration,
                 Shutdown);
-            Application.Run(context);
+            System.Windows.Forms.Application.Run(context);
         }
         finally
         {

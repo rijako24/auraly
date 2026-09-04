@@ -224,6 +224,11 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
           BEGIN TRAN;
           BEGIN TRY
             IF NOT EXISTS(SELECT 1 FROM dbo.DispatchSettlements WITH(UPDLOCK,HOLDLOCK) WHERE DispatchId=@Id AND BusinessId=@BusinessId AND Status=N'PendingReview') THROW 51000,'The dispatch is not pending settlement.',1;
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
+              WHERE WorkSessionId=@WorkSessionId AND TenantId=@TenantId
+                AND BusinessId=@BusinessId AND UserId=@UserId AND Status=N'Open')
+              THROW 51000,'The work session does not belong to the receiving user and business.',1;
             IF EXISTS(SELECT 1 FROM dbo.DispatchExpenses WHERE DispatchId=@Id AND ApprovalStatus=N'Pending') THROW 51000,'Every dispatch expense must be approved or rejected before settlement.',1;
             DECLARE @GrossCash decimal(19,4)=(SELECT COALESCE(SUM(Amount),0) FROM dbo.DispatchDeliveryPayments WHERE DispatchId=@Id AND PaymentMethod=N'Cash');
             DECLARE @Deposit decimal(19,4)=(SELECT COALESCE(SUM(Amount),0) FROM dbo.DispatchDeliveryPayments WHERE DispatchId=@Id AND PaymentMethod=N'Deposit');
@@ -241,8 +246,17 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
             IF @Expected<0 THROW 51000,'Approved expenses exceed cash collected.',1;
             IF @Cash<>@Expected AND NULLIF(LTRIM(RTRIM(@Notes)),N'') IS NULL THROW 51000,'A cash surplus or shortage requires a supervisor explanation.',1;
             UPDATE dbo.DispatchSettlements SET ExpectedCash=@Expected,DepositTotal=@Deposit,CreditDocumentTotal=@RemainingCredit,CreditAdvanceTotal=@Advance,ReturnTotal=@Returns,CashReceived=@Cash,ReceivedBy=@UserId,ReceivedAt=SYSUTCDATETIME(),Notes=@Notes,Status=N'Processing' WHERE DispatchId=@Id;
-            INSERT dbo.DispatchSettlementOperations(DispatchSettlementOperationId,BusinessId,DispatchId,CashReceived,Notes,RequestedBy,RequestedAt,Status,Attempts,NextAttemptAt,IdempotencyKey)
-            VALUES(NEWID(),@BusinessId,@Id,@Cash,@Notes,@UserId,SYSUTCDATETIME(),N'Pending',0,SYSUTCDATETIME(),@Key);
+            INSERT dbo.DispatchSettlementOperations(DispatchSettlementOperationId,BusinessId,DispatchId,WorkSessionId,CashReceived,Notes,RequestedBy,RequestedAt,Status,Attempts,NextAttemptAt,IdempotencyKey)
+            VALUES(NEWID(),@BusinessId,@Id,@WorkSessionId,@Cash,@Notes,@UserId,SYSUTCDATETIME(),N'Pending',0,SYSUTCDATETIME(),@Key);
+            IF @Cash<>0
+              INSERT dbo.WorkSessionMovements(
+                WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,
+                BusinessDate,MovementType,PaymentMethodCode,Amount,Reference,
+                SourceKey,OccurredAt,RecordedByUserId)
+              VALUES(
+                NEWID(),@WorkSessionId,NULL,NULL,CONVERT(date,SYSUTCDATETIME()),
+                N'CashIn',N'Cash',@Cash,NULL,
+                CONCAT(N'dispatch-settlement:',@Key),SYSUTCDATETIME(),@UserId);
             UPDATE dbo.Dispatches SET Status=N'SettlementProcessing',UpdatedBy=@UserId,UpdatedAt=SYSUTCDATETIME() WHERE DispatchId=@Id;
             COMMIT;
           END TRY
@@ -250,7 +264,7 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
             IF @@TRANCOUNT>0 ROLLBACK;
             THROW;
           END CATCH
-        """,connection);Scope(command,actor,dispatchId);Money(command,"@Cash",request.CashReceived);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct))!;
+        """,connection);Scope(command,actor,dispatchId);Money(command,"@Cash",request.CashReceived);command.Parameters.AddWithValue("@WorkSessionId",request.WorkSessionId!.Value);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct))!;
     }
 
     private static void Scope(SqlCommand command,DispatchActorIdentity actor,Guid id){command.Parameters.AddWithValue("@TenantId",actor.TenantId);command.Parameters.AddWithValue("@BusinessId",actor.BusinessId);command.Parameters.AddWithValue("@UserId",actor.UserId);command.Parameters.AddWithValue("@ReadAll",actor.Permissions.Contains(DispatchPermissionCodes.ReadAll));command.Parameters.AddWithValue("@Settle",actor.Permissions.Contains(DispatchPermissionCodes.Settle));command.Parameters.AddWithValue("@IsAdministrator",actor.IsAdministrator);command.Parameters.AddWithValue("@Id",id);}

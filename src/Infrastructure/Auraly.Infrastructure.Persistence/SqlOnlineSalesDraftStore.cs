@@ -134,22 +134,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
                     P("@PriceChannelId", price.PriceChannelId)
                 ],
                 cancellationToken);
-        await ExecuteAsync(connection, transaction, """
-                UPDATE dbo.SalesDraftLines
-                SET BaseUnitPrice=@BaseUnitPrice,UnitPrice=@UnitPrice,CurrencyCode=@CurrencyCode,
-                    PriceSource=@PriceSource,
-                    PriceChannelId=@PriceChannelId
-                WHERE ProductId=@ProductId AND SalesDraftId=@DraftId;
-                """,
-                [
-                    P("@BaseUnitPrice", product.UnitPrice),
-                    P("@UnitPrice", TaxExclusive(price.Amount, product.TaxRate)), P("@CurrencyCode", price.CurrencyCode),
-                    P("@PriceSource", price.Source),
-                    P("@PriceChannelId", price.PriceChannelId),
-                    P("@ProductId", productId), P("@DraftId", draftId)
-                ],
-                cancellationToken);
-
         var version = await AdvanceVersionAsync(
             connection, transaction, draftId, expectedVersion, cancellationToken);
         await SaveReceiptAsync(
@@ -201,10 +185,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await DemandInventoryAsync(
             connection, transaction, state, line.ProductId, product.ManagesStock,
             totalQuantity, cancellationToken);
-        var price = await ResolvePriceAsync(
-            connection, transaction, state.BusinessId, state.WarehouseId, state.CustomerId,
-            line.ProductId, totalQuantity, product.UnitPrice,
-            product.CurrencyCode, cancellationToken);
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE dbo.SalesDraftLines
             SET Quantity=@Quantity
@@ -218,20 +198,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
         if (affected != 1)
             throw new OnlineSalesDraftValidationException(
                 "La línea no pertenece al borrador activo.");
-
-        await ExecuteAsync(connection, transaction, """
-            UPDATE dbo.SalesDraftLines
-            SET BaseUnitPrice=@BaseUnitPrice,UnitPrice=@UnitPrice,CurrencyCode=@CurrencyCode,
-                PriceSource=@PriceSource,PriceChannelId=@PriceChannelId
-            WHERE SalesDraftId=@DraftId AND ProductId=@ProductId;
-            """,
-            [
-                P("@BaseUnitPrice", product.UnitPrice),
-                P("@UnitPrice", TaxExclusive(price.Amount, product.TaxRate)),
-                P("@CurrencyCode", price.CurrencyCode), P("@PriceSource", price.Source),
-                P("@PriceChannelId", price.PriceChannelId), P("@DraftId", draftId),
-                P("@ProductId", line.ProductId)
-            ], cancellationToken);
 
         var version = await AdvanceVersionAsync(
             connection, transaction, draftId, expectedVersion, cancellationToken);
@@ -341,7 +307,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             var affected = await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.SalesDraftLines
                 SET Description=@Description,UnitPrice=@UnitPrice,DocumentUnitCost=@DocumentUnitCost,
-                    DiscountAmount=@Discount,PriceSource=N'ManualOverride',PriceChannelId=NULL
+                    DiscountAmount=@Discount
                 WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
                 """,
                 [
@@ -391,7 +357,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             return replay;
         }
         DemandActiveVersion(state, expectedVersion);
-        var removedLine = await ReadLineProductAsync(
+        await ReadLineProductAsync(
             connection, transaction, draftId, lineId, cancellationToken);
         var affected = await ExecuteAsync(connection, transaction, """
             DELETE dbo.SalesDraftLines
@@ -401,8 +367,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
         if (affected != 1)
             throw new OnlineSalesDraftValidationException(
                 "La línea no pertenece al borrador activo.");
-        await RepriceProductLinesAsync(connection, transaction, state, draftId,
-            state.CustomerId, removedLine.ProductId, cancellationToken);
         var version = await AdvanceVersionAsync(
             connection, transaction, draftId, expectedVersion, cancellationToken);
         await SaveReceiptAsync(
@@ -722,9 +686,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
               ON w.WarehouseId=@WarehouseId AND w.BusinessId=b.BusinessId
              AND w.IsActive=1 AND w.UseForSales=1
             JOIN dbo.WorkSessions s
-              ON s.WorkSessionId=@WorkSessionId
+             ON s.WorkSessionId=@WorkSessionId
              AND s.BusinessId=b.BusinessId
-             AND s.WarehouseId=w.WarehouseId
              AND s.TenantId=@TenantId
              AND s.UserId=@UserId
              AND s.Status=N'Open'
@@ -742,7 +705,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new OnlineSalesDraftForbiddenException(
-                "La sesión de trabajo no pertenece al usuario, negocio y bodega autenticados.");
+                "La sesión de trabajo no pertenece al usuario y negocio autenticados.");
         return new(
             reader.GetGuid(0),
             reader.GetGuid(1),

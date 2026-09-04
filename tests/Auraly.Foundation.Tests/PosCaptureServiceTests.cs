@@ -157,6 +157,44 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
+    public async Task Adding_same_product_creates_normal_price_line_without_changing_edited_lines()
+    {
+        await WithServiceAsync(async (service, drafts, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 10m, true, true, "Available");
+            var captured = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            var original = Assert.Single(captured.Draft!.Lines);
+            var edited = await drafts.UpdateLinesAsync(
+                captured.Draft.DraftId,
+                [new(original.LineId, original.Description, 95m, 0m, original.DocumentUnitCost)]);
+
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 2m, 10m, true, true, "Available");
+            var addedAgain = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+
+            Assert.Equal(2, addedAgain.Draft!.Lines.Count);
+            var editedLine = addedAgain.Draft.Lines.Single(line => line.LineId == original.LineId);
+            var automatic = addedAgain.Draft.Lines.Single(line => line.LineId != original.LineId);
+            Assert.Equal(95m, editedLine.UnitPrice);
+            Assert.Equal(original.PriceSource, editedLine.PriceSource);
+            Assert.Equal(80m, automatic.UnitPrice);
+
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 4m, 10m, true, true, "Available");
+            var changed = await service.ChangeQuantityAsync(
+                edited.DraftId, automatic.LineId, 3m, false, Guid.NewGuid());
+            Assert.Equal(95m, changed.Draft!.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
+
+            var recovered = await drafts.GetOrCreateActiveAsync(scope);
+            Assert.Equal(95m, recovered.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
+            Assert.Equal(original.PriceSource, recovered.Lines.Single(line => line.LineId == original.LineId).PriceSource);
+        });
+    }
+
+    [Fact]
     public async Task Warehouse_that_allows_negatives_never_queries_inventory()
     {
         await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>

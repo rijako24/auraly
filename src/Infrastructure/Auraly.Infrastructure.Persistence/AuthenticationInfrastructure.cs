@@ -21,7 +21,7 @@ public sealed class AuthenticationJwtOptions
     public string Audience { get; set; } = string.Empty;
     public string SigningKey { get; set; } = string.Empty;
     public int AccessTokenExpirationMinutes { get; set; } = 15;
-    public int RefreshTokenExpirationDays { get; set; } = 7;
+    public int RefreshTokenExpirationDays { get; set; } = 1;
 }
 
 public sealed class BcryptAuthenticationPasswordVerifier : IAuthenticationPasswordVerifier
@@ -297,6 +297,12 @@ public sealed class SqlAuthenticationSessionStore(
             connection, transaction, command.Identity, cancellationToken)
             ?? throw new AuthenticationDeniedException(
                 "The authentication session does not exist.");
+        if (string.Equals(state.RevocationReason, "ReplacedByNewLogin", StringComparison.Ordinal))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            throw new AuthenticationSessionReplacedException(
+                "The authentication session was replaced by a new login.");
+        }
         if (!string.Equals(state.Status, "Active", StringComparison.Ordinal) ||
             state.ExpiresAt <= command.Now)
         {
@@ -676,7 +682,7 @@ public sealed class SqlAuthenticationSessionStore(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT ClientId,RefreshTokenHash,IssuedAt,ExpiresAt,Status
+            SELECT ClientId,RefreshTokenHash,IssuedAt,ExpiresAt,Status,RevocationReason
             FROM dbo.AuthenticationSessions WITH (UPDLOCK,HOLDLOCK)
             WHERE AuthenticationSessionId=@SessionId
               AND TenantId=@TenantId AND UserId=@UserId;
@@ -689,7 +695,8 @@ public sealed class SqlAuthenticationSessionStore(
                 (byte[])reader[1],
                 reader.GetFieldValue<DateTimeOffset>(2),
                 reader.GetFieldValue<DateTimeOffset>(3),
-                reader.GetString(4))
+                reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5))
             : null;
     }
 
@@ -752,5 +759,6 @@ public sealed class SqlAuthenticationSessionStore(
         byte[] RefreshTokenHash,
         DateTimeOffset IssuedAt,
         DateTimeOffset ExpiresAt,
-        string Status);
+        string Status,
+        string? RevocationReason);
 }

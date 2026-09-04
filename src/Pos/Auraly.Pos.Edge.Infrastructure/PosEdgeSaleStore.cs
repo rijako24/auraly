@@ -624,11 +624,12 @@ public sealed class PosEdgeSaleStore
         await using var context = new PosEdgeDbContext(_options);
         return await context.Outbox
             .AsNoTracking()
-            .Where(row => row.Type != PosOutboxMessageTypes.CashMovement &&
+            .Where(row => row.Type != PosOutboxMessageTypes.WorkSessionOpened &&
+                          row.Type != PosOutboxMessageTypes.CashMovement &&
                           row.Type != PosOutboxMessageTypes.WorkSessionClosure &&
                           (row.Status == PosOutboxStatus.Pending ||
                            row.Status == PosOutboxStatus.RetryScheduled))
-            .OrderBy(row => row.MessageId)
+            .OrderBy(row => row.LocalSequence)
             .Select(ToOutboxItem)
             .ToArrayAsync(cancellationToken);
     }
@@ -658,7 +659,8 @@ public sealed class PosEdgeSaleStore
     {
         await using var context = new PosEdgeDbContext(_options);
         var rows = await context.Outbox.AsNoTracking()
-            .Where(row => row.Type != PosOutboxMessageTypes.CashMovement &&
+            .Where(row => row.Type != PosOutboxMessageTypes.WorkSessionOpened &&
+                          row.Type != PosOutboxMessageTypes.CashMovement &&
                           row.Type != PosOutboxMessageTypes.WorkSessionClosure &&
                           row.Status != PosOutboxStatus.Uploaded)
             .Select(row => new { row.CreatedAt, row.LastError })
@@ -676,7 +678,8 @@ public sealed class PosEdgeSaleStore
     {
         await using var context = new PosEdgeDbContext(_options);
         return await context.Outbox.AsNoTracking()
-            .Where(row => row.Type != PosOutboxMessageTypes.CashMovement &&
+            .Where(row => row.Type != PosOutboxMessageTypes.WorkSessionOpened &&
+                          row.Type != PosOutboxMessageTypes.CashMovement &&
                           row.Type != PosOutboxMessageTypes.WorkSessionClosure &&
                           row.Status != PosOutboxStatus.Uploaded &&
                           row.WorkSessionId == workSessionId)
@@ -704,9 +707,8 @@ public sealed class PosEdgeSaleStore
                 (item.Status == PosOutboxStatus.Uploading &&
                  item.LeaseAcquiredAt != null &&
                  item.LeaseAcquiredAt <= staleBefore)) &&
-                !pending.Any(prior => IsEarlierInWorkSession(prior, item)))
-            .OrderBy(item => item.CreatedAt)
-            .ThenBy(item => item.MessageId)
+                !pending.Any(prior => IsEarlier(prior, item)))
+            .OrderBy(item => item.LocalSequence)
             .FirstOrDefault();
         if (row is null)
         {
@@ -724,11 +726,8 @@ public sealed class PosEdgeSaleStore
         return ToOutboxItem.Compile().Invoke(row);
     }
 
-    private static bool IsEarlierInWorkSession(PosOutboxRow prior, PosOutboxRow current) =>
-        current.WorkSessionId is Guid sessionId &&
-        prior.WorkSessionId == sessionId &&
-        (prior.CreatedAt < current.CreatedAt ||
-         prior.CreatedAt == current.CreatedAt && prior.MessageId.CompareTo(current.MessageId) < 0);
+    private static bool IsEarlier(PosOutboxRow prior, PosOutboxRow current) =>
+        prior.LocalSequence < current.LocalSequence;
 
     public async Task<PosEdgeOutboxItem?> GetOutboxAsync(
         DocumentId documentId,

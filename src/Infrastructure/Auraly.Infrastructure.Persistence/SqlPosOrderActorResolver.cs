@@ -6,8 +6,7 @@ using Microsoft.Data.SqlClient;
 namespace Auraly.Infrastructure.Persistence;
 
 public sealed class SqlPosOrderActorResolver(
-    SqlServerConnectionFactory connections,
-    TimeProvider timeProvider) : IPosOrderActorResolver
+    SqlServerConnectionFactory connections) : IPosOrderActorResolver
 {
     public async Task<OrderActor> ResolveAsync(
         PosDeviceIdentity device,
@@ -27,7 +26,7 @@ public sealed class SqlPosOrderActorResolver(
 
         await ValidateContextAsync(
             connection, transaction, device, context, cancellationToken);
-        await EnsureWorkSessionAsync(
+        await ValidateWorkSessionAsync(
             connection, transaction, device, context, cancellationToken);
         var permissions = await ReadPermissionsAsync(
             connection, transaction, device, context, cancellationToken);
@@ -80,7 +79,7 @@ public sealed class SqlPosOrderActorResolver(
                 "El contexto del pedido no pertenece al tenant o no está activo.");
     }
 
-    private async Task EnsureWorkSessionAsync(
+    private static async Task ValidateWorkSessionAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         PosDeviceIdentity device,
@@ -88,46 +87,22 @@ public sealed class SqlPosOrderActorResolver(
         CancellationToken cancellationToken)
     {
         await using (var read = new SqlCommand("""
-            SELECT WorkSessionId,BusinessId,WarehouseId,DeviceId
+            SELECT COUNT_BIG(1)
             FROM dbo.WorkSessions WITH (UPDLOCK,HOLDLOCK)
-            WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Open';
+            WHERE WorkSessionId=@WorkSessionId
+              AND TenantId=@TenantId AND BusinessId=@BusinessId
+              AND UserId=@UserId AND DeviceId=@DeviceId AND Status=N'Open';
             """, connection, transaction))
         {
             read.Parameters.AddWithValue("@UserId", context.UserId);
             read.Parameters.AddWithValue("@TenantId", device.TenantId);
-            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
-            if (await reader.ReadAsync(cancellationToken))
-            {
-                var matches =
-                    reader.GetGuid(0) == context.WorkSessionId &&
-                    reader.GetGuid(1) == context.BusinessId &&
-                    reader.GetGuid(2) == context.WarehouseId &&
-                    !reader.IsDBNull(3) &&
-                    reader.GetGuid(3) == device.DeviceId;
-                if (!matches)
-                    throw new OrderForbiddenException(
-                        "El usuario ya tiene una sesión de trabajo abierta en otro contexto.");
-                return;
-            }
+            read.Parameters.AddWithValue("@WorkSessionId", context.WorkSessionId);
+            read.Parameters.AddWithValue("@BusinessId", context.BusinessId);
+            read.Parameters.AddWithValue("@DeviceId", device.DeviceId);
+            if (Convert.ToInt64(await read.ExecuteScalarAsync(cancellationToken)) != 1)
+                throw new OrderForbiddenException(
+                    "La sesión de trabajo local aún no fue sincronizada o no pertenece al contexto del pedido.");
         }
-
-        var now = timeProvider.GetUtcNow();
-        await using var insert = new SqlCommand("""
-            INSERT dbo.WorkSessions
-              (WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
-               OpenedAt,LastActivityAt,Status)
-            VALUES
-              (@WorkSessionId,@TenantId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
-               @Now,@Now,N'Open');
-            """, connection, transaction);
-        insert.Parameters.AddWithValue("@WorkSessionId", context.WorkSessionId);
-        insert.Parameters.AddWithValue("@TenantId", device.TenantId);
-        insert.Parameters.AddWithValue("@BusinessId", context.BusinessId);
-        insert.Parameters.AddWithValue("@WarehouseId", context.WarehouseId);
-        insert.Parameters.AddWithValue("@UserId", context.UserId);
-        insert.Parameters.AddWithValue("@DeviceId", device.DeviceId);
-        insert.Parameters.AddWithValue("@Now", now);
-        await insert.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<IReadOnlySet<string>> ReadPermissionsAsync(

@@ -12,12 +12,14 @@ using Auraly.Pos.Edge.Infrastructure;
 namespace Auraly.Pos.Edge.Host;
 
 public sealed class PosEdgeRuntimeContext(
+    TenantId tenantId,
     BusinessId businessId,
     WarehouseId warehouseId,
     DeviceId deviceId,
     bool warehouseAllowsNegativeStock)
 {
     private int allowsNegativeStock = warehouseAllowsNegativeStock ? 1 : 0;
+    public TenantId TenantId { get; } = tenantId;
     public BusinessId BusinessId { get; } = businessId;
     public WarehouseId WarehouseId { get; } = warehouseId;
     public DeviceId DeviceId { get; } = deviceId;
@@ -64,7 +66,10 @@ public sealed record DirectPrintReceiptRequest(
     string? Cufe,
     string? QrPayload,
     string? CompanyName = null,
-    string? CompanyLogoSource = null);
+    string? CompanyLogoSource = null,
+    string? CustomerName = null,
+    string? BusinessName = null,
+    string? WarehouseName = null);
 
 public static class PosEdgeHostApplication
 {
@@ -127,6 +132,7 @@ public static class PosEdgeHostApplication
             Required(builder.Configuration, "PosEdge:DeviceSecret"));
         var tenantId = RequiredGuid(builder.Configuration, "PosEdge:TenantId");
         var runtime = new PosEdgeRuntimeContext(
+            new TenantId(tenantId),
             new BusinessId(RequiredGuid(builder.Configuration, "PosEdge:BusinessId")),
             new WarehouseId(RequiredGuid(builder.Configuration, "PosEdge:WarehouseId")),
             new DeviceId(RequiredGuid(builder.Configuration, "PosEdge:DeviceId")),
@@ -157,7 +163,6 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<PosOfflineLeaseVerifier>(),
             sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<PosOfflineLeaseClient>();
-        builder.Services.AddSingleton<PosWorkSessionOpenServerClient>();
         builder.Services.AddSingleton<PosEdgeAuthenticationService>();
         builder.Services.AddSingleton<PosEnrollmentSessionCompleter>();
         builder.Services.AddSingleton<PosEnrollmentRevocationHandler>();
@@ -221,6 +226,17 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<PosOfflineWorkSessionClosureService>();
         builder.Services.AddSingleton<PosWorkSessionClosureUploader>();
+        builder.Services.AddSingleton(sp => new PosLocalWorkSessionStore(
+            connectionString,
+            sp.GetRequiredService<IAuralyIdGenerator>(),
+            sp.GetRequiredService<TimeProvider>(),
+            runtime));
+        builder.Services.AddSingleton(sp => new PosWorkSessionOpenUploader(
+            connectionString,
+            sp.GetRequiredService<HttpClient>(),
+            credentials,
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<PosSynchronizationEventLog>()));
         builder.Services.AddSingleton(sp => new PosUnifiedOutboxDispatcher(
             connectionString,
             sp.GetRequiredService<TimeProvider>()));
@@ -353,6 +369,17 @@ public static class PosEdgeHostApplication
                         detail = replaced
                             ? "Tu usuario inició sesión en otro navegador o caja. Esta sesión se cerrará."
                             : "Inicia sesión en este dispositivo para continuar."
+                    });
+                    return;
+                }
+                if (userSession.WorkSessionId == Guid.Empty &&
+                    RequiresOperationalWorkSession(context.Request.Path))
+                {
+                    context.Response.StatusCode = StatusCodes.Status409Conflict;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        code = "WorkSessionRequired",
+                        detail = "Entra nuevamente al punto de venta para abrir la sesión de caja local."
                     });
                     return;
                 }
@@ -589,6 +616,25 @@ public static class PosEdgeHostApplication
                     title: exception.Code);
             }
         });
+        edge.MapPost("/work-sessions/current", async (
+            PosLocalSessionAccessor sessions,
+            PosLocalIdentityStore identities,
+            PosLocalWorkSessionStore workSessions,
+            PosSynchronizationSignal synchronization,
+            CancellationToken ct) =>
+        {
+            var authenticated = sessions.Required();
+            var active = await workSessions.OpenOrResumeAsync(
+                authenticated.UserId, ct);
+            if (authenticated.WorkSessionId != active.WorkSessionId)
+                await identities.AssignWorkSessionAsync(
+                    authenticated.SessionId, active.WorkSessionId, ct);
+            synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
+            return Results.Ok(authenticated with
+            {
+                WorkSessionId = active.WorkSessionId
+            });
+        });
         edge.MapGet("/approvals/{approvalRequestId:guid}", async (
             Guid approvalRequestId,
             PosRemoteApprovalClient approvals,
@@ -712,7 +758,9 @@ public static class PosEdgeHostApplication
                 warehouseAllowsNegativeStockSales = runtime.WarehouseAllowsNegativeStock,
                 userDisplayName = user?.DisplayName ?? string.Empty,
                 userId = user?.UserId,
-                workSessionId = user?.WorkSessionId,
+                workSessionId = user is null || user.WorkSessionId == Guid.Empty
+                    ? (Guid?)null
+                    : user.WorkSessionId,
                 deviceId = runtime.DeviceId.Value,
                 fiscalReady = saleSettings.Fiscal is not null && fiscalPreview.IsAvailable,
                 fiscalWarnings,
@@ -1288,12 +1336,20 @@ public static class PosEdgeHostApplication
         !path.Equals("/edge/v1/cash-drawer/open") &&
         !path.Equals("/edge/v1/scale/read");
 
+    private static bool RequiresOperationalWorkSession(PathString path) =>
+        !path.Equals("/edge/v1/work-sessions/current") &&
+        !path.Equals("/edge/v1/auth/session") &&
+        !path.Equals("/edge/v1/auth/logout") &&
+        !path.Equals("/edge/v1/auth/complete-enrollment") &&
+        !path.StartsWithSegments("/edge/v1/synchronization");
+
     private static bool IsLoopback(System.Net.IPAddress? address) =>
         address is null || System.Net.IPAddress.IsLoopback(address);
 }
 
 internal sealed class PosEdgeStorageInitializer(
     PosLocalIdentityStore identities,
+    PosLocalWorkSessionStore workSessions,
     PosOfflineLeaseStore leases,
     PosCatalogStore catalog,
     PosDraftStore drafts) : IHostedService
@@ -1301,6 +1357,7 @@ internal sealed class PosEdgeStorageInitializer(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await identities.InitializeAsync(cancellationToken);
+        await workSessions.InitializeAsync(cancellationToken);
         await leases.InitializeAsync(cancellationToken);
         await catalog.InitializeAsync(cancellationToken);
         await drafts.InitializeAsync(cancellationToken);

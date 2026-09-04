@@ -193,7 +193,8 @@ public sealed class OrderBatchService(
                     "Invoiced",
                     issued.Receipt.DocumentId,
                     issued.Receipt.DocumentNumber,
-                    null));
+                    null,
+                    issued.Receipt));
                 completed++;
             }
             catch (Exception exception) when (

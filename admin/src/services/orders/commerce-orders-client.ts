@@ -1,5 +1,6 @@
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { orderHttpError } from "@/services/orders/order-http-error";
+import type { PosPrintableReceipt } from "@/services/pos/pos-edge-client";
 
 export type CommerceOrderClaim = {
   claimId: string;
@@ -84,6 +85,7 @@ export type InvoiceOrderResult = {
   documentId: string | null;
   documentNumber: string | null;
   error: string | null;
+  receipt?: PosPrintableReceipt | null;
 };
 
 export type InvoiceOrdersResponse = {

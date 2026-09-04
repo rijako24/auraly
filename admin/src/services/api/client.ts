@@ -4,6 +4,8 @@ import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
 
 import {
   announceSessionReplacement,
+  announceSessionClosure,
+  clearPreviousWebIdentityContext,
   isActiveLocalPosSession,
   isCurrentWebSessionVersion,
   retryAuthenticatedRequest,
@@ -79,13 +81,9 @@ function fetchWithTimeout(
   return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
-async function expireWebSession(): Promise<void> {
+async function expireWebSession(reason: "replaced" | "expired"): Promise<void> {
   if (typeof window === "undefined") return;
-  try {
-    localStorage.removeItem("auth-state");
-  } catch {
-    // Storage can be unavailable in hardened browsers; navigation still expires the shell.
-  }
+  clearPreviousWebIdentityContext();
   if (isActiveLocalPosSession(
     window.location.pathname,
     window.sessionStorage.getItem("auraly.pos.edge-token"),
@@ -95,7 +93,12 @@ async function expireWebSession(): Promise<void> {
     window.location.pathname,
     window.location.search,
   );
-  announceSessionReplacement(destination);
+  if (reason === "replaced") announceSessionReplacement(destination);
+  else announceSessionClosure(
+    destination,
+    "Sesión finalizada",
+    "Esta sesión expiró o dejó de estar disponible. Inicia sesión nuevamente para continuar.",
+  );
 }
 
 async function refreshSession(): Promise<SessionRefreshResult> {
@@ -106,6 +109,11 @@ async function refreshSession(): Promise<SessionRefreshResult> {
       headers: buildJsonHeaders(false),
     }, 15_000);
     if (res.ok) return "refreshed";
+    if (res.status === 409) {
+      const problem = await res.json().catch(() => null) as { code?: string; title?: string } | null;
+      if (problem?.code === "AuthenticationSessionReplaced" ||
+          problem?.title === "AuthenticationSessionReplaced") return "replaced";
+    }
     return res.status === 401 || res.status === 403 ? "expired" : "unavailable";
   } catch {
     return "unavailable";
@@ -168,11 +176,11 @@ export async function fetchWithSessionRetry(
       }
       return activeRefresh.promise;
     },
-    () => isCurrentWebSessionVersion(
+    (reason) => isCurrentWebSessionVersion(
       requestSessionVersion,
       currentWebSessionVersion(),
     )
-      ? expireWebSession()
+      ? expireWebSession(reason)
       : Promise.resolve(),
   );
 }

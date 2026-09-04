@@ -9,6 +9,12 @@ FROM dbo.Businesses b
 WHERE b.IsActive=1 AND NOT EXISTS(
   SELECT 1 FROM dbo.Warehouses w WHERE w.BusinessId=b.BusinessId AND w.Code=N'AVE');
 
+INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
+SELECT NEWID(),b.BusinessId,N'PED',N'Bodega de pedidos',0,N'LatestReceiptCost',1,0,0,0,1,SYSUTCDATETIME()
+FROM dbo.Businesses b
+WHERE b.IsActive=1 AND NOT EXISTS(
+  SELECT 1 FROM dbo.Warehouses w WHERE w.BusinessId=b.BusinessId AND w.Code=N'PED');
+
 UPDATE dbo.Warehouses
 SET UseForGoodsReceipts=IsActive,IsInventoryVisible=IsActive
 WHERE IsSystem=0 AND (UseForGoodsReceipts<>IsActive OR IsInventoryVisible<>IsActive);

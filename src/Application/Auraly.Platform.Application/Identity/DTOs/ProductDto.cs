@@ -31,6 +31,17 @@ public record UpdateProductRequest(
     string? Description,
     string? CategoryName);
 
+public sealed record ProductListFilters(
+    Guid? AreaId = null,
+    Guid? LineId = null,
+    Guid? GroupId = null,
+    Guid? SubgroupId = null,
+    Guid? SupplierId = null,
+    Guid? BrandId = null,
+    bool? ManagesInventory = null,
+    bool? AllowsFractionalSale = null,
+    bool? IsWeighable = null);
+
 public sealed record ProductCategoryAdminDto(
     Guid ProductCategoryId,
     Guid? ParentProductCategoryId,

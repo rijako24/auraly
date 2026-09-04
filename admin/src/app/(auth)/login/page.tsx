@@ -29,9 +29,14 @@ import {
 import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
 import { defaultStartRoute } from "@/lib/default-start-route";
-import { runAuthenticationSessionReplacement } from "@/lib/auth-session";
+import {
+  clearPreviousWebIdentityContext,
+  runAuthenticationSessionReplacement,
+} from "@/lib/auth-session";
 import { rememberSalesWorkspace } from "@/services/pos/online-pos-client";
 import { useAuthStore } from "@/stores/auth-store";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { ApiError } from "@/types/api";
 
 const fieldClassName =
@@ -102,6 +107,9 @@ function LoginForm() {
 
     try {
       const loginToCloud = async () => {
+        // Remove the previous user's client-side identity before the server
+        // atomically replaces the HttpOnly session cookies in its response.
+        clearPreviousWebIdentityContext();
         const effectiveTenantKey = tenantKey.trim() || readRememberedTenantKey();
         if (!effectiveTenantKey) {
           setTenantKeyRequired(true);
@@ -118,10 +126,16 @@ function LoginForm() {
             password,
           }),
         );
-        rememberTenantKey(response.user.tenantKey || effectiveTenantKey);
-        setAuth(response.user);
+        // A login starts from the immutable tenant that owns the user. Never
+        // let a tenant/business persisted by a previous user race the first
+        // authenticated requests of this session.
+        useTenantContextStore.getState().establishIdentityTenant(response.user.tenantId);
+        useBusinessContextStore.getState().clearForTenantChange();
+        const verifiedUser = await authApi.me();
+        rememberTenantKey(verifiedUser.tenantKey || effectiveTenantKey);
+        setAuth(verifiedUser);
         const redirect = searchParams.get("redirect")
-          ?? defaultStartRoute(response.user.roles, response.user.permissions);
+          ?? defaultStartRoute(verifiedUser.roles, verifiedUser.permissions);
         router.push(redirect.startsWith("/") ? redirect : "/dashboard");
       };
 

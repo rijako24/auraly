@@ -355,7 +355,7 @@ public sealed class PosDraftStore
             var affected = await ExecuteAsync(connection, transaction, """
                 UPDATE PosDraftLines
                 SET Description=@Description,UnitPrice=@UnitPrice,DocumentUnitCost=@DocumentUnitCost,
-                    Discount=@Discount,PriceSource='ManualOverride',PriceChannelId=NULL
+                    Discount=@Discount
                 WHERE DraftId=@DraftId AND LineId=@LineId;
                 """,
                 [

@@ -5,6 +5,7 @@ namespace Auraly.Pos.Edge.Host;
 
 public enum PosUnifiedOutboxRoute
 {
+    WorkSessionOpened,
     Sale,
     CashMovement,
     WorkSessionClosure
@@ -30,13 +31,10 @@ public sealed class PosUnifiedOutboxDispatcher(
               AND NOT EXISTS
               (
                 SELECT 1 FROM Outbox prior
-                WHERE current.WorkSessionId IS NOT NULL
-                  AND prior.WorkSessionId=current.WorkSessionId
-                  AND prior.Status<>'Uploaded'
-                  AND (prior.CreatedAt<current.CreatedAt OR
-                       (prior.CreatedAt=current.CreatedAt AND prior.MessageId<current.MessageId))
+                WHERE prior.Status<>'Uploaded'
+                  AND prior.LocalSequence<current.LocalSequence
               )
-            ORDER BY current.CreatedAt,current.MessageId
+            ORDER BY current.LocalSequence
             LIMIT 1;
             """;
         command.Parameters.AddWithValue("$now", now.ToString("O"));
@@ -45,6 +43,7 @@ public sealed class PosUnifiedOutboxDispatcher(
         return type switch
         {
             null => null,
+            PosOutboxMessageTypes.WorkSessionOpened => PosUnifiedOutboxRoute.WorkSessionOpened,
             PosOutboxMessageTypes.CashMovement => PosUnifiedOutboxRoute.CashMovement,
             PosOutboxMessageTypes.WorkSessionClosure => PosUnifiedOutboxRoute.WorkSessionClosure,
             _ => PosUnifiedOutboxRoute.Sale

@@ -256,6 +256,11 @@
           "System.IO.Hashing": "6.0.0"
         }
       },
+      "BouncyCastle.Cryptography": {
+        "type": "Transitive",
+        "resolved": "2.7.0",
+        "contentHash": "U+12df8UEWHgBi04YVf/Lgi2dy3SItlIYvHjjEVa/BngCQIzDCDRBk50DDByCfDvSbe5pRNFr3b7UrVK2kMcLw=="
+      },
       "Google.Apis": {
         "type": "Transitive",
         "resolved": "1.68.0",
@@ -818,7 +823,8 @@
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Domain.Fiscal": "[1.0.0, )",
           "Auraly.Fiscal.Core": "[1.0.0, )",
-          "Auraly.Fiscal.Ubl": "[1.0.0, )"
+          "Auraly.Fiscal.Ubl": "[1.0.0, )",
+          "BouncyCastle.Cryptography": "[2.7.0, )"
         }
       },
       "auraly.application.sales": {

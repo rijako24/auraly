@@ -118,6 +118,7 @@ public sealed partial class ProductRepository : IProductRepository
         int pageSize,
         string? search = null,
         bool includeInactive = false,
+        ProductListFilter? filter = null,
         CancellationToken ct = default)
     {
         page = Math.Max(1, page);
@@ -126,6 +127,28 @@ public sealed partial class ProductRepository : IProductRepository
         var query = _context.Products.AsNoTracking().Where(product => product.TenantId == tenantId);
         if (!includeInactive)
             query = query.Where(product => product.IsActive);
+        if (filter?.CategoryIds is { } categoryIds)
+            query = categoryIds.Count == 0
+                ? query.Where(_ => false)
+                : query.Where(product => product.ProductCategoryId.HasValue
+                    && categoryIds.Contains(product.ProductCategoryId.Value));
+        if (filter?.BrandId is { } brandId)
+            query = query.Where(product => product.ProductBrandId == brandId);
+        if (filter?.ManagesInventory is { } managesInventory)
+            query = query.Where(product => product.ManageStock == managesInventory);
+        if (filter?.AllowsFractionalSale is { } allowsFractionalSale)
+            query = query.Where(product => product.AllowsFractionalSale == allowsFractionalSale);
+        if (filter?.IsWeighable is { } isWeighable)
+            query = query.Where(product => product.IsWeighable == isWeighable);
+        if (filter?.SupplierId is { } supplierId)
+        {
+            var supplierProductIds = await _context.Database.SqlQuery<Guid>($"""
+                SELECT sp.ProductId AS Value
+                FROM dbo.SupplierProducts sp
+                WHERE sp.BusinessId={businessId} AND sp.SupplierId={supplierId} AND sp.IsActive=1
+                """).ToListAsync(ct);
+            query = query.Where(product => supplierProductIds.Contains(product.ProductId));
+        }
         if (!string.IsNullOrWhiteSpace(search))
         {
             foreach (var term in CatalogSearchText.GetSearchTerms(search))

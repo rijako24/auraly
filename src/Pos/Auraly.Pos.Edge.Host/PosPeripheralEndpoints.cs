@@ -36,6 +36,7 @@ internal static class PosPeripheralModule
         services.AddSingleton<IPosReceiptPrinter>(sp =>
             sp.GetRequiredService<ConfigurablePosReceiptPrinter>());
         services.AddSingleton<PosCashMovementTicketPrinter>();
+        services.AddSingleton<PosCashDenominationCountTicketPrinter>();
         services.AddSingleton<PosWorkSessionClosurePrinter>();
         services.AddSingleton<IPosWorkSessionClosurePrinter>(sp =>
             sp.GetRequiredService<PosWorkSessionClosurePrinter>());
@@ -73,7 +74,8 @@ internal static class PosPeripheralModule
 
         edge.MapPost("/print/receipt", async (
             DirectPrintReceiptRequest request,
-            IPosReceiptPrinter printer,
+            string? workflow,
+            ConfigurablePosReceiptPrinter printer,
             PosPrinterConfigurationStore configuration,
             CancellationToken ct) =>
         {
@@ -83,15 +85,31 @@ internal static class PosPeripheralModule
                 {
                     [nameof(request)] = ["El documento para imprimir no es válido."]
                 });
+            if (workflow is not (null or "pos" or "orders"))
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    [nameof(workflow)] = ["El flujo de impresión no es válido."]
+                });
             var settings = configuration.Load();
+            var ordersWorkflow = workflow == "orders";
+            var workflowPrinterName = ordersWorkflow
+                ? settings.OrdersPrinterName
+                : settings.PosPrinterName;
+            var outputFormat = ordersWorkflow
+                ? settings.OrdersOutputFormat
+                : settings.PosOutputFormat;
+            workflowPrinterName ??= settings.PrinterFor(
+                request.DocumentType, outputFormat);
             if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
-                string.IsNullOrWhiteSpace(settings.PosPrinterName))
+                string.IsNullOrWhiteSpace(workflowPrinterName))
                 return Results.Problem(
-                    "Configura una impresora para impresión directa.",
+                    ordersWorkflow
+                        ? "Configura la impresora del flujo de pedidos."
+                        : "Configura una impresora para impresión directa.",
                     statusCode: StatusCodes.Status409Conflict);
             try
             {
-                await printer.PrintAsync(new PosReceipt(
+                var receipt = new PosReceipt(
                     Guid.NewGuid(),
                     new DocumentId(request.DocumentId),
                     request.DocumentNumber,
@@ -108,7 +126,14 @@ internal static class PosPeripheralModule
                     settings.ReceiptPaperWidthMillimeters,
                     request.DocumentType,
                     request.CompanyName,
-                    request.CompanyLogoSource), ct);
+                    request.CompanyLogoSource,
+                    CustomerName: request.CustomerName,
+                    BusinessName: request.BusinessName,
+                    WarehouseName: request.WarehouseName);
+                if (ordersWorkflow)
+                    await printer.PrintOrdersReceiptAsync(receipt, ct);
+                else
+                    await printer.PrintAsync(receipt, ct);
                 return Results.NoContent();
             }
             catch (Exception exception) when (
@@ -155,6 +180,32 @@ internal static class PosPeripheralModule
             {
                 await printer.PrintAsync(closure, ct);
                 return Results.NoContent();
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
+
+        edge.MapPost("/print/cash-denomination-count", async (
+            PosCashDenominationCountTicket request,
+            PosCashDenominationCountTicketPrinter printer,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                await printer.PrintAsync(request, ct);
+                return Results.NoContent();
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    [nameof(request)] = [exception.Message]
+                });
             }
             catch (Exception exception) when (
                 exception is IOException or InvalidOperationException)

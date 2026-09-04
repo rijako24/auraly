@@ -185,8 +185,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(state.InventoryReasons >= 12);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
-        Assert.Equal(52, state.AccountingAccounts);
-        Assert.Equal(52, state.AccountingMappings);
+        Assert.Equal(57, state.AccountingAccounts);
+        Assert.Equal(57, state.AccountingMappings);
         Assert.Equal(1, await CountGeneralCashAccountsAsync(result.TenantId));
         Assert.Equal(0, state.UnmappedPosPaymentMethods);
         Assert.Equal(1, state.OpenAccountingPeriods);
@@ -413,6 +413,111 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(
             await TenantAdministratorPermissionCountAsync(),
             authentication.User.Permissions.Count);
+    }
+
+    [Fact]
+    public async Task Administrator_activation_reuses_an_existing_customer_party_in_the_same_tenant()
+    {
+        var geography = await ReadGeographyAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..10];
+        var nit = $"9{Random.Shared.NextInt64(100000000, 999999999)}";
+        var invitationEmail = $"kevin-{suffix}@auraly.test";
+        var identification = $"10{Random.Shared.NextInt64(100000000, 999999999)}";
+        var request = new ProvisionTenantRequest(
+            Guid.NewGuid(), $"Migrada {suffix} SAS", $"Migrada {suffix}",
+            "Organization", "NIT", nit,
+            TenantProvisioningRequestValidator.CalculateNitVerificationDigit(nit).ToString(),
+            geography.CountryId, geography.DivisionId, geography.CityId,
+            "Calle empresa", "3001234567", $"empresa-{suffix}@auraly.test", "R-99-PN",
+            "Sede principal", "Calle empresa", "3001234567", $"sede-{suffix}@auraly.test",
+            "America/Bogota", "LatestReceiptCost", invitationEmail, 10, 3);
+        using var admin = fixture.CreateAdminClient(
+            "tenants.create", "tenants.update", "tenants.provisioning.payment.waive");
+        using var provisioned = await admin.PostAsJsonAsync("/api/v1/tenants", Waived(request));
+        provisioned.EnsureSuccessStatusCode();
+        var tenant = await provisioned.Content.ReadFromJsonAsync<ProvisionTenantResult>()
+            ?? throw new InvalidOperationException("Tenant provisioning response is missing.");
+        var token = await ReadInvitationTokenAsync(tenant.TenantId);
+        var existingPartyId = Guid.NewGuid();
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                INSERT dbo.Parties
+                  (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
+                   Identification,NormalizedIdentification,DisplayName,FirstName,LastName,
+                   CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                VALUES(@PartyId,@TenantId,N'NaturalPerson',@CountryId,N'CC',@Identification,
+                       @Identification,N'Kevin cliente migrado',N'Kevin',N'Cliente',N'Complete',1,@ActorId,@Now);
+                INSERT dbo.PartyContacts
+                  (PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
+                VALUES(NEWID(),@PartyId,N'Email',N'correo-anterior@auraly.test',N'CORREO-ANTERIOR@AURALY.TEST',1,1,@Now);
+                INSERT dbo.PartySites
+                  (PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+                   AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                VALUES(NEWID(),@PartyId,N'PRINCIPAL',N'Principal',@CountryId,@DivisionId,@CityId,
+                       N'Dirección anterior',1,1,@ActorId,@Now);
+                INSERT dbo.Customers
+                  (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+                VALUES(NEWID(),@PartyId,@BusinessId,0,1,@ActorId,@Now);
+                """, connection);
+            command.Parameters.AddWithValue("@PartyId", existingPartyId);
+            command.Parameters.AddWithValue("@TenantId", tenant.TenantId);
+            command.Parameters.AddWithValue("@CountryId", geography.CountryId);
+            command.Parameters.AddWithValue("@DivisionId", geography.DivisionId);
+            command.Parameters.AddWithValue("@CityId", geography.CityId);
+            command.Parameters.AddWithValue("@Identification", identification);
+            command.Parameters.AddWithValue("@BusinessId", tenant.BusinessId);
+            command.Parameters.AddWithValue("@ActorId", fixture.UserId);
+            command.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        using var publicClient = fixture.CreateClient();
+        using var accepted = await publicClient.PostAsJsonAsync(
+            "/api/v1/auth/invitations/accept",
+            new AcceptTenantInvitationRequest(
+                token, "CC", identification, "Kevin", "Ramírez",
+                $"kevin-{suffix}", "3007654321", "Calle nueva # 1-2",
+                Password, Password));
+        var acceptedBody = await accepted.Content.ReadAsStringAsync();
+        Assert.True(accepted.StatusCode == HttpStatusCode.OK,
+            $"Expected OK but received {accepted.StatusCode}: {acceptedBody}");
+        var receipt = JsonSerializer.Deserialize<AcceptTenantInvitationResult>(
+            acceptedBody, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException("Invitation acceptance response is missing.");
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                SELECT
+                  (SELECT COUNT(*) FROM dbo.Parties WHERE TenantId=@TenantId AND NormalizedIdentification=@Identification),
+                  (SELECT PartyId FROM dbo.AppUsers WHERE UserId=@UserId),
+                  (SELECT COUNT(*) FROM dbo.Customers WHERE PartyId=@PartyId AND BusinessId=@BusinessId AND IsActive=1),
+                  (SELECT COUNT(*) FROM dbo.UserRoles ur JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId
+                   WHERE ur.UserId=@UserId AND r.NormalizedName=N'ADMINISTRATOR'),
+                  (SELECT COUNT(*) FROM dbo.PartyContacts WHERE PartyId=@PartyId AND ContactType=N'Email'
+                   AND NormalizedValue=@Email AND IsPrimary=1 AND IsActive=1),
+                  (SELECT COUNT(*) FROM dbo.PartySites WHERE PartyId=@PartyId AND AddressLine=N'Calle nueva # 1-2'
+                   AND IsPrimary=1 AND IsActive=1);
+                """, connection);
+            command.Parameters.AddWithValue("@TenantId", tenant.TenantId);
+            command.Parameters.AddWithValue("@Identification", identification);
+            command.Parameters.AddWithValue("@UserId", receipt.UserId);
+            command.Parameters.AddWithValue("@PartyId", existingPartyId);
+            command.Parameters.AddWithValue("@BusinessId", tenant.BusinessId);
+            command.Parameters.AddWithValue("@Email", invitationEmail.ToUpperInvariant());
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1, reader.GetInt32(0));
+            Assert.Equal(existingPartyId, reader.GetGuid(1));
+            Assert.Equal(1, reader.GetInt32(2));
+            Assert.Equal(1, reader.GetInt32(3));
+            Assert.Equal(1, reader.GetInt32(4));
+            Assert.Equal(1, reader.GetInt32(5));
+        }
     }
 
     [Fact]

@@ -1,3 +1,5 @@
+using Auraly.Contracts.Sales;
+
 namespace Auraly.Contracts.Orders;
 
 public sealed record InvoiceOrdersRequest(
@@ -17,7 +19,8 @@ public sealed record InvoiceOrderResult(
     string Status,
     Guid? DocumentId,
     string? DocumentNumber,
-    string? Error);
+    string? Error,
+    OnlineSalesReceipt? Receipt = null);
 
 public sealed record InvoiceOrdersResponse(
     Guid OperationId,

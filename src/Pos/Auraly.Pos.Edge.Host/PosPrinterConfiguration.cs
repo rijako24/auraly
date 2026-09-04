@@ -406,7 +406,7 @@ public sealed class ConfigurableOrderDocumentPrinter(
                 receipt.Cufe,
                 receipt.QrPayload,
                 null,
-                receipt.CustomerIdentification,
+                receipt.CustomerName ?? receipt.CustomerIdentification,
                 receipt.CompanyName,
                 receipt.CompanyLogoSource)
         ], workflowPrinterName, outputFormat, cancellationToken);
@@ -417,7 +417,6 @@ public sealed class ConfigurablePosReceiptPrinter(
     EscPosReceiptRenderer escPos,
     HtmlReceiptPreviewRenderer html,
     IReceiptPreviewLauncher preview,
-    IWindowsRawPrintJob rawPrintJob,
     IWindowsRenderedPrintJob renderedPrintJob,
     ConfigurableOrderDocumentPrinter orderDocumentPrinter,
     PosWorkstationIdentity? workstation = null) : IPosReceiptPrinter
@@ -451,20 +450,30 @@ public sealed class ConfigurablePosReceiptPrinter(
         receipt = receipt with
         {
             CompanyName = string.IsNullOrWhiteSpace(receipt.CompanyName)
-                ? workstation?.CompanyName
+                ? string.IsNullOrWhiteSpace(workstation?.CompanyName)
+                    ? "Auraly"
+                    : workstation.CompanyName
                 : receipt.CompanyName,
             CompanyLogoSource = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
                 ? workstation?.CompanyLogoSource
-                : receipt.CompanyLogoSource
+                : receipt.CompanyLogoSource,
+            BusinessName = string.IsNullOrWhiteSpace(receipt.BusinessName)
+                ? workstation?.BusinessName
+                : receipt.BusinessName,
+            WarehouseName = string.IsNullOrWhiteSpace(receipt.WarehouseName)
+                ? workstation?.WarehouseName
+                : receipt.WarehouseName
         };
         var configuration = settings.Load();
         var printerName = workflowPrinterName ?? configuration.PrinterFor(
             receipt.DocumentType, PrintTemplateFormats.Receipt);
-        if (configuration.ReceiptMode == PosPrinterModes.WindowsRaw &&
-            WindowsPrinterOutput.RequiresRenderedDocument(printerName))
+        if (configuration.ReceiptMode == PosPrinterModes.WindowsRaw)
         {
+            if (string.IsNullOrWhiteSpace(printerName))
+                throw new InvalidOperationException(
+                    "Configura una impresora para impresión directa.");
             return renderedPrintJob.PrintAsync(
-                printerName!,
+                printerName,
                 $"Auraly-{receipt.DocumentNumber}",
                 html.Render(receipt with { PaperWidthMillimeters = paperWidthMillimeters }),
                 settings.ReceiptOutputDirectory,
@@ -478,10 +487,6 @@ public sealed class ConfigurablePosReceiptPrinter(
                     settings.ReceiptOutputDirectory, html, preview),
             PosPrinterModes.File => new FileReceiptPrinter(
                 settings.ReceiptOutputDirectory, escPos),
-            PosPrinterModes.WindowsRaw => ReceiptPrinterForWindows(
-                printerName
-                    ?? throw new InvalidOperationException(
-                        "La impresora de tirilla no esta configurada.")),
             _ => throw new InvalidOperationException(
                 "La configuracion de impresora no es valida.")
         };
@@ -494,11 +499,6 @@ public sealed class ConfigurablePosReceiptPrinter(
             cancellationToken);
     }
 
-    private IPosReceiptPrinter ReceiptPrinterForWindows(string printerName)
-    {
-        return new WindowsRawReceiptPrinter(printerName, escPos, rawPrintJob);
-    }
-
     public Task PrintReceiptAsync(
         Auraly.Contracts.Sales.OnlineSalesReceipt receipt,
         CancellationToken cancellationToken = default) =>
@@ -506,8 +506,31 @@ public sealed class ConfigurablePosReceiptPrinter(
 
     public Task PrintOrdersReceiptAsync(
         Auraly.Contracts.Sales.OnlineSalesReceipt receipt,
-        CancellationToken cancellationToken = default) =>
-        PrintOnlineReceiptAsync(receipt, true, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var configuration = settings.Load();
+        return PrintOrdersReceiptAsync(
+            ToPosReceipt(receipt, configuration.OrdersReceiptPaperWidthMillimeters),
+            cancellationToken);
+    }
+
+    public Task PrintOrdersReceiptAsync(
+        PosReceipt receipt,
+        CancellationToken cancellationToken = default)
+    {
+        var configuration = settings.Load();
+        if (configuration.OrdersOutputFormat != PrintTemplateFormats.Receipt)
+            return orderDocumentPrinter.PrintAsync(
+                receipt,
+                configuration.OrdersPrinterName,
+                configuration.OrdersOutputFormat,
+                cancellationToken);
+        return PrintReceiptAsync(
+            receipt,
+            configuration.OrdersPrinterName,
+            configuration.OrdersReceiptPaperWidthMillimeters,
+            cancellationToken);
+    }
 
     private Task PrintOnlineReceiptAsync(
         Auraly.Contracts.Sales.OnlineSalesReceipt receipt,
@@ -516,7 +539,22 @@ public sealed class ConfigurablePosReceiptPrinter(
     {
         var configuration = settings.Load();
         return PrintReceiptAsync(
-            new PosReceipt(
+            ToPosReceipt(
+                receipt,
+                ordersWorkflow
+                    ? configuration.OrdersReceiptPaperWidthMillimeters
+                    : configuration.ReceiptPaperWidthMillimeters),
+            ordersWorkflow ? configuration.OrdersPrinterName : configuration.PosPrinterName,
+            ordersWorkflow
+                ? configuration.OrdersReceiptPaperWidthMillimeters
+                : configuration.ReceiptPaperWidthMillimeters,
+            cancellationToken);
+    }
+
+    private static PosReceipt ToPosReceipt(
+        Auraly.Contracts.Sales.OnlineSalesReceipt receipt,
+        int paperWidthMillimeters) =>
+            new(
                 Guid.NewGuid(),
                 new Auraly.BuildingBlocks.Domain.Identifiers.DocumentId(
                     receipt.DocumentId),
@@ -537,18 +575,11 @@ public sealed class ConfigurablePosReceiptPrinter(
                 receipt.PayableAmount,
                 receipt.Cufe,
                 receipt.QrPayload,
-                ordersWorkflow
-                    ? configuration.OrdersReceiptPaperWidthMillimeters
-                    : configuration.ReceiptPaperWidthMillimeters,
+                paperWidthMillimeters,
                 receipt.DocumentType,
                 receipt.CompanyName,
-                receipt.CompanyLogoSource),
-            ordersWorkflow ? configuration.OrdersPrinterName : configuration.PosPrinterName,
-            ordersWorkflow
-                ? configuration.OrdersReceiptPaperWidthMillimeters
-                : configuration.ReceiptPaperWidthMillimeters,
-            cancellationToken);
-    }
+                receipt.CompanyLogoSource,
+                CustomerName: receipt.CustomerName);
 }
 
 public sealed class RenderedWindowsReceiptPrinter(

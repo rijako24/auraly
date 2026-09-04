@@ -23,12 +23,14 @@ public class ProductsController : ControllerBase
         Guid businessId,
         [FromQuery] PagedRequest request,
         [FromQuery] bool includeInactive = false,
+        [FromQuery] ProductListFilters? filters = null,
         CancellationToken ct = default) =>
         Ok(await _service.GetPagedByBusinessIdAsync(
             User.GetTenantId(),
             businessId,
             request,
             includeInactive,
+            filters,
             ct));
 
     [HttpPatch("{productId:guid}/status")]

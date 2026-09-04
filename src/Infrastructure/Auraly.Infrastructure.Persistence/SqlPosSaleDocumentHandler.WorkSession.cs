@@ -18,11 +18,10 @@ public sealed partial class SqlPosSaleDocumentHandler
                 "The sale references a work session that does not exist.");
 
         if (session.UserId != request.SoldByUserId ||
-            session.BusinessId != request.BusinessId ||
-            session.WarehouseId != request.WarehouseId)
+            session.BusinessId != request.BusinessId)
         {
             throw new InvalidOperationException(
-                "The sale work session does not match its user, business, or warehouse.");
+                "The sale work session does not match its user or business.");
         }
 
         if (!string.Equals(session.Status, "Open", StringComparison.Ordinal) &&
@@ -71,7 +70,7 @@ public sealed partial class SqlPosSaleDocumentHandler
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT BusinessId,WarehouseId,UserId,Status
+            SELECT BusinessId,UserId,Status
             FROM dbo.WorkSessions WITH (UPDLOCK,HOLDLOCK)
             WHERE WorkSessionId=@WorkSessionId
               AND TenantId=@TenantId AND UserId=@UserId
@@ -86,13 +85,11 @@ public sealed partial class SqlPosSaleDocumentHandler
         return new WorkSessionState(
             reader.GetGuid(0),
             reader.GetGuid(1),
-            reader.GetGuid(2),
-            reader.GetString(3));
+            reader.GetString(2));
     }
 
     private sealed record WorkSessionState(
         Guid BusinessId,
-        Guid WarehouseId,
         Guid UserId,
         string Status);
 

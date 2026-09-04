@@ -147,6 +147,66 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Enrollment_client_reconciles_multiple_revoked_local_identities_without_deleting_history()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(), $"auraly-retired-devices-{Guid.NewGuid():N}.db");
+        var retiredDeviceIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var newDeviceId = Guid.NewGuid();
+        var package = CreateEnrollmentPackage(newDeviceId);
+        try
+        {
+            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+                             $"Data Source={path}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE DocumentSeriesCursors(
+                        SeriesId TEXT PRIMARY KEY,
+                        DeviceId TEXT NOT NULL,
+                        IsActive INTEGER NOT NULL);
+                    INSERT INTO DocumentSeriesCursors(SeriesId,DeviceId,IsActive)
+                    VALUES($firstSeries,$firstDevice,1),($secondSeries,$secondDevice,1);
+                    """;
+                command.Parameters.AddWithValue("$firstSeries", Guid.NewGuid().ToString("D"));
+                command.Parameters.AddWithValue("$firstDevice", retiredDeviceIds[0].ToString("D"));
+                command.Parameters.AddWithValue("$secondSeries", Guid.NewGuid().ToString("D"));
+                command.Parameters.AddWithValue("$secondDevice", retiredDeviceIds[1].ToString("D"));
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var handler = new MultipleRetiredEnrollmentsHandler(retiredDeviceIds, package);
+            using var http = new HttpClient(handler)
+            {
+                BaseAddress = new Uri("https://api.example.test/")
+            };
+            var recovery = new PosLocalDeviceIdentityRecovery(path);
+            var client = new PosEdgeEnrollmentClient(
+                http,
+                new PosEdgeEnrollmentStore(path + ".enrollment", _secretPath),
+                recovery);
+
+            var result = await client.RedeemAsync(
+                new LocalPosEnrollmentRequest(Guid.NewGuid(), "code"));
+
+            Assert.Equal(newDeviceId, result.DeviceId);
+            Assert.Equal(3, handler.ExistingDeviceIds.Count);
+            Assert.Null(handler.ExistingDeviceIds[^1]);
+            Assert.Equal(
+                retiredDeviceIds.Order(),
+                handler.ExistingDeviceIds.Take(2).Select(value => value!.Value).Order());
+            Assert.Empty(recovery.ReadActiveDeviceIds());
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".enrollment")) File.Delete(path + ".enrollment");
+        }
+    }
+
+    [Fact]
     public void Enrollment_package_created_before_offline_leases_still_loads()
     {
         var deviceId = Guid.NewGuid();
@@ -287,6 +347,23 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             using var printers = await client.GetAsync(
                 "/edge/v1/configuration/printers");
             printers.EnsureSuccessStatusCode();
+            using var orderPrint = await client.PostAsJsonAsync(
+                "/edge/v1/print/receipt?workflow=orders",
+                new DirectPrintReceiptRequest(
+                    Guid.NewGuid(),
+                    PosSaleDocumentTypes.Receipt,
+                    "CVI-1",
+                    null,
+                    DateTimeOffset.UtcNow,
+                    "222222222222",
+                    [new PosReceiptLine("P-1", "Producto", 1m, 10m, 0m, 0m, 10m)],
+                    [new OfflineSalePayment("Cash", 10m)],
+                    10m,
+                    0m,
+                    10m,
+                    null,
+                    null));
+            Assert.Equal(HttpStatusCode.Conflict, orderPrint.StatusCode);
             using var scale = await client.PostAsync("/edge/v1/scale/read", null);
             Assert.Equal(HttpStatusCode.ServiceUnavailable, scale.StatusCode);
             var now = DateTimeOffset.UtcNow;
@@ -636,7 +713,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Selected_customer_channel_reprices_separate_scan_lines_by_total_quantity()
+    public async Task Selected_customer_channel_keeps_each_scan_line_price_stable()
     {
         var customers = await Client.GetFromJsonAsync<CustomerSearchPageContract>(
             "/edge/v1/customers?search=400&take=50");
@@ -674,10 +751,10 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             $"/edge/v1/drafts/{second.Draft.DraftId.Value:D}/lines/{firstLine.LineId:D}/quantity",
             new QuantityRequest(2m));
         quantityResponse.EnsureSuccessStatusCode();
-        var repriced = await quantityResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
-        Assert.Equal(new[] { 1m, 2m }, repriced!.Draft!.Lines.Select(line => line.Quantity).Order().ToArray());
-        Assert.All(repriced.Draft.Lines, line => Assert.Equal(70m, line.UnitPrice));
-        Assert.All(repriced.Draft.Lines, line => Assert.Equal("PriceChannel", line.PriceSource));
+        var changed = await quantityResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
+        Assert.Equal(new[] { 1m, 2m }, changed!.Draft!.Lines.Select(line => line.Quantity).Order().ToArray());
+        Assert.All(changed.Draft.Lines, line => Assert.Equal(90m, line.UnitPrice));
+        Assert.All(changed.Draft.Lines, line => Assert.Equal("PriceChannel", line.PriceSource));
     }
 
     [Fact]
@@ -721,7 +798,14 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var session = await response.Content.ReadFromJsonAsync<PosLocalUserSession>();
         Assert.NotNull(session);
         Assert.Equal("Cajera de prueba", session.DisplayName);
-        Assert.NotEqual(Guid.Empty, session.WorkSessionId);
+        Assert.Equal(Guid.Empty, session.WorkSessionId);
+        loginClient.DefaultRequestHeaders.Add(
+            "X-Auraly-User-Session", session.Token);
+        using var open = await loginClient.PostAsync(
+            "/edge/v1/work-sessions/current", null);
+        open.EnsureSuccessStatusCode();
+        var operational = await open.Content.ReadFromJsonAsync<PosLocalUserSession>();
+        Assert.NotEqual(Guid.Empty, operational!.WorkSessionId);
     }
 
     [Fact]
@@ -821,13 +905,12 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             JsonValueKind.Null,
             health.GetProperty("oldestPendingSynchronizationAt").ValueKind);
 
-        using var nextLoginClient = _factory!.CreateClient();
-        nextLoginClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
-        var login = await nextLoginClient.PostAsJsonAsync(
-            "/edge/v1/auth/login",
-            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
-        login.EnsureSuccessStatusCode();
-        var nextSession = await login.Content.ReadFromJsonAsync<PosLocalUserSession>();
+        // Closing the cash session must not close authentication. Re-entering POS
+        // with the same token opens the next local operational stream.
+        using var openNext = await Client.PostAsync(
+            "/edge/v1/work-sessions/current", null);
+        openNext.EnsureSuccessStatusCode();
+        var nextSession = await openNext.Content.ReadFromJsonAsync<PosLocalUserSession>();
         Assert.NotEqual(closure.WorkSessionId, nextSession!.WorkSessionId);
     }
 
@@ -873,6 +956,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         replacementClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
         replacementClient.DefaultRequestHeaders.Add(
             "X-Auraly-User-Session", replacement!.Token);
+        using var open = await replacementClient.PostAsync(
+            "/edge/v1/work-sessions/current", null);
+        open.EnsureSuccessStatusCode();
         var restored = await replacementClient.GetFromJsonAsync<PosDraft>(
             "/edge/v1/drafts/active");
         Assert.Equal(captured!.Draft!.DraftId, restored!.DraftId);
@@ -984,6 +1070,10 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var localSession = await loginResponse.Content.ReadFromJsonAsync<PosLocalUserSession>();
         _userSessionToken = Assert.IsType<string>(localSession!.Token);
         _client.DefaultRequestHeaders.Add("X-Auraly-User-Session", _userSessionToken);
+        var openWorkSession = await _client.PostAsync(
+            "/edge/v1/work-sessions/current", null);
+        if (!openWorkSession.IsSuccessStatusCode)
+            throw new InvalidOperationException(await openWorkSession.Content.ReadAsStringAsync());
 
         var store = scope.ServiceProvider.GetRequiredService<PosCatalogStore>();
         var product = new PosCatalogItem(
@@ -1170,6 +1260,39 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                         "application/problem+json")
                 };
             }
+
+            Assert.Null(payload.ExistingDeviceId);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(package)
+            };
+        }
+    }
+
+    private sealed class MultipleRetiredEnrollmentsHandler(
+        IReadOnlyCollection<Guid> retiredDeviceIds,
+        PosEnrollmentPackage package) : HttpMessageHandler
+    {
+        public List<Guid?> ExistingDeviceIds { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var payload = await request.Content!.ReadFromJsonAsync<RedeemPosEnrollmentRequest>(
+                cancellationToken: cancellationToken);
+            Assert.NotNull(payload);
+            ExistingDeviceIds.Add(payload.ExistingDeviceId);
+            if (payload.ExistingDeviceId.HasValue &&
+                retiredDeviceIds.Contains(payload.ExistingDeviceId.Value))
+                return new HttpResponseMessage(HttpStatusCode.Gone)
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        title = "PosEnrollmentRetired",
+                        detail = "El enrolamiento anterior fue retirado."
+                    })
+                };
 
             Assert.Null(payload.ExistingDeviceId);
             return new HttpResponseMessage(HttpStatusCode.OK)

@@ -8,13 +8,11 @@ public class ExceptionHandlingMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<ExceptionHandlingMiddleware> _logger;
-    private readonly IHostEnvironment _environment;
 
-    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger, IHostEnvironment environment)
+    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
     {
         _next = next;
         _logger = logger;
-        _environment = environment;
     }
 
     public async Task InvokeAsync(HttpContext context, ICorrelationIdProvider correlationIdProvider)
@@ -29,11 +27,11 @@ public class ExceptionHandlingMiddleware
                 "Unhandled exception [CorrelationId: {CorrelationId}]",
                 correlationIdProvider.CorrelationId);
 
-            await HandleExceptionAsync(context, ex, correlationIdProvider.CorrelationId, _environment.IsEnvironment("Testing"));
+            await HandleExceptionAsync(context, ex, correlationIdProvider.CorrelationId);
         }
     }
 
-    private static Task HandleExceptionAsync(HttpContext context, Exception exception, string correlationId, bool exposeDetail)
+    private static Task HandleExceptionAsync(HttpContext context, Exception exception, string correlationId)
     {
         var (statusCode, title) = exception switch
         {
@@ -60,8 +58,6 @@ public class ExceptionHandlingMiddleware
         {
             problemDetails.Extensions["errors"] = validationEx.Errors;
         }
-        if (exposeDetail) problemDetails.Detail = exception.ToString();
-
         return context.Response.WriteAsJsonAsync(problemDetails);
     }
 }

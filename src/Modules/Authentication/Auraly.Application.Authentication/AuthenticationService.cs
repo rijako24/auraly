@@ -299,4 +299,5 @@ public sealed class AuthenticationSessionValidator(
 }
 
 public sealed class AuthenticationDeniedException(string message) : Exception(message);
+public sealed class AuthenticationSessionReplacedException(string message) : Exception(message);
 public sealed class AuthenticationSessionConflictException(string message) : Exception(message);

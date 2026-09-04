@@ -56,6 +56,7 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
             entity.ToTable("Outbox");
             entity.HasKey(row => row.MessageId);
             entity.HasIndex(row => row.DocumentId).IsUnique();
+            entity.HasIndex(row => row.LocalSequence).IsUnique();
             entity.HasIndex(row => new { row.WorkSessionId, row.CreatedAt });
             entity.Property(row => row.Type).HasMaxLength(128);
             entity.Property(row => row.Status).HasMaxLength(32);
@@ -124,6 +125,7 @@ internal sealed class PosOutboxRow
 {
     public Guid MessageId { get; set; }
     public Guid DocumentId { get; set; }
+    public long? LocalSequence { get; set; }
     public Guid? WorkSessionId { get; set; }
     public string Type { get; set; } = string.Empty;
     public string Payload { get; set; } = string.Empty;
@@ -156,10 +158,12 @@ public static class PosOutboxStatus
 
 public static class PosOutboxMessageTypes
 {
+    public const string WorkSessionOpened = "work-session.opened";
     public const string CashMovement = "cash.movement.confirmed";
     public const string WorkSessionClosure = "work-session.closed";
 
     public static bool IsLocalSale(string type) =>
+        !string.Equals(type, WorkSessionOpened, StringComparison.Ordinal) &&
         !string.Equals(type, CashMovement, StringComparison.Ordinal) &&
         !string.Equals(type, WorkSessionClosure, StringComparison.Ordinal);
 }

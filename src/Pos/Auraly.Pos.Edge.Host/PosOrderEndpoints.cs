@@ -143,11 +143,10 @@ public static class PosOrderEndpoints
                 ct);
             try
             {
-                var receipts = new List<Auraly.Contracts.Sales.OnlineSalesReceipt>();
-                foreach (var result in response.Results.Where(
-                             result => result.DocumentId.HasValue && result.Error is null))
-                    receipts.Add(await server.ReceiptAsync(
-                        session, result.DocumentId!.Value, ct));
+                var receipts = response.Results
+                    .Where(result => result.Error is null && result.Receipt is not null)
+                    .Select(result => result.Receipt!)
+                    .ToArray();
                 var printConfiguration = printerSettings.Load();
                 if (printConfiguration.OrdersOutputFormat !=
                     PrintTemplateFormats.Receipt)
@@ -161,7 +160,7 @@ public static class PosOrderEndpoints
                         await receiptPrinter.PrintOrdersReceiptAsync(receipt, ct);
                 return Results.Ok(response with
                 {
-                    PrintStatus = receipts.Count == 0 ? "NotRequired" : "Sent"
+                    PrintStatus = receipts.Length == 0 ? "NotRequired" : "Sent"
                 });
             }
             catch (Exception error) when (error is IOException or

@@ -88,9 +88,6 @@ public sealed class PosIdentitySynchronizationJourneyTests
                     new PosSynchronizationEventLog(TimeProvider.System)),
                 new PosOfflineLeaseClient(leaseHttp, credentials),
                 leaseStore,
-                new PosWorkSessionOpenServerClient(
-                    leaseHttp, credentials,
-                    new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid())),
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<PosEdgeAuthenticationService>.Instance);
 
             var session = await authentication.LoginAsync(
@@ -98,7 +95,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
 
             Assert.Equal(userId, session.UserId);
             Assert.Equal(1, leaseHandler.AcquireCount);
-            Assert.Equal(1, leaseHandler.WorkSessionCount);
+            Assert.Equal(0, leaseHandler.WorkSessionCount);
             await identities.LoginAsync(
                 new PosLocalLoginRequest("admin", currentPassword));
         }
@@ -314,10 +311,6 @@ public sealed class PosIdentitySynchronizationJourneyTests
         {
             BaseAddress = new Uri("https://auraly.test")
         };
-        var workSessions = new PosWorkSessionOpenServerClient(
-            http,
-            new PosDeviceCredentials(Guid.NewGuid(), "device-secret"),
-            new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()));
         var deviceId = Guid.NewGuid();
         var credentials = new PosDeviceCredentials(deviceId, "device-secret");
         var leases = new PosOfflineLeaseClient(http, credentials);
@@ -334,7 +327,6 @@ public sealed class PosIdentitySynchronizationJourneyTests
             synchronizer,
             leases,
             leaseStore,
-            workSessions,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<PosEdgeAuthenticationService>.Instance);
     }
 

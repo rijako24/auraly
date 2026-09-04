@@ -381,7 +381,16 @@ function Publish-Database {
             -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260829_RemoveFiscalSeriesAllocationState.sql') `
             -AccessToken $accessToken
         Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260903_BackfillLegacyDamageWarehouses.sql') `
+            -AccessToken $accessToken
+        Invoke-ReviewedPreDacpacMigration `
             -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260902_ScopeWorkSessionsByTenant.sql') `
+            -AccessToken $accessToken
+        Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260903_AlignWorkSessionOperationalScope.sql') `
+            -AccessToken $accessToken
+        Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260903_BackfillDispatchSettlementWorkSessions.sql') `
             -AccessToken $accessToken
 
         $whatsAppAccessTokenArgument = if ([string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_ACCESS_TOKEN)) {

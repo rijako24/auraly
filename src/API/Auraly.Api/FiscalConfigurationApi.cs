@@ -119,6 +119,13 @@ public static class FiscalConfigurationApi
                 testSetId,
                 form["certificatePassword"].ToString(),
                 stream.ToArray());
+            context.RequestServices.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Auraly.Api.FiscalCertificateUpload")
+                .LogInformation(
+                    "Validating fiscal certificate upload {FileName} ({CertificateLength} bytes, password length {PasswordLength}).",
+                    file.FileName,
+                    request.CertificatePfx.Length,
+                    request.CertificatePassword.Length);
             return await service.ConfigureHabilitationAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, request, ct);
         })).DisableAntiforgery()
