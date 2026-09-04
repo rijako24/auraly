@@ -53,9 +53,10 @@ public sealed class HtmlReceiptPreviewRenderer
             ? "Factura emitida por Auraly"
             : "Comprobante emitido por Auraly";
         var displayNumber = Encode(PosReceiptPresentation.DisplayNumber(receipt));
+        var ticketNumber = $"<div class=\"ticket-number\">N.º de ticket: <strong>{displayNumber}</strong></div>";
         var documentHeader = isFiscal
-            ? $"<div class=\"title\">N.º {displayNumber}</div>"
-            : $"<div class=\"title\">{Encode(PosReceiptPresentation.Title(receipt))}</div><div class=\"title\">N.º {displayNumber}</div>";
+            ? ticketNumber
+            : $"<div class=\"title\">{Encode(PosReceiptPresentation.Title(receipt))}</div>{ticketNumber}";
         var qrSvg = string.Empty;
         if (isFiscal)
         {
@@ -130,13 +131,15 @@ public sealed class HtmlReceiptPreviewRenderer
                 }
                 .receipt { padding: 5mm 3mm 2mm 2mm; }
                 .center { text-align: center; }
-                header > * + * { margin-top: 5px; }
+                header > * + * { margin-top: 4px; }
                 .brand { font: 800 23px/1 system-ui, sans-serif; letter-spacing: -.04em; text-transform: uppercase; }
                 .brand-logo { display: block; max-width: 48mm; max-height: 18mm; object-fit: contain; margin: 0 auto 3mm; }
                 .title { margin-top: 6px; font-size: 13px; font-weight: 800; text-transform: uppercase; }
+                .ticket-number { font-size: 12px; }
                 .scope { margin-top: 4px; overflow-wrap: anywhere; }
                 .muted { color: #49666a; }
                 .rule { border: 0; border-top: 1px dashed #789093; margin: 8px 0; }
+                .rule.summary { border-top: 2px dashed #061f22; margin: 7px 0; }
                 .line { margin: 9px 0; break-inside: avoid; }
                 .product { font-weight: 800; overflow-wrap: anywhere; }
                 .pair { display: flex; justify-content: space-between; gap: 10px; }
@@ -193,14 +196,14 @@ public sealed class HtmlReceiptPreviewRenderer
                 <hr class="rule">
                 {{lines}}
                 <hr class="rule">
-                <div class="section-title">Resumen e impuestos</div>
+                <div class="section-title">Impuestos por tarifa</div>
                 <table class="tax-table"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{{taxes}}</tbody></table>
                 {{Pair("Subtotal", Money(receipt.UntaxedAmount))}}
                 {{Pair("Total impuestos", Money(receipt.TaxAmount))}}
                 {{withholdings}}
-                <hr class="rule">
+                <hr class="rule summary">
                 <div class="pair total"><span>Total</span><strong>{{Money(netPayable)}}</strong></div>
-                <hr class="rule">
+                <hr class="rule summary">
                 <div class="section-title">Medios de pago</div>
                 {{payments}}
                 <hr class="rule">

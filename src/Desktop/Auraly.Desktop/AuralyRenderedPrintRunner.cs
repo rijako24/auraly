@@ -131,15 +131,18 @@ internal sealed class AuralyRenderedPrintForm : Form
                   const brand = document.querySelector('.brand');
                   if (brand) brand.style.fontSize = '23px';
                   document.querySelectorAll('.title').forEach(element => element.style.fontSize = '13px');
+                  document.querySelectorAll('.ticket-number').forEach(element => element.style.fontSize = '12px');
                   const total = document.querySelector('.total');
                   if (total) {
                     total.style.fontSize = '16px';
                     const previous = total.previousElementSibling;
                     if (!previous?.classList.contains('rule')) {
                       const rule = document.createElement('hr');
-                      rule.className = 'rule';
+                      rule.className = 'rule summary';
                       total.before(rule);
                     }
+                    const next = total.nextElementSibling;
+                    if (next?.classList.contains('rule')) next.classList.add('summary');
                   }
                   const cufe = document.querySelector('.cufe');
                   if (cufe) cufe.style.fontSize = '9px';
@@ -155,25 +158,44 @@ internal sealed class AuralyRenderedPrintForm : Form
                   });
                   const firstTitle = document.querySelector('.receipt header .title');
                   const titleElements = [...document.querySelectorAll('.receipt header .title')];
-                  if (firstTitle && ['factura electronica de venta', 'número de ticket'].includes(firstTitle.textContent?.trim().toLowerCase())) {
-                    const number = titleElements[1]?.textContent?.trim();
+                  if (firstTitle && ['factura electronica de venta', 'factura electrónica de venta', 'número de ticket'].includes(firstTitle.textContent?.trim().toLowerCase())) {
+                    const number = titleElements[1]?.textContent?.trim() || firstTitle.textContent?.replace(/^n(?:ú|u)mero de ticket:?\s*/i, '').trim();
                     if (number) {
-                      firstTitle.textContent = `N.º ${number}`;
-                      titleElements[1].remove();
+                      firstTitle.textContent = 'N.º de ticket: ';
+                      const strong = document.createElement('strong');
+                      strong.textContent = number.replace(/^N\.º\s*/i, '');
+                      firstTitle.append(strong);
+                      firstTitle.classList.add('ticket-number');
+                      if (titleElements[1]) titleElements[1].remove();
                     }
+                  } else if (firstTitle?.textContent?.trim().toLowerCase() === 'comprobante de venta' && titleElements[1]) {
+                    const number = titleElements[1].textContent?.trim().replace(/^N\.º\s*/i, '');
+                    titleElements[1].textContent = 'N.º de ticket: ';
+                    const strong = document.createElement('strong');
+                    strong.textContent = number;
+                    titleElements[1].append(strong);
+                    titleElements[1].classList.add('ticket-number');
                   }
                   const scope = document.querySelector('.receipt header .scope');
-                  if (scope) scope.textContent = scope.textContent?.split(' - ')[0] ?? '';
+                  if (scope) scope.textContent = scope.textContent?.split(/\s+(?:-|·)\s+/)[0] ?? '';
                   document.querySelectorAll('.receipt header > * + *')
-                    .forEach(element => element.style.marginTop = '5px');
+                    .forEach(element => element.style.marginTop = '4px');
                   const taxTitle = [...document.querySelectorAll('.section-title')]
                     .find(element => element.textContent?.trim() === 'Impuestos por tarifa');
                   if (taxTitle) {
-                    taxTitle.textContent = 'Resumen e impuestos';
                     const subtotal = taxTitle.previousElementSibling;
                     const table = taxTitle.nextElementSibling;
                     if (subtotal?.classList.contains('pair') && table?.classList.contains('tax-table'))
                       table.after(subtotal);
+                  }
+                  const totalTaxes = [...document.querySelectorAll('.pair')]
+                    .find(element => element.firstElementChild?.textContent?.trim() === 'Total impuestos');
+                  if (totalTaxes && !totalTaxes.nextElementSibling?.classList.contains('rule')) {
+                    const rule = document.createElement('hr');
+                    rule.className = 'rule summary';
+                    totalTaxes.after(rule);
+                  } else if (totalTaxes?.nextElementSibling?.classList.contains('rule')) {
+                    totalTaxes.nextElementSibling.classList.add('summary');
                   }
                   document.documentElement.style.background = 'white';
                   document.documentElement.style.overflow = 'hidden';
@@ -484,7 +506,10 @@ internal sealed class AuralyRenderedPrintForm : Form
                 }
             }
         }
-        output.Write([0x1B, 0x64, 0x01, 0x1D, 0x56, 0x41, 0x03]);
+        // Feed the printed content beyond the cutter before issuing the cut.
+        // Four standard text lines cover the printhead-to-cutter gap used by
+        // common Epson, Xprinter and ESC/POS-compatible thermal printers.
+        output.Write([0x1B, 0x64, 0x04, 0x1D, 0x56, 0x41, 0x03]);
         return output.ToArray();
     }
 

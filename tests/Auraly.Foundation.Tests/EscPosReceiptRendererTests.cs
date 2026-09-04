@@ -145,7 +145,9 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("abc123", html);
         Assert.Contains("<svg", html);
         Assert.Contains("Efectivo", html);
-        Assert.Contains("Resumen e impuestos", html);
+        Assert.Contains("N.º de ticket: <strong>FE42</strong>", html);
+        Assert.Contains("Impuestos por tarifa", html);
+        Assert.Contains("class=\"rule summary\"", html);
         Assert.Contains("IVA 19%", html);
         Assert.Contains("Medios de pago", html);
         Assert.Contains("Factura emitida por Auraly", html);
