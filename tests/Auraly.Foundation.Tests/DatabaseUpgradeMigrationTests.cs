@@ -36,11 +36,37 @@ public sealed class DatabaseUpgradeMigrationTests
     }
 
     [Fact]
+    public void Fiscal_document_backfill_runs_after_the_dacpac_and_binds_legacy_columns_dynamically()
+    {
+        var root = FindRepositoryRoot();
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260801_CreateFiscalDocumentRoot.sql"));
+        var preDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+        var postDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PostDeployment.sql"));
+
+        Assert.DoesNotContain("CREATE TABLE dbo.FiscalDocuments", migration,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EXEC sys.sp_executesql", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("COL_LENGTH(N'dbo.SalesDocuments',N'BusinessId') IS NOT NULL",
+            migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("20260801_CreateFiscalDocumentRoot.sql", preDeployment,
+            StringComparison.Ordinal);
+        Assert.Contains("20260801_CreateFiscalDocumentRoot.sql", postDeployment,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pricing_cutover_preserves_historical_scope_and_expires_ambiguous_catalog_sessions()
     {
         var root = FindRepositoryRoot();
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
         var migration = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "Migrations",
             "20260904_MigratePromotionAndChannelPricing.sql"));
@@ -50,7 +76,9 @@ public sealed class DatabaseUpgradeMigrationTests
             root, "database", "Auraly.Database", "Scripts", "Migrations",
             "20260904_CompletePromotionScopeMigration.sql"));
 
-        Assert.Contains("20260904_MigratePromotionAndChannelPricing.sql", preDeployment,
+        Assert.DoesNotContain("20260904_MigratePromotionAndChannelPricing.sql", preDeployment,
+            StringComparison.Ordinal);
+        Assert.Contains("20260904_MigratePromotionAndChannelPricing.sql", pipeline,
             StringComparison.Ordinal);
         Assert.Contains("INSERT dbo.PriceChannelItemMigration", migration,
             StringComparison.Ordinal);
@@ -60,6 +88,8 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.Contains("INSERT dbo.PromotionBusinessScopeMigration", migration,
             StringComparison.Ordinal);
+        Assert.Contains("COL_LENGTH(N'dbo.Promotions', N'BusinessId') IS NOT NULL",
+            migration, StringComparison.Ordinal);
         Assert.DoesNotContain("CREATE SCHEMA pricing", migration,
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains("20260904_CompletePromotionScopeMigration.sql", postDeployment,
@@ -208,7 +238,7 @@ public sealed class DatabaseUpgradeMigrationTests
             "Migrations",
             "20260801_CreateFiscalDocumentRoot.sql"));
 
-        Assert.Contains("d.DocumentType=N'SalesInvoice'", migration, StringComparison.Ordinal);
+        Assert.Contains("d.DocumentType=N''SalesInvoice''", migration, StringComparison.Ordinal);
         Assert.Contains("d.FiscalNumber IS NOT NULL", migration, StringComparison.Ordinal);
         Assert.Contains("d.FiscalStatus IS NOT NULL", migration, StringComparison.Ordinal);
     }
@@ -284,7 +314,7 @@ public sealed class DatabaseUpgradeMigrationTests
 
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
-        Assert.Contains("20260824_MoveFiscalCredentialsToTenant.sql", preDeployment,
+        Assert.DoesNotContain("20260824_MoveFiscalCredentialsToTenant.sql", preDeployment,
             StringComparison.Ordinal);
 
         var pipeline = File.ReadAllText(Path.Combine(
@@ -329,8 +359,8 @@ public sealed class DatabaseUpgradeMigrationTests
         var migration = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "Migrations",
             "20260828_NormalizePriceChannelValues.sql"));
-        var preDeployment = File.ReadAllText(Path.Combine(
-            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
 
         Assert.Contains("Strategy = N''FixedMarginOverAverageCost''", migration,
             StringComparison.Ordinal);
@@ -345,7 +375,7 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.DoesNotContain("\nGO", migration.Replace("\r\n", "\n"),
             StringComparison.Ordinal);
         Assert.DoesNotContain("RETURN", migration, StringComparison.Ordinal);
-        Assert.Contains("20260828_NormalizePriceChannelValues.sql", preDeployment,
+        Assert.Contains("20260828_NormalizePriceChannelValues.sql", pipeline,
             StringComparison.Ordinal);
     }
 
@@ -356,8 +386,8 @@ public sealed class DatabaseUpgradeMigrationTests
         var migrationName = "20260828_ReplaceAverageCostMarkupWithLatestCostMargin.sql";
         var migration = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "Migrations", migrationName));
-        var preDeployment = File.ReadAllText(Path.Combine(
-            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
 
         Assert.Contains("NOCHECK CONSTRAINT CK_PriceChannels_Strategy", migration, StringComparison.Ordinal);
         Assert.Contains("NOCHECK CONSTRAINT CK_PriceChannels_Value", migration, StringComparison.Ordinal);
@@ -366,7 +396,7 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("100 * Value / (100 + Value)", migration, StringComparison.Ordinal);
         Assert.Contains("WHERE Strategy = N''PercentageOverAverageCost''", migration, StringComparison.Ordinal);
         Assert.DoesNotContain("\nGO", migration.Replace("\r\n", "\n"), StringComparison.Ordinal);
-        Assert.Contains(migrationName, preDeployment, StringComparison.Ordinal);
+        Assert.Contains(migrationName, pipeline, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -432,8 +462,8 @@ public sealed class DatabaseUpgradeMigrationTests
         var table = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Tables",
             "AuthenticationSessions.sql"));
-        var preDeployment = File.ReadAllText(Path.Combine(
-            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
         var migration = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "Migrations",
             "20260831_EnforceExclusiveUserSessions.sql"));
@@ -444,7 +474,7 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.DoesNotContain("DROP INDEX [UX_AuthenticationSessions_User_Client_Active]", migration,
             StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("20260831_EnforceExclusiveUserSessions.sql", preDeployment,
+        Assert.Contains("20260831_EnforceExclusiveUserSessions.sql", pipeline,
             StringComparison.Ordinal);
         Assert.DoesNotContain("DROP INDEX [UX_WorkSessions_User_Open]", migration,
             StringComparison.Ordinal);
@@ -513,7 +543,7 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.Contains("operation.DestinationWarehouseId IS NULL", damageBackfill,
             StringComparison.Ordinal);
-        Assert.Contains("20260902_ScopeWorkSessionsByTenant.sql", preDeployment,
+        Assert.DoesNotContain("20260902_ScopeWorkSessionsByTenant.sql", preDeployment,
             StringComparison.Ordinal);
         var reviewedMigration = pipeline.IndexOf(
             "20260902_ScopeWorkSessionsByTenant.sql", StringComparison.Ordinal);

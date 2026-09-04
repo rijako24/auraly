@@ -52,6 +52,10 @@ BEGIN
 END;
 
 IF OBJECT_ID(N'dbo.Promotions', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.Promotions', N'BusinessId') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PromotionConditions', N'BusinessId') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PromotionBenefits', N'BusinessId') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PromotionApplications', N'BusinessId') IS NOT NULL
 BEGIN
     IF COL_LENGTH(N'dbo.Promotions', N'TenantId') IS NULL
         ALTER TABLE dbo.Promotions ADD TenantId UNIQUEIDENTIFIER NULL;

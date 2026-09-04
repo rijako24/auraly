@@ -289,10 +289,17 @@ function Invoke-ReviewedPreDacpacMigration {
     $connection.AccessToken = $AccessToken
     try {
         $connection.Open()
-        $command = $connection.CreateCommand()
-        $command.CommandTimeout = 120
-        $command.CommandText = Get-Content -LiteralPath $MigrationPath -Raw
-        [void]$command.ExecuteNonQuery()
+        $contents = Get-Content -LiteralPath $MigrationPath -Raw
+        $batches = [Text.RegularExpressions.Regex]::Split(
+            $contents,
+            '(?im)^\s*GO\s*(?:--.*)?$')
+        foreach ($batch in $batches) {
+            if ([string]::IsNullOrWhiteSpace($batch)) { continue }
+            $command = $connection.CreateCommand()
+            $command.CommandTimeout = 120
+            $command.CommandText = $batch
+            [void]$command.ExecuteNonQuery()
+        }
         Write-Information "Migracion previa al DACPAC aplicada: $(Split-Path $MigrationPath -Leaf)." -InformationAction Continue
     }
     finally {
@@ -358,48 +365,35 @@ function Publish-Database {
         $accessToken = if ($tokenResponse.accessToken) { $tokenResponse.accessToken } else { $tokenResponse.token }
         if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'Azure no devolvio token para SQL.' }
 
-        # El modelo organizacional retirado se limpia antes de calcular el plan;
-        # así un despliegue interrumpido no deja al DACPAC planificando contra
-        # columnas de compatibilidad que ya no son fuente de verdad.
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260730_CollapseOrganizationScope.sql') `
-            -AccessToken $accessToken
-        # Esta migracion retira una columna solo despues de preservar su valor.
-        # Se ejecuta antes del DeployReport para que BlockOnPossibleDataLoss siga
-        # protegiendo cualquier otra eliminacion no revisada del DACPAC.
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260817_NormalizeAuralyPlatformTenantKey.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260823_MoveBusinessLogoToTenant.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260824_MoveFiscalCredentialsToTenant.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260825_AddPurchaseEvidence.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260828_RemoveProductsUnitPrice.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260829_BackfillProductTenant.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260829_RemoveFiscalSeriesAllocationState.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260903_BackfillLegacyDamageWarehouses.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260902_ScopeWorkSessionsByTenant.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260903_AlignWorkSessionOperationalScope.sql') `
-            -AccessToken $accessToken
-        Invoke-ReviewedPreDacpacMigration `
-            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260903_BackfillDispatchSettlementWorkSessions.sql') `
-            -AccessToken $accessToken
+        # Toda transformación del esquema existente se ejecuta antes de calcular
+        # el plan. El predeployment del DACPAC queda mecánico y no vuelve a enlazar
+        # columnas legacy mientras SQLPackage aplica un plan ya calculado.
+        $reviewedMigrations = @(
+            '20260730_CollapseOrganizationScope.sql',
+            '20260802_RemoveCashRegisterContext.sql',
+            '20260811_NormalizeGoodsReceiptPresentations.sql',
+            '20260811_ExpandAuditAction.sql',
+            '20260817_NormalizeAuralyPlatformTenantKey.sql',
+            '20260823_MoveBusinessLogoToTenant.sql',
+            '20260824_MoveFiscalCredentialsToTenant.sql',
+            '20260825_AddPurchaseEvidence.sql',
+            '20260828_RemoveProductsUnitPrice.sql',
+            '20260828_NormalizePriceChannelValues.sql',
+            '20260828_ReplaceAverageCostMarkupWithLatestCostMargin.sql',
+            '20260829_BackfillProductTenant.sql',
+            '20260829_RemoveFiscalSeriesAllocationState.sql',
+            '20260831_EnforceExclusiveUserSessions.sql',
+            '20260903_BackfillLegacyDamageWarehouses.sql',
+            '20260902_ScopeWorkSessionsByTenant.sql',
+            'MoveDispatchReasonsToOwnedSchema.sql',
+            '20260903_AlignWorkSessionOperationalScope.sql',
+            '20260903_BackfillDispatchSettlementWorkSessions.sql',
+            '20260904_MigratePromotionAndChannelPricing.sql')
+        foreach ($migration in $reviewedMigrations) {
+            Invoke-ReviewedPreDacpacMigration `
+                -MigrationPath (Join-Path $repoRoot "database/Auraly.Database/Scripts/Migrations/$migration") `
+                -AccessToken $accessToken
+        }
 
         $whatsAppAccessTokenArgument = if ([string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_ACCESS_TOKEN)) {
             '/v:CJWhatsAppAccessToken=""'

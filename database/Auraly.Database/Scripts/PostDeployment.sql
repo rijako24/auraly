@@ -19,6 +19,7 @@
 -- =============================================================================
 
 :r .\Migrations\MigrateMultitenantStateArchitecture.sql
+:r .\Migrations\20260801_CreateFiscalDocumentRoot.sql
 :r .\Migrations\MigratePaymentSnapshotAndReservationCustomAttrs.sql
 :r .\Migrations\MigrateConversationStateVerifications.sql
 :r .\Migrations\MigrateObsoleteReservationStatuses.sql
