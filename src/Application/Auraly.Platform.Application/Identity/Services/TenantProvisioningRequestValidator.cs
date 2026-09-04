@@ -1,4 +1,5 @@
 using Auraly.Contracts.Tenants;
+using Auraly.BuildingBlocks.Domain.Identity;
 
 namespace Auraly.Platform.Application.Identity.Services;
 
@@ -48,17 +49,11 @@ public static class TenantProvisioningRequestValidator
         if (identificationTypeCode != "NIT") return;
         if (verificationDigit is null || verificationDigit.Length != 1 || !char.IsDigit(verificationDigit[0]))
             throw new ArgumentException("El dígito de verificación del NIT debe ser un solo número.");
-        if (value.Length > NitWeights.Length || verificationDigit[0] - '0' != CalculateNitVerificationDigit(value))
+        if (!ColombianNit.TryCalculateVerificationDigit(value, out var calculatedVerificationDigit)
+            || verificationDigit[0] - '0' != calculatedVerificationDigit)
             throw new ArgumentException("El dígito de verificación no corresponde al NIT ingresado.");
     }
 
     public static int CalculateNitVerificationDigit(string nit)
-    {
-        var offset = NitWeights.Length - nit.Length;
-        var sum = nit.Select((value, index) => (value - '0') * NitWeights[offset + index]).Sum();
-        var remainder = sum % 11;
-        return remainder is 0 or 1 ? remainder : 11 - remainder;
-    }
-
-    private static readonly int[] NitWeights = [71, 67, 59, 53, 47, 43, 41, 37, 29, 23, 19, 17, 13, 7, 3];
+        => ColombianNit.CalculateVerificationDigit(nit);
 }

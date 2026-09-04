@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
+using Auraly.BuildingBlocks.Domain.Identity;
 using Auraly.Contracts.Fiscal;
 
 namespace Auraly.Application.Fiscal;
@@ -16,6 +17,7 @@ public interface IFiscalOnboardingStore
         Guid userId,
         string softwareIdentificationCode,
         Guid testSetId,
+        string supplierCheckDigit,
         FiscalCredentialReference credentials,
         CancellationToken cancellationToken);
 
@@ -114,6 +116,7 @@ public sealed class FiscalOnboardingService(
             current.SupplierTaxId,
             current.SupplierCheckDigit,
             timeProvider.GetUtcNow());
+        var supplierCheckDigit = ResolveSupplierCheckDigit(current);
         var stored = await credentials.StoreAsync(
             user.TenantId,
             businessId,
@@ -130,9 +133,21 @@ public sealed class FiscalOnboardingService(
             user.UserId,
             request.SoftwareIdentificationCode.Trim(),
             request.TestSetId,
+            supplierCheckDigit,
             stored,
             cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
+    }
+
+    private static string ResolveSupplierCheckDigit(FiscalOnboardingConfiguration current)
+    {
+        if (!string.IsNullOrWhiteSpace(current.SupplierCheckDigit))
+            return current.SupplierCheckDigit.Trim();
+        if (ColombianNit.TryCalculateVerificationDigit(
+                current.SupplierTaxId, out var verificationDigit))
+            return verificationDigit.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        throw new FiscalConfigurationValidationException(
+            "El perfil legal no contiene un NIT válido para calcular el dígito de verificación.");
     }
 
     public async Task<FiscalOnboardingConfiguration> SynchronizeNumberingRangesAsync(

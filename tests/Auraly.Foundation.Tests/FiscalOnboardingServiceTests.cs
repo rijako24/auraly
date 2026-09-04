@@ -68,6 +68,29 @@ public sealed class FiscalOnboardingServiceTests
     }
 
     [Fact]
+    public async Task Loading_a_natural_person_certificate_derives_a_missing_check_digit()
+    {
+        const string password = "certificate-password";
+        const string supplierTaxId = "1065658655";
+        var store = new TestOnboardingStore(
+            Configuration(supplierTaxId) with { SupplierCheckDigit = "" });
+        var service = new FiscalOnboardingService(
+            store, new TestCredentialVault(), new TestNumberingRangeClient(),
+            new FixedTimeProvider(Now));
+        var request = new SaveDianHabilitationConfiguration(
+            Guid.NewGuid().ToString(), "software-pin", Guid.NewGuid(), password,
+            CreatePfx(supplierTaxId, password));
+        var user = new FiscalConfigurationUser(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
+
+        await service.ConfigureHabilitationAsync(
+            user, store.Configuration.BusinessId, request);
+
+        Assert.Equal("6", store.SavedSupplierCheckDigit);
+    }
+
+    [Fact]
     public async Task Loading_a_certificate_with_another_nit_is_rejected()
     {
         const string password = "certificate-password";
@@ -245,6 +268,7 @@ public sealed class FiscalOnboardingServiceTests
     {
         public FiscalOnboardingConfiguration Configuration { get; } = configuration;
         public bool SaveCalled { get; private set; }
+        public string? SavedSupplierCheckDigit { get; private set; }
         public bool SupportActivationCalled { get; private set; }
 
         public Task<FiscalOnboardingConfiguration> GetAsync(
@@ -257,10 +281,12 @@ public sealed class FiscalOnboardingServiceTests
             Guid userId,
             string softwareIdentificationCode,
             Guid testSetId,
+            string supplierCheckDigit,
             FiscalCredentialReference credentials,
             CancellationToken cancellationToken)
         {
             SaveCalled = true;
+            SavedSupplierCheckDigit = supplierCheckDigit;
             return Task.CompletedTask;
         }
 

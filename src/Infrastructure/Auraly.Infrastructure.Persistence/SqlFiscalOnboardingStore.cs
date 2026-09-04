@@ -211,6 +211,7 @@ public sealed class SqlFiscalOnboardingStore(
         Guid userId,
         string softwareIdentificationCode,
         Guid testSetId,
+        string supplierCheckDigit,
         FiscalCredentialReference credentials,
         CancellationToken cancellationToken)
     {
@@ -236,7 +237,7 @@ public sealed class SqlFiscalOnboardingStore(
                 Environment,TestSetId,CertificateProvider,CertificateKeyReference,
                 CertificateThumbprint,DianEndpoint,TechnicalAnnexVersion,GeneratorVersion,
                 ValidFrom,ValidTo,IsActive,CreatedAt,CreatedByUserId)
-            SELECT @Id,@BusinessId,@Version,p.Nit,p.VerificationDigit,p.LegalName,
+            SELECT @Id,@BusinessId,@Version,p.Nit,@SupplierCheckDigit,p.LegalName,
                    NULLIF(p.TradeName,N''),p.TaxResponsibilities,N'01',N'IVA',N'31',p.Address,
                    c.Code,c.Name,d.Code,d.Name,NULL,country.Code,country.Name,
                    @SoftwareId,@PinReference,2,@TestSetId,@CertificateProvider,
@@ -260,6 +261,7 @@ public sealed class SqlFiscalOnboardingStore(
         Add(command, "@SoftwareId", softwareIdentificationCode);
         Add(command, "@PinReference", credentials.SoftwarePinReference);
         Add(command, "@TestSetId", testSetId);
+        Add(command, "@SupplierCheckDigit", supplierCheckDigit);
         Add(command, "@CertificateProvider", credentials.Provider);
         Add(command, "@CertificateReference", credentials.CertificateKeyReference);
         Add(command, "@Thumbprint", credentials.CertificateThumbprint);
