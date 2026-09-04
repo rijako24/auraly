@@ -452,6 +452,17 @@ public sealed class DatabaseUpgradeMigrationTests
             "La migración de liquidaciones debe asociar sesiones antes del DeployReport.");
         Assert.Contains("/p:IgnoreWithNocheckOnForeignKeys=True", pipeline,
             StringComparison.Ordinal);
+        var releasePipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        Assert.Contains("AllowRecordedComponentSubset", releasePipeline,
+            StringComparison.Ordinal);
+
+        var workflow = File.ReadAllText(Path.Combine(
+            root, ".github", "workflows", "deploy-auraly-release.yml"));
+        Assert.Contains("pos_installer:", workflow, StringComparison.Ordinal);
+        Assert.Contains("name: Publish signed POS installer", workflow, StringComparison.Ordinal);
+        Assert.Contains("Where-Object { $_ -notin @('admin', 'pos-installer') }", workflow,
+            StringComparison.Ordinal);
     }
 
     [Fact]

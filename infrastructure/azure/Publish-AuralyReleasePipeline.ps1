@@ -16,6 +16,8 @@ param(
     [ValidateSet('database', 'function', 'api', 'pos-installer')]
     [string[]]$Components,
 
+    [switch]$AllowRecordedComponentSubset,
+
     [string]$SqlPackagePath = 'sqlpackage'
 )
 
@@ -675,9 +677,16 @@ $recordedComponents = @(
         ForEach-Object { "$_".Trim().ToLowerInvariant() } |
         Where-Object { $_ -in @('database', 'function', 'api', 'pos-installer') } |
         Sort-Object -Unique)
-if ($recordedComponents.Count -gt 0 -and
-    (Compare-Object -ReferenceObject $recordedComponents -DifferenceObject $selectedComponents)) {
-    throw 'El alcance solicitado no coincide con los componentes archivados en el release.'
+if ($recordedComponents.Count -gt 0) {
+    if ($AllowRecordedComponentSubset) {
+        $unrecordedComponents = @($selectedComponents | Where-Object { $_ -notin $recordedComponents })
+        if ($unrecordedComponents.Count -gt 0) {
+            throw "El subconjunto solicitado contiene componentes no archivados: $($unrecordedComponents -join ',')."
+        }
+    }
+    elseif (Compare-Object -ReferenceObject $recordedComponents -DifferenceObject $selectedComponents) {
+        throw 'El alcance solicitado no coincide con los componentes archivados en el release.'
+    }
 }
 
 if ($selectedComponents -contains 'database') {

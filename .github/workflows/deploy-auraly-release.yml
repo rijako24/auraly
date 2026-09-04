@@ -262,19 +262,55 @@ jobs:
           CJ_WHATSAPP_FUNCTION_KEY: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_FUNCTION_KEY || '' }}
           CJ_WHATSAPP_VERIFY_TOKEN: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_VERIFY_TOKEN || '' }}
         run: |
-          $components = @($env:DEPLOYMENT_COMPONENTS -split ',' | Where-Object { $_ -ne 'admin' })
+          $components = @($env:DEPLOYMENT_COMPONENTS -split ',' | Where-Object { $_ -notin @('admin', 'pos-installer') })
+          if ($components.Count -gt 0) {
+            ./infrastructure/azure/Publish-AuralyReleasePipeline.ps1 `
+              -Environment '${{ inputs.environment }}' `
+              -ReleaseVersion '${{ inputs.version }}' `
+              -Components $components `
+              -AllowRecordedComponentSubset `
+              -SqlPackagePath $env:SQLPACKAGE_PATH
+          }
+
+  pos_installer:
+    name: Publish POS installer
+    needs: release
+    if: contains(needs.release.outputs.components, 'pos-installer')
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.release.outputs.artifact_name }}
+          path: artifacts/releases/${{ inputs.version }}
+
+      - name: Login to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish signed POS installer
+        shell: pwsh
+        run: |
           ./infrastructure/azure/Publish-AuralyReleasePipeline.ps1 `
             -Environment '${{ inputs.environment }}' `
             -ReleaseVersion '${{ inputs.version }}' `
-            -Components $components `
-            -SqlPackagePath $env:SQLPACKAGE_PATH
+            -Components pos-installer `
+            -AllowRecordedComponentSubset
 
   admin:
     name: Deploy Admin
     needs:
       - release
       - cloud
-    if: always() && needs.release.result == 'success' && needs.release.outputs.deploy_admin == 'true' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped')
+      - pos_installer
+    if: always() && needs.release.result == 'success' && needs.release.outputs.deploy_admin == 'true' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped') && (needs.pos_installer.result == 'success' || needs.pos_installer.result == 'skipped')
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -309,8 +345,9 @@ jobs:
     needs:
       - release
       - cloud
+      - pos_installer
       - admin
-    if: always() && needs.release.result == 'success' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped') && (needs.admin.result == 'success' || needs.admin.result == 'skipped')
+    if: always() && needs.release.result == 'success' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped') && (needs.pos_installer.result == 'success' || needs.pos_installer.result == 'skipped') && (needs.admin.result == 'success' || needs.admin.result == 'skipped')
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
