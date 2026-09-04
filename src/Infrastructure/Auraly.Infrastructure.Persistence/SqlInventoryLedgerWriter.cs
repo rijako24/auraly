@@ -157,6 +157,28 @@ public sealed class SqlInventoryLedgerWriter(
                @LineNumber,@ResolvedProductId,@MovementType,@QuantityChange,@Sequence,
                @QuantityBefore,@QuantityAfter,@PoolAverageBefore,@AverageAfter,
                @RecognizedUnitCost,@ValueChange,@OccurredAt,@Now,@Now);
+
+            IF @AverageAfter<>@PoolAverageBefore
+            BEGIN
+              DECLARE @CatalogChanges TABLE(
+                BusinessId UNIQUEIDENTIFIER NOT NULL,
+                CatalogChangeId BIGINT NOT NULL);
+              INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+                OUTPUT inserted.BusinessId,inserted.CatalogChangeId INTO @CatalogChanges
+              SELECT target.BusinessId,@ResolvedProductId,N'Upsert',@Now
+              FROM dbo.Businesses target
+              WHERE target.IsActive=1
+                AND ((@SharesPrices=1 AND target.TenantId=@TenantId AND target.SharesProductPrices=1)
+                  OR (@SharesPrices=0 AND target.BusinessId=@BusinessId))
+                AND EXISTS(
+                  SELECT 1 FROM dbo.ProductPrices price
+                  WHERE price.BusinessId=target.BusinessId
+                    AND price.ProductId=@ResolvedProductId AND price.IsActive=1);
+              INSERT dbo.PosSynchronizationOutboxMessages(
+                NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+              SELECT NEWID(),BusinessId,N'Catalog',CatalogChangeId,@Now
+              FROM @CatalogChanges;
+            END;
             SELECT @RecognizedUnitCost;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
@@ -212,6 +234,22 @@ public sealed class SqlInventoryLedgerWriter(
                @LineNumber,@ProductId,@MovementType,@QuantityChange,@Sequence,
                @QuantityBefore,@QuantityAfter,@AverageBefore,@AverageAfter,
                @RecognizedUnitCost,@ValueChange,@OccurredAt,@Now,@Now);
+
+            IF @AverageAfter<>@AverageBefore
+            BEGIN
+              DECLARE @CatalogChange TABLE(CatalogChangeId BIGINT NOT NULL);
+              INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+                OUTPUT inserted.CatalogChangeId INTO @CatalogChange
+              SELECT @BusinessId,@ProductId,N'Upsert',@Now
+              WHERE EXISTS(
+                SELECT 1 FROM dbo.ProductPrices price
+                WHERE price.BusinessId=@BusinessId AND price.ProductId=@ProductId
+                  AND price.IsActive=1);
+              INSERT dbo.PosSynchronizationOutboxMessages(
+                NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+              SELECT NEWID(),@BusinessId,N'Catalog',CatalogChangeId,@Now
+              FROM @CatalogChange;
+            END;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@MovementId", ids.NewId());

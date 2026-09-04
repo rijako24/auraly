@@ -442,6 +442,7 @@ public static class PlatformApiComposition
 
         builder.Services.AddScoped<IUserService, UserService>();
         builder.Services.AddScoped<IPosSecuritySynchronizationWriter, SqlPosSecuritySynchronizationWriter>();
+        builder.Services.AddScoped<IPosPricingSynchronizationWriter, SqlPosPricingSynchronizationWriter>();
 
         builder.Services.AddScoped<IRoleService, RoleService>();
 

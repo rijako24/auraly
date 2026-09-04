@@ -1008,18 +1008,19 @@ public sealed class PosEdgeSaleStore
                 line.Product.TaxCode,
                 line.Quantity,
                 line.UnitPrice,
-                line.Discount,
+                line.TotalDiscount,
                 line.TaxAmount,
                 decimal.Round(
-                    (line.Quantity * line.UnitPrice) - line.Discount,
+                    (line.Quantity * line.UnitPrice) - line.TotalDiscount,
                     2,
                     MidpointRounding.ToEven),
                 decimal.Round(
-                    (line.Quantity * line.UnitPrice) - line.Discount,
+                    (line.Quantity * line.UnitPrice) - line.TotalDiscount,
                     2,
                     MidpointRounding.ToEven) + line.TaxAmount,
                 line.Product.TaxRate,
-                line.DocumentUnitCost))
+                line.DocumentUnitCost,
+                line.PromotionDiscount))
             .ToArray();
         var payments = command.Payments is { Count: > 0 }
             ? command.Payments

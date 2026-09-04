@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Application.Common.Exceptions;
 using Auraly.Contracts.Tenants;
@@ -16,7 +17,9 @@ public sealed class TenantService(
     ITenantProvisioningStore provisioning,
     IBlobStorageService blobStorage,
     IMediaUrlResolver mediaUrlResolver,
-    ILogger<TenantService> logger) : ITenantService
+    ILogger<TenantService> logger,
+    IPosPricingSynchronizationWriter pricingSynchronization,
+    IPosSynchronizationOutboxDispatcher synchronization) : ITenantService
 {
     public async Task<TenantDto> GetByIdAsync(Guid tenantId, CancellationToken ct)
     {
@@ -80,6 +83,7 @@ public sealed class TenantService(
         int? maximumUsers, int? maximumEnrolledDevices, string? legalName = null,
         string? nit = null, string? verificationDigit = null, string? entityType = null,
         string? identificationTypeCode = null, string? inventoryCostBasis = null,
+        bool? allowPromotionChannelCombination = null,
         CancellationToken ct = default)
     {
         var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
@@ -110,6 +114,10 @@ public sealed class TenantService(
                 throw new ArgumentException("La base de costo de inventario no es válida.");
             tenant.InventoryCostBasis = inventoryCostBasis;
         }
+        var promotionPolicyChanged = allowPromotionChannelCombination.HasValue
+            && tenant.AllowPromotionChannelCombination != allowPromotionChannelCombination.Value;
+        if (allowPromotionChannelCombination.HasValue)
+            tenant.AllowPromotionChannelCombination = allowPromotionChannelCombination.Value;
         var changesLegalIdentity = legalName is not null || nit is not null || verificationDigit is not null
             || entityType is not null || identificationTypeCode is not null;
         if (changesLegalIdentity)
@@ -142,6 +150,17 @@ public sealed class TenantService(
             tenant.IdentificationTypeCode = nextIdentificationType;
         }
         await unitOfWork.SaveChangesAsync(ct);
+        if (promotionPolicyChanged)
+        {
+            var businessIds = (await unitOfWork.Businesses.GetByTenantIdAsync(tenantId, ct))
+                .Where(business => business.IsActive)
+                .Select(business => business.BusinessId)
+                .ToArray();
+            await pricingSynchronization.EnqueueBusinessesAsync(businessIds, ct);
+            foreach (var businessId in businessIds)
+                await synchronization.DispatchPendingAsync(
+                    tenantId, businessId, CancellationToken.None);
+        }
         var expiration = (await unitOfWork.Tenants.GetFiscalCertificateExpirationsAsync(null, ct))
             .FirstOrDefault(value => value.TenantId == tenantId)?.ValidTo;
         return await MapToDtoWithBrandingAsync(tenant, expiration, ct);
@@ -190,6 +209,7 @@ public sealed class TenantService(
         tenant.TenantId, tenant.TenantKey, tenant.Name, tenant.Email, tenant.IsActive,
         tenant.CreatedAt, tenant.Businesses?.Count ?? 0,
         tenant.MaximumUsers, tenant.MaximumEnrolledDevices, tenant.InventoryCostBasis,
+        tenant.AllowPromotionChannelCombination,
         tenant.ActiveUserCount, tenant.ActiveEnrolledDeviceCount,
         tenant.LegalName, tenant.Nit, tenant.VerificationDigit,
         tenant.EntityType, tenant.IdentificationTypeCode, null, fiscalCertificateValidTo);

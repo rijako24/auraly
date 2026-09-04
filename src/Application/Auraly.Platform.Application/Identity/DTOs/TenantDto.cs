@@ -11,6 +11,7 @@ public record TenantDto(
     int MaximumUsers,
     int MaximumEnrolledDevices,
     string InventoryCostBasis,
+    bool AllowPromotionChannelCombination,
     int ActiveUserCount,
     int ActiveEnrolledDeviceCount,
     string? LegalName,

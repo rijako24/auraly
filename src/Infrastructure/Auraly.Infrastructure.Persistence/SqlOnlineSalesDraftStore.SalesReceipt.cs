@@ -105,9 +105,10 @@ public sealed partial class SqlOnlineSalesDraftStore
             connection, transaction, state.BusinessId, state.CustomerId, ct);
         var lines = draft.Lines.Select((line, index) => new PosSaleLineContract(
             index + 1, line.ProductId, line.Description, line.TaxCode,
-            line.Quantity, line.UnitPrice, line.Discount, line.Tax,
+            line.Quantity, line.UnitPrice, line.TotalDiscount, line.Tax,
             line.Net, line.Total, line.TaxRate,
-            line.AllowsDocumentCostOverride ? line.DocumentUnitCost : null)).ToArray();
+            line.AllowsDocumentCostOverride ? line.DocumentUnitCost : null,
+            line.PromotionDiscount)).ToArray();
         var payments = request.Payments.Select((payment, index) => new PosSalePaymentContract(
             index + 1, payment.MethodCode, payment.Amount,
             string.IsNullOrWhiteSpace(payment.Reference) ? null : payment.Reference.Trim(),

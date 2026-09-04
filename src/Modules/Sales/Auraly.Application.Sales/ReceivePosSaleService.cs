@@ -234,6 +234,11 @@ public sealed class ReceivePosSaleService(
         var paid = request.Payments.Sum(payment => payment.Amount);
         var credit = request.Credit?.Amount ?? 0m;
         var withholding = request.CommercialSnapshot.Withholding;
+        if (request.Lines.Any(line =>
+                line.PromotionDiscountAmount < 0 ||
+                line.PromotionDiscountAmount > line.DiscountAmount))
+            throw new PosSaleInvalidException(
+                "The promotion discount snapshot must be a non-negative part of the line discount.");
         if (withholding is not null &&
             (withholding.GrossAmount != request.CommercialSnapshot.PayableAmount ||
              withholding.WithholdingTotal != withholding.Lines.Sum(line => line.Amount) ||

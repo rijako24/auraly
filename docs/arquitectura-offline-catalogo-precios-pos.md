@@ -238,10 +238,13 @@ El precio efectivo depende de:
 
 ### 5.2 Paquete de precios
 
-El servidor no envía solamente un precio final. Envía un paquete versionado:
+El servidor envía el precio público dentro del catálogo y, por separado, la
+configuración necesaria para ejecutar localmente el mismo resolvedor
+determinista:
 
 - listas aplicables;
-- precios por producto y unidad;
+- tramos por producto y cantidad configurados explícitamente en el canal;
+- estrategia, valor y exclusiones del canal;
 - vigencia;
 - promociones;
 - descuentos por cantidad;
@@ -266,12 +269,22 @@ Cada venta y cada línea guardan esas versiones.
 La regla se define una vez y se prueba con vectores comunes. Propuesta:
 
 ```text
-1. precio contractual del cliente
-2. promoción prioritaria válida
-3. lista asignada al cliente
-4. lista predeterminada de la caja
-5. precio base autorizado
+1. precio público vigente
+2. canal aplicable calculado por el resolvedor compartido
+3. todas las promociones activas en prioridad determinista
+4. política del tenant para combinar promoción y canal
+5. precio manual autorizado
 ```
+
+Promociones sobre líneas distintas no compiten. En una misma línea solo se
+acumulan si todas son combinables. Con combinación tenant habilitada, la
+promoción se calcula sobre canal; deshabilitada, la promoción aplicable reemplaza
+al canal y usa como base el precio público.
+
+Antes de sincronizar, el servidor filtra promociones por `TenantId` y por la
+sede de la caja. Una promoción puede seleccionar varias sedes mediante
+`PromotionBusinessScopes` o marcarse para todas; ninguna caja recibe reglas de
+otro tenant.
 
 Después se aplican:
 
@@ -284,7 +297,8 @@ descuento por cantidad
 
 Si una promoción no puede acumularse con descuentos manuales, el motor lo impide.
 
-Esta precedencia debe validarse contra los negocios piloto antes de congelarla.
+La misma función pura se ejecuta en servidor y POS Edge con vectores comunes de
+prueba. La confirmación no vuelve a cotizar el documento.
 
 ### 5.4 Fotografía
 

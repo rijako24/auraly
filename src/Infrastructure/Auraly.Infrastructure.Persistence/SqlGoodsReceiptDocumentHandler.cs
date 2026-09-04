@@ -325,6 +325,19 @@ public sealed class SqlGoodsReceiptDocumentHandler(
                  SourceDocumentId,SourceLineNumber,ObservedAt)
               VALUES(@BusinessId,@SupplierId,@ProductId,@PreviousCost,@UnitCost,@Currency,
                  @DocumentId,@LineNumber,@ObservedAt);
+
+            DECLARE @CatalogChange TABLE(CatalogChangeId BIGINT NOT NULL);
+            INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+              OUTPUT inserted.CatalogChangeId INTO @CatalogChange
+            SELECT @BusinessId,@ProductId,N'Upsert',@Now
+            WHERE EXISTS(
+              SELECT 1 FROM dbo.ProductPrices price
+              WHERE price.BusinessId=@BusinessId AND price.ProductId=@ProductId
+                AND price.IsActive=1);
+            INSERT dbo.PosSynchronizationOutboxMessages(
+              NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+            SELECT NEWID(),@BusinessId,N'Catalog',CatalogChangeId,@Now
+            FROM @CatalogChange;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@ObservationId", ids.NewId());

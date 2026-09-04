@@ -30,7 +30,7 @@ export type PosCatalogProduct = {
   isActive: boolean;
   isWeighable: boolean;
   allowsFractionalSale: boolean;
-  priceSource: "Public" | "Base" | "PriceChannel";
+  priceSource: "Public" | "Base" | "PriceChannel" | "Promotion" | "Promotion+PriceChannel";
 };
 export type PosCatalogSearchPage = {
   items: PosCatalogProduct[];
@@ -113,6 +113,7 @@ export type PosDraftLine = {
   currencyCode: string;
   priceSource: string;
   discount: number;
+  promotionDiscount?: number;
   documentUnitCost: number;
   allowsDocumentCostOverride: boolean;
   allowsFractionalSale: boolean;

@@ -107,6 +107,7 @@ type OnlineDraftLine = {
   currencyCode: string;
   priceSource: string;
   discount: number;
+  promotionDiscount?: number;
   documentUnitCost: number;
   allowsDocumentCostOverride: boolean;
   allowsFractionalSale: boolean;

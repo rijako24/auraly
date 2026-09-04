@@ -44,7 +44,8 @@ public sealed record PosSaleLineContract(
     decimal UntaxedAmount,
     decimal LineTotal,
     decimal TaxRate = 0m,
-    decimal? DocumentUnitCost = null);
+    decimal? DocumentUnitCost = null,
+    decimal PromotionDiscountAmount = 0m);
 
 public sealed record PosSalePaymentContract(
     int PaymentNumber,

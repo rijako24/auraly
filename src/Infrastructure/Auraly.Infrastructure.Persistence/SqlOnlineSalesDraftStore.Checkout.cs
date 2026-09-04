@@ -224,12 +224,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                 line.TaxCode,
                 line.Quantity,
                 line.UnitPrice,
-                line.Discount,
+                line.TotalDiscount,
                 line.Tax,
                 line.Net,
                 line.Total,
                 line.TaxRate,
-                line.AllowsDocumentCostOverride ? line.DocumentUnitCost : null)).ToArray();
+                line.AllowsDocumentCostOverride ? line.DocumentUnitCost : null,
+                line.PromotionDiscount)).ToArray();
         var payments = request.Payments.Select((payment, index) =>
             new PosSalePaymentContract(
                 index + 1,

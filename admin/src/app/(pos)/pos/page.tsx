@@ -2813,6 +2813,11 @@ export default function PosPage() {
                               Descuento -{money.format(line.discount)}
                             </span>
                           )}
+                          {(line.promotionDiscount ?? 0) > 0 && (
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-800">
+                              Promoción -{money.format(line.promotionDiscount ?? 0)}
+                            </span>
+                          )}
                           <span
                             className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-800"
                             title={`Impuesto ${line.taxCode}`}
@@ -3596,5 +3601,8 @@ function TotalRow({ label, value }: { label: string; value: number }) {
 
 function priceLabel(source: string) {
   if (source === "PriceChannel") return "Canal de precio";
+  if (source === "Promotion+PriceChannel") return "Promoción + canal";
+  if (source === "Promotion") return "Promoción";
+  if (source === "Manual") return "Precio manual";
   return "Precio del negocio";
 }

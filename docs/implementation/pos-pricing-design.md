@@ -24,13 +24,16 @@ No contiene tenant, lista, canal, costo ni inventario. La publicación vendible
 exige un precio base vigente.
 
 Las listas (`PriceLists`, `PriceListItems`) y los canales (`PriceChannels`,
-`ResolvedPriceChannelItems`, `PriceChannelExclusions`) pertenecen al negocio.
+`PriceChannelItems`, `PriceChannelExclusions`) pertenecen al negocio.
 La vigencia del canal se configura únicamente en su asignación al cliente
 mediante `CustomerPricingSettings`; los precios por producto y cantidad no
 tienen un rango de vigencia propio.
 
-Un canal que depende de costo o margen se calcula en servidor. POS Edge recibe
-solo el resultado materializado y nunca la fórmula o el costo.
+Un canal se calcula mediante `PriceChannelResolver`, compartido por servidor y
+POS Edge. La caja recibe la definición y únicamente los tramos configurados; no
+recibe una matriz materializada canal por producto. Los insumos del producto
+para estrategias de costo o margen forman parte de su única fila de catálogo
+local y no se exponen en la UI de caja.
 
 ## Resolución
 
@@ -60,10 +63,14 @@ Algoritmo:
    precios por cantidad se escoge la mayor cantidad mínima aplicable. Si falta
    o existe una exclusión, usar base.
 4. Sin asignación, usar base.
-5. Evaluar promoción con una precedencia explícita, sin acumular beneficios no
-   combinables.
-6. Aplicar precio manual autorizado, si existe.
-7. Aplicar descuento manual autorizado y calcular impuestos/totales.
+5. Evaluar todas las promociones activas en orden determinista. Promociones que
+   afectan líneas distintas se aplican independientemente. En una misma línea
+   solo se acumulan cuando todas las involucradas son combinables.
+6. Si el tenant permite combinar promoción y canal, calcular la promoción sobre
+   el precio de canal; si no lo permite, una promoción aplicable se calcula
+   sobre el público y reemplaza al canal para esa línea.
+7. Aplicar precio manual autorizado, si existe.
+8. Aplicar descuento manual autorizado y calcular impuestos/totales.
 
 Lista y canal nunca se combinan. La ausencia de especial nunca bloquea la venta.
 
@@ -74,14 +81,18 @@ Lista y canal nunca se combinan. La ausencia de especial nunca bloquea la venta.
 - Cambiar cantidad reevalúa escalas y disponibilidad cuando la bodega bloquea
   negativos.
 - Un delta de precios no repricia silenciosamente una línea ya capturada.
-- Un documento confirmado conserva su fotografía de precio e impuestos.
+- Un documento confirmado conserva su fotografía de precio e impuestos, con
+  descuento total y descuento promocional separados hasta `SalesDocumentLines`.
 
 ## Propietario de la resolución online
 
-`dbo.CustomerProductPriceResolve` es el único resolvedor de precio de cliente
-para la búsqueda, captura y recálculo online de Venta y Pedidos. Ambos flujos
-deben enviar `BusinessId`, `WarehouseId`, `CustomerId`, `ProductId` y cantidad;
-no deben volver a implementar la fórmula del canal en consultas paralelas.
+`PriceChannelResolver` es el único motor de fórmulas de canal para los flujos
+online de POS, búsqueda/captura de pedidos y POS Edge. La composición
+promocional pertenece a `PromotionPriceResolver`, función pura llamada por
+búsqueda, captura y recálculo online y por POS Edge. Los adaptadores y
+procedimientos SQL solo cargan precio público, configuración de canal,
+clasificación, disponibilidad y promociones; no contienen reglas de precedencia
+ni fórmulas duplicadas.
 
 Si el cliente no tiene una asignación vigente, el canal está inactivo, el
 producto está excluido o no existe una escala aplicable, el resolvedor retorna
@@ -94,13 +105,17 @@ SQLite contiene:
 
 - precios base del negocio;
 - listas, detalles y vigencias;
-- canales y precios finales materializados;
-- exclusiones resueltas: un producto excluido por categoría, marca o identidad
-  no recibe una fila de canal y el resolvedor local conserva el precio base;
+- definiciones de canales;
+- tramos por cantidad solo para los productos configurados en cada canal;
+- exclusiones por producto, marca o categoría, evaluadas por el resolvedor;
 - clientes mínimos y su asignación excluyente;
+- configuración de combinación del tenant y promociones activas;
+- alcance de promociones ya filtrado por tenant y por sede
+  (`PromotionBusinessScopes` o todas las sedes);
 - versiones y tombstones.
 
-No contiene costos, proveedores, fórmulas confidenciales, inventario ni datos
-de otros negocios. La aplicación de un delta y el avance del cursor son una
-única transacción.
+No contiene proveedores, inventario de otros negocios ni datos de otros tenants.
+Los insumos de costo estrictamente necesarios para resolver una estrategia
+forman parte del catálogo local protegido y no se presentan al cajero. La
+aplicación de un delta y el avance del cursor son una única transacción.
 

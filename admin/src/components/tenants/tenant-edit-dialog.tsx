@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { tenantsApi } from "@/services/api/tenants";
 import type { Tenant } from "@/types/entities";
@@ -20,6 +21,7 @@ type TenantEditForm = {
   name: string; email: string; legalName: string; identification: string; verificationDigit: string;
   entityType: "NaturalPerson" | "Organization"; identificationTypeCode: NonNullable<Tenant["identificationTypeCode"]>;
   inventoryCostBasis: "LatestReceiptCost" | "WeightedAverageCost";
+  allowPromotionChannelCombination: boolean;
 };
 
 export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props) {
@@ -33,7 +35,7 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
   useEffect(() => () => { if (logo && preview) URL.revokeObjectURL(preview); }, [logo, preview]);
   useEffect(() => { if (open) { setForm(initial(tenant)); setLogo(null); } }, [open, tenant]);
 
-  const set = (key: keyof typeof form, value: string) => setForm(current => ({ ...current, [key]: value }));
+  const set = (key: keyof typeof form, value: string | boolean) => setForm(current => ({ ...current, [key]: value }));
   const availableIdentificationTypes = (identificationTypes.data ?? [])
     .filter(item => item.description === form.entityType);
   const identityMatches = availableIdentificationTypes.some(item => item.code === form.identificationTypeCode);
@@ -55,6 +57,7 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
         nit: form.identification.trim(), verificationDigit: form.identificationTypeCode === "NIT" && calculatedVerificationDigit !== null ? String(calculatedVerificationDigit) : null,
         entityType: form.entityType, identificationTypeCode: form.identificationTypeCode,
         inventoryCostBasis: form.inventoryCostBasis as Tenant["inventoryCostBasis"],
+        allowPromotionChannelCombination: form.allowPromotionChannelCombination,
       });
       profileSaved = true;
       if (logo) await tenantsApi.uploadLogo(tenant.tenantId, logo);
@@ -86,6 +89,10 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
           {supportsTenantVerificationDigit(form.identificationTypeCode) && <Field label="Dígito de verificación (calculado)"><Input aria-readonly="true" readOnly value={calculatedVerificationDigit ?? ""} className="bg-muted" />{identityError && <p className="text-xs text-destructive">{identityError}</p>}<p className="text-xs text-muted-foreground">Se calcula automáticamente y no se puede modificar.</p></Field>}
           <Field label="Correo empresarial" className="sm:col-span-2"><Input type="email" value={form.email} onChange={event => set("email", event.target.value)} /></Field>
           <Field label="Base para formar costos" className="sm:col-span-2"><Select value={form.inventoryCostBasis} onValueChange={value => set("inventoryCostBasis", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="LatestReceiptCost">Último costo recibido</SelectItem><SelectItem value="WeightedAverageCost">Costo promedio ponderado</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Define la base que usa el tenant al preparar precios. El costo promedio consolida las sedes que comparten precios.</p></Field>
+          <label className="flex items-center justify-between gap-4 rounded-xl border p-4 sm:col-span-2">
+            <span><strong className="block text-sm">Combinar promociones con canal de precios</strong><small className="text-muted-foreground">Al activarlo, el descuento promocional se calcula sobre el precio del canal. Si está apagado, una promoción aplicable usa el precio público y reemplaza el canal.</small></span>
+            <Switch checked={form.allowPromotionChannelCombination} onCheckedChange={value => set("allowPromotionChannelCombination", value)} />
+          </label>
         </section>
       </div>
       <DialogFooter><Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>Cancelar</Button><Button disabled={saving || !valid || entityTypes.isLoading || identificationTypes.isLoading} onClick={() => void save()}>{saving ? "Guardando…" : "Guardar cambios"}</Button></DialogFooter>
@@ -94,5 +101,5 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
 }
 
 function Field({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) { return <div className={`space-y-2 ${className ?? ""}`}><Label>{label}</Label>{children}</div>; }
-function initial(tenant: Tenant): TenantEditForm { return { name: tenant.name, email: tenant.email, legalName: tenant.legalName ?? tenant.name, identification: tenant.nit ?? "", verificationDigit: tenant.verificationDigit ?? "", entityType: tenant.entityType ?? "Organization", identificationTypeCode: tenant.identificationTypeCode ?? "NIT", inventoryCostBasis: tenant.inventoryCostBasis }; }
+function initial(tenant: Tenant): TenantEditForm { return { name: tenant.name, email: tenant.email, legalName: tenant.legalName ?? tenant.name, identification: tenant.nit ?? "", verificationDigit: tenant.verificationDigit ?? "", entityType: tenant.entityType ?? "Organization", identificationTypeCode: tenant.identificationTypeCode ?? "NIT", inventoryCostBasis: tenant.inventoryCostBasis, allowPromotionChannelCombination: tenant.allowPromotionChannelCombination ?? false }; }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "No fue posible actualizar el tenant."; }

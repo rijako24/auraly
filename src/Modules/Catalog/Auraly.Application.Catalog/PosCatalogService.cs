@@ -37,7 +37,8 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         ValidateEnrolledScope(device);
         if (cursor < 0) throw new CatalogValidationException("The catalog cursor cannot be negative.");
         ValidatePageSize(pageSize);
-        return store.ChangesAsync(device.DeviceId, device.TenantId, device.BusinessId, cursor, pageSize, ct);
+        return store.ChangesAsync(device.DeviceId, device.TenantId, device.BusinessId,
+            device.WarehouseId, cursor, pageSize, ct);
     }
 
     public Task<PosPricingSnapshot> PricingSnapshotAsync(

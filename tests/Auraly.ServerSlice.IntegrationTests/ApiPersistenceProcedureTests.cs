@@ -230,26 +230,6 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
         }
     }
 
-    [Fact]
-    public async Task Canonical_price_channel_formula_adjusts_product_margin_and_never_goes_below_average_cost()
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand("""
-            SELECT dbo.PriceChannelAmountCalculate(N'ProductMarginAdjustment',10,150,100,110,20,NULL)
-            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'ProductMarginAdjustment',-30,150,100,110,20,NULL)
-            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'PercentageOverBasePrice',-50,150,100,110,NULL,NULL)
-            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'TieredProductPrice',NULL,150,100,110,NULL,80)
-            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'MarginOverLatestCost',20,150,100,120,NULL,NULL);
-            """, connection);
-
-        var amounts = new List<decimal>();
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync()) amounts.Add(reader.GetDecimal(0));
-
-        Assert.Equal([171.4286m, 120m, 100m, 100m, 150m], amounts);
-    }
-
     private static async Task<Guid> ClaimAsync(
         SqlConnection connection,
         SqlTransaction transaction,

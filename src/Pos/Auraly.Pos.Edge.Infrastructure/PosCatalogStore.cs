@@ -21,8 +21,10 @@ public sealed record CapturedCatalogProduct(
     decimal Quantity,
     string MatchKind);
 
-public sealed partial class PosCatalogStore(string connectionString)
+public sealed partial class PosCatalogStore(string connectionString, TimeProvider? timeProvider = null)
 {
+    private TimeProvider Clock { get; } = timeProvider ?? TimeProvider.System;
+
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(connectionString);
@@ -327,15 +329,21 @@ public sealed partial class PosCatalogStore(string connectionString)
         var identifiers = staging ? "PosCatalogStagingIdentifiers" : "PosCatalogIdentifiers";
         await ExecuteAsync(connection, transaction, $"""
             INSERT INTO {products}
-              (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix)
+              (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
+               ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent)
             VALUES
-              (@ProductId,@ProductCode,@Reference,@Name,@BaseUnitCode,@TaxCode,@TaxRate,@UnitPrice,@UnitCost,@ManagesStock,@CurrencyCode,@IsActive,@IsWeighable,@AllowsFractionalSale,@ScaleJson,@ScalePrefix)
+              (@ProductId,@ProductCode,@Reference,@Name,@BaseUnitCode,@TaxCode,@TaxRate,@UnitPrice,@UnitCost,@ManagesStock,@CurrencyCode,@IsActive,@IsWeighable,@AllowsFractionalSale,@ScaleJson,@ScalePrefix,@CategoryName,
+               @ProductCategoryId,@ProductBrandId,@ProductCategoryAncestorIds,@AverageUnitCost,@LatestUnitCost,@TargetMarginPercent)
             ON CONFLICT(ProductId) DO UPDATE SET
               ProductCode=excluded.ProductCode,Reference=excluded.Reference,Name=excluded.Name,
               BaseUnitCode=excluded.BaseUnitCode,TaxCode=excluded.TaxCode,TaxRate=excluded.TaxRate,
               UnitPrice=excluded.UnitPrice,UnitCost=excluded.UnitCost,ManagesStock=excluded.ManagesStock,CurrencyCode=excluded.CurrencyCode,IsActive=excluded.IsActive,
               IsWeighable=excluded.IsWeighable,AllowsFractionalSale=excluded.AllowsFractionalSale,
-              ScaleJson=excluded.ScaleJson,ScalePrefix=excluded.ScalePrefix;
+              ScaleJson=excluded.ScaleJson,ScalePrefix=excluded.ScalePrefix,CategoryName=excluded.CategoryName,
+              ProductCategoryId=excluded.ProductCategoryId,ProductBrandId=excluded.ProductBrandId,
+              ProductCategoryAncestorIds=excluded.ProductCategoryAncestorIds,
+              AverageUnitCost=excluded.AverageUnitCost,LatestUnitCost=excluded.LatestUnitCost,
+              TargetMarginPercent=excluded.TargetMarginPercent;
             DELETE FROM {barcodes} WHERE ProductId=@ProductId;
             DELETE FROM {identifiers} WHERE ProductId=@ProductId;
             """,
@@ -348,7 +356,12 @@ public sealed partial class PosCatalogStore(string connectionString)
                 P("@IsWeighable", item.IsWeighable ? 1 : 0),
                 P("@AllowsFractionalSale", item.AllowsFractionalSale ? 1 : 0),
                 P("@ScaleJson", item.Scale is null ? null : JsonSerializer.Serialize(item.Scale)),
-                P("@ScalePrefix", item.Scale?.BarcodePrefix)
+                P("@ScalePrefix", item.Scale?.BarcodePrefix), P("@CategoryName", item.CategoryName),
+                P("@ProductCategoryId", item.ProductCategoryId?.ToString("D")),
+                P("@ProductBrandId", item.ProductBrandId?.ToString("D")),
+                P("@ProductCategoryAncestorIds", JsonSerializer.Serialize(item.ProductCategoryAncestorIds ?? [])),
+                P("@AverageUnitCost", item.AverageUnitCost),P("@LatestUnitCost", item.LatestUnitCost),
+                P("@TargetMarginPercent", item.TargetMarginPercent)
             ],
             ct);
         foreach (var barcode in item.Barcodes.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -384,7 +397,16 @@ public sealed partial class PosCatalogStore(string connectionString)
             [],
             [],
             Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("UnitCost")), CultureInfo.InvariantCulture),
-            reader.GetInt64(reader.GetOrdinal("ManagesStock")) == 1);
+            reader.GetInt64(reader.GetOrdinal("ManagesStock")) == 1,
+            reader.IsDBNull(reader.GetOrdinal("CategoryName")) ? null : reader.GetString(reader.GetOrdinal("CategoryName")),
+            reader.IsDBNull(reader.GetOrdinal("ProductCategoryId")) ? null : Guid.Parse(reader.GetString(reader.GetOrdinal("ProductCategoryId"))),
+            reader.IsDBNull(reader.GetOrdinal("ProductBrandId")) ? null : Guid.Parse(reader.GetString(reader.GetOrdinal("ProductBrandId"))),
+            reader.IsDBNull(reader.GetOrdinal("ProductCategoryAncestorIds")) ? [] :
+                JsonSerializer.Deserialize<Guid[]>(reader.GetString(reader.GetOrdinal("ProductCategoryAncestorIds"))) ?? [],
+            Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("AverageUnitCost")), CultureInfo.InvariantCulture),
+            Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("LatestUnitCost")), CultureInfo.InvariantCulture),
+            reader.IsDBNull(reader.GetOrdinal("TargetMarginPercent")) ? null :
+                Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("TargetMarginPercent")), CultureInfo.InvariantCulture));
     }
 
     private static async Task<PosCatalogStatus> StatusAsync(
@@ -452,6 +474,26 @@ public sealed partial class PosCatalogStore(string connectionString)
                 alter.CommandText = $"ALTER TABLE {table} ADD COLUMN ManagesStock INTEGER NOT NULL DEFAULT 1;";
                 await alter.ExecuteNonQueryAsync(ct);
             }
+            if (!columns.Contains("CategoryName"))
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN CategoryName TEXT NULL;";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
+            foreach (var column in new[] { "ProductCategoryId", "ProductBrandId", "ProductCategoryAncestorIds", "TargetMarginPercent" })
+            {
+                if (columns.Contains(column)) continue;
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} TEXT NULL;";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
+            foreach (var column in new[] { "AverageUnitCost", "LatestUnitCost" })
+            {
+                if (columns.Contains(column)) continue;
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT '0';";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
         }
     }
 
@@ -471,7 +513,14 @@ public sealed partial class PosCatalogStore(string connectionString)
         IsWeighable INTEGER NOT NULL DEFAULT 0,
         AllowsFractionalSale INTEGER NOT NULL DEFAULT 0,
         ScaleJson TEXT NULL,
-        ScalePrefix TEXT NULL
+        ScalePrefix TEXT NULL,
+        CategoryName TEXT NULL,
+        ProductCategoryId TEXT NULL,
+        ProductBrandId TEXT NULL,
+        ProductCategoryAncestorIds TEXT NULL,
+        AverageUnitCost TEXT NOT NULL DEFAULT '0',
+        LatestUnitCost TEXT NOT NULL DEFAULT '0',
+        TargetMarginPercent TEXT NULL
         """;
 
     private static readonly string Schema = $"""

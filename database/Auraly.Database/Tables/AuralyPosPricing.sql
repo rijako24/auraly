@@ -1,8 +1,8 @@
-CREATE TABLE [dbo].[ResolvedPriceChannelItems] (
-    [ResolvedPriceChannelItemId] UNIQUEIDENTIFIER NOT NULL,
+CREATE TABLE [dbo].[PriceChannelItems] (
+    [PriceChannelItemId] UNIQUEIDENTIFIER NOT NULL,
     [PriceChannelId] UNIQUEIDENTIFIER NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
-    [MinimumQuantity] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_ResolvedPriceChannelItems_MinimumQuantity] DEFAULT (1),
+    [MinimumQuantity] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_PriceChannelItems_MinimumQuantity] DEFAULT (1),
     [Amount] DECIMAL(19,4) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
     [ValidFrom] DATETIMEOFFSET(7) NOT NULL,
@@ -10,16 +10,16 @@ CREATE TABLE [dbo].[ResolvedPriceChannelItems] (
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [PK_ResolvedPriceChannelItems] PRIMARY KEY ([ResolvedPriceChannelItemId]),
-    CONSTRAINT [FK_ResolvedPriceChannelItems_PriceChannels] FOREIGN KEY ([PriceChannelId]) REFERENCES [dbo].[PriceChannels] ([PriceChannelId]),
-    CONSTRAINT [FK_ResolvedPriceChannelItems_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [CK_ResolvedPriceChannelItems_Amount] CHECK ([Amount] >= 0),
-    CONSTRAINT [CK_ResolvedPriceChannelItems_MinimumQuantity] CHECK ([MinimumQuantity] > 0),
-    CONSTRAINT [CK_ResolvedPriceChannelItems_Validity] CHECK ([ValidUntil] IS NULL OR [ValidUntil] > [ValidFrom])
+    CONSTRAINT [PK_PriceChannelItems] PRIMARY KEY ([PriceChannelItemId]),
+    CONSTRAINT [FK_PriceChannelItems_PriceChannels] FOREIGN KEY ([PriceChannelId]) REFERENCES [dbo].[PriceChannels] ([PriceChannelId]),
+    CONSTRAINT [FK_PriceChannelItems_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
+    CONSTRAINT [CK_PriceChannelItems_Amount] CHECK ([Amount] >= 0),
+    CONSTRAINT [CK_PriceChannelItems_MinimumQuantity] CHECK ([MinimumQuantity] > 0),
+    CONSTRAINT [CK_PriceChannelItems_Validity] CHECK ([ValidUntil] IS NULL OR [ValidUntil] > [ValidFrom])
 );
 GO
-CREATE UNIQUE INDEX [UX_ResolvedPriceChannelItems_Active]
-    ON [dbo].[ResolvedPriceChannelItems] ([PriceChannelId], [ProductId], [MinimumQuantity])
+CREATE UNIQUE INDEX [UX_PriceChannelItems_Active]
+    ON [dbo].[PriceChannelItems] ([PriceChannelId], [ProductId], [MinimumQuantity])
     WHERE [IsActive] = 1;
 GO
 

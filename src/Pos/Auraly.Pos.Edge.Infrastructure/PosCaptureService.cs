@@ -30,6 +30,7 @@ public sealed record PosCaptureResult(
 public sealed class PosCaptureService(
     PosCatalogStore catalog,
     PosDraftStore drafts,
+    PosDraftPricingService pricing,
     IPosInventoryAvailabilityClient availability)
 {
     public async Task<OnlineSalesInventoryValidation> ValidateDraftInventoryAsync(
@@ -131,6 +132,7 @@ public sealed class PosCaptureService(
                 DocumentUnitCost: captured.Product.UnitCost,
                 AllowsDocumentCostOverride: !captured.Product.ManagesStock),
             cancellationToken);
+        updated = await pricing.RepriceAsync(updated.DraftId, updated.CustomerId, cancellationToken);
         return new PosCaptureResult(PosCaptureStatus.Added, updated, captured, inventory.Response);
     }
 
@@ -169,6 +171,7 @@ public sealed class PosCaptureService(
             lineId,
             quantity,
             cancellationToken);
+        updated = await pricing.RepriceAsync(updated.DraftId, updated.CustomerId, cancellationToken);
         return new PosCaptureResult(PosCaptureStatus.Added, updated, null, inventory.Response);
     }
 

@@ -2,6 +2,6 @@ CREATE PROCEDURE [dbo].[PriceSegmentItemSave] @Id UNIQUEIDENTIFIER,@BusinessId U
 BEGIN SET NOCOUNT ON;
  IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1) THROW 51004,'Product not found',1;
   IF NOT EXISTS(SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Id AND BusinessId=@BusinessId) THROW 51004,'Segment not found',1;
-  UPDATE dbo.ResolvedPriceChannelItems SET IsActive=0 WHERE PriceChannelId=@Id AND ProductId=@ProductId AND MinimumQuantity=@MinimumQuantity AND IsActive=1;
-  INSERT dbo.ResolvedPriceChannelItems(ResolvedPriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,ValidUntil,IsActive,CreatedAt) VALUES(NEWID(),@Id,@ProductId,@MinimumQuantity,@Amount,N'COP',SYSUTCDATETIME(),NULL,1,SYSUTCDATETIME());
+  UPDATE dbo.PriceChannelItems SET IsActive=0 WHERE PriceChannelId=@Id AND ProductId=@ProductId AND MinimumQuantity=@MinimumQuantity AND IsActive=1;
+  INSERT dbo.PriceChannelItems(PriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,ValidUntil,IsActive,CreatedAt) VALUES(NEWID(),@Id,@ProductId,@MinimumQuantity,@Amount,N'COP',SYSUTCDATETIME(),NULL,1,SYSUTCDATETIME());
 END

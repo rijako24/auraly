@@ -18,6 +18,7 @@ public interface ITenantService
         int? maximumEnrolledDevices, string? legalName = null, string? nit = null,
         string? verificationDigit = null, string? entityType = null,
         string? identificationTypeCode = null, string? inventoryCostBasis = null,
+        bool? allowPromotionChannelCombination = null,
         CancellationToken ct = default);
     Task<TenantDto> UploadLogoAsync(Guid tenantId, Stream stream, string fileName, CancellationToken ct = default);
     Task DeactivateAsync(Guid tenantId, CancellationToken ct = default);

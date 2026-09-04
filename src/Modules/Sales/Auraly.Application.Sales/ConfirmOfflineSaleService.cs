@@ -18,7 +18,11 @@ public sealed record OfflineSaleLine(
     decimal UnitPrice,
     decimal Discount,
     decimal TaxAmount,
-    decimal? DocumentUnitCost = null);
+    decimal? DocumentUnitCost = null,
+    decimal PromotionDiscount = 0)
+{
+    public decimal TotalDiscount => Discount + PromotionDiscount;
+}
 
 public sealed record PrepareOfflineSaleCommand(
     UserId UserId,
@@ -137,6 +141,8 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
 
         foreach (var line in command.Lines)
         {
+            if (line.PromotionDiscount < 0)
+                throw new InvalidOperationException("Promotion discounts cannot be negative.");
             if (!line.Product.IsActive)
             {
                 throw new InvalidOperationException(
@@ -148,7 +154,7 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
                 line.Product.Name,
                 line.Quantity,
                 line.UnitPrice,
-                line.Discount,
+                line.TotalDiscount,
                 line.TaxAmount));
         }
 

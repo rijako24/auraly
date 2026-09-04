@@ -63,7 +63,9 @@ Pricing será propietario de:
 - versiones;
 - proyección para cajas.
 
-Promotions consume el precio resuelto por Pricing y aplica beneficios después, según la precedencia definida.
+Promotions y Pricing entregan datos al resolvedor comercial canónico. La misma
+función pura compone ambos resultados en servidor y POS Edge; ningún adaptador
+vuelve a implementar la aritmética.
 
 ---
 
@@ -200,10 +202,11 @@ El orden determinista será:
 2. Resolver canal
 3. Verificar exclusiones por categoría (incluidos descendientes), marca o producto
 4. Aplicar fórmula del canal
-5. Aplicar promociones compatibles
-6. Aplicar descuento manual autorizado
-7. Calcular impuestos según perfil fiscal
-8. Guardar snapshots y explicación
+5. Evaluar todas las promociones activas en orden de prioridad
+6. Componer promoción y canal según `Tenants.AllowPromotionChannelCombination`
+7. Aplicar descuento manual autorizado
+8. Calcular impuestos según perfil fiscal
+9. Guardar snapshots y explicación
 ```
 
 Los impuestos no se eliminan ni cambian por seleccionar un canal.
@@ -235,19 +238,25 @@ Reglas:
 
 - solo usuarios autorizados pueden configurarlos;
 - el cajero no ve el costo;
-- el servidor vuelve a calcular;
-- la caja recibe únicamente el precio efectivo o una regla que no exponga el costo;
+- servidor y POS Edge ejecutan el mismo resolvedor puro;
+- la caja recibe la definición completa del canal y los insumos de cálculo que
+  ya pertenecen a la fila local del catálogo; ninguna pantalla de caja expone
+  los costos;
 - un costo cero o inexistente bloquea el cálculo o utiliza una política explícita;
 - se puede configurar margen mínimo;
 - nunca permiten precio negativo;
-- ninguna estrategia materializa un precio inferior al costo promedio vigente;
+- ninguna estrategia resuelve un precio inferior al costo promedio vigente;
 - `MarginOverLatestCost` calcula margen real sobre el último costo de compra observado; si todavía no existe una recepción usa el costo configurado del producto;
 - `MarginOverLatestCost` y `FixedMarginOverAverageCost` no aceptan valores negativos ni márgenes iguales o superiores a 100%;
 - los descuentos sobre precio público y los precios escalonados usan el costo promedio como piso de seguridad;
 - `ProductMarginAdjustment` permite restar puntos, pero nunca produce un margen menor que 0%;
-- el cambio de costo genera una nueva revisión de precio para cajas afectadas.
+- el cambio de costo genera un delta de catálogo para las cajas afectadas.
 
-Para operación offline, la caja debe recibir el precio efectivo ya materializado. No descarga el costo promedio.
+Para operación offline no se materializa la matriz canal por producto. La caja
+descarga una sola fila por producto en el catálogo —incluidos los insumos de
+costo requeridos por las estrategias autorizadas— y la configuración de canal
+por separado. Esos datos permanecen en la base local protegida y no forman parte
+de los contratos de presentación del cajero.
 
 ---
 
@@ -263,14 +272,27 @@ Canal mayorista -10%:         $90.000
 Promoción adicional -5%:      $85.500
 ```
 
-La promoción puede declarar:
+`Promotion.IsCombinable` controla exclusivamente el solapamiento entre
+promociones sobre una misma línea. Dos promociones no combinables sí pueden
+aplicarse en la misma venta cuando afectan líneas distintas, por ejemplo aseo
+y carnes. Si dos promociones compiten por una línea y cualquiera no es
+combinable, gana la de mayor prioridad; los empates se resuelven por fecha de
+creación e identificador.
 
-```text
-CanCombineWithPriceChannel
-AllowedPriceChannelIds
-```
+La combinación promoción-canal es una política del tenant:
 
-Si no es combinable, el motor elige el beneficio conforme a una regla explícita, por ejemplo mayor ahorro permitido. Nunca depende del orden de consultas.
+- desactivada: si una promoción aplica a la línea, se calcula sobre el precio
+  público y reemplaza el canal; si no aplica, se usa canal y luego público;
+- activada: si ambos existen, la promoción se calcula sobre el precio de canal;
+  si falta uno, se usa el otro y finalmente el precio público.
+
+No se crean campos de combinación con canal dentro de cada promoción.
+
+La promoción pertenece al tenant (empresa), no a una sola sede. Su alcance se
+declara para todas las sedes con `AppliesToAllBusinesses` o para una selección
+con `PromotionBusinessScopes`. La definición, sus condiciones y sus beneficios
+no almacenan `BusinessId`. Las claves compuestas por `TenantId` impiden asociar
+una promoción con una sede de otra empresa.
 
 ---
 
@@ -281,27 +303,45 @@ La primera sincronización incluye:
 - precio base efectivo;
 - canales accesibles para esa caja;
 - asignaciones relevantes;
-- exclusiones relevantes;
+- tramos por cantidad configurados explícitamente;
+- exclusiones configuradas;
 - revisión;
-- precio materializado para estrategias basadas en costo.
+- configuración de combinación del tenant;
+- promociones activas con condiciones y beneficios cuyo alcance incluye la
+  sede de la caja, sin duplicar productos.
 
 Los cambios posteriores generan deltas:
 
 - canal creado o modificado;
+- tramo de precio o exclusión de canal creado, modificado o eliminado;
 - asignación cambiada;
 - producto excluido;
 - precio base cambiado;
-- costo cambiado cuando afecta un canal materializado;
-- canal desactivado.
+- costo o margen de producto cambiado cuando afecta el cálculo local;
+- canal desactivado;
+- promoción creada, modificada, desactivada o con alcance de sedes cambiado;
+- política del tenant para combinar promoción y canal modificada.
 
-Cuando cambia el cliente:
+El enrolamiento no incrusta una copia potencialmente obsoleta de pricing en el
+paquete de credenciales. Al reiniciar después de canjear el enrolamiento, POS
+Edge dispara inmediatamente la sincronización completa sin esperar al canal de
+eventos. Después, las invalidaciones anteriores hacen que la caja vuelva a bajar
+el snapshot unificado de pricing y reemplace atómicamente definiciones de canal,
+tramos configurados, exclusiones, asignaciones, promociones y política de
+combinación en SQLite. El tamaño de esa sección depende de la configuración, no
+del producto cartesiano entre canales y catálogo.
 
-1. se resuelve su canal;
-2. se informa si cambiarán precios;
-3. las líneas existentes no cambian silenciosamente;
-4. el usuario ejecuta **Recotizar factura**;
-5. se muestra antes/después;
-6. queda auditoría.
+En una venta abierta se recalculan las líneas automáticas al agregar, quitar o
+cambiar cantidad y al cambiar cliente. Así una regla como “compra tres” entra o
+sale en el momento visible para el cajero. Las líneas con precio manual
+autorizado permanecen congeladas. La confirmación no recalcula: persiste la
+fotografía ya mostrada.
+
+La fotografía conserva por separado el descuento promocional y el descuento
+manual. `DiscountAmount` mantiene el descuento total requerido por los cálculos
+fiscales y contables, mientras `PromotionDiscountAmount` identifica su porción
+promocional en el borrador, el payload offline y `SalesDocumentLines`. Una
+promoción automática no exige el permiso de descuento manual.
 
 ---
 
@@ -393,8 +433,9 @@ Todos los importes y porcentajes usan `DECIMAL`.
 - Impuestos no se modifican desde el canal.
 - El precio aplicado conserva snapshots y explicación.
 - Canales basados en costo no exponen el costo a la caja.
-- Las cajas offline reciben precios efectivos materializados.
+- Las cajas offline reciben configuración de canal y la resuelven localmente
+  con el mismo motor usado por el servidor.
 - Un cambio genera deltas solo para cajas afectadas.
-- Cambiar cliente no recotiza líneas silenciosamente.
+- Cambiar cliente o composición del borrador recalcula únicamente líneas automáticas antes de confirmar.
 - Pedidos conservan su canal.
 - Las tablas pertenecen a `Auraly.Database.sqlproj`.

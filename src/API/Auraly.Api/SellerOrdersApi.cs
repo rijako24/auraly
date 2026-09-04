@@ -118,12 +118,28 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             throw new SellerOrderValidationException("Sede, bodega y cliente son obligatorios.");
         var take=Math.Clamp(request.Take,1,500);var search=request.Search?.Trim()??string.Empty;
         await using var connection=connections.Create();await connection.OpenAsync(token);
-        await using var command=Procedure("dbo.SellerOrderCatalogGet",connection);
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted,token);
+        await using var command=Procedure("dbo.SellerOrderCatalogGet",connection,transaction);
         command.Parameters.AddRange([P("@TenantId",actor.TenantId),P("@BusinessId",request.BusinessId),P("@WarehouseId",request.WarehouseId),P("@CustomerId",request.CustomerId),
             P("@Search",search),P("@Contains",$"%{search}%"),P("@Prefix",$"{search}%"),P("@Skip",request.Skip),P("@Take",take+1)]);
-        var values=new List<SellerOrdersApi.SellerCatalogItem>();
+        var candidates=new List<SellerCatalogCandidate>();
         await using var reader=await command.ExecuteReaderAsync(token);
-        while(await reader.ReadAsync(token))values.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetDecimal(4),reader.GetString(5),reader.GetDecimal(6),reader.GetBoolean(7)));
+        while(await reader.ReadAsync(token))candidates.Add(new(
+            reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),
+            reader.GetDecimal(4),reader.GetBoolean(5)));
+        await reader.DisposeAsync();
+        var prices=await SqlOnlineSalesDraftStore.ResolveCommercePricesAsync(
+            connection,transaction,request.BusinessId,request.WarehouseId,request.CustomerId,
+            candidates.Select(value=>new CommercePriceRequest(
+                value.ProductId.ToString("D"),value.ProductId,1m)).ToArray(),token);
+        await transaction.CommitAsync(token);
+        var values=candidates.Select(value=>
+        {
+            var price=prices[value.ProductId.ToString("D")];
+            return new SellerOrdersApi.SellerCatalogItem(
+                value.ProductId,value.ProductCode,value.Name,value.UnitCode,price.UnitPrice,
+                price.PriceSource,value.QuantityOnHand,value.ManageStock);
+        }).ToList();
         var more=values.Count>take;if(more)values.RemoveAt(values.Count-1);
         return new(values,more,more?request.Skip+values.Count:null);
     }
@@ -192,7 +208,24 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     {await using var command=Procedure("dbo.SellerOrderContextGet",connection,transaction);command.Parameters.AddRange([P("@SiteId",partySiteId),P("@BusinessId",businessId),P("@TenantId",actor.TenantId),P("@CustomerId",customerId)]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))throw new SellerOrderValidationException("El cliente, su sede o la bodega de pedidos no están disponibles.");return new(reader.GetString(0),reader.IsDBNull(1)?null:reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),reader.GetGuid(5));}
 
     private static async Task<OrderLine?> ResolveLineAsync(SqlConnection connection,SqlTransaction transaction,Guid businessId,Guid warehouseId,Guid customerId,SellerOrdersApi.SellerOrderLineInput input,CancellationToken token)
-    {await using var command=Procedure("dbo.SellerOrderProductResolve",connection,transaction);command.Parameters.AddRange([P("@BusinessId",businessId),P("@WarehouseId",warehouseId),P("@CustomerId",customerId),P("@ProductId",input.ProductId),Quantity("@Quantity",input.Quantity)]);await using var reader=await command.ExecuteReaderAsync(token);return await reader.ReadAsync(token)?new(input.ProductId,reader.GetString(0),reader.GetString(1),reader.GetString(2),input.Quantity,reader.GetDecimal(3),reader.GetString(4),reader.GetDecimal(5),reader.GetBoolean(6),reader.GetDecimal(7),0):null;}
+    {
+        await using var command=Procedure("dbo.SellerOrderProductResolve",connection,transaction);
+        command.Parameters.AddRange([P("@BusinessId",businessId),P("@WarehouseId",warehouseId),P("@CustomerId",customerId),P("@ProductId",input.ProductId),Quantity("@Quantity",input.Quantity)]);
+        string code;string name;string unitCode;decimal available;bool manageStock;decimal taxRate;
+        await using(var reader=await command.ExecuteReaderAsync(token))
+        {
+            if(!await reader.ReadAsync(token))return null;
+            code=reader.GetString(0);name=reader.GetString(1);unitCode=reader.GetString(2);
+            available=reader.GetDecimal(3);manageStock=reader.GetBoolean(4);taxRate=reader.GetDecimal(5);
+        }
+        var key=input.ProductId.ToString("D");
+        var prices=await SqlOnlineSalesDraftStore.ResolveCommercePricesAsync(
+            connection,transaction,businessId,warehouseId,customerId,
+            [new CommercePriceRequest(key,input.ProductId,input.Quantity)],token);
+        var price=prices[key];
+        return new(input.ProductId,code,name,unitCode,input.Quantity,price.UnitPrice,
+            price.PriceSource,available,manageStock,taxRate,0);
+    }
     private static SellerOrdersApi.SellerOrderLineInput[] NormalizeUpdateLines(IReadOnlyCollection<SellerOrdersApi.SellerOrderLineInput> lines)
     {
         var result=new List<SellerOrdersApi.SellerOrderLineInput>();
@@ -217,6 +250,9 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     {
         public decimal LineTotal=>decimal.Round(UnitPrice*Quantity-DiscountAmount,2,MidpointRounding.AwayFromZero);
     }
+    private sealed record SellerCatalogCandidate(
+        Guid ProductId,string ProductCode,string Name,string UnitCode,
+        decimal QuantityOnHand,bool ManageStock);
 
 }
 

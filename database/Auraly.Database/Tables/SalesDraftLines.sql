@@ -15,6 +15,7 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     [PriceSource] NVARCHAR(24) NOT NULL,
     [PriceChannelId] UNIQUEIDENTIFIER NULL,
     [DiscountAmount] DECIMAL(18, 2) NOT NULL CONSTRAINT [DF_SalesDraftLines_Discount] DEFAULT 0,
+    [PromotionDiscountAmount] DECIMAL(18, 2) NOT NULL CONSTRAINT [DF_SalesDraftLines_PromotionDiscount] DEFAULT 0,
     [Note] NVARCHAR(300) NULL,
     [Position] INT NOT NULL,
     CONSTRAINT [PK_SalesDraftLines] PRIMARY KEY ([SalesDraftLineId]),
@@ -23,7 +24,8 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     CONSTRAINT [FK_SalesDraftLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_SalesDraftLines_Quantity] CHECK ([Quantity] > 0),
     CONSTRAINT [CK_SalesDraftLines_Amounts]
-        CHECK ([BaseUnitPrice] >= 0 AND [UnitPrice] >= 0 AND [DocumentUnitCost] >= 0 AND [DiscountAmount] >= 0),
+        CHECK ([BaseUnitPrice] >= 0 AND [UnitPrice] >= 0 AND [DocumentUnitCost] >= 0
+          AND [DiscountAmount] >= 0 AND [PromotionDiscountAmount] >= 0),
     CONSTRAINT [CK_SalesDraftLines_TaxRate] CHECK ([TaxRate] >= 0)
 );
 GO

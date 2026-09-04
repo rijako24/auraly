@@ -15,7 +15,7 @@ public interface ICatalogStore
     Task SetStatusAsync(CatalogUserIdentity user, Guid productId, bool isActive, DateTimeOffset now, CancellationToken ct);
     Task<CatalogSyncSessionResponse> StartSyncAsync(Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId, DateTimeOffset now, CancellationToken ct);
     Task<CatalogBootstrapPage> BootstrapPageAsync(Guid deviceId, Guid sessionId, string? cursor, int pageSize, CancellationToken ct);
-    Task<CatalogDeltaPage> ChangesAsync(Guid deviceId, Guid tenantId, Guid businessId, long cursor, int pageSize, CancellationToken ct);
+    Task<CatalogDeltaPage> ChangesAsync(Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId, long cursor, int pageSize, CancellationToken ct);
     Task<InventoryAvailabilityResponse> AvailabilityAsync(
         Guid deviceId, Guid tenantId, Guid businessId,
         InventoryAvailabilityRequest request, CancellationToken ct);

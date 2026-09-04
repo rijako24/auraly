@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Domain\Auraly.Platform.Domain\Auraly.Platform.Domain.csproj" />
     <ProjectReference Include="..\..\src\BuildingBlocks\Auraly.BuildingBlocks.Application\Auraly.BuildingBlocks.Application.csproj" />
     <ProjectReference Include="..\..\src\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />

@@ -1,0 +1,1 @@
+CREATE SCHEMA [pricing] AUTHORIZATION [dbo];

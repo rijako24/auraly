@@ -18,6 +18,8 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     [UnitPrice] DECIMAL(19, 4) NOT NULL,
     [UnitCostSnapshot] DECIMAL(19, 6) NULL,
     [DiscountAmount] DECIMAL(19, 4) NOT NULL,
+    [PromotionDiscountAmount] DECIMAL(19, 4) NOT NULL
+        CONSTRAINT [DF_SalesDocumentLines_PromotionDiscountAmount] DEFAULT (0),
     [TaxAmount] DECIMAL(19, 4) NOT NULL,
     [UntaxedAmount] DECIMAL(19, 4) NOT NULL,
     [LineTotal] DECIMAL(19, 4) NOT NULL,
@@ -27,6 +29,7 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     CONSTRAINT [CK_SalesDocumentLines_Values] CHECK
         ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitPrice] >= 0 AND
          ([UnitCostSnapshot] IS NULL OR [UnitCostSnapshot] >= 0) AND [DiscountAmount] >= 0 AND
+         [PromotionDiscountAmount] >= 0 AND [PromotionDiscountAmount] <= [DiscountAmount] AND
          [TaxAmount] >= 0 AND [TaxRate] >= 0 AND [AttributionSnapshotVersion] >= 0)
 );
 

@@ -8,8 +8,7 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),p.Name,
-           COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),resolved.Amount,
-           resolved.PriceSource,
+           COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
            COALESCE(balance.QuantityOnHand,0),
            p.ManageStock,COALESCE(tax.Rate,0)
     FROM dbo.Products p
@@ -18,8 +17,11 @@ BEGIN
      AND balance.WarehouseId=@WarehouseId
      AND balance.ProductId=p.ProductId
     LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.IsActive=1
-    CROSS APPLY dbo.CustomerProductPriceResolve(
-      @BusinessId,@WarehouseId,@CustomerId,p.ProductId,@Quantity,SYSDATETIMEOFFSET()) resolved
     WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-      AND p.ProductId=@ProductId AND p.IsActive=1;
+      AND p.ProductId=@ProductId AND p.IsActive=1
+      AND EXISTS(
+        SELECT 1 FROM dbo.ProductPrices price
+        WHERE price.BusinessId=@BusinessId AND price.ProductId=p.ProductId
+          AND price.IsActive=1 AND price.ValidFrom<=SYSDATETIMEOFFSET()
+          AND (price.ValidUntil IS NULL OR price.ValidUntil>SYSDATETIMEOFFSET()));
 END

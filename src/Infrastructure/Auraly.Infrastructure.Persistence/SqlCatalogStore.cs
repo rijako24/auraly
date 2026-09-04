@@ -505,8 +505,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               THROW 51020,'The device operational scope is invalid.',1;
             DECLARE @High BIGINT=ISNULL((SELECT MAX(CatalogChangeId) FROM dbo.CatalogChanges WHERE BusinessId=@BusinessId),0);
             INSERT dbo.CatalogSyncSessions
-              (CatalogSyncSessionId,DeviceId,BusinessId,HighWaterMark,CreatedAt,ExpiresAt)
-            VALUES (@SessionId,@DeviceId,@BusinessId,@High,@Now,DATEADD(hour,2,@Now));
+              (CatalogSyncSessionId,DeviceId,BusinessId,WarehouseId,HighWaterMark,CreatedAt,ExpiresAt)
+            VALUES (@SessionId,@DeviceId,@BusinessId,@WarehouseId,@High,@Now,DATEADD(hour,2,@Now));
             INSERT dbo.CatalogSyncSessionProducts (CatalogSyncSessionId,ProductId)
             SELECT @SessionId,p.ProductId FROM dbo.Products p
             WHERE (p.TenantId=@TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
@@ -536,7 +536,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     }
 
     public async Task<CatalogDeltaPage> ChangesAsync(
-        Guid deviceId, Guid tenantId, Guid businessId, long cursor, int pageSize, CancellationToken ct)
+        Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId,
+        long cursor, int pageSize, CancellationToken ct)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -552,24 +553,58 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         }
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            ;WITH CategoryAncestors AS
+            (
+              SELECT category.ProductCategoryId DescendantId,category.ProductCategoryId AncestorId,
+                     category.ParentProductCategoryId
+              FROM dbo.ProductCategories category WHERE category.BusinessId=@BusinessId
+              UNION ALL
+              SELECT child.DescendantId,parent.ProductCategoryId,parent.ParentProductCategoryId
+              FROM CategoryAncestors child
+              JOIN dbo.ProductCategories parent ON parent.ProductCategoryId=child.ParentProductCategoryId
+            )
             SELECT TOP (@Take) c.CatalogChangeId,c.ChangeKind,p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,
               t.DianTaxCode,t.Rate,pr.Amount,pr.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
               COALESCE(pr.CostBasisAmount,0),p.ManageStock,
               COALESCE((SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),N'[]'),
               COALESCE((SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),N'[]'),
-              s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces
+              s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces,
+              p.CategoryName,p.ProductCategoryId,p.ProductBrandId,
+              COALESCE((SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),ancestor.AncestorId),N',')
+                        FROM CategoryAncestors ancestor
+                        WHERE ancestor.DescendantId=p.ProductCategoryId),N''),
+              averageCost.Amount,latestCost.Amount,
+              COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent)
             FROM dbo.CatalogChanges c
             JOIN dbo.Products p ON p.ProductId=c.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
             JOIN dbo.EnrolledDevices d ON d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1
             JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
+            JOIN dbo.Warehouses warehouseValue ON warehouseValue.WarehouseId=@WarehouseId
+              AND warehouseValue.BusinessId=b.BusinessId AND warehouseValue.IsActive=1
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=c.BusinessId AND pr.IsActive=1
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
+            OUTER APPLY
+            (
+              SELECT COALESCE(MAX(NULLIF(balance.AverageUnitCost,0)),pr.CostBasisAmount,0) Amount
+              FROM dbo.InventoryBalances balance
+              WHERE balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
+                AND balance.ProductId=p.ProductId
+            ) averageCost
+            OUTER APPLY
+            (
+              SELECT COALESCE(
+                (SELECT TOP (1) latest.LatestUnitCost
+                 FROM dbo.SupplierProductLatestCosts latest
+                 WHERE latest.BusinessId=@BusinessId AND latest.ProductId=p.ProductId
+                 ORDER BY latest.ObservedAt DESC,latest.SupplierId),
+                pr.CostBasisAmount,averageCost.Amount,0) Amount
+            ) latestCost
             WHERE c.BusinessId=@BusinessId AND c.CatalogChangeId>@Cursor
             ORDER BY c.CatalogChangeId;
             """;
         command.Parameters.AddRange([P("@Take", pageSize + 1), P("@DeviceId", deviceId), P("@TenantId", tenantId),
-            P("@BusinessId", businessId), P("@Cursor", cursor)]);
+            P("@BusinessId", businessId), P("@WarehouseId", warehouseId), P("@Cursor", cursor)]);
         var changes = new List<CatalogDelta>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
@@ -758,18 +793,51 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     {
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
+            ;WITH CategoryAncestors AS
+            (
+              SELECT category.ProductCategoryId DescendantId,category.ProductCategoryId AncestorId,
+                     category.ParentProductCategoryId
+              FROM dbo.ProductCategories category
+              WHERE category.BusinessId=(SELECT BusinessId FROM dbo.CatalogSyncSessions WHERE CatalogSyncSessionId=@SessionId)
+              UNION ALL
+              SELECT child.DescendantId,parent.ProductCategoryId,parent.ParentProductCategoryId
+              FROM CategoryAncestors child
+              JOIN dbo.ProductCategories parent ON parent.ProductCategoryId=child.ParentProductCategoryId
+            )
             SELECT TOP (@Take) p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,t.DianTaxCode,t.Rate,
               pr.Amount,pr.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
               COALESCE(pr.CostBasisAmount,0),p.ManageStock,
               (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),
               (SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),
-              s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces
+              s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces,
+              p.CategoryName,p.ProductCategoryId,p.ProductBrandId,
+              COALESCE((SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),ancestor.AncestorId),N',')
+                        FROM CategoryAncestors ancestor
+                        WHERE ancestor.DescendantId=p.ProductCategoryId),N''),
+              averageCost.Amount,latestCost.Amount,
+              COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent)
             FROM dbo.CatalogSyncSessions ss
             JOIN dbo.CatalogSyncSessionProducts ssp ON ssp.CatalogSyncSessionId=ss.CatalogSyncSessionId
             JOIN dbo.Products p ON p.ProductId=ssp.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=ss.BusinessId AND pr.IsActive=1
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
+            OUTER APPLY
+            (
+              SELECT COALESCE(MAX(NULLIF(balance.AverageUnitCost,0)),pr.CostBasisAmount,0) Amount
+              FROM dbo.InventoryBalances balance
+              WHERE balance.BusinessId=ss.BusinessId AND balance.WarehouseId=ss.WarehouseId
+                AND balance.ProductId=p.ProductId
+            ) averageCost
+            OUTER APPLY
+            (
+              SELECT COALESCE(
+                (SELECT TOP (1) latest.LatestUnitCost
+                 FROM dbo.SupplierProductLatestCosts latest
+                 WHERE latest.BusinessId=ss.BusinessId AND latest.ProductId=p.ProductId
+                 ORDER BY latest.ObservedAt DESC,latest.SupplierId),
+                pr.CostBasisAmount,averageCost.Amount,0) Amount
+            ) latestCost
             WHERE ss.CatalogSyncSessionId=@SessionId AND {predicate}
             ORDER BY p.ProductId;
             """;
@@ -791,7 +859,14 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             reader.GetBoolean(offset + 10), reader.GetBoolean(offset + 11), scale,
             DeserializeArray<BarcodeJson>(reader, offset + 14).Select(value => value.Value).ToArray(),
             DeserializeArray<ProductIdentifierInput>(reader, offset + 15),
-            reader.GetDecimal(offset + 12), reader.GetBoolean(offset + 13));
+            reader.GetDecimal(offset + 12), reader.GetBoolean(offset + 13),
+            reader.IsDBNull(offset + 22) ? null : reader.GetString(offset + 22),
+            reader.IsDBNull(offset + 23) ? null : reader.GetGuid(offset + 23),
+            reader.IsDBNull(offset + 24) ? null : reader.GetGuid(offset + 24),
+            reader.GetString(offset + 25).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(Guid.Parse).ToArray(),
+            reader.GetDecimal(offset + 26),reader.GetDecimal(offset + 27),
+            reader.IsDBNull(offset + 28) ? null : reader.GetDecimal(offset + 28));
     }
 
     private static T[] DeserializeArray<T>(SqlDataReader reader, int ordinal) =>

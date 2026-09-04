@@ -29,17 +29,23 @@ public sealed partial class SqlOnlineSalesDraftStore
                    p.Reference,p.Name,
                    COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
                    COALESCE(t.Code,N'01'),COALESCE(t.Rate,0),
-                   resolved.Amount,
-                   resolved.CurrencyCode,
+                   price.Amount,
+                   price.CurrencyCode,
                    p.IsActive,
                    p.IsWeighable,
                    p.AllowsFractionalSale,
-                   resolved.PriceSource
+                   N'Base'
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
               ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=@BusinessId AND t.IsActive=1
-            CROSS APPLY dbo.CustomerProductPriceResolve(
-              @BusinessId,@WarehouseId,@CustomerId,p.ProductId,1,SYSDATETIMEOFFSET()) resolved
+            CROSS APPLY (
+              SELECT TOP(1) pp.Amount,pp.CurrencyCode
+              FROM dbo.ProductPrices pp
+              WHERE pp.BusinessId=@BusinessId AND pp.ProductId=p.ProductId
+                AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET()
+                AND (pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
+              ORDER BY pp.ValidFrom DESC,pp.ProductPriceId
+            ) price
             WHERE p.TenantId=@TenantId AND p.IsActive=1
               AND (@Search=N'' OR p.Name LIKE @Contains
                    OR p.ProductCode LIKE @Prefix OR p.Sku LIKE @Prefix
@@ -81,6 +87,23 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.GetBoolean(9), reader.GetBoolean(10), reader.GetBoolean(11), reader.GetString(12)));
         var hasMore = items.Count > request.Take;
         if (hasMore) items.RemoveAt(items.Count - 1);
+        if (items.Count > 0)
+        {
+            var prices = await ResolveProductPricesAsync(
+                connection, transaction, scope.BusinessId, scope.WarehouseId, request.CustomerId,
+                items.Select(item => new SalePriceRequest(
+                    item.ProductId.ToString("D"), item.ProductId, 1)).ToArray(), cancellationToken);
+            items = items.Select(item =>
+            {
+                var resolved = prices[item.ProductId.ToString("D")];
+                return item with
+                {
+                    UnitPrice = resolved.EffectiveUnitPrice,
+                    CurrencyCode = resolved.Input.CurrencyCode,
+                    PriceSource = resolved.PriceSource
+                };
+            }).ToList();
+        }
         await transaction.CommitAsync(cancellationToken);
         return new(items, hasMore, hasMore ? request.Skip + items.Count : null);
     }

@@ -270,11 +270,15 @@ No se recrean `PrecioPublico1...4`.
 
 - El precio base es una versión en `ProductPrices`.
 - Las escalas por cantidad pertenecen a `PriceListItems`.
-- Los canales conservan resultados materializados en `ResolvedPriceChannelItems`.
+- Los canales conservan configuración en `PriceChannels`, tramos explícitos en
+  `PriceChannelItems` y exclusiones en `PriceChannelExclusions`; no existe una
+  matriz materializada canal por producto.
 - Lista o canal se asignan exclusivamente al cliente y nunca ambos.
 - Sin coincidencia de escala, producto de canal o cliente, se usa el precio base.
 
-Cuando cambia el precio base, Pricing identifica listas y canales derivados que requieren recalcularse. Sus nuevos resultados se publican en la misma operación lógica o quedan explícitamente pendientes; nunca quedan silenciosamente inconsistentes.
+Cuando cambia el precio base o uno de sus insumos, el catálogo emite el delta
+del producto. Servidor y POS Edge vuelven a resolver el canal con la misma
+configuración y el mismo motor, sin regenerar resultados por canal.
 
 ## 8. Redondeo
 

@@ -67,9 +67,9 @@ public sealed class PosSynchronizationEventLog(
             "Info", "Cliente", title, detail));
     }
 
-    public void ChannelPriceReceived(
-        PosPriceChannelItem price,
-        PosPriceChannelItem? previous,
+    public void ChannelTierReceived(
+        PosPriceChannelTier price,
+        PosPriceChannelTier? previous,
         string? productName)
     {
         var name = string.IsNullOrWhiteSpace(productName)

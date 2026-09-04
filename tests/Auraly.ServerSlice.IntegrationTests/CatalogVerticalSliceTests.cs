@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Pricing;
@@ -427,8 +428,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             """
             INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
               VALUES(@TierChannel,@Business,N'VIP',N'VIP',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
-            INSERT dbo.ResolvedPriceChannelItems
-              (ResolvedPriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+            INSERT dbo.PriceChannelItems
+              (PriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
               VALUES(@TierItem,@TierChannel,@Product,1,11000,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
             UPDATE dbo.PriceChannels
               SET Strategy=N'PercentageOverBasePrice',Value=10
@@ -530,8 +531,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/products/{created.ProductId:D}",
                 updated);
             update.EnsureSuccessStatusCode();
-            var updatedSignal = await fixture.ReadSynchronizationMessageAsync();
-            Assert.Equal("Catalog", updatedSignal.Stream);
+            var updatedSignal = await ReadCatalogSynchronizationMessageAsync(
+                publishedSignal.AvailableThroughCursor);
             Assert.True(
                 updatedSignal.AvailableThroughCursor >
                 publishedSignal.AvailableThroughCursor);
@@ -949,6 +950,18 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             new SqlParameter("@Second", second),
             new SqlParameter("@Business", fixture.BusinessId));
         return (tax, channel, second);
+    }
+
+    private async Task<PosSynchronizationInvalidation> ReadCatalogSynchronizationMessageAsync(
+        long afterCursor)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var message = await fixture.ReadSynchronizationMessageAsync();
+            if (message.Stream == "Catalog" && message.AvailableThroughCursor > afterCursor)
+                return message;
+        }
+        throw new InvalidOperationException("No newer catalog synchronization signal was published.");
     }
 
     private SaveProductRequest ProductRequest(

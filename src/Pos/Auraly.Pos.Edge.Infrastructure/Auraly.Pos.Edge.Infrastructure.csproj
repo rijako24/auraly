@@ -10,10 +10,12 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\Domain\Auraly.Platform.Domain\Auraly.Platform.Domain.csproj" />
     <ProjectReference Include="..\..\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
     <ProjectReference Include="..\..\Modules\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
     <ProjectReference Include="..\..\Modules\Catalog\Auraly.Contracts.Catalog\Auraly.Contracts.Catalog.csproj" />
     <ProjectReference Include="..\..\Modules\Catalog\Auraly.Domain.Catalog\Auraly.Domain.Catalog.csproj" />
+    <ProjectReference Include="..\..\Modules\Pricing\Auraly.Domain.Pricing\Auraly.Domain.Pricing.csproj" />
     <ProjectReference Include="..\..\Modules\Organization\Auraly.Contracts.Organization\Auraly.Contracts.Organization.csproj" />
     <ProjectReference Include="..\..\Modules\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
     <ProjectReference Include="..\..\Modules\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />

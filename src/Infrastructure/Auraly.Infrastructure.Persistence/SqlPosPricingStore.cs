@@ -25,13 +25,25 @@ public sealed partial class SqlCatalogStore
             new SqlParameter("@BusinessId", businessId),
             new SqlParameter("@WarehouseId", warehouseId)
         ]);
-        var channels = new List<PosPriceChannelItem>();
+        var channels = new List<PosPriceChannelDefinition>();
+        var tiers = new List<PosPriceChannelTier>();
+        var exclusions = new List<PosPriceChannelExclusion>();
         var customers = new List<PosCustomerPricing>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             channels.Add(new(
-                reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2), reader.GetDecimal(3),
-                reader.GetString(4), reader.GetBoolean(5)));
+                reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetDecimal(4)));
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            tiers.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetDecimal(2),
+                reader.GetDecimal(3),reader.GetString(4)));
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            exclusions.Add(new(reader.GetGuid(0),reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetGuid(2),
+                reader.IsDBNull(3) ? null : reader.GetGuid(3),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4)));
         await reader.NextResultAsync(ct);
         while (await reader.ReadAsync(ct))
             customers.Add(new(
@@ -55,7 +67,22 @@ public sealed partial class SqlCatalogStore
         bool? warehouseAllowsNegativeStock = null;
         if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
             warehouseAllowsNegativeStock = reader.GetBoolean(0);
+        var allowPromotionChannelCombination = false;
+        if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
+            allowPromotionChannelCombination = reader.GetBoolean(0);
+        var promotions = new List<PosPromotion>();
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            promotions.Add(new(
+                reader.GetGuid(0), reader.GetString(1), reader.GetInt32(2), reader.GetBoolean(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.IsDBNull(5) ? null : new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(5), DateTimeKind.Utc)),
+                reader.IsDBNull(6) ? null : new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(6), DateTimeKind.Utc)),
+                new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(7), DateTimeKind.Utc)),
+                JsonSerializer.Deserialize<PosPromotionCondition[]>(reader.GetString(8)) ?? [],
+                JsonSerializer.Deserialize<PosPromotionBenefit[]>(reader.GetString(9)) ?? []));
         return new PosPricingSnapshot(
-            channels, customers, rules, warehouseAllowsNegativeStock);
+            channels, tiers, exclusions, customers, rules, warehouseAllowsNegativeStock,
+            allowPromotionChannelCombination, promotions);
     }
 }

@@ -1,10 +1,16 @@
 using System.Globalization;
 using System.Text.Json;
 using Auraly.Contracts.Catalog;
+using Auraly.Domain.Pricing;
 using Auraly.Commerce.Taxation.Domain;
+using Auraly.Platform.Domain.Enums;
+using Auraly.Platform.Domain.Promotions;
 using Microsoft.Data.Sqlite;
 
 namespace Auraly.Pos.Edge.Infrastructure;
+
+public sealed record PosPriceLineRequest(
+    string Key, Guid ProductId, decimal Quantity, bool EligibleForPromotion = true);
 
 public sealed partial class PosCatalogStore
 {
@@ -26,22 +32,38 @@ public sealed partial class PosCatalogStore
             while (await reader.ReadAsync(ct)) customers.Add(ReadCustomer(reader));
         }
 
-        var prices = new List<PosPriceChannelItem>();
+        var channels = new List<PosPriceChannelDefinition>();
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = """
-                SELECT PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,IsExcluded
-                FROM PosPriceChannelItems;
-                """;
+            command.CommandText = "SELECT PriceChannelId,Code,Name,Strategy,Value FROM PosPriceChannels;";
             await using var reader = await command.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
-                prices.Add(new(
-                    Guid.Parse(reader.GetString(0)),
-                    Guid.Parse(reader.GetString(1)),
-                    Convert.ToDecimal(reader.GetValue(2), CultureInfo.InvariantCulture),
-                    Convert.ToDecimal(reader.GetValue(3), CultureInfo.InvariantCulture),
-                    reader.GetString(4),
-                    reader.GetInt32(5) == 1));
+                channels.Add(new(Guid.Parse(reader.GetString(0)),reader.GetString(1),reader.GetString(2),
+                    reader.GetString(3),reader.IsDBNull(4) ? null :
+                        Convert.ToDecimal(reader.GetValue(4),CultureInfo.InvariantCulture)));
+        }
+
+        var tiers = new List<PosPriceChannelTier>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode FROM PosPriceChannelTiers;";
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                tiers.Add(new(Guid.Parse(reader.GetString(0)),Guid.Parse(reader.GetString(1)),
+                    Convert.ToDecimal(reader.GetValue(2),CultureInfo.InvariantCulture),
+                    Convert.ToDecimal(reader.GetValue(3),CultureInfo.InvariantCulture),reader.GetString(4)));
+        }
+
+        var exclusions = new List<PosPriceChannelExclusion>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT PriceChannelId,ScopeType,ProductId,ProductCategoryId,ProductBrandId FROM PosPriceChannelExclusions;";
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                exclusions.Add(new(Guid.Parse(reader.GetString(0)),reader.GetString(1),
+                    reader.IsDBNull(2) ? null : Guid.Parse(reader.GetString(2)),
+                    reader.IsDBNull(3) ? null : Guid.Parse(reader.GetString(3)),
+                    reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4))));
         }
 
         var rules = new List<PosWithholdingRule>();
@@ -69,7 +91,19 @@ public sealed partial class PosCatalogStore
                     reader.GetInt32(15) == 1));
         }
 
-        return new(prices, customers, rules);
+        var promotions = new List<PosPromotion>();
+        var allowCombination = false;
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT AllowPromotionChannelCombination FROM PosPricingConfiguration WHERE ConfigurationId=1;";
+            allowCombination = Convert.ToInt32(await command.ExecuteScalarAsync(ct) ?? 0) == 1;
+            command.CommandText = "SELECT Payload FROM PosPromotions ORDER BY Priority DESC,CreatedAtUtc,PromotionId;";
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                promotions.Add(JsonSerializer.Deserialize<PosPromotion>(reader.GetString(0))
+                    ?? throw new InvalidDataException("The local promotion payload is invalid."));
+        }
+        return new(channels, tiers, exclusions, customers, rules, null, allowCombination, promotions);
     }
 
     public async Task<IReadOnlyCollection<PosCustomerPricing>> SearchCustomersAsync(
@@ -133,18 +167,39 @@ public sealed partial class PosCatalogStore
         await connection.OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await ExecutePricingAsync(connection, transaction, """
-            DELETE FROM PosPriceChannelItems;
+            DELETE FROM PosPriceChannelTiers;
+            DELETE FROM PosPriceChannelExclusions;
+            DELETE FROM PosPriceChannels;
             DELETE FROM PosWithholdingRules;
             DELETE FROM PosPricingCustomers;
-            """, [], ct);
-        foreach (var item in snapshot.PriceChannelItems)
+            DELETE FROM PosPromotions;
+            UPDATE PosPricingConfiguration
+            SET AllowPromotionChannelCombination=@AllowCombination
+            WHERE ConfigurationId=1;
+            """, [Q("@AllowCombination", snapshot.AllowPromotionChannelCombination ? 1 : 0)], ct);
+        foreach (var channel in snapshot.PriceChannels)
             await ExecutePricingAsync(connection, transaction, """
-                INSERT INTO PosPriceChannelItems(PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,IsExcluded)
-                VALUES(@PriceChannelId,@ProductId,@MinimumQuantity,@Amount,@CurrencyCode,@IsExcluded);
+                INSERT INTO PosPriceChannels(PriceChannelId,Code,Name,Strategy,Value)
+                VALUES(@PriceChannelId,@Code,@Name,@Strategy,@Value);
                 """,
-                [Q("@PriceChannelId", item.PriceChannelId), Q("@ProductId", item.ProductId),
-                 Q("@MinimumQuantity", item.MinimumQuantity), Q("@Amount", item.Amount), Q("@CurrencyCode", item.CurrencyCode),
-                 Q("@IsExcluded", item.IsExcluded ? 1 : 0)], ct);
+                [Q("@PriceChannelId", channel.PriceChannelId),Q("@Code", channel.Code),
+                 Q("@Name", channel.Name),Q("@Strategy", channel.Strategy),Q("@Value", channel.Value)], ct);
+        foreach (var tier in snapshot.PriceChannelTiers)
+            await ExecutePricingAsync(connection, transaction, """
+                INSERT INTO PosPriceChannelTiers(PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode)
+                VALUES(@PriceChannelId,@ProductId,@MinimumQuantity,@Amount,@CurrencyCode);
+                """,
+                [Q("@PriceChannelId", tier.PriceChannelId),Q("@ProductId", tier.ProductId),
+                 Q("@MinimumQuantity", tier.MinimumQuantity),Q("@Amount", tier.Amount),
+                 Q("@CurrencyCode", tier.CurrencyCode)], ct);
+        foreach (var exclusion in snapshot.PriceChannelExclusions)
+            await ExecutePricingAsync(connection, transaction, """
+                INSERT INTO PosPriceChannelExclusions(PriceChannelId,ScopeType,ProductId,ProductCategoryId,ProductBrandId)
+                VALUES(@PriceChannelId,@ScopeType,@ProductId,@ProductCategoryId,@ProductBrandId);
+                """,
+                [Q("@PriceChannelId", exclusion.PriceChannelId),Q("@ScopeType", exclusion.ScopeType),
+                 Q("@ProductId", exclusion.ProductId),Q("@ProductCategoryId", exclusion.ProductCategoryId),
+                 Q("@ProductBrandId", exclusion.ProductBrandId)], ct);
         foreach (var customer in snapshot.Customers)
             await ExecutePricingAsync(connection, transaction, """
                 INSERT INTO PosPricingCustomers(
@@ -179,6 +234,14 @@ public sealed partial class PosCatalogStore
                  Q("@EffectiveFrom", rule.EffectiveFrom.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
                  Q("@EffectiveTo", rule.EffectiveTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
                  Q("@IsActive", rule.IsActive ? 1 : 0)], ct);
+        foreach (var promotion in snapshot.Promotions ?? [])
+            await ExecutePricingAsync(connection, transaction, """
+                INSERT INTO PosPromotions(PromotionId,Priority,CreatedAtUtc,Payload)
+                VALUES(@PromotionId,@Priority,@CreatedAtUtc,@Payload);
+                """,
+                [Q("@PromotionId", promotion.PromotionId), Q("@Priority", promotion.Priority),
+                 Q("@CreatedAtUtc", promotion.CreatedAtUtc.ToString("O", CultureInfo.InvariantCulture)),
+                 Q("@Payload", JsonSerializer.Serialize(promotion))], ct);
         await transaction.CommitAsync(ct);
     }
 
@@ -188,52 +251,91 @@ public sealed partial class PosCatalogStore
         decimal quantity,
         CancellationToken ct = default)
     {
-        if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity));
+        var key = productId.ToString("D");
+        var result = await ResolvePricesAsync([new(key, productId, quantity)], customerId, ct);
+        return result[key];
+    }
+
+    public async Task<IReadOnlyDictionary<string, PosResolvedPrice>> ResolvePricesAsync(
+        IReadOnlyCollection<PosPriceLineRequest> requests,
+        Guid? customerId,
+        CancellationToken ct = default)
+    {
+        if (requests.Count == 0) return new Dictionary<string, PosResolvedPrice>();
+        if (requests.Any(request => request.Quantity <= 0))
+            throw new ArgumentOutOfRangeException(nameof(requests));
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT UnitPrice,CurrencyCode FROM PosCatalogProducts
-            WHERE ProductId=@ProductId AND IsActive=1;
-            """;
-        command.Parameters.Add(Q("@ProductId", productId));
-        await using var baseReader = await command.ExecuteReaderAsync(ct);
-        if (!await baseReader.ReadAsync(ct))
-            throw new KeyNotFoundException("The product is not available in the local catalog.");
-        var baseAmount = Convert.ToDecimal(baseReader.GetValue(0), CultureInfo.InvariantCulture);
-        var currency = baseReader.GetString(1);
-        await baseReader.DisposeAsync();
-        if (customerId is null)
-            return new(productId, baseAmount, baseAmount, currency, "Base", null);
-
-        command.Parameters.Clear();
-        command.CommandText = """
-            SELECT PriceChannelId FROM PosPricingCustomers
-            WHERE CustomerId=@CustomerId AND IsActive=1;
-            """;
-        command.Parameters.Add(Q("@CustomerId", customerId));
-        await using var customerReader = await command.ExecuteReaderAsync(ct);
-        if (!await customerReader.ReadAsync(ct))
-            return new(productId, baseAmount, baseAmount, currency, "Base", null);
-        var channelId = customerReader.IsDBNull(0) ? (Guid?)null : Guid.Parse(customerReader.GetString(0));
-        await customerReader.DisposeAsync();
-
-        command.Parameters.Clear();
-        if (channelId is not null)
+        Guid? channelId = null;
+        if (customerId is not null)
         {
-            command.CommandText = """
-                SELECT Amount,CurrencyCode FROM PosPriceChannelItems
-                WHERE PriceChannelId=@SourceId AND ProductId=@ProductId AND MinimumQuantity<=@Quantity AND IsExcluded=0
-                ORDER BY MinimumQuantity DESC LIMIT 1;
-                """;
-            command.Parameters.AddRange([Q("@SourceId", channelId), Q("@ProductId", productId), Q("@Quantity", quantity)]);
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            if (await reader.ReadAsync(ct))
-                return new(productId, baseAmount,
-                    Convert.ToDecimal(reader.GetValue(0), CultureInfo.InvariantCulture),
-                    reader.GetString(1), "PriceChannel", channelId);
+            await using var customer = connection.CreateCommand();
+            customer.CommandText = "SELECT PriceChannelId FROM PosPricingCustomers WHERE CustomerId=@CustomerId AND IsActive=1;";
+            customer.Parameters.Add(Q("@CustomerId", customerId));
+            var value = await customer.ExecuteScalarAsync(ct);
+            channelId = value is null or DBNull ? null : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!);
         }
-        return new(productId, baseAmount, baseAmount, currency, "Base", channelId);
+
+        var snapshot = await ReadPricingSnapshotAsync(ct);
+        var channelRules = snapshot.PriceChannels.Select(value =>
+            new PriceChannelRule(value.PriceChannelId,value.Strategy,value.Value)).ToArray();
+        var tierRules = snapshot.PriceChannelTiers.Select(value =>
+            new PriceChannelTierRule(value.PriceChannelId,value.ProductId,value.MinimumQuantity,
+                value.Amount,value.CurrencyCode)).ToArray();
+        var exclusionRules = snapshot.PriceChannelExclusions.Select(value =>
+            new PriceChannelExclusionRule(value.PriceChannelId,value.ProductId,
+                value.ProductCategoryId,value.ProductBrandId)).ToArray();
+        var quantities = requests.GroupBy(value => value.ProductId)
+            .ToDictionary(group => group.Key,group => group.Sum(value => value.Quantity));
+        var inputs = new List<PromotionPriceLineInput>(requests.Count);
+        foreach (var request in requests)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT Name,CategoryName,UnitPrice,CurrencyCode,ProductCategoryId,ProductBrandId,
+                       ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent
+                FROM PosCatalogProducts WHERE ProductId=@ProductId AND IsActive=1;
+                """;
+            command.Parameters.Add(Q("@ProductId", request.ProductId));
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
+                throw new KeyNotFoundException("The product is not available in the local catalog.");
+            var name = reader.GetString(0);
+            var category = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var baseAmount = Convert.ToDecimal(reader.GetValue(2), CultureInfo.InvariantCulture);
+            var currency = reader.GetString(3);
+            var productContext = new PriceChannelProductContext(
+                request.ProductId,
+                reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4)),
+                reader.IsDBNull(5) ? null : Guid.Parse(reader.GetString(5)),
+                reader.IsDBNull(6) ? [] : JsonSerializer.Deserialize<Guid[]>(reader.GetString(6)) ?? [],
+                currency,
+                Convert.ToDecimal(reader.GetValue(7),CultureInfo.InvariantCulture),
+                Convert.ToDecimal(reader.GetValue(8),CultureInfo.InvariantCulture),
+                reader.IsDBNull(9) ? null : Convert.ToDecimal(reader.GetValue(9),CultureInfo.InvariantCulture));
+            await reader.DisposeAsync();
+            var pricingQuantity = quantities[request.ProductId];
+            var channel = PriceChannelResolver.Resolve(
+                channelId,baseAmount,pricingQuantity,productContext,
+                channelRules,tierRules,exclusionRules);
+            inputs.Add(new(request.Key, PromotionItemType.Product, request.ProductId, null,
+                name, category, baseAmount, channel.Amount, request.Quantity, currency,
+                channel.PriceChannelId,
+                EligibleForPromotion: request.EligibleForPromotion));
+        }
+        var now = Clock.GetUtcNow();
+        var resolved = PromotionPriceResolver.Resolve(
+            inputs, (snapshot.Promotions ?? [])
+                .Where(promotion => promotion.StartsAtUtc is null || promotion.StartsAtUtc <= now)
+                .Where(promotion => promotion.EndsAtUtc is null || promotion.EndsAtUtc >= now)
+                .Select(ToRule).ToArray(),
+            snapshot.AllowPromotionChannelCombination);
+        return resolved.Lines.ToDictionary(line => line.Input.Key, line => new PosResolvedPrice(
+            line.Input.ProductId!.Value, line.Input.BaseUnitPrice, line.EffectiveUnitPrice,
+            line.Input.CurrencyCode, line.PriceSource, line.PriceChannelId,
+            line.DiscountAmount, line.Adjustments.Select(value => value.PromotionId).Distinct().ToArray(),
+            line.ReferenceUnitPrice),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     public async Task<WithholdingCalculation> CalculateSaleWithholdingAsync(
@@ -301,16 +403,34 @@ public sealed partial class PosCatalogStore
               AppliesWithholding INTEGER NOT NULL DEFAULT 0,TaxResponsibilities TEXT NOT NULL DEFAULT '[]',
               TaxJurisdictionCode TEXT NULL);
             CREATE INDEX IF NOT EXISTS IX_PosPricingCustomers_Identification ON PosPricingCustomers(Identification);
-            CREATE TABLE IF NOT EXISTS PosPriceChannelItems(
+            CREATE TABLE IF NOT EXISTS PosPriceChannels(
+              PriceChannelId TEXT PRIMARY KEY,Code TEXT NOT NULL,Name TEXT NOT NULL,
+              Strategy TEXT NOT NULL,Value TEXT NULL);
+            CREATE TABLE IF NOT EXISTS PosPriceChannelTiers(
               PriceChannelId TEXT NOT NULL,ProductId TEXT NOT NULL,MinimumQuantity TEXT NOT NULL,
-              Amount TEXT NOT NULL,CurrencyCode TEXT NOT NULL,IsExcluded INTEGER NOT NULL,
-              PRIMARY KEY(PriceChannelId,ProductId,MinimumQuantity));
+              Amount TEXT NOT NULL,CurrencyCode TEXT NOT NULL,
+              PRIMARY KEY(PriceChannelId,ProductId,MinimumQuantity),
+              FOREIGN KEY(PriceChannelId) REFERENCES PosPriceChannels(PriceChannelId) ON DELETE CASCADE);
+            CREATE TABLE IF NOT EXISTS PosPriceChannelExclusions(
+              PriceChannelId TEXT NOT NULL,ScopeType TEXT NOT NULL,ProductId TEXT NULL,
+              ProductCategoryId TEXT NULL,ProductBrandId TEXT NULL,
+              PRIMARY KEY(PriceChannelId,ScopeType,ProductId,ProductCategoryId,ProductBrandId),
+              FOREIGN KEY(PriceChannelId) REFERENCES PosPriceChannels(PriceChannelId) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS PosWithholdingRules(
               RuleId TEXT NOT NULL,Version INTEGER NOT NULL,Code TEXT NOT NULL,Name TEXT NOT NULL,
               Kind TEXT NOT NULL,Direction TEXT NOT NULL,Moment TEXT NOT NULL,BaseKind TEXT NOT NULL,
               ConceptCode TEXT NULL,JurisdictionCode TEXT NULL,Rate TEXT NOT NULL,MinimumBase TEXT NOT NULL,
               RequiredResponsibilities TEXT NOT NULL,EffectiveFrom TEXT NOT NULL,EffectiveTo TEXT NULL,
               IsActive INTEGER NOT NULL,PRIMARY KEY(RuleId,Version));
+            CREATE TABLE IF NOT EXISTS PosPricingConfiguration(
+              ConfigurationId INTEGER PRIMARY KEY CHECK(ConfigurationId=1),
+              AllowPromotionChannelCombination INTEGER NOT NULL);
+            INSERT OR IGNORE INTO PosPricingConfiguration(ConfigurationId,AllowPromotionChannelCombination)
+              VALUES(1,0);
+            CREATE TABLE IF NOT EXISTS PosPromotions(
+              PromotionId TEXT PRIMARY KEY,Priority INTEGER NOT NULL,
+              CreatedAtUtc TEXT NOT NULL,Payload TEXT NOT NULL);
+            DROP TABLE IF EXISTS PosPriceChannelItems;
             """;
         await command.ExecuteNonQueryAsync(ct);
         command.CommandText = "PRAGMA table_info(PosPricingCustomers);";
@@ -347,34 +467,6 @@ public sealed partial class PosCatalogStore
             command.CommandText = "ALTER TABLE PosPricingCustomers ADD COLUMN TaxJurisdictionCode TEXT NULL;";
             await command.ExecuteNonQueryAsync(ct);
         }
-        command.CommandText = "PRAGMA table_info(PosPriceChannelItems);";
-        var hasChannelQuantity = false;
-        var hasChannelAmount = false;
-        await using (var reader = await command.ExecuteReaderAsync(ct))
-            while (await reader.ReadAsync(ct))
-            {
-                hasChannelQuantity |= string.Equals(reader.GetString(1), "MinimumQuantity", StringComparison.Ordinal);
-                hasChannelAmount |= string.Equals(reader.GetString(1), "Amount", StringComparison.Ordinal);
-            }
-        if (!hasChannelAmount)
-        {
-            command.CommandText = "ALTER TABLE PosPriceChannelItems ADD COLUMN Amount TEXT NOT NULL DEFAULT '0';";
-            await command.ExecuteNonQueryAsync(ct);
-        }
-        if (!hasChannelQuantity)
-        {
-            command.CommandText = """
-                ALTER TABLE PosPriceChannelItems RENAME TO PosPriceChannelItemsLegacy;
-                CREATE TABLE PosPriceChannelItems(
-                  PriceChannelId TEXT NOT NULL,ProductId TEXT NOT NULL,MinimumQuantity TEXT NOT NULL,
-                  Amount TEXT NOT NULL,CurrencyCode TEXT NOT NULL,IsExcluded INTEGER NOT NULL,
-                  PRIMARY KEY(PriceChannelId,ProductId,MinimumQuantity));
-                INSERT INTO PosPriceChannelItems(PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,IsExcluded)
-                SELECT PriceChannelId,ProductId,'1',Amount,CurrencyCode,IsExcluded FROM PosPriceChannelItemsLegacy;
-                DROP TABLE PosPriceChannelItemsLegacy;
-                """;
-            await command.ExecuteNonQueryAsync(ct);
-        }
     }
 
     private static async Task ExecutePricingAsync(
@@ -402,4 +494,16 @@ public sealed partial class PosCatalogStore
             reader.GetInt32(6) == 1,
             JsonSerializer.Deserialize<string[]>(reader.GetString(7)) ?? [],
             reader.IsDBNull(8) ? null : reader.GetString(8));
+
+    private static PromotionRule ToRule(PosPromotion promotion) => new(
+        promotion.PromotionId, promotion.Name, promotion.Priority, promotion.IsCombinable,
+        promotion.CouponCode, promotion.CreatedAtUtc.UtcDateTime,
+        promotion.Conditions.Select(condition => new PromotionConditionRule(
+            (PromotionItemType)condition.ItemType, condition.ProductId, condition.ServiceId,
+            condition.CategoryName, condition.MinimumQuantity, condition.MinimumSubtotal)).ToArray(),
+        promotion.Benefits.Select(benefit => new PromotionBenefitRule(
+            (PromotionBenefitType)benefit.BenefitType, (PromotionItemType)benefit.TargetItemType,
+            benefit.ProductId, benefit.ServiceId, benefit.CategoryName,
+            benefit.DiscountPercentage, benefit.DiscountAmount, benefit.FixedUnitPrice,
+            benefit.AppliesToQuantity)).ToArray());
 }

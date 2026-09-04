@@ -134,7 +134,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             INSERT INTO dbo.SalesDocumentLines
             (
                 DocumentId, LineNumber, ProductId, Description, TaxCode, TaxRate,
-                Quantity, UnitPrice, UnitCostSnapshot, DiscountAmount, TaxAmount,
+                Quantity, UnitPrice, UnitCostSnapshot, DiscountAmount, PromotionDiscountAmount, TaxAmount,
                 UntaxedAmount, LineTotal,ProductCodeSnapshot,ProductNameSnapshot,
                 CategoryIdSnapshot,CategoryNameSnapshot,SupplierIdSnapshot,SupplierNameSnapshot,
                 AttributionSnapshotVersion
@@ -143,7 +143,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 @DocumentId, @LineNumber, @ProductId, @Description, @TaxCode, @TaxRate,
                 @Quantity, @UnitPrice,
                 COALESCE(@UnitCostSnapshot,CASE WHEN @Quantity=0 THEN 0 ELSE COALESCE(ABS(movement.ValueChange)/@Quantity,0) END),
-                @DiscountAmount, @TaxAmount,
+                @DiscountAmount, @PromotionDiscountAmount, @TaxAmount,
                 @UntaxedAmount, @LineTotal,COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,
                 p.ProductCategoryId,COALESCE(category.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
                 1
@@ -186,6 +186,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         unitCost.Scale = 6;
         unitCost.Value = (object?)line.DocumentUnitCost ?? DBNull.Value;
         AddDecimal(command, "@DiscountAmount", line.DiscountAmount, 19, 4);
+        AddDecimal(command, "@PromotionDiscountAmount", line.PromotionDiscountAmount, 19, 4);
         AddDecimal(command, "@TaxAmount", line.TaxAmount, 19, 4);
         AddDecimal(command, "@UntaxedAmount", line.UntaxedAmount, 19, 4);
         AddDecimal(command, "@LineTotal", line.LineTotal, 19, 4);

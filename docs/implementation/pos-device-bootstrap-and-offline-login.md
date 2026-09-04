@@ -109,15 +109,17 @@ Etapas:
 3. impuestos, unidades y balanza;
 4. precios base del negocio;
 5. listas y sus detalles;
-6. canales y precios materializados;
+6. definiciones de canal, tramos configurados y exclusiones;
 7. clientes mínimos y su asignación excluyente de lista o canal;
 8. validación de integridad;
 9. promoción atómica;
 10. caja lista.
 
-La proyección local no incluye costos, márgenes, proveedores, inventario ni
-información personal innecesaria. El precio base siempre permite vender si no
-existe un precio especial.
+La proyección local no incluye proveedores, inventario de otros negocios ni
+información personal innecesaria. Los insumos de costo o margen exigidos por
+una estrategia de canal forman parte de la única fila local del producto y no
+se muestran al cajero. El precio base siempre permite vender si no existe un
+precio especial.
 
 La UI muestra etapa, porcentaje real, registros procesados, total conocido,
 conexión, reanudación y un error accionable. Facturación no se habilita sobre un

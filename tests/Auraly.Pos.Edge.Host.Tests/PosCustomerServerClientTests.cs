@@ -127,7 +127,7 @@ public sealed class PosCustomerServerClientTests
                     null, true, []));
             }
             if (path.StartsWith("/api/pos/v1/pricing/snapshot?", StringComparison.Ordinal))
-                return Ok(new PosPricingSnapshot([], [
+                return Ok(new PosPricingSnapshot([], [], [], [
                     new PosCustomerPricing(customerId, "1.234.567", "Cliente POS nuevo", null, true)
                 ], WarehouseAllowsNegativeStock: true));
             if (path.StartsWith("/api/commerce/v1/reference-options/", StringComparison.Ordinal))

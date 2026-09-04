@@ -41,8 +41,7 @@ public sealed class PromotionsController : ControllerBase
         [FromBody] CreatePromotionRequest request,
         CancellationToken ct)
     {
-        var normalized = request with { BusinessId = businessId };
-        var result = await _service.CreateAsync(User.GetTenantId(), normalized, ct);
+        var result = await _service.CreateAsync(User.GetTenantId(), businessId, request, ct);
         return CreatedAtAction(nameof(GetById), new { businessId, promotionId = result.PromotionId }, result);
     }
 

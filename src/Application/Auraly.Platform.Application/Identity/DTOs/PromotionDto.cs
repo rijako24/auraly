@@ -4,7 +4,6 @@ namespace Auraly.Platform.Application.Identity.DTOs;
 
 public sealed record PromotionDto(
     Guid PromotionId,
-    Guid BusinessId,
     string Name,
     string? Description,
     bool IsActive,
@@ -16,7 +15,10 @@ public sealed record PromotionDto(
     IReadOnlyList<PromotionConditionDto> Conditions,
     IReadOnlyList<PromotionBenefitDto> Benefits,
     DateTime CreatedAt,
-    DateTime? UpdatedAt);
+    DateTime? UpdatedAt,
+    Guid TenantId,
+    bool AppliesToAllBusinesses = false,
+    IReadOnlyList<Guid>? ApplicableBusinessIds = null);
 
 public sealed record PromotionConditionDto(
     Guid? PromotionConditionId,
@@ -40,7 +42,6 @@ public sealed record PromotionBenefitDto(
     decimal? AppliesToQuantity);
 
 public sealed record CreatePromotionRequest(
-    Guid BusinessId,
     string Name,
     string? Description,
     bool IsActive,
@@ -50,7 +51,9 @@ public sealed record CreatePromotionRequest(
     bool IsCombinable,
     string? CouponCode,
     IReadOnlyList<PromotionConditionDto> Conditions,
-    IReadOnlyList<PromotionBenefitDto> Benefits);
+    IReadOnlyList<PromotionBenefitDto> Benefits,
+    bool AppliesToAllBusinesses = false,
+    IReadOnlyList<Guid>? ApplicableBusinessIds = null);
 
 public sealed record UpdatePromotionRequest(
     string? Name,
@@ -62,4 +65,6 @@ public sealed record UpdatePromotionRequest(
     bool? IsCombinable,
     string? CouponCode,
     IReadOnlyList<PromotionConditionDto>? Conditions,
-    IReadOnlyList<PromotionBenefitDto>? Benefits);
+    IReadOnlyList<PromotionBenefitDto>? Benefits,
+    bool? AppliesToAllBusinesses = null,
+    IReadOnlyList<Guid>? ApplicableBusinessIds = null);

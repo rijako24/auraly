@@ -105,21 +105,17 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await DemandInventoryAsync(
             connection, transaction, state, productId, product.ManagesStock,
             totalQuantity, cancellationToken);
-        var price = await ResolvePriceAsync(
-            connection, transaction, state.BusinessId, state.WarehouseId, state.CustomerId,
-            productId, totalQuantity, product.UnitPrice,
-            product.CurrencyCode, cancellationToken);
         await ExecuteAsync(connection, transaction, """
                 INSERT dbo.SalesDraftLines(
                   SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
                   UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,DocumentUnitCost,
                   CurrencyCode,PriceSource,PriceChannelId,
-                  DiscountAmount,Position)
+                  DiscountAmount,PromotionDiscountAmount,Position)
                 SELECT
                   @LineId,@DraftId,@ProductId,@ProductCode,@Description,
                   @UnitCode,@TaxCode,@TaxRate,@Quantity,@BaseUnitPrice,@UnitPrice,@DocumentUnitCost,
                   @CurrencyCode,@PriceSource,@PriceChannelId,
-                  0,COALESCE(MAX(Position),0)+1
+                  0,0,COALESCE(MAX(Position),0)+1
                 FROM dbo.SalesDraftLines WHERE SalesDraftId=@DraftId;
                 """,
                 [
@@ -128,12 +124,14 @@ public sealed partial class SqlOnlineSalesDraftStore(
                     P("@Description", product.Name), P("@UnitCode", product.UnitCode),
                     P("@TaxCode", product.TaxCode), P("@TaxRate", product.TaxRate),
                     P("@Quantity", quantity), P("@BaseUnitPrice", product.UnitPrice),
-                    P("@UnitPrice", TaxExclusive(price.Amount, product.TaxRate)), P("@CurrencyCode", price.CurrencyCode),
+                    P("@UnitPrice", TaxExclusive(product.UnitPrice, product.TaxRate)), P("@CurrencyCode", product.CurrencyCode),
                     P("@DocumentUnitCost", product.UnitCost),
-                    P("@PriceSource", price.Source),
-                    P("@PriceChannelId", price.PriceChannelId)
+                    P("@PriceSource", "Base"),
+                    P("@PriceChannelId", null)
                 ],
                 cancellationToken);
+        await RepriceDraftAsync(
+            connection, transaction, state, draftId, state.CustomerId, cancellationToken);
         var version = await AdvanceVersionAsync(
             connection, transaction, draftId, expectedVersion, cancellationToken);
         await SaveReceiptAsync(
@@ -199,6 +197,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
             throw new OnlineSalesDraftValidationException(
                 "La línea no pertenece al borrador activo.");
 
+        await RepriceDraftAsync(
+            connection, transaction, state, draftId, state.CustomerId, cancellationToken);
+
         var version = await AdvanceVersionAsync(
             connection, transaction, draftId, expectedVersion, cancellationToken);
         await SaveReceiptAsync(
@@ -239,7 +240,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             UPDATE dbo.SalesDraftLines
             SET DiscountAmount=@Discount
             WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId
-              AND @Discount<=Quantity*UnitPrice;
+              AND @Discount<=Quantity*UnitPrice-PromotionDiscountAmount;
             """,
             [P("@Discount", discount), P("@DraftId", draftId), P("@LineId", lineId)],
             cancellationToken);
@@ -307,7 +308,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
             var affected = await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.SalesDraftLines
                 SET Description=@Description,UnitPrice=@UnitPrice,DocumentUnitCost=@DocumentUnitCost,
-                    DiscountAmount=@Discount
+                    DiscountAmount=@Discount,
+                    PriceSource=CASE WHEN UnitPrice<>@UnitPrice THEN N'Manual' ELSE PriceSource END,
+                    PriceChannelId=CASE WHEN UnitPrice<>@UnitPrice THEN NULL ELSE PriceChannelId END,
+                    PromotionDiscountAmount=CASE WHEN UnitPrice<>@UnitPrice THEN 0 ELSE PromotionDiscountAmount END
                 WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
                 """,
                 [
@@ -367,6 +371,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         if (affected != 1)
             throw new OnlineSalesDraftValidationException(
                 "La línea no pertenece al borrador activo.");
+        await RepriceDraftAsync(
+            connection, transaction, state, draftId, state.CustomerId, cancellationToken);
         var version = await AdvanceVersionAsync(
             connection, transaction, draftId, expectedVersion, cancellationToken);
         await SaveReceiptAsync(
@@ -416,12 +422,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             WHERE SalesDraftId=@DraftId;
             """,
             [P("@CustomerId", customerId), P("@DraftId", draftId)], cancellationToken);
-        var productIds = (await ReadLineProductsAsync(
-                connection, transaction, draftId, cancellationToken))
-            .Select(line => line.ProductId).Distinct().ToArray();
-        foreach (var productId in productIds)
-            await RepriceProductLinesAsync(connection, transaction, state, draftId,
-                customerId, productId, cancellationToken);
+        await RepriceDraftAsync(
+            connection, transaction, state, draftId, customerId, cancellationToken);
         var version = await AdvanceVersionAsync(
             connection, transaction, draftId, expectedVersion, cancellationToken);
         await SaveReceiptAsync(
@@ -632,17 +634,35 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
+            ;WITH ProductCategoryAncestors AS
+            (
+              SELECT category.ProductCategoryId,category.ParentProductCategoryId
+              FROM dbo.Products scopedProduct
+              JOIN dbo.ProductCategories category ON category.ProductCategoryId=scopedProduct.ProductCategoryId
+              WHERE scopedProduct.ProductId=@ProductId AND category.BusinessId=@BusinessId
+              UNION ALL
+              SELECT parent.ProductCategoryId,parent.ParentProductCategoryId
+              FROM dbo.ProductCategories parent
+              JOIN ProductCategoryAncestors child ON child.ParentProductCategoryId=parent.ProductCategoryId
+              WHERE parent.BusinessId=@BusinessId
+            )
             SELECT COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
                    p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
                    COALESCE(t.Code,N'01'),COALESCE(t.Rate,0),
                    price.Amount,
                    price.CurrencyCode,p.AllowsFractionalSale,
-                   COALESCE(NULLIF(balance.AverageUnitCost,0),price.CostBasisAmount,0),p.ManageStock
+                    COALESCE(NULLIF(balance.AverageUnitCost,0),price.CostBasisAmount,0),p.ManageStock,
+                    p.CategoryName,p.ProductCategoryId,p.ProductBrandId,
+                    COALESCE((SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),ancestor.ProductCategoryId),N',')
+                              FROM ProductCategoryAncestors ancestor),N''),
+                    latestCost.Amount,
+                    COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
               ON t.TaxProfileId=p.TaxProfileId AND t.IsActive=1
             CROSS APPLY (
-              SELECT TOP(1) pp.Amount,pp.CurrencyCode,pp.CostBasisAmount
+              SELECT TOP(1) pp.Amount,pp.CurrencyCode,pp.CostBasisAmount,
+                     pp.TargetMarginPercent,pp.EffectiveMarginPercent
               FROM dbo.ProductPrices pp
               WHERE pp.BusinessId=@BusinessId AND pp.ProductId=p.ProductId
                 AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET()
@@ -651,6 +671,15 @@ public sealed partial class SqlOnlineSalesDraftStore(
             ) price
             LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId
               AND balance.ProductId=p.ProductId AND balance.WarehouseId=@WarehouseId
+            OUTER APPLY
+            (
+              SELECT COALESCE(
+                (SELECT TOP (1) latest.LatestUnitCost
+                 FROM dbo.SupplierProductLatestCosts latest
+                 WHERE latest.BusinessId=@BusinessId AND latest.ProductId=p.ProductId
+                 ORDER BY latest.ObservedAt DESC,latest.SupplierId),
+                price.CostBasisAmount,NULLIF(balance.AverageUnitCost,0),0) Amount
+            ) latestCost
             WHERE p.ProductId=@ProductId AND p.IsActive=1
               AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
                    OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
@@ -666,7 +695,12 @@ public sealed partial class SqlOnlineSalesDraftStore(
             reader.GetString(0), reader.GetString(1), reader.GetString(2),
             reader.GetString(3), reader.GetDecimal(4),
             reader.GetDecimal(5), reader.GetString(6), reader.GetBoolean(7),
-            reader.GetDecimal(8), reader.GetBoolean(9));
+            reader.GetDecimal(8), reader.GetBoolean(9),
+            reader.IsDBNull(10) ? null : reader.GetString(10),
+            reader.IsDBNull(11) ? null : reader.GetGuid(11),
+            reader.IsDBNull(12) ? null : reader.GetGuid(12),
+            reader.GetString(13).Split(',',StringSplitOptions.RemoveEmptyEntries).Select(Guid.Parse).ToArray(),
+            reader.GetDecimal(14),reader.IsDBNull(15) ? null : reader.GetDecimal(15));
     }
 
     private static async Task<ResolvedSalesExecutionContext> ResolveOnlineContextAsync(
@@ -822,7 +856,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT SalesDraftLineId,ProductId,Quantity,BaseUnitPrice,CurrencyCode,TaxRate,DocumentUnitCost
+            SELECT SalesDraftLineId,ProductId,Quantity,BaseUnitPrice,CurrencyCode,TaxRate,DocumentUnitCost,
+                   UnitPrice,PriceSource
             FROM dbo.SalesDraftLines WITH (UPDLOCK,HOLDLOCK)
             WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
             """;
@@ -833,7 +868,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 "La línea no pertenece al borrador activo.");
         return new(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2),
-            reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5), reader.GetDecimal(6));
+            reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5), reader.GetDecimal(6),
+            reader.GetDecimal(7), reader.GetString(8));
     }
 
     private static async Task<IReadOnlyList<DraftLineProduct>> ReadLineProductsAsync(
@@ -845,7 +881,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT SalesDraftLineId,ProductId,Quantity,BaseUnitPrice,CurrencyCode,TaxRate,DocumentUnitCost
+            SELECT SalesDraftLineId,ProductId,Quantity,BaseUnitPrice,CurrencyCode,TaxRate,DocumentUnitCost,
+                   UnitPrice,PriceSource
             FROM dbo.SalesDraftLines WITH (UPDLOCK,HOLDLOCK)
             WHERE SalesDraftId=@DraftId ORDER BY Position,SalesDraftLineId;
             """;
@@ -855,42 +892,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
         while (await reader.ReadAsync(ct))
             result.Add(new(
                 reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2),
-                reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5), reader.GetDecimal(6)));
+                reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5), reader.GetDecimal(6),
+                reader.GetDecimal(7), reader.GetString(8)));
         return result;
-    }
-
-    private static async Task<ResolvedPrice> ResolvePriceAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        Guid businessId,
-        Guid warehouseId,
-        Guid? customerId,
-        Guid productId,
-        decimal quantity,
-        decimal baseAmount,
-        string baseCurrency,
-        CancellationToken ct)
-    {
-        if (customerId is null)
-            return new(baseAmount, baseCurrency, "Base", null);
-
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT Amount,CurrencyCode,PriceSource,PriceChannelId
-            FROM dbo.CustomerProductPriceResolve(
-              @BusinessId,@WarehouseId,@CustomerId,@ProductId,@Quantity,SYSDATETIMEOFFSET());
-            """;
-        command.Parameters.AddRange([
-            P("@BusinessId", businessId), P("@WarehouseId", warehouseId),
-            P("@CustomerId", customerId), P("@ProductId", productId),
-            P("@Quantity", quantity)
-        ]);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct)
-            ? new(reader.GetDecimal(0), reader.GetString(1), reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetGuid(3))
-            : new(baseAmount, baseCurrency, "Base", null);
     }
 
     private static async Task<OnlineSalesCustomer?> ReadCustomerAsync(
@@ -935,39 +939,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 reader.GetBoolean(4), reader.GetBoolean(5), reader.GetInt32(6),
                 reader.IsDBNull(7) ? null : reader.GetDecimal(7))
             : null;
-    }
-
-    private static async Task RepriceProductLinesAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        DraftState state,
-        Guid draftId,
-        Guid? customerId,
-        Guid productId,
-        CancellationToken ct)
-    {
-        var lines = (await ReadLineProductsAsync(connection, transaction, draftId, ct))
-            .Where(line => line.ProductId == productId).ToArray();
-        if (lines.Length == 0) return;
-        var product = await ReadProductAsync(
-            connection, transaction, state.BusinessId, state.WarehouseId, productId, ct);
-        var price = await ResolvePriceAsync(
-            connection, transaction, state.BusinessId, state.WarehouseId, customerId,
-            productId, lines.Sum(line => line.Quantity), product.UnitPrice,
-            product.CurrencyCode, ct);
-        await ExecuteAsync(connection, transaction, """
-            UPDATE dbo.SalesDraftLines
-            SET BaseUnitPrice=@BaseUnitPrice,UnitPrice=@UnitPrice,CurrencyCode=@CurrencyCode,
-                PriceSource=@PriceSource,PriceChannelId=@PriceChannelId
-            WHERE SalesDraftId=@DraftId AND ProductId=@ProductId;
-            """,
-            [
-                P("@BaseUnitPrice", product.UnitPrice),
-                P("@UnitPrice", TaxExclusive(price.Amount, product.TaxRate)),
-                P("@CurrencyCode", price.CurrencyCode), P("@PriceSource", price.Source),
-                P("@PriceChannelId", price.PriceChannelId), P("@DraftId", draftId),
-                P("@ProductId", productId)
-            ], ct);
     }
 
     private static async Task DemandInventoryAsync(
@@ -1034,7 +1005,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         details.CommandText = """
             SELECT line.SalesDraftLineId,line.ProductId,line.ProductCode,line.Description,line.UnitCode,
                    line.TaxCode,line.TaxRate,line.Quantity,line.BaseUnitPrice,line.UnitPrice,line.CurrencyCode,
-                   line.PriceSource,line.DiscountAmount,line.DocumentUnitCost,product.ManageStock,product.AllowsFractionalSale
+                   line.PriceSource,line.DiscountAmount,line.DocumentUnitCost,product.ManageStock,product.AllowsFractionalSale,
+                   line.PromotionDiscountAmount
             FROM dbo.SalesDraftLines line
             JOIN dbo.Products product ON product.ProductId=line.ProductId
             WHERE line.SalesDraftId=@DraftId ORDER BY line.Position,line.SalesDraftLineId;
@@ -1047,7 +1019,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             var quantity = lineReader.GetDecimal(7);
             var price = lineReader.GetDecimal(9);
             var discount = lineReader.GetDecimal(12);
-            var net = decimal.Round(quantity * price - discount, 2, MidpointRounding.AwayFromZero);
+            var promotionDiscount = lineReader.GetDecimal(16);
+            var net = decimal.Round(quantity * price - discount - promotionDiscount, 2, MidpointRounding.AwayFromZero);
             var tax = decimal.Round(net * lineReader.GetDecimal(6) / 100m, 2, MidpointRounding.AwayFromZero);
             lines.Add(new(
                 lineReader.GetGuid(0), lineReader.GetGuid(1), lineReader.GetString(2),
@@ -1055,7 +1028,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 lineReader.GetDecimal(6), quantity, lineReader.GetDecimal(8), price,
                 lineReader.GetString(10), lineReader.GetString(11), discount,
                 lineReader.GetDecimal(13), !lineReader.GetBoolean(14), lineReader.GetBoolean(15),
-                net, tax, net + tax));
+                net, tax, net + tax, promotionDiscount));
         }
         return new(
             (Guid)values[0], (Guid)values[1], (Guid)values[2], (Guid)values[3],
@@ -1112,10 +1085,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
         decimal BaseUnitPrice,
         string CurrencyCode,
         decimal TaxRate,
-        decimal DocumentUnitCost);
-    private sealed record ResolvedPrice(
-        decimal Amount, string CurrencyCode, string Source,
-        Guid? PriceChannelId);
+        decimal DocumentUnitCost,
+        decimal UnitPrice,
+        string PriceSource);
     private sealed record ProductSnapshot(
         string Code,
         string Name,
@@ -1126,7 +1098,13 @@ public sealed partial class SqlOnlineSalesDraftStore(
         string CurrencyCode,
         bool AllowsFractionalSale,
         decimal UnitCost,
-        bool ManagesStock);
+        bool ManagesStock,
+        string? CategoryName,
+        Guid? ProductCategoryId,
+        Guid? ProductBrandId,
+        IReadOnlyCollection<Guid> ProductCategoryAncestorIds,
+        decimal LatestUnitCost,
+        decimal? TargetMarginPercent);
 
     private static async Task<bool> ProductManagesStockAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid productId,

@@ -29,7 +29,7 @@ usuario/dispositivo, caja, bodega y recurso pertenecen al tenant autenticado.
 | PriceLists | PriceList | Business | Sí | No | Nueva |
 | PriceListItems | PriceList | Padre | No | No | Nueva |
 | PriceChannels | PriceChannel | Business | Sí | No | Retirar tenant/default |
-| ResolvedPriceChannelItems | PriceChannel | Padre + product | No | No | Nueva |
+| PriceChannelItems | PriceChannel | Padre + product configurado | No | No | Nueva; tramo explícito, no precio materializado |
 | PriceChannelExclusions | PriceChannel | Padre | No | No | Nueva |
 | Customers | Customer | Tenant/persona global | No | Sí cuando el cliente pueda compartirse | Nueva frontera mínima |
 | CustomerBusinesses | CustomerBusiness | Business | Sí | No | Nueva |

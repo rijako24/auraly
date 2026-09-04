@@ -143,7 +143,14 @@ public sealed record PosCatalogItem(
     IReadOnlyCollection<string> Barcodes,
     IReadOnlyCollection<ProductIdentifierInput> Identifiers,
     decimal UnitCost = 0,
-    bool ManagesStock = true)
+    bool ManagesStock = true,
+    string? CategoryName = null,
+    Guid? ProductCategoryId = null,
+    Guid? ProductBrandId = null,
+    IReadOnlyCollection<Guid>? ProductCategoryAncestorIds = null,
+    decimal AverageUnitCost = 0,
+    decimal LatestUnitCost = 0,
+    decimal? TargetMarginPercent = null)
 {
     public PosCatalogItem(
         Guid productId,

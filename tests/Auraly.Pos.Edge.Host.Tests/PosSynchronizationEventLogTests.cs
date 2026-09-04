@@ -99,15 +99,15 @@ public sealed class PosSynchronizationEventLogTests
     }
 
     [Fact]
-    public void Channel_price_event_preserves_product_and_price_detail()
+    public void Channel_tier_event_preserves_product_and_price_detail()
     {
         var log = new PosSynchronizationEventLog(TimeProvider.System);
         var productId = Guid.NewGuid();
         var channelId = Guid.NewGuid();
-        var previous = new PosPriceChannelItem(channelId, productId, 5m, 10_000m, "COP", false);
+        var previous = new PosPriceChannelTier(channelId, productId, 5m, 10_000m, "COP");
         var current = previous with { Amount = 9_500m };
 
-        log.ChannelPriceReceived(current, previous, "Producto sincronizado");
+        log.ChannelTierReceived(current, previous, "Producto sincronizado");
 
         var value = Assert.Single(log.Read());
         Assert.Equal("Precio", value.Category);

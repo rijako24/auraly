@@ -160,6 +160,27 @@ public sealed class ConnectedOfflineSaleSliceTests
                 [new OfflineSaleLine(product, 1m, 10_000m, 1_000m, 1_710m)])));
     }
 
+    [Fact]
+    public void Automatic_promotion_does_not_require_manual_discount_permission()
+    {
+        var tenantId = new TenantId(Guid.NewGuid());
+        var userId = new UserId(Guid.NewGuid());
+        var service = new ConfirmOfflineSaleService(new PermissionAuthorizer(
+            new FixedPermissionProvider(new UserPermissionSet(
+                tenantId, userId, [CommercePermissionCodes.SalesCreate]))));
+        var product = new Auraly.Contracts.Catalog.PosCatalogProduct(
+            new ProductId(Guid.NewGuid()), "P1", "Producto", ["7701"], true, false, "01", 19m);
+        var context = new Auraly.Contracts.Organization.SalesExecutionContext(
+            tenantId, new BusinessId(Guid.NewGuid()), new WarehouseId(Guid.NewGuid()), userId,
+            new DeviceId(Guid.NewGuid()), new WorkSessionId(Guid.NewGuid()), true);
+
+        var invoice = service.Prepare(new PrepareOfflineSaleCommand(
+            userId, new DocumentId(Guid.NewGuid()), context,
+            [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_710m, PromotionDiscount: 1_000m)]));
+
+        Assert.Equal(10_710m, invoice.PayableAmount);
+    }
+
     private sealed class FixedPermissionProvider(UserPermissionSet permissionSet)
         : IUserPermissionSetProvider
     {

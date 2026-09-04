@@ -713,7 +713,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Selected_customer_channel_keeps_each_scan_line_price_stable()
+    public async Task Selected_customer_channel_reprices_all_lines_when_accumulated_quantity_reaches_a_tier()
     {
         var customers = await Client.GetFromJsonAsync<CustomerSearchPageContract>(
             "/edge/v1/customers?search=400&take=50");
@@ -753,7 +753,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         quantityResponse.EnsureSuccessStatusCode();
         var changed = await quantityResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
         Assert.Equal(new[] { 1m, 2m }, changed!.Draft!.Lines.Select(line => line.Quantity).Order().ToArray());
-        Assert.All(changed.Draft.Lines, line => Assert.Equal(90m, line.UnitPrice));
+        Assert.All(changed.Draft.Lines, line => Assert.Equal(70m, line.UnitPrice));
         Assert.All(changed.Draft.Lines, line => Assert.Equal("PriceChannel", line.PriceSource));
     }
 
@@ -1091,35 +1091,37 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         await store.PromoteBootstrapAsync();
         await store.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
             [
-                new PosPriceChannelItem(
+                new(tierChannelId,"TIER","Escalonado","TieredProductPrice",null),
+                new(priceChannelId,"PRICE","Precio","TieredProductPrice",null),
+                new(excludedChannelId,"EXCLUDED","Excluido","TieredProductPrice",null)
+            ],
+            [
+                new PosPriceChannelTier(
                     tierChannelId,
                     product.ProductId,
                     1m,
                     90m,
-                    "COP",
-                    false),
-                new PosPriceChannelItem(
+                    "COP"),
+                new PosPriceChannelTier(
                     tierChannelId,
                     product.ProductId,
                     3m,
                     70m,
-                    "COP",
-                    false),
-                new PosPriceChannelItem(
+                    "COP"),
+                new PosPriceChannelTier(
                     priceChannelId,
                     product.ProductId,
                     1m,
                     80m,
-                    "COP",
-                    false),
-                new PosPriceChannelItem(
+                    "COP"),
+                new PosPriceChannelTier(
                     excludedChannelId,
                     product.ProductId,
                     1m,
                     60m,
-                    "COP",
-                    true)
+                    "COP")
             ],
+            [new(excludedChannelId,"Product",product.ProductId,null,null)],
             [
                 new PosCustomerPricing(
                     customerId,

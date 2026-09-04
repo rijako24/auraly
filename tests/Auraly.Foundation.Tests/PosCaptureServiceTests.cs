@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
+using Auraly.Platform.Domain.Enums;
 using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Foundation.Tests;
@@ -195,6 +196,31 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
+    public async Task Third_captured_unit_activates_buy_two_get_one_and_reprices_the_open_draft()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            for (var quantity = 1; quantity <= 3; quantity++)
+            {
+                availability.Response = new(
+                    productId, scope.WarehouseId.Value, quantity, 10m, true, true, "Available");
+                var result = await service.CaptureAsync(
+                    "770123", scope, customerId, false, Guid.NewGuid());
+                Assert.Equal(quantity, result.Draft!.Lines.Count);
+                Assert.Equal(quantity < 3 ? quantity * 80m : 200m, result.Draft.PayableAmount, 2);
+            }
+        }, promotionsFactory: productId =>
+        [
+            new PosPromotion(
+                Guid.NewGuid(), "Buy 2 get 1", 100, false, null, null, null,
+                DateTimeOffset.UnixEpoch,
+                [new((int)PromotionItemType.Product, productId, null, null, 3m, null)],
+                [new((int)PromotionBenefitType.FreeItem, (int)PromotionItemType.Product,
+                    productId, null, null, null, null, null, 1m)])
+        ]);
+    }
+
+    [Fact]
     public async Task Warehouse_that_allows_negatives_never_queries_inventory()
     {
         await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>
@@ -234,7 +260,8 @@ public sealed class PosCaptureServiceTests
 
     private static async Task WithServiceAsync(
         Func<PosCaptureService, PosDraftStore, PosDraftScope, Guid, Guid, RecordingAvailabilityClient, Task> test,
-        bool managesStock = true)
+        bool managesStock = true,
+        Func<Guid, IReadOnlyCollection<PosPromotion>>? promotionsFactory = null)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-capture-{Guid.NewGuid():N}.db");
         try
@@ -260,8 +287,11 @@ public sealed class PosCaptureServiceTests
             var customerId = Guid.NewGuid();
             var priceChannelId = Guid.NewGuid();
             await catalog.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
-                [new(priceChannelId, productId, 1m, 80m, "COP", false)],
-                [new(customerId, "1", "Customer", priceChannelId, true)]));
+                [new(priceChannelId,"TIER","Tiered", "TieredProductPrice",null)],
+                [new(priceChannelId, productId, 1m, 80m, "COP")],
+                [],
+                [new(customerId, "1", "Customer", priceChannelId, true)],
+                Promotions: promotionsFactory?.Invoke(productId)));
 
             var drafts = new PosDraftStore(
                 $"Data Source={path}",
@@ -269,7 +299,8 @@ public sealed class PosCaptureServiceTests
                 TimeProvider.System);
             await drafts.InitializeAsync();
             var availability = new RecordingAvailabilityClient();
-            var service = new PosCaptureService(catalog, drafts, availability);
+            var pricing = new PosDraftPricingService(catalog, drafts);
+            var service = new PosCaptureService(catalog, drafts, pricing, availability);
             var scope = new PosDraftScope(
                 new BusinessId(Guid.NewGuid()),
                 new WarehouseId(Guid.NewGuid()),

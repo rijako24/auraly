@@ -1,5 +1,7 @@
 using Auraly.Contracts.Pricing;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Application.Identity.Interfaces;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Api;
@@ -44,7 +46,10 @@ public static class PriceSegmentsApi
 
     private static async Task<IResult> SaveAsync(
         HttpContext context, SavePriceSegmentRequest request,
-        SqlServerConnectionFactory connections, CancellationToken ct)
+        SqlServerConnectionFactory connections,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization,
+        CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
@@ -115,6 +120,8 @@ public static class PriceSegmentsApi
             await transaction.RollbackAsync(ct);
             return Results.Problem("Ya existe una condición igual para ese producto.", statusCode: 409);
         }
+        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+            pricingSynchronization, synchronization, ct);
         return Results.Ok(new PriceSegmentSummary(id, code, name, true,
             DateTimeOffset.UtcNow, requestedItems.Select(item => item.ProductId).Distinct().Count(), 0,
             strategy!, channelValue));
@@ -141,7 +148,10 @@ public static class PriceSegmentsApi
 
     private static async Task<IResult> SaveItemAsync(
         HttpContext context, Guid id, Guid productId,
-        SavePriceSegmentItemRequest request, SqlServerConnectionFactory connections, CancellationToken ct)
+        SavePriceSegmentItemRequest request, SqlServerConnectionFactory connections,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization,
+        CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
@@ -159,6 +169,8 @@ public static class PriceSegmentsApi
         try { await command.ExecuteNonQueryAsync(ct); await transaction.CommitAsync(ct); }
         catch (SqlException exception) when (exception.Number == 51004)
         { await transaction.RollbackAsync(ct); return Results.NotFound(); }
+        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+            pricingSynchronization, synchronization, ct);
         return Results.NoContent();
     }
 
@@ -192,7 +204,10 @@ public static class PriceSegmentsApi
 
     private static async Task<IResult> SaveExclusionAsync(
         HttpContext context, Guid id, SavePriceChannelExclusionRequest request,
-        SqlServerConnectionFactory connections, CancellationToken ct)
+        SqlServerConnectionFactory connections,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization,
+        CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
@@ -214,6 +229,8 @@ public static class PriceSegmentsApi
         try
         {
             await command.ExecuteNonQueryAsync(ct);
+            await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+                pricingSynchronization, synchronization, ct);
             return Results.Created($"/api/commerce/v1/pricing/segments/{id:D}/exclusions/{exclusionId:D}",
                 new { exclusionId });
         }
@@ -229,7 +246,10 @@ public static class PriceSegmentsApi
 
     private static async Task<IResult> DeleteExclusionAsync(
         HttpContext context, Guid id, Guid exclusionId,
-        SqlServerConnectionFactory connections, CancellationToken ct)
+        SqlServerConnectionFactory connections,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization,
+        CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
@@ -240,12 +260,17 @@ public static class PriceSegmentsApi
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         await command.ExecuteNonQueryAsync(ct);
+        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+            pricingSynchronization, synchronization, ct);
         return Results.NoContent();
     }
 
     private static async Task<IResult> SaveChannelSettingsAsync(
         HttpContext context, Guid id, SavePriceChannelSettingsRequest request,
-        SqlServerConnectionFactory connections, CancellationToken ct)
+        SqlServerConnectionFactory connections,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization,
+        CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
@@ -274,12 +299,17 @@ public static class PriceSegmentsApi
             await transaction.RollbackAsync(ct);
             return Results.NotFound();
         }
+        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+            pricingSynchronization, synchronization, ct);
         return Results.NoContent();
     }
 
     private static async Task<IResult> DeleteItemAsync(
         HttpContext context, Guid id, Guid productId, decimal? minimumQuantity,
-        SqlServerConnectionFactory connections, CancellationToken ct)
+        SqlServerConnectionFactory connections,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization,
+        CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
@@ -291,7 +321,21 @@ public static class PriceSegmentsApi
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@MinimumQuantity", minimumQuantity ?? 1m);
         await command.ExecuteNonQueryAsync(ct);
+        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+            pricingSynchronization, synchronization, ct);
         return Results.NoContent();
+    }
+
+    private static async Task SynchronizeAsync(
+        Guid tenantId,
+        Guid businessId,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization,
+        CancellationToken ct)
+    {
+        await pricingSynchronization.EnqueueBusinessesAsync([businessId], ct);
+        await synchronization.DispatchPendingAsync(
+            tenantId, businessId, CancellationToken.None);
     }
 
     private static bool TryNormalizeChannelStrategy(string? strategy, out string normalized)

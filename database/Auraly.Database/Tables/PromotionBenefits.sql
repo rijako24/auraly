@@ -1,7 +1,7 @@
 CREATE TABLE [dbo].[PromotionBenefits] (
     [PromotionBenefitId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [PromotionId] UNIQUEIDENTIFIER NOT NULL,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BenefitType] INT NOT NULL,
     [TargetItemType] INT NOT NULL DEFAULT 0,
     [ProductId] UNIQUEIDENTIFIER NULL,
@@ -12,11 +12,11 @@ CREATE TABLE [dbo].[PromotionBenefits] (
     [FixedUnitPrice] DECIMAL(18, 2) NULL,
     [AppliesToQuantity] DECIMAL(18, 2) NULL,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-    CONSTRAINT [FK_PromotionBenefits_Promotions] FOREIGN KEY ([PromotionId])
-        REFERENCES [dbo].[Promotions] ([PromotionId])
+    CONSTRAINT [FK_PromotionBenefits_Promotions] FOREIGN KEY ([PromotionId], [TenantId])
+        REFERENCES [dbo].[Promotions] ([PromotionId], [TenantId])
         ON DELETE CASCADE,
-    CONSTRAINT [FK_PromotionBenefits_Businesses] FOREIGN KEY ([BusinessId])
-        REFERENCES [dbo].[Businesses] ([BusinessId])
+    CONSTRAINT [FK_PromotionBenefits_Tenants] FOREIGN KEY ([TenantId])
+        REFERENCES [dbo].[Tenants] ([TenantId])
         ON DELETE NO ACTION,
     CONSTRAINT [FK_PromotionBenefits_Products] FOREIGN KEY ([ProductId])
         REFERENCES [dbo].[Products] ([ProductId])
@@ -30,7 +30,7 @@ CREATE TABLE [dbo].[PromotionBenefits] (
 
 GO
 
-CREATE INDEX [IX_PromotionBenefits_BusinessId] ON [dbo].[PromotionBenefits] ([BusinessId]);
+CREATE INDEX [IX_PromotionBenefits_TenantId] ON [dbo].[PromotionBenefits] ([TenantId]);
 GO
 CREATE INDEX [IX_PromotionBenefits_PromotionId] ON [dbo].[PromotionBenefits] ([PromotionId]);
 GO

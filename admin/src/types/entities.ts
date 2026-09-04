@@ -27,6 +27,7 @@ export interface Tenant {
   maximumUsers: number;
   maximumEnrolledDevices: number;
   inventoryCostBasis: "LatestReceiptCost" | "WeightedAverageCost";
+  allowPromotionChannelCombination: boolean;
   businessCount: number;
   activeUserCount: number;
     activeEnrolledDeviceCount: number;
@@ -114,7 +115,7 @@ export interface PromotionBenefit {
 
 export interface Promotion {
   promotionId: string;
-  businessId: string;
+  tenantId: string;
   name: string;
   description?: string | null;
   isActive: boolean;
@@ -122,6 +123,8 @@ export interface Promotion {
   endsAtUtc?: string | null;
   priority: number;
   isCombinable: boolean;
+  appliesToAllBusinesses: boolean;
+  applicableBusinessIds?: string[] | null;
   couponCode?: string | null;
   conditions: PromotionCondition[];
   benefits: PromotionBenefit[];

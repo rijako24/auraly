@@ -37,7 +37,8 @@ public sealed record PosDraftLineInput(
     string? Note = null,
     bool AllowsFractionalSale = false,
     decimal DocumentUnitCost = 0,
-    bool AllowsDocumentCostOverride = false);
+    bool AllowsDocumentCostOverride = false,
+    decimal PromotionDiscount = 0);
 
 public sealed record PosDraftLine(
     Guid LineId,
@@ -58,10 +59,13 @@ public sealed record PosDraftLine(
     bool AllowsFractionalSale,
     decimal DocumentUnitCost,
     bool AllowsDocumentCostOverride,
-    int Position)
+    int Position,
+    bool IsPriceOverridden = false,
+    decimal PromotionDiscount = 0)
 {
     public decimal Gross => Round(Quantity * UnitPrice);
-    public decimal Total => Round(Gross - Discount);
+    public decimal TotalDiscount => Discount + PromotionDiscount;
+    public decimal Total => Round(Gross - TotalDiscount);
     public decimal Net => TaxRate == 0 ? Total : Round(Total / (1m + TaxRate / 100m));
     public decimal Tax => Total - Net;
 
@@ -102,7 +106,8 @@ public sealed record PosDraftLinePriceUpdate(
     decimal UnitPrice,
     string CurrencyCode,
     string PriceSource,
-    Guid? PriceChannelId);
+    Guid? PriceChannelId,
+    decimal PromotionDiscount = 0);
 
 public sealed record PosDraftLineDocumentUpdate(
     Guid LineId,
@@ -175,6 +180,16 @@ public sealed class PosDraftStore
         if (!columns.Contains("AllowsDocumentCostOverride"))
         {
             command.CommandText = "ALTER TABLE PosDraftLines ADD COLUMN AllowsDocumentCostOverride INTEGER NOT NULL DEFAULT 0;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (!columns.Contains("IsPriceOverridden"))
+        {
+            command.CommandText = "ALTER TABLE PosDraftLines ADD COLUMN IsPriceOverridden INTEGER NOT NULL DEFAULT 0;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (!columns.Contains("PromotionDiscount"))
+        {
+            command.CommandText = "ALTER TABLE PosDraftLines ADD COLUMN PromotionDiscount TEXT NOT NULL DEFAULT '0';";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         command.CommandText = """
@@ -314,7 +329,7 @@ public sealed class PosDraftStore
         var current = await GetRequiredAsync(draftId, cancellationToken);
         var line = current.Lines.SingleOrDefault(value => value.LineId == lineId)
             ?? throw new KeyNotFoundException("The draft line does not exist.");
-        if (discount > line.Gross)
+        if (discount > line.Gross - line.PromotionDiscount)
             throw new ArgumentOutOfRangeException(nameof(discount), "Discount cannot exceed gross value.");
         await MutateLineAsync(
             draftId,
@@ -355,7 +370,9 @@ public sealed class PosDraftStore
             var affected = await ExecuteAsync(connection, transaction, """
                 UPDATE PosDraftLines
                 SET Description=@Description,UnitPrice=@UnitPrice,DocumentUnitCost=@DocumentUnitCost,
-                    Discount=@Discount
+                    Discount=@Discount,
+                    IsPriceOverridden=CASE WHEN UnitPrice<>@UnitPrice THEN 1 ELSE IsPriceOverridden END,
+                    PromotionDiscount=CASE WHEN UnitPrice<>@UnitPrice THEN '0' ELSE PromotionDiscount END
                 WHERE DraftId=@DraftId AND LineId=@LineId;
                 """,
                 [
@@ -461,14 +478,14 @@ public sealed class PosDraftStore
             if (price.BaseUnitPrice < 0 || price.UnitPrice < 0)
                 throw new ArgumentOutOfRangeException(nameof(prices), "Prices cannot be negative.");
             var line = current.Lines.Single(value => value.LineId == price.LineId);
-            if (line.Discount > line.Quantity * price.UnitPrice)
+            if (line.Discount + price.PromotionDiscount > line.Quantity * price.UnitPrice)
                 throw new InvalidOperationException(
                     "The existing discount exceeds the selected customer's price.");
             await ExecuteAsync(connection, transaction, """
                 UPDATE PosDraftLines
                 SET BaseUnitPrice=@BaseUnitPrice,UnitPrice=@UnitPrice,
                     CurrencyCode=@CurrencyCode,PriceSource=@PriceSource,
-                    PriceChannelId=@PriceChannelId
+                    PriceChannelId=@PriceChannelId,PromotionDiscount=@PromotionDiscount
                 WHERE DraftId=@DraftId AND LineId=@LineId;
                 """,
                 [
@@ -477,6 +494,7 @@ public sealed class PosDraftStore
                     P("@CurrencyCode", price.CurrencyCode.Trim().ToUpperInvariant()),
                     P("@PriceSource", price.PriceSource),
                     P("@PriceChannelId", price.PriceChannelId),
+                    P("@PromotionDiscount", price.PromotionDiscount),
                     P("@DraftId", draftId.Value),
                     P("@LineId", price.LineId)
                 ],
@@ -729,11 +747,13 @@ public sealed class PosDraftStore
             INSERT INTO PosDraftLines(
               LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,
               Quantity,BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,
-              PriceChannelId,Discount,Note,AllowsFractionalSale,DocumentUnitCost,AllowsDocumentCostOverride,Position)
+              PriceChannelId,Discount,Note,AllowsFractionalSale,DocumentUnitCost,AllowsDocumentCostOverride,Position,
+              PromotionDiscount)
             VALUES(
               @LineId,@DraftId,@ProductId,@ProductCode,@Description,@UnitCode,@TaxCode,@TaxRate,
               @Quantity,@BaseUnitPrice,@UnitPrice,@CurrencyCode,@PriceSource,
-              @PriceChannelId,@Discount,@Note,@AllowsFractionalSale,@DocumentUnitCost,@AllowsDocumentCostOverride,@Position);
+              @PriceChannelId,@Discount,@Note,@AllowsFractionalSale,@DocumentUnitCost,@AllowsDocumentCostOverride,@Position,
+              @PromotionDiscount);
             """,
             LineParameters(lineId, draftId, input, position),
             ct);
@@ -769,9 +789,9 @@ public sealed class PosDraftStore
             throw new ArgumentException("Product code and description are required.", nameof(input));
         if (input.Quantity <= 0) throw new ArgumentOutOfRangeException(nameof(input));
         if (input.UnitPrice < 0 || input.BaseUnitPrice < 0 || input.DocumentUnitCost < 0 ||
-            input.Discount < 0 || input.TaxRate < 0)
+            input.Discount < 0 || input.PromotionDiscount < 0 || input.TaxRate < 0)
             throw new ArgumentOutOfRangeException(nameof(input));
-        if (input.Discount > input.Quantity * input.UnitPrice)
+        if (input.Discount + input.PromotionDiscount > input.Quantity * input.UnitPrice)
             throw new ArgumentOutOfRangeException(
                 nameof(input),
                 "Discount cannot exceed gross value.");
@@ -987,7 +1007,8 @@ public sealed class PosDraftStore
         command.CommandText = """
             SELECT line.LineId,line.ProductId,line.ProductCode,line.Description,line.UnitCode,line.TaxCode,line.TaxRate,line.Quantity,
                    line.BaseUnitPrice,line.UnitPrice,line.CurrencyCode,line.PriceSource,line.PriceChannelId,
-                   line.Discount,line.Note,line.AllowsFractionalSale,line.DocumentUnitCost,line.AllowsDocumentCostOverride,line.Position
+                   line.Discount,line.Note,line.AllowsFractionalSale,line.DocumentUnitCost,line.AllowsDocumentCostOverride,line.Position,
+                   line.IsPriceOverridden,line.PromotionDiscount
             FROM PosDraftLines line
             WHERE line.DraftId=@DraftId ORDER BY line.Position,line.LineId;
             """;
@@ -1014,7 +1035,9 @@ public sealed class PosDraftStore
                 reader.GetInt64(15) == 1,
                 Decimal(reader, 16),
                 reader.GetInt64(17) == 1,
-                reader.GetInt32(18)));
+                reader.GetInt32(18),
+                reader.GetInt64(19) == 1,
+                Decimal(reader, 20)));
         return lines;
     }
 
@@ -1062,7 +1085,8 @@ public sealed class PosDraftStore
         P("@AllowsFractionalSale", input.AllowsFractionalSale ? 1 : 0),
         P("@DocumentUnitCost", input.DocumentUnitCost),
         P("@AllowsDocumentCostOverride", input.AllowsDocumentCostOverride ? 1 : 0),
-        P("@Position", position)
+        P("@Position", position),
+        P("@PromotionDiscount", input.PromotionDiscount)
     ];
 
     private static PosDraftLineInput ToInput(PosDraftLine line) =>
@@ -1083,7 +1107,8 @@ public sealed class PosDraftStore
             line.Note,
             line.AllowsFractionalSale,
             line.DocumentUnitCost,
-            line.AllowsDocumentCostOverride);
+            line.AllowsDocumentCostOverride,
+            line.PromotionDiscount);
 
     private DateTimeOffset Now() => _timeProvider.GetUtcNow();
 
@@ -1155,6 +1180,8 @@ public sealed class PosDraftStore
           DocumentUnitCost TEXT NOT NULL DEFAULT '0',
           AllowsDocumentCostOverride INTEGER NOT NULL DEFAULT 0,
           Position INTEGER NOT NULL,
+          IsPriceOverridden INTEGER NOT NULL DEFAULT 0,
+          PromotionDiscount TEXT NOT NULL DEFAULT '0',
           FOREIGN KEY(DraftId) REFERENCES PosDrafts(DraftId) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS IX_PosDraftLines_Draft
           ON PosDraftLines(DraftId,Position);

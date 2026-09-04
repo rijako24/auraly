@@ -217,6 +217,55 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Promotion_discount_remains_separate_after_checkout_without_manual_discount_permission()
+    {
+        var promotionId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.Promotions(PromotionId,TenantId,Name,IsActive,Priority,IsCombinable,CreatedAt)
+            VALUES(@PromotionId,@TenantId,N'Diez por ciento',1,100,0,SYSUTCDATETIME());
+            INSERT pricing.PromotionBusinessScopes(PromotionId,BusinessId,TenantId)
+            VALUES(@PromotionId,@BusinessId,@TenantId);
+            INSERT dbo.PromotionBenefits(
+              PromotionId,TenantId,BenefitType,TargetItemType,ProductId,DiscountPercentage,CreatedAt)
+            VALUES(@PromotionId,@TenantId,0,1,@ProductId,10,SYSUTCDATETIME());
+            """,
+            new("@PromotionId", promotionId), new("@TenantId", fixture.TenantId),
+            new("@BusinessId", fixture.BusinessId), new("@ProductId", fixture.ProductId));
+        try
+        {
+            var userId = await CreateUserAsync("promotion-snapshot");
+            using var client = fixture.CreateUserClient(
+                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+            var captured = await CaptureAsync(client, await OpenAsync(client));
+            var completed = await CompleteAsync(
+                client,
+                captured.DraftId,
+                new CompleteOnlineSalesDraftRequest(
+                    captured.Version,
+                    [new OnlineSalesPayment("Cash", captured.PayableAmount, null)]),
+                $"promotion-snapshot-{Guid.NewGuid():N}");
+
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new SqlCommand(
+                "SELECT DiscountAmount,PromotionDiscountAmount FROM dbo.SalesDocumentLines WHERE DocumentId=@DocumentId;",
+                connection);
+            command.Parameters.AddWithValue("@DocumentId", completed.Receipt.DocumentId);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.True(reader.GetDecimal(1) > 0);
+            Assert.Equal(reader.GetDecimal(0), reader.GetDecimal(1));
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "DELETE dbo.Promotions WHERE PromotionId=@PromotionId;",
+                new SqlParameter("@PromotionId", promotionId));
+        }
+    }
+
+    [Fact]
     public async Task Cash_closure_traces_only_the_cash_share_of_a_split_payment_sale()
     {
         var userId = await CreateUserAsync("split-cash-trace");

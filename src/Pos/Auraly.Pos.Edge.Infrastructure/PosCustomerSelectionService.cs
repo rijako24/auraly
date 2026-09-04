@@ -9,7 +9,7 @@ public sealed record PosCustomerSelection(
 
 public sealed class PosCustomerSelectionService(
     PosCatalogStore catalog,
-    PosDraftStore drafts)
+    PosDraftPricingService pricing)
 {
     public async Task<PosCustomerSelection> SelectAsync(
         DraftId draftId,
@@ -20,29 +20,7 @@ public sealed class PosCustomerSelectionService(
             ? null
             : await catalog.GetCustomerAsync(customerId.Value, cancellationToken)
               ?? throw new KeyNotFoundException("The customer is not available in the local POS catalog.");
-        var current = await drafts.GetAsync(draftId, cancellationToken)
-            ?? throw new KeyNotFoundException("The draft does not exist.");
-        var prices = new List<PosDraftLinePriceUpdate>(current.Lines.Count);
-        foreach (var line in current.Lines)
-        {
-            var price = await catalog.ResolvePriceAsync(
-                line.ProductId.Value,
-                customer?.CustomerId,
-                line.Quantity,
-                cancellationToken);
-            prices.Add(new PosDraftLinePriceUpdate(
-                line.LineId,
-                price.BaseAmount,
-                price.Amount,
-                price.CurrencyCode,
-                price.Source,
-                price.PriceChannelId));
-        }
-        var updated = await drafts.AssignCustomerAndPricesAsync(
-            draftId,
-            customer?.CustomerId,
-            prices,
-            cancellationToken);
+        var updated = await pricing.RepriceAsync(draftId, customer?.CustomerId, cancellationToken);
         return new PosCustomerSelection(updated, customer);
     }
 }

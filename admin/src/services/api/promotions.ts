@@ -2,7 +2,7 @@ import { apiClient, withPagedDefaults } from "./client";
 import type { PagedRequest, PagedResponse } from "@/types/api";
 import type { Promotion } from "@/types/entities";
 
-export type PromotionPayload = Omit<Promotion, "promotionId" | "createdAt" | "updatedAt">;
+export type PromotionPayload = Omit<Promotion, "promotionId" | "tenantId" | "createdAt" | "updatedAt">;
 
 export const promotionsApi = {
   list: (businessId: string, params?: Partial<PagedRequest>) =>

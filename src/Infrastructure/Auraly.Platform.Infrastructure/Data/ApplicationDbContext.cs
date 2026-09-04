@@ -106,6 +106,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<CartMutationReceipt> CartMutationReceipts { get; set; }
     public DbSet<ProductRecommendationRule> ProductRecommendationRules { get; set; }
     public DbSet<Promotion> Promotions { get; set; }
+    public DbSet<PromotionBusinessScope> PromotionBusinessScopes { get; set; }
     public DbSet<PromotionCondition> PromotionConditions { get; set; }
     public DbSet<PromotionBenefit> PromotionBenefits { get; set; }
     public DbSet<PromotionApplication> PromotionApplications { get; set; }
@@ -154,6 +155,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Email).IsRequired().HasMaxLength(200);
             entity.Property(e => e.InventoryCostBasis).IsRequired().HasMaxLength(32);
+            entity.Property(e => e.AllowPromotionChannelCombination).IsRequired();
             entity.HasIndex(e => e.Email).IsUnique();
         });
 
@@ -747,14 +749,35 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Description).HasMaxLength(1000);
             entity.Property(e => e.CouponCode).HasMaxLength(80);
+            entity.HasOne(e => e.Tenant)
+                .WithMany()
+                .HasForeignKey(e => e.TenantId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.TenantId, e.IsActive, e.StartsAtUtc, e.EndsAtUtc });
+            entity.HasIndex(e => new { e.TenantId, e.CouponCode })
+                .HasFilter("CouponCode IS NOT NULL");
+        });
+
+        modelBuilder.Entity<PromotionBusinessScope>(entity =>
+        {
+            entity.ToTable("PromotionBusinessScopes", "pricing");
+            entity.HasKey(e => new { e.PromotionId, e.BusinessId });
+            entity.HasOne(e => e.Promotion)
+                .WithMany(e => e.BusinessScopes)
+                .HasForeignKey(e => new { e.PromotionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.PromotionId, e.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.Business)
                 .WithMany()
-                .HasForeignKey(e => e.BusinessId)
+                .HasForeignKey(e => new { e.BusinessId, e.TenantId })
+                .HasPrincipalKey(e => new { e.BusinessId, e.TenantId })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Tenant)
+                .WithMany()
+                .HasForeignKey(e => e.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => new { e.BusinessId, e.IsActive, e.StartsAtUtc, e.EndsAtUtc });
-            entity.HasIndex(e => new { e.BusinessId, e.CouponCode })
-                .HasFilter("CouponCode IS NOT NULL");
+            entity.HasIndex(e => e.TenantId);
         });
 
         modelBuilder.Entity<PromotionCondition>(entity =>
@@ -766,11 +789,12 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.MinSubtotal).HasPrecision(18, 2);
             entity.HasOne(e => e.Promotion)
                 .WithMany(p => p.Conditions)
-                .HasForeignKey(e => e.PromotionId)
+                .HasForeignKey(e => new { e.PromotionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.PromotionId, e.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.HasOne(e => e.Business)
+            entity.HasOne(e => e.Tenant)
                 .WithMany()
-                .HasForeignKey(e => e.BusinessId)
+                .HasForeignKey(e => e.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Product)
                 .WithMany()
@@ -782,7 +806,7 @@ public class ApplicationDbContext : DbContext
                 .HasForeignKey(e => e.ServiceId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
-            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.PromotionId);
         });
 
@@ -798,11 +822,12 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.AppliesToQuantity).HasPrecision(18, 2);
             entity.HasOne(e => e.Promotion)
                 .WithMany(p => p.Benefits)
-                .HasForeignKey(e => e.PromotionId)
+                .HasForeignKey(e => new { e.PromotionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.PromotionId, e.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.HasOne(e => e.Business)
+            entity.HasOne(e => e.Tenant)
                 .WithMany()
-                .HasForeignKey(e => e.BusinessId)
+                .HasForeignKey(e => e.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Product)
                 .WithMany()
@@ -814,7 +839,7 @@ public class ApplicationDbContext : DbContext
                 .HasForeignKey(e => e.ServiceId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
-            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.PromotionId);
         });
 
@@ -823,13 +848,19 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.PromotionApplicationId);
             entity.Property(e => e.DiscountAmount).HasPrecision(18, 2);
             entity.Property(e => e.SnapshotJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.Tenant)
+                .WithMany()
+                .HasForeignKey(e => e.TenantId)
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Business)
                 .WithMany()
-                .HasForeignKey(e => e.BusinessId)
+                .HasForeignKey(e => new { e.BusinessId, e.TenantId })
+                .HasPrincipalKey(e => new { e.BusinessId, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Promotion)
                 .WithMany()
-                .HasForeignKey(e => e.PromotionId)
+                .HasForeignKey(e => new { e.PromotionId, e.TenantId })
+                .HasPrincipalKey(e => new { e.PromotionId, e.TenantId })
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.Order)
                 .WithMany()
@@ -846,8 +877,8 @@ public class ApplicationDbContext : DbContext
                 .HasForeignKey(e => e.PaymentTransactionId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
-            entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => e.PromotionId);
+            entity.HasIndex(e => new { e.TenantId, e.BusinessId });
+            entity.HasIndex(e => new { e.TenantId, e.PromotionId });
             entity.HasIndex(e => e.OrderId);
             entity.HasIndex(e => e.ReservationId);
             entity.HasIndex(e => e.PaymentTransactionId);

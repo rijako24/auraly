@@ -11,9 +11,9 @@ public interface IPosSynchronizationEventSink
     void Record(string level, string category, string title, string? detail = null);
     void ProductReceived(PosCatalogItem product, PosCatalogItem? previous, bool bootstrap);
     void CustomerReceived(PosCustomerPricing customer, PosCustomerPricing? previous);
-    void ChannelPriceReceived(
-        PosPriceChannelItem price,
-        PosPriceChannelItem? previous,
+    void ChannelTierReceived(
+        PosPriceChannelTier tier,
+        PosPriceChannelTier? previous,
         string? productName);
 }
 
@@ -92,13 +92,13 @@ public sealed class PosCatalogSynchronizer(
                     events!.CustomerReceived(customer, previous);
             }
 
-            var previousPrices = previousPricing.PriceChannelItems.ToDictionary(PriceKey);
-            foreach (var price in pricing.PriceChannelItems)
+            var previousTiers = previousPricing.PriceChannelTiers.ToDictionary(TierKey);
+            foreach (var tier in pricing.PriceChannelTiers)
             {
-                previousPrices.TryGetValue(PriceKey(price), out var previous);
-                if (previous == price) continue;
-                var product = await store.GetByProductIdAsync(price.ProductId, cancellationToken);
-                events!.ChannelPriceReceived(price, previous, product?.Name);
+                previousTiers.TryGetValue(TierKey(tier), out var previous);
+                if (previous == tier) continue;
+                var product = await store.GetByProductIdAsync(tier.ProductId, cancellationToken);
+                events!.ChannelTierReceived(tier, previous, product?.Name);
             }
         }
         await store.ApplyPricingSnapshotAsync(pricing, cancellationToken);
@@ -150,8 +150,8 @@ public sealed class PosCatalogSynchronizer(
     private string ScopeQuery =>
         $"businessId={scope.BusinessId:D}&warehouseId={scope.WarehouseId:D}";
 
-    private static (Guid PriceChannelId, Guid ProductId, decimal MinimumQuantity) PriceKey(
-        PosPriceChannelItem item) =>
+    private static (Guid PriceChannelId, Guid ProductId, decimal MinimumQuantity) TierKey(
+        PosPriceChannelTier item) =>
         (item.PriceChannelId, item.ProductId, item.MinimumQuantity);
 
     private static bool CustomerEquals(

@@ -192,9 +192,11 @@ CREATE TABLE [dbo].[CatalogSyncSessions] (
     [CatalogSyncSessionId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     [DeviceId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [HighWaterMark] BIGINT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [ExpiresAt] DATETIMEOFFSET(7) NOT NULL,
-    CONSTRAINT [FK_CatalogSyncSessions_EnrolledDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[EnrolledDevices] ([DeviceId])
+    CONSTRAINT [FK_CatalogSyncSessions_EnrolledDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[EnrolledDevices] ([DeviceId]),
+    CONSTRAINT [FK_CatalogSyncSessions_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId])
 );
 GO

@@ -116,7 +116,11 @@ public sealed record OnlineSalesDraftLine(
     bool AllowsFractionalSale,
     decimal Net,
     decimal Tax,
-    decimal Total);
+    decimal Total,
+    decimal PromotionDiscount = 0)
+{
+    public decimal TotalDiscount => Discount + PromotionDiscount;
+}
 
 public sealed record OnlineSalesDraft(
     Guid DraftId,

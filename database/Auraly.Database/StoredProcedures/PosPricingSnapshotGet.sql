@@ -19,109 +19,29 @@ BEGIN
           AND deviceValue.IsActive = 1)
         THROW 51020, 'The device pricing scope is invalid.', 1;
 
-    ;WITH CategoryAncestors AS
-    (
-        SELECT category.ProductCategoryId AS DescendantId,
-               category.ProductCategoryId AS AncestorId,
-               category.ParentProductCategoryId
-        FROM dbo.ProductCategories category
-        WHERE category.BusinessId = @BusinessId
-        UNION ALL
-        SELECT child.DescendantId, parent.ProductCategoryId, parent.ParentProductCategoryId
-        FROM CategoryAncestors child
-        JOIN dbo.ProductCategories parent
-          ON parent.ProductCategoryId = child.ParentProductCategoryId
-         AND parent.BusinessId = @BusinessId
-    )
-    SELECT channelValue.PriceChannelId,
-           product.ProductId,
-           CASE WHEN channelValue.Strategy = N'TieredProductPrice'
-                THEN special.MinimumQuantity ELSE CONVERT(DECIMAL(19,6), 1) END,
-           calculated.Amount,
-           basePrice.CurrencyCode,
-           CONVERT(BIT, 0)
+    -- Channel configuration is transferred verbatim. No channel/product price
+    -- matrix is calculated or persisted for POS synchronization.
+    SELECT channelValue.PriceChannelId,channelValue.Code,channelValue.Name,
+           channelValue.Strategy,channelValue.Value
     FROM dbo.PriceChannels channelValue
-    JOIN dbo.Products product
-      ON product.TenantId = @TenantId
-     AND product.IsActive = 1
-    CROSS APPLY
-    (
-        SELECT TOP (1) price.Amount,
-               price.CurrencyCode,
-               price.CostBasisAmount,
-               price.TargetMarginPercent,
-               price.EffectiveMarginPercent
-        FROM dbo.ProductPrices price
-        WHERE price.BusinessId = @BusinessId
-          AND price.ProductId = product.ProductId
-          AND price.IsActive = 1
-          AND price.ValidFrom <= SYSDATETIMEOFFSET()
-          AND (price.ValidUntil IS NULL OR price.ValidUntil > SYSDATETIMEOFFSET())
-        ORDER BY price.ValidFrom DESC, price.ProductPriceId
-    ) basePrice
-    OUTER APPLY
-    (
-        SELECT COALESCE(
-            MAX(NULLIF(balance.AverageUnitCost, 0)),
-            basePrice.CostBasisAmount,
-            0) AS Amount
-        FROM dbo.InventoryBalances balance
-        WHERE balance.BusinessId = @BusinessId
-          AND balance.WarehouseId = @WarehouseId
-          AND balance.ProductId = product.ProductId
-    ) cost
-    OUTER APPLY
-    (
-        SELECT COALESCE(
-            (SELECT TOP (1) latest.LatestUnitCost
-             FROM dbo.SupplierProductLatestCosts latest
-             WHERE latest.BusinessId = @BusinessId
-               AND latest.ProductId = product.ProductId
-             ORDER BY latest.ObservedAt DESC, latest.SupplierId),
-            basePrice.CostBasisAmount,
-            cost.Amount,
-            0) AS Amount
-    ) latestCost
-    OUTER APPLY
-    (
-        SELECT item.Amount, item.MinimumQuantity
-        FROM dbo.ResolvedPriceChannelItems item
-        WHERE item.PriceChannelId = channelValue.PriceChannelId
-          AND item.ProductId = product.ProductId
-          AND item.IsActive = 1
-          AND channelValue.Strategy = N'TieredProductPrice'
-    ) special
-    CROSS APPLY
-    (
-        SELECT dbo.PriceChannelAmountCalculate(
-            channelValue.Strategy,
-            channelValue.Value,
-            basePrice.Amount,
-            cost.Amount,
-            latestCost.Amount,
-            COALESCE(basePrice.TargetMarginPercent, basePrice.EffectiveMarginPercent),
-            special.Amount) AS Amount
-    ) calculated
     WHERE channelValue.BusinessId = @BusinessId
-      AND channelValue.IsActive = 1
-      AND calculated.Amount IS NOT NULL
-      AND NOT EXISTS
-      (
-          SELECT 1
-          FROM dbo.PriceChannelExclusions exclusion
-          WHERE exclusion.PriceChannelId = channelValue.PriceChannelId
-            AND
-            (
-                exclusion.ProductId = product.ProductId
-                OR exclusion.ProductBrandId = product.ProductBrandId
-                OR exclusion.ProductCategoryId IN
-                (
-                    SELECT ancestor.AncestorId
-                    FROM CategoryAncestors ancestor
-                    WHERE ancestor.DescendantId = product.ProductCategoryId
-                )
-            )
-      );
+      AND channelValue.IsActive = 1;
+
+    SELECT item.PriceChannelId,item.ProductId,item.MinimumQuantity,item.Amount,item.CurrencyCode
+    FROM dbo.PriceChannelItems item
+    JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=item.PriceChannelId
+    WHERE channelValue.BusinessId=@BusinessId
+      AND channelValue.IsActive=1
+      AND item.IsActive=1
+    ORDER BY item.PriceChannelId,item.ProductId,item.MinimumQuantity;
+
+    SELECT exclusion.PriceChannelId,exclusion.ScopeType,exclusion.ProductId,
+           exclusion.ProductCategoryId,exclusion.ProductBrandId
+    FROM dbo.PriceChannelExclusions exclusion
+    JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=exclusion.PriceChannelId
+    WHERE channelValue.BusinessId=@BusinessId
+      AND channelValue.IsActive=1
+    ORDER BY exclusion.PriceChannelId,exclusion.PriceChannelExclusionId;
 
     SELECT customer.CustomerId,
            COALESCE(party.NormalizedIdentification, party.Identification, N''),
@@ -165,4 +85,38 @@ BEGIN
     WHERE warehouseValue.WarehouseId = @WarehouseId
       AND warehouseValue.BusinessId = @BusinessId
       AND warehouseValue.IsActive = 1;
+
+    SELECT tenantValue.AllowPromotionChannelCombination
+    FROM dbo.Tenants tenantValue
+    WHERE tenantValue.TenantId = @TenantId
+      AND tenantValue.IsActive = 1;
+
+    SELECT promotion.PromotionId,promotion.Name,promotion.Priority,promotion.IsCombinable,
+           promotion.CouponCode,promotion.StartsAtUtc,promotion.EndsAtUtc,promotion.CreatedAt,
+           COALESCE((
+             SELECT CONVERT(INT,conditionValue.ItemType) ItemType,conditionValue.ProductId,
+                    conditionValue.ServiceId,conditionValue.CategoryName,
+                    conditionValue.MinQuantity MinimumQuantity,conditionValue.MinSubtotal MinimumSubtotal
+             FROM dbo.PromotionConditions conditionValue
+             WHERE conditionValue.PromotionId=promotion.PromotionId
+             ORDER BY conditionValue.PromotionConditionId
+             FOR JSON PATH),N'[]') ConditionsJson,
+           COALESCE((
+             SELECT CONVERT(INT,benefit.BenefitType) BenefitType,
+                    CONVERT(INT,benefit.TargetItemType) TargetItemType,benefit.ProductId,
+                    benefit.ServiceId,benefit.CategoryName,benefit.DiscountPercentage,
+                    benefit.DiscountAmount,benefit.FixedUnitPrice,benefit.AppliesToQuantity
+             FROM dbo.PromotionBenefits benefit
+             WHERE benefit.PromotionId=promotion.PromotionId
+             ORDER BY benefit.PromotionBenefitId
+             FOR JSON PATH),N'[]') BenefitsJson
+    FROM dbo.Promotions promotion
+    WHERE promotion.TenantId=@TenantId
+      AND (promotion.AppliesToAllBusinesses=1
+           OR EXISTS(SELECT 1 FROM pricing.PromotionBusinessScopes scope
+                     WHERE scope.PromotionId=promotion.PromotionId AND scope.BusinessId=@BusinessId))
+      AND promotion.IsActive=1
+      AND (promotion.StartsAtUtc IS NULL OR promotion.StartsAtUtc<=SYSUTCDATETIME())
+      AND (promotion.EndsAtUtc IS NULL OR promotion.EndsAtUtc>=SYSUTCDATETIME())
+    ORDER BY promotion.Priority DESC,promotion.CreatedAt,promotion.PromotionId;
 END;

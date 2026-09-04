@@ -31,8 +31,7 @@
     <Build Include="Schemas\Billing.sql" />
     <Build Include="Schemas\Sales.sql" />
     <Build Include="Schemas\Accounting.sql" />
-    <Build Include="Functions\PriceChannelAmountCalculate.sql" />
-    <Build Include="Functions\CustomerProductPriceResolve.sql" />
+    <Build Include="Schemas\Pricing.sql" />
     <Build Include="StoredProcedures\SellerOrderCatalogGet.sql" />
     <Build Include="StoredProcedures\SellerOrderContextGet.sql" />
     <Build Include="StoredProcedures\SellerOrderProductResolve.sql" />
@@ -152,6 +151,7 @@
     <Build Include="Tables\ProductSearchTerms.sql" />
     <Build Include="Tables\ProductRecommendationRules.sql" />
     <Build Include="Tables\Promotions.sql" />
+    <Build Include="Tables\PromotionBusinessScopes.sql" />
     <Build Include="Tables\PromotionConditions.sql" />
     <Build Include="Tables\PromotionBenefits.sql" />
     <Build Include="Tables\Conversations.sql" />

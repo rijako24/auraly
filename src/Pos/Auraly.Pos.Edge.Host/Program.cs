@@ -206,6 +206,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
         builder.Services.AddSingleton<PosCaptureService>();
+        builder.Services.AddSingleton<PosDraftPricingService>();
         builder.Services.AddSingleton<PosCustomerSelectionService>();
         builder.Services.AddPosSaleCompletion(
             builder.Configuration,
@@ -1049,6 +1050,7 @@ public static class PosEdgeHostApplication
             Guid lineId,
             HttpContext http,
             PosDraftStore drafts,
+            PosDraftPricingService pricing,
             PosSensitiveActionAuthorizer authorizer,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
@@ -1059,6 +1061,8 @@ public static class PosEdgeHostApplication
                 http.Request.Headers["X-Auraly-Operation-Id"],
                 http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
             var result = await drafts.RemoveLineAsync(new DraftId(draftId), lineId, ct);
+            if (result.Lines.Count > 0)
+                result = await pricing.RepriceAsync(result.DraftId, result.CustomerId, ct);
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);
         });
