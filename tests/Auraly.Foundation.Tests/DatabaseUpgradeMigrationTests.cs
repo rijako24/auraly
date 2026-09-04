@@ -11,6 +11,11 @@ public sealed class DatabaseUpgradeMigrationTests
         var migration = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "Migrations",
             "20260904_MigratePromotionAndChannelPricing.sql"));
+        var postDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PostDeployment.sql"));
+        var completion = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260904_CompletePromotionScopeMigration.sql"));
 
         Assert.Contains("20260904_MigratePromotionAndChannelPricing.sql", preDeployment,
             StringComparison.Ordinal);
@@ -18,7 +23,15 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.Contains("DELETE FROM dbo.CatalogSyncSessions", migration,
             StringComparison.Ordinal);
-        Assert.Contains("INSERT pricing.PromotionBusinessScopes", migration,
+        Assert.Contains("INSERT dbo.PromotionBusinessScopeMigration", migration,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATE SCHEMA pricing", migration,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("20260904_CompletePromotionScopeMigration.sql", postDeployment,
+            StringComparison.Ordinal);
+        Assert.Contains("INSERT pricing.PromotionBusinessScopes", completion,
+            StringComparison.Ordinal);
+        Assert.Contains("DROP TABLE dbo.PromotionBusinessScopeMigration", completion,
             StringComparison.Ordinal);
         Assert.Contains("SET TenantId=promotion.TenantId", migration,
             StringComparison.Ordinal);

@@ -29,9 +29,6 @@ BEGIN
     ALTER TABLE dbo.CatalogSyncSessions ALTER COLUMN WarehouseId UNIQUEIDENTIFIER NOT NULL;
 END;
 
-IF SCHEMA_ID(N'pricing') IS NULL
-    EXEC(N'CREATE SCHEMA pricing AUTHORIZATION dbo;');
-
 IF OBJECT_ID(N'dbo.Promotions', N'U') IS NOT NULL
 BEGIN
     IF COL_LENGTH(N'dbo.Promotions', N'TenantId') IS NULL
@@ -58,25 +55,25 @@ BEGIN
             ADD AppliesToAllBusinesses BIT NOT NULL
                 CONSTRAINT DF_Promotions_AppliesToAllBusinesses DEFAULT (0);
 
-    IF OBJECT_ID(N'pricing.PromotionBusinessScopes', N'U') IS NULL
+    IF OBJECT_ID(N'dbo.PromotionBusinessScopeMigration', N'U') IS NULL
     BEGIN
-        CREATE TABLE pricing.PromotionBusinessScopes
+        CREATE TABLE dbo.PromotionBusinessScopeMigration
         (
             PromotionId UNIQUEIDENTIFIER NOT NULL,
             BusinessId UNIQUEIDENTIFIER NOT NULL,
             TenantId UNIQUEIDENTIFIER NOT NULL,
-            CONSTRAINT PK_PromotionBusinessScopes
+            CONSTRAINT PK_PromotionBusinessScopeMigration
                 PRIMARY KEY (PromotionId, BusinessId)
         );
     END;
 
     EXEC sys.sp_executesql N'
-        INSERT pricing.PromotionBusinessScopes(PromotionId,BusinessId,TenantId)
+        INSERT dbo.PromotionBusinessScopeMigration(PromotionId,BusinessId,TenantId)
         SELECT promotion.PromotionId,promotion.BusinessId,promotion.TenantId
         FROM dbo.Promotions promotion
         WHERE NOT EXISTS(
             SELECT 1
-            FROM pricing.PromotionBusinessScopes scopeValue
+            FROM dbo.PromotionBusinessScopeMigration scopeValue
             WHERE scopeValue.PromotionId=promotion.PromotionId
               AND scopeValue.BusinessId=promotion.BusinessId);';
 

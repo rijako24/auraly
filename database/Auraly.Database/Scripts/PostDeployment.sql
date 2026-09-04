@@ -47,6 +47,7 @@
 :r .\Migrations\MigrateSuppliersToParties.sql
 :r .\Migrations\RemoveLegacyTriggers.sql
 :r .\Migrations\ClassifySystemWarehouses.sql
+:r .\Migrations\20260904_CompletePromotionScopeMigration.sql
 :r .\Migrations\20260903_BackfillLegacyDamageWarehouses.sql
 :r .\Migrations\20260903_AlignWorkSessionOperationalScope.sql
 :r .\Migrations\20260903_BackfillDispatchSettlementWorkSessions.sql
