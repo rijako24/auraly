@@ -224,6 +224,11 @@
         "resolved": "4.0.3",
         "contentHash": "W+U9WvmZQgi5cX6FS5GDtDoPzUCV4LkBLkywq/kRZhuDwcbavOzcDAr3LXJFqHUi952Yj3LEYoWW0jbEUQChsA=="
       },
+      "BouncyCastle.Cryptography": {
+        "type": "Transitive",
+        "resolved": "2.7.0",
+        "contentHash": "U+12df8UEWHgBi04YVf/Lgi2dy3SItlIYvHjjEVa/BngCQIzDCDRBk50DDByCfDvSbe5pRNFr3b7UrVK2kMcLw=="
+      },
       "Castle.Core": {
         "type": "Transitive",
         "resolved": "5.1.1",
@@ -2379,7 +2384,8 @@
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Domain.Fiscal": "[1.0.0, )",
           "Auraly.Fiscal.Core": "[1.0.0, )",
-          "Auraly.Fiscal.Ubl": "[1.0.0, )"
+          "Auraly.Fiscal.Ubl": "[1.0.0, )",
+          "BouncyCastle.Cryptography": "[2.7.0, )"
         }
       },
       "auraly.application.inventory": {
@@ -2642,7 +2648,10 @@
         }
       },
       "auraly.contracts.orders": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Contracts.Sales": "[1.0.0, )"
+        }
       },
       "auraly.contracts.organization": {
         "type": "Project",

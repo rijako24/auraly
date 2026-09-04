@@ -1186,7 +1186,10 @@
         }
       },
       "auraly.contracts.orders": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Contracts.Sales": "[1.0.0, )"
+        }
       },
       "auraly.contracts.organization": {
         "type": "Project",
