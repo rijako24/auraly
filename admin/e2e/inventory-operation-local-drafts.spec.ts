@@ -248,6 +248,8 @@ test("recepción simple sigue directa y la importación carga catálogos y conce
   await page.getByRole("option", { name: /Arroz premium/ }).click();
 
   await expect(dialog.getByText("Opcional. Si la compra no tiene otros costos, no necesitas hacer nada aquí.")).toBeVisible();
+  await expect(dialog.getByText(/Factura .* COP/)).toBeVisible();
+  await expect(dialog.getByText(/Al inventario .* COP/)).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Confirmar entrada" })).toBeEnabled();
   await expect(dialog.getByText("Valor que entra al inventario", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Total retenciones", { exact: true })).toBeVisible();

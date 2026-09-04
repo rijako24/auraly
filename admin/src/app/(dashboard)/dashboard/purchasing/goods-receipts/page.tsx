@@ -1022,11 +1022,13 @@ function ReceiptEditor({
               <thead className="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <tr><th className="w-[34%] px-4 py-3">Producto</th><th className="w-[17%] px-3 py-3">Cantidad recibida</th>
                   <th className="w-[14%] px-3 py-3">Costo unitario</th><th className="w-[12%] px-3 py-3">Descuento</th>
-                  <th className="w-[7%] px-3 py-3 text-center">IVA</th><th className="w-[11%] px-3 py-3 text-right">Total</th>
+                  <th className="w-[7%] px-3 py-3 text-center">IVA</th><th className="w-[11%] px-3 py-3 text-right">Factura / inventario</th>
                   <th className="w-[5%]" /></tr>
               </thead>
               <tbody>{draft.lines.map((line) => {
-                const lineTotal = calculateGoodsReceiptLine(line).total;
+                const calculatedLine = calculateGoodsReceiptLine(line);
+                const lineInventoryCost = (calculatedLine.net +
+                  (line.taxTreatment === "CapitalizedCost" ? calculatedLine.tax : 0)) * mainRate;
                 return <tr key={line.productId} className="border-t align-top">
                   <td className="break-words px-4 py-3"><p className="font-semibold">{line.description}</p>
                     <p className="text-xs text-muted-foreground">IVA de compra {line.taxRate} % · {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}</p>
@@ -1080,7 +1082,10 @@ function ReceiptEditor({
                     value={line.discountAmount} onValueChange={(value) =>
                       updateLine(line.productId, { discountAmount: value ?? 0 })} /></td>
                   <td className="px-3 py-4 text-center">{line.taxRate} %</td>
-                  <td className="break-words px-3 py-4 text-right text-xs font-semibold">{formatCurrency(lineTotal)}</td>
+                  <td className="break-words px-3 py-4 text-right text-xs">
+                    <p className="font-semibold">Factura {formatCurrency(calculatedLine.total)} {draft.currencyCode}</p>
+                    <p className="mt-1 text-muted-foreground">Al inventario {formatCurrency(lineInventoryCost)} COP</p>
+                  </td>
                   <td className="pr-3"><Button type="button" size="icon" variant="ghost"
                     aria-label={`Eliminar ${line.description}`}
                     onClick={() => change({ lines: draft.lines
