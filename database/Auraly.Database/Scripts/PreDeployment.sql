@@ -41,6 +41,8 @@ GO
 GO
 :r .\Migrations\MoveDispatchReasonsToOwnedSchema.sql
 GO
+:r .\Migrations\20260904_MigratePromotionAndChannelPricing.sql
+GO
 
 -- Scripts de pre-despliegue
 -- Aquí puedes agregar validaciones, limpieza, etc.

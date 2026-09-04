@@ -3,6 +3,32 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public void Pricing_cutover_preserves_historical_scope_and_expires_ambiguous_catalog_sessions()
+    {
+        var root = FindRepositoryRoot();
+        var preDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260904_MigratePromotionAndChannelPricing.sql"));
+
+        Assert.Contains("20260904_MigratePromotionAndChannelPricing.sql", preDeployment,
+            StringComparison.Ordinal);
+        Assert.Contains("sp_rename N'dbo.ResolvedPriceChannelItems'", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("DELETE FROM dbo.CatalogSyncSessions", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("INSERT pricing.PromotionBusinessScopes", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("SET TenantId=promotion.TenantId", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("different tenant than its promotion", migration,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("DROP TABLE dbo.Promotions", migration,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Production_database_deployment_skips_demo_tenant_seeds()
     {
         var root = FindRepositoryRoot();
