@@ -456,6 +456,46 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/parties?page=1&pageSize=1&role=Supplier&partyId={customer.PartyId:D}");
         Assert.Equal(supplier.SupplierId, Assert.Single(identityPage!.Items).SupplierId);
 
+        var supplierOptions = await admin.GetFromJsonAsync<PartyRoleOptionPage>(
+            $"/api/commerce/v1/parties/role-options?role=Supplier&page=1&pageSize=10&roleId={supplier.SupplierId:D}");
+        var supplierOption = Assert.Single(supplierOptions!.Items);
+        Assert.Equal(customer.PartyId, supplierOption.PartyId);
+        Assert.Equal(supplier.SupplierId, supplierOption.RoleId);
+        Assert.Equal("Supplier", supplierOption.Role);
+        Assert.Equal("Comercial unificada", supplierOption.DisplayName);
+        Assert.Equal("901.777.333-1", supplierOption.Identification);
+        Assert.Null(supplierOption.SupplierPurchaseEvidencePolicy);
+        Assert.Equal(15, supplierOption.SupplierDefaultPaymentDueDays);
+
+        var customerOptions = await admin.GetFromJsonAsync<PartyRoleOptionPage>(
+            $"/api/commerce/v1/parties/role-options?role=Customer&page=1&pageSize=10&roleId={customer.CustomerId:D}");
+        var customerOption = Assert.Single(customerOptions!.Items);
+        Assert.Equal(customer.PartyId, customerOption.PartyId);
+        Assert.Equal(customer.CustomerId, customerOption.RoleId);
+        Assert.Equal("Customer", customerOption.Role);
+
+        var sellerOptions = await admin.GetFromJsonAsync<PartyRoleOptionPage>(
+            $"/api/commerce/v1/parties/role-options?role=Seller&page=1&pageSize=10&roleId={seller.RoleId:D}");
+        var sellerOption = Assert.Single(sellerOptions!.Items);
+        Assert.Equal(customer.PartyId, sellerOption.PartyId);
+        Assert.Equal(seller.RoleId, sellerOption.RoleId);
+        Assert.Null(sellerOption.SupplierPurchaseEvidencePolicy);
+        Assert.Null(sellerOption.SupplierDefaultPaymentDueDays);
+
+        var carrierOptions = await admin.GetFromJsonAsync<PartyRoleOptionPage>(
+            $"/api/commerce/v1/parties/role-options?role=Carrier&page=1&pageSize=10&roleId={carrier.RoleId:D}");
+        var carrierOption = Assert.Single(carrierOptions!.Items);
+        Assert.Equal(customer.PartyId, carrierOption.PartyId);
+        Assert.Equal(carrier.RoleId, carrierOption.RoleId);
+        Assert.Equal("Carrier", carrierOption.Role);
+
+        var anyPartyOptions = await admin.GetFromJsonAsync<PartyRoleOptionPage>(
+            $"/api/commerce/v1/parties/role-options?role=Any&page=1&pageSize=10&partyId={customer.PartyId:D}");
+        var anyPartyOption = Assert.Single(anyPartyOptions!.Items);
+        Assert.Equal(customer.PartyId, anyPartyOption.PartyId);
+        Assert.Equal(customer.PartyId, anyPartyOption.RoleId);
+        Assert.Equal("Any", anyPartyOption.Role);
+
         var update = new UpdatePartyRequest(
             PartyTypes.Organization, "Comercial unificada renovada",
             "Comercial unificada S.A.S.", null, null, "4",

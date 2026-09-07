@@ -9,6 +9,8 @@ public interface IPartyWorkspaceStore
 {
     Task<PartyWorkspacePage> PageAsync(
         PartyActorIdentity actor, int page, PartyWorkspaceQuery query, CancellationToken ct);
+    Task<PartyRoleOptionPage> RoleOptionsAsync(
+        PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct);
     Task<IReadOnlyCollection<CustomerMapSite>> CustomerMapAsync(
         PartyActorIdentity actor, CustomerMapQuery query, CancellationToken ct);
     Task<PartyWorkspaceDetail?> FindIdentityAsync(
@@ -48,6 +50,19 @@ public sealed class PartyWorkspaceService(
         if (role is not null && role is not ("Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User"))
             throw new PartyValidationException("Role must be Customer, Supplier, Seller, Carrier, Employee or User.");
         return store.PageAsync(actor, page, query with { Search = query.Search?.Trim(), Role = role }, ct);
+    }
+
+    public Task<PartyRoleOptionPage> RoleOptionsAsync(
+        PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct)
+    {
+        Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
+        if (page < 1 || query.PageSize is < 1 or > 100)
+            throw new PartyValidationException("Page and PageSize are outside the allowed range.");
+        var role = query.Role?.Trim();
+        if (role is not ("Any" or "Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User"))
+            throw new PartyValidationException("Role must be Any, Customer, Supplier, Seller, Carrier, Employee or User.");
+        return store.RoleOptionsAsync(
+            actor, page, query with { Role = role, Search = query.Search?.Trim() }, ct);
     }
 
     public Task<IReadOnlyCollection<CustomerMapSite>> CustomerMapAsync(

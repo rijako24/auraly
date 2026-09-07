@@ -5,7 +5,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Plus,Search,Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
-import { PartyRoleSelect } from "@/components/parties/party-role-select";
+import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
 import { SupplierProductPicker } from "@/components/products/supplier-product-picker";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +21,6 @@ import { useConfirmPurchaseOrder,useDeletePurchaseOrderDraft,usePurchaseOrders,u
 import { useGoodsReceiptOptions } from "@/hooks/use-goods-receipts";
 import { purchaseOrdersApi,type PurchaseOrderDetail,type PurchaseOrderLineRequest,type PurchaseOrderListItem,type PurchaseOrderStatus,type PurchaseOrderSuggestion } from "@/services/api/purchase-orders";
 import type { GoodsReceiptProduct } from "@/services/api/goods-receipts";
-import type { PartyWorkspaceItem } from "@/services/api/parties";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { formatCurrency,formatDateTime } from "@/lib/utils";
@@ -69,7 +68,7 @@ function OrderEditor({draft,businessId,onChange,onClose,onDiscard,onConfirmed}:{
   const targetCoverageDays=draft.targetCoverageDays;
   const [suggestions,setSuggestions]=useState<Record<string,PurchaseOrderSuggestion>>({});
   const [suggestionsLoading,setSuggestionsLoading]=useState(false);
-  const [pendingSupplierChange,setPendingSupplierChange]=useState<PartyWorkspaceItem>();
+  const [pendingSupplierChange,setPendingSupplierChange]=useState<PartyRoleSelection>();
   const productSearchRef=useRef<HTMLInputElement>(null),quantityRefs=useRef(new Map<string,HTMLInputElement>());
   const draftRef=useRef(draft),onChangeRef=useRef(onChange),autoAppliedProducts=useRef(new Set<string>(draft.suggestionsInitialized?draft.lines.map(line=>line.productId):[]));
   draftRef.current=draft;onChangeRef.current=onChange;
@@ -78,8 +77,8 @@ function OrderEditor({draft,businessId,onChange,onClose,onDiscard,onConfirmed}:{
   useEffect(()=>{let active=true;if(!draft.warehouseId||!draft.supplierId||!productIdsKey){setSuggestions({});setSuggestionsLoading(false);return()=>{active=false}}setSuggestionsLoading(true);void purchaseOrdersApi.suggestions({businessId,warehouseId:draft.warehouseId,supplierId:draft.supplierId,productIds:productIdsKey.split(","),targetCoverageDays}).then(values=>{if(!active)return;const byProduct=Object.fromEntries(values.map(value=>[value.productId,value]));setSuggestions(byProduct);const current=draftRef.current;let changed=false;const lines=current.lines.map(line=>{const suggestion=byProduct[line.productId];if(!suggestion||autoAppliedProducts.current.has(line.productId))return line;autoAppliedProducts.current.add(line.productId);changed=true;return {...line,presentationQuantity:suggestion.suggestedPresentationQuantity,orderedQuantity:suggestion.suggestedQuantity}});if(changed)onChangeRef.current({...current,lines,suggestionsInitialized:true})}).catch(()=>{if(active){setSuggestions({});toast.error("No fue posible calcular las cantidades sugeridas.")}}).finally(()=>{if(active)setSuggestionsLoading(false)});return()=>{active=false}},[businessId,draft.supplierId,draft.warehouseId,productIdsKey,targetCoverageDays]);
   const total=draft.lines.reduce((sum,x)=>sum+(x.orderedQuantity*x.unitCost-x.discountAmount)*(1+x.taxRate/100),0);
   const patch=(v:Partial<Draft>)=>onChange({...draft,...v});
-  const applySupplierChange=(supplier:PartyWorkspaceItem)=>{autoAppliedProducts.current.clear();patch({supplierId:supplier.supplierId??"",lines:[],suggestionsInitialized:false});setPendingSupplierChange(undefined)};
-  const requestSupplierChange=(supplierId:string,supplier?:PartyWorkspaceItem)=>{if(!supplier||supplierId===draft.supplierId)return;if(!draft.lines.length){applySupplierChange(supplier);return}setPendingSupplierChange(supplier)};
+  const applySupplierChange=(supplier:PartyRoleSelection)=>{autoAppliedProducts.current.clear();patch({supplierId:supplier.supplierId??"",lines:[],suggestionsInitialized:false});setPendingSupplierChange(undefined)};
+  const requestSupplierChange=(supplierId:string,supplier?:PartyRoleSelection)=>{if(!supplier||supplierId===draft.supplierId)return;if(!draft.lines.length){applySupplierChange(supplier);return}setPendingSupplierChange(supplier)};
   const focusQuantity=(productId:string)=>requestAnimationFrame(()=>requestAnimationFrame(()=>{const input=quantityRefs.current.get(productId);input?.focus();input?.select();input?.scrollIntoView({block:"nearest"})}));
   const add=(p:GoodsReceiptProduct)=>{const existing=draft.lines.find(x=>x.productId===p.productId);if(existing){focusQuantity(existing.productId);return}const line={lineId:crypto.randomUUID(),lineNumber:draft.lines.length+1,productId:p.productId,description:p.name,orderedQuantity:p.unitsPerPresentation,unitCost:p.latestUnitCost??0,discountAmount:0,taxCode:p.taxCode,taxRate:p.taxRate,taxTreatment:p.taxTreatment,presentationName:p.purchasePresentationName,presentationQuantity:1,unitsPerPresentation:p.unitsPerPresentation};patch({lines:[...draft.lines,line]});focusQuantity(line.productId)};
   const moveQuantity=(productId:string,offset:number)=>{const index=draft.lines.findIndex(x=>x.productId===productId);if(index<0||!draft.lines.length)return;const next=Math.min(Math.max(index+offset,0),draft.lines.length-1);quantityRefs.current.get(draft.lines[next].productId)?.focus()};

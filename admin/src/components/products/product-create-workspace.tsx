@@ -110,8 +110,8 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
       if (form.isWeighable && !form.allowsFractionalSale) throw new Error("Habilita la venta fraccionada antes de usar balanza.");
       let supplierDetails = selectedSupplier;
       if (form.supplierId && !supplierDetails) {
-        const resolved = (await partiesApi.page({
-          page: 1, pageSize: 1, role: "Supplier", roleId: form.supplierId, isActive: true,
+        const resolved = (await partiesApi.roleOptions({
+          page: 1, pageSize: 1, role: "Supplier", roleId: form.supplierId,
         })).items[0];
         if (!resolved) throw new Error("El proveedor seleccionado ya no está disponible.");
         supplierDetails = { name: resolved.displayName, identification: resolved.identification ?? "" };
