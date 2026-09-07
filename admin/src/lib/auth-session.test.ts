@@ -9,10 +9,18 @@ import {
   retryAuthenticatedRequest,
   runAuthenticationSessionReplacement,
   shouldRunCloudBackgroundSynchronization,
+  shouldRedirectUnauthenticatedDashboard,
   shouldRefreshSession,
 } from "./auth-session";
 
 describe("auth session decisions", () => {
+  it("redirects an unauthenticated dashboard only after persisted auth hydrates", () => {
+    assert.equal(shouldRedirectUnauthenticatedDashboard(false, false, "/dashboard/parties"), false);
+    assert.equal(shouldRedirectUnauthenticatedDashboard(true, true, "/dashboard/parties"), false);
+    assert.equal(shouldRedirectUnauthenticatedDashboard(true, false, "/login"), false);
+    assert.equal(shouldRedirectUnauthenticatedDashboard(true, false, "/dashboard/parties"), true);
+  });
+
   it("clears the previous identity context before a new login is installed", () => {
     const removed: string[] = [];
     clearPreviousWebIdentityContext({ removeItem: (key) => { removed.push(key); } });

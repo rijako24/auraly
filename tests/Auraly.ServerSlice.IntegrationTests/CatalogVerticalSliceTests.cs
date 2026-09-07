@@ -13,6 +13,57 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Catalog_delta_coalesces_repeated_product_changes_without_skipping_other_products()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        using var firstCreation = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/products",
+            ProductRequest(taxProfileId, [new ProductPriceInput(10_000m)], []));
+        firstCreation.EnsureSuccessStatusCode();
+        var first = (await firstCreation.Content.ReadFromJsonAsync<ProductDetail>())!;
+        using var secondCreation = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/products",
+            ProductRequest(taxProfileId, [new ProductPriceInput(20_000m)], []));
+        secondCreation.EnsureSuccessStatusCode();
+        var second = (await secondCreation.Content.ReadFromJsonAsync<ProductDetail>())!;
+        var fromCursor = await ScalarAsync<long>(
+            "SELECT MAX(CatalogChangeId) FROM dbo.CatalogChanges WHERE BusinessId=@BusinessId;",
+            new SqlParameter("@BusinessId", fixture.BusinessId));
+
+        await ExecuteAsync(
+            """
+            INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+            SELECT TOP (10) @BusinessId,@FirstProduct,N'Upsert',SYSDATETIMEOFFSET()
+            FROM sys.all_objects;
+            INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+            VALUES(@BusinessId,@SecondProduct,N'Upsert',SYSDATETIMEOFFSET());
+            INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+            SELECT TOP (10) @BusinessId,@FirstProduct,N'Upsert',SYSDATETIMEOFFSET()
+            FROM sys.all_objects;
+            """,
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@FirstProduct", first.ProductId),
+            new SqlParameter("@SecondProduct", second.ProductId));
+        var latestCursor = await ScalarAsync<long>(
+            "SELECT MAX(CatalogChangeId) FROM dbo.CatalogChanges WHERE BusinessId=@BusinessId;",
+            new SqlParameter("@BusinessId", fixture.BusinessId));
+
+        using var device = fixture.CreateClient();
+        var firstPage = await ReadCatalogPageAsync(device, fromCursor, pageSize: 1);
+        Assert.True(firstPage.HasMore);
+        Assert.Equal(second.ProductId, Assert.Single(firstPage.Changes).Product.ProductId);
+
+        var secondPage = await ReadCatalogPageAsync(device, firstPage.ToCursor, pageSize: 1);
+        Assert.False(secondPage.HasMore);
+        Assert.Equal(first.ProductId, Assert.Single(secondPage.Changes).Product.ProductId);
+        Assert.Equal(latestCursor, secondPage.ToCursor);
+    }
+
+    [Fact]
     public async Task Product_category_endpoint_returns_zero_based_area_line_group_and_subgroup_depths()
     {
         var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
@@ -962,6 +1013,21 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 return message;
         }
         throw new InvalidOperationException("No newer catalog synchronization signal was published.");
+    }
+
+    private async Task<CatalogDeltaPage> ReadCatalogPageAsync(
+        HttpClient client,
+        long cursor,
+        int pageSize)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/pos/v1/catalog/changes?businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&cursor={cursor}&pageSize={pageSize}");
+        request.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        request.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<CatalogDeltaPage>())!;
     }
 
     private SaveProductRequest ProductRequest(

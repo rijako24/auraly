@@ -553,7 +553,18 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         }
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            ;WITH CategoryAncestors AS
+            ;WITH LatestProductChanges AS
+            (
+              SELECT c.CatalogChangeId,c.BusinessId,c.ProductId,c.ChangeKind,
+                     ROW_NUMBER() OVER
+                     (
+                       PARTITION BY c.ProductId
+                       ORDER BY c.CatalogChangeId DESC
+                     ) AS ProductPosition
+              FROM dbo.CatalogChanges c
+              WHERE c.BusinessId=@BusinessId AND c.CatalogChangeId>@Cursor
+            ),
+            CategoryAncestors AS
             (
               SELECT category.ProductCategoryId DescendantId,category.ProductCategoryId AncestorId,
                      category.ParentProductCategoryId
@@ -575,7 +586,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                         WHERE ancestor.DescendantId=p.ProductCategoryId),N''),
               averageCost.Amount,latestCost.Amount,
               COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent)
-            FROM dbo.CatalogChanges c
+            FROM LatestProductChanges c
             JOIN dbo.Products p ON p.ProductId=c.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
             JOIN dbo.EnrolledDevices d ON d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1
@@ -600,7 +611,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                  ORDER BY latest.ObservedAt DESC,latest.SupplierId),
                 pr.CostBasisAmount,averageCost.Amount,0) Amount
             ) latestCost
-            WHERE c.BusinessId=@BusinessId AND c.CatalogChangeId>@Cursor
+            WHERE c.ProductPosition=1
             ORDER BY c.CatalogChangeId;
             """;
         command.Parameters.AddRange([P("@Take", pageSize + 1), P("@DeviceId", deviceId), P("@TenantId", tenantId),

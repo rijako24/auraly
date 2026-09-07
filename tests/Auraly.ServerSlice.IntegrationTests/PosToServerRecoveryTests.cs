@@ -20,6 +20,81 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task One_thousand_offline_sales_resume_after_restart_without_duplicates()
+    {
+        const int documentCount = 1_000;
+        const int uploadedBeforeRestart = 400;
+        var databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"auraly-pos-volume-{Guid.NewGuid():N}.db");
+        try
+        {
+            var userId = new UserId(Guid.NewGuid());
+            var register = SalesExecutionContext(userId);
+            var store = await CreateStoreOnlyAsync(databasePath, userId);
+            await store.ProvisionDocumentSeriesAsync(
+                new PosEdgeDocumentSeriesProvision(
+                    fixture.DocumentSeriesId,
+                    register.DeviceId!.Value,
+                    AuralyDocumentTypes.SalesInvoice,
+                    "VTA",
+                    "03",
+                    8,
+                    1_001,
+                    3_000));
+            await store.ProvisionSeriesAsync(
+                new PosEdgeSeriesProvision(
+                    fixture.SeriesId,
+                    register.DeviceId.Value,
+                    ServerSliceFixture.Prefix,
+                    ServerSliceFixture.AuthorizationNumber,
+                    1_001,
+                    3_000,
+                    new DateOnly(2028, 12, 31),
+                    fixture.FiscalAuthorizationId));
+
+            var issuedAt = new DateTimeOffset(
+                2026, 9, 7, 8, 0, 0, TimeSpan.FromHours(-5));
+            for (var index = 0; index < documentCount; index++)
+            {
+                await store.IssueAsync(
+                    CreateCommand(userId, new DocumentId(Guid.NewGuid()), register, fixture) with
+                    {
+                        IssuedAt = issuedAt.AddSeconds(index)
+                    });
+            }
+            Assert.Equal(documentCount, (await store.GetPendingOutboxAsync()).Count);
+
+            var uploads = new RecordingUploadClient();
+            var firstUploader = new PosEdgeOutboxUploader(store, uploads, TimeProvider.System);
+            for (var index = 0; index < uploadedBeforeRestart; index++)
+                Assert.True(await firstUploader.UploadNextAsync());
+
+            var reopened = await CreateStoreOnlyAsync(databasePath, userId);
+            Assert.Equal(
+                documentCount - uploadedBeforeRestart,
+                (await reopened.GetPendingOutboxAsync()).Count);
+            var resumedUploader = new PosEdgeOutboxUploader(reopened, uploads, TimeProvider.System);
+            while (await resumedUploader.UploadNextAsync()) { }
+
+            Assert.Empty(await reopened.GetPendingOutboxAsync());
+            Assert.Equal(documentCount, uploads.IdempotencyKeys.Count);
+            Assert.Equal(documentCount, uploads.RequestDocumentIds.Count);
+            Assert.True(uploads.IdempotencyKeys.SetEquals(uploads.RequestDocumentIds));
+
+            var verifiedAfterSecondRestart = await CreateStoreOnlyAsync(databasePath, userId);
+            Assert.Empty(await verifiedAfterSecondRestart.GetPendingOutboxAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteIfPresent(databasePath);
+            DeleteIfPresent($"{databasePath}-wal");
+            DeleteIfPresent($"{databasePath}-shm");
+        }
+    }
+
+    [Fact]
     public async Task Commercial_receipt_acknowledgement_completes_the_local_upload()
     {
         var request = fixture.CreateValidRequest(99);
@@ -399,6 +474,34 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             string idempotencyKey,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(result);
+    }
+
+    private sealed class RecordingUploadClient : IPosSaleUploadClient
+    {
+        public HashSet<string> IdempotencyKeys { get; } = [];
+        public HashSet<string> RequestDocumentIds { get; } = [];
+
+        public Task<PosSaleUploadAttempt> UploadAsync(
+            PosSaleUploadRequest request,
+            string idempotencyKey,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.True(IdempotencyKeys.Add(idempotencyKey));
+            Assert.True(RequestDocumentIds.Add(request.DocumentId.ToString("D")));
+            return Task.FromResult(new PosSaleUploadAttempt(
+                PosSaleUploadDisposition.Uploaded,
+                new PosSaleUploadResponse(
+                    Guid.NewGuid(),
+                    request.DocumentId,
+                    PosSaleRemoteStatuses.CommercialAccepted,
+                    null,
+                    null,
+                    false,
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow,
+                    null),
+                null));
+        }
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset value) : TimeProvider

@@ -45,6 +45,14 @@ export function shouldRunCloudBackgroundSynchronization(pathname: string): boole
   return pathname.startsWith("/dashboard");
 }
 
+export function shouldRedirectUnauthenticatedDashboard(
+  hydrationFinished: boolean,
+  isAuthenticated: boolean,
+  pathname: string,
+): boolean {
+  return hydrationFinished && !isAuthenticated && pathname.startsWith("/dashboard");
+}
+
 export function isCurrentWebSessionVersion(
   requestVersion: string,
   currentVersion: string,

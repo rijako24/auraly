@@ -5,10 +5,12 @@ import type { AuthUser } from "@/types/api";
 interface AuthState {
   user: AuthUser | null;
   isAuthenticated: boolean;
+  hasHydrated: boolean;
   setAuth: (user: AuthUser) => void;
   setExecutionAccess: (roles: string[], permissions: string[]) => void;
   logout: () => Promise<void>;
   clearAuth: () => void;
+  setHasHydrated: (value: boolean) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -16,6 +18,7 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       user: null,
       isAuthenticated: false,
+      hasHydrated: false,
       setAuth: (user) => {
         set({ user, isAuthenticated: true });
       },
@@ -24,6 +27,7 @@ export const useAuthStore = create<AuthState>()(
           user: state.user ? { ...state.user, roles, permissions } : null,
         })),
       clearAuth: () => set({ user: null, isAuthenticated: false }),
+      setHasHydrated: (value) => set({ hasHydrated: value }),
       logout: async () => {
         set({ user: null, isAuthenticated: false });
         try {
@@ -40,6 +44,7 @@ export const useAuthStore = create<AuthState>()(
     {
       name: "auth-state",
       partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated }),
+      onRehydrateStorage: () => (state) => state?.setHasHydrated(true),
     }
   )
 );

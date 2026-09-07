@@ -4,6 +4,8 @@ import { useEffect, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { defaultStartRoute, shouldRestoreOperationalStart } from "@/lib/default-start-route";
+import { buildLoginRedirect } from "@/lib/login-redirect";
+import { shouldRedirectUnauthenticatedDashboard } from "@/lib/auth-session";
 import { executionContextApi } from "@/services/api/execution-context";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -15,6 +17,7 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const authHydrated = useAuthStore((state) => state.hasHydrated);
   const userId = useAuthStore((state) => state.user?.userId ?? null);
   const setExecutionAccess = useAuthStore((state) => state.setExecutionAccess);
   const selectedTenantId = useTenantContextStore((state) => state.selectedTenantId);
@@ -23,6 +26,14 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
   const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const setBusinesses = useBusinessContextStore((state) => state.setBusinesses);
   const businessesLoaded = useBusinessContextStore((state) => state.isLoaded);
+  useEffect(() => {
+    if (!shouldRedirectUnauthenticatedDashboard(
+      authHydrated,
+      isAuthenticated,
+      pathname,
+    )) return;
+    window.location.replace(buildLoginRedirect(pathname, window.location.search));
+  }, [authHydrated, isAuthenticated, pathname]);
 
   const tenantsQuery = useQuery({
     queryKey: ["execution-context", userId, "tenants"],
@@ -74,7 +85,12 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
     }
   }, [accessQuery.data, pathname, router]);
 
-  if (!isAuthenticated) return null;
+  if (!authHydrated || !isAuthenticated) {
+    return <AuralyLoadingState
+      title="Validando tu sesión"
+      description="Estamos comprobando tu acceso antes de abrir el espacio de trabajo."
+    />;
+  }
 
   const failed = tenantsQuery.isError || businessesQuery.isError || accessQuery.isError;
   if (failed) {

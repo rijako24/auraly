@@ -102,8 +102,15 @@ declara cursor inicial y final. POS Edge exige orden estricto, aplica upserts o
 tombstones y avanza el cursor dentro de la misma transacción SQLite. Repetir una
 página ya aplicada no produce efectos.
 
+Antes de paginar, el servidor compacta los cambios pendientes por `ProductId` y
+conserva únicamente el cursor más reciente de cada producto. El cursor final de
+la página cubre también las revisiones intermedias descartadas. Así, una caja que
+estuvo apagada materializa una sola vez el estado vigente de cada producto sin
+omitir los cambios de otros productos, incluso cuando requiere varias páginas.
+
 Una notificación futura solo despertará este mismo consumidor. El transporte
-real de esta rebanada es sondeo HTTP incremental.
+de datos es HTTP incremental dirigido por la señal push o por la reconciliación
+de reconexión; no existe sondeo por temporizador.
 
 ## Captura offline y balanza
 
