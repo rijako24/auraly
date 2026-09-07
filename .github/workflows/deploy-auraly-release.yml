@@ -24,6 +24,11 @@ on:
         description: Componentes modificados separados por coma (database,function,api,admin,pos-installer). PROD reutiliza el alcance archivado.
         required: true
         type: string
+      publish_pos_installer_in_dev:
+        description: Publicar el instalador POS en DEV además de archivarlo para promoción
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -275,7 +280,7 @@ jobs:
   pos_installer:
     name: Publish POS installer
     needs: release
-    if: contains(needs.release.outputs.components, 'pos-installer')
+    if: contains(needs.release.outputs.components, 'pos-installer') && (inputs.environment == 'prod' || inputs.publish_pos_installer_in_dev)
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
