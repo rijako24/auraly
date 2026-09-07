@@ -20,7 +20,9 @@ public sealed class SqlReceivablePaymentDocumentHandler(
            payment.Allocations.Count==0||payment.TotalAmount!=payment.Allocations.Sum(x=>x.Amount))
             throw new InvalidOperationException("The customer receipt envelope or allocations are inconsistent.");
         var session=sessions.Current;
-        await SqlAccountingPostingJobWriter.InsertAsync(session,document,payment.PaidAt,ids,timeProvider,token);
+        await SqlAccountingPostingJobWriter.InsertAsync(
+            session,document,payment.PaidAt,ids,timeProvider,token,
+            AccountingJobRequirement.PreserveCommercialEffects);
         await using var outbox=new SqlCommand("INSERT dbo.ServerOutboxMessages(MessageId,DocumentId,DocumentType,Type,Payload,OccurredAt) VALUES(@Id,@DocumentId,N'ReceivablePayment',N'receivables.customer-payment.processed',@Payload,@Now)",session.Connection,session.Transaction);
         outbox.Parameters.AddWithValue("@Id",ids.NewId());outbox.Parameters.AddWithValue("@DocumentId",payment.PaymentId);outbox.Parameters.AddWithValue("@Payload",document.Payload);outbox.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());await outbox.ExecuteNonQueryAsync(token);
     }

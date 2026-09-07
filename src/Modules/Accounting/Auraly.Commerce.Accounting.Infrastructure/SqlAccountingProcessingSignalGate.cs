@@ -17,7 +17,8 @@ public sealed class SqlAccountingProcessingSignalGate(
         await using var command = new SqlCommand("""
             SELECT job.SourceDocumentId,job.SourceDocumentType
             FROM dbo.AccountingPostingJobs job
-            WHERE job.BusinessId=@BusinessId AND job.Status<>N'Posted'
+            WHERE job.BusinessId=@BusinessId
+              AND job.Status NOT IN(N'Posted',N'CommercialEffectsApplied')
               AND
               (
                 (job.SourceDocumentId=@DocumentId AND job.SourceDocumentType=@DocumentType)

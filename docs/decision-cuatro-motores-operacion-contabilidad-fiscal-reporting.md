@@ -24,7 +24,7 @@ cuatro propietarios de ejecución:
 | Cola | Motor | Única responsabilidad |
 | --- | --- | --- |
 | `auraly-document-processing` | Operación | aplicar exclusivamente inventario, kardex y costo físico de los documentos que tengan ese efecto, y guardar sus señales derivadas en outbox |
-| `auraly-accounting-processing` | Contabilidad | todos los submayores financieros y el libro mayor |
+| `auraly-accounting-processing` | Finanzas y contabilidad | todos los submayores financieros y, cuando esté activa, el libro mayor |
 | `auraly-fiscal-processing` | Fiscal | generar el artefacto fiscal y transmitirlo a DIAN mediante las etapas `Generation` y `Submission` |
 | `auraly-sales-reporting` | Reporting | construir y reconstruir hechos y consolidados de ventas |
 
@@ -44,9 +44,11 @@ asumir inventario, cartera, contabilidad, fiscal ni reporting.
 Un documento exclusivamente financiero no se publica en la cola operacional.
 Notas débito/crédito de CxC o CxP, pagos sin efecto físico, comprobantes
 manuales, saldos iniciales y reclasificaciones van directamente a la cola
-contable después de que la API guarda atómicamente su fuente y su único job
-contable. No crean `DocumentProcessingJobs`, no avanzan
-`BusinessProcessingCursors` y no usan payloads propietarios de inventario.
+financiera-contable después de que la API guarda atómicamente su fuente y su
+único job. No crean `DocumentProcessingJobs`, no avanzan
+`BusinessProcessingCursors` y no usan payloads propietarios de inventario. Los
+flujos heredados que aún aceptan recaudos mediante el motor documental deben
+converger en ese mismo job; no pueden escribir el submayor desde el handler.
 
 Las cuatro colas se particionan y ordenan por negocio. En Azure Service Bus es
 obligatorio `SessionId = BusinessId`, con una ejecución secuencial dentro de la
@@ -82,27 +84,35 @@ Que el documento incluya medios de pago no convierte esos renglones declarados
 en un submayor. Son hechos fuente; sus efectos financieros pertenecen al motor
 contable.
 
-## 4. Motor contable único
+## 4. Motor financiero-contable único
 
 Existe una sola cola, un solo contrato de señal, una política canónica de tipos
-contabilizables y un solo trabajo durable contable por documento fuente. No se
-crean workers separados para CxC, CxP, pagos, notas, caja o libro mayor.
+financieros y un solo trabajo durable por documento fuente. No se crean workers
+separados para CxC, CxP, pagos, notas, caja o libro mayor. La cartera comercial
+puede operar sin que el tenant active el libro mayor, pero conserva este mismo
+propietario, tablas, orden e idempotencia.
 
-Dentro de una transacción serializable, el motor contable:
+Dentro de una transacción serializable, el motor:
 
 1. bloquea el trabajo y verifica el hash del payload inmutable;
 2. aplica CxC/CxP, pagos, aplicaciones, créditos o anticipos;
-3. crea y valida el comprobante de partida doble;
-4. marca el trabajo completo;
-5. confirma todos los efectos o ninguno.
+3. cuando el trabajo congeló `AccountingEntryRequired=1`, crea y valida el
+   comprobante de partida doble;
+4. marca el trabajo `Posted` si incluyó asiento o `CommercialEffectsApplied` si
+   era únicamente seguimiento comercial;
+5. confirma todos los efectos que correspondan al modo congelado o ninguno.
 
 El orden financiero usa la misma secuencia documental de origen por negocio.
-Una entrega duplicada no reaplica submayor ni asiento. Mientras el tenant no
-esté explícitamente `Ready`, o el documento sea anterior a `EffectiveFrom`, la
-operación no crea trabajo ni publica mensaje contable. Después de activar, una
-inconsistencia sobrevenida de período o mapeo deja el único trabajo ya creado
-en estado pendiente de configuración; no crea un trabajo lateral ni revierte
-inventario ya confirmado.
+Una entrega duplicada no reaplica submayor ni asiento. Al aceptar cada fuente se
+congela si requiere asiento: únicamente un tenant explícitamente `Ready` y una
+operación en o después de `EffectiveFrom` usan `AccountingEntryRequired=1`.
+Sin contabilidad activa solo se crea trabajo para efectos comerciales que deben
+subsistir —apertura y recaudo de CxC y devolución aplicada a esa cartera— y el
+trabajo no se convierte retroactivamente al activar contabilidad. Los demás
+documentos no crean fuente ni trabajo financiero-contable. Después de activar,
+una inconsistencia sobrevenida de período o mapeo deja el único trabajo ya
+creado en estado pendiente de configuración; no crea un trabajo lateral ni
+revierte inventario ya confirmado.
 
 Los documentos manuales usan el mismo carril contable y nunca el operacional:
 
@@ -236,8 +246,9 @@ un atraso de reporting no bloquea una venta; un atraso DIAN no repite inventario
 un error contable no autoriza otro motor financiero.
 
 Las pantallas que requieren consistencia financiera —cierre de caja, estado de
-cuenta o aplicación de pagos— consultan el estado del trabajo contable y no dan
-por aplicado un efecto mientras siga pendiente.
+cuenta o aplicación de pagos— consultan el estado del trabajo. `Posted` y
+`CommercialEffectsApplied` son terminales para sus respectivos modos; ninguna
+pantalla da por aplicado un efecto mientras siga pendiente.
 
 ## 8. Pruebas obligatorias
 
@@ -246,6 +257,8 @@ por aplicado un efecto mientras siga pendiente.
 - submayor y libro mayor en el mismo commit contable;
 - fallo entre submayor y asiento revierte ambos;
 - venta de crédito, pago parcial, devolución y aplicación;
+- la misma matriz de CxC con contabilidad desactivada, sin asientos y sin
+  contabilización retroactiva al activar;
 - recepción a crédito, pago parcial y devolución al proveedor;
 - nota débito/crédito y comprobante manual por el mismo carril contable;
 - documento financiero puro sin job, payload ni cursor operacional;
@@ -262,7 +275,7 @@ por aplicado un efecto mientras siga pendiente.
 
 ## 9. Regla para extensiones
 
-Un nuevo efecto financiero extiende el contrato y procesador contable existentes.
+Un nuevo efecto financiero extiende el contrato y procesador financiero-contable existentes.
 Un nuevo documento fiscal extiende el motor fiscal. Un reporte pequeño agrega una
 consulta indexada; una proyección nueva exige evidencia y el contrato anterior.
 No se crea una quinta cola dentro del ciclo documental, otro motor financiero ni

@@ -17,13 +17,13 @@ belong to a Business and remain an optional analytical dimension.
 
 ```text
 sale, sales return or goods receipt handler
-  -> operational effects and AccountingPostingJob in the same SQL transaction
+  -> operational effects and, when required, AccountingPostingJob in the same SQL transaction
   -> DocumentProcessingJob Completed
   -> completion observer before broker ACK
-  -> separate serializable accounting transaction
-  -> open period + effective account mappings
-  -> balanced immutable AccountingEntry + lines
-  -> AccountingPostingJob Posted
+  -> separate serializable financial-accounting transaction
+  -> financial subledger effects
+  -> when AccountingEntryRequired: open period + effective mappings + balanced immutable entry
+  -> AccountingPostingJob CommercialEffectsApplied or Posted
 ```
 
 There is still one broker message per source document. There is no accounting
@@ -47,7 +47,13 @@ Sales invoice:
 - credit sales revenue;
 - credit output VAT when non-zero;
 - debit cost of goods sold and credit inventory using the recognized movement
-  value when the product manages stock.
+value when the product manages stock.
+
+Credit sales, customer collections and returns applied to receivables preserve
+their commercial subledger effects when accounting is not active. The job
+freezes `AccountingEntryRequired` at acceptance. A later accounting activation
+does not post that historical activity retroactively; opening balances provide
+the explicit cutover.
 
 Sales return / credit note:
 

@@ -24,7 +24,7 @@ Antes de crear un processor, engine, worker, job table, queue o background servi
 | Documentos operativos con efecto fisico y efectos intrinsecos | `DocumentProcessingEngine` + `DocumentProcessingWorker`; nuevos tipos implementan `IConfirmedDocumentHandler` | `DocumentProcessingJobs`, movimiento confirmado y cursor de procesamiento | `decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md` |
 | Inventario | Se ejecuta dentro del motor documental. Las operaciones dedicadas convergen en `SqlInventoryOperationProcessor`; ventas, entradas y devoluciones aplican sus efectos desde su `IConfirmedDocumentHandler` canonico | `InventoryBalances`, `InventoryMovements`, `InventoryOperations` y sus lineas | `implementation/inventory-operations-engine-design.md` |
 | Fiscal/DIAN | `FiscalProcessingCoordinator` + `FiscalGenerationWorker` + `FiscalSubmissionWorker` | `FiscalDocuments`, `FiscalDocumentProcesses`, snapshots, artefactos e intentos | `implementation/dian-fiscal-engine-design.md` |
-| Contabilidad | `AccountingProcessingCoordinator` + `SqlAccountingPostingProcessor` | `AccountingSourceDocuments`, `AccountingPostingJobs`, `AccountingEntries` y lineas | `implementation/accounting-operational-design.md` |
+| Finanzas y contabilidad | `AccountingProcessingCoordinator` + `SqlAccountingPostingProcessor` | `AccountingSourceDocuments`, `AccountingPostingJobs`, submayores y, cuando aplica, `AccountingEntries` y líneas | `implementation/accounting-operational-design.md` |
 | Reporting de ventas | `SalesReportingProcessingCoordinator` + `SqlSalesReportingProcessor` | `reporting.SalesReportingJobs`, hechos y consolidados | `decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md` |
 | Conversacional | Pipeline determinista descrito en el manual del agente | Conversacion, estado, facts, recibos y configuracion del agente | `agent-engine-manual.md` |
 | Nómina | Calculador determinístico del módulo `Payroll`; las salidas extienden los motores contable y fiscal existentes | `payroll.Employments`, conceptos, reglas, novedades, liquidaciones, pagos y períodos electrónicos | `decision-nomina-electronica-integrada.md` |
@@ -52,9 +52,13 @@ Si aparece una nueva capacidad con semantica realmente distinta, primero se regi
 - Un nuevo documento fiscal extiende el snapshot/contrato y las reglas del motor existente. No crea tablas paralelas de folios, estados, intentos o artefactos.
 - Reintentos, timeouts ambiguos, track IDs, firma, CUFE/CUDE y estados DIAN se resuelven en el motor fiscal, nunca en controllers o UI.
 
-## 5. Motor contable
+## 5. Motor financiero-contable
 
 - Todo asiento automatico converge en `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor`.
+- La cartera comercial sin contabilidad activa converge en esos mismos
+  componentes, jobs y submayores. El modo del trabajo se congela al aceptar la
+  fuente; activar contabilidad después no contabiliza retroactivamente el
+  historial comercial.
 - Un nuevo documento contabilizable agrega su regla de posting al motor existente y reutiliza `AccountingPostingJobs` y la unicidad por documento fuente.
 - Su fuente inmutable pertenece a `AccountingSourceDocuments`; el job contable no depende por FK de `DocumentProcessingJobs`.
 - No se crea un posting service por modulo, un asiento directo desde un endpoint ni una segunda tabla de trabajos contables.

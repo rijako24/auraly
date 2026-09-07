@@ -26,10 +26,14 @@ No existen dos motores comerciales. Ambos tipos ingresan al mismo motor document
 3. Movimiento de inventario.
 4. Registro de los medios de pago.
 5. Actualización de informes operativos mediante el evento de salida.
-6. Solamente para `SalesInvoice`: cartera y trabajo de contabilización.
+6. Para ambos tipos cuando existe crédito: cartera comercial. El asiento se
+   agrega al mismo trabajo únicamente si contabilidad está activa.
 7. Solamente para `SalesInvoice`: creación del trabajo fiscal que genera UBL, firma y transmisión.
 
-`SalesReceipt` nunca se enruta al worker fiscal y tampoco crea cartera ni trabajo contable. Esto se valida en SQL, no únicamente en la interfaz.
+`SalesReceipt` nunca se enruta al worker fiscal. Puede crear cartera y aceptar
+recaudos sin contabilidad; con contabilidad activa, el mismo proceso crea también
+el asiento. El tipo real `SalesReceipt` se conserva en la obligación y no se
+disfraza como factura.
 
 ## Impresión
 
@@ -45,5 +49,6 @@ La misma selección funciona con la API online y con POS Edge. En Edge, el compr
 - Emisión y reintento offline durables sin renumeración.
 - El comprobante no contiene CUFE, QR, número DIAN ni snapshot UBL.
 - El comprobante procesa una sola vez inventario, pago y evento operativo.
-- El comprobante genera cero artefactos fiscales, cero cartera y cero trabajos contables.
+- El comprobante genera cero artefactos fiscales; si tiene crédito crea una sola
+  cuenta por cobrar y un único trabajo financiero-contable en el modo congelado.
 - La factura electrónica conserva el flujo fiscal existente.

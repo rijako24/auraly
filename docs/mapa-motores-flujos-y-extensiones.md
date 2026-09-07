@@ -12,7 +12,7 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Efecto de inventario | handler documental → `SqlInventoryLedgerWriter`; operaciones dedicadas además usan `SqlInventoryOperationProcessor`. `InventoryBalances` es el saldo actual por negocio+bodega+producto y `InventoryMovements` solo el kardex historico | SQL a `InventoryBalances`/`InventoryMovements`, reconstruir existencias sumando movimientos, segundo kardex o motor |
 | Nuevo documento fiscal DIAN | snapshot/regla del `FiscalProcessingCoordinator` y workers fiscales existentes | worker DIAN por módulo, tenant o tipo |
 | Nuevo asiento automático | política/regla del `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor` | asiento desde API o segundo posting service |
-| Nuevo efecto de CxC/CxP, pago, aplicación, crédito o anticipo | contrato y transacción del único `SqlAccountingPostingProcessor` | handler operacional, worker financiero adicional o job lateral |
+| Nuevo efecto de CxC/CxP, pago, aplicación, crédito o anticipo | contrato y transacción del único `SqlAccountingPostingProcessor`; el trabajo congela si además requiere asiento | handler operacional, worker financiero adicional o job lateral |
 | Nueva proyección de alto volumen | motor de reporting existente, con métrica, idempotencia, rebuild y benchmark documentados | consolidado preventivo o job por reporte |
 | Nueva opción de dropdown | seed/maestro → store de aplicación → endpoint de catálogo → `useReferenceOptions` | array `{value,label}`, switch de labels o prompt |
 | Nuevo endpoint | contrato/caso de uso de aplicación; adapter de persistencia en infraestructura | SQL o reglas de dominio en Minimal API |

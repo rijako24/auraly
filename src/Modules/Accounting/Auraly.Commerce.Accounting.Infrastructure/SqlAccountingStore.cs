@@ -554,7 +554,7 @@ public sealed class SqlAccountingStore(
             await using (var pending = new SqlCommand("""
                 SELECT COUNT(*) FROM dbo.AccountingPostingJobs
                 WHERE TenantId=@TenantId AND CAST(OccurredAt AS date) BETWEEN @StartsOn AND @EndsOn
-                  AND Status<>N'Posted';
+                  AND Status NOT IN(N'Posted',N'CommercialEffectsApplied');
                 """, connection, transaction))
             {
                 pending.Parameters.AddWithValue("@TenantId", user.TenantId); pending.Parameters.AddWithValue("@StartsOn", startsOn); pending.Parameters.AddWithValue("@EndsOn", endsOn);
@@ -786,7 +786,8 @@ public sealed class SqlAccountingStore(
             SELECT SourceDocumentId,SourceDocumentType,OccurredAt,Status,
                    LastErrorCode,LastErrorMessage
             FROM dbo.AccountingPostingJobs
-            WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND Status<>N'Posted'
+            WHERE TenantId=@TenantId AND BusinessId=@BusinessId
+              AND Status NOT IN(N'Posted',N'CommercialEffectsApplied')
               AND CAST(OccurredAt AS date) BETWEEN @From AND @To
             ORDER BY OccurredAt,SourceDocumentType,SourceDocumentId;
             """, connection);

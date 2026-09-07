@@ -233,7 +233,8 @@ public sealed class SqlSalesReturnStore(
             SELECT d.CustomerId,d.CustomerIdentification,
                    COALESCE((SELECT SUM(r.OutstandingAmount) FROM dbo.Receivables r
                      WHERE r.BusinessId=d.BusinessId AND r.SourceDocumentId=d.DocumentId
-                       AND r.SourceDocumentType=N'SalesInvoice' AND r.Status IN(N'Open',N'PartiallyPaid')),0)
+                       AND r.SourceDocumentType=d.DocumentType
+                       AND r.Status IN(N'Open',N'PartiallyPaid')),0)
             FROM dbo.SalesDocuments d WITH (UPDLOCK,HOLDLOCK)
             WHERE d.DocumentId=@OriginalDocumentId AND d.BusinessId=@BusinessId
               AND d.DocumentType IN(N'SalesInvoice',N'SalesReceipt')

@@ -7,7 +7,9 @@ using Auraly.Contracts.Receivables;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Commerce.Accounting.Infrastructure;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -15,6 +17,156 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Accounting")]
 public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Commercial_receipt_credit_and_collection_work_without_accounting_and_are_not_posted_retroactively()
+    {
+        var (customerId, userId) = await ConfigureAsync();
+        using var client = fixture.CreateUserClient(userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open,
+            ReceivablesPermissionCodes.Read,
+            ReceivablesPermissionCodes.ManageCredit,
+            ReceivablesPermissionCodes.RegisterPayment,
+            SalesReturnPermissionCodes.Read,
+            SalesReturnPermissionCodes.Create,
+            SalesReturnPermissionCodes.Confirm);
+        client.Timeout = TimeSpan.FromSeconds(60);
+        using (var profile = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/customers/{customerId:D}/credit",
+                   new UpdateCustomerCreditProfileRequest(
+                       fixture.BusinessId, 500_000m, 30, true)))
+            profile.EnsureSuccessStatusCode();
+
+        await DisableAccountingAsync();
+        var accountingRestored = false;
+        try
+        {
+            var workSession = await fixture.OpenWorkSessionAsync(client);
+            var cashDraft = await CaptureAsync(client,
+                await OpenDraftAsync(client, workSession.WorkSessionId));
+            var cashSale = await CompleteAsync(client, cashDraft,
+                new CompleteOnlineSalesDraftRequest(
+                    cashDraft.Version,
+                    [new OnlineSalesPayment("Cash", cashDraft.PayableAmount, null)],
+                    DocumentType: PosSaleDocumentTypes.Receipt),
+                $"commercial-cash-control-{Guid.NewGuid():N}");
+            Assert.Equal(0, await CountAsync(
+                "AccountingPostingJobs", "SourceDocumentId", cashSale.Receipt.DocumentId));
+            Assert.Equal("Completed", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id",
+                cashSale.Receipt.DocumentId));
+
+            var draft = await CaptureAsync(client,
+                await OpenDraftAsync(client, workSession.WorkSessionId));
+            var selection = await SelectCustomerAsync(client, draft, customerId);
+            var sale = await CompleteAsync(client, selection.Draft,
+                new CompleteOnlineSalesDraftRequest(
+                    selection.Draft.Version, [],
+                    new OnlineSalesCreditTerms(
+                        selection.Draft.PayableAmount,
+                        DateTimeOffset.UtcNow.AddDays(30)),
+                    DocumentType: PosSaleDocumentTypes.Receipt),
+                $"commercial-credit-{Guid.NewGuid():N}");
+
+            Assert.Equal(PosSaleDocumentTypes.Receipt, sale.Receipt.DocumentType);
+            var receivable = await ReadReceivableAsync(sale.Receipt.DocumentId);
+            Assert.Equal(sale.Receipt.PayableAmount, receivable.OutstandingAmount);
+            Assert.Equal(PosSaleDocumentTypes.Receipt, await ScalarAsync<string>(
+                "SELECT SourceDocumentType FROM dbo.Receivables WHERE SourceDocumentId=@Id",
+                sale.Receipt.DocumentId));
+            await AssertCommercialOnlyProcessingAsync(sale.Receipt.DocumentId);
+
+            var partialAmount = decimal.Round(receivable.OriginalAmount * .4m, 4);
+            var payment = new ConfirmCustomerPaymentRequest(
+                Guid.NewGuid(), fixture.BusinessId, customerId,
+                workSession.WorkSessionId, DateTimeOffset.UtcNow, "COP",
+                CustomerPaymentMethods.Cash, null, "Abono sin contabilidad",
+                [new CustomerPaymentAllocationRequest(
+                    receivable.ReceivableId, partialAmount)]);
+            var paymentKey = $"commercial-payment-{payment.PaymentId:N}";
+            using (var response = await SendAsync(client,
+                       "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))
+                Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+            Assert.Equal(receivable.OriginalAmount - partialAmount,
+                await ScalarAsync<decimal>(
+                    "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
+                    receivable.ReceivableId));
+            Assert.Equal("Processed", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.CustomerPayments WHERE PaymentId=@Id",
+                payment.PaymentId));
+            await AssertCommercialOnlyProcessingAsync(payment.PaymentId);
+
+            using (var replay = await SendAsync(client,
+                       "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))
+            {
+                Assert.Equal(HttpStatusCode.Accepted, replay.StatusCode);
+                Assert.True((await replay.Content.ReadFromJsonAsync<CustomerPaymentAcceptance>())!
+                    .IdempotentReplay);
+            }
+            Assert.Equal(1, await CountAsync(
+                "ReceivableTransactions", "SourceDocumentId", payment.PaymentId));
+
+            var returnRequest = new ConfirmSalesReturnRequest(
+                Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+                sale.Receipt.DocumentId, DateTimeOffset.UtcNow,
+                ReturnEconomicResolutions.CustomerCredit, null,
+                "Devolucion comercial sin contabilidad",
+                [new ConfirmSalesReturnLineRequest(
+                    1, .2m, ReturnInventoryDispositions.Sellable)],
+                null, null, "CustomerChangedMind");
+            using (var response = await SendAsync(client,
+                       "/api/commerce/v1/sales-returns/confirm", returnRequest,
+                       $"commercial-return-{returnRequest.ReturnId:N}"))
+                Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var returnApplication = await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.SalesReturnReceivableApplications WHERE ReturnId=@Id",
+                returnRequest.ReturnId);
+            Assert.Equal(receivable.OriginalAmount - partialAmount - returnApplication,
+                await ScalarAsync<decimal>(
+                    "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
+                    receivable.ReceivableId));
+            await AssertCommercialOnlyProcessingAsync(returnRequest.ReturnId);
+
+            await RestoreAccountingAsync();
+            accountingRestored = true;
+            await ReprocessAsync(sale.Receipt.DocumentId, PosSaleDocumentTypes.Receipt);
+            await ReprocessAsync(payment.PaymentId, ReceivablesDocumentTypes.Payment);
+            await ReprocessAsync(returnRequest.ReturnId, SalesReturnDocumentTypes.SalesReturn);
+            await AssertCommercialOnlyProcessingAsync(sale.Receipt.DocumentId);
+            await AssertCommercialOnlyProcessingAsync(payment.PaymentId);
+            await AssertCommercialOnlyProcessingAsync(returnRequest.ReturnId);
+
+            var accountedDraft = await CaptureAsync(client,
+                await OpenDraftAsync(client, workSession.WorkSessionId));
+            var accountedSelection = await SelectCustomerAsync(
+                client, accountedDraft, customerId);
+            var accountedSale = await CompleteAsync(client, accountedSelection.Draft,
+                new CompleteOnlineSalesDraftRequest(
+                    accountedSelection.Draft.Version, [],
+                    new OnlineSalesCreditTerms(
+                        accountedSelection.Draft.PayableAmount,
+                        DateTimeOffset.UtcNow.AddDays(30)),
+                    DocumentType: PosSaleDocumentTypes.Receipt),
+                $"accounted-commercial-credit-{Guid.NewGuid():N}");
+            Assert.Equal("Posted", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                accountedSale.Receipt.DocumentId));
+            Assert.True(await ScalarAsync<bool>(
+                "SELECT AccountingEntryRequired FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                accountedSale.Receipt.DocumentId));
+            Assert.Equal(1, await CountAsync(
+                "AccountingEntries", "SourceDocumentId", accountedSale.Receipt.DocumentId));
+            Assert.Equal(PosSaleDocumentTypes.Receipt, await ScalarAsync<string>(
+                "SELECT SourceDocumentType FROM dbo.Receivables WHERE SourceDocumentId=@Id",
+                accountedSale.Receipt.DocumentId));
+        }
+        finally
+        {
+            if (!accountingRestored) await RestoreAccountingAsync();
+        }
+    }
+
     [Fact]
     public async Task Credit_sale_is_rejected_when_customer_credit_is_not_enabled()
     {
@@ -213,9 +365,18 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             new CompleteOnlineSalesDraftRequest(
                 selection.Draft.Version, [],
                 new OnlineSalesCreditTerms(
-                    selection.Draft.PayableAmount, DateTimeOffset.UtcNow.AddDays(30))),
+                    selection.Draft.PayableAmount, DateTimeOffset.UtcNow.AddDays(30)),
+                DocumentType: PosSaleDocumentTypes.Receipt),
             $"return-credit-sale-{Guid.NewGuid():N}");
         var receivable = await ReadReceivableAsync(checkout.Receipt.DocumentId);
+        using (var response = await client.GetAsync(
+                   $"/api/commerce/v1/sales-returns/sales/{checkout.Receipt.DocumentId:D}"))
+        {
+            response.EnsureSuccessStatusCode();
+            var returnable = await response.Content.ReadFromJsonAsync<ReturnableSale>()
+                ?? throw new InvalidOperationException("Empty returnable sale response.");
+            Assert.Equal(receivable.OutstandingAmount, returnable.ReceivableOutstanding);
+        }
 
         var paidBeforeReturn = decimal.Round(receivable.OriginalAmount * .25m, 4);
         var payment = new ConfirmCustomerPaymentRequest(
@@ -469,6 +630,55 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             new("@RequiresParty", requiresParty));
     }
 
+    private async Task AssertCommercialOnlyProcessingAsync(Guid documentId)
+    {
+        Assert.Equal(AccountingPostingStatuses.CommercialEffectsApplied,
+            await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                documentId));
+        Assert.False(await ScalarAsync<bool>(
+            "SELECT AccountingEntryRequired FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+            documentId));
+        Assert.Equal(0, await CountAsync(
+            "AccountingEntries", "SourceDocumentId", documentId));
+    }
+
+    private async Task ReprocessAsync(Guid documentId, string documentType)
+    {
+        await using var scope = fixture.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>()
+            .ProcessAsync(documentId, documentType, fixture.BusinessId,
+                CancellationToken.None);
+    }
+
+    private async Task DisableAccountingAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.AccountingTenantSettings
+            SET Status=N'Disabled',EffectiveFrom=NULL,OpeningBalanceMode=NULL,
+                ActivatedAt=NULL,ActivatedByUserId=NULL,UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE TenantId=@TenantId;
+            """;
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task RestoreAccountingAsync()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read,
+            AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate);
+        using var response = await accounting.PostAsJsonAsync(
+            "/api/commerce/v1/accounting/activate",
+            new ActivateAccountingRequest(
+                new DateOnly(2026, 1, 1), "COP", "ZeroDeclared"));
+        response.EnsureSuccessStatusCode();
+    }
+
     private async Task EnsureMappingAsync(SqlConnection connection,
         SqlTransaction transaction, string category, string code)
     {
@@ -522,6 +732,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             "SalesPayments:DocumentId",
             "ReceivableTransactions:SourceDocumentId",
             "AccountingEntries:SourceDocumentId",
+            "AccountingPostingJobs:SourceDocumentId",
             "CustomerPaymentApplications:PaymentId",
             "ServerOutboxMessages:DocumentId"
         });

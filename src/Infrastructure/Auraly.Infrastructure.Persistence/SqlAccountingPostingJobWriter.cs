@@ -7,6 +7,12 @@ using System.Text;
 
 namespace Auraly.Infrastructure.Persistence;
 
+internal enum AccountingJobRequirement
+{
+    AccountingEntryOnly,
+    PreserveCommercialEffects
+}
+
 internal static class SqlAccountingPostingJobWriter
 {
     public static async Task InsertAsync(
@@ -15,20 +21,26 @@ internal static class SqlAccountingPostingJobWriter
         DateTimeOffset occurredAt,
         IAuralyIdGenerator ids,
         TimeProvider timeProvider,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AccountingJobRequirement requirement = AccountingJobRequirement.AccountingEntryOnly)
     {
         const string sql = """
+            DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS
+            (
+              SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+              WHERE TenantId=@TenantId AND Status=N'Ready'
+                AND EffectiveFrom<=CONVERT(date,@OccurredAt)
+            ) THEN 1 ELSE 0 END);
+
             INSERT dbo.AccountingSourceDocuments
             (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
              PayloadHash,OccurredAt,AcceptedAt)
             SELECT p.DocumentId,p.DocumentType,@TenantId,@BusinessId,p.PayloadJson,
                    p.PayloadHash,@OccurredAt,@CreatedAt
             FROM dbo.DocumentProcessingPayloads p
-            INNER JOIN dbo.AccountingTenantSettings settings
-              ON settings.TenantId=@TenantId AND settings.Status=N'Ready'
-             AND settings.EffectiveFrom<=CONVERT(date,@OccurredAt)
             WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
               AND p.BusinessId=@BusinessId
+              AND (@AccountingEntryRequired=1 OR @PreserveCommercialEffects=1)
               AND NOT EXISTS
               (
                 SELECT 1 FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)
@@ -38,9 +50,11 @@ internal static class SqlAccountingPostingJobWriter
 
             INSERT dbo.AccountingPostingJobs
             (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-             SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
+             SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,
+             Status,AttemptCount,CreatedAt)
             SELECT @JobId,s.TenantId,s.BusinessId,s.SourceDocumentId,
-                   s.SourceDocumentType,s.PayloadHash,s.OccurredAt,N'Pending',0,@CreatedAt
+                   s.SourceDocumentType,s.PayloadHash,s.OccurredAt,
+                   @AccountingEntryRequired,N'Pending',0,@CreatedAt
             FROM dbo.AccountingSourceDocuments s
             WHERE s.SourceDocumentId=@DocumentId
               AND s.SourceDocumentType=@DocumentType
@@ -60,6 +74,9 @@ internal static class SqlAccountingPostingJobWriter
         command.Parameters.AddWithValue("@DocumentType", document.DocumentType);
         command.Parameters.AddWithValue("@OccurredAt", occurredAt);
         command.Parameters.AddWithValue("@CreatedAt", timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue(
+            "@PreserveCommercialEffects",
+            requirement == AccountingJobRequirement.PreserveCommercialEffects);
         var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
         if (inserted is < 0 or > 2)
             throw new InvalidOperationException("An invalid number of accounting jobs was created.");
@@ -69,26 +86,32 @@ internal static class SqlAccountingPostingJobWriter
         SqlDocumentProcessingSessionAccessor.Session session,
         Guid tenantId, Guid businessId, Guid documentId, string documentType,
         string payload, DateTimeOffset occurredAt, IAuralyIdGenerator ids,
-        TimeProvider timeProvider, CancellationToken cancellationToken)
+        TimeProvider timeProvider, CancellationToken cancellationToken,
+        AccountingJobRequirement requirement = AccountingJobRequirement.AccountingEntryOnly)
     {
         var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
         const string sql = """
+            DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS
+            (
+              SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+              WHERE TenantId=@TenantId AND Status=N'Ready'
+                AND EffectiveFrom<=CONVERT(date,@OccurredAt)
+            ) THEN 1 ELSE 0 END);
+
             INSERT dbo.AccountingSourceDocuments
               (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
                PayloadHash,OccurredAt,AcceptedAt)
             SELECT @DocumentId,@DocumentType,@TenantId,@BusinessId,@Payload,@PayloadHash,
                    @OccurredAt,@CreatedAt
-            FROM dbo.AccountingTenantSettings settings
-            WHERE settings.TenantId=@TenantId AND settings.Status=N'Ready'
-              AND settings.EffectiveFrom<=CONVERT(date,@OccurredAt)
+            WHERE (@AccountingEntryRequired=1 OR @PreserveCommercialEffects=1)
               AND NOT EXISTS (SELECT 1 FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)
                 WHERE s.SourceDocumentId=@DocumentId AND s.SourceDocumentType=@DocumentType);
 
             INSERT dbo.AccountingPostingJobs
               (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
-               SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
+               SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,CreatedAt)
             SELECT @JobId,s.TenantId,s.BusinessId,s.SourceDocumentId,s.SourceDocumentType,
-                   s.PayloadHash,s.OccurredAt,N'Pending',0,@CreatedAt
+                   s.PayloadHash,s.OccurredAt,@AccountingEntryRequired,N'Pending',0,@CreatedAt
             FROM dbo.AccountingSourceDocuments s
             WHERE s.SourceDocumentId=@DocumentId AND s.SourceDocumentType=@DocumentType
               AND NOT EXISTS (SELECT 1 FROM dbo.AccountingPostingJobs j WITH(UPDLOCK,HOLDLOCK)
@@ -104,6 +127,9 @@ internal static class SqlAccountingPostingJobWriter
         command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = payloadHash;
         command.Parameters.AddWithValue("@OccurredAt", occurredAt);
         command.Parameters.AddWithValue("@CreatedAt", timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue(
+            "@PreserveCommercialEffects",
+            requirement == AccountingJobRequirement.PreserveCommercialEffects);
         var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
         if (inserted is < 0 or > 2)
             throw new InvalidOperationException("An invalid number of accounting jobs was created.");

@@ -21,7 +21,8 @@ public sealed partial class SqlAccountingPostingProcessor
     {
         "SalesInvoice" or "SalesReceipt" => ApplySaleFinancialEffectsAsync(
             connection, transaction,
-            PosSaleContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
+            PosSaleContractSerializer.Deserialize(source.PayloadJson),
+            source.DocumentType, cancellationToken),
         "SalesReturn" => ApplySalesReturnFinancialEffectsAsync(
             connection, transaction,
             SalesReturnContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
@@ -143,7 +144,7 @@ public sealed partial class SqlAccountingPostingProcessor
 
     private async Task ApplySaleFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
-        PosSaleUploadRequest sale, CancellationToken token)
+        PosSaleUploadRequest sale, string sourceDocumentType, CancellationToken token)
     {
         await using var sessionCommand = new SqlCommand("""
             SELECT WorkSessionId
@@ -162,7 +163,7 @@ public sealed partial class SqlAccountingPostingProcessor
                 INSERT dbo.Receivables
                   (ReceivableId,BusinessId,CustomerId,SourceDocumentId,SourceDocumentType,
                    DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-                VALUES(@ReceivableId,@BusinessId,@CustomerId,@DocumentId,N'SalesInvoice',
+                VALUES(@ReceivableId,@BusinessId,@CustomerId,@DocumentId,@DocumentType,
                    @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now);
                 INSERT dbo.ReceivableTransactions
                   (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
@@ -175,6 +176,7 @@ public sealed partial class SqlAccountingPostingProcessor
             receivable.Parameters.AddWithValue("@BusinessId", sale.BusinessId);
             receivable.Parameters.AddWithValue("@CustomerId", sale.Credit.CustomerId);
             receivable.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
+            receivable.Parameters.AddWithValue("@DocumentType", sourceDocumentType);
             receivable.Parameters.AddWithValue("@Number", sale.DocumentNumber.FullNumber);
             AddMoney(receivable, "@Amount", sale.Credit.Amount);
             receivable.Parameters.AddWithValue("@DueDate", sale.Credit.DueDate);
@@ -268,11 +270,16 @@ public sealed partial class SqlAccountingPostingProcessor
         Guid? receivableId = null;
         decimal outstanding = 0;
         await using (var load = new SqlCommand("""
-            SELECT TOP(1) ReceivableId,OutstandingAmount
-            FROM dbo.Receivables WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND CustomerId=@CustomerId
-              AND SourceDocumentId=@OriginalId AND SourceDocumentType=N'SalesInvoice'
-              AND Status IN(N'Open',N'PartiallyPaid') ORDER BY CreatedAt;
+            SELECT TOP(1) receivable.ReceivableId,receivable.OutstandingAmount
+            FROM dbo.Receivables receivable WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.SalesDocuments sale
+              ON sale.DocumentId=receivable.SourceDocumentId
+             AND sale.BusinessId=receivable.BusinessId
+             AND sale.DocumentType=receivable.SourceDocumentType
+            WHERE receivable.BusinessId=@BusinessId AND receivable.CustomerId=@CustomerId
+              AND receivable.SourceDocumentId=@OriginalId
+              AND receivable.Status IN(N'Open',N'PartiallyPaid')
+            ORDER BY receivable.CreatedAt;
             """, connection, transaction))
         {
             load.Parameters.AddWithValue("@BusinessId", value.BusinessId);

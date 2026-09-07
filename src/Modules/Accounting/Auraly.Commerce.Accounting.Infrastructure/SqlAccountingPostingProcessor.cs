@@ -41,8 +41,19 @@ public sealed partial class SqlAccountingPostingProcessor(
 
             var status = await LockPostingStatusAsync(
                 connection, transaction, source, cancellationToken);
-            if (status == AccountingPostingStatuses.Posted)
+            if (status is AccountingPostingStatuses.Posted or
+                AccountingPostingStatuses.CommercialEffectsApplied)
             {
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+
+            if (!source.AccountingEntryRequired)
+            {
+                await ApplyFinancialEffectsAsync(
+                    connection, transaction, source, cancellationToken);
+                await MarkCommercialEffectsAppliedAsync(
+                    connection, transaction, source, cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 return;
             }
@@ -187,7 +198,8 @@ public sealed partial class SqlAccountingPostingProcessor(
     {
         const string sql = """
             SELECT a.TenantId,a.BusinessId,a.SourceDocumentId,
-                   a.SourceDocumentType,a.SourcePayloadHash,a.OccurredAt,s.PayloadJson
+                   a.SourceDocumentType,a.SourcePayloadHash,a.OccurredAt,s.PayloadJson,
+                   a.AccountingEntryRequired
             FROM dbo.AccountingPostingJobs a WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.AccountingSourceDocuments s
               ON s.SourceDocumentId=a.SourceDocumentId
@@ -208,7 +220,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         return new SourceEnvelope(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
             reader.GetString(3), (byte[])reader[4], reader.GetDateTimeOffset(5),
-            reader.GetString(6));
+            reader.GetString(6), reader.GetBoolean(7));
     }
 
     private static FinancialFacts LoadWorkSessionCashDifferenceFacts(
@@ -1226,6 +1238,27 @@ public sealed partial class SqlAccountingPostingProcessor(
             connection, transaction, source.TenantId, ids, timeProvider.GetUtcNow(), token);
     }
 
+    private static async Task MarkCommercialEffectsAppliedAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken token)
+    {
+        await using var command = new SqlCommand("""
+            UPDATE dbo.AccountingPostingJobs
+            SET Status=N'CommercialEffectsApplied',AttemptCount=AttemptCount+1,
+                LastAttemptAt=SYSDATETIMEOFFSET(),CompletedAt=SYSDATETIMEOFFSET(),
+                LastErrorCode=NULL,LastErrorMessage=NULL
+            WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType
+              AND BusinessId=@BusinessId AND AccountingEntryRequired=0
+              AND Status=N'Pending';
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        if (await command.ExecuteNonQueryAsync(token) != 1)
+            throw new DBConcurrencyException(
+                "The commercial financial effects could not be completed.");
+    }
+
     private static void AddSource(SqlCommand command, SourceEnvelope source)
     {
         command.Parameters.AddWithValue("@TenantId", source.TenantId); command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
@@ -1240,7 +1273,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         string DocumentType,
         byte[] PayloadHash,
         DateTimeOffset OccurredAt,
-        string PayloadJson);
+        string PayloadJson,
+        bool AccountingEntryRequired);
 
     private sealed record FinancialFactsResult(
         FinancialFacts? Facts,

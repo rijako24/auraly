@@ -310,6 +310,7 @@ CREATE TABLE [dbo].[AccountingPostingJobs]
     [SourceDocumentType] NVARCHAR(64) NOT NULL,
     [SourcePayloadHash] BINARY(32) NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
+    [AccountingEntryRequired] BIT NOT NULL CONSTRAINT [DF_AccountingPostingJobs_AccountingEntryRequired] DEFAULT (1),
     [Status] NVARCHAR(40) NOT NULL,
     [AttemptCount] INT NOT NULL CONSTRAINT [DF_AccountingPostingJobs_Attempts] DEFAULT (0),
     [LastErrorCode] NVARCHAR(80) NULL,
@@ -322,7 +323,7 @@ CREATE TABLE [dbo].[AccountingPostingJobs]
     CONSTRAINT [UQ_AccountingPostingJobs_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [FK_AccountingPostingJobs_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_AccountingPostingJobs_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
-    CONSTRAINT [CK_AccountingPostingJobs_Status] CHECK ([Status] IN (N'Pending',N'AccountingPendingConfiguration',N'Posted')),
+    CONSTRAINT [CK_AccountingPostingJobs_Status] CHECK ([Status] IN (N'Pending',N'AccountingPendingConfiguration',N'CommercialEffectsApplied',N'Posted')),
     CONSTRAINT [CK_AccountingPostingJobs_Attempts] CHECK ([AttemptCount]>=0)
 );
 GO

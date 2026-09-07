@@ -61,6 +61,7 @@ public static class AccountingPostingStatuses
 {
     public const string Pending = "Pending";
     public const string PendingConfiguration = "AccountingPendingConfiguration";
+    public const string CommercialEffectsApplied = "CommercialEffectsApplied";
     public const string Posted = "Posted";
 }
 

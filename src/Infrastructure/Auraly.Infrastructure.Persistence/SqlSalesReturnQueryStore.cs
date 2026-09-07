@@ -111,7 +111,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                              WHERE r.OriginalDocumentId=d.DocumentId),0),
                    COALESCE((SELECT SUM(r.OutstandingAmount) FROM dbo.Receivables r
                              WHERE r.SourceDocumentId=d.DocumentId
-                               AND r.SourceDocumentType=N'SalesInvoice'
+                               AND r.SourceDocumentType=d.DocumentType
                                AND r.Status IN(N'Open',N'PartiallyPaid')),0),
                    COALESCE(d.FiscalStatus,N'No aplica')
             FROM dbo.SalesDocuments d
