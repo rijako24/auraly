@@ -16,14 +16,14 @@ export const serviceKeys = {
     [...serviceKeys.all, "categories", businessId, params] as const,
 };
 
-export function useServices(params?: Partial<PagedRequest>) {
+export function useServices(params?: Partial<PagedRequest>, enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
 
   return useQuery({
     queryKey: serviceKeys.list(businessId, params),
     queryFn: () =>
       servicesApi.listByBusiness(businessId!, params),
-    enabled: !!businessId,
+    enabled: enabled && !!businessId,
   });
 }
 

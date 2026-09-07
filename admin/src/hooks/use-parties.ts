@@ -19,9 +19,10 @@ export function useAddPartySite(partyId:string){const client=useQueryClient();co
 export function useUpdatePartySite(partyId:string){const client=useQueryClient();const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);return useMutation({mutationFn:({customerId,siteId,request}:{customerId:string;siteId:string;request:Parameters<typeof partiesApi.updateSite>[2]})=>partiesApi.updateSite(customerId,siteId,request),onSuccess:async()=>{await Promise.all([client.invalidateQueries({queryKey:["parties","detail",businessId,partyId]}),client.invalidateQueries({queryKey:["parties",businessId]}),client.invalidateQueries({queryKey:["parties","customer-map",businessId]})])}});}
 export function useUpdateParty(){const client=useQueryClient();const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);return useMutation({mutationFn:({partyId,request}:{partyId:string;request:Parameters<typeof partiesApi.update>[1]})=>partiesApi.update(partyId,request),onSuccess:()=>client.invalidateQueries({queryKey:["parties",businessId]})});}
 export function useSetPartyStatus(){const client=useQueryClient();const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);return useMutation({mutationFn:({partyId,isActive,rowVersion}:{partyId:string;isActive:boolean;rowVersion:string})=>partiesApi.setStatus(partyId,isActive,rowVersion),onSuccess:()=>client.invalidateQueries({queryKey:["parties",businessId]})});}
-export function useCountries(includeInactive=false){return useQuery({
+export function useCountries(includeInactive=false,enabled=true){return useQuery({
   queryKey:["geography","countries",includeInactive],
   queryFn:()=>partiesApi.countries(includeInactive),
+  enabled,
   select:(countries)=>countries.filter((country,index,items)=>
     items.findIndex((candidate)=>
       candidate.name.trim().localeCompare(country.name.trim(),undefined,{sensitivity:"base"})===0)===index),

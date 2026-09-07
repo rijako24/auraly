@@ -12,10 +12,11 @@ export const roleKeys = {
   detail: (id: string) => [...roleKeys.details(), id] as const,
 };
 
-export function useRoles(params?: Partial<PagedRequest>) {
+export function useRoles(params?: Partial<PagedRequest>, enabled = true) {
   return useQuery({
     queryKey: roleKeys.list(params),
     queryFn: () => rolesApi.list(params),
+    enabled,
   });
 }
 

@@ -27,3 +27,8 @@ test("keeps a valid natural-person identification and exposes PPT", () => {
 test("returns to the natural-person default when changing from an organization", () => {
   assert.equal(identificationTypeForPartyChange("NIT", "NaturalPerson", options), "CC");
 });
+
+test("does not invent an identification type when the canonical catalog is empty", () => {
+  assert.equal(identificationTypeForPartyChange("CC", "NaturalPerson", []), "");
+  assert.equal(identificationTypeForPartyChange("NIT", "Organization", []), "");
+});

@@ -16,5 +16,5 @@ export function identificationTypeForPartyChange(
 ) {
   const available = identificationTypesForParty(options, partyType);
   if (available.some((option) => option.code === currentCode)) return currentCode;
-  return available[0]?.code ?? (partyType === "Organization" ? "NIT" : "CC");
+  return available[0]?.code ?? "";
 }
