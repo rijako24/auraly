@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BadgePercent, Plus, Trash2 } from "lucide-react";
+import { BadgePercent, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ProductPicker } from "@/components/products/product-picker";
+import { PromotionEditDialog } from "@/components/promotions/promotion-edit-dialog";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useCreatePromotion, useDeletePromotion, usePromotions } from "@/hooks/use-promotions";
 import { useProductCategories } from "@/hooks/use-products";
@@ -46,6 +47,7 @@ export default function PromotionsPage() {
   const [benefitProduct, setBenefitProduct] = useState<{ id: string; name: string } | null>(null);
   const [conditionCategory, setConditionCategory] = useState("");
   const [benefitCategory, setBenefitCategory] = useState("");
+  const [editingPromotion, setEditingPromotion] = useState<Promotion | null>(null);
 
   const promotions = data?.items ?? [];
 
@@ -242,7 +244,7 @@ export default function PromotionsPage() {
                     <TableCell>{promotion.isCombinable ? "Sí" : "No"}</TableCell>
                     <TableCell>{promotion.appliesToAllBusinesses ? "Todas" : `${promotion.applicableBusinessIds?.length ?? 1} seleccionada(s)`}</TableCell>
                     <TableCell className="text-right">{promotion.priority}</TableCell>
-                    <TableCell><Button variant="ghost" size="icon" onClick={() => handleDelete(promotion)} disabled={!promotion.isActive || deletePromotion.isPending}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                    <TableCell><div className="flex"><Button variant="ghost" size="icon" aria-label={`Editar ${promotion.name}`} onClick={() => setEditingPromotion(promotion)}><Pencil className="h-4 w-4" /></Button><Button variant="ghost" size="icon" aria-label={`Desactivar ${promotion.name}`} onClick={() => handleDelete(promotion)} disabled={!promotion.isActive || deletePromotion.isPending}><Trash2 className="h-4 w-4" /></Button></div></TableCell>
                   </TableRow>
                 );
               })}
@@ -251,6 +253,7 @@ export default function PromotionsPage() {
           </Table>
         </CardContent>
       </Card>
+      {editingPromotion && <PromotionEditDialog promotion={editingPromotion} businesses={businesses.data?.items ?? []} onClose={() => setEditingPromotion(null)} />}
     </div>
   );
 }

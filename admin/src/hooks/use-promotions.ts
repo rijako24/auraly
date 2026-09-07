@@ -30,6 +30,16 @@ export function useCreatePromotion() {
   });
 }
 
+export function useUpdatePromotion() {
+  const queryClient = useQueryClient();
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  return useMutation({
+    mutationFn: ({ promotionId, payload }: { promotionId: string; payload: PromotionPayload }) =>
+      promotionsApi.update(businessId!, promotionId, payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: promotionKeys.lists() }),
+  });
+}
+
 export function useDeletePromotion() {
   const queryClient = useQueryClient();
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);

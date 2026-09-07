@@ -54,14 +54,17 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
                 $"/api/v1/businesses/{fixture.BusinessId:D}/promotions",
                 new CreatePromotionRequest(
                     "Promoción descargable 10", null, true, null, null, 100, false, null,
-                    [],
+                    [new PromotionConditionDto(
+                        null, PromotionItemType.AnyProduct,
+                        null, null, null, 1m, null)],
                     [new PromotionBenefitDto(
                         null, PromotionBenefitType.PercentageDiscount,
                         PromotionItemType.Product, productId, null, null,
                         10m, null, null, null)],
                     false, [fixture.BusinessId]));
             createdResponse.EnsureSuccessStatusCode();
-            promotionId = (await createdResponse.Content.ReadFromJsonAsync<PromotionDto>())!.PromotionId;
+            var createdPromotion = (await createdResponse.Content.ReadFromJsonAsync<PromotionDto>())!;
+            promotionId = createdPromotion.PromotionId;
             var createdCursor = await ScalarAsync<long>(
                 "SELECT ISNULL(MAX(AvailableThroughCursor),0) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'Configuration';",
                 new SqlParameter("@BusinessId", fixture.BusinessId));
@@ -89,15 +92,45 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             Assert.Equal("Promotion", resolved.Source);
             Assert.Equal(promotionId, Assert.Single(resolved.PromotionIds!));
 
+            using (var invalidResponse = await admin.PutAsJsonAsync(
+                       $"/api/v1/businesses/{fixture.BusinessId:D}/promotions/{promotionId:D}",
+                       new UpdatePromotionRequest(
+                           createdPromotion.Name, createdPromotion.Description,
+                           createdPromotion.IsActive, createdPromotion.StartsAtUtc,
+                           createdPromotion.EndsAtUtc, createdPromotion.Priority,
+                           createdPromotion.IsCombinable, createdPromotion.CouponCode,
+                           createdPromotion.Conditions,
+                           [createdPromotion.Benefits[0] with
+                           {
+                               PromotionBenefitId = Guid.NewGuid(),
+                               DiscountPercentage = 20m
+                           }],
+                           createdPromotion.AppliesToAllBusinesses,
+                           createdPromotion.ApplicableBusinessIds)))
+                Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+
             using var updatedResponse = await admin.PutAsJsonAsync(
                 $"/api/v1/businesses/{fixture.BusinessId:D}/promotions/{promotionId:D}",
                 new UpdatePromotionRequest(
-                    null, null, null, null, null, null, null, null, null,
-                    [new PromotionBenefitDto(
-                        null, PromotionBenefitType.PercentageDiscount,
-                        PromotionItemType.Product, productId, null, null,
-                        20m, null, null, null)]));
+                    "Promoción descargable 20", "Actualización completa", true,
+                    null, null, 200, true, "",
+                    createdPromotion.Conditions,
+                    [createdPromotion.Benefits[0] with { DiscountPercentage = 20m }],
+                    false, [fixture.BusinessId]));
             updatedResponse.EnsureSuccessStatusCode();
+            var updatedPromotion = await updatedResponse.Content.ReadFromJsonAsync<PromotionDto>();
+            Assert.NotNull(updatedPromotion);
+            Assert.Equal("Promoción descargable 20", updatedPromotion!.Name);
+            Assert.Equal("Actualización completa", updatedPromotion.Description);
+            Assert.Equal(200, updatedPromotion.Priority);
+            Assert.True(updatedPromotion.IsCombinable);
+            Assert.Null(updatedPromotion.CouponCode);
+            Assert.Equal(
+                createdPromotion.Benefits[0].PromotionBenefitId,
+                Assert.Single(updatedPromotion.Benefits).PromotionBenefitId);
+            Assert.Equal(
+                createdPromotion.Conditions[0].PromotionConditionId,
+                Assert.Single(updatedPromotion.Conditions).PromotionConditionId);
             var updatedCursor = await ScalarAsync<long>(
                 "SELECT ISNULL(MAX(AvailableThroughCursor),0) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'Configuration';",
                 new SqlParameter("@BusinessId", fixture.BusinessId));

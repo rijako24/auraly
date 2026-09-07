@@ -135,29 +135,14 @@ public sealed class PromotionAdminService : IPromotionAdminService
                 var businessIds = await ValidateScopeAsync(
                     tenantId, businessId, appliesToAll, requestedBusinessIds, ct);
                 promotion.AppliesToAllBusinesses = appliesToAll;
-                promotion.BusinessScopes.Clear();
-                foreach (var scopedBusinessId in businessIds)
-                    promotion.BusinessScopes.Add(new PromotionBusinessScope
-                    {
-                        PromotionId = promotion.PromotionId,
-                        BusinessId = scopedBusinessId,
-                        TenantId = tenantId
-                    });
+                SynchronizeBusinessScopes(promotion, tenantId, businessIds);
             }
 
             if (request.Conditions is not null)
-            {
-                promotion.Conditions.Clear();
-                foreach (var condition in request.Conditions)
-                    promotion.Conditions.Add(MapCondition(tenantId, promotionId, condition));
-            }
+                SynchronizeConditions(promotion, tenantId, request.Conditions);
 
             if (request.Benefits is not null)
-            {
-                promotion.Benefits.Clear();
-                foreach (var benefit in request.Benefits)
-                    promotion.Benefits.Add(MapBenefit(tenantId, promotionId, benefit));
-            }
+                SynchronizeBenefits(promotion, tenantId, request.Benefits);
 
             promotion.UpdatedAt = DateTime.UtcNow;
             await _unitOfWork.Promotions.UpdateAsync(promotion, ct);
@@ -317,6 +302,76 @@ public sealed class PromotionAdminService : IPromotionAdminService
         CreatedAt = DateTime.UtcNow
     };
 
+    private static void SynchronizeBusinessScopes(
+        Promotion promotion,
+        Guid tenantId,
+        IReadOnlyCollection<Guid> businessIds)
+    {
+        var requested = businessIds.ToHashSet();
+        foreach (var scope in promotion.BusinessScopes
+                     .Where(scope => !requested.Contains(scope.BusinessId))
+                     .ToArray())
+            promotion.BusinessScopes.Remove(scope);
+
+        var existing = promotion.BusinessScopes
+            .Select(scope => scope.BusinessId)
+            .ToHashSet();
+        foreach (var businessId in requested.Where(id => !existing.Contains(id)))
+            promotion.BusinessScopes.Add(new PromotionBusinessScope
+            {
+                PromotionId = promotion.PromotionId,
+                BusinessId = businessId,
+                TenantId = tenantId
+            });
+    }
+
+    private static void SynchronizeConditions(
+        Promotion promotion,
+        Guid tenantId,
+        IReadOnlyCollection<PromotionConditionDto> requested)
+    {
+        EnsureUniqueIds(
+            requested.Select(condition => condition.PromotionConditionId),
+            "Conditions");
+        var existing = promotion.Conditions.ToDictionary(
+            condition => condition.PromotionConditionId);
+        var retained = new HashSet<Guid>();
+
+        foreach (var dto in requested)
+        {
+            if (dto.PromotionConditionId is { } conditionId)
+            {
+                if (!existing.TryGetValue(conditionId, out var condition))
+                    throw new DomainValidationException(
+                        "Conditions",
+                        "La condición indicada no pertenece a la promoción.");
+                ApplyCondition(condition, dto);
+                retained.Add(conditionId);
+                continue;
+            }
+
+            promotion.Conditions.Add(MapCondition(tenantId, promotion.PromotionId, dto));
+        }
+
+        foreach (var condition in promotion.Conditions
+                     .Where(condition => existing.ContainsKey(condition.PromotionConditionId)
+                                         && !retained.Contains(condition.PromotionConditionId))
+                     .ToArray())
+            promotion.Conditions.Remove(condition);
+    }
+
+    private static void ApplyCondition(
+        PromotionCondition condition,
+        PromotionConditionDto dto)
+    {
+        condition.ItemType = dto.ItemType;
+        condition.ProductId = dto.ProductId;
+        condition.ServiceId = dto.ServiceId;
+        condition.CategoryName = Normalize(dto.CategoryName);
+        condition.MinQuantity = dto.MinQuantity;
+        condition.MinSubtotal = dto.MinSubtotal;
+    }
+
     private static PromotionBenefit MapBenefit(Guid tenantId, Guid promotionId, PromotionBenefitDto dto) => new()
     {
         PromotionBenefitId = dto.PromotionBenefitId ?? Guid.NewGuid(),
@@ -333,6 +388,69 @@ public sealed class PromotionAdminService : IPromotionAdminService
         AppliesToQuantity = dto.AppliesToQuantity,
         CreatedAt = DateTime.UtcNow
     };
+
+    private static void SynchronizeBenefits(
+        Promotion promotion,
+        Guid tenantId,
+        IReadOnlyCollection<PromotionBenefitDto> requested)
+    {
+        EnsureUniqueIds(
+            requested.Select(benefit => benefit.PromotionBenefitId),
+            "Benefits");
+        var existing = promotion.Benefits.ToDictionary(
+            benefit => benefit.PromotionBenefitId);
+        var retained = new HashSet<Guid>();
+
+        foreach (var dto in requested)
+        {
+            if (dto.PromotionBenefitId is { } benefitId)
+            {
+                if (!existing.TryGetValue(benefitId, out var benefit))
+                    throw new DomainValidationException(
+                        "Benefits",
+                        "El beneficio indicado no pertenece a la promoción.");
+                ApplyBenefit(benefit, dto);
+                retained.Add(benefitId);
+                continue;
+            }
+
+            promotion.Benefits.Add(MapBenefit(tenantId, promotion.PromotionId, dto));
+        }
+
+        foreach (var benefit in promotion.Benefits
+                     .Where(benefit => existing.ContainsKey(benefit.PromotionBenefitId)
+                                       && !retained.Contains(benefit.PromotionBenefitId))
+                     .ToArray())
+            promotion.Benefits.Remove(benefit);
+    }
+
+    private static void ApplyBenefit(
+        PromotionBenefit benefit,
+        PromotionBenefitDto dto)
+    {
+        benefit.BenefitType = dto.BenefitType;
+        benefit.TargetItemType = dto.TargetItemType;
+        benefit.ProductId = dto.ProductId;
+        benefit.ServiceId = dto.ServiceId;
+        benefit.CategoryName = Normalize(dto.CategoryName);
+        benefit.DiscountPercentage = dto.DiscountPercentage;
+        benefit.DiscountAmount = dto.DiscountAmount;
+        benefit.FixedUnitPrice = dto.FixedUnitPrice;
+        benefit.AppliesToQuantity = dto.AppliesToQuantity;
+    }
+
+    private static void EnsureUniqueIds(
+        IEnumerable<Guid?> ids,
+        string field)
+    {
+        if (ids.Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .GroupBy(id => id)
+            .Any(group => group.Count() > 1))
+            throw new DomainValidationException(
+                field,
+                "La solicitud contiene identificadores repetidos.");
+    }
 
     private static PromotionDto Map(Promotion p) => new(
         p.PromotionId,
