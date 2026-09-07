@@ -114,6 +114,29 @@ public sealed record PartyWorkspacePage(
     int TotalCount,
     int TotalPages);
 
+public sealed record PartyRoleOptionQuery(
+    string Role,
+    int PageSize = 25,
+    string? Search = null,
+    Guid? RoleId = null,
+    Guid? PartyId = null);
+
+public sealed record PartyRoleOption(
+    Guid PartyId,
+    Guid RoleId,
+    string Role,
+    string DisplayName,
+    string? Identification,
+    string? SupplierPurchaseEvidencePolicy = null,
+    int? SupplierDefaultPaymentDueDays = null);
+
+public sealed record PartyRoleOptionPage(
+    IReadOnlyCollection<PartyRoleOption> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    int TotalPages);
+
 public sealed record CustomerMapQuery(string? Search = null, Guid? RouteId = null, Guid? SellerId = null, bool OnlyUnassigned = false);
 public sealed record CustomerMapAssignment(Guid RouteId, string RouteName, Guid SellerId, string SellerName);
 public sealed record CustomerMapSite(

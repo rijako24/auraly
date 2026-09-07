@@ -16,6 +16,13 @@ export interface PartyWorkspaceItem {
   supplierDefaultPaymentDueDays: number | null;
 }
 export interface PartyWorkspacePage { items: PartyWorkspaceItem[]; page: number; pageSize: number; totalCount: number; totalPages: number; }
+export interface PartyRoleOption {
+  partyId: string; roleId: string; role: PartyRole | "Any"; displayName: string;
+  identification: string | null;
+  supplierPurchaseEvidencePolicy: PurchaseEvidencePolicy | null;
+  supplierDefaultPaymentDueDays: number | null;
+}
+export interface PartyRoleOptionPage { items: PartyRoleOption[]; page: number; pageSize: number; totalCount: number; totalPages: number; }
 export interface CustomerMapAssignment { routeId:string; routeName:string; sellerId:string; sellerName:string; }
 export interface CustomerMapSite { customerId:string; partyId:string; customerName:string; identification:string|null; partySiteId:string; siteName:string; addressLine:string; neighborhood:string|null; cityName:string; phone:string|null; googleMapsUrl:string|null; latitude:number|null; longitude:number|null; assignments:CustomerMapAssignment[]; }
 export interface PartySiteDetail {
@@ -62,6 +69,8 @@ export interface CreateSellerUserAccess { username:string; email:string; passwor
 export const partiesApi = {
   page: (params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean; roleId?: string; partyId?: string }) =>
     apiClient.get<PartyWorkspacePage>("/commerce/v1/parties", params),
+  roleOptions: (params: { page: number; pageSize: number; role: PartyRole | "Any"; search?: string; roleId?: string; partyId?: string }) =>
+    apiClient.get<PartyRoleOptionPage>("/commerce/v1/parties/role-options", params),
   createIdentity: (request: CreateThirdPartyRequest & { targetRole: "Employee" | "User" }) => apiClient.post<PartyIdentityAcceptance>("/commerce/v1/parties/identity", request),
   customerMap: () => apiClient.get<CustomerMapSite[]>("/commerce/v1/parties/customer-map"),
   createCustomer: (request: CreateThirdPartyRequest) => apiClient.post<CustomerAcceptance>("/commerce/v1/customers", request),

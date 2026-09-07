@@ -83,6 +83,7 @@ El detalle de producto presenta rotación sólo como información de lectura. La
 - `GET /api/commerce/v1/purchase-orders`
 - `GET /api/commerce/v1/purchase-orders/{id}`
 - `GET /api/commerce/v1/purchase-orders/{id}/receipt-source`
+- `GET /api/commerce/v1/parties/role-options?role=Supplier`
 - `PUT /api/commerce/v1/purchase-orders/{id}/draft`
 - `POST /api/commerce/v1/purchase-orders/confirm`
 - `POST /api/commerce/v1/purchase-orders/{id}/close`

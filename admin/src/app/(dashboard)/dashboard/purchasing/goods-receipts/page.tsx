@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
-import { PartyRoleSelect } from "@/components/parties/party-role-select";
+import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,7 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
-import { partiesApi, type PartyWorkspaceItem } from "@/services/api/parties";
+import { partiesApi } from "@/services/api/parties";
 import { tenantCommercialApi } from "@/services/api/tenants";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
 import {
@@ -53,7 +53,7 @@ import {
   goodsReceiptDraftKey, loadGoodsReceiptDraft, removeGoodsReceiptDraft, saveGoodsReceiptDraft,
 } from "@/lib/goods-receipt-draft-store";
 
-type PendingSupplierChange = { supplier: PartyWorkspaceItem };
+type PendingSupplierChange = { supplier: PartyRoleSelection };
 type GoodsReceiptCostLine = GoodsReceiptCostDocument["lines"][number];
 
 type EditorDraft = {
@@ -416,7 +416,7 @@ function ReceiptEditor({
   );
   const [costSupplierNames, setCostSupplierNames] = useState<Record<string, string>>({});
   const [pendingSupplierChange, setPendingSupplierChange] = useState<PendingSupplierChange>();
-  const [selectedSupplier, setSelectedSupplier] = useState<PartyWorkspaceItem | null>(null);
+  const [selectedSupplier, setSelectedSupplier] = useState<PartyRoleSelection | null>(null);
   const products = useGoodsReceiptProducts(
     draft?.supplierId || undefined, productSearch, includeUnassociated,
   );
@@ -484,8 +484,8 @@ function ReceiptEditor({
   const costSupplierQueries = useQueries({
     queries: costSupplierIds.map((supplierId) => ({
       queryKey: ["goods-receipt-cost-supplier", businessId, supplierId],
-      queryFn: async () => (await partiesApi.page({
-        page: 1, pageSize: 1, role: "Supplier", roleId: supplierId, isActive: true,
+      queryFn: async () => (await partiesApi.roleOptions({
+        page: 1, pageSize: 1, role: "Supplier", roleId: supplierId,
       })).items[0] ?? null,
       enabled: Boolean(open && businessId && supplierId),
       staleTime: 5 * 60 * 1000,
@@ -603,7 +603,7 @@ function ReceiptEditor({
     setCostsExpanded(true);
   };
 
-  const applySupplierChange = (supplier: PartyWorkspaceItem) => {
+  const applySupplierChange = (supplier: PartyRoleSelection) => {
     const supplierId = supplier.supplierId ?? "";
     setSelectedSupplier(supplier);
     const evidenceType = supplier.supplierPurchaseEvidencePolicy ?? "";
@@ -617,7 +617,7 @@ function ReceiptEditor({
     setProductSearch("");
   };
 
-  const requestSupplierChange = (supplierId: string, supplier?: PartyWorkspaceItem) => {
+  const requestSupplierChange = (supplierId: string, supplier?: PartyRoleSelection) => {
     if (!supplier) return;
     if (supplierId === draft.supplierId) return;
     if (draft.lines.length === 0) {
@@ -902,6 +902,7 @@ function ReceiptEditor({
         <section className="grid items-start gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
           <Field label="Proveedor">
             <PartyRoleSelect role="Supplier" value={draft.supplierId} placeholder="Buscar proveedor"
+              preload
               disabled={!!draft.purchaseOrderId}
               onResolved={(supplier)=>{
                 setSelectedSupplier(supplier);

@@ -111,7 +111,7 @@ Los códigos son estables; label, descripción, activación y orden pertenecen a
 
 Catálogos iniciales: medios de pago, tipos de documento de venta, presentaciones de compra, tipos de operación de inventario y tipos de bot. Al tocar otro selector heredado, se agrega su slice completo en esta ruta; no se crea otro endpoint genérico ni otra lista local.
 
-Los terceros no pasan por `reference.Options`: su propietario es el workspace de `Parties`. Clientes, proveedores, vendedores, transportadores, empleados y usuarios se resuelven mediante la consulta paginada de `Parties`, filtrada por rol y scope, conservando `PartyId` o el ID del rol según el contrato consumidor.
+Los terceros no pasan por `reference.Options`: su propietario es el workspace de `Parties`. Los combos de clientes, proveedores, vendedores, transportadores, empleados, usuarios o cualquier tercero consumen `GET /api/commerce/v1/parties/role-options`, una proyección paginada mínima y aislada por tenant/business. Para un rol específico, la consulta une `Parties` únicamente con la tabla de ese rol; `Any` deduplica los identificadores de las tablas de roles activas. La respuesta retorna `PartyId`, ID del rol, nombre e identificación; proveedor agrega sólo política de soporte y plazo de pago porque sus formularios los necesitan. La página y el detalle administrativo continúan usando el read model completo de `Parties`, que no debe reutilizarse para dropdowns.
 
 ## Fronteras y persistencia
 

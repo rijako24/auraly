@@ -17,6 +17,7 @@ import { ProductRecognitionSections, type ProductRecognitionSectionsHandle } fro
 import { ProductImageEditor, type ProductImageEditorHandle } from "@/components/products/product-image-gallery";
 import { DataTable } from "@/components/tables/data-table";
 import { ReportViewer } from "@/components/reports/report-viewer";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,7 +49,6 @@ import {
   productsApi,
 } from "@/services/api/products";
 import { productMerchandisingApi } from "@/services/api/product-merchandising";
-import { partiesApi } from "@/services/api/parties";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 interface ProductFormState {
@@ -115,10 +115,6 @@ export default function ProductsPage() {
   });
   const categoriesQuery = useProductCategories(false);
   const brandsQuery = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands, staleTime: 5 * 60 * 1000 });
-  const suppliersQuery = useQuery({
-    queryKey: ["product-filter-suppliers", businessId], enabled: !!businessId, staleTime: 5 * 60 * 1000,
-    queryFn: async () => { const items: Awaited<ReturnType<typeof partiesApi.page>>["items"] = []; let current = 1; let totalPages = 1; do { const result = await partiesApi.page({ page: current, pageSize: 200, role: "Supplier", isActive: true }); items.push(...result.items); totalPages = result.totalPages; current += 1; } while (current <= totalPages); return items.filter(item => item.supplierId).sort((left, right) => left.displayName.localeCompare(right.displayName, "es", { sensitivity: "base" })); },
-  });
   const categories = categoriesQuery.data ?? [];
   const areas = categories.filter(item => item.depth === 0);
   const lines = categories.filter(item => item.depth === 1 && (!areaId || item.parentProductCategoryId === areaId));
@@ -449,7 +445,7 @@ export default function ProductsPage() {
           />
             </div></div>
             {([['Área', areaId, areas, (value:string|undefined)=>{setAreaId(value);setLineId(undefined);setGroupId(undefined);setSubgroupId(undefined)}],['Línea', lineId, lines, (value:string|undefined)=>{setLineId(value);setGroupId(undefined);setSubgroupId(undefined)}],['Grupo', groupId, groups, (value:string|undefined)=>{setGroupId(value);setSubgroupId(undefined)}],['Subgrupo', subgroupId, subgroups, setSubgroupId]] as const).map(([label,value,options,onChange])=><div key={label} className="space-y-2"><Label>{label}</Label><Select value={value ?? "all"} onValueChange={next=>{onChange(next === "all" ? undefined : next);setPage(1)}}><SelectTrigger><SelectValue placeholder={`Todos los ${label.toLocaleLowerCase("es")}`}/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{options.map(option=><SelectItem key={option.productCategoryId} value={option.productCategoryId}>{option.name}</SelectItem>)}</SelectContent></Select></div>)}
-            <div className="space-y-2"><Label>Proveedor</Label><Select value={supplierId ?? "all"} onValueChange={value=>{setSupplierId(value === "all" ? undefined : value);setPage(1)}}><SelectTrigger><SelectValue placeholder="Todos"/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{suppliersQuery.data?.map(item=><SelectItem key={item.supplierId!} value={item.supplierId!}>{item.displayName}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-2"><Label>Proveedor</Label><PartyRoleSelect role="Supplier" value={supplierId ?? "all"} leadingOptions={[{value:"all",label:"Todos"}]} placeholder="Buscar proveedor" onChange={value=>{setSupplierId(value === "all" ? undefined : value);setPage(1)}}/></div>
             <div className="space-y-2"><Label>Marca</Label><Select value={brandId ?? "all"} onValueChange={value=>{setBrandId(value === "all" ? undefined : value);setPage(1)}}><SelectTrigger><SelectValue placeholder="Todas"/></SelectTrigger><SelectContent><SelectItem value="all">Todas</SelectItem>{brandsQuery.data?.map(item=><SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>)}</SelectContent></Select></div>
           </div>
           <div className="flex flex-wrap gap-5"><TriStateFilter label="Controla inventario" value={managesInventory} onChange={value=>{setManagesInventory(value);setPage(1)}}/><TriStateFilter label="Permite venta fraccionada" value={allowsFractionalSale} onChange={value=>{setAllowsFractionalSale(value);setPage(1)}}/><TriStateFilter label="Producto de balanza" value={isWeighable} onChange={value=>{setIsWeighable(value);setPage(1)}}/></div>
