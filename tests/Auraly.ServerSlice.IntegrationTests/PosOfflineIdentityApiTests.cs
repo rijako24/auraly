@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
+using Auraly.Platform.Application.Identity.DTOs;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -40,6 +41,27 @@ public sealed class PosOfflineIdentityApiTests(ServerSliceFixture fixture)
             "another-password", cashier.PasswordVerifier));
         Assert.True(snapshot.ValidUntil > snapshot.IssuedAt);
         Assert.Equal(64, snapshot.Revision.Length);
+        Assert.NotNull(snapshot.Cursor);
+
+        var changedName = $"Cajero delta {Guid.NewGuid():N}";
+        using (var admin = fixture.CreateAdminClient("users.update"))
+        using (var update = await admin.PutAsJsonAsync(
+                   $"/api/v1/users/{fixture.UserId:D}",
+                   new UpdateUserRequest(changedName, null, null, null)))
+            update.EnsureSuccessStatusCode();
+
+        using var deltaRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/pos/v1/identity/changes?businessId={fixture.BusinessId:D}&cursor={snapshot.Cursor}&pageSize=250");
+        deltaRequest.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        deltaRequest.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        using var deltaResponse = await client.SendAsync(deltaRequest);
+        deltaResponse.EnsureSuccessStatusCode();
+        var delta = await deltaResponse.Content.ReadFromJsonAsync<PosOfflineIdentityDeltaPage>();
+        Assert.NotNull(delta);
+        Assert.True(delta!.ToCursor > snapshot.Cursor);
+        var changed = Assert.Single(delta.Changes, item => item.UserId == fixture.UserId);
+        Assert.StartsWith(changedName, changed.User!.DisplayName, StringComparison.Ordinal);
     }
 
     [Fact]

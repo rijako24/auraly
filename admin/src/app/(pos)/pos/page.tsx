@@ -1190,7 +1190,7 @@ export default function PosPage() {
       return false;
     }
     try {
-      const candidates = await client.searchProducts(value, 0, 3);
+      const candidates = await client.searchProducts(value, 0, 1);
       const exact = candidates.items.find(product =>
         product.productCode.localeCompare(value, undefined, { sensitivity: "accent" }) === 0 ||
         product.reference?.localeCompare(value, undefined, { sensitivity: "accent" }) === 0);
@@ -2527,7 +2527,7 @@ export default function PosPage() {
             <button
               type="button"
               onClick={() => void synchronizeNow()}
-              disabled={synchronization.inProgress || !serverConnected}
+              disabled={synchronization.inProgress}
               className="mt-4 h-11 w-full rounded-xl bg-teal-300 px-4 font-bold text-[#071a1d] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {synchronization.inProgress ? "Reintentando…" : "Reintentar preparación"}
@@ -3574,7 +3574,7 @@ export default function PosPage() {
           }}
         />
       )}
-      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} serverConnected={serverConnected} pushConnected={pushConnected} canSynchronize={serverConnected} inProgress={synchronization.inProgress} pendingCount={synchronization.pendingCount} failed={synchronization.failed} error={synchronization.error} onSynchronize={synchronizeNow} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
+      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} serverConnected={serverConnected} pushConnected={pushConnected} canSynchronize inProgress={synchronization.inProgress} pendingCount={synchronization.pendingCount} failed={synchronization.failed} error={synchronization.error} onSynchronize={synchronizeNow} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
 
       {quantityShortage && <PosQuantityAvailabilityDialog
         value={quantityShortage}

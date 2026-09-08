@@ -25,4 +25,17 @@ public sealed record PosOfflineIdentitySnapshot(
     string Revision,
     DateTimeOffset IssuedAt,
     DateTimeOffset ValidUntil,
-    IReadOnlyList<PosOfflineUserProjection> Users);
+    IReadOnlyList<PosOfflineUserProjection> Users,
+    long? Cursor = null);
+
+public sealed record PosOfflineIdentityDelta(
+    long Version,
+    string Kind,
+    Guid UserId,
+    PosOfflineUserProjection? User);
+
+public sealed record PosOfflineIdentityDeltaPage(
+    long FromCursor,
+    long ToCursor,
+    bool HasMore,
+    IReadOnlyList<PosOfflineIdentityDelta> Changes);

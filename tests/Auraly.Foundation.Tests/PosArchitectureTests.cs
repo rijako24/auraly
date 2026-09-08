@@ -385,7 +385,7 @@ public sealed class PosArchitectureTests
         Assert.Contains("const string Configuration", streams, StringComparison.Ordinal);
         Assert.Contains("N'Configuration'", warehouseStore, StringComparison.Ordinal);
         Assert.Contains("AllowNegativeStockSales", pricingSnapshot, StringComparison.Ordinal);
-        Assert.Contains("PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Catalog", edgeSynchronization, StringComparison.Ordinal);
+        Assert.Contains("PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Configuration", edgeSynchronization, StringComparison.Ordinal);
         Assert.Contains("PosSynchronizationStreams.DeviceEnrollment", edgeSynchronization, StringComparison.Ordinal);
         Assert.Contains("TargetDeviceId", deviceAdministration, StringComparison.Ordinal);
         Assert.Contains("Equipo enrolado", setup, StringComparison.Ordinal);

@@ -66,7 +66,6 @@ public class RoleService : IRoleService
             };
             await _unitOfWork.AppRoles.AddAsync(role, ct);
             await _unitOfWork.SaveChangesAsync(ct);
-            await _securitySynchronization.EnqueueTenantAsync(tenantId, ct);
             _logger.LogInformation("Role '{RoleName}' created [CorrelationId: {CorrelationId}]", role.Name, _correlationIdProvider.CorrelationId);
             return MapToDto(role);
         }, ct);
@@ -93,7 +92,7 @@ public class RoleService : IRoleService
             _unitOfWork.AppRoles.Update(role);
             await _unitOfWork.SaveChangesAsync(ct);
             var tenantId = role.TenantId!.Value;
-            await _securitySynchronization.EnqueueTenantAsync(tenantId, ct);
+            await _securitySynchronization.EnqueueRoleUsersAsync(tenantId, role.RoleId, ct);
             return (Value: MapToDto(role), TenantId: tenantId);
         }, ct);
         await DispatchSecurityAsync(result.TenantId, ct);
@@ -111,7 +110,7 @@ public class RoleService : IRoleService
             _unitOfWork.AppRoles.Update(role);
             await _unitOfWork.SaveChangesAsync(ct);
             var tenantId = role.TenantId!.Value;
-            await _securitySynchronization.EnqueueTenantAsync(tenantId, ct);
+            await _securitySynchronization.EnqueueRoleUsersAsync(tenantId, role.RoleId, ct);
             return tenantId;
         }, ct);
         await DispatchSecurityAsync(tenantId, ct);
@@ -158,7 +157,7 @@ public class RoleService : IRoleService
             }), ct);
             await _unitOfWork.SaveChangesAsync(ct);
             var roleTenantId = role.TenantId!.Value;
-            await _securitySynchronization.EnqueueTenantAsync(roleTenantId, ct);
+            await _securitySynchronization.EnqueueRoleUsersAsync(roleTenantId, role.RoleId, ct);
             _logger.LogInformation("Permissions updated for role {RoleId}: {Count} permissions [CorrelationId: {CorrelationId}]", roleId, permissions.Count, _correlationIdProvider.CorrelationId);
             return roleTenantId;
         }, ct);

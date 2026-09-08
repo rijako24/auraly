@@ -92,7 +92,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             var prices = await ResolveProductPricesAsync(
                 connection, transaction, scope.BusinessId, scope.WarehouseId, request.CustomerId,
                 items.Select(item => new SalePriceRequest(
-                    item.ProductId.ToString("D"), item.ProductId, 1)).ToArray(), cancellationToken);
+                    item.ProductId.ToString("D"), item.ProductId, 1)).ToArray(), cancellationToken,
+                independentLines: true);
             items = items.Select(item =>
             {
                 var resolved = prices[item.ProductId.ToString("D")];

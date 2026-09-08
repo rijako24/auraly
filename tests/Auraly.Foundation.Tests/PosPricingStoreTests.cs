@@ -155,6 +155,56 @@ public sealed class PosPricingStoreTests
                 [new("h", hygieneId, 1m), new("m", meatId, 1m)], null);
             Assert.Equal(90m, thresholdResult["h"].Amount);
             Assert.Equal(180m, thresholdResult["m"].Amount);
+
+            var searchPage = await store.ResolvePricesAsync(
+                [new("h", hygieneId, 1m), new("m", meatId, 1m)], null,
+                independentLines: true);
+            Assert.Equal(100m, searchPage["h"].Amount);
+            Assert.Equal(200m, searchPage["m"].Amount);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Customer_delta_changes_only_the_target_and_configuration_refresh_preserves_the_directory()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-customer-delta-{Guid.NewGuid():N}.db");
+        try
+        {
+            var now = new DateTimeOffset(2026, 9, 8, 12, 0, 0, TimeSpan.Zero);
+            var store = new PosCatalogStore($"Data Source={path}", new FixedTimeProvider(now));
+            await store.InitializeAsync();
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+            var channel = Guid.NewGuid();
+            await store.BeginCustomerBootstrapAsync();
+            await store.ApplyCustomerBootstrapPageAsync(new PosCustomerBootstrapPage(
+                10, null, false,
+                [
+                    new(first, "1", "First", channel, true,
+                        PriceChannelValidFrom: now.AddDays(-1), PriceChannelValidUntil: now.AddDays(1)),
+                    new(second, "2", "Second", null, true)
+                ]));
+
+            await store.ApplyCustomerChangesAsync(new PosCustomerDeltaPage(
+                10, 11, false,
+                [new(11, "Upsert", first, new(first, "1", "First updated", null, true))]));
+            await store.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
+                [new(channel, "C", "Channel", "PercentageOverBasePrice", -10m)],
+                [], [], [], ConfigurationCursor: 12));
+
+            var customers = (await store.ReadPricingSnapshotAsync()).Customers
+                .OrderBy(value => value.Identification).ToArray();
+            Assert.Equal(2, customers.Length);
+            Assert.Equal("First updated", customers[0].Name);
+            Assert.Null(customers[0].PriceChannelId);
+            Assert.Equal("Second", customers[1].Name);
+            Assert.Equal(11, await store.CustomerCursorAsync());
+            Assert.Equal(12, await store.ConfigurationCursorAsync());
         }
         finally
         {

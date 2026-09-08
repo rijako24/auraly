@@ -595,8 +595,11 @@ public sealed partial class SqlPartyWorkspaceStore(
               FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
               WHERE BusinessId=@BusinessId AND Stream=N'Customers';
               INSERT dbo.PosSynchronizationOutboxMessages
-                (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-              VALUES(@NotificationId,@BusinessId,N'Customers',@Cursor,@Now);
+                (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,
+                 EntityType,EntityId,ChangeKind)
+              SELECT @NotificationId,@BusinessId,N'Customers',@Cursor,@Now,
+                     N'Customer',CustomerId,N'Upsert'
+              FROM dbo.Customers WHERE BusinessId=@BusinessId AND PartyId=@PartyId;
             END
             """,[P("@NotificationId",ids.NewId()),P("@BusinessId",businessId),P("@PartyId",partyId),P("@Now",now)],ct);
     }

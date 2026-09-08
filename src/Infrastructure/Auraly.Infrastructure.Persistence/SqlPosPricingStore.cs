@@ -15,7 +15,10 @@ public sealed partial class SqlCatalogStore
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable, ct);
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "dbo.PosPricingSnapshotGet";
         command.CommandType = System.Data.CommandType.StoredProcedure;
         command.Parameters.AddRange(
@@ -81,8 +84,13 @@ public sealed partial class SqlCatalogStore
                 new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(7), DateTimeKind.Utc)),
                 JsonSerializer.Deserialize<PosPromotionCondition[]>(reader.GetString(8)) ?? [],
                 JsonSerializer.Deserialize<PosPromotionBenefit[]>(reader.GetString(9)) ?? []));
+        long? configurationCursor = null;
+        if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
+            configurationCursor = reader.GetInt64(0);
+        await reader.DisposeAsync();
+        await transaction.CommitAsync(ct);
         return new PosPricingSnapshot(
             channels, tiers, exclusions, customers, rules, warehouseAllowsNegativeStock,
-            allowPromotionChannelCombination, promotions);
+            allowPromotionChannelCombination, promotions, null, configurationCursor);
     }
 }

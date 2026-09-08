@@ -16,7 +16,9 @@ public sealed class SqlPosOfflineIdentityStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        if (!await DeviceMatchesAsync(connection, device, cancellationToken))
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable, cancellationToken);
+        if (!await DeviceMatchesAsync(connection, device, cancellationToken, transaction))
             throw new PosIdentityForbiddenException(
                 "El dispositivo y el negocio no pertenecen al mismo tenant activo.");
 
@@ -58,7 +60,7 @@ public sealed class SqlPosOfflineIdentityStore(
                     AND salesPermission.Resource=@SalesCreate)
             ORDER BY u.UserId,p.Resource;
             """;
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", device.TenantId);
         command.Parameters.AddWithValue("@BusinessId", device.BusinessId);
         command.Parameters.AddWithValue(
@@ -94,6 +96,7 @@ public sealed class SqlPosOfflineIdentityStore(
             }
             user.Permissions.Add(reader.GetString(12));
         }
+        await reader.DisposeAsync();
 
         var projections = users.Values
             .Select(user => new PosOfflineUserProjection(
@@ -106,17 +109,132 @@ public sealed class SqlPosOfflineIdentityStore(
             .OrderBy(user => user.Username, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var now = timeProvider.GetUtcNow();
+        await using var cursorCommand = connection.CreateCommand();
+        cursorCommand.Transaction = transaction;
+        cursorCommand.CommandText = "SELECT ISNULL(MAX(AvailableThroughCursor),0) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'Security';";
+        cursorCommand.Parameters.AddWithValue("@BusinessId", device.BusinessId);
+        var cursor = Convert.ToInt64(await cursorCommand.ExecuteScalarAsync(cancellationToken));
+        await transaction.CommitAsync(cancellationToken);
         return new PosOfflineIdentitySnapshot(
             Revision(projections),
             now,
             now.AddDays(7),
-            projections);
+            projections,
+            cursor);
+    }
+
+    public async Task<PosOfflineIdentityDeltaPage> ChangesAsync(
+        PosIdentityDeviceScope device,
+        long cursor,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        if (!await DeviceMatchesAsync(connection, device, cancellationToken))
+            throw new PosIdentityForbiddenException(
+                "El dispositivo y el negocio no pertenecen al mismo tenant activo.");
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT TOP (@Take) AvailableThroughCursor,EntityId,ChangeKind
+            FROM dbo.PosSynchronizationOutboxMessages
+            WHERE BusinessId=@BusinessId AND Stream=N'Security'
+              AND AvailableThroughCursor>@Cursor AND EntityType=N'User' AND EntityId IS NOT NULL
+            ORDER BY AvailableThroughCursor;
+            """;
+        command.Parameters.AddWithValue("@BusinessId", device.BusinessId);
+        command.Parameters.AddWithValue("@Cursor", cursor);
+        command.Parameters.AddWithValue("@Take", pageSize + 1);
+        var pending = new List<(long Version, Guid UserId, string Kind)>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken))
+                pending.Add((reader.GetInt64(0), reader.GetGuid(1),
+                    reader.IsDBNull(2) ? "Upsert" : reader.GetString(2)));
+        var hasMore = pending.Count > pageSize;
+        if (hasMore) pending.RemoveAt(pending.Count - 1);
+        var changes = new List<PosOfflineIdentityDelta>(pending.Count);
+        foreach (var item in pending)
+        {
+            var user = string.Equals(item.Kind, "Tombstone", StringComparison.Ordinal)
+                ? null
+                : await ReadUserAsync(connection, device, item.UserId, cancellationToken);
+            changes.Add(new PosOfflineIdentityDelta(
+                item.Version, user is null ? "Tombstone" : "Upsert", item.UserId, user));
+        }
+        return new PosOfflineIdentityDeltaPage(
+            cursor,
+            changes.Count == 0 ? cursor : changes[^1].Version,
+            hasMore,
+            changes);
+    }
+
+    private static async Task<PosOfflineUserProjection?> ReadUserAsync(
+        SqlConnection connection,
+        PosIdentityDeviceScope device,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT u.UserId,u.Username,LTRIM(RTRIM(CONCAT(u.FirstName,N' ',u.LastName))),
+                   u.PosOfflinePasswordSalt,u.PosOfflinePasswordHash,u.PosOfflinePasswordIterations,
+                   u.PosOfflinePasswordChangedAt,credential.SecretSalt,credential.SecretHash,
+                   credential.SecretIterations,credential.CreatedAt,credential.IsOneTime,p.Resource
+            FROM dbo.AppUsers u
+            LEFT JOIN dbo.SupervisorCredentials credential
+              ON credential.UserId=u.UserId AND credential.IsActive=1
+              AND (credential.ValidUntil IS NULL OR credential.ValidUntil>SYSUTCDATETIME())
+            JOIN dbo.UserRoles ur ON ur.UserId=u.UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId)
+            JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
+              AND (r.TenantId IS NULL OR r.TenantId=@TenantId)
+            JOIN dbo.RolePermissions rp ON rp.RoleId=r.RoleId
+            JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
+            WHERE u.UserId=@UserId AND u.TenantId=@TenantId AND u.IsActive=1
+              AND u.PosOfflinePasswordSalt IS NOT NULL AND u.PosOfflinePasswordHash IS NOT NULL
+              AND u.PosOfflinePasswordIterations IS NOT NULL AND u.PosOfflinePasswordChangedAt IS NOT NULL
+              AND EXISTS(
+                SELECT 1 FROM dbo.UserRoles salesUr
+                JOIN dbo.AppRoles salesRole ON salesRole.RoleId=salesUr.RoleId AND salesRole.IsActive=1
+                  AND (salesRole.TenantId IS NULL OR salesRole.TenantId=@TenantId)
+                JOIN dbo.RolePermissions salesRp ON salesRp.RoleId=salesRole.RoleId
+                JOIN dbo.Permissions salesPermission ON salesPermission.PermissionId=salesRp.PermissionId
+                WHERE salesUr.UserId=u.UserId AND (salesUr.BusinessId IS NULL OR salesUr.BusinessId=@BusinessId)
+                  AND salesPermission.Resource=@SalesCreate)
+            ORDER BY p.Resource;
+            """;
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@TenantId", device.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", device.BusinessId);
+        command.Parameters.AddWithValue("@SalesCreate", CommercePermissionCodes.SalesCreate);
+        MutableUser? user = null;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (user is null)
+            {
+                var username = reader.GetString(1);
+                var displayName = reader.GetString(2);
+                user = new MutableUser(userId, username,
+                    string.IsNullOrWhiteSpace(displayName) ? username : displayName,
+                    new PosOfflinePasswordVerifier((byte[])reader[3], (byte[])reader[4],
+                        reader.GetInt32(5), reader.GetFieldValue<DateTimeOffset>(6)),
+                    reader.IsDBNull(7) ? null : new PosOfflineSupervisorCredentialVerifier(
+                        (byte[])reader[7], (byte[])reader[8], reader.GetInt32(9),
+                        reader.GetFieldValue<DateTimeOffset>(10), reader.GetBoolean(11)));
+            }
+            user.Permissions.Add(reader.GetString(12));
+        }
+        return user is null ? null : new PosOfflineUserProjection(
+            user.UserId, user.Username, user.DisplayName,
+            user.Permissions.Order(StringComparer.Ordinal).ToArray(),
+            user.Verifier, user.SupervisorCredential);
     }
 
     private static async Task<bool> DeviceMatchesAsync(
         SqlConnection connection,
         PosIdentityDeviceScope device,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SqlTransaction? transaction = null)
     {
         const string sql = """
             SELECT COUNT(1)
@@ -126,7 +244,7 @@ public sealed class SqlPosOfflineIdentityStore(
             WHERE d.DeviceId=@DeviceId AND d.IsActive=1
               AND d.TenantId=@TenantId;
             """;
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DeviceId", device.DeviceId);
         command.Parameters.AddWithValue("@BusinessId", device.BusinessId);
         command.Parameters.AddWithValue("@TenantId", device.TenantId);

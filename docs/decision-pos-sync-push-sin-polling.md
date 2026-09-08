@@ -73,6 +73,11 @@ El catálogo geográfico necesario para el formulario también se conserva
 localmente y se renueva con la sincronización de catálogo; por eso país,
 división y ciudad no dependen de red durante la captura offline.
 
+El bootstrap de `Customers` pagina todos los clientes del negocio, no solo el
+cliente actualmente seleccionado ni los clientes usados recientemente. Después
+del bootstrap, cada mensaje identifica el `CustomerId` afectado y Edge solicita
+y aplica únicamente ese upsert o tombstone.
+
 ### Security
 
 - usuario habilitado para login offline;
@@ -81,6 +86,9 @@ división y ciudad no dependen de red durante la captura offline.
 - versión de autorización.
 
 Solo viajan verificadores seguros y datos mínimos, nunca contraseñas en claro.
+El canje de enrolamiento instala el snapshot completo inicial; las altas,
+cambios, bloqueos y revocaciones posteriores viajan como deltas dirigidos al
+`UserId` afectado.
 
 ### RegisterConfiguration
 
@@ -140,13 +148,23 @@ Web PubSub.
 9. Los heartbeats del WebSocket mantienen la conexión, pero no consultan
    catálogos ni manifiestos.
 
-Una caja apagada no genera carga: recupera el rango pendiente al reconectar.
+Una caja apagada no genera carga: recupera el rango pendiente al reconectar. Un
+cambio de producto no invalida clientes ni usuarios; un cambio de cliente no
+invalida catálogo ni seguridad; y un cambio de usuario no obliga a bajar otra
+vez todos los usuarios.
 
 ## 6. Bootstrap y facturas abiertas
 
-El primer bootstrap automático bloquea facturación solo mientras no exista un
-catálogo local válido. Después, la caja abre con su última versión íntegra y la
-puesta al día ocurre en segundo plano, activada por el handshake.
+El primer bootstrap automático bloquea facturación mientras no exista una
+proyección local íntegra. Esa preparación es única para el negocio y comprende
+todos los productos, todos los clientes, la configuración comercial y todos los
+usuarios POS autorizados; nunca se repite por cliente. Después, la caja abre con
+su última versión íntegra y la puesta al día ocurre en segundo plano, activada
+por el handshake.
+
+Si la preparación inicial falla, conserva sus checkpoints, expone una causa
+segura y queda pausada. Solo la acción manual **Reintentar preparación** vuelve a
+ejecutarla; no hay reintento automático.
 
 Un precio nuevo no repricia silenciosamente una línea ya capturada. Se usa en
 líneas posteriores o mediante una acción explícita, autorizada y confirmada.

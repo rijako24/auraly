@@ -152,17 +152,13 @@ public sealed class PosCustomerOutboxTests
                     "Cliente offline autoritativo", null, "Cliente", "Offline",
                     "offline@auraly.test", "3001234567", null, true, []));
             }
-            if (path.StartsWith("/api/pos/v1/pricing/snapshot?", StringComparison.Ordinal))
-                return Ok(new PosPricingSnapshot([], [], [], [
+            if (path.StartsWith("/api/pos/v1/customers/bootstrap?", StringComparison.Ordinal))
+                return Ok(new PosCustomerBootstrapPage(0, null, false, [
                     new PosCustomerPricing(
                         customerId, identification, "Cliente offline autoritativo", null, true)
                 ]));
-            if (path.StartsWith("/api/commerce/v1/reference-options/", StringComparison.Ordinal))
-                return Ok<IReadOnlyList<ReferenceOption>>([]);
-            if (path == "/api/pos/v1/accounting/settlement-configuration")
-                return Ok(new PosAccountingSettlementConfiguration(false, []));
-            if (path.StartsWith("/api/pos/v1/catalog/changes?", StringComparison.Ordinal))
-                return Ok(new CatalogDeltaPage(0, 0, false, []));
+            if (path.StartsWith("/api/pos/v1/customers/changes?", StringComparison.Ordinal))
+                return Ok(new PosCustomerDeltaPage(0, 0, false, []));
             return new HttpResponseMessage(HttpStatusCode.NotFound)
             {
                 Content = JsonContent.Create(new { path })

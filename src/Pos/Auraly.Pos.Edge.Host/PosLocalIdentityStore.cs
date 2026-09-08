@@ -56,6 +56,7 @@ public sealed partial class PosLocalIdentityStore(
                 DisplayName TEXT NOT NULL,
                 ProtectedPasswordVerifier TEXT NOT NULL,
                 ProtectedSupervisorCredential TEXT NULL,
+                IsActive INTEGER NOT NULL DEFAULT 1,
                 FailedCount INTEGER NOT NULL DEFAULT 0,
                 LockedUntil TEXT NULL);
             CREATE TABLE IF NOT EXISTS PosOfflineUserPermissions(
@@ -68,7 +69,8 @@ public sealed partial class PosLocalIdentityStore(
                 Revision TEXT NOT NULL,
                 IssuedAt TEXT NOT NULL,
                 ValidUntil TEXT NOT NULL,
-                LastSynchronizedAt TEXT NOT NULL);
+                LastSynchronizedAt TEXT NOT NULL,
+                SecurityCursor INTEGER NULL);
             CREATE TABLE IF NOT EXISTS PosLocalUserSessions(
                 SessionId TEXT NOT NULL PRIMARY KEY,
                 WorkSessionId TEXT NOT NULL,
@@ -109,6 +111,7 @@ public sealed partial class PosLocalIdentityStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
         await UpgradeWorkSessionsAsync(connection, cancellationToken);
         await UpgradeSupervisorCredentialsAsync(connection, cancellationToken);
+        await UpgradeIdentitySynchronizationAsync(connection, cancellationToken);
     }
 
     public async Task ApplySnapshotAsync(
@@ -123,6 +126,8 @@ public sealed partial class PosLocalIdentityStore(
 
         await ExecuteAsync(connection, transaction,
             "DELETE FROM PosOfflineUserPermissions;", cancellationToken);
+        await ExecuteAsync(connection, transaction,
+            "UPDATE PosOfflineUsers SET IsActive=0;", cancellationToken);
         await ExecuteAsync(connection, transaction,
             "DELETE FROM PosLocalUserSessions WHERE EndedAt IS NOT NULL;", cancellationToken);
         await ExecuteAsync(connection, transaction,
@@ -165,14 +170,15 @@ public sealed partial class PosLocalIdentityStore(
                 INSERT INTO PosOfflineUsers(
                     UserId,Username,NormalizedUsername,DisplayName,
                     ProtectedPasswordVerifier,ProtectedSupervisorCredential,
-                    FailedCount,LockedUntil)
-                VALUES($id,$username,$normalized,$display,$verifier,$supervisor,0,NULL)
+                    IsActive,FailedCount,LockedUntil)
+                VALUES($id,$username,$normalized,$display,$verifier,$supervisor,1,0,NULL)
                 ON CONFLICT(UserId) DO UPDATE SET
                     Username=excluded.Username,
                     NormalizedUsername=excluded.NormalizedUsername,
                     DisplayName=excluded.DisplayName,
                     ProtectedPasswordVerifier=excluded.ProtectedPasswordVerifier,
-                    ProtectedSupervisorCredential=excluded.ProtectedSupervisorCredential;
+                    ProtectedSupervisorCredential=excluded.ProtectedSupervisorCredential,
+                    IsActive=1;
                 """;
             userCommand.Parameters.AddWithValue("$id", user.UserId.ToString("D"));
             userCommand.Parameters.AddWithValue("$username", user.Username);
@@ -203,20 +209,131 @@ public sealed partial class PosLocalIdentityStore(
         state.Transaction = (SqliteTransaction)transaction;
         state.CommandText = """
             INSERT INTO PosIdentityState(
-                Singleton,Revision,IssuedAt,ValidUntil,LastSynchronizedAt)
-            VALUES(1,$revision,$issued,$valid,$now)
+                Singleton,Revision,IssuedAt,ValidUntil,LastSynchronizedAt,SecurityCursor)
+            VALUES(1,$revision,$issued,$valid,$now,$cursor)
             ON CONFLICT(Singleton) DO UPDATE SET
                 Revision=excluded.Revision,
                 IssuedAt=excluded.IssuedAt,
                 ValidUntil=excluded.ValidUntil,
-                LastSynchronizedAt=excluded.LastSynchronizedAt;
+                LastSynchronizedAt=excluded.LastSynchronizedAt,
+                SecurityCursor=excluded.SecurityCursor;
             """;
         state.Parameters.AddWithValue("$revision", snapshot.Revision);
         state.Parameters.AddWithValue("$issued", Format(snapshot.IssuedAt));
         state.Parameters.AddWithValue("$valid", Format(snapshot.ValidUntil));
         state.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
+        state.Parameters.AddWithValue("$cursor", (object?)snapshot.Cursor ?? DBNull.Value);
         await state.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<long?> SecurityCursorAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT SecurityCursor FROM PosIdentityState WHERE Singleton=1;";
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is null or DBNull ? null : Convert.ToInt64(value);
+    }
+
+    public async Task ApplyChangesAsync(
+        PosOfflineIdentityDeltaPage page,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT COALESCE(SecurityCursor,0) FROM PosIdentityState WHERE Singleton=1;";
+            if (Convert.ToInt64(await read.ExecuteScalarAsync(cancellationToken)) != page.FromCursor)
+                throw new InvalidOperationException("The security delta is outside the durable local cursor.");
+        }
+        foreach (var change in page.Changes)
+        {
+            if (change.User is { } user)
+                await UpsertChangedUserAsync(connection, transaction, user, cancellationToken);
+            else
+            {
+                await using var deactivate = connection.CreateCommand();
+                deactivate.Transaction = transaction;
+                deactivate.CommandText = """
+                    DELETE FROM PosOfflineUserPermissions WHERE UserId=$id;
+                    UPDATE PosOfflineUsers SET IsActive=0 WHERE UserId=$id;
+                    UPDATE PosLocalUserSessions SET EndedAt=$now,EndReason='AccessRevoked'
+                    WHERE UserId=$id AND EndedAt IS NULL;
+                    """;
+                deactivate.Parameters.AddWithValue("$id", change.UserId.ToString("D"));
+                deactivate.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
+                await deactivate.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+        await using var state = connection.CreateCommand();
+        state.Transaction = transaction;
+        state.CommandText = "UPDATE PosIdentityState SET SecurityCursor=$cursor,LastSynchronizedAt=$now WHERE Singleton=1;";
+        state.Parameters.AddWithValue("$cursor", page.ToCursor);
+        state.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
+        await state.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task UpsertChangedUserAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        PosOfflineUserProjection user,
+        CancellationToken cancellationToken)
+    {
+        var protectedVerifier = PosEdgeProtectedSecret.ProtectIdentityVerifier(
+            keyDirectory, JsonSerializer.Serialize(user.PasswordVerifier));
+        var supervisorCredential = user.SupervisorCredential;
+        if (supervisorCredential?.IsOneTime == true)
+        {
+            await using var consumed = connection.CreateCommand();
+            consumed.Transaction = transaction;
+            consumed.CommandText = """
+                SELECT COUNT(1) FROM PosConsumedOneTimeSupervisorCredentials
+                WHERE UserId=$id AND ChangedAt=$changedAt;
+                """;
+            consumed.Parameters.AddWithValue("$id", user.UserId.ToString("D"));
+            consumed.Parameters.AddWithValue("$changedAt", Format(supervisorCredential.ChangedAt));
+            if (Convert.ToInt32(await consumed.ExecuteScalarAsync(cancellationToken)) > 0)
+                supervisorCredential = null;
+        }
+        var protectedSupervisor = supervisorCredential is null ? null :
+            PosEdgeProtectedSecret.ProtectIdentityVerifier(
+                keyDirectory, JsonSerializer.Serialize(supervisorCredential));
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO PosOfflineUsers(UserId,Username,NormalizedUsername,DisplayName,
+                  ProtectedPasswordVerifier,ProtectedSupervisorCredential,IsActive,FailedCount,LockedUntil)
+                VALUES($id,$username,$normalized,$display,$verifier,$supervisor,1,0,NULL)
+                ON CONFLICT(UserId) DO UPDATE SET Username=excluded.Username,
+                  NormalizedUsername=excluded.NormalizedUsername,DisplayName=excluded.DisplayName,
+                  ProtectedPasswordVerifier=excluded.ProtectedPasswordVerifier,
+                  ProtectedSupervisorCredential=excluded.ProtectedSupervisorCredential,IsActive=1;
+                DELETE FROM PosOfflineUserPermissions WHERE UserId=$id;
+                """;
+            command.Parameters.AddWithValue("$id", user.UserId.ToString("D"));
+            command.Parameters.AddWithValue("$username", user.Username);
+            command.Parameters.AddWithValue("$normalized", Normalize(user.Username));
+            command.Parameters.AddWithValue("$display", user.DisplayName);
+            command.Parameters.AddWithValue("$verifier", protectedVerifier);
+            command.Parameters.AddWithValue("$supervisor", (object?)protectedSupervisor ?? DBNull.Value);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        foreach (var permission in user.Permissions.Distinct(StringComparer.Ordinal))
+        {
+            await using var permissionCommand = connection.CreateCommand();
+            permissionCommand.Transaction = transaction;
+            permissionCommand.CommandText = "INSERT INTO PosOfflineUserPermissions(UserId,PermissionCode) VALUES($id,$permission);";
+            permissionCommand.Parameters.AddWithValue("$id", user.UserId.ToString("D"));
+            permissionCommand.Parameters.AddWithValue("$permission", permission);
+            await permissionCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     public async Task<IReadOnlyList<PosLocalIdentitySummary>> ReadIdentitySummariesAsync(
@@ -278,7 +395,7 @@ public sealed partial class PosLocalIdentityStore(
         command.CommandText = """
             SELECT COUNT(1)
             FROM PosOfflineUsers
-            WHERE NormalizedUsername=$username;
+            WHERE NormalizedUsername=$username AND IsActive=1;
             """;
         command.Parameters.AddWithValue("$username", Normalize(username));
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 1;
@@ -425,7 +542,7 @@ public sealed partial class PosLocalIdentityStore(
         command.CommandText = """
             SELECT s.SessionId,s.WorkSessionId,u.UserId,u.Username,u.DisplayName,s.ExpiresAt
             FROM PosLocalUserSessions s
-            JOIN PosOfflineUsers u ON u.UserId=s.UserId
+            JOIN PosOfflineUsers u ON u.UserId=s.UserId AND u.IsActive=1
             WHERE s.TokenHash=$hash AND s.EndedAt IS NULL AND s.ExpiresAt>$now;
             """;
         command.Parameters.AddWithValue("$hash", TokenHash(token));
@@ -590,6 +707,38 @@ public sealed partial class PosLocalIdentityStore(
         await upgrade.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static async Task UpgradeIdentitySynchronizationAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var userColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('PosOfflineUsers');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) userColumns.Add(reader.GetString(1));
+        }
+        if (!userColumns.Contains("IsActive"))
+        {
+            await using var upgrade = connection.CreateCommand();
+            upgrade.CommandText = "ALTER TABLE PosOfflineUsers ADD COLUMN IsActive INTEGER NOT NULL DEFAULT 1;";
+            await upgrade.ExecuteNonQueryAsync(cancellationToken);
+        }
+        var stateColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('PosIdentityState');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) stateColumns.Add(reader.GetString(1));
+        }
+        if (!stateColumns.Contains("SecurityCursor"))
+        {
+            await using var upgrade = connection.CreateCommand();
+            upgrade.CommandText = "ALTER TABLE PosIdentityState ADD COLUMN SecurityCursor INTEGER NULL;";
+            await upgrade.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
     private static async Task<LocalUser?> ReadUserAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -602,7 +751,7 @@ public sealed partial class PosLocalIdentityStore(
             SELECT UserId,Username,DisplayName,ProtectedPasswordVerifier,
                    FailedCount,LockedUntil
             FROM PosOfflineUsers
-            WHERE NormalizedUsername=$username;
+            WHERE NormalizedUsername=$username AND IsActive=1;
             """;
         command.Parameters.AddWithValue("$username", Normalize(username));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -628,7 +777,7 @@ public sealed partial class PosLocalIdentityStore(
             SELECT UserId,Username,DisplayName,ProtectedPasswordVerifier,
                    FailedCount,LockedUntil
             FROM PosOfflineUsers
-            WHERE UserId=$userId;
+            WHERE UserId=$userId AND IsActive=1;
             """;
         command.Parameters.AddWithValue("$userId", userId.ToString("D"));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

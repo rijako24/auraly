@@ -12,6 +12,7 @@ public sealed class PosSecuritySynchronizationTests(ServerSliceFixture fixture)
     {
         using var client = fixture.CreateAdminClient(
             "users.update",
+            "users.assign_role",
             "roles.create",
             "roles.update");
 
@@ -31,6 +32,11 @@ public sealed class PosSecuritySynchronizationTests(ServerSliceFixture fixture)
         createResponse.EnsureSuccessStatusCode();
         var role = await createResponse.Content.ReadFromJsonAsync<RoleDto>();
         Assert.NotNull(role);
+
+        using var assignResponse = await client.PostAsJsonAsync(
+            $"/api/v1/users/{fixture.UserId:D}/roles",
+            new { roleId = role.RoleId, businessId = fixture.BusinessId });
+        assignResponse.EnsureSuccessStatusCode();
 
         await ClearSecurityNotificationsAsync();
         using var roleResponse = await client.PutAsJsonAsync(

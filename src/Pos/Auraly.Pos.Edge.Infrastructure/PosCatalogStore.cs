@@ -92,6 +92,35 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task InvalidateBootstrapAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE PosCatalogState SET Status='Invalid',SessionId=NULL,NextPageCursor=NULL,UpdatedAt=@Now WHERE StateId=1 AND Status='Bootstrapping';";
+        command.Parameters.Add(P("@Now", Clock.GetUtcNow().ToString("O")));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<bool> IsPreparationPausedAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT PreparationPaused FROM PosCatalogState WHERE StateId=1;";
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 1;
+    }
+
+    public async Task SetPreparationPausedAsync(bool paused, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE PosCatalogState SET PreparationPaused=@Paused WHERE StateId=1;";
+        command.Parameters.Add(P("@Paused", paused ? 1 : 0));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task ApplyBootstrapPageAsync(
         CatalogBootstrapPage page,
         CancellationToken cancellationToken = default)
@@ -527,12 +556,18 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) columns.Add(reader.GetString(1));
         }
-        if (columns.Contains("TotalProducts")) return;
-
-        await using var upgrade = connection.CreateCommand();
-        upgrade.CommandText =
-            "ALTER TABLE PosCatalogState ADD COLUMN TotalProducts INTEGER NOT NULL DEFAULT 0;";
-        await upgrade.ExecuteNonQueryAsync(cancellationToken);
+        if (!columns.Contains("TotalProducts"))
+        {
+            await using var upgrade = connection.CreateCommand();
+            upgrade.CommandText = "ALTER TABLE PosCatalogState ADD COLUMN TotalProducts INTEGER NOT NULL DEFAULT 0;";
+            await upgrade.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (!columns.Contains("PreparationPaused"))
+        {
+            await using var upgrade = connection.CreateCommand();
+            upgrade.CommandText = "ALTER TABLE PosCatalogState ADD COLUMN PreparationPaused INTEGER NOT NULL DEFAULT 0;";
+            await upgrade.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private const string ProductColumns = """
@@ -571,6 +606,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
           Cursor INTEGER NOT NULL,
           NextPageCursor TEXT NULL,
           TotalProducts INTEGER NOT NULL DEFAULT 0,
+          PreparationPaused INTEGER NOT NULL DEFAULT 0,
           UpdatedAt TEXT NOT NULL);
         INSERT OR IGNORE INTO PosCatalogState(StateId,Status,HighWaterMark,Cursor,UpdatedAt)
           VALUES(1,'Empty',0,0,'1970-01-01T00:00:00+00:00');

@@ -33,4 +33,23 @@ public sealed class PosSynchronizationStateTests
         Assert.Null(state.Current.FailedStage);
         Assert.Null(state.Current.LastError);
     }
+
+    [Fact]
+    public void Operational_work_does_not_hide_a_paused_preparation_failure()
+    {
+        var state = new PosSynchronizationState();
+        state.Begin();
+        state.StageFailed("catálogo", "La descarga falló. Pulsa Reintentar.");
+        state.Failed();
+
+        state.Begin(preserveFailure: true);
+        state.StageStarted("subida de documentos");
+        state.StageSucceeded("subida de documentos");
+        state.Succeeded(preserveFailure: true);
+
+        Assert.True(state.Current.LastAttemptFailed);
+        Assert.Equal("catálogo", state.Current.FailedStage);
+        Assert.Equal("La descarga falló. Pulsa Reintentar.", state.Current.LastError);
+        Assert.Empty(state.Current.ActiveStages);
+    }
 }

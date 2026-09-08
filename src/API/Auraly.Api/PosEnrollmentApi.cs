@@ -73,15 +73,25 @@ public static class PosEnrollmentApi
                     {
                         var package = await service.RedeemAsync(request, ct);
                         var identities = services.GetRequiredService<PosOfflineIdentityService>();
-                        package = package with
+                        try
                         {
-                            InitialIdentitySnapshot = await identities.SnapshotAsync(
-                                new PosIdentityDeviceScope(
-                                    package.DeviceId,
-                                    package.TenantId,
-                                    package.BusinessId),
-                                ct)
-                        };
+                            package = package with
+                            {
+                                InitialIdentitySnapshot = await identities.SnapshotAsync(
+                                    new PosIdentityDeviceScope(
+                                        package.DeviceId,
+                                        package.TenantId,
+                                        package.BusinessId),
+                                    ct)
+                            };
+                        }
+                        catch (Exception exception) when (exception is not OperationCanceledException)
+                        {
+                            loggerFactory.CreateLogger("PosEnrollmentIdentity")
+                                .LogWarning(exception,
+                                    "POS enrollment {DeviceId} completed; identity bootstrap will resume through the durable preparation flow.",
+                                    package.DeviceId);
+                        }
                         return await EnrichBrandingAsync(
                             package,
                             cancellationToken => services

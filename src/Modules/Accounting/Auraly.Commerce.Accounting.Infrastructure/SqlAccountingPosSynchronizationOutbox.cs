@@ -5,6 +5,33 @@ namespace Auraly.Commerce.Accounting.Infrastructure;
 
 internal static class SqlAccountingPosSynchronizationOutbox
 {
+    public static async Task InsertCustomerAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        Guid customerId,
+        IAuralyIdGenerator ids,
+        DateTimeOffset occurredAt,
+        CancellationToken cancellationToken)
+    {
+        await using var notification = new SqlCommand("""
+            DECLARE @Cursor BIGINT;
+            SELECT @Cursor=COALESCE(MAX(AvailableThroughCursor),0)+1
+            FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND Stream=N'Customers';
+            INSERT dbo.PosSynchronizationOutboxMessages(
+                NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,
+                EntityType,EntityId,ChangeKind)
+            VALUES(@Id,@BusinessId,N'Customers',@Cursor,@Now,
+                N'Customer',@CustomerId,N'Upsert');
+            """, connection, transaction);
+        notification.Parameters.AddWithValue("@Id", ids.NewId());
+        notification.Parameters.AddWithValue("@BusinessId", businessId);
+        notification.Parameters.AddWithValue("@CustomerId", customerId);
+        notification.Parameters.AddWithValue("@Now", occurredAt);
+        await notification.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public static async Task InsertTenantConfigurationAsync(
         SqlConnection connection,
         SqlTransaction transaction,

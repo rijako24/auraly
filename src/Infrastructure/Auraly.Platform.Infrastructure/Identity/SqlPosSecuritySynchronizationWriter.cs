@@ -9,8 +9,16 @@ namespace Auraly.Platform.Infrastructure.Identity;
 public sealed class SqlPosSecuritySynchronizationWriter(
     ApplicationDbContext context) : IPosSecuritySynchronizationWriter
 {
-    public async Task EnqueueTenantAsync(
+    public Task EnqueueUserAsync(Guid tenantId, Guid userId, CancellationToken cancellationToken = default) =>
+        EnqueueAsync(tenantId, userId, null, cancellationToken);
+
+    public Task EnqueueRoleUsersAsync(Guid tenantId, Guid roleId, CancellationToken cancellationToken = default) =>
+        EnqueueAsync(tenantId, null, roleId, cancellationToken);
+
+    private async Task EnqueueAsync(
         Guid tenantId,
+        Guid? userId,
+        Guid? roleId,
         CancellationToken cancellationToken = default)
     {
         var transaction = context.Database.CurrentTransaction
@@ -26,6 +34,16 @@ public sealed class SqlPosSecuritySynchronizationWriter(
         parameter.DbType = DbType.Guid;
         parameter.Value = tenantId;
         command.Parameters.Add(parameter);
+        var userParameter = command.CreateParameter();
+        userParameter.ParameterName = "@UserId";
+        userParameter.DbType = DbType.Guid;
+        userParameter.Value = (object?)userId ?? DBNull.Value;
+        command.Parameters.Add(userParameter);
+        var roleParameter = command.CreateParameter();
+        roleParameter.ParameterName = "@RoleId";
+        roleParameter.DbType = DbType.Guid;
+        roleParameter.Value = (object?)roleId ?? DBNull.Value;
+        command.Parameters.Add(roleParameter);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

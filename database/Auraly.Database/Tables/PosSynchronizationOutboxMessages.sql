@@ -5,6 +5,9 @@ CREATE TABLE [dbo].[PosSynchronizationOutboxMessages]
     [Stream] NVARCHAR(32) NOT NULL,
     [AvailableThroughCursor] BIGINT NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
+    [EntityType] NVARCHAR(32) NULL,
+    [EntityId] UNIQUEIDENTIFIER NULL,
+    [ChangeKind] NVARCHAR(16) NULL,
     [TargetDeviceId] UNIQUEIDENTIFIER NULL,
     [PublishedAt] DATETIMEOFFSET(7) NULL,
     [AttemptCount] INT NOT NULL CONSTRAINT [DF_PosSynchronizationOutboxMessages_AttemptCount] DEFAULT (0),
@@ -21,11 +24,19 @@ CREATE TABLE [dbo].[PosSynchronizationOutboxMessages]
         CHECK ([Stream] IN
             (N'Catalog', N'Customers', N'Security', N'FiscalStatus', N'FiscalProvisioning', N'Approvals', N'Configuration', N'DeviceEnrollment')),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Cursor]
-        CHECK ([AvailableThroughCursor] >= 0)
+        CHECK ([AvailableThroughCursor] >= 0),
+    CONSTRAINT [CK_PosSynchronizationOutboxMessages_ChangeKind]
+        CHECK ([ChangeKind] IS NULL OR [ChangeKind] IN (N'Upsert',N'Tombstone'))
 );
 GO
 
 CREATE INDEX [IX_PosSynchronizationOutboxMessages_Pending]
     ON [dbo].[PosSynchronizationOutboxMessages]
         ([BusinessId], [Stream], [PublishedAt], [AvailableThroughCursor]);
+GO
+
+CREATE INDEX [IX_PosSynchronizationOutboxMessages_Changes]
+    ON [dbo].[PosSynchronizationOutboxMessages]
+        ([BusinessId], [Stream], [AvailableThroughCursor])
+    INCLUDE ([EntityType], [EntityId], [ChangeKind]);
 GO

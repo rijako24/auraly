@@ -64,7 +64,8 @@ BEGIN
       ON taxProfile.BusinessId=customer.BusinessId
      AND taxProfile.CounterpartyId=customer.CustomerId
     WHERE customer.BusinessId = @BusinessId
-      AND party.IsActive = 1;
+      AND party.IsActive = 1
+      AND 1=0; -- Customers are transferred through the paged customer stream.
 
     ;WITH CurrentRules AS
     (
@@ -119,4 +120,8 @@ BEGIN
       AND (promotion.StartsAtUtc IS NULL OR promotion.StartsAtUtc<=SYSUTCDATETIME())
       AND (promotion.EndsAtUtc IS NULL OR promotion.EndsAtUtc>=SYSUTCDATETIME())
     ORDER BY promotion.Priority DESC,promotion.CreatedAt,promotion.PromotionId;
+
+    SELECT ISNULL(MAX(AvailableThroughCursor),0)
+    FROM dbo.PosSynchronizationOutboxMessages
+    WHERE BusinessId=@BusinessId AND Stream=N'Configuration';
 END;

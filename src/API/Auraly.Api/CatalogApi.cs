@@ -138,6 +138,28 @@ public static class CatalogApi
             CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.PricingSnapshotAsync(
                 context.User.ToCatalogDeviceIdentity(businessId, warehouseId), ct))));
+        pos.MapGet("/pricing/cursor", async (
+            HttpContext context, PosCatalogService service, Guid businessId, Guid warehouseId,
+            CancellationToken ct) =>
+            await Handle(async () => Results.Ok(new
+            {
+                cursor = await service.PricingCursorAsync(
+                    context.User.ToCatalogDeviceIdentity(businessId, warehouseId), ct)
+            })));
+
+        pos.MapGet("/customers/bootstrap", async (
+            HttpContext context, PosCatalogService service, Guid businessId, Guid warehouseId,
+            string? cursor, int? pageSize, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.CustomerBootstrapPageAsync(
+                context.User.ToCatalogDeviceIdentity(businessId, warehouseId),
+                cursor, pageSize ?? 500, ct))));
+
+        pos.MapGet("/customers/changes", async (
+            HttpContext context, PosCatalogService service, Guid businessId, Guid warehouseId,
+            long? cursor, int? pageSize, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.CustomerChangesAsync(
+                context.User.ToCatalogDeviceIdentity(businessId, warehouseId),
+                cursor ?? 0, pageSize ?? 500, ct))));
 
         pos.MapPost("/inventory/availability", async (
             HttpContext context, PosCatalogService service, Guid businessId,

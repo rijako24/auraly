@@ -140,8 +140,9 @@ public sealed class SqlPosEnrollmentStore(
             connection, transaction, request.EnrollmentSessionId,
             existing?.DeviceId, cancellationToken);
         var now = timeProvider.GetUtcNow();
-        if (data is null || data.RedeemedAt is not null || data.ExpiresAt <= now ||
-            !FixedEquals(data.CodeHash, redemptionCodeHash))
+        if (data is null || data.ExpiresAt <= now ||
+            !FixedEquals(data.CodeHash, redemptionCodeHash) ||
+            (data.RedeemedAt is not null && existing is null))
             throw new PosEnrollmentValidationException(
                 "El código de enrolamiento es inválido, expiró o ya fue utilizado.");
         if (existing is null)
@@ -332,8 +333,9 @@ public sealed class SqlPosEnrollmentStore(
             IF @@ROWCOUNT<>1 THROW 51003,'The existing POS device is not valid for this tenant.',1;
             UPDATE dbo.PosEnrollmentSessions
             SET RedeemedAt=@Now,DeviceId=@DeviceId
-            WHERE EnrollmentSessionId=@SessionId AND RedeemedAt IS NULL;
-            IF @@ROWCOUNT<>1 THROW 51002,'The enrollment session was already redeemed.',1;
+            WHERE EnrollmentSessionId=@SessionId
+              AND (RedeemedAt IS NULL OR DeviceId=@DeviceId);
+            IF @@ROWCOUNT<>1 THROW 51002,'The enrollment session belongs to another device.',1;
             """;
         await using (var command = new SqlCommand(sql, connection, transaction))
         {

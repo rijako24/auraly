@@ -36,10 +36,18 @@ public sealed class PosCatalogSynchronizer(
     IPosWarehousePolicySink? warehousePolicy = null,
     IPosSynchronizationProgressSink? progress = null) : IPosInventoryAvailabilityClient
 {
+    private readonly SemaphoreSlim synchronizationGate = new(1, 1);
     private static readonly string[] OperationalReferenceCatalogs =
         ["payment-method", "card-franchise", "sales-document-type", "cash-denomination"];
 
     public async Task SynchronizeAsync(CancellationToken cancellationToken = default)
+    {
+        await synchronizationGate.WaitAsync(cancellationToken);
+        try { await SynchronizeCatalogCoreAsync(cancellationToken); }
+        finally { synchronizationGate.Release(); }
+    }
+
+    private async Task SynchronizeCatalogCoreAsync(CancellationToken cancellationToken)
     {
         await store.InitializeAsync(cancellationToken);
         var status = await store.StatusAsync(cancellationToken);
@@ -61,28 +69,142 @@ public sealed class PosCatalogSynchronizer(
             if (status.SessionId is null)
                 throw new InvalidOperationException("The durable bootstrap state has no server session.");
             var cursor = status.NextPageCursor;
-            while (true)
+            while (status.ProcessedProducts < status.TotalProducts)
             {
-                var path = $"api/pos/v1/catalog/sync-sessions/{status.SessionId:D}/pages?{ScopeQuery}&pageSize=500";
+                var path = $"api/pos/v1/catalog/sync-sessions/{status.SessionId:D}/pages?{ScopeQuery}&pageSize=1000";
                 if (!string.IsNullOrWhiteSpace(cursor))
                     path += $"&cursor={Uri.EscapeDataString(cursor)}";
-                var page = await SendAsync<CatalogBootstrapPage>(
-                    HttpMethod.Get,
-                    path,
-                    content: null,
-                    cancellationToken);
+                CatalogBootstrapPage page;
+                try
+                {
+                    page = await SendAsync<CatalogBootstrapPage>(
+                        HttpMethod.Get, path, content: null, cancellationToken);
+                }
+                catch (HttpRequestException exception) when (
+                    exception.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Gone)
+                {
+                    await store.InvalidateBootstrapAsync(cancellationToken);
+                    throw new InvalidDataException(
+                        "La sesión de preparación venció. Pulsa Reintentar para iniciar una descarga nueva.", exception);
+                }
                 await store.ApplyBootstrapPageAsync(page, cancellationToken);
                 progress?.Publish();
                 if (!page.HasMore)
                 {
-                    await store.PromoteBootstrapAsync(cancellationToken);
-                    progress?.Publish();
                     break;
                 }
                 cursor = page.NextCursor;
+                status = await store.StatusAsync(cancellationToken);
             }
         }
 
+        if (initialSynchronization)
+        {
+            await SynchronizeConfigurationCoreAsync(cancellationToken, initialSynchronization: true);
+            await SynchronizeCustomersCoreAsync(cancellationToken);
+            await store.PromoteBootstrapAsync(cancellationToken);
+            progress?.Publish();
+        }
+
+        while (true)
+        {
+            status = await store.StatusAsync(cancellationToken);
+            var page = await SendAsync<CatalogDeltaPage>(
+                HttpMethod.Get,
+                $"api/pos/v1/catalog/changes?{ScopeQuery}&cursor={status.Cursor}&pageSize=1000",
+                content: null,
+                cancellationToken);
+            foreach (var change in page.Changes)
+                events?.ProductReceived(
+                    change.Product,
+                    await store.GetByProductIdAsync(change.Product.ProductId, cancellationToken),
+                    bootstrap: false);
+            await store.ApplyChangesAsync(page, cancellationToken);
+            progress?.Publish();
+            if (!page.HasMore) break;
+        }
+    }
+
+    public async Task SynchronizeCustomersAsync(CancellationToken cancellationToken = default)
+    {
+        await synchronizationGate.WaitAsync(cancellationToken);
+        try
+        {
+            await store.InitializeAsync(cancellationToken);
+            await SynchronizeCustomersCoreAsync(cancellationToken);
+        }
+        finally { synchronizationGate.Release(); }
+    }
+
+    private async Task SynchronizeCustomersCoreAsync(CancellationToken cancellationToken)
+    {
+        var cursor = await store.CustomerCursorAsync(cancellationToken);
+        if (cursor is null)
+        {
+            var bootstrap = await store.CustomerBootstrapStatusAsync(cancellationToken);
+            if (!bootstrap.Active)
+            {
+                await store.BeginCustomerBootstrapAsync(cancellationToken);
+                bootstrap = (true, null);
+            }
+            var next = bootstrap.NextCursor;
+            while (true)
+            {
+                var path = $"api/pos/v1/customers/bootstrap?{ScopeQuery}&pageSize=1000";
+                if (!string.IsNullOrWhiteSpace(next))
+                    path += $"&cursor={Uri.EscapeDataString(next)}";
+                var page = await SendAsync<PosCustomerBootstrapPage>(
+                    HttpMethod.Get, path, null, cancellationToken);
+                await store.ApplyCustomerBootstrapPageAsync(page, cancellationToken);
+                progress?.Publish();
+                if (!page.HasMore) break;
+                next = page.NextCursor;
+            }
+            cursor = await store.CustomerCursorAsync(cancellationToken) ?? 0;
+        }
+
+        while (true)
+        {
+            var page = await SendAsync<PosCustomerDeltaPage>(
+                HttpMethod.Get,
+                $"api/pos/v1/customers/changes?{ScopeQuery}&cursor={cursor.Value}&pageSize=1000",
+                null,
+                cancellationToken);
+            foreach (var change in page.Changes)
+            {
+                var previous = await store.GetCustomerAsync(change.CustomerId, cancellationToken);
+                if (change.Customer is { } customer && !CustomerEquals(previous, customer))
+                    events?.CustomerReceived(customer, previous);
+            }
+            await store.ApplyCustomerChangesAsync(page, cancellationToken);
+            progress?.Publish();
+            cursor = page.ToCursor;
+            if (!page.HasMore) break;
+        }
+    }
+
+    public async Task SynchronizeConfigurationAsync(CancellationToken cancellationToken = default)
+    {
+        await synchronizationGate.WaitAsync(cancellationToken);
+        try
+        {
+            await store.InitializeAsync(cancellationToken);
+            await SynchronizeConfigurationCoreAsync(cancellationToken, initialSynchronization: false);
+        }
+        finally { synchronizationGate.Release(); }
+    }
+
+    private async Task SynchronizeConfigurationCoreAsync(
+        CancellationToken cancellationToken,
+        bool initialSynchronization)
+    {
+        if (!initialSynchronization)
+        {
+            var localCursor = await store.ConfigurationCursorAsync(cancellationToken);
+            var remote = await SendAsync<PosCursorResponse>(
+                HttpMethod.Get, $"api/pos/v1/pricing/cursor?{ScopeQuery}", null, cancellationToken);
+            if (localCursor is not null && localCursor.Value >= remote.Cursor) return;
+        }
         var previousPricing = events is null || initialSynchronization
             ? null
             : await store.ReadPricingSnapshotAsync(cancellationToken);
@@ -132,23 +254,6 @@ public sealed class PosCatalogSynchronizer(
             cancellationToken);
         await store.ApplySettlementConfigurationAsync(settlementConfiguration, cancellationToken);
         progress?.Publish();
-        while (true)
-        {
-            status = await store.StatusAsync(cancellationToken);
-            var page = await SendAsync<CatalogDeltaPage>(
-                HttpMethod.Get,
-                $"api/pos/v1/catalog/changes?{ScopeQuery}&cursor={status.Cursor}&pageSize=500",
-                content: null,
-                cancellationToken);
-            foreach (var change in page.Changes)
-                events?.ProductReceived(
-                    change.Product,
-                    await store.GetByProductIdAsync(change.Product.ProductId, cancellationToken),
-                    bootstrap: false);
-            await store.ApplyChangesAsync(page, cancellationToken);
-            progress?.Publish();
-            if (!page.HasMore) break;
-        }
     }
 
     public async Task<InventoryAvailabilityResponse> CheckAvailabilityAsync(
@@ -179,6 +284,12 @@ public sealed class PosCatalogSynchronizer(
         previous.RequiresElectronicInvoice == current.RequiresElectronicInvoice &&
         previous.AppliesWithholding == current.AppliesWithholding &&
         previous.TaxJurisdictionCode == current.TaxJurisdictionCode &&
+        previous.IsCreditEnabled == current.IsCreditEnabled &&
+        previous.CreditLimit == current.CreditLimit &&
+        previous.AvailableCredit == current.AvailableCredit &&
+        previous.DefaultDueDays == current.DefaultDueDays &&
+        previous.PriceChannelValidFrom == current.PriceChannelValidFrom &&
+        previous.PriceChannelValidUntil == current.PriceChannelValidUntil &&
         (previous.TaxResponsibilities ?? []).SequenceEqual(
             current.TaxResponsibilities ?? [], StringComparer.Ordinal);
 
@@ -204,4 +315,6 @@ public sealed class PosCatalogSynchronizer(
         return await response.Content.ReadFromJsonAsync<T>(cancellationToken: cancellationToken)
             ?? throw new InvalidDataException("The Auraly server returned an empty catalog response.");
     }
+
+    private sealed record PosCursorResponse(long Cursor);
 }

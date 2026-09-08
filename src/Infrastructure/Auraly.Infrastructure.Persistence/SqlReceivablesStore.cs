@@ -129,6 +129,15 @@ public sealed class SqlReceivablesStore(
             ELSE
                 INSERT dbo.CustomerCreditProfiles(CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,UpdatedByUserId,UpdatedAt)
                 VALUES(@CustomerId,@BusinessId,@Limit,@Days,@Enabled,@UserId,@Now);
+            DECLARE @Cursor BIGINT;
+            SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
+            FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND Stream=N'Customers';
+            INSERT dbo.PosSynchronizationOutboxMessages(
+              NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,
+              EntityType,EntityId,ChangeKind)
+            VALUES(@NotificationId,@BusinessId,N'Customers',@Cursor,@Now,
+                   N'Customer',@CustomerId,N'Upsert');
             COMMIT TRANSACTION;
             END TRY
             BEGIN CATCH
@@ -139,6 +148,7 @@ public sealed class SqlReceivablesStore(
         command.Parameters.AddWithValue("@CustomerId",customerId); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@Limit",(object?)request.CreditLimit??DBNull.Value); command.Parameters.AddWithValue("@Days",request.DefaultDueDays);
         command.Parameters.AddWithValue("@Enabled",request.IsCreditEnabled); command.Parameters.AddWithValue("@UserId",user.UserId); command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("@NotificationId",ids.NewId());
         try { await command.ExecuteNonQueryAsync(token); } catch(SqlException ex) when(ex.Number==51300) { throw new ReceivablesValidationException(ex.Message); }
         return (await GetCreditProfileAsync(user,customerId,token))!;
     }

@@ -135,9 +135,13 @@ public sealed class PosCatalogStoreTests
         {
             var store = new PosCatalogStore($"Data Source={path}");
             await store.InitializeAsync();
-            var session = new CatalogSyncSessionResponse(Guid.NewGuid(), 1_500, 1_500, DateTimeOffset.UtcNow.AddHours(1));
+            const int productCount = 40_000;
+            const int checkpoint = 20_000;
+            const int pageSize = 1_000;
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var session = new CatalogSyncSessionResponse(Guid.NewGuid(), productCount, productCount, DateTimeOffset.UtcNow.AddHours(1));
             await store.BeginBootstrapAsync(session);
-            var products = Enumerable.Range(1, 1_500)
+            var products = Enumerable.Range(1, productCount)
                 .Select(index => Product() with
                 {
                     ProductId = Guid.NewGuid(),
@@ -148,35 +152,38 @@ public sealed class PosCatalogStoreTests
                 })
                 .ToArray();
 
-            for (var offset = 0; offset < 750; offset += 250)
+            for (var offset = 0; offset < checkpoint; offset += pageSize)
             {
-                var items = products.Skip(offset).Take(250).ToArray();
+                var items = products.Skip(offset).Take(pageSize).ToArray();
                 await store.ApplyBootstrapPageAsync(Page(session, items, true, items[^1].ProductId.ToString("D")));
             }
 
             var reopened = new PosCatalogStore($"Data Source={path}");
             var resumed = await reopened.StatusAsync();
-            Assert.Equal(products[749].ProductId.ToString("D"), resumed.NextPageCursor);
-            Assert.Equal(1_500, resumed.TotalProducts);
-            Assert.Equal(750, resumed.ProcessedProducts);
-            for (var offset = 750; offset < products.Length; offset += 250)
+            Assert.Equal(products[checkpoint - 1].ProductId.ToString("D"), resumed.NextPageCursor);
+            Assert.Equal(productCount, resumed.TotalProducts);
+            Assert.Equal(checkpoint, resumed.ProcessedProducts);
+            for (var offset = checkpoint; offset < products.Length; offset += pageSize)
             {
-                var items = products.Skip(offset).Take(250).ToArray();
+                var items = products.Skip(offset).Take(pageSize).ToArray();
                 var hasMore = offset + items.Length < products.Length;
                 await reopened.ApplyBootstrapPageAsync(Page(
                     session, items, hasMore, hasMore ? items[^1].ProductId.ToString("D") : null));
             }
             await reopened.PromoteBootstrapAsync();
             var completed = await reopened.StatusAsync();
-            Assert.Equal(1_500, completed.TotalProducts);
-            Assert.Equal(1_500, completed.ProcessedProducts);
+            Assert.Equal(productCount, completed.TotalProducts);
+            Assert.Equal(productCount, completed.ProcessedProducts);
 
             await using var connection = new SqliteConnection($"Data Source={path}");
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT COUNT(*) FROM PosCatalogProducts;";
-            Assert.Equal(1_500L, (long)(await command.ExecuteScalarAsync())!);
-            Assert.NotNull(await reopened.CaptureAsync("7700000001500"));
+            Assert.Equal(productCount, (long)(await command.ExecuteScalarAsync())!);
+            Assert.NotNull(await reopened.CaptureAsync("7700000040000"));
+            stopwatch.Stop();
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(60),
+                $"A 40,000-product local bootstrap took {stopwatch.Elapsed}.");
         }
         finally
         {

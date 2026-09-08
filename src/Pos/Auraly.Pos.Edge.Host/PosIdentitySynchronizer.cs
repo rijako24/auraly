@@ -47,27 +47,56 @@ public sealed class PosIdentitySynchronizer(
     {
         var previous = (await identities.ReadIdentitySummariesAsync(cancellationToken))
             .ToDictionary(user => user.UserId);
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get, $"/api/pos/v1/identity/snapshot?businessId={scope.BusinessId:D}");
+        var cursor = await identities.SecurityCursorAsync(cancellationToken);
+        if (cursor is null)
+        {
+            var snapshot = await GetAsync<PosOfflineIdentitySnapshot>(
+                $"/api/pos/v1/identity/snapshot?businessId={scope.BusinessId:D}", cancellationToken);
+            await identities.ApplySnapshotAsync(snapshot, cancellationToken);
+            RecordSnapshotChanges(previous, snapshot.Users);
+            return;
+        }
+
+        while (true)
+        {
+            var page = await GetAsync<PosOfflineIdentityDeltaPage>(
+                $"/api/pos/v1/identity/changes?businessId={scope.BusinessId:D}&cursor={cursor.Value}&pageSize=250",
+                cancellationToken);
+            await identities.ApplyChangesAsync(page, cancellationToken);
+            foreach (var change in page.Changes)
+            {
+                previous.TryGetValue(change.UserId, out var prior);
+                if (change.User is { } user) events.UserReceived(user, prior);
+                else if (prior is not null) events.UserRemoved(prior);
+            }
+            cursor = page.ToCursor;
+            if (!page.HasMore) break;
+        }
+    }
+
+    private async Task<T> GetAsync<T>(string uri, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
         using var response = await http.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
-        var snapshot = await response.Content.ReadFromJsonAsync<PosOfflineIdentitySnapshot>(
-            cancellationToken)
-            ?? throw new InvalidDataException(
-                "Auraly Server returned an empty POS identity snapshot.");
-        await identities.ApplySnapshotAsync(snapshot, cancellationToken);
-        var receivedIds = snapshot.Users.Select(user => user.UserId).ToHashSet();
-        foreach (var user in snapshot.Users)
+        return await response.Content.ReadFromJsonAsync<T>(cancellationToken: cancellationToken)
+            ?? throw new InvalidDataException("Auraly Server returned an empty identity response.");
+    }
+
+    private void RecordSnapshotChanges(
+        IReadOnlyDictionary<Guid, PosLocalIdentitySummary> previous,
+        IReadOnlyList<PosOfflineUserProjection> users)
+    {
+        var receivedIds = users.Select(user => user.UserId).ToHashSet();
+        foreach (var user in users)
         {
             previous.TryGetValue(user.UserId, out var prior);
-            var changed = prior is null ||
-                !string.Equals(prior.Username, user.Username, StringComparison.Ordinal) ||
-                !string.Equals(prior.DisplayName, user.DisplayName, StringComparison.Ordinal) ||
+            var changed = prior is null || prior.Username != user.Username ||
+                prior.DisplayName != user.DisplayName ||
                 prior.PasswordChangedAt != user.PasswordVerifier.ChangedAt ||
-                !prior.Permissions.SequenceEqual(
-                    user.Permissions.Order(StringComparer.Ordinal), StringComparer.Ordinal);
+                !prior.Permissions.SequenceEqual(user.Permissions.Order(StringComparer.Ordinal), StringComparer.Ordinal);
             if (changed) events.UserReceived(user, prior);
         }
         foreach (var removed in previous.Values.Where(user => !receivedIds.Contains(user.UserId)))

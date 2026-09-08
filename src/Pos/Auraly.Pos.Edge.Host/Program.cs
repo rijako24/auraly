@@ -681,7 +681,15 @@ public static class PosEdgeHostApplication
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
             return Results.NoContent();
         });
-        edge.MapPost("/synchronization/refresh", (PosSynchronizationSignal synchronization) => { synchronization.Signal(PosSynchronizationTrigger.All | PosSynchronizationTrigger.Manual); return Results.Accepted(); });
+        edge.MapPost("/synchronization/refresh", async (
+            PosSynchronizationSignal synchronization,
+            PosCatalogStore catalog,
+            CancellationToken ct) =>
+        {
+            await catalog.SetPreparationPausedAsync(false, ct);
+            synchronization.Signal(PosSynchronizationTrigger.All | PosSynchronizationTrigger.Manual);
+            return Results.Accepted();
+        });
         edge.MapGet("/synchronization/events", async (
             int? take,
             PosSynchronizationEventLog events,
@@ -758,9 +766,10 @@ public static class PosEdgeHostApplication
                 ?? syncStatus.LastError;
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
-            // The protected enrollment handoff is sufficient to start the initial
-            // local session while the complete identity snapshot synchronizes.
-            var identityReady = identitySnapshotReady || user is not null;
+            // The enrollment handoff may open the initial local session, but the
+            // workstation is not prepared until every authorized offline identity
+            // and permission has been committed to the durable projection.
+            var identityReady = identitySnapshotReady;
             var fiscalWarnings = await sales.GetFiscalWarningsAsync(
                 runtime.DeviceId, timeProvider.GetUtcNow(), ct);
             var fiscalPreview = await sales.PreviewNextFiscalNumberAsync(
@@ -847,10 +856,17 @@ public static class PosEdgeHostApplication
                 pageSize + 1,
                 ct)).ToArray();
             var hasMore = values.Length > pageSize;
-            var priced = new List<object>(Math.Min(values.Length, pageSize));
-            foreach (var value in values.Take(pageSize))
+            var visible = values.Take(pageSize).ToArray();
+            var resolutions = await catalog.ResolvePricesAsync(
+                visible.Select(value => new PosPriceLineRequest(
+                    value.ProductId.ToString("D"), value.ProductId, 1m)).ToArray(),
+                customerId,
+                ct,
+                independentLines: true);
+            var priced = new List<object>(visible.Length);
+            foreach (var value in visible)
             {
-                var resolved = await catalog.ResolvePriceAsync(value.ProductId, customerId, 1m, ct);
+                var resolved = resolutions[value.ProductId.ToString("D")];
                 priced.Add(new {
                     value.ProductId,value.ProductCode,value.Reference,value.Name,value.BaseUnitCode,
                     value.TaxCode,value.TaxRate,unitPrice=resolved.Amount,resolved.CurrencyCode,

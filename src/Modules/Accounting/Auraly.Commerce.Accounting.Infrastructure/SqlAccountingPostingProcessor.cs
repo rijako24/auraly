@@ -2,6 +2,7 @@ using System.Data;
 using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Domain;
@@ -17,7 +18,8 @@ namespace Auraly.Commerce.Accounting.Infrastructure;
 public sealed partial class SqlAccountingPostingProcessor(
     AccountingSqlConnectionFactory connections,
     IAuralyIdGenerator ids,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IPosSynchronizationOutboxDispatcher synchronization)
 {
     public async Task ProcessAsync(
         Guid documentId,
@@ -45,6 +47,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 AccountingPostingStatuses.CommercialEffectsApplied)
             {
                 await transaction.CommitAsync(cancellationToken);
+                await synchronization.DispatchPendingAsync(
+                    source.TenantId, source.BusinessId, CancellationToken.None);
                 return;
             }
 
@@ -55,6 +59,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await MarkCommercialEffectsAppliedAsync(
                     connection, transaction, source, cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
+                await synchronization.DispatchPendingAsync(
+                    source.TenantId, source.BusinessId, CancellationToken.None);
                 return;
             }
 
@@ -195,6 +201,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await CompleteOpeningActivationAsync(
                     connection, transaction, source, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            await synchronization.DispatchPendingAsync(
+                source.TenantId, source.BusinessId, CancellationToken.None);
         }
         catch (Exception error)
         {

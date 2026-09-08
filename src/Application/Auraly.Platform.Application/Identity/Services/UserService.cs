@@ -121,7 +121,7 @@ public class UserService : IUserService
                 }, ct);
             }
             await _unitOfWork.SaveChangesAsync(ct);
-            await _securitySynchronization.EnqueueTenantAsync(tenantId, ct);
+            await _securitySynchronization.EnqueueUserAsync(tenantId, user.UserId, ct);
             _logger.LogInformation(
                 "User {Username} created by {CreatedBy} [CorrelationId: {CorrelationId}]",
                 user.Username, createdByUserId, _correlationIdProvider.CorrelationId);
@@ -146,7 +146,7 @@ public class UserService : IUserService
             user.UpdatedAt = DateTime.UtcNow;
             _unitOfWork.AppUsers.Update(user);
             await _unitOfWork.SaveChangesAsync(ct);
-            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            await _securitySynchronization.EnqueueUserAsync(user.TenantId, user.UserId, ct);
             return (User: MapToDto(user), user.TenantId);
         }, ct);
         await DispatchSecurityAsync(result.TenantId, ct);
@@ -174,7 +174,7 @@ public class UserService : IUserService
             _unitOfWork.AppUsers.Update(user);
             await _unitOfWork.RefreshTokens.RevokeAllByUserIdAsync(userId, ct);
             await _unitOfWork.SaveChangesAsync(ct);
-            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            await _securitySynchronization.EnqueueUserAsync(user.TenantId, user.UserId, ct);
             return user.TenantId;
         }, ct);
         await DispatchSecurityAsync(tenantId, ct);
@@ -190,7 +190,7 @@ public class UserService : IUserService
             _unitOfWork.AppUsers.Update(user);
             await _unitOfWork.RefreshTokens.RevokeAllByUserIdAsync(userId, ct);
             await _unitOfWork.SaveChangesAsync(ct);
-            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            await _securitySynchronization.EnqueueUserAsync(user.TenantId, user.UserId, ct);
             return user.TenantId;
         }, ct);
         await DispatchSecurityAsync(tenantId, ct);
@@ -211,7 +211,7 @@ public class UserService : IUserService
             user.UpdatedAt = DateTime.UtcNow;
             _unitOfWork.AppUsers.Update(user);
             await _unitOfWork.SaveChangesAsync(ct);
-            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            await _securitySynchronization.EnqueueUserAsync(user.TenantId, user.UserId, ct);
             return (user.TenantId, Changed: true);
         }, ct);
         if (result.Changed) await DispatchSecurityAsync(result.TenantId, ct);
@@ -244,7 +244,7 @@ public class UserService : IUserService
                 AssignedByUserId = assignedByUserId
             }, ct);
             await _unitOfWork.SaveChangesAsync(ct);
-            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            await _securitySynchronization.EnqueueUserAsync(user.TenantId, user.UserId, ct);
             return user.TenantId;
         }, ct);
         await DispatchSecurityAsync(tenantId, ct);
@@ -261,7 +261,7 @@ public class UserService : IUserService
                 ?? throw new NotFoundException("UserRole", $"{userId}/{roleId}/{businessId}");
             _unitOfWork.UserRoles.Delete(userRole);
             await _unitOfWork.SaveChangesAsync(ct);
-            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            await _securitySynchronization.EnqueueUserAsync(user.TenantId, user.UserId, ct);
             return user.TenantId;
         }, ct);
         await DispatchSecurityAsync(tenantId, ct);

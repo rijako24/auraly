@@ -78,8 +78,8 @@ public sealed class PosCustomerOutboxStore(
             insert.CommandText = """
                 INSERT INTO PosPricingCustomers(
                   CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,
-                  IsActive,AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode)
-                VALUES($customer,$identification,$name,NULL,$electronic,1,0,'[]',NULL);
+                  IsActive,AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,IsPendingLocal)
+                VALUES($customer,$identification,$name,NULL,$electronic,1,0,'[]',NULL,1);
                 INSERT INTO Outbox(
                   MessageId,DocumentId,WorkSessionId,Type,Payload,Status,AttemptCount,CreatedAt)
                 VALUES($customer,$customer,$session,$type,$payload,'Pending',0,$now);
@@ -261,7 +261,7 @@ public sealed class PosCustomerOutboxUploader(
                 if (created.CustomerId != item.Value.CustomerId)
                     throw new InvalidDataException("Auraly Server returned a different customer identifier.");
                 await store.MarkUploadedAsync(item.Value.CustomerId, cancellationToken);
-                await synchronization.SynchronizeAsync(cancellationToken);
+                await synchronization.SynchronizeCustomersAsync(cancellationToken);
                 events.Record("Success", "Cliente", $"Cliente local subido: {created.DisplayName}",
                     created.Identification);
                 return true;

@@ -128,10 +128,13 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),
             reader.GetDecimal(4),reader.GetBoolean(5)));
         await reader.DisposeAsync();
+        var more=candidates.Count>take;
+        if(more)candidates.RemoveAt(candidates.Count-1);
         var prices=await SqlOnlineSalesDraftStore.ResolveCommercePricesAsync(
             connection,transaction,request.BusinessId,request.WarehouseId,request.CustomerId,
             candidates.Select(value=>new CommercePriceRequest(
-                value.ProductId.ToString("D"),value.ProductId,1m)).ToArray(),token);
+                value.ProductId.ToString("D"),value.ProductId,1m)).ToArray(),token,
+            independentLines:true);
         await transaction.CommitAsync(token);
         var values=candidates.Select(value=>
         {
@@ -140,7 +143,6 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 value.ProductId,value.ProductCode,value.Name,value.UnitCode,price.UnitPrice,
                 price.PriceSource,value.QuantityOnHand,value.ManageStock);
         }).ToList();
-        var more=values.Count>take;if(more)values.RemoveAt(values.Count-1);
         return new(values,more,more?request.Skip+values.Count:null);
     }
 

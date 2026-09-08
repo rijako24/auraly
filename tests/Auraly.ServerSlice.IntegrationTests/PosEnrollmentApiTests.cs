@@ -10,7 +10,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Authorized_user_enrolls_a_device_and_code_can_only_be_redeemed_once()
+    public async Task Authorized_user_enrolls_and_same_installation_can_recover_a_lost_response()
     {
         await PrepareInitialCashierAsync();
         using var client = fixture.CreateAdminClient(
@@ -68,7 +68,12 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         using var repeated = await client.PostAsJsonAsync(
             "/api/pos/v1/enrollments/redeem",
             redeemRequest);
-        Assert.Equal(HttpStatusCode.BadRequest, repeated.StatusCode);
+        repeated.EnsureSuccessStatusCode();
+        var recovered = await repeated.Content.ReadFromJsonAsync<PosEnrollmentPackage>();
+        Assert.NotNull(recovered);
+        Assert.Equal(package.DeviceId, recovered.DeviceId);
+        Assert.Equal(package.DocumentSeries.SeriesId, recovered.DocumentSeries.SeriesId);
+        Assert.NotEqual(package.DeviceSecret, recovered.DeviceSecret);
 
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();

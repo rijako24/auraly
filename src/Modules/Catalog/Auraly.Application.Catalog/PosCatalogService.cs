@@ -48,6 +48,30 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         ValidateEnrolledScope(device);
         return store.PricingSnapshotAsync(device.DeviceId, device.TenantId, device.BusinessId, device.WarehouseId, ct);
     }
+    public Task<long> PricingCursorAsync(CatalogDeviceIdentity device, CancellationToken ct)
+    {
+        ValidateEnrolledScope(device);
+        return store.PricingCursorAsync(device.DeviceId, device.TenantId, device.BusinessId, ct);
+    }
+
+    public Task<PosCustomerBootstrapPage> CustomerBootstrapPageAsync(
+        CatalogDeviceIdentity device, string? cursor, int pageSize, CancellationToken ct)
+    {
+        ValidateEnrolledScope(device);
+        ValidatePageSize(pageSize);
+        return store.CustomerBootstrapPageAsync(
+            device.DeviceId, device.TenantId, device.BusinessId, cursor, pageSize, ct);
+    }
+
+    public Task<PosCustomerDeltaPage> CustomerChangesAsync(
+        CatalogDeviceIdentity device, long cursor, int pageSize, CancellationToken ct)
+    {
+        ValidateEnrolledScope(device);
+        if (cursor < 0) throw new CatalogValidationException("The customer cursor cannot be negative.");
+        ValidatePageSize(pageSize);
+        return store.CustomerChangesAsync(
+            device.DeviceId, device.TenantId, device.BusinessId, cursor, pageSize, ct);
+    }
     public Task<InventoryAvailabilityResponse> AvailabilityAsync(
         CatalogDeviceIdentity device,
         InventoryAvailabilityRequest request,

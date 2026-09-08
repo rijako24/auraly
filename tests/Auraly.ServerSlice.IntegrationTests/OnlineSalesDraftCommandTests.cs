@@ -141,7 +141,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
                     server, local,
                     new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret),
                     new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId));
-                await synchronization.SynchronizeAsync();
+                await synchronization.SynchronizeConfigurationAsync();
             }
             Assert.Equal(8_000m, (await local.ResolvePriceAsync(productId, null, 1m)).Amount);
 
@@ -158,7 +158,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
                     server, local,
                     new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret),
                     new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId));
-                await synchronization.SynchronizeAsync();
+                await synchronization.SynchronizeConfigurationAsync();
             }
             var withoutPromotion = await local.ResolvePriceAsync(productId, null, 1m);
             Assert.Equal(10_000m, withoutPromotion.Amount);
@@ -512,14 +512,26 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             Assert.Equal("Base",excludedOffline.Source);
 
             await ExecuteAsync(
-                "DELETE dbo.PriceChannelExclusions WHERE PriceChannelExclusionId=@ExclusionId;",
-                new SqlParameter("@ExclusionId", categoryExclusionId));
+                """
+                DELETE dbo.PriceChannelExclusions
+                WHERE PriceChannelExclusionId=@ExclusionId;
+
+                DECLARE @Cursor BIGINT;
+                SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
+                FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+                WHERE BusinessId=@BusinessId AND Stream=N'Configuration';
+                INSERT dbo.PosSynchronizationOutboxMessages(
+                  NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+                VALUES(NEWID(),@BusinessId,N'Configuration',@Cursor,SYSDATETIMEOFFSET());
+                """,
+                new SqlParameter("@ExclusionId", categoryExclusionId),
+                new SqlParameter("@BusinessId", fixture.BusinessId));
             using (var server = fixture.CreateClient())
                 await new PosCatalogSynchronizer(
                     server,local,
                     new PosDeviceCredentials(fixture.DeviceId,ServerSliceFixture.DeviceSecret),
                     new PosOperationalScope(fixture.BusinessId,fixture.WarehouseId))
-                    .SynchronizeAsync();
+                    .SynchronizeConfigurationAsync();
             var oneOffline = await local.ResolvePriceAsync(fixture.ProductId,customerId,1m);
             var threeOffline = await local.ResolvePriceAsync(fixture.ProductId,customerId,3m);
             Assert.Equal(8_000m,oneOffline.Amount);

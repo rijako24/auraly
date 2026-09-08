@@ -70,7 +70,7 @@ public sealed class SqlWithholdingRuleStore(
                 proposed.RequiredResponsibilities, proposed.EffectiveFrom, proposed.EffectiveTo, proposed.IsActive);
             await InsertAsync(connection, transaction, rule, userId, ct);
             await EnqueueCustomerSynchronizationAsync(
-                connection, transaction, proposed.BusinessId, ct);
+                connection, transaction, proposed.BusinessId, null, ct);
             await transaction.CommitAsync(ct);
             return rule;
         }
@@ -148,7 +148,7 @@ public sealed class SqlWithholdingRuleStore(
             command.Parameters.AddWithValue("@UserId", userId);
             await command.ExecuteNonQueryAsync(ct);
             await EnqueueCustomerSynchronizationAsync(
-                connection, transaction, request.BusinessId, ct);
+                connection, transaction, request.BusinessId, request.CounterpartyId, ct);
             await transaction.CommitAsync(ct);
             return new CounterpartyTaxProfileView(
                 request.BusinessId, request.CounterpartyId, request.AppliesWithholding, responsibilities,
@@ -216,18 +216,25 @@ public sealed class SqlWithholdingRuleStore(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid businessId,
+        Guid? customerId,
         CancellationToken ct)
     {
         await using var command = new SqlCommand("""
             DECLARE @Cursor BIGINT;
             SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
             FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND Stream=N'Customers';
+            WHERE BusinessId=@BusinessId AND Stream=CASE WHEN @CustomerId IS NULL THEN N'Configuration' ELSE N'Customers' END;
             INSERT dbo.PosSynchronizationOutboxMessages
-              (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-            VALUES(NEWID(),@BusinessId,N'Customers',@Cursor,SYSDATETIMEOFFSET());
+              (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,
+               EntityType,EntityId,ChangeKind)
+            VALUES(NEWID(),@BusinessId,
+                   CASE WHEN @CustomerId IS NULL THEN N'Configuration' ELSE N'Customers' END,
+                   @Cursor,SYSDATETIMEOFFSET(),
+                   CASE WHEN @CustomerId IS NULL THEN N'WithholdingRules' ELSE N'Customer' END,
+                   @CustomerId,N'Upsert');
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@CustomerId", (object?)customerId ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(ct);
     }
 

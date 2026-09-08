@@ -15,7 +15,10 @@ public interface IReceivablesStore
         ConfirmCustomerPaymentRequest request, ReceivableSettlement settlement, CancellationToken token);
 }
 
-public sealed class ReceivablesService(IReceivablesStore store, IDocumentProcessingSignalPublisher signals)
+public sealed class ReceivablesService(
+    IReceivablesStore store,
+    IDocumentProcessingSignalPublisher signals,
+    Auraly.BuildingBlocks.Application.Synchronization.IPosSynchronizationOutboxDispatcher synchronization)
 {
     public Task<ReceivablePage> ListAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token = default)
     {
@@ -40,14 +43,16 @@ public sealed class ReceivablesService(IReceivablesStore store, IDocumentProcess
         return store.GetCreditProfileAsync(user, customerId, token);
     }
 
-    public Task<CustomerCreditProfile> UpdateCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId,
+    public async Task<CustomerCreditProfile> UpdateCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId,
         UpdateCustomerCreditProfileRequest request, CancellationToken token = default)
     {
         Require(user, ReceivablesPermissionCodes.ManageCredit);
         if (request.BusinessId != user.BusinessId) throw new ReceivablesForbiddenException("The profile belongs to another business.");
         if (customerId == Guid.Empty || request.DefaultDueDays is < 0 or > 3650 || request.CreditLimit < 0)
             throw new ReceivablesValidationException("The credit profile is invalid.");
-        return store.UpdateCreditProfileAsync(user, customerId, request, token);
+        var result = await store.UpdateCreditProfileAsync(user, customerId, request, token);
+        await synchronization.DispatchPendingAsync(user.TenantId, user.BusinessId, CancellationToken.None);
+        return result;
     }
 
     public async Task<CustomerPaymentAcceptance> ConfirmPaymentAsync(ReceivablesUserIdentity user,

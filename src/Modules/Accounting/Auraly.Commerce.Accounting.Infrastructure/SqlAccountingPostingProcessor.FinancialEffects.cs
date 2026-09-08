@@ -13,52 +13,110 @@ namespace Auraly.Commerce.Accounting.Infrastructure;
 
 public sealed partial class SqlAccountingPostingProcessor
 {
-    private Task ApplyFinancialEffectsAsync(
+    private async Task ApplyFinancialEffectsAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         SourceEnvelope source,
-        CancellationToken cancellationToken) => source.DocumentType switch
+        CancellationToken cancellationToken)
     {
-        "SalesInvoice" or "SalesReceipt" => ApplySaleFinancialEffectsAsync(
-            connection, transaction,
-            PosSaleContractSerializer.Deserialize(source.PayloadJson),
-            source.DocumentType, cancellationToken),
-        "ServiceInvoice" => ApplyServiceInvoiceFinancialEffectsAsync(
-            connection, transaction,
-            ServiceInvoiceSnapshotSerializer.Deserialize(source.PayloadJson),
-            cancellationToken),
-        "SalesReturn" => ApplySalesReturnFinancialEffectsAsync(
-            connection, transaction,
-            SalesReturnContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
-        "SalesDebitNote" => ApplySalesDebitNoteFinancialEffectsAsync(
-            connection, transaction,
-            SalesDebitNoteContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
-        "GoodsReceipt" => ApplyGoodsReceiptFinancialEffectsAsync(
-            connection, transaction,
-            GoodsReceiptContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
-        "GoodsReceiptCostDocument" => ApplyGoodsReceiptCostDocumentFinancialEffectsAsync(
-            connection, transaction,
-            GoodsReceiptContractSerializer.DeserializeCostDocument(source.PayloadJson), cancellationToken),
-        "Expense" => ApplyExpenseFinancialEffectsAsync(
-            connection, transaction,
-            ExpenseContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
-        "PurchaseReturn" => ApplyPurchaseReturnFinancialEffectsAsync(
-            connection, transaction,
-            PurchaseReturnContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
-        "PayablePayment" => ApplyPayablePaymentFinancialEffectsAsync(
-            connection, transaction,
-            SupplierPaymentContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
-        "ReceivablePayment" => ApplyReceivablePaymentFinancialEffectsAsync(
-            connection, transaction,
-            CustomerPaymentContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
-        "CashReceipt" or "CashDisbursement" => ApplyCashMovementFinancialEffectsAsync(
-            connection, transaction,
-            CashMovementContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
-        AccountingManualDocumentTypes.AccountAdjustment => ApplyAccountAdjustmentFinancialEffectsAsync(
-            connection, transaction, source, cancellationToken),
-        AccountingManualDocumentTypes.ManualVoucher => Task.CompletedTask,
-        _ => Task.CompletedTask
-    };
+        Guid? affectedCustomerId = null;
+        switch (source.DocumentType)
+        {
+            case "SalesInvoice":
+            case "SalesReceipt":
+                var sale = PosSaleContractSerializer.Deserialize(source.PayloadJson);
+                await ApplySaleFinancialEffectsAsync(
+                    connection, transaction, sale, source.DocumentType, cancellationToken);
+                affectedCustomerId = sale.Credit?.CustomerId;
+                break;
+            case "ServiceInvoice":
+                var serviceInvoice = ServiceInvoiceSnapshotSerializer.Deserialize(source.PayloadJson);
+                await ApplyServiceInvoiceFinancialEffectsAsync(
+                    connection, transaction, serviceInvoice, cancellationToken);
+                affectedCustomerId = serviceInvoice.CustomerId;
+                break;
+            case "SalesReturn":
+                var salesReturn = SalesReturnContractSerializer.Deserialize(source.PayloadJson);
+                await ApplySalesReturnFinancialEffectsAsync(
+                    connection, transaction, salesReturn, cancellationToken);
+                affectedCustomerId = salesReturn.CustomerId;
+                break;
+            case "SalesDebitNote":
+                var debitNote = SalesDebitNoteContractSerializer.Deserialize(source.PayloadJson);
+                await ApplySalesDebitNoteFinancialEffectsAsync(
+                    connection, transaction, debitNote, cancellationToken);
+                affectedCustomerId = debitNote.CustomerId;
+                break;
+            case "ReceivablePayment":
+                var customerPayment = CustomerPaymentContractSerializer.Deserialize(source.PayloadJson);
+                await ApplyReceivablePaymentFinancialEffectsAsync(
+                    connection, transaction, customerPayment, cancellationToken);
+                affectedCustomerId = customerPayment.CustomerId;
+                break;
+            case "GoodsReceipt":
+                await ApplyGoodsReceiptFinancialEffectsAsync(
+                    connection, transaction,
+                    GoodsReceiptContractSerializer.Deserialize(source.PayloadJson), cancellationToken);
+                break;
+            case "GoodsReceiptCostDocument":
+                await ApplyGoodsReceiptCostDocumentFinancialEffectsAsync(
+                    connection, transaction,
+                    GoodsReceiptContractSerializer.DeserializeCostDocument(source.PayloadJson), cancellationToken);
+                break;
+            case "Expense":
+                await ApplyExpenseFinancialEffectsAsync(
+                    connection, transaction,
+                    ExpenseContractSerializer.Deserialize(source.PayloadJson), cancellationToken);
+                break;
+            case "PurchaseReturn":
+                await ApplyPurchaseReturnFinancialEffectsAsync(
+                    connection, transaction,
+                    PurchaseReturnContractSerializer.Deserialize(source.PayloadJson), cancellationToken);
+                break;
+            case "PayablePayment":
+                await ApplyPayablePaymentFinancialEffectsAsync(
+                    connection, transaction,
+                    SupplierPaymentContractSerializer.Deserialize(source.PayloadJson), cancellationToken);
+                break;
+            case "CashReceipt":
+            case "CashDisbursement":
+                await ApplyCashMovementFinancialEffectsAsync(
+                    connection, transaction,
+                    CashMovementContractSerializer.Deserialize(source.PayloadJson), cancellationToken);
+                break;
+            case AccountingManualDocumentTypes.AccountAdjustment:
+                affectedCustomerId = await ReadAdjustedCustomerIdAsync(
+                    connection, transaction, source, cancellationToken);
+                await ApplyAccountAdjustmentFinancialEffectsAsync(
+                    connection, transaction, source, cancellationToken);
+                break;
+        }
+
+        if (affectedCustomerId is Guid customerId)
+            await SqlAccountingPosSynchronizationOutbox.InsertCustomerAsync(
+                connection, transaction, source.BusinessId, customerId,
+                ids, timeProvider.GetUtcNow(), cancellationToken);
+    }
+
+    private static async Task<Guid?> ReadAdjustedCustomerIdAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        var request = System.Text.Json.JsonSerializer.Deserialize<ConfirmAccountAdjustmentRequest>(
+            source.PayloadJson) ?? throw new InvalidOperationException(
+                "The account adjustment payload is invalid.");
+        if (request.SubledgerKind != AccountingSubledgerKinds.Receivable) return null;
+        await using var command = new SqlCommand("""
+            SELECT CustomerId
+            FROM dbo.Receivables
+            WHERE ReceivableId=@ReceivableId AND BusinessId=@BusinessId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@ReceivableId", request.SubledgerId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        return await command.ExecuteScalarAsync(cancellationToken) as Guid?;
+    }
 
     private async Task ApplyServiceInvoiceFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,

@@ -15,17 +15,25 @@ public sealed record PosPriceLineRequest(
 public sealed partial class PosCatalogStore
 {
     public async Task<PosPricingSnapshot> ReadPricingSnapshotAsync(
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        await ReadPricingSnapshotAsync(includeCustomers: true, ct);
+
+    private async Task<PosPricingSnapshot> ReadPricingSnapshotAsync(
+        bool includeCustomers,
+        CancellationToken ct)
     {
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(ct);
 
         var customers = new List<PosCustomerPricing>();
-        await using (var command = connection.CreateCommand())
+        if (includeCustomers)
         {
+          await using var command = connection.CreateCommand();
             command.CommandText = """
                 SELECT CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
-                       AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode
+                       AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,
+                       IsCreditEnabled,CreditLimit,AvailableCredit,DefaultDueDays,
+                       PriceChannelValidFrom,PriceChannelValidUntil
                 FROM PosPricingCustomers;
                 """;
             await using var reader = await command.ExecuteReaderAsync(ct);
@@ -33,8 +41,8 @@ public sealed partial class PosCatalogStore
         }
 
         var channels = new List<PosPriceChannelDefinition>();
-        await using (var command = connection.CreateCommand())
         {
+          await using var command = connection.CreateCommand();
             command.CommandText = "SELECT PriceChannelId,Code,Name,Strategy,Value FROM PosPriceChannels;";
             await using var reader = await command.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
@@ -119,7 +127,9 @@ public sealed partial class PosCatalogStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
-                   AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode
+                   AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,
+                   IsCreditEnabled,CreditLimit,AvailableCredit,DefaultDueDays,
+                   PriceChannelValidFrom,PriceChannelValidUntil
             FROM PosPricingCustomers
             WHERE IsActive=1
               AND (@Term='' OR Identification LIKE @Prefix OR Name LIKE @Name)
@@ -150,7 +160,9 @@ public sealed partial class PosCatalogStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
-                   AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode
+                   AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,
+                   IsCreditEnabled,CreditLimit,AvailableCredit,DefaultDueDays,
+                   PriceChannelValidFrom,PriceChannelValidUntil
             FROM PosPricingCustomers
             WHERE CustomerId=@CustomerId AND IsActive=1;
             """;
@@ -158,6 +170,145 @@ public sealed partial class PosCatalogStore
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct) ? ReadCustomer(reader) : null;
     }
+
+    public async Task<long?> CustomerCursorAsync(CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT CustomerCursor FROM PosPricingSynchronizationState WHERE StateId=1;";
+        var value = await command.ExecuteScalarAsync(ct);
+        return value is null or DBNull ? null : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+    }
+
+    public async Task<long?> ConfigurationCursorAsync(CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ConfigurationCursor FROM PosPricingSynchronizationState WHERE StateId=1;";
+        var value = await command.ExecuteScalarAsync(ct);
+        return value is null or DBNull ? null : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+    }
+
+    public async Task<(bool Active, string? NextCursor)> CustomerBootstrapStatusAsync(
+        CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT CustomerBootstrapActive,CustomerBootstrapNextCursor FROM PosPricingSynchronizationState WHERE StateId=1;";
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return (false, null);
+        return (reader.GetInt32(0) == 1, reader.IsDBNull(1) ? null : reader.GetString(1));
+    }
+
+    public async Task BeginCustomerBootstrapAsync(CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        await ExecutePricingAsync(connection, transaction,
+            "DELETE FROM PosPricingCustomers WHERE IsPendingLocal=0; UPDATE PosPricingSynchronizationState SET CustomerCursor=NULL,CustomerBootstrapActive=1,CustomerBootstrapNextCursor=NULL,CustomerBootstrapThroughCursor=NULL WHERE StateId=1;",
+            [], ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    public async Task ApplyCustomerBootstrapPageAsync(
+        PosCustomerBootstrapPage page,
+        CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        foreach (var customer in page.Customers)
+            await UpsertCustomerAsync(connection, transaction, customer, ct);
+        await ExecutePricingAsync(connection, transaction, page.HasMore
+                ? "UPDATE PosPricingSynchronizationState SET CustomerBootstrapThroughCursor=COALESCE(CustomerBootstrapThroughCursor,@Through),CustomerBootstrapNextCursor=@Next WHERE StateId=1;"
+                : "UPDATE PosPricingSynchronizationState SET CustomerCursor=COALESCE(CustomerBootstrapThroughCursor,@Through),CustomerBootstrapActive=0,CustomerBootstrapNextCursor=NULL,CustomerBootstrapThroughCursor=NULL WHERE StateId=1;",
+            [Q("@Through", page.ThroughCursor), Q("@Next", page.NextCursor)], ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    public async Task ApplyCustomerChangesAsync(
+        PosCustomerDeltaPage page,
+        CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var current = await CustomerCursorAsync(connection, transaction, ct);
+        if (current != page.FromCursor)
+            throw new InvalidOperationException("The customer delta is outside the durable local cursor.");
+        foreach (var change in page.Changes)
+        {
+            if (change.Customer is { } customer)
+                await UpsertCustomerAsync(connection, transaction, customer, ct);
+            else
+                await ExecutePricingAsync(connection, transaction,
+                    "DELETE FROM PosPricingCustomers WHERE CustomerId=@CustomerId AND IsPendingLocal=0;",
+                    [Q("@CustomerId", change.CustomerId)], ct);
+        }
+        await ExecutePricingAsync(connection, transaction,
+            "UPDATE PosPricingSynchronizationState SET CustomerCursor=@Cursor WHERE StateId=1;",
+            [Q("@Cursor", page.ToCursor)], ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    private static async Task<long> CustomerCursorAsync(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = "SELECT COALESCE(CustomerCursor,0) FROM PosPricingSynchronizationState WHERE StateId=1;";
+        return Convert.ToInt64(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
+    }
+
+    private static async Task UpsertCustomerAsync(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        PosCustomerPricing customer,
+        CancellationToken ct) =>
+        await ExecutePricingAsync(connection, transaction, """
+            INSERT INTO PosPricingCustomers(
+              CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
+              AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,IsCreditEnabled,
+              CreditLimit,AvailableCredit,DefaultDueDays,PriceChannelValidFrom,
+              PriceChannelValidUntil,IsPendingLocal)
+            VALUES(@CustomerId,@Identification,@Name,@PriceChannelId,@RequiresElectronicInvoice,@IsActive,
+              @AppliesWithholding,@TaxResponsibilities,@TaxJurisdictionCode,@IsCreditEnabled,
+              @CreditLimit,@AvailableCredit,@DefaultDueDays,@PriceChannelValidFrom,
+              @PriceChannelValidUntil,0)
+            ON CONFLICT(CustomerId) DO UPDATE SET
+              Identification=excluded.Identification,Name=excluded.Name,
+              PriceChannelId=excluded.PriceChannelId,
+              RequiresElectronicInvoice=excluded.RequiresElectronicInvoice,
+              IsActive=excluded.IsActive,AppliesWithholding=excluded.AppliesWithholding,
+              TaxResponsibilities=excluded.TaxResponsibilities,
+              TaxJurisdictionCode=excluded.TaxJurisdictionCode,
+              IsCreditEnabled=excluded.IsCreditEnabled,CreditLimit=excluded.CreditLimit,
+              AvailableCredit=excluded.AvailableCredit,DefaultDueDays=excluded.DefaultDueDays,
+              PriceChannelValidFrom=excluded.PriceChannelValidFrom,
+              PriceChannelValidUntil=excluded.PriceChannelValidUntil,IsPendingLocal=0;
+            """, CustomerParameters(customer), ct);
+
+    private static SqliteParameter[] CustomerParameters(PosCustomerPricing customer) =>
+    [
+        Q("@CustomerId", customer.CustomerId), Q("@Identification", customer.Identification),
+        Q("@Name", customer.Name), Q("@PriceChannelId", customer.PriceChannelId),
+        Q("@RequiresElectronicInvoice", customer.RequiresElectronicInvoice ? 1 : 0),
+        Q("@IsActive", customer.IsActive ? 1 : 0),
+        Q("@AppliesWithholding", customer.AppliesWithholding ? 1 : 0),
+        Q("@TaxResponsibilities", JsonSerializer.Serialize(customer.TaxResponsibilities ?? [])),
+        Q("@TaxJurisdictionCode", customer.TaxJurisdictionCode),
+        Q("@IsCreditEnabled", customer.IsCreditEnabled ? 1 : 0),
+        Q("@CreditLimit", customer.CreditLimit), Q("@AvailableCredit", customer.AvailableCredit),
+        Q("@DefaultDueDays", customer.DefaultDueDays),
+        Q("@PriceChannelValidFrom", customer.PriceChannelValidFrom?.ToString("O", CultureInfo.InvariantCulture)),
+        Q("@PriceChannelValidUntil", customer.PriceChannelValidUntil?.ToString("O", CultureInfo.InvariantCulture))
+    ];
 
     public async Task ApplyPricingSnapshotAsync(
         PosPricingSnapshot snapshot,
@@ -171,7 +322,6 @@ public sealed partial class PosCatalogStore
             DELETE FROM PosPriceChannelExclusions;
             DELETE FROM PosPriceChannels;
             DELETE FROM PosWithholdingRules;
-            DELETE FROM PosPricingCustomers;
             DELETE FROM PosPromotions;
             UPDATE PosPricingConfiguration
             SET AllowPromotionChannelCombination=@AllowCombination
@@ -204,9 +354,24 @@ public sealed partial class PosCatalogStore
             await ExecutePricingAsync(connection, transaction, """
                 INSERT INTO PosPricingCustomers(
                   CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
-                  AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode)
+                  AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,IsCreditEnabled,
+                  CreditLimit,AvailableCredit,DefaultDueDays,PriceChannelValidFrom,
+                  PriceChannelValidUntil,IsPendingLocal)
                 VALUES(@CustomerId,@Identification,@Name,@PriceChannelId,@RequiresElectronicInvoice,@IsActive,
-                  @AppliesWithholding,@TaxResponsibilities,@TaxJurisdictionCode);
+                  @AppliesWithholding,@TaxResponsibilities,@TaxJurisdictionCode,@IsCreditEnabled,
+                  @CreditLimit,@AvailableCredit,@DefaultDueDays,@PriceChannelValidFrom,
+                  @PriceChannelValidUntil,0)
+                ON CONFLICT(CustomerId) DO UPDATE SET
+                  Identification=excluded.Identification,Name=excluded.Name,
+                  PriceChannelId=excluded.PriceChannelId,
+                  RequiresElectronicInvoice=excluded.RequiresElectronicInvoice,
+                  IsActive=excluded.IsActive,AppliesWithholding=excluded.AppliesWithholding,
+                  TaxResponsibilities=excluded.TaxResponsibilities,
+                  TaxJurisdictionCode=excluded.TaxJurisdictionCode,
+                  IsCreditEnabled=excluded.IsCreditEnabled,CreditLimit=excluded.CreditLimit,
+                  AvailableCredit=excluded.AvailableCredit,DefaultDueDays=excluded.DefaultDueDays,
+                  PriceChannelValidFrom=excluded.PriceChannelValidFrom,
+                  PriceChannelValidUntil=excluded.PriceChannelValidUntil,IsPendingLocal=0;
                 """,
                 [Q("@CustomerId", customer.CustomerId), Q("@Identification", customer.Identification),
                  Q("@Name", customer.Name), Q("@PriceChannelId", customer.PriceChannelId),
@@ -214,7 +379,12 @@ public sealed partial class PosCatalogStore
                  Q("@IsActive", customer.IsActive ? 1 : 0),
                  Q("@AppliesWithholding", customer.AppliesWithholding ? 1 : 0),
                  Q("@TaxResponsibilities", JsonSerializer.Serialize(customer.TaxResponsibilities ?? [])),
-                 Q("@TaxJurisdictionCode", customer.TaxJurisdictionCode)], ct);
+                 Q("@TaxJurisdictionCode", customer.TaxJurisdictionCode),
+                 Q("@IsCreditEnabled", customer.IsCreditEnabled ? 1 : 0),
+                 Q("@CreditLimit", customer.CreditLimit), Q("@AvailableCredit", customer.AvailableCredit),
+                 Q("@DefaultDueDays", customer.DefaultDueDays),
+                 Q("@PriceChannelValidFrom", customer.PriceChannelValidFrom?.ToString("O", CultureInfo.InvariantCulture)),
+                 Q("@PriceChannelValidUntil", customer.PriceChannelValidUntil?.ToString("O", CultureInfo.InvariantCulture))], ct);
         foreach (var rule in snapshot.WithholdingRules ?? [])
             await ExecutePricingAsync(connection, transaction, """
                 INSERT INTO PosWithholdingRules(
@@ -242,6 +412,10 @@ public sealed partial class PosCatalogStore
                 [Q("@PromotionId", promotion.PromotionId), Q("@Priority", promotion.Priority),
                  Q("@CreatedAtUtc", promotion.CreatedAtUtc.ToString("O", CultureInfo.InvariantCulture)),
                  Q("@Payload", JsonSerializer.Serialize(promotion))], ct);
+        if (snapshot.ConfigurationCursor is { } configurationCursor)
+            await ExecutePricingAsync(connection, transaction,
+                "UPDATE PosPricingSynchronizationState SET ConfigurationCursor=@Cursor WHERE StateId=1;",
+                [Q("@Cursor", configurationCursor)], ct);
         await transaction.CommitAsync(ct);
     }
 
@@ -259,7 +433,8 @@ public sealed partial class PosCatalogStore
     public async Task<IReadOnlyDictionary<string, PosResolvedPrice>> ResolvePricesAsync(
         IReadOnlyCollection<PosPriceLineRequest> requests,
         Guid? customerId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool independentLines = false)
     {
         if (requests.Count == 0) return new Dictionary<string, PosResolvedPrice>();
         if (requests.Any(request => request.Quantity <= 0))
@@ -270,13 +445,23 @@ public sealed partial class PosCatalogStore
         if (customerId is not null)
         {
             await using var customer = connection.CreateCommand();
-            customer.CommandText = "SELECT PriceChannelId FROM PosPricingCustomers WHERE CustomerId=@CustomerId AND IsActive=1;";
+            customer.CommandText = "SELECT PriceChannelId,PriceChannelValidFrom,PriceChannelValidUntil FROM PosPricingCustomers WHERE CustomerId=@CustomerId AND IsActive=1;";
             customer.Parameters.Add(Q("@CustomerId", customerId));
-            var value = await customer.ExecuteScalarAsync(ct);
-            channelId = value is null or DBNull ? null : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!);
+            await using var customerReader = await customer.ExecuteReaderAsync(ct);
+            if (await customerReader.ReadAsync(ct))
+            {
+                var channelNow = Clock.GetUtcNow();
+                var validFrom = customerReader.IsDBNull(1) ? (DateTimeOffset?)null :
+                    DateTimeOffset.Parse(customerReader.GetString(1), CultureInfo.InvariantCulture);
+                var validUntil = customerReader.IsDBNull(2) ? (DateTimeOffset?)null :
+                    DateTimeOffset.Parse(customerReader.GetString(2), CultureInfo.InvariantCulture);
+                if ((validFrom is null || validFrom <= channelNow) && (validUntil is null || validUntil > channelNow))
+                    channelId = customerReader.IsDBNull(0) ? null : Guid.Parse(customerReader.GetString(0));
+            }
         }
 
-        var snapshot = await ReadPricingSnapshotAsync(ct);
+        var snapshot = await ReadPriceResolutionConfigurationAsync(
+            connection, channelId, requests.Select(value => value.ProductId).Distinct().ToArray(), ct);
         var channelRules = snapshot.PriceChannels.Select(value =>
             new PriceChannelRule(value.PriceChannelId,value.Strategy,value.Value)).ToArray();
         var tierRules = snapshot.PriceChannelTiers.Select(value =>
@@ -324,18 +509,98 @@ public sealed partial class PosCatalogStore
                 EligibleForPromotion: request.EligibleForPromotion));
         }
         var now = Clock.GetUtcNow();
-        var resolved = PromotionPriceResolver.Resolve(
-            inputs, (snapshot.Promotions ?? [])
-                .Where(promotion => promotion.StartsAtUtc is null || promotion.StartsAtUtc <= now)
-                .Where(promotion => promotion.EndsAtUtc is null || promotion.EndsAtUtc >= now)
-                .Select(ToRule).ToArray(),
-            snapshot.AllowPromotionChannelCombination);
-        return resolved.Lines.ToDictionary(line => line.Input.Key, line => new PosResolvedPrice(
+        var promotionRules = (snapshot.Promotions ?? [])
+            .Where(promotion => promotion.StartsAtUtc is null || promotion.StartsAtUtc <= now)
+            .Where(promotion => promotion.EndsAtUtc is null || promotion.EndsAtUtc >= now)
+            .Select(ToRule).ToArray();
+        var resolvedLines = independentLines
+            ? inputs.SelectMany(input => PromotionPriceResolver.Resolve(
+                [input], promotionRules, snapshot.AllowPromotionChannelCombination).Lines).ToArray()
+            : PromotionPriceResolver.Resolve(
+                inputs, promotionRules, snapshot.AllowPromotionChannelCombination).Lines;
+        return resolvedLines.ToDictionary(line => line.Input.Key, line => new PosResolvedPrice(
             line.Input.ProductId!.Value, line.Input.BaseUnitPrice, line.EffectiveUnitPrice,
             line.Input.CurrencyCode, line.PriceSource, line.PriceChannelId,
             line.DiscountAmount, line.Adjustments.Select(value => value.PromotionId).Distinct().ToArray(),
             line.ReferenceUnitPrice),
             StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static async Task<PosPricingSnapshot> ReadPriceResolutionConfigurationAsync(
+        SqliteConnection connection,
+        Guid? channelId,
+        IReadOnlyCollection<Guid> productIds,
+        CancellationToken ct)
+    {
+        var channels = new List<PosPriceChannelDefinition>();
+        var tiers = new List<PosPriceChannelTier>();
+        var exclusions = new List<PosPriceChannelExclusion>();
+        if (channelId is { } selectedChannelId)
+        {
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT PriceChannelId,Code,Name,Strategy,Value FROM PosPriceChannels WHERE PriceChannelId=@ChannelId;";
+                command.Parameters.Add(Q("@ChannelId", selectedChannelId));
+                await using var reader = await command.ExecuteReaderAsync(ct);
+                if (await reader.ReadAsync(ct))
+                    channels.Add(new(Guid.Parse(reader.GetString(0)), reader.GetString(1), reader.GetString(2),
+                        reader.GetString(3), reader.IsDBNull(4) ? null :
+                            Convert.ToDecimal(reader.GetValue(4), CultureInfo.InvariantCulture)));
+            }
+
+            var distinctProducts = productIds.Distinct().ToArray();
+            if (distinctProducts.Length > 0)
+            {
+                await using var command = connection.CreateCommand();
+                var parameters = distinctProducts.Select((productId, index) =>
+                {
+                    var parameterName = $"@Product{index}";
+                    command.Parameters.Add(Q(parameterName, productId));
+                    return parameterName;
+                }).ToArray();
+                command.CommandText = $"""
+                    SELECT PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode
+                    FROM PosPriceChannelTiers
+                    WHERE PriceChannelId=@ChannelId AND ProductId IN ({string.Join(',', parameters)});
+                    """;
+                command.Parameters.Add(Q("@ChannelId", selectedChannelId));
+                await using var reader = await command.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                    tiers.Add(new(Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)),
+                        Convert.ToDecimal(reader.GetValue(2), CultureInfo.InvariantCulture),
+                        Convert.ToDecimal(reader.GetValue(3), CultureInfo.InvariantCulture), reader.GetString(4)));
+            }
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    SELECT PriceChannelId,ScopeType,ProductId,ProductCategoryId,ProductBrandId
+                    FROM PosPriceChannelExclusions WHERE PriceChannelId=@ChannelId;
+                    """;
+                command.Parameters.Add(Q("@ChannelId", selectedChannelId));
+                await using var reader = await command.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                    exclusions.Add(new(Guid.Parse(reader.GetString(0)), reader.GetString(1),
+                        reader.IsDBNull(2) ? null : Guid.Parse(reader.GetString(2)),
+                        reader.IsDBNull(3) ? null : Guid.Parse(reader.GetString(3)),
+                        reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4))));
+            }
+        }
+
+        var allowCombination = false;
+        var promotions = new List<PosPromotion>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT AllowPromotionChannelCombination FROM PosPricingConfiguration WHERE ConfigurationId=1;";
+            allowCombination = Convert.ToInt32(await command.ExecuteScalarAsync(ct) ?? 0) == 1;
+            command.CommandText = "SELECT Payload FROM PosPromotions ORDER BY Priority DESC,CreatedAtUtc,PromotionId;";
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                promotions.Add(JsonSerializer.Deserialize<PosPromotion>(reader.GetString(0))
+                    ?? throw new InvalidDataException("The local promotion payload is invalid."));
+        }
+
+        return new(channels, tiers, exclusions, [], [], null, allowCombination, promotions);
     }
 
     public async Task<WithholdingCalculation> CalculateSaleWithholdingAsync(
@@ -351,9 +616,8 @@ public sealed partial class PosCatalogStore
         if (customerId is null)
             return new WithholdingCalculation(gross, 0m, gross, []);
 
-        var snapshot = await ReadPricingSnapshotAsync(ct);
-        var customer = snapshot.Customers.SingleOrDefault(
-            item => item.CustomerId == customerId.Value && item.IsActive);
+        var snapshot = await ReadPricingSnapshotAsync(includeCustomers: false, ct);
+        var customer = await GetCustomerAsync(customerId.Value, ct);
         if (customer is null)
             throw new KeyNotFoundException("The customer is not available in the local projection.");
 
@@ -401,7 +665,10 @@ public sealed partial class PosCatalogStore
               CustomerId TEXT PRIMARY KEY,Identification TEXT NOT NULL,Name TEXT NOT NULL,
               PriceChannelId TEXT NULL,RequiresElectronicInvoice INTEGER NOT NULL DEFAULT 0,IsActive INTEGER NOT NULL,
               AppliesWithholding INTEGER NOT NULL DEFAULT 0,TaxResponsibilities TEXT NOT NULL DEFAULT '[]',
-              TaxJurisdictionCode TEXT NULL);
+              TaxJurisdictionCode TEXT NULL,IsCreditEnabled INTEGER NOT NULL DEFAULT 0,
+              CreditLimit TEXT NULL,AvailableCredit TEXT NULL,DefaultDueDays INTEGER NOT NULL DEFAULT 0,
+              PriceChannelValidFrom TEXT NULL,PriceChannelValidUntil TEXT NULL,
+              IsPendingLocal INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS IX_PosPricingCustomers_Identification ON PosPricingCustomers(Identification);
             CREATE TABLE IF NOT EXISTS PosPriceChannels(
               PriceChannelId TEXT PRIMARY KEY,Code TEXT NOT NULL,Name TEXT NOT NULL,
@@ -427,6 +694,11 @@ public sealed partial class PosCatalogStore
               AllowPromotionChannelCombination INTEGER NOT NULL);
             INSERT OR IGNORE INTO PosPricingConfiguration(ConfigurationId,AllowPromotionChannelCombination)
               VALUES(1,0);
+            CREATE TABLE IF NOT EXISTS PosPricingSynchronizationState(
+              StateId INTEGER PRIMARY KEY CHECK(StateId=1),CustomerCursor INTEGER NULL,
+              ConfigurationCursor INTEGER NULL,CustomerBootstrapActive INTEGER NOT NULL DEFAULT 0,
+              CustomerBootstrapNextCursor TEXT NULL,CustomerBootstrapThroughCursor INTEGER NULL);
+            INSERT OR IGNORE INTO PosPricingSynchronizationState(StateId) VALUES(1);
             CREATE TABLE IF NOT EXISTS PosPromotions(
               PromotionId TEXT PRIMARY KEY,Priority INTEGER NOT NULL,
               CreatedAtUtc TEXT NOT NULL,Payload TEXT NOT NULL);
@@ -438,10 +710,12 @@ public sealed partial class PosCatalogStore
         var hasWithholdingColumn = false;
         var hasResponsibilitiesColumn = false;
         var hasJurisdictionColumn = false;
+        var columns = new HashSet<string>(StringComparer.Ordinal);
         await using (var reader = await command.ExecuteReaderAsync(ct))
             while (await reader.ReadAsync(ct))
             {
                 var column = reader.GetString(1);
+                columns.Add(column);
                 hasBillingColumn |= string.Equals(column, "RequiresElectronicInvoice", StringComparison.Ordinal);
                 hasWithholdingColumn |= string.Equals(column, "AppliesWithholding", StringComparison.Ordinal);
                 hasResponsibilitiesColumn |= string.Equals(column, "TaxResponsibilities", StringComparison.Ordinal);
@@ -465,6 +739,36 @@ public sealed partial class PosCatalogStore
         if (!hasJurisdictionColumn)
         {
             command.CommandText = "ALTER TABLE PosPricingCustomers ADD COLUMN TaxJurisdictionCode TEXT NULL;";
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        foreach (var migration in new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["IsCreditEnabled"] = "ALTER TABLE PosPricingCustomers ADD COLUMN IsCreditEnabled INTEGER NOT NULL DEFAULT 0;",
+            ["CreditLimit"] = "ALTER TABLE PosPricingCustomers ADD COLUMN CreditLimit TEXT NULL;",
+            ["AvailableCredit"] = "ALTER TABLE PosPricingCustomers ADD COLUMN AvailableCredit TEXT NULL;",
+            ["DefaultDueDays"] = "ALTER TABLE PosPricingCustomers ADD COLUMN DefaultDueDays INTEGER NOT NULL DEFAULT 0;",
+            ["PriceChannelValidFrom"] = "ALTER TABLE PosPricingCustomers ADD COLUMN PriceChannelValidFrom TEXT NULL;",
+            ["PriceChannelValidUntil"] = "ALTER TABLE PosPricingCustomers ADD COLUMN PriceChannelValidUntil TEXT NULL;",
+            ["IsPendingLocal"] = "ALTER TABLE PosPricingCustomers ADD COLUMN IsPendingLocal INTEGER NOT NULL DEFAULT 0;"
+        })
+        {
+            if (columns.Contains(migration.Key)) continue;
+            command.CommandText = migration.Value;
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        command.CommandText = "PRAGMA table_info(PosPricingSynchronizationState);";
+        var stateColumns = new HashSet<string>(StringComparer.Ordinal);
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) stateColumns.Add(reader.GetString(1));
+        foreach (var migration in new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["CustomerBootstrapActive"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN CustomerBootstrapActive INTEGER NOT NULL DEFAULT 0;",
+            ["CustomerBootstrapNextCursor"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN CustomerBootstrapNextCursor TEXT NULL;",
+            ["CustomerBootstrapThroughCursor"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN CustomerBootstrapThroughCursor INTEGER NULL;"
+        })
+        {
+            if (stateColumns.Contains(migration.Key)) continue;
+            command.CommandText = migration.Value;
             await command.ExecuteNonQueryAsync(ct);
         }
     }
@@ -493,7 +797,13 @@ public sealed partial class PosCatalogStore
             reader.GetInt32(4) == 1,
             reader.GetInt32(6) == 1,
             JsonSerializer.Deserialize<string[]>(reader.GetString(7)) ?? [],
-            reader.IsDBNull(8) ? null : reader.GetString(8));
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            reader.GetInt32(9) == 1,
+            reader.IsDBNull(10) ? null : Convert.ToDecimal(reader.GetValue(10), CultureInfo.InvariantCulture),
+            reader.IsDBNull(11) ? null : Convert.ToDecimal(reader.GetValue(11), CultureInfo.InvariantCulture),
+            reader.GetInt32(12),
+            reader.IsDBNull(13) ? null : DateTimeOffset.Parse(reader.GetString(13), CultureInfo.InvariantCulture),
+            reader.IsDBNull(14) ? null : DateTimeOffset.Parse(reader.GetString(14), CultureInfo.InvariantCulture));
 
     private static PromotionRule ToRule(PosPromotion promotion) => new(
         promotion.PromotionId, promotion.Name, promotion.Priority, promotion.IsCombinable,

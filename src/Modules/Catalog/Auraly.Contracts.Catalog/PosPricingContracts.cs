@@ -15,7 +15,13 @@ public sealed record PosCustomerPricing(
     bool IsActive, bool RequiresElectronicInvoice = false,
     bool AppliesWithholding = false,
     IReadOnlyList<string>? TaxResponsibilities = null,
-    string? TaxJurisdictionCode = null);
+    string? TaxJurisdictionCode = null,
+    bool IsCreditEnabled = false,
+    decimal? CreditLimit = null,
+    decimal? AvailableCredit = null,
+    int DefaultDueDays = 0,
+    DateTimeOffset? PriceChannelValidFrom = null,
+    DateTimeOffset? PriceChannelValidUntil = null);
 
 public sealed record PosWithholdingRule(
     Guid RuleId, int Version, string Code, string Name, string Kind,
@@ -47,7 +53,27 @@ public sealed record PosPricingSnapshot(
     IReadOnlyCollection<PosWithholdingRule>? WithholdingRules = null,
     bool? WarehouseAllowsNegativeStock = null,
     bool AllowPromotionChannelCombination = false,
-    IReadOnlyCollection<PosPromotion>? Promotions = null);
+    IReadOnlyCollection<PosPromotion>? Promotions = null,
+    long? CustomerCursor = null,
+    long? ConfigurationCursor = null);
+
+public sealed record PosCustomerBootstrapPage(
+    long ThroughCursor,
+    string? NextCursor,
+    bool HasMore,
+    IReadOnlyList<PosCustomerPricing> Customers);
+
+public sealed record PosCustomerDelta(
+    long Version,
+    string Kind,
+    Guid CustomerId,
+    PosCustomerPricing? Customer);
+
+public sealed record PosCustomerDeltaPage(
+    long FromCursor,
+    long ToCursor,
+    bool HasMore,
+    IReadOnlyList<PosCustomerDelta> Changes);
 
 public sealed record PosResolvedPrice(
     Guid ProductId, decimal BaseAmount, decimal Amount, string CurrencyCode,

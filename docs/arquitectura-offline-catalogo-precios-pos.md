@@ -464,7 +464,9 @@ Se transmiten:
 - precios;
 - promociones;
 - impuestos;
-- clientes necesarios;
+- todos los clientes del negocio durante la preparación inicial;
+- altas, cambios o tombstones posteriores de un solo cliente;
+- altas, cambios, bloqueos o tombstones posteriores de un solo usuario POS;
 - parámetros;
 - existencias.
 
@@ -474,7 +476,7 @@ Si un delta falla:
 
 - no se avanza el checkpoint;
 - se conserva el paquete anterior;
-- se reintenta;
+- la preparación queda pausada hasta que el usuario ordena el reintento;
 - se muestra diagnóstico.
 
 ### 9.3 Frecuencia
@@ -482,11 +484,11 @@ Si un delta falla:
 Cuando hay red:
 
 - cambios urgentes por notificación;
-- consulta incremental periódica;
 - sincronización manual;
-- sincronización al abrir caja.
+- puesta al día por handshake al abrir o reconectar la caja.
 
-No se hace polling cada 500 ms como el motor anterior.
+No se hace polling periódico. La notificación identifica el stream y el cursor;
+el delta contiene únicamente la entidad afectada cuando el stream lo permite.
 
 ### 9.4 Orden al reconectar
 
@@ -705,6 +707,8 @@ La caja tendrá su propia copia operativa de:
 - precios;
 - promociones;
 - impuestos;
+- todos los clientes del negocio;
+- todos los usuarios POS autorizados;
 - parámetros;
 - existencias estimadas.
 

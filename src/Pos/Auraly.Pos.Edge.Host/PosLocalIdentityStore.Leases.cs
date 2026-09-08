@@ -37,7 +37,7 @@ public sealed partial class PosLocalIdentityStore
                     NormalizedUsername=excluded.NormalizedUsername,
                     DisplayName=excluded.DisplayName,
                     ProtectedPasswordVerifier=excluded.ProtectedPasswordVerifier,
-                    FailedCount=0,LockedUntil=NULL;
+                    IsActive=1,FailedCount=0,LockedUntil=NULL;
                 DELETE FROM PosOfflineUserPermissions WHERE UserId=$id;
                 """;
             command.Parameters.AddWithValue("$id", user.UserId.ToString("D"));

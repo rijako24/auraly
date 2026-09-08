@@ -41,10 +41,16 @@ enrolado.
 12. Al reiniciar el servicio, SQLite se crea o actualiza automáticamente. Edge
     instala atómicamente ese snapshot y consume una sola vez el acceso inicial
     protegido para abrir la identidad local.
-13. El sincronizador de identidades queda como propietario de las puestas al
-    día posteriores al enrolamiento, mientras el bootstrap inicial del catálogo
-    continúa por su cursor durable.
-14. La venta permanece inhabilitada hasta que el catálogo local queda `Ready`.
+13. La preparación completa, sin depender de un cliente seleccionado, descarga
+    por páginas todos los productos y todos los clientes del negocio, además de
+    promociones, canales, parámetros y catálogos operativos. El snapshot del
+    canje ya aporta todos los usuarios POS autorizados.
+14. Cada familia conserva su propio cursor durable: catálogo, clientes,
+    configuración comercial y seguridad. Después del bootstrap, cada cambio
+    actualiza únicamente la entidad afectada; nunca vuelve a descargar una
+    colección completa por haber cambiado un producto, cliente o usuario.
+15. La venta permanece inhabilitada hasta que la proyección local completa queda
+    `Ready`.
 
 Si una etapa de la preparación falla, Edge conserva el checkpoint y detiene esa
 ejecución. La interfaz muestra una causa segura y accionable; solo el usuario
@@ -71,9 +77,11 @@ El paquete local contiene únicamente lo necesario para operar la caja:
 El secreto del dispositivo y la clave técnica no se almacenan en texto plano.
 La clave privada del certificado DIAN nunca llega al navegador ni al POS.
 
-El enrolamiento no descarga inventario. El catálogo local mantiene productos,
-códigos, precios de venta, impuestos y datos mínimos ya definidos por la
-rebanada de sincronización.
+El enrolamiento no descarga inventario. La preparación local mantiene todos los
+productos, códigos, precios de venta, impuestos, promociones, canales, clientes,
+usuarios y parámetros operativos del negocio ya definidos por la rebanada de
+sincronización. Esa preparación es una proyección del negocio y no se construye
+para un cliente concreto.
 
 ## En línea y offline
 

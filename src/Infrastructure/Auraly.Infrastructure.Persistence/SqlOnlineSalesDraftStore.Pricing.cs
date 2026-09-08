@@ -22,12 +22,13 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid warehouseId,
         Guid? customerId,
         IReadOnlyCollection<CommercePriceRequest> requests,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool independentLines = false)
     {
         var resolved = await ResolveProductPricesAsync(
             connection,transaction,businessId,warehouseId,customerId,
             requests.Select(value => new SalePriceRequest(
-                value.Key,value.ProductId,value.Quantity)).ToArray(),ct);
+                value.Key,value.ProductId,value.Quantity)).ToArray(),ct,independentLines);
         return resolved.ToDictionary(
             pair => pair.Key,
             pair => new CommercePriceResolution(
@@ -44,10 +45,14 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid warehouseId,
         Guid? customerId,
         IReadOnlyCollection<SalePriceRequest> requests,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool independentLines = false)
     {
+        if (requests.Count == 0)
+            return new Dictionary<string, PromotionPriceLineResult>(StringComparer.OrdinalIgnoreCase);
         var channelConfiguration = await LoadChannelConfigurationAsync(
-            connection,transaction,businessId,customerId,ct);
+            connection,transaction,businessId,customerId,
+            requests.Select(value => value.ProductId).Distinct().ToArray(),ct);
         var quantities = requests.GroupBy(value => value.ProductId)
             .ToDictionary(group => group.Key,group => group.Sum(value => value.Quantity));
         var inputs = new List<PromotionPriceLineInput>(requests.Count);
@@ -73,9 +78,12 @@ public sealed partial class SqlOnlineSalesDraftStore
 
         var configuration = await LoadPromotionConfigurationAsync(
             connection, transaction, businessId, ct);
-        var result = PromotionPriceResolver.Resolve(
-            inputs, configuration.Promotions, configuration.AllowChannelCombination);
-        return result.Lines.ToDictionary(line => line.Input.Key, StringComparer.OrdinalIgnoreCase);
+        var resolvedLines = independentLines
+            ? inputs.SelectMany(input => PromotionPriceResolver.Resolve(
+                [input], configuration.Promotions, configuration.AllowChannelCombination).Lines).ToArray()
+            : PromotionPriceResolver.Resolve(
+                inputs, configuration.Promotions, configuration.AllowChannelCombination).Lines;
+        return resolvedLines.ToDictionary(line => line.Input.Key, StringComparer.OrdinalIgnoreCase);
     }
 
     private static async Task RepriceDraftAsync(
@@ -195,6 +203,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         SqlTransaction transaction,
         Guid businessId,
         Guid? customerId,
+        IReadOnlyCollection<Guid> productIds,
         CancellationToken ct)
     {
         if (customerId is null)
@@ -202,7 +211,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT CASE WHEN setting.ValidFrom<=SYSDATETIMEOFFSET()
+            DECLARE @SelectedPriceChannelId UNIQUEIDENTIFIER;
+            SELECT @SelectedPriceChannelId=CASE WHEN (setting.ValidFrom IS NULL OR setting.ValidFrom<=SYSDATETIMEOFFSET())
                               AND (setting.ValidUntil IS NULL OR setting.ValidUntil>SYSDATETIMEOFFSET())
                         THEN setting.PriceChannelId END
             FROM dbo.Customers customer
@@ -210,21 +220,32 @@ public sealed partial class SqlOnlineSalesDraftStore
             WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
               AND customer.IsActive=1;
 
+            SELECT @SelectedPriceChannelId;
+
             SELECT PriceChannelId,Strategy,Value FROM dbo.PriceChannels
-            WHERE BusinessId=@BusinessId AND IsActive=1;
+            WHERE BusinessId=@BusinessId AND IsActive=1
+              AND PriceChannelId=@SelectedPriceChannelId;
 
             SELECT item.PriceChannelId,item.ProductId,item.MinimumQuantity,item.Amount,item.CurrencyCode
             FROM dbo.PriceChannelItems item
             JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=item.PriceChannelId
-            WHERE channelValue.BusinessId=@BusinessId AND channelValue.IsActive=1 AND item.IsActive=1;
+            WHERE channelValue.BusinessId=@BusinessId AND channelValue.IsActive=1 AND item.IsActive=1
+              AND item.PriceChannelId=@SelectedPriceChannelId
+              AND item.ProductId IN (
+                SELECT TRY_CONVERT(UNIQUEIDENTIFIER,[value]) FROM OPENJSON(@ProductIdsJson));
 
             SELECT exclusion.PriceChannelId,exclusion.ProductId,
                    exclusion.ProductCategoryId,exclusion.ProductBrandId
             FROM dbo.PriceChannelExclusions exclusion
             JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=exclusion.PriceChannelId
-            WHERE channelValue.BusinessId=@BusinessId AND channelValue.IsActive=1;
+            WHERE channelValue.BusinessId=@BusinessId AND channelValue.IsActive=1
+              AND exclusion.PriceChannelId=@SelectedPriceChannelId
+              AND (exclusion.ProductId IS NULL OR exclusion.ProductId IN (
+                SELECT TRY_CONVERT(UNIQUEIDENTIFIER,[value]) FROM OPENJSON(@ProductIdsJson)));
             """;
-        command.Parameters.AddRange([P("@BusinessId",businessId),P("@CustomerId",customerId)]);
+        command.Parameters.AddRange([
+            P("@BusinessId",businessId),P("@CustomerId",customerId),
+            P("@ProductIdsJson",JsonSerializer.Serialize(productIds))]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         Guid? channelId = null;
         if (await reader.ReadAsync(ct) && !reader.IsDBNull(0)) channelId=reader.GetGuid(0);

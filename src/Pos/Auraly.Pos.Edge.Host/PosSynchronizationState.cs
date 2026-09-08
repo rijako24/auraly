@@ -20,17 +20,17 @@ public sealed class PosSynchronizationState
         get { lock (gate) return status; }
     }
 
-    public void Begin()
+    public void Begin(bool preserveFailure = false)
     {
         lock (gate)
             status = status with
             {
                 IsSynchronizing = true,
                 LastAttemptAt = DateTimeOffset.UtcNow,
-                LastAttemptFailed = false,
                 ActiveStages = [],
-                FailedStage = null,
-                LastError = null
+                LastAttemptFailed = preserveFailure && status.LastAttemptFailed,
+                FailedStage = preserveFailure ? status.FailedStage : null,
+                LastError = preserveFailure ? status.LastError : null
             };
     }
 
@@ -70,17 +70,17 @@ public sealed class PosSynchronizationState
             };
     }
 
-    public void Succeeded()
+    public void Succeeded(bool preserveFailure = false)
     {
         lock (gate)
             status = status with
             {
                 IsSynchronizing = false,
                 LastSuccessfulAt = DateTimeOffset.UtcNow,
-                LastAttemptFailed = false,
                 ActiveStages = [],
-                FailedStage = null,
-                LastError = null
+                LastAttemptFailed = preserveFailure && status.LastAttemptFailed,
+                FailedStage = preserveFailure ? status.FailedStage : null,
+                LastError = preserveFailure ? status.LastError : null
             };
     }
 

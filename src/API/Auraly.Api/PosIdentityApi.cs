@@ -29,6 +29,24 @@ public static class PosIdentityApi
                 })
             .RequireAuthorization("pos.enrolled");
 
+        endpoints.MapGet(
+                "/api/pos/v1/identity/changes",
+                async (HttpContext context, PosOfflineIdentityService service,
+                    Guid businessId, long? cursor, int? pageSize, CancellationToken ct) =>
+                {
+                    try
+                    {
+                        return Results.Ok(await service.ChangesAsync(
+                            context.User.ToPosIdentityDeviceScope(businessId),
+                            cursor ?? 0, pageSize ?? 250, ct));
+                    }
+                    catch (PosIdentityForbiddenException exception)
+                    {
+                        return Results.Problem(exception.Message, statusCode: StatusCodes.Status403Forbidden);
+                    }
+                })
+            .RequireAuthorization("pos.enrolled");
+
         return endpoints;
     }
 }

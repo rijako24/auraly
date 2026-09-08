@@ -16,7 +16,9 @@ public enum PosSynchronizationTrigger
     LocalOutbox = 8,
     Manual = 16,
     FiscalProvisioning = 32,
-    All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning
+    Customers = 64,
+    Configuration = 128,
+    All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning | Customers | Configuration
 }
 
 public sealed class PosSynchronizationSignal
@@ -82,17 +84,21 @@ internal sealed class PosSynchronizationWork(
     PosSynchronizationState state,
     PosSynchronizationEventLog events,
     PosSynchronizationSignal signal,
-    PosSynchronizationLaneExecutor lanes)
+    PosSynchronizationLaneExecutor lanes,
+    PosCatalogStore catalogStore)
 {
     public async Task ExecuteAsync(
         PosSynchronizationTrigger trigger,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool preservePreparationFailure = false)
     {
-        state.Begin();
+        state.Begin(preservePreparationFailure);
         events.Record("Info", "Synchronization", "Sincronización iniciada", trigger.ToString());
         uiState.Publish();
         try
         {
+            await catalogStore.InitializeAsync(cancellationToken);
+            var initialPreparation = (await catalogStore.StatusAsync(cancellationToken)).Status != "Ready";
             var pending = new List<PosSynchronizationLane>();
             if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
                 pending.Add(new PosSynchronizationLane(
@@ -136,6 +142,11 @@ internal sealed class PosSynchronizationWork(
                     PosSynchronizationTrigger.Security,
                     "usuarios y permisos",
                     () => identities.SynchronizeAsync(cancellationToken)));
+            if (!initialPreparation && trigger.HasFlag(PosSynchronizationTrigger.Customers))
+                pending.Add(new PosSynchronizationLane(
+                    PosSynchronizationTrigger.Customers,
+                    "clientes",
+                    () => catalog.SynchronizeCustomersAsync(cancellationToken)));
             if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
             {
                 pending.Add(new PosSynchronizationLane(
@@ -144,12 +155,19 @@ internal sealed class PosSynchronizationWork(
                     async () =>
                     {
                         await catalog.SynchronizeAsync(cancellationToken);
-                        await customerDirectory.RefreshGeographyAsync(cancellationToken);
                     }));
+            }
+            if (!initialPreparation && trigger.HasFlag(PosSynchronizationTrigger.Configuration))
+            {
                 pending.Add(new PosSynchronizationLane(
-                    PosSynchronizationTrigger.Catalog,
-                    "motivos de caja",
-                    () => cashMovements.RefreshReasonsAsync(cancellationToken)));
+                    PosSynchronizationTrigger.Configuration,
+                    "precios y configuración",
+                    async () =>
+                    {
+                        await catalog.SynchronizeConfigurationAsync(cancellationToken);
+                        await customerDirectory.RefreshGeographyAsync(cancellationToken);
+                        await cashMovements.RefreshReasonsAsync(cancellationToken);
+                    }));
             }
             if (trigger.HasFlag(PosSynchronizationTrigger.FiscalStatus))
                 pending.Add(new PosSynchronizationLane(
@@ -172,7 +190,7 @@ internal sealed class PosSynchronizationWork(
             }
             else
             {
-                state.Succeeded();
+                state.Succeeded(preservePreparationFailure);
                 events.Record(
                     "Success",
                     "Synchronization",
@@ -243,15 +261,22 @@ internal sealed class PosSynchronizationLaneExecutor(
 
     private static string DescribeFailure(string lane, Exception exception)
     {
+        var detail = SafeDetail(exception.Message);
         if (exception is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound })
-            return $"No fue posible preparar {lane}: el servidor no ofrece una operación requerida por esta versión de Auraly. Actualiza la aplicación o el servidor y pulsa Reintentar.";
+            return $"No fue posible preparar {lane}: el servidor no ofrece una operación requerida por esta versión de Auraly. {detail} Pulsa Reintentar.";
         if (exception is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden })
-            return $"No fue posible preparar {lane}: el servidor rechazó la identidad de esta caja. Revisa el enrolamiento y pulsa Reintentar.";
+            return $"No fue posible preparar {lane}: el servidor rechazó la identidad de esta caja. {detail} Revisa el enrolamiento y pulsa Reintentar.";
         if (exception is HttpRequestException)
-            return $"No fue posible preparar {lane}: no hay una conexión válida con Auraly Server. Comprueba la red y pulsa Reintentar.";
+            return $"No fue posible preparar {lane}: no hay una conexión válida con Auraly Server. {detail} Comprueba la red y pulsa Reintentar.";
         if (exception is InvalidDataException)
-            return $"No fue posible preparar {lane}: los datos descargados no pasaron la validación. Pulsa Reintentar; si se repite, informa al supervisor.";
-        return $"No fue posible preparar {lane}. Pulsa Reintentar; si se repite, informa al supervisor.";
+            return $"No fue posible preparar {lane}: los datos descargados no pasaron la validación. {detail} Pulsa Reintentar; si se repite, informa al supervisor.";
+        return $"No fue posible preparar {lane}: {detail} Pulsa Reintentar; si se repite, informa al supervisor.";
+    }
+
+    private static string SafeDetail(string value)
+    {
+        var normalized = string.Join(' ', value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Trim();
+        return normalized.Length <= 240 ? normalized : normalized[..240] + "…";
     }
 }
 
@@ -448,13 +473,13 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         stream switch
         {
             PosSynchronizationStreams.Catalog => PosSynchronizationTrigger.Catalog,
-            PosSynchronizationStreams.Customers => PosSynchronizationTrigger.Catalog,
+            PosSynchronizationStreams.Customers => PosSynchronizationTrigger.Customers,
             PosSynchronizationStreams.Security => PosSynchronizationTrigger.Security,
             PosSynchronizationStreams.FiscalStatus => PosSynchronizationTrigger.FiscalStatus,
             PosSynchronizationStreams.FiscalProvisioning => PosSynchronizationTrigger.FiscalProvisioning,
             PosSynchronizationStreams.LocalOutbox => PosSynchronizationTrigger.LocalOutbox,
             PosSynchronizationStreams.Authentication => PosSynchronizationTrigger.Security,
-            PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Catalog,
+            PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Configuration,
             _ => PosSynchronizationTrigger.None
         };
 }
@@ -465,6 +490,7 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
     PosSynchronizationWork work,
     PosSynchronizationState state,
     PosUiStateSignal uiState,
+    PosCatalogStore catalog,
     ILogger<PosEventDrivenSynchronizationHostedService> logger)
     : BackgroundService
 {
@@ -477,16 +503,34 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
         while (!stoppingToken.IsCancellationRequested)
         {
             var trigger = await signal.ReadAsync(stoppingToken);
-            if (state.Current.LastAttemptFailed &&
-                !trigger.HasFlag(PosSynchronizationTrigger.Manual))
+            var isManual = trigger.HasFlag(PosSynchronizationTrigger.Manual);
+            var preservePreparationFailure = false;
+            if (!isManual && await catalog.IsPreparationPausedAsync(stoppingToken))
             {
-                logger.LogInformation(
-                    "POS synchronization remains paused after a failure until a manual retry is requested.");
-                continue;
+                var operational = trigger & (PosSynchronizationTrigger.LocalOutbox |
+                    PosSynchronizationTrigger.FiscalStatus | PosSynchronizationTrigger.FiscalProvisioning);
+                if (operational == PosSynchronizationTrigger.None)
+                {
+                    logger.LogInformation(
+                        "POS preparation remains paused after a failure until a manual retry is requested.");
+                    continue;
+                }
+                trigger = operational;
+                preservePreparationFailure = true;
             }
             try
             {
-                await work.ExecuteAsync(trigger, stoppingToken);
+                await work.ExecuteAsync(
+                    trigger, stoppingToken, preservePreparationFailure);
+                var masterDataRequested = (trigger & (
+                    PosSynchronizationTrigger.Catalog |
+                    PosSynchronizationTrigger.Customers |
+                    PosSynchronizationTrigger.Configuration |
+                    PosSynchronizationTrigger.Security)) != PosSynchronizationTrigger.None;
+                if (masterDataRequested && state.Current.LastAttemptFailed)
+                    await catalog.SetPreparationPausedAsync(true, stoppingToken);
+                else if (isManual && !state.Current.LastAttemptFailed)
+                    await catalog.SetPreparationPausedAsync(false, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -501,6 +545,8 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
                     "sincronización",
                     "La preparación se detuvo por un error inesperado. Pulsa Reintentar; si se repite, informa al supervisor.");
                 state.Failed();
+                if ((await catalog.StatusAsync(stoppingToken)).Status != "Ready")
+                    await catalog.SetPreparationPausedAsync(true, stoppingToken);
                 uiState.Publish();
             }
         }
