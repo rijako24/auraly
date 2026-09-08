@@ -484,14 +484,17 @@ WHERE tenantValue.TenantKey=N'@auraly';
                 $roleActive = $reader.GetInt32(1) -eq 1
                 $permissionCount = $reader.GetInt32(2)
                 $assignedPermissionCount = $reader.GetInt32(3)
-                $activeObsoleteUsers = $reader.GetInt32(4)
-                $obsoleteAssignments = $reader.GetInt32(5)
+                $activeTechnicalAdminUsers = $reader.GetInt32(4)
+                $technicalAdminAssignments = $reader.GetInt32(5)
+                $expectedTechnicalAdminUsers = if ($Environment -eq 'dev') { 1 } else { 0 }
+                $expectedTechnicalAdminAssignments = if ($Environment -eq 'dev') { 1 } else { 0 }
                 if (-not $tenantActive -or -not $roleActive -or
                     $permissionCount -ne $assignedPermissionCount -or
-                    $activeObsoleteUsers -ne 0 -or $obsoleteAssignments -ne 0) {
-                    throw "El rol administrador @auraly no quedo aprovisionado correctamente. Tenant=$tenantActive Role=$roleActive Permissions=$assignedPermissionCount/$permissionCount ActiveObsoleteUsers=$activeObsoleteUsers ObsoleteAssignments=$obsoleteAssignments."
+                    $activeTechnicalAdminUsers -ne $expectedTechnicalAdminUsers -or
+                    $technicalAdminAssignments -ne $expectedTechnicalAdminAssignments) {
+                    throw "El rol administrador @auraly no quedo aprovisionado correctamente. Tenant=$tenantActive Role=$roleActive Permissions=$assignedPermissionCount/$permissionCount ActiveTechnicalAdminUsers=$activeTechnicalAdminUsers/$expectedTechnicalAdminUsers TechnicalAdminAssignments=$technicalAdminAssignments/$expectedTechnicalAdminAssignments."
                 }
-                Write-Information "Rol administrador @auraly verificado con $assignedPermissionCount permisos y sin identidades tecnicas activas." -InformationAction Continue
+                Write-Information "Rol administrador @auraly verificado con $assignedPermissionCount permisos y $activeTechnicalAdminUsers identidad(es) tecnica(s) activa(s), segun politica de $Environment." -InformationAction Continue
             }
             finally { $reader.Dispose() }
         }

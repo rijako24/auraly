@@ -220,9 +220,11 @@ public sealed class DatabaseUpgradeMigrationTests
             "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
         Assert.DoesNotContain("JOIN dbo.AppUsers userValue", releasePipeline,
             StringComparison.Ordinal);
-        Assert.Contains("ActiveObsoleteUsers", releasePipeline,
-            StringComparison.Ordinal);
-        Assert.Contains("sin identidades tecnicas activas", releasePipeline,
+        Assert.Contains("expectedTechnicalAdminUsers = if ($Environment -eq 'dev') { 1 } else { 0 }",
+            releasePipeline, StringComparison.Ordinal);
+        Assert.Contains("expectedTechnicalAdminAssignments = if ($Environment -eq 'dev') { 1 } else { 0 }",
+            releasePipeline, StringComparison.Ordinal);
+        Assert.Contains("segun politica de $Environment", releasePipeline,
             StringComparison.Ordinal);
     }
 
