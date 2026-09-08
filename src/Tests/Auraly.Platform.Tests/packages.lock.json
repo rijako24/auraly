@@ -2461,6 +2461,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.Contracts.Receivables": "[1.0.0, )",
           "Auraly.Domain.Receivables": "[1.0.0, )"
         }
@@ -2543,6 +2544,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",

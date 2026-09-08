@@ -1369,6 +1369,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.Contracts.Receivables": "[1.0.0, )",
           "Auraly.Domain.Receivables": "[1.0.0, )"
         }
