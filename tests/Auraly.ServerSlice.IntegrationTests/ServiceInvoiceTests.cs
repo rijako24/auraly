@@ -5,6 +5,7 @@ using System.Text;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Persistence;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
@@ -16,6 +17,58 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Credit_service_invoice_preserves_receivable_without_posting_when_accounting_is_disabled()
+    {
+        var context = await SeedAsync();
+        using var client = fixture.CreateAdminClient(
+            ServiceInvoicePermissionCodes.Create,
+            ServiceInvoicePermissionCodes.Issue);
+        client.DefaultRequestHeaders.Add("Idempotency-Key", context.IdempotencyKey);
+        var originalAccounting = await SetAccountingDisabledAsync();
+        try
+        {
+            using var response = await client.PostAsJsonAsync(
+                "/api/commerce/v1/service-invoices/issue",
+                new IssueServiceInvoiceRequest(
+                    fixture.BusinessId, context.CustomerId,
+                    [new(context.ServiceId, 1)], "Transfer", "SERVICE-CREDIT",
+                    CreditAmount: 50_000m,
+                    CreditDueDate: DateTimeOffset.UtcNow.AddDays(30)));
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.IsSuccessStatusCode, body);
+            var issued = (await response.Content
+                .ReadFromJsonAsync<IssuedServiceInvoice>())!;
+
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var verify = new SqlCommand("""
+                SELECT source.AccountingEntryRequired,job.AccountingEntryRequired,job.Status,
+                  (SELECT COUNT(*) FROM dbo.Receivables WHERE SourceDocumentId=@DocumentId),
+                  (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@DocumentId),
+                  (SELECT OutstandingAmount FROM dbo.Receivables WHERE SourceDocumentId=@DocumentId)
+                FROM dbo.AccountingSourceDocuments source
+                JOIN dbo.AccountingPostingJobs job
+                  ON job.SourceDocumentId=source.SourceDocumentId
+                 AND job.SourceDocumentType=source.SourceDocumentType
+                WHERE source.SourceDocumentId=@DocumentId;
+                """, connection);
+            verify.Parameters.AddWithValue("@DocumentId", issued.DocumentId);
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.False(reader.GetBoolean(0));
+            Assert.False(reader.GetBoolean(1));
+            Assert.Equal("CommercialEffectsApplied", reader.GetString(2));
+            Assert.Equal(1, reader.GetInt32(3));
+            Assert.Equal(0, reader.GetInt32(4));
+            Assert.Equal(50_000m, reader.GetDecimal(5));
+        }
+        finally
+        {
+            await RestoreAccountingAsync(originalAccounting);
+        }
+    }
+
     [Fact]
     public async Task Online_service_invoice_is_idempotent_and_has_no_inventory_effects()
     {
@@ -306,6 +359,80 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         Assert.True(await reader.ReadAsync());
         return new(reader.GetGuid(0), serviceId, reader.GetGuid(1), Guid.NewGuid().ToString("N"));
     }
+
+    private async Task<AccountingSettingsState> SetAccountingDisabledAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using var read = new SqlCommand("""
+            SELECT Status,FunctionalCurrencyCode,EffectiveFrom,OpeningBalanceMode,
+              ActivationRequestedAt,ActivationRequestedByUserId,ActivatedAt,ActivatedByUserId
+            FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+            WHERE TenantId=@TenantId;
+            """, connection, (SqlTransaction)transaction);
+        read.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        await using var reader = await read.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        var state = new AccountingSettingsState(
+            reader.GetString(0), reader.GetString(1),
+            reader.IsDBNull(2) ? null : DateOnly.FromDateTime(reader.GetDateTime(2)),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4),
+            reader.IsDBNull(5) ? null : reader.GetGuid(5),
+            reader.IsDBNull(6) ? null : reader.GetFieldValue<DateTimeOffset>(6),
+            reader.IsDBNull(7) ? null : reader.GetGuid(7));
+        await reader.DisposeAsync();
+        await using var command = new SqlCommand("""
+            UPDATE dbo.AccountingTenantSettings
+            SET Status=N'Disabled',EffectiveFrom=NULL,OpeningBalanceMode=NULL,
+                ActivationRequestedAt=NULL,ActivationRequestedByUserId=NULL,
+                ActivatedAt=NULL,ActivatedByUserId=NULL,UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE TenantId=@TenantId;
+            """, connection, (SqlTransaction)transaction);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        await transaction.CommitAsync();
+        return state;
+    }
+
+    private async Task RestoreAccountingAsync(AccountingSettingsState state)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.AccountingTenantSettings
+            SET Status=@Status,FunctionalCurrencyCode=@Currency,
+                EffectiveFrom=@EffectiveFrom,OpeningBalanceMode=@OpeningMode,
+                ActivationRequestedAt=@RequestedAt,
+                ActivationRequestedByUserId=@RequestedBy,
+                ActivatedAt=@ActivatedAt,ActivatedByUserId=@ActivatedBy,
+                UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE TenantId=@TenantId;
+            """;
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@Status", state.Status);
+        command.Parameters.AddWithValue("@Currency", state.FunctionalCurrencyCode);
+        command.Parameters.AddWithValue("@EffectiveFrom",
+            state.EffectiveFrom?.ToDateTime(TimeOnly.MinValue) ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@OpeningMode", state.OpeningBalanceMode ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@RequestedAt", state.ActivationRequestedAt ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@RequestedBy", state.ActivationRequestedByUserId ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@ActivatedAt", state.ActivatedAt ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@ActivatedBy", state.ActivatedByUserId ?? (object)DBNull.Value);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private sealed record AccountingSettingsState(
+        string Status,
+        string FunctionalCurrencyCode,
+        DateOnly? EffectiveFrom,
+        string? OpeningBalanceMode,
+        DateTimeOffset? ActivationRequestedAt,
+        Guid? ActivationRequestedByUserId,
+        DateTimeOffset? ActivatedAt,
+        Guid? ActivatedByUserId);
 
     private sealed record Context(
         Guid CustomerId,

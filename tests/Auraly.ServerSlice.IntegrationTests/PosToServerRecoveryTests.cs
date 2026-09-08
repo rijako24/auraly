@@ -20,6 +20,30 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public void Zero_adjustment_to_peso_preserves_the_legacy_snapshot_hash_shape()
+    {
+        var request = fixture.CreateValidRequest(9_917);
+
+        var legacyCompatible = PosSaleContractSerializer.Serialize(request);
+        var adjusted = PosSaleContractSerializer.Serialize(request with
+        {
+            CommercialSnapshot = request.CommercialSnapshot with
+            {
+                PayableRoundingAmount = .4m
+            },
+            FiscalSnapshot = request.FiscalSnapshot! with
+            {
+                PayableRoundingAmount = .4m
+            }
+        });
+
+        Assert.DoesNotContain("payableRoundingAmount", legacyCompatible,
+            StringComparison.Ordinal);
+        Assert.Equal(2, adjusted.Split("payableRoundingAmount",
+            StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
     public async Task One_thousand_offline_sales_resume_after_restart_without_duplicates()
     {
         const int documentCount = 1_000;

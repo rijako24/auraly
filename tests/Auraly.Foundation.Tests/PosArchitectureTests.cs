@@ -447,6 +447,10 @@ public sealed class PosArchitectureTests
             "PreDeployment.sql"));
 
         Assert.Contains("const availabilityVersion = useRef(0)", dialog, StringComparison.Ordinal);
+        Assert.Contains("availabilityProductId !== selectedProduct.productId", dialog, StringComparison.Ordinal);
+        Assert.Contains("flex h-44 shrink-0 flex-col", dialog, StringComparison.Ordinal);
+        Assert.Contains("aria-busy=\"true\"", dialog, StringComparison.Ordinal);
+        Assert.Contains("Consultando existencias", dialog, StringComparison.Ordinal);
         Assert.Contains("El producto local sigue disponible", dialog, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Existencias por sede y bodega\"", dialog, StringComparison.Ordinal);
         Assert.Contains("connected={serverConnected}", page, StringComparison.Ordinal);

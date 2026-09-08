@@ -115,6 +115,11 @@ import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } fr
 import { useAuthStore } from "@/stores/auth-store";
 import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
 import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
+import { Progress } from "@/components/ui/progress";
+import {
+  posPreparationView,
+  type PosPreparationHealth,
+} from "./pos-preparation-progress";
 
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -224,6 +229,7 @@ export default function PosPage() {
   } | null>(null);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
   const [edgeLoginError, setEdgeLoginError] = useState<string | null>(null);
+  const [preparationHealth, setPreparationHealth] = useState<PosPreparationHealth | null>(null);
   const [edgePermissions, setEdgePermissions] = useState<string[]>([]);
   const [setupLoading, setSetupLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -506,6 +512,7 @@ export default function PosPage() {
               health = await edgeClient.health();
             }
             if (active) {
+              setPreparationHealth(health);
               setEdgePermissions(health.permissions ?? []);
               setSynchronization({
                 inProgress: health.synchronizationInProgress,
@@ -613,6 +620,7 @@ export default function PosPage() {
       try {
         const health = await client.health();
         if (active) {
+          if (client.mode === "edge") setPreparationHealth(health);
           if (client.mode === "edge") setEdgePermissions(health.permissions ?? []);
           setSynchronization({
             inProgress: health.synchronizationInProgress,
@@ -2423,18 +2431,87 @@ export default function PosPage() {
   }
 
   if (client instanceof PosEdgeClient && edgeLoginState === "preparing") {
+    const preparation = posPreparationView(preparationHealth);
+    const visibleProgress = preparation.resourceProgress ?? preparation.overallProgress;
     return (
-      <main className="grid min-h-screen place-items-center bg-[#071a1d] text-white">
-        <div className="text-center">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin text-teal-200" />
-          <p className="mt-3 font-bold">Preparando los datos de este equipo…</p>
-          <p className="mt-1 text-sm text-slate-300">Auraly abrirá facturación cuando la preparación inicial termine.</p>
+      <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#061719] px-5 py-10 text-white">
+        <div aria-hidden className="absolute -left-28 top-[-8rem] h-80 w-80 rounded-full bg-teal-400/10 blur-3xl" />
+        <div aria-hidden className="absolute -bottom-32 right-[-6rem] h-96 w-96 rounded-full bg-cyan-300/10 blur-3xl" />
+        <section
+          aria-labelledby="pos-preparation-title"
+          aria-live="polite"
+          className="relative w-full max-w-xl rounded-[2rem] border border-white/10 bg-white/[0.06] p-6 shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-8"
+        >
+          <div className="flex items-start gap-4">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-teal-200/20 bg-teal-300/10">
+              <Package className="h-6 w-6 text-teal-200" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-teal-200">Preparando tu caja</p>
+              <h1 id="pos-preparation-title" className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
+                {preparation.title}
+              </h1>
+              <p className="mt-2 text-sm leading-6 text-slate-300">{preparation.detail}</p>
+            </div>
+          </div>
+
+          <div className="mt-8 rounded-2xl border border-white/10 bg-black/15 p-4 sm:p-5">
+            <div className="flex items-end justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Ahora</p>
+                <p className="mt-1 truncate font-bold text-white">{preparation.currentResource}</p>
+              </div>
+              <p className="shrink-0 text-3xl font-black tabular-nums text-teal-200">
+                {visibleProgress === null ? "…" : `${visibleProgress}%`}
+              </p>
+            </div>
+            {visibleProgress === null ? (
+              <div
+                role="progressbar"
+                aria-label="Calculando el progreso de la preparación"
+                className="mt-4 h-2.5 overflow-hidden rounded-full bg-white/10"
+              >
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-teal-400 via-cyan-200 to-teal-400" />
+              </div>
+            ) : (
+              <Progress
+                aria-label={`Preparación ${visibleProgress}%`}
+                value={visibleProgress}
+                className="mt-4 h-2.5 bg-white/10 [&>div]:bg-gradient-to-r [&>div]:from-teal-400 [&>div]:to-cyan-200"
+              />
+            )}
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
+              <span>{preparation.processedLabel ?? (visibleProgress === null ? "Calculando el total…" : "Avance por etapas completadas")}</span>
+              {preparation.overallProgress !== null && preparation.resourceProgress !== null && (
+                <span>Preparación general: {preparation.overallProgress}%</span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-3">
+              {preparationHealth?.serverConnected ? (
+                <Wifi className="h-4 w-4 shrink-0 text-emerald-300" />
+              ) : (
+                <WifiOff className="h-4 w-4 shrink-0 text-amber-300" />
+              )}
+              <span className="text-slate-200">{preparation.connectionLabel}</span>
+            </div>
+            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-3">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-200" />
+              <span className="text-slate-200">{preparation.resumeLabel}</span>
+            </div>
+          </div>
+
           {(edgeLoginError || synchronization.error) && (
-            <p role="alert" className="mx-auto mt-4 max-w-xl rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">
+            <p role="alert" className="mt-5 rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">
               {edgeLoginError ?? synchronization.error}
             </p>
           )}
-        </div>
+          <p className="mt-6 text-center text-xs text-slate-400">
+            Puedes cerrar Auraly: el progreso queda guardado y continúa desde el último checkpoint.
+          </p>
+        </section>
       </main>
     );
   }

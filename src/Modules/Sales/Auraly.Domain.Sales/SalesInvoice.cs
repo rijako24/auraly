@@ -35,7 +35,8 @@ public sealed record ImmutableFiscalSnapshot(
     decimal TaxAmount,
     decimal PayableAmount,
     string Cufe,
-    string QrPayload);
+    string QrPayload,
+    decimal PayableRoundingAmount = 0m);
 
 public sealed class SalesInvoice
 {
@@ -98,7 +99,7 @@ public sealed class SalesInvoice
         {
             throw new InvalidOperationException("A sales invoice requires an Auraly sales document number.");
         }
-        if (snapshot.PayableAmount != PayableAmount ||
+        if (snapshot.PayableAmount != PayableAmount + snapshot.PayableRoundingAmount ||
             snapshot.UntaxedAmount != UntaxedAmount ||
             snapshot.TaxAmount != TaxAmount)
         {

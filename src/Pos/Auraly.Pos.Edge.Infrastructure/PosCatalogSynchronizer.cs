@@ -22,13 +22,19 @@ public interface IPosWarehousePolicySink
     Task ApplyAsync(bool allowsNegativeStock, CancellationToken cancellationToken = default);
 }
 
+public interface IPosSynchronizationProgressSink
+{
+    void Publish();
+}
+
 public sealed class PosCatalogSynchronizer(
     HttpClient httpClient,
     PosCatalogStore store,
     PosDeviceCredentials credentials,
     PosOperationalScope scope,
     IPosSynchronizationEventSink? events = null,
-    IPosWarehousePolicySink? warehousePolicy = null) : IPosInventoryAvailabilityClient
+    IPosWarehousePolicySink? warehousePolicy = null,
+    IPosSynchronizationProgressSink? progress = null) : IPosInventoryAvailabilityClient
 {
     private static readonly string[] OperationalReferenceCatalogs =
         ["payment-method", "card-franchise", "sales-document-type", "cash-denomination"];
@@ -46,6 +52,7 @@ public sealed class PosCatalogSynchronizer(
                 content: null,
                 cancellationToken);
             await store.BeginBootstrapAsync(session, cancellationToken);
+            progress?.Publish();
             status = await store.StatusAsync(cancellationToken);
         }
 
@@ -65,9 +72,11 @@ public sealed class PosCatalogSynchronizer(
                     content: null,
                     cancellationToken);
                 await store.ApplyBootstrapPageAsync(page, cancellationToken);
+                progress?.Publish();
                 if (!page.HasMore)
                 {
                     await store.PromoteBootstrapAsync(cancellationToken);
+                    progress?.Publish();
                     break;
                 }
                 cursor = page.NextCursor;
@@ -102,6 +111,7 @@ public sealed class PosCatalogSynchronizer(
             }
         }
         await store.ApplyPricingSnapshotAsync(pricing, cancellationToken);
+        progress?.Publish();
         if (pricing.WarehouseAllowsNegativeStock is { } allowsNegativeStock
             && warehousePolicy is not null)
             await warehousePolicy.ApplyAsync(allowsNegativeStock, cancellationToken);
@@ -113,6 +123,7 @@ public sealed class PosCatalogSynchronizer(
                 content: null,
                 cancellationToken);
             await store.ApplyReferenceOptionsAsync(catalogCode, options, cancellationToken);
+            progress?.Publish();
         }
         var settlementConfiguration = await SendAsync<PosAccountingSettlementConfiguration>(
             HttpMethod.Get,
@@ -120,6 +131,7 @@ public sealed class PosCatalogSynchronizer(
             content: null,
             cancellationToken);
         await store.ApplySettlementConfigurationAsync(settlementConfiguration, cancellationToken);
+        progress?.Publish();
         while (true)
         {
             status = await store.StatusAsync(cancellationToken);
@@ -134,6 +146,7 @@ public sealed class PosCatalogSynchronizer(
                     await store.GetByProductIdAsync(change.Product.ProductId, cancellationToken),
                     bootstrap: false);
             await store.ApplyChangesAsync(page, cancellationToken);
+            progress?.Publish();
             if (!page.HasMore) break;
         }
     }

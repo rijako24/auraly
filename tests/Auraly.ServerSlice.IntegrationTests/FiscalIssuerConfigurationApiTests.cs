@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Api;
 using Auraly.Contracts.Fiscal;
 using Microsoft.Data.SqlClient;
 
@@ -9,6 +10,70 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Fiscal")]
 public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Support_document_uses_an_independent_current_resolution_and_cursor()
+    {
+        var businessId = Guid.NewGuid();
+        var validRangeId = Guid.NewGuid();
+        var futureRangeId = Guid.NewGuid();
+        var legalScope = await InsertBusinessAsync(businessId);
+        await InsertProductionIssuerAndSupportRangesAsync(
+            businessId, validRangeId, futureRangeId);
+        try
+        {
+            using var client = fixture.CreateUserClient(
+                fixture.UserId,
+                FiscalPermissionCodes.ConfigurationRead,
+                FiscalPermissionCodes.ConfigurationManage);
+            using (var future = await client.PostAsJsonAsync(
+                       $"/api/commerce/v1/fiscal/configuration/onboarding/activate-support-document?businessId={businessId:D}",
+                       new ActivateFiscalProductionRequest(futureRangeId)))
+            {
+                Assert.Equal(HttpStatusCode.Conflict, future.StatusCode);
+                Assert.Contains("aún no está vigente",
+                    await future.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            }
+
+            using var response = await client.PostAsJsonAsync(
+                $"/api/commerce/v1/fiscal/configuration/onboarding/activate-support-document?businessId={businessId:D}",
+                new ActivateFiscalProductionRequest(validRangeId));
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK,
+                $"Expected support resolution activation, got {response.StatusCode}: {body}");
+            var value = await response.Content
+                .ReadFromJsonAsync<FiscalOnboardingConfiguration>();
+
+            Assert.NotNull(value?.AssignedSupportDocumentRange);
+            Assert.Equal(validRangeId,
+                value.AssignedSupportDocumentRange.DianNumberingRangeId);
+            Assert.Null(value.AssignedRange);
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalSeries series
+                INNER JOIN dbo.FiscalAuthorizations fiscalAuthorization
+                  ON fiscalAuthorization.FiscalAuthorizationId=series.FiscalAuthorizationId
+                WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
+                  AND series.EmitterKind=N'Server' AND series.IsActive=1
+                  AND fiscalAuthorization.DianNumberingRangeId=@RangeId;
+                """, businessId, validRangeId));
+            Assert.Equal(0, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalSeries
+                WHERE BusinessId=@BusinessId AND DocumentType=N'SalesInvoice' AND IsActive=1;
+                """, businessId));
+            Assert.Equal(501, await ScalarAsync("""
+                SELECT seriesCursor.NextConsecutive FROM dbo.FiscalSeriesCursors seriesCursor
+                INNER JOIN dbo.FiscalSeries series ON series.SeriesId=seriesCursor.SeriesId
+                WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
+                  AND series.IsActive=1;
+                """, businessId));
+        }
+        finally
+        {
+            await DeleteSupportConfigurationAsync(
+                businessId, validRangeId, futureRangeId);
+            await DeleteBusinessAsync(businessId, legalScope);
+        }
+    }
+
     [Fact]
     public async Task Onboarding_exposes_the_latest_terminal_habilitation_error()
     {
@@ -205,13 +270,74 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
         await command.ExecuteNonQueryAsync();
     }
 
-    private async Task<int> ScalarAsync(string sql, Guid businessId)
+    private async Task<int> ScalarAsync(
+        string sql, Guid businessId, Guid? rangeId = null)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        if (rangeId is not null)
+            command.Parameters.AddWithValue("@RangeId", rangeId.Value);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task InsertProductionIssuerAndSupportRangesAsync(
+        Guid businessId, Guid validRangeId, Guid futureRangeId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.FiscalIssuerConfigurations(
+                FiscalIssuerConfigurationId,BusinessId,Version,SupplierTaxId,SupplierCheckDigit,
+                LegalName,TaxLevelCode,TaxSchemeId,TaxSchemeName,IdentificationTypeCode,
+                AddressLine,CityCode,CityName,DepartmentCode,DepartmentName,CountryCode,CountryName,
+                SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,
+                CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
+                TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,1,@SupplierTaxId,N'7',N'DIAN E2E SAS',N'R-99-PN',
+                N'01',N'IVA',N'31',N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá',N'CO',N'Colombia',
+                CONVERT(nvarchar(64),NEWID()),N'env://AURALY_TEST_SOFTWARE_PIN',1,
+                N'Test',N'Test',N'TEST',N'https://vpfe.dian.gov.co',N'1.9',N'Auraly.Tests',
+                DATEADD(day,-1,SYSDATETIMEOFFSET()),DATEADD(day,30,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
+
+            INSERT fiscal.DianNumberingRanges(
+                DianNumberingRangeId,TenantId,AuthorizationNumber,ResolutionDate,Prefix,
+                RangeStart,RangeEnd,ValidFrom,ValidUntil,ProtectedTechnicalKey,ImportedAt,LastSeenAt)
+            VALUES
+              (@ValidRangeId,@TenantId,N'18769900001',CONVERT(date,SYSDATETIMEOFFSET()),N'DS',
+               501,900,DATEADD(day,-1,CONVERT(date,SYSDATETIMEOFFSET())),
+               DATEADD(day,30,CONVERT(date,SYSDATETIMEOFFSET())),0x01,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET()),
+              (@FutureRangeId,@TenantId,N'18769900002',CONVERT(date,SYSDATETIMEOFFSET()),N'DSF',
+               901,1200,DATEADD(day,10,CONVERT(date,SYSDATETIMEOFFSET())),
+               DATEADD(day,40,CONVERT(date,SYSDATETIMEOFFSET())),0x02,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@SupplierTaxId", ServerSliceFixture.SupplierTaxId);
+        command.Parameters.AddWithValue("@ValidRangeId", validRangeId);
+        command.Parameters.AddWithValue("@FutureRangeId", futureRangeId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task DeleteSupportConfigurationAsync(
+        Guid businessId, Guid validRangeId, Guid futureRangeId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            DELETE seriesCursor FROM dbo.FiscalSeriesCursors seriesCursor
+            INNER JOIN dbo.FiscalSeries series ON series.SeriesId=seriesCursor.SeriesId
+            WHERE series.BusinessId=@BusinessId;
+            DELETE dbo.FiscalSeries WHERE BusinessId=@BusinessId;
+            DELETE dbo.FiscalAuthorizations WHERE BusinessId=@BusinessId;
+            DELETE fiscal.DianNumberingRanges
+            WHERE DianNumberingRangeId IN(@ValidRangeId,@FutureRangeId);
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@ValidRangeId", validRangeId);
+        command.Parameters.AddWithValue("@FutureRangeId", futureRangeId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private async Task ExecuteAsync(string sql, Guid businessId, Guid? tenantId = null)

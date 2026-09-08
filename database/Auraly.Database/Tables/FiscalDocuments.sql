@@ -3,7 +3,7 @@ CREATE TABLE [dbo].[FiscalDocuments]
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(32) NOT NULL,
-    [FiscalDocumentType] NVARCHAR(24) NOT NULL,
+    [FiscalDocumentType] NVARCHAR(32) NOT NULL,
     [AuralyDocumentNumber] NVARCHAR(64) NOT NULL,
     [FiscalNumber] NVARCHAR(64) NOT NULL,
     [UniqueCodeType] NVARCHAR(8) NOT NULL,
@@ -24,11 +24,11 @@ CREATE TABLE [dbo].[FiscalDocuments]
     CONSTRAINT [UQ_FiscalDocuments_Business_Number]
       UNIQUE ([BusinessId],[FiscalDocumentType],[FiscalNumber]),
     CONSTRAINT [CK_FiscalDocuments_Type]
-      CHECK ([FiscalDocumentType] IN (N'Invoice',N'CreditNote',N'DebitNote',N'SupportDocument',N'ElectronicPayroll')),
+      CHECK ([FiscalDocumentType] IN (N'Invoice',N'CreditNote',N'DebitNote',N'SupportDocument',N'SupportDocumentAdjustment',N'ElectronicPayroll')),
     CONSTRAINT [CK_FiscalDocuments_UniqueCodeType]
       CHECK (([FiscalDocumentType]=N'Invoice' AND [UniqueCodeType]=N'CUFE') OR
              ([FiscalDocumentType] IN (N'CreditNote',N'DebitNote') AND [UniqueCodeType]=N'CUDE') OR
-             ([FiscalDocumentType]=N'SupportDocument' AND [UniqueCodeType]=N'CUDS') OR
+             ([FiscalDocumentType] IN (N'SupportDocument',N'SupportDocumentAdjustment') AND [UniqueCodeType]=N'CUDS') OR
              ([FiscalDocumentType]=N'ElectronicPayroll' AND [UniqueCodeType]=N'CUNE'))
 );
 GO

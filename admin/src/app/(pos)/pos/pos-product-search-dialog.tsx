@@ -47,6 +47,7 @@ export function PosProductSearchDialog({
   const availabilityVersion = useRef(0);
   const resultElements = useRef(new Map<number, HTMLButtonElement>());
   const [availability, setAvailability] = useState<PosProductWarehouseAvailability[]>([]);
+  const [availabilityProductId, setAvailabilityProductId] = useState<string | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
@@ -92,6 +93,7 @@ export function PosProductSearchDialog({
     const product = results[selected];
     const version = ++availabilityVersion.current;
     setAvailability([]);
+    setAvailabilityProductId(product?.productId ?? null);
     setAvailabilityLoading(false);
     if (!product) {
       setAvailabilityError(null);
@@ -119,6 +121,10 @@ export function PosProductSearchDialog({
         if (availabilityVersion.current === version) setAvailabilityLoading(false);
       });
   }, [canReadAvailability, connected, onLoadAvailability, results, selected]);
+
+  const selectedProduct = results[selected];
+  const availabilityPending = Boolean(selectedProduct) &&
+    (availabilityProductId !== selectedProduct.productId || availabilityLoading);
 
   useEffect(() => {
     const close = (event: globalThis.KeyboardEvent) => {
@@ -358,8 +364,8 @@ export function PosProductSearchDialog({
           )}
         </div>
 
-        <section className="shrink-0 border-t border-slate-200 bg-slate-50/80 px-5 py-4" aria-label="Existencias por sede y bodega">
-          <header className="mb-2 flex items-center justify-between gap-3">
+        <section className="flex h-44 shrink-0 flex-col border-t border-slate-200 bg-slate-50/80 px-5 py-4" aria-label="Existencias por sede y bodega">
+          <header className="mb-2 flex shrink-0 items-center justify-between gap-3">
             <div className="min-w-0">
               <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
                 <Boxes className="h-4 w-4 text-teal-700" />
@@ -369,16 +375,31 @@ export function PosProductSearchDialog({
                 {results[selected]?.name ?? "Selecciona un producto para consultar su disponibilidad."}
               </p>
             </div>
-            {availabilityLoading && <span className="flex shrink-0 items-center gap-2 text-xs font-medium text-teal-800" role="status"><Loader2 className="h-4 w-4 animate-spin" />Consultando servidor</span>}
+            {availabilityPending && <span className="flex shrink-0 items-center gap-2 text-xs font-medium text-teal-800" role="status"><Loader2 className="h-4 w-4 animate-spin" />Consultando existencias</span>}
           </header>
 
-          {availabilityError ? (
-            <div className="flex min-h-16 items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm text-amber-950">
+          {!selectedProduct ? (
+            <div className="grid min-h-0 flex-1 place-items-center rounded-xl border border-slate-200 bg-white px-4 text-center text-sm text-slate-500">
+              Selecciona un producto para consultar su disponibilidad.
+            </div>
+          ) : availabilityPending ? (
+            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white" aria-busy="true" aria-label="Consultando existencias por bodega">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                <span>Sede</span><span>Bodega</span><span className="text-right">Existencias</span>
+              </div>
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 px-3 py-3">
+                <span className="h-3 animate-pulse rounded-full bg-slate-200" />
+                <span className="h-3 animate-pulse rounded-full bg-slate-200" />
+                <span className="ml-auto h-3 w-12 animate-pulse rounded-full bg-teal-100" />
+              </div>
+            </div>
+          ) : availabilityError ? (
+            <div className="flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm text-amber-950">
               {connected ? <ShieldAlert className="h-5 w-5 shrink-0 text-amber-700" /> : <WifiOff className="h-5 w-5 shrink-0 text-amber-700" />}
               {availabilityError}
             </div>
           ) : (
-            <div className="max-h-36 overflow-auto rounded-xl border border-slate-200 bg-white">
+            <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-200 bg-white">
               <div className="sticky top-0 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                 <span>Sede</span><span>Bodega</span><span className="text-right">Existencias</span>
               </div>
@@ -389,8 +410,8 @@ export function PosProductSearchDialog({
                   <strong className={`text-right tabular-nums ${item.quantityOnHand < 0 ? "text-red-700" : "text-slate-900"}`}>{item.quantityOnHand.toLocaleString("es-CO", { maximumFractionDigits: 3 })}</strong>
                 </div>
               ))}
-              {!availabilityLoading && availability.length === 0 && results[selected] && (
-                <p className="p-4 text-center text-sm text-slate-500">No hay bodegas operativas para este producto.</p>
+              {availability.length === 0 && (
+                <p className="grid min-h-16 place-items-center p-3 text-center text-sm text-slate-500">No hay bodegas operativas para este producto.</p>
               )}
             </div>
           )}

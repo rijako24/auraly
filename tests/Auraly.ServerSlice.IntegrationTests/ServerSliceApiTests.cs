@@ -207,6 +207,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         var page = await pageResponse.Content.ReadFromJsonAsync<FiscalDocumentPage>();
         Assert.NotNull(page);
         Assert.Contains(page.Items, item => item.DocumentId == request.DocumentId);
+        fixture.DrainFiscalSignals();
 
         using var denied = fixture.CreateAdminClient();
         using var deniedResponse = await denied.GetAsync($"/api/commerce/v1/fiscal/documents/{request.DocumentId}");

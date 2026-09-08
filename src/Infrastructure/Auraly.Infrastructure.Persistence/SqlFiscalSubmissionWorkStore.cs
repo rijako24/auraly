@@ -369,7 +369,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
             command.Parameters.AddWithValue("@IsTerminal", terminal);
             var expectedRows = work.FiscalDocumentType switch
             {
-                FiscalDocumentTypeCodes.SupportDocument => 3,
+                FiscalDocumentTypeCodes.SupportDocument or
+                    FiscalDocumentTypeCodes.SupportDocumentAdjustment => 3,
                 FiscalDocumentTypeCodes.ElectronicPayroll => 5,
                 _ => 4
             };
@@ -456,7 +457,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
         command.Parameters.AddWithValue("@WorkerId", work.WorkerId);
         command.Parameters.AddWithValue("@PermanentFailure", FiscalDocumentStatusCodes.PermanentFailure);
         command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
-        var expectedRows = work.FiscalDocumentType == FiscalDocumentTypeCodes.SupportDocument ? 2 : 3;
+        var expectedRows = work.FiscalDocumentType is FiscalDocumentTypeCodes.SupportDocument or
+            FiscalDocumentTypeCodes.SupportDocumentAdjustment ? 2 : 3;
         if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
             throw new InvalidOperationException("The fiscal submission lease could not be released.");
         if (status == FiscalDocumentStatusCodes.PermanentFailure)

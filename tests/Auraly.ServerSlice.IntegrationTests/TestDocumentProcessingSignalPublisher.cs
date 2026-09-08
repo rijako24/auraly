@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Auraly.Application.DocumentProcessing;
+using Auraly.Application.Fiscal;
 using Auraly.Application.Sales;
 using Auraly.Commerce.Accounting.Application;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,6 +36,13 @@ internal sealed class TestDocumentProcessingSignalPublisher(
             try
             {
                 await worker.ProcessOneAsync(signal, cancellationToken);
+                if (FiscalGenerationPolicy.Supports(signal.DocumentType))
+                {
+                    var fiscal = scope.ServiceProvider
+                        .GetRequiredService<FiscalProcessingCoordinator>();
+                    await fiscal.RequestGenerationAsync(
+                        signal.BusinessId, signal.DocumentId, cancellationToken);
+                }
                 if (signal.EconomicEffectsEnabled && AccountingProcessingPolicy.Supports(signal.DocumentType))
                 {
                     var accounting = scope.ServiceProvider

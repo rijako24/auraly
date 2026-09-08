@@ -5,13 +5,15 @@ import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
-  ArchiveRestore, Barcode, ChevronDown, CircleAlert, CircleDollarSign, PackagePlus, Plus, Save,
+  ArchiveRestore, Barcode, ChevronDown, CircleAlert, CircleDollarSign, FileText, PackagePlus, Plus, Save,
   Search, Trash2, Truck, Warehouse, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
+import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
+import { ReportViewer } from "@/components/reports/report-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,6 +46,7 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { partiesApi } from "@/services/api/parties";
 import { tenantCommercialApi } from "@/services/api/tenants";
+import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
 import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
@@ -260,8 +263,24 @@ function ReceiptDetailDialog({
   detail?: GoodsReceiptDetail;
   onClose: () => void;
 }) {
+  const [accountingDocumentId,setAccountingDocumentId]=useState<string>();
+  const [reportOpen,setReportOpen]=useState(false);
+  const fiscal=useQuery({
+    queryKey:["goods-receipt-fiscal-document",detail?.documentId],
+    queryFn:()=>fiscalDocumentsApi.get(detail!.documentId),
+    enabled:Boolean(detail?.documentId&&detail.purchaseEvidenceType==="BuyerElectronicSupportDocument"),
+    retry:false,
+  });
   if (!detail) return null;
-  return <Dialog open onOpenChange={(value) => !value && onClose()}>
+  if(reportOpen)return <Dialog open onOpenChange={value=>!value&&setReportOpen(false)}><DialogContent showClose={false} className="h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] overflow-hidden p-2 sm:p-4"><ReportViewer
+    onClose={()=>setReportOpen(false)}
+    title={detail.purchaseEvidenceType==="BuyerElectronicSupportDocument"?`Documento soporte ${fiscal.data?.dianNumber??detail.documentNumber}`:`Recepción de compra ${detail.documentNumber}`}
+    description={`${detail.supplierName} · ${purchaseEvidenceLabels[detail.purchaseEvidenceType]} · ${new Date(detail.receivedAt).toLocaleDateString("es-CO")}${fiscal.data?.uniqueCode?` · ${fiscal.data.uniqueCodeType} ${fiscal.data.uniqueCode}`:""}`}
+    fileName={`${detail.purchaseEvidenceType==="BuyerElectronicSupportDocument"?"documento-soporte":"recepcion-compra"}-${fiscal.data?.dianNumber??detail.documentNumber}`}
+    rows={detail.lines.map(line=>({id:line.lineNumber,linea:line.lineNumber,producto:line.description,presentacion:line.presentationName,cantidad:line.quantity,costoUnitario:line.unitCost,descuento:line.discountAmount,base:line.netAmount,iva:line.taxAmount,total:line.lineTotal}))}
+    columns={[{key:"linea",label:"Línea"},{key:"producto",label:"Producto"},{key:"presentacion",label:"Presentación"},{key:"cantidad",label:"Cantidad",align:"right"},{key:"costoUnitario",label:"Costo unitario",align:"right",format:value=>formatCurrency(Number(value??0))},{key:"descuento",label:"Descuento",align:"right",format:value=>formatCurrency(Number(value??0))},{key:"base",label:"Base",align:"right",format:value=>formatCurrency(Number(value??0))},{key:"iva",label:"IVA",align:"right",format:value=>formatCurrency(Number(value??0))},{key:"total",label:"Total",align:"right",format:value=>formatCurrency(Number(value??0))}]}
+  /></DialogContent></Dialog>;
+  return <><Dialog open={!accountingDocumentId} onOpenChange={(value) => !value && onClose()}>
     <DialogContent className="flex max-h-[92dvh] max-w-5xl flex-col overflow-hidden p-0">
       <DialogHeader className="border-b px-6 py-5">
         <DialogTitle className="flex items-center gap-2">
@@ -344,10 +363,10 @@ function ReceiptDetailDialog({
             ? <p className="mt-1 text-sm text-muted-foreground">La contabilidad no está activa o el movimiento aún está entrando al motor.</p>
             : <div className="mt-3 grid gap-2 md:grid-cols-2">{detail.accountingStatuses!.map((posting) => {
               const cost = detail.additionalCostDocuments?.find((document) => document.costDocumentId === posting.sourceDocumentId);
-              return <div key={posting.sourceDocumentId} className="flex items-start justify-between gap-3 rounded-xl bg-muted/30 p-3">
+              return <button type="button" onClick={()=>setAccountingDocumentId(posting.sourceDocumentId)} key={posting.sourceDocumentId} className="flex items-start justify-between gap-3 rounded-xl bg-muted/30 p-3 text-left transition hover:bg-muted">
                 <div><p className="text-sm font-medium">{cost?.documentNumber ?? detail.documentNumber}</p>{posting.errorMessage && <p className="text-xs text-amber-700">{posting.errorMessage}</p>}</div>
                 <Badge variant={posting.status === "Posted" ? "secondary" : "outline"}>{posting.status === "Posted" ? "Contabilizado" : posting.status === "AccountingPendingConfiguration" ? "Requiere configuración" : "Pendiente"}</Badge>
-              </div>;
+              </button>;
             })}</div>}
         </section>
         {(detail.additionalCostDocuments ?? []).length > 0 && <section className="space-y-3">
@@ -370,10 +389,11 @@ function ReceiptDetailDialog({
         </div>}
       </div>
       <DialogFooter className="border-t px-6 py-4">
+        <Button type="button" variant="outline" onClick={()=>setReportOpen(true)}><FileText className="mr-2 h-4 w-4"/>Abrir reporte</Button>
         <Button type="button" onClick={onClose}>Cerrar</Button>
       </DialogFooter>
     </DialogContent>
-  </Dialog>;
+  </Dialog><AccountingDocumentDialog documentId={accountingDocumentId} sourceLabel={`Recepción ${detail.documentNumber}`} onClose={()=>setAccountingDocumentId(undefined)}/></>;
 }
 
 function DetailValue({ label, value }: { label: string; value: string }) {
@@ -444,11 +464,18 @@ function ReceiptEditor({
 
   useEffect(() => setActiveProductIndex(0), [productSearch, includeUnassociated, draft?.supplierId]);
 
+  const withholdingPreviewReady = Boolean(
+    open && businessId && draft?.supplierId && draft.supplierInvoiceDate &&
+    draft.purchaseEvidenceType && draft.exchangeRate > 0 && draft.lines.length > 0 &&
+    draft.lines.every((line) => line.quantity > 0 && line.presentationQuantity > 0 &&
+      line.unitsPerPresentation > 0 && line.unitCost >= 0 && line.discountAmount >= 0 &&
+      Math.abs(line.presentationQuantity * line.unitsPerPresentation - line.quantity) < 0.000001),
+  );
   const withholdingPreview = useQuery({
     queryKey: [
       "goods-receipt-withholding-preview", businessId, draft?.supplierId,
       draft?.supplierInvoiceDate, draft?.purchaseEvidenceType,
-      draft?.withholdingConceptCode, draft?.lines,
+      draft?.withholdingConceptCode, draft?.exchangeRate, draft?.lines,
     ],
     queryFn: () => {
       if (!businessId || !draft) throw new Error("La recepción no está lista para calcular retenciones.");
@@ -462,10 +489,7 @@ function ReceiptEditor({
         exchangeRate: draft.currencyCode === "COP" ? 1 : draft.exchangeRate,
       });
     },
-    enabled: Boolean(
-      open && businessId && draft?.supplierId && draft.supplierInvoiceDate &&
-      draft.purchaseEvidenceType && draft.lines.length > 0,
-    ),
+    enabled: withholdingPreviewReady,
     staleTime: 10_000,
   });
   const costWithholdingPreviews = useQueries({
@@ -1307,7 +1331,14 @@ function ReceiptEditor({
             </>}
             <p className="pt-2 text-xs text-slate-300">Las retenciones reducen lo adeudado; no reducen el costo ni el IVA reconocido.</p>
             {withholdingPreview.isFetching && <p className="text-right text-xs text-slate-300">Calculando retenciones…</p>}
-            {withholdingPreview.isError && <p className="text-right text-xs text-amber-300">No fue posible obtener la vista previa. La confirmación volverá a validar con el motor.</p>}
+            {withholdingPreview.isError && <p className="text-right text-xs text-amber-300">
+              No fue posible calcular la retención: {withholdingPreview.error instanceof Error
+                ? withholdingPreview.error.message
+                : "el motor tributario rechazó los datos actuales"}.
+            </p>}
+            {!withholdingPreviewReady && draft.lines.length > 0 && <p className="text-right text-xs text-slate-300">
+              Completa cantidades, costo, fecha, soporte y tasa de cambio para calcular la retención.
+            </p>}
           </dl>
         </section>
 

@@ -110,6 +110,7 @@ public static class AccountingProcessingPolicy
         DispatchAccountingDocumentTypes.CashDifference
     ];
 
+    public static IReadOnlySet<string> DocumentTypes => AccountableDocumentTypes;
 
     public static bool Supports(string documentType) =>
         !string.IsNullOrWhiteSpace(documentType) && AccountableDocumentTypes.Contains(documentType);

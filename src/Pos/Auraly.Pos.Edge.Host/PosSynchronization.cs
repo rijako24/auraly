@@ -191,7 +191,9 @@ internal sealed record PosSynchronizationLane(
 internal sealed class PosSynchronizationLaneExecutor(
     PosSynchronizationSignal signal,
     PosSynchronizationEventLog events,
-    ILogger<PosSynchronizationLaneExecutor> logger)
+    ILogger<PosSynchronizationLaneExecutor> logger,
+    PosSynchronizationState? state = null,
+    PosUiStateSignal? uiState = null)
 {
     public async Task<bool> ExecuteAllAsync(
         IReadOnlyCollection<PosSynchronizationLane> lanes,
@@ -206,9 +208,12 @@ internal sealed class PosSynchronizationLaneExecutor(
         PosSynchronizationLane lane,
         CancellationToken cancellationToken)
     {
+        state?.StageStarted(lane.Label);
+        uiState?.Publish();
         try
         {
             await lane.Execute();
+            state?.StageSucceeded(lane.Label);
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -217,6 +222,7 @@ internal sealed class PosSynchronizationLaneExecutor(
         }
         catch (Exception exception)
         {
+            state?.StageFailed(lane.Label);
             logger.LogWarning(
                 exception,
                 "POS synchronization lane {Lane} failed without blocking other lanes.",
@@ -231,6 +237,10 @@ internal sealed class PosSynchronizationLaneExecutor(
                 TimeSpan.FromSeconds(5),
                 cancellationToken);
             return false;
+        }
+        finally
+        {
+            uiState?.Publish();
         }
     }
 }

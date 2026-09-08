@@ -1,4 +1,8 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Purchasing;
+using Auraly.Contracts.Returns;
+using Auraly.Contracts.Sales;
 
 namespace Auraly.Application.Fiscal;
 
@@ -20,6 +24,17 @@ public interface IFiscalProcessingSignalPublisher
         FiscalProcessingSignal signal,
         DateTimeOffset? scheduledEnqueueTime = null,
         CancellationToken cancellationToken = default);
+}
+
+public static class FiscalGenerationPolicy
+{
+    public static bool Supports(string documentType) => documentType is
+        PosSaleDocumentTypes.Invoice or
+        ServiceInvoiceDocumentTypes.ServiceInvoice or
+        SalesReturnDocumentTypes.SalesReturn or
+        PurchasingDocumentTypes.GoodsReceipt or
+        PurchasingDocumentTypes.PurchaseReturn or
+        ExpenseDocumentTypes.Expense;
 }
 
 public sealed class FiscalProcessingCoordinator(

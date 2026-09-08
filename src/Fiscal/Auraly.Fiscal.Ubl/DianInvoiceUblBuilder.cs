@@ -164,6 +164,10 @@ public sealed class DianInvoiceUblBuilder
             MoneyElement("TaxExclusiveAmount", invoice.TaxExclusiveAmount, invoice.CurrencyCode),
             MoneyElement("TaxInclusiveAmount", invoice.TaxInclusiveAmount, invoice.CurrencyCode),
             MoneyElement("AllowanceTotalAmount", invoice.DiscountAmount, invoice.CurrencyCode),
+            invoice.PayableRoundingAmount == 0
+                ? null
+                : MoneyElement("PayableRoundingAmount", invoice.PayableRoundingAmount,
+                    invoice.CurrencyCode),
             MoneyElement("PayableAmount", invoice.PayableAmount, invoice.CurrencyCode));
 
     private static XElement InvoiceLine(DianInvoiceLine line, string currency) =>

@@ -881,6 +881,10 @@ public sealed class SqlPayrollStore(
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
             var jobId = ids.NewId(); var now = timeProvider.GetUtcNow();
             await using var save = new SqlCommand("""
+                DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS(
+                  SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+                  WHERE TenantId=@TenantId AND Status=N'Ready'
+                    AND EffectiveFrom<=CONVERT(date,@OccurredAt)) THEN 1 ELSE 0 END);
                 INSERT payroll.PaymentBatches(PaymentBatchId,TenantId,BusinessId,PaymentDate,
                   PaymentMethodOptionId,ReferenceNumber,Status,TotalAmount,CreatedBy,CreatedAt,
                   ConfirmedBy,ConfirmedAt)
@@ -894,11 +898,11 @@ public sealed class SqlPayrollStore(
                     WHERE pl.PayrollRunEmployeeId=re.PayrollRunEmployeeId AND pb.Status<>N'Voided');
                 IF @@ROWCOUNT<>@EmployeeCount THROW 51735,N'Los empleados por pagar cambiaron durante la confirmación.',1;
                 INSERT dbo.AccountingSourceDocuments(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                  PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
-                VALUES(@BatchId,N'PayrollPayment',@TenantId,@BusinessId,@Payload,@PayloadHash,@OccurredAt,@Now);
+                  PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+                VALUES(@BatchId,N'PayrollPayment',@TenantId,@BusinessId,@Payload,@PayloadHash,@OccurredAt,@Now,@AccountingEntryRequired);
                 INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-                  SourceDocumentType,SourcePayloadHash,OccurredAt,Status,CreatedAt)
-                VALUES(@JobId,@TenantId,@BusinessId,@BatchId,N'PayrollPayment',@PayloadHash,@OccurredAt,N'Pending',@Now);
+                  SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,CreatedAt)
+                VALUES(@JobId,@TenantId,@BusinessId,@BatchId,N'PayrollPayment',@PayloadHash,@OccurredAt,@AccountingEntryRequired,N'Pending',@Now);
                 INSERT payroll.OutboxMessages(OutboxMessageId,TenantId,BusinessId,AggregateId,MessageType,
                   PayloadJson,OccurredAt,AttemptCount)
                 VALUES(@OutboxId,@TenantId,@BusinessId,@BatchId,N'AccountingPostingRequested',@Payload,@Now,0);
@@ -1220,6 +1224,10 @@ public sealed class SqlPayrollStore(
                 start, end, payment, description, accountingLines);
             var json = PayrollContractSerializer.Serialize(payload); var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(json)); var jobId = ids.NewId(); var now = timeProvider.GetUtcNow();
             await using var approve = new SqlCommand("""
+                DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS(
+                  SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+                  WHERE TenantId=@TenantId AND Status=N'Ready'
+                    AND EffectiveFrom<=CONVERT(date,@OccurredAt)) THEN 1 ELSE 0 END);
                 UPDATE payroll.Runs SET Status=N'Approved',ApprovedBy=@UserId,ApprovedAt=@Now,
                   ApprovalIdempotencyKey=@Key,ApprovalRequestHash=@RequestHash
                 WHERE PayrollRunId=@RunId AND TenantId=@TenantId AND BusinessId=@BusinessId
@@ -1239,11 +1247,11 @@ public sealed class SqlPayrollStore(
                 ) l ON l.DeductionAgreementId=a.DeductionAgreementId;
 
                 INSERT dbo.AccountingSourceDocuments(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                  PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
-                VALUES(@RunId,@DocumentType,@TenantId,@BusinessId,@Payload,@PayloadHash,@OccurredAt,@Now);
+                  PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+                VALUES(@RunId,@DocumentType,@TenantId,@BusinessId,@Payload,@PayloadHash,@OccurredAt,@Now,@AccountingEntryRequired);
                 INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-                  SourceDocumentType,SourcePayloadHash,OccurredAt,Status,CreatedAt)
-                VALUES(@JobId,@TenantId,@BusinessId,@RunId,@DocumentType,@PayloadHash,@OccurredAt,N'Pending',@Now);
+                  SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,CreatedAt)
+                VALUES(@JobId,@TenantId,@BusinessId,@RunId,@DocumentType,@PayloadHash,@OccurredAt,@AccountingEntryRequired,N'Pending',@Now);
                 INSERT payroll.OutboxMessages(OutboxMessageId,TenantId,BusinessId,AggregateId,MessageType,
                   PayloadJson,OccurredAt,AttemptCount)
                 VALUES(@OutboxId,@TenantId,@BusinessId,@RunId,N'AccountingPostingRequested',@Payload,@Now,0);

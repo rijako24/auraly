@@ -176,7 +176,9 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
         var payableTotal = request.Lines.Sum(line => line.LineTotal);
         if (snapshot.UntaxedAmount != untaxedTotal ||
             snapshot.TaxAmount != taxTotal ||
-            snapshot.PayableAmount != payableTotal)
+            snapshot.PayableAmount != payableTotal + snapshot.PayableRoundingAmount ||
+            snapshot.PayableRoundingAmount !=
+                request.CommercialSnapshot.PayableRoundingAmount)
         {
             return "Document totals do not match its lines.";
         }

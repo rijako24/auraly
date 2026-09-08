@@ -4,6 +4,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Claims;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Net.Http.Json;
 using Auraly.Api;
@@ -20,6 +21,7 @@ using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Fiscal.Core;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Infrastructure.Fiscal;
 using Auraly.Contracts.Parties;
 using Auraly.Platform.Application.Services;
 using Microsoft.AspNetCore.Hosting;
@@ -188,6 +190,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 services.RemoveAll<IFiscalProcessingSignalPublisher>();
                 services.AddSingleton<TestFiscalProcessingSignalPublisher>();
                 services.AddSingleton<IFiscalProcessingSignalPublisher>(provider => provider.GetRequiredService<TestFiscalProcessingSignalPublisher>());
+                services.RemoveAll<IFiscalSigningCertificateProvider>();
+                services.AddSingleton<IFiscalSigningCertificateProvider,
+                    TestFiscalSigningCertificateProvider>();
                 services.AddSingleton<TestPosSynchronizationPushGateway>();
                 services.AddSingleton<IPosSynchronizationPushGateway>(provider =>
                     provider.GetRequiredService<
@@ -769,6 +774,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__Value", TechnicalKeyValue);
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__SupplierTaxId", SupplierTaxId);
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__QrValidationUrl", QrValidationUrl);
+        SetHostEnvironment("AURALY_TEST_SOFTWARE_PIN", "auraly-test-pin");
         SetHostEnvironment("Auraly__Fiscal__Worker__Enabled", "false");
         SetHostEnvironment(
             "Auraly__PosSynchronization__WebPubSub__ConnectionString",
@@ -929,7 +935,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              N'EMISOR MAESTRO',N'EMISOR MAESTRO',N'R-99-PN',N'01',N'IVA',N'31',
              N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá D.C.',N'CO',N'Colombia',
              N'auraly-test-software',N'env://AURALY_TEST_SOFTWARE_PIN',2,
-             '11111111-1111-1111-1111-111111111111',N'Test',N'Test',N'TEST',
+             '11111111-1111-1111-1111-111111111111',N'Test',N'Test',@FiscalCertificateThumbprint,
              N'https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc',N'1.9',N'Auraly.Tests',
              '2026-01-01',1,SYSDATETIMEOFFSET());
 
@@ -1017,6 +1023,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@DeniedIterations", deniedCredential.Iterations);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", FiscalAuthorizationId);
         command.Parameters.AddWithValue("@FiscalIssuerConfigurationId", FiscalIssuerConfigurationId);
+        command.Parameters.AddWithValue("@FiscalCertificateThumbprint",
+            TestFiscalSigningCertificateProvider.Thumbprint);
         command.Parameters.AddWithValue("@AuthorizationNumber", AuthorizationNumber);
         command.Parameters.AddWithValue("@SupplierTaxId", SupplierTaxId);
         command.Parameters.AddWithValue("@TechnicalKeyVersion", TechnicalKeyVersion);
@@ -1223,4 +1231,34 @@ internal sealed class TestMediaUrlResolver : IMediaUrlResolver
         string mediaRef,
         CancellationToken ct = default) =>
         Task.FromResult($"https://media.auraly.test/{businessId:D}/{mediaRef}");
+}
+
+internal sealed class TestFiscalSigningCertificateProvider :
+    IFiscalSigningCertificateProvider
+{
+    private static readonly Lazy<X509Certificate2> Certificate = new(CreateCertificate);
+    public static string Thumbprint => Certificate.Value.Thumbprint;
+
+    public Task<FiscalCertificateMaterial> ResolveAsync(
+        FiscalCertificateReference reference,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new FiscalCertificateMaterial(Certificate.Value, []));
+    }
+
+    private static X509Certificate2 CreateCertificate()
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest(
+            $"CN=Auraly integration fiscal signer, SERIALNUMBER={ServerSliceFixture.SupplierTaxId}",
+            key,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.DigitalSignature, true));
+        return request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddDays(-1),
+            DateTimeOffset.UtcNow.AddDays(30));
+    }
 }

@@ -614,7 +614,7 @@ public sealed class SqlGoodsReceiptStore(
         return result;
     }
 
-    private static async Task<SupportFiscalAllocation> AllocateSupportFiscalAsync(
+    internal static async Task<SupportFiscalAllocation> AllocateSupportFiscalAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid supplierId,
         DateTimeOffset issuedAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -872,7 +872,7 @@ public sealed class SqlGoodsReceiptStore(
         parameter.Value = (object?)value ?? DBNull.Value;
     }
 
-    private sealed record SupportFiscalAllocation(
+    internal sealed record SupportFiscalAllocation(
         Guid SeriesId, Guid AuthorizationId, Guid IssuerConfigurationId,
         string FiscalNumber, int Environment, string QrValidationUrl,
         PosSaleUblAuthorizationContract Authorization, PosSaleUblPartyContract Seller);

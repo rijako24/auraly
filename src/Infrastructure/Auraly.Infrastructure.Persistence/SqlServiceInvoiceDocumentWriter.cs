@@ -39,6 +39,12 @@ internal static class SqlServiceInvoiceDocumentWriter
         var hash = ServiceInvoiceSnapshotSerializer.Hash(snapshot);
         await using var command = new SqlCommand("""
             SET XACT_ABORT ON;
+            DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS
+            (
+              SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+              WHERE TenantId=@TenantId AND Status=N'Ready'
+                AND EffectiveFrom<=CONVERT(date,@Now)
+            ) THEN 1 ELSE 0 END);
             INSERT dbo.SalesDocuments
               (DocumentId,BusinessId,WarehouseId,DeviceId,SourceMode,DocumentSeriesId,
                DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
@@ -76,14 +82,15 @@ internal static class SqlServiceInvoiceDocumentWriter
 
             INSERT dbo.AccountingSourceDocuments
               (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
-               PayloadHash,OccurredAt,AcceptedAt)
+               PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
             VALUES(@DocumentId,N'ServiceInvoice',@TenantId,@BusinessId,@Payload,
-               @Hash,@Now,@Now);
+               @Hash,@Now,@Now,@AccountingEntryRequired);
             INSERT dbo.AccountingPostingJobs
               (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-               SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
+               SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,
+               Status,AttemptCount,CreatedAt)
             VALUES(@AccountingJobId,@TenantId,@BusinessId,@DocumentId,
-               N'ServiceInvoice',@Hash,@Now,N'Pending',0,@Now);
+               N'ServiceInvoice',@Hash,@Now,@AccountingEntryRequired,N'Pending',0,@Now);
             INSERT reporting.SalesReportingJobs
               (SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,
                SourceVersion,SourcePayloadHash,SourcePayloadJson,Status,AttemptCount,CreatedAt)

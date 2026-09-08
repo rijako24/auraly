@@ -27,6 +27,155 @@ public sealed class AccountingSliceCollection : ICollectionFixture<ServerSliceFi
 public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Sales_adjustment_to_peso_is_frozen_balanced_and_posted_separately()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate);
+        using (var defaults = await accounting.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(
+                       new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        const decimal adjustment = 0.40m;
+        var source = fixture.CreateValidRequest(9_918);
+        var fiscal = source.FiscalSnapshot!;
+        var payable = fiscal.PayableAmount + adjustment;
+        var cufe = CufeCalculator.Calculate(new CufeInput(
+            fiscal.FiscalNumber, fiscal.IssuedAt, fiscal.UntaxedAmount, payable,
+            ServerSliceFixture.SupplierTaxId, fiscal.CustomerIdentification,
+            new FiscalTechnicalKey(ServerSliceFixture.TechnicalKeyValue,
+                ServerSliceFixture.TechnicalKeyVersion),
+            FiscalEnvironment.Test,
+            [new FiscalTaxAmount("01", fiscal.TaxAmount)]),
+            ServerSliceFixture.QrValidationUrl);
+        var invoice = WithUblSnapshot(source with
+        {
+            CommercialSnapshot = source.CommercialSnapshot with
+            {
+                PayableAmount = payable,
+                PayableRoundingAmount = adjustment
+            },
+            FiscalSnapshot = fiscal with
+            {
+                PayableAmount = payable,
+                PayableRoundingAmount = adjustment,
+                Cufe = cufe.Cufe,
+                QrPayload = cufe.QrPayload
+            },
+            Payments = [new PosSalePaymentContract(1, "Cash", payable, null)]
+        });
+
+        await SetWarehouseNegativeSalesPolicyAsync(false);
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(invoice);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+        }
+
+        await AssertBalancedAsync(invoice.DocumentId);
+        Assert.Equal(payable, await AccountAmountAsync(
+            invoice.DocumentId, "110505", debit: true));
+        Assert.Equal(adjustment, await AccountAmountAsync(
+            invoice.DocumentId, "429598", debit: false));
+    }
+
+    [Fact]
+    public async Task Automatic_cost_center_is_required_frozen_and_auditable_on_every_entry_line()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate);
+        using (var defaults = await accounting.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(
+                       new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        var centerId = Guid.NewGuid();
+        var assignmentId = Guid.NewGuid();
+        using (var create = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/cost-centers",
+                   new CreateCostCenterRequest(centerId, fixture.BusinessId,
+                       $"AUTO-{centerId:N}"[..13], "Centro automático prueba", null, false)))
+            Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        using (var assign = await accounting.PutAsJsonAsync(
+                   "/api/commerce/v1/accounting/cost-center-assignments",
+                   new SaveAccountingCostCenterAssignmentRequest(
+                       assignmentId, fixture.BusinessId, centerId,
+                       AccountingCostCenterOperationKinds.All, fixture.WarehouseId, true)))
+            Assert.True(assign.IsSuccessStatusCode,
+                await assign.Content.ReadAsStringAsync());
+
+        var invoice = WithUblSnapshot(fixture.CreateValidRequest(9_919));
+        await SetWarehouseNegativeSalesPolicyAsync(false);
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(invoice);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+            await AssertBalancedAsync(invoice.DocumentId);
+
+            Assert.Equal(centerId, await ScalarAsync<Guid>(
+                "SELECT ResolvedCostCenterId FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                invoice.DocumentId));
+            Assert.Equal(0, await ScalarAsync<int>("""
+                SELECT COUNT(*) FROM dbo.AccountingEntryLines line
+                INNER JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId
+                WHERE entry.SourceDocumentId=@Id AND
+                  (line.CostCenterId IS NULL OR line.CostCenterId<>(
+                     SELECT ResolvedCostCenterId FROM dbo.AccountingPostingJobs
+                     WHERE SourceDocumentId=@Id) OR
+                   line.CostCenterCodeSnapshot IS NULL OR line.CostCenterNameSnapshot IS NULL)
+                """, invoice.DocumentId));
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+            using var disable = await accounting.PutAsJsonAsync(
+                "/api/commerce/v1/accounting/cost-center-assignments",
+                new SaveAccountingCostCenterAssignmentRequest(
+                    assignmentId, fixture.BusinessId, centerId,
+                    AccountingCostCenterOperationKinds.All, fixture.WarehouseId, false));
+            disable.EnsureSuccessStatusCode();
+
+            using var deactivate = await accounting.PutAsJsonAsync(
+                $"/api/commerce/v1/accounting/cost-centers/{centerId:D}/status",
+                new SetAccountingCostCenterStatusRequest(false));
+            deactivate.EnsureSuccessStatusCode();
+            Assert.False((await deactivate.Content.ReadFromJsonAsync<AccountingCostCenterView>())!.IsActive);
+
+            using var reactivate = await accounting.PutAsJsonAsync(
+                $"/api/commerce/v1/accounting/cost-centers/{centerId:D}/status",
+                new SetAccountingCostCenterStatusRequest(true));
+            reactivate.EnsureSuccessStatusCode();
+
+            var defaultCenterId = await ScalarAsync<Guid>("""
+                SELECT CostCenterId FROM dbo.AccountingCostCenters
+                WHERE BusinessId=@Id AND IsDefault=1 AND IsActive=1
+                """, fixture.BusinessId);
+            using var rejectDefault = await accounting.PutAsJsonAsync(
+                $"/api/commerce/v1/accounting/cost-centers/{defaultCenterId:D}/status",
+                new SetAccountingCostCenterStatusRequest(false));
+            Assert.Equal(HttpStatusCode.BadRequest, rejectDefault.StatusCode);
+        }
+    }
+
+    [Fact]
     public async Task Dispatch_cash_shortage_posts_once_to_the_configured_account()
     {
         using var accounting = fixture.CreateAdminClient(
@@ -492,8 +641,15 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             await SetWarehouseNegativeSalesPolicyAsync(true);
         }
 
-        Assert.Equal(0, await CountAsync(
+        Assert.Equal(1, await CountAsync(
             "AccountingPostingJobs", "SourceDocumentId", unconfiguredInvoice.DocumentId));
+        Assert.Equal(AccountingPostingStatuses.CommercialEffectsApplied,
+            await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                unconfiguredInvoice.DocumentId));
+        Assert.False(await ScalarAsync<bool>(
+            "SELECT AccountingEntryRequired FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+            unconfiguredInvoice.DocumentId));
         await AssertFastProcessingAsync(
             unconfiguredInvoice.DocumentId, "venta sin contabilidad activa");
         Assert.Equal(0, await CountAsync(
@@ -528,7 +684,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                     "The accounting defaults response is empty.");
             Assert.True(defaults.IsReady);
             Assert.True(defaults.AccountCount >= 43);
-            Assert.Equal(57, defaults.MappingCount);
+            Assert.Equal(59, defaults.MappingCount);
             Assert.True(defaults.HasDefaultCostCenter);
             Assert.True(defaults.HasOpenPeriod);
         }
@@ -2136,7 +2292,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             accountCode,
             new[] { "143505", "240810", "519595", "220505",
                 "236540", "236701", "236805", "110505", "111005", "130505",
-                "130510", "130515", "130520", "139995", "429595", "429596", "539595", "539596" });
+                "130510", "130515", "130520", "139995", "429595", "429596",
+                "429598", "539595", "539596", "539598" });
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();

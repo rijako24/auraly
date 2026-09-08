@@ -140,6 +140,14 @@ VALUES
 
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
 VALUES
+('72000000-0000-0000-0000-000000000001',N'accounting-cost-center-operation',N'All',N'Todas las operaciones',N'Regla general de la sede o bodega.',10),
+('72000000-0000-0000-0000-000000000002',N'accounting-cost-center-operation',N'Sales',N'Ventas',N'Facturas, documentos POS, devoluciones y recaudos.',20),
+('72000000-0000-0000-0000-000000000003',N'accounting-cost-center-operation',N'Purchasing',N'Compras',N'Recepciones, costos adicionales, devoluciones y pagos.',30),
+('72000000-0000-0000-0000-000000000004',N'accounting-cost-center-operation',N'Expenses',N'Gastos',N'Gastos operativos sin una asignación más específica en el concepto.',40),
+('72000000-0000-0000-0000-000000000005',N'accounting-cost-center-operation',N'Inventory',N'Inventario',N'Conteos, ajustes, bajas, conversiones y diferencias de traslado.',50);
+
+INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
+VALUES
 ('6A000000-0000-0000-0000-000000000001',N'tax-responsibility',N'O-13',N'Gran contribuyente',N'Responsabilidad fiscal DIAN O-13.',10),
 ('6A000000-0000-0000-0000-000000000002',N'tax-responsibility',N'O-15',N'Autorretenedor',N'Responsabilidad fiscal DIAN O-15.',20),
 ('6A000000-0000-0000-0000-000000000003',N'tax-responsibility',N'O-23',N'Agente de retención de IVA',N'Responsabilidad fiscal DIAN O-23.',30),
@@ -162,7 +170,7 @@ WHEN NOT MATCHED BY SOURCE
         N'inventory-operation-type',N'agent-bot-type',N'accounting-account-type',
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',
-        N'accounting-withholding-kind',N'accounting-opening-balance-mode',
+        N'accounting-withholding-kind',N'accounting-opening-balance-mode',N'accounting-cost-center-operation',
         N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type',N'tax-responsibility',
         N'purchase-cost-evidence-type',N'purchase-cost-kind',N'purchase-cost-treatment',
         N'purchase-cost-allocation-method',N'purchase-tax-rate',N'purchase-tax-treatment',

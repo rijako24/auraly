@@ -8,8 +8,13 @@ export interface FiscalDocumentQuotaItem {
 export interface FiscalDocumentQuotaPage {
   items: FiscalDocumentQuotaItem[]; page: number; pageSize: number; totalCount: number;
 }
+export interface FiscalDocumentView extends FiscalDocumentQuotaItem {
+  businessId:string;uniqueCodeType:string;uniqueCode:string|null;deviceId:string|null;
+  attemptCount:number;trackId:string|null;lastStatusCode:string|null;
+}
 
 export const fiscalDocumentsApi = {
+  get: (documentId:string) => apiClient.get<FiscalDocumentView>(`/commerce/v1/fiscal/documents/${documentId}`),
   quotaHistory: (page: number, pageSize: number, status?: string) =>
     apiClient.get<FiscalDocumentQuotaPage>("/commerce/v1/fiscal/documents", {
       page, pageSize, quotaOnly: true, status: status || undefined,

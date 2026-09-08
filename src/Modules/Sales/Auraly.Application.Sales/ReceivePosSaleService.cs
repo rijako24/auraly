@@ -234,6 +234,13 @@ public sealed class ReceivePosSaleService(
         var paid = request.Payments.Sum(payment => payment.Amount);
         var credit = request.Credit?.Amount ?? 0m;
         var withholding = request.CommercialSnapshot.Withholding;
+        var rounding = request.CommercialSnapshot.PayableRoundingAmount;
+        if (decimal.Round(rounding, 4, MidpointRounding.AwayFromZero) != rounding ||
+            request.CommercialSnapshot.PayableAmount !=
+                request.CommercialSnapshot.UntaxedAmount +
+                request.CommercialSnapshot.TaxAmount + rounding)
+            throw new PosSaleInvalidException(
+                "The immutable adjustment-to-peso totals do not reconcile.");
         if (request.Lines.Any(line =>
                 line.PromotionDiscountAmount < 0 ||
                 line.PromotionDiscountAmount > line.DiscountAmount))

@@ -37,7 +37,7 @@ CREATE TABLE [dbo].[Receivables]
     CONSTRAINT [PK_Receivables] PRIMARY KEY ([ReceivableId]),
     CONSTRAINT [FK_Receivables_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_Receivables_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
-    CONSTRAINT [FK_Receivables_SourceJob] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType]) REFERENCES [dbo].[DocumentProcessingJobs] ([DocumentId],[DocumentType]),
+    CONSTRAINT [FK_Receivables_SourceJob] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType]) REFERENCES [dbo].[AccountingPostingJobs] ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [UQ_Receivables_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [CK_Receivables_Amounts] CHECK ([OriginalAmount] > 0 AND [OutstandingAmount] >= 0),
     CONSTRAINT [CK_Receivables_Currency] CHECK ([CurrencyCode] = 'COP'),

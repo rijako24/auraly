@@ -51,6 +51,7 @@ const permissionScopes: Record<string, string[]> = {
   "/dashboard/expenses": ["expenses."],
   "/dashboard/payroll": ["payroll."],
   "/dashboard/accounting": ["accounting.", "commerce.taxation."],
+  "/dashboard/financial-traceability": ["accounting."],
   "/dashboard/sales-debit-notes": ["sales.debit-notes."],
   "/dashboard/cash-differences": ["work-sessions.differences.", "work-sessions.closures."],
   "/dashboard/subscription": ["subscription."],

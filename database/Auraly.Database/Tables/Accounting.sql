@@ -149,6 +149,28 @@ CREATE UNIQUE INDEX [UX_AccountingCostCenters_Business_Default]
     ON [dbo].[AccountingCostCenters]([BusinessId]) WHERE [IsDefault]=1 AND [IsActive]=1;
 GO
 
+CREATE TABLE [dbo].[AccountingCostCenterAssignments]
+(
+    [AssignmentId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [CostCenterId] UNIQUEIDENTIFIER NOT NULL,
+    [OperationKind] NVARCHAR(32) NOT NULL,
+    [WarehouseId] UNIQUEIDENTIFIER NULL,
+    [IsActive] BIT NOT NULL CONSTRAINT [DF_AccountingCostCenterAssignments_IsActive] DEFAULT (1),
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [RowVersion] ROWVERSION NOT NULL,
+    CONSTRAINT [PK_AccountingCostCenterAssignments] PRIMARY KEY ([AssignmentId]),
+    CONSTRAINT [UQ_AccountingCostCenterAssignments_Rule] UNIQUE ([BusinessId],[OperationKind],[WarehouseId]),
+    CONSTRAINT [FK_AccountingCostCenterAssignments_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+    CONSTRAINT [FK_AccountingCostCenterAssignments_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [FK_AccountingCostCenterAssignments_Center] FOREIGN KEY ([BusinessId],[CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([BusinessId],[CostCenterId]),
+    CONSTRAINT [FK_AccountingCostCenterAssignments_Warehouse] FOREIGN KEY ([BusinessId],[WarehouseId]) REFERENCES [dbo].[Warehouses]([BusinessId],[WarehouseId]),
+    CONSTRAINT [CK_AccountingCostCenterAssignments_Kind] CHECK ([OperationKind] IN (N'All',N'Sales',N'Purchasing',N'Expenses',N'Inventory'))
+);
+GO
+
 CREATE TABLE [dbo].[BusinessReasons]
 (
     [ReasonId] UNIQUEIDENTIFIER NOT NULL,
@@ -318,11 +340,13 @@ CREATE TABLE [dbo].[AccountingPostingJobs]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [LastAttemptAt] DATETIMEOFFSET(7) NULL,
     [CompletedAt] DATETIMEOFFSET(7) NULL,
+    [ResolvedCostCenterId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_AccountingPostingJobs] PRIMARY KEY CLUSTERED ([AccountingPostingJobId]),
     CONSTRAINT [UQ_AccountingPostingJobs_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [FK_AccountingPostingJobs_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_AccountingPostingJobs_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [FK_AccountingPostingJobs_ResolvedCostCenter] FOREIGN KEY ([BusinessId],[ResolvedCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([BusinessId],[CostCenterId]),
     CONSTRAINT [CK_AccountingPostingJobs_Status] CHECK ([Status] IN (N'Pending',N'AccountingPendingConfiguration',N'CommercialEffectsApplied',N'Posted')),
     CONSTRAINT [CK_AccountingPostingJobs_Attempts] CHECK ([AttemptCount]>=0)
 );
@@ -369,7 +393,11 @@ CREATE TABLE [dbo].[AccountingEntryLines]
     [LineNumber] INT NOT NULL,
     [AccountId] UNIQUEIDENTIFIER NOT NULL,
     [PartyId] UNIQUEIDENTIFIER NULL,
+    [PartyIdentificationSnapshot] NVARCHAR(80) NULL,
+    [PartyNameSnapshot] NVARCHAR(240) NULL,
     [CostCenterId] UNIQUEIDENTIFIER NULL,
+    [CostCenterCodeSnapshot] NVARCHAR(32) NULL,
+    [CostCenterNameSnapshot] NVARCHAR(160) NULL,
     [Description] NVARCHAR(300) NOT NULL,
     [Debit] DECIMAL(19,4) NOT NULL,
     [Credit] DECIMAL(19,4) NOT NULL,

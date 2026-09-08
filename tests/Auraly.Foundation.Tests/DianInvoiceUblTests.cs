@@ -44,6 +44,40 @@ public sealed class DianInvoiceUblTests
         Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
     }
 
+    [Theory]
+    [InlineData(0.40, 11900.40)]
+    [InlineData(-0.40, 11899.60)]
+    public void Adjustment_to_peso_is_explicit_and_reconciles_the_payable_total(
+        decimal adjustment, decimal payable)
+    {
+        var invoice = CreateInvoice() with
+        {
+            PayableRoundingAmount = adjustment,
+            PayableAmount = payable
+        };
+
+        var built = new DianInvoiceUblBuilder().Build(invoice);
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var total = document.Descendants(DianUblNamespaces.Cac + "LegalMonetaryTotal")
+            .Single();
+
+        Assert.Equal(adjustment.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            total.Element(DianUblNamespaces.Cbc + "PayableRoundingAmount")?.Value);
+        Assert.Equal(payable.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            total.Element(DianUblNamespaces.Cbc + "PayableAmount")?.Value);
+        Assert.True(new DianSchemaValidator().Validate(built.Xml).IsValid);
+    }
+
+    [Fact]
+    public void Zero_adjustment_to_peso_is_not_emitted()
+    {
+        var built = new DianInvoiceUblBuilder().Build(CreateInvoice());
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+
+        Assert.Empty(document.Descendants(
+            DianUblNamespaces.Cbc + "PayableRoundingAmount"));
+    }
+
     [Fact]
     public void Software_security_code_uses_official_sha384_composition()
     {

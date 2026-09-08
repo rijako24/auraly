@@ -38,6 +38,10 @@ public static class AccountingApi
                 : await ExecuteAsync(() => service.SaveBankAccountAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/cost-centers", async (HttpContext context, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListCostCentersAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/cost-center-assignments", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListCostCenterAssignmentsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapPut("/api/commerce/v1/accounting/cost-center-assignments", async (HttpContext context, SaveAccountingCostCenterAssignmentRequest request, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.SaveCostCenterAssignmentAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/periods", async (HttpContext context, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListPeriodsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/account-mappings", async (HttpContext context, AccountingService service, CancellationToken token) =>
@@ -50,6 +54,8 @@ public static class AccountingApi
             await ExecuteAsync(() => service.CreateAccountAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Created($"/api/commerce/v1/accounting/accounts/{value.AccountId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/cost-centers", async (HttpContext context, CreateCostCenterRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.CreateCostCenterAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Created($"/api/commerce/v1/accounting/cost-centers/{value.CostCenterId:D}", value))).RequireAuthorization("accounting.user");
+        endpoints.MapPut("/api/commerce/v1/accounting/cost-centers/{costCenterId:guid}/status", async (HttpContext context, Guid costCenterId, SetAccountingCostCenterStatusRequest request, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.SetCostCenterStatusAsync(context.User.ToAccountingIdentity(), costCenterId, request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/periods", async (HttpContext context, CreateAccountingPeriodRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.CreatePeriodAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Created($"/api/commerce/v1/accounting/periods/{value.PeriodId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapPut("/api/commerce/v1/accounting/account-mappings", async (HttpContext context, SetAccountMappingRequest request, AccountingService service, CancellationToken token) =>
@@ -90,6 +96,12 @@ public static class AccountingApi
             await ExecuteAsync(() => service.GetIncomeStatementAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/reports/exceptions", async (HttpContext context, DateOnly from, DateOnly to, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetExceptionsAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/documents", async (HttpContext context,
+            DateOnly from, DateOnly to, string? documentType, string? status, string? search,
+            int? page, int? pageSize, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListDocumentsAsync(context.User.ToAccountingIdentity(),
+                from, to, documentType, status, search, page ?? 1, pageSize ?? 25, token),
+                Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/compliance/definitions", async (HttpContext context, short? taxYear, ComplianceReportingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListDefinitionsAsync(context.User.ToAccountingIdentity(), taxYear, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/compliance/mappings", async (HttpContext context, short taxYear, string? formatCode, ComplianceReportingService service, CancellationToken token) =>
@@ -105,6 +117,12 @@ public static class AccountingApi
             {
                 var artifact = await service.GetArtifactAsync(context.User.ToAccountingIdentity(), runId, token);
                 return artifact is null ? Results.NotFound() : Results.File(artifact.Content, artifact.MediaType, artifact.FileName);
+            })).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/postings/by-document/{documentId:guid}", async (HttpContext context, Guid documentId, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(async () =>
+            {
+                var value = await service.GetPostingAsync(context.User.ToAccountingIdentity(), documentId, token);
+                return value is null ? Results.NotFound() : Results.Ok(value);
             })).RequireAuthorization("accounting.user");
         return endpoints;
     }

@@ -139,7 +139,7 @@ public sealed class SqlFiscalGenerationWorkStore(
             WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'DebitNote';
             UPDATE fiscal.PurchaseSupportFiscalSnapshots
             SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
-            WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'SupportDocument';
+            WHERE DocumentId=@DocumentId AND @FiscalDocumentType IN(N'SupportDocument',N'SupportDocumentAdjustment');
             UPDATE payroll.ElectronicDocuments
             SET Status=N'Queued'
             WHERE FiscalDocumentId=@DocumentId AND BusinessId=@BusinessId
@@ -158,7 +158,9 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
         var expectedRows = work.FiscalDocumentType is
             FiscalDocumentTypeCodes.CreditNote or FiscalDocumentTypeCodes.DebitNote or
-            FiscalDocumentTypeCodes.SupportDocument or FiscalDocumentTypeCodes.ElectronicPayroll ? 3 : 2;
+            FiscalDocumentTypeCodes.SupportDocument or
+            FiscalDocumentTypeCodes.SupportDocumentAdjustment or
+            FiscalDocumentTypeCodes.ElectronicPayroll ? 3 : 2;
         if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
             throw new InvalidOperationException(
                 "The fiscal generation lease is no longer owned by this worker.");
@@ -207,7 +209,8 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@BusinessId", work.BusinessId);
         command.Parameters.AddWithValue("@WorkerId", work.WorkerId);
         command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
-        var expectedRows = work.FiscalDocumentType == FiscalDocumentTypeCodes.SupportDocument ? 2 : 3;
+        var expectedRows = work.FiscalDocumentType is FiscalDocumentTypeCodes.SupportDocument or
+            FiscalDocumentTypeCodes.SupportDocumentAdjustment ? 2 : 3;
         if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
             throw new InvalidOperationException("The fiscal generation failure could not release its lease.");
         await SqlFiscalStatusSynchronizationOutbox.InsertAsync(

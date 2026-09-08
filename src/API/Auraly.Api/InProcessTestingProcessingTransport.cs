@@ -37,18 +37,7 @@ public sealed class InProcessTestingProcessingTransport(
             var worker = scope.ServiceProvider.GetRequiredService<DocumentProcessingWorker>();
             await worker.ProcessOneAsync(signal, cancellationToken);
 
-            if (string.Equals(
-                    signal.DocumentType,
-                    Auraly.Contracts.Sales.PosSaleDocumentTypes.Invoice,
-                    StringComparison.Ordinal) ||
-                string.Equals(
-                    signal.DocumentType,
-                    Auraly.Contracts.Returns.SalesReturnDocumentTypes.SalesReturn,
-                    StringComparison.Ordinal) ||
-                string.Equals(
-                    signal.DocumentType,
-                    Auraly.Contracts.Purchasing.PurchasingDocumentTypes.GoodsReceipt,
-                    StringComparison.Ordinal))
+            if (FiscalGenerationPolicy.Supports(signal.DocumentType))
             {
                 var fiscal = scope.ServiceProvider.GetRequiredService<FiscalProcessingCoordinator>();
                 await fiscal.RequestGenerationAsync(

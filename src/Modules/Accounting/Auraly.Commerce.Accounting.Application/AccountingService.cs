@@ -11,6 +11,8 @@ public interface IAccountingStore
     Task<bool> IsAccountingEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
     Task<BankAccountView> SaveBankAccountAsync(AccountingUserIdentity user, SaveBankAccountRequest request, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingCostCenterView>> ListCostCentersAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AccountingCostCenterAssignmentView>> ListCostCenterAssignmentsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<AccountingCostCenterAssignmentView> SaveCostCenterAssignmentAsync(AccountingUserIdentity user, SaveAccountingCostCenterAssignmentRequest request, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingPeriodView>> ListPeriodsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingMappingView>> ListMappingsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingCategoryDefinition>> ListCategoryDefinitionsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
@@ -25,10 +27,12 @@ public interface IAccountingStore
     Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request, CancellationToken cancellationToken);
     Task<AccountingAccountView> CreateAccountAsync(AccountingUserIdentity user, CreateAccountingAccountRequest request, CancellationToken cancellationToken);
     Task<AccountingCostCenterView> CreateCostCenterAsync(AccountingUserIdentity user, CreateCostCenterRequest request, CancellationToken cancellationToken);
+    Task<AccountingCostCenterView> SetCostCenterStatusAsync(AccountingUserIdentity user, Guid costCenterId, bool isActive, CancellationToken cancellationToken);
     Task<AccountingPeriodView> CreatePeriodAsync(AccountingUserIdentity user, CreateAccountingPeriodRequest request, CancellationToken cancellationToken);
     Task SetMappingAsync(AccountingUserIdentity user, SetAccountMappingRequest request, CancellationToken cancellationToken);
     Task ClosePeriodAsync(AccountingUserIdentity user, Guid periodId, CancellationToken cancellationToken);
     Task<AccountingPostingView?> RetryPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
+    Task<AccountingPostingView?> GetPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<AccountingEntryView?> GetEntryAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TrialBalanceRow>> GetTrialBalanceAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to, CancellationToken cancellationToken);
@@ -37,12 +41,31 @@ public interface IAccountingStore
     Task<IReadOnlyList<FinancialStatementRow>> GetBalanceSheetAsync(AccountingUserIdentity user, DateOnly asOf, CancellationToken cancellationToken);
     Task<IReadOnlyList<FinancialStatementRow>> GetIncomeStatementAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingExceptionRow>> GetExceptionsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
+    Task<AccountingDocumentPage> ListDocumentsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken);
 }
 
 public sealed class AccountingService(
     IAccountingStore store,
     AccountingProcessingCoordinator processing)
 {
+    public Task<IReadOnlyList<AccountingCostCenterAssignmentView>> ListCostCenterAssignmentsAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        return store.ListCostCenterAssignmentsAsync(user, cancellationToken);
+    }
+
+    public Task<AccountingCostCenterAssignmentView> SaveCostCenterAssignmentAsync(
+        AccountingUserIdentity user, SaveAccountingCostCenterAssignmentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Configure);
+        if (request.AssignmentId == Guid.Empty || request.BusinessId != user.BusinessId ||
+            request.CostCenterId == Guid.Empty ||
+            !AccountingCostCenterOperationKinds.IsValid(request.OperationKind))
+            throw new AccountingValidationException("The cost-center assignment is invalid.");
+        return store.SaveCostCenterAssignmentAsync(user, request, cancellationToken);
+    }
     public async Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(
         AccountingUserIdentity user, ConfirmAccountAdjustmentRequest request,
         CancellationToken cancellationToken = default)
@@ -59,9 +82,11 @@ public sealed class AccountingService(
         ValidateText(request.ConceptCode, 40, "Concept code");
         ValidateText(request.Description, 500, "Description");
         var result = await store.ConfirmAccountAdjustmentAsync(user, request, cancellationToken);
-        if (!result.IsDuplicate)
-            await processing.RequestPostingAsync(user.BusinessId, result.DocumentId,
-                result.DocumentType, cancellationToken);
+        // The durable job is authoritative. Publishing is only a wake-up signal,
+        // so a replay must publish again while that job is still pending. The
+        // coordinator gate suppresses the signal once it is already posted.
+        await processing.RequestPostingAsync(user.BusinessId, result.DocumentId,
+            result.DocumentType, cancellationToken);
         return result;
     }
 
@@ -88,9 +113,8 @@ public sealed class AccountingService(
         if (debit <= 0 || decimal.Round(debit, 4) != decimal.Round(credit, 4))
             throw new AccountingValidationException("The manual voucher is not balanced.");
         var result = await store.ConfirmManualVoucherAsync(user, request, cancellationToken);
-        if (!result.IsDuplicate)
-            await processing.RequestPostingAsync(user.BusinessId, result.DocumentId,
-                result.DocumentType, cancellationToken);
+        await processing.RequestPostingAsync(user.BusinessId, result.DocumentId,
+            result.DocumentType, cancellationToken);
         return result;
     }
     public Task<AccountingReadinessView> GetReadinessAsync(
@@ -269,6 +293,18 @@ public sealed class AccountingService(
         return store.CreateCostCenterAsync(user, request with { Code = request.Code.Trim(), Name = request.Name.Trim() }, cancellationToken);
     }
 
+    public Task<AccountingCostCenterView> SetCostCenterStatusAsync(
+        AccountingUserIdentity user, Guid costCenterId,
+        SetAccountingCostCenterStatusRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Configure);
+        if (costCenterId == Guid.Empty)
+            throw new AccountingValidationException("The cost center ID is required.");
+        return store.SetCostCenterStatusAsync(user, costCenterId, request.IsActive,
+            cancellationToken);
+    }
+
     public Task<AccountingPeriodView> CreatePeriodAsync(AccountingUserIdentity user, CreateAccountingPeriodRequest request, CancellationToken cancellationToken = default)
     {
         Demand(user, AccountingPermissionCodes.PeriodsManage);
@@ -303,6 +339,16 @@ public sealed class AccountingService(
         Demand(user, AccountingPermissionCodes.Retry);
         if (documentId == Guid.Empty) throw new AccountingValidationException("DocumentId is required.");
         return store.RetryPostingAsync(user, documentId, cancellationToken);
+    }
+
+    public Task<AccountingPostingView?> GetPostingAsync(
+        AccountingUserIdentity user, Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        if (documentId == Guid.Empty)
+            throw new AccountingValidationException("DocumentId is required.");
+        return store.GetPostingAsync(user, documentId, cancellationToken);
     }
 
     public Task<AccountingEntryView?> GetEntryAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken = default)
@@ -368,6 +414,18 @@ public sealed class AccountingService(
         return store.GetExceptionsAsync(user, from, to, cancellationToken);
     }
 
+    public Task<AccountingDocumentPage> ListDocumentsAsync(
+        AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
+        string? status, string? search, int page, int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateReport(user, from, to);
+        if (page < 1 || pageSize is < 1 or > 100)
+            throw new AccountingValidationException("The accounting document pagination is invalid.");
+        return store.ListDocumentsAsync(user, from, to, Normalize(documentType),
+            Normalize(status), Normalize(search), page, pageSize, cancellationToken);
+    }
+
     private static void ValidateReport(AccountingUserIdentity user, DateOnly from, DateOnly to)
     {
         Demand(user, AccountingPermissionCodes.Read);
@@ -386,6 +444,9 @@ public sealed class AccountingService(
         if (string.IsNullOrWhiteSpace(value) || value.Trim().Length > maximum)
             throw new AccountingValidationException($"{label} is required and limited to {maximum} characters.");
     }
+
+    private static string? Normalize(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
 public sealed class AccountingForbiddenException(string message) : Exception(message);

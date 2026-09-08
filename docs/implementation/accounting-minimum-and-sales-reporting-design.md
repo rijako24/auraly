@@ -16,8 +16,12 @@ Los cuatro motores durables son:
 
 En Service Bus cada cola exige sesiones y usa `SessionId = BusinessId`. La
 configuración contable de una empresa debe estar en estado `Ready` y la fecha
-del documento debe ser igual o posterior a `EffectiveFrom`; antes de eso no se
-crea `AccountingPostingJob` ni se publica una señal contable.
+del documento debe ser igual o posterior a `EffectiveFrom` para generar asiento.
+El modo queda congelado en la fuente y en `AccountingPostingJob`: cuando la
+contabilidad está desactivada, el mismo motor aplica únicamente efectos
+comerciales necesarios —cartera, recaudos y caja— y termina en
+`CommercialEffectsApplied`, sin cuentas ni asiento y sin contabilización
+retroactiva al activar la empresa después.
 
 ## Documento contable manual
 
@@ -54,10 +58,48 @@ La API y la vista de Contabilidad exponen:
 
 Todos esos informes leen `AccountingEntries` y `AccountingEntryLines`. No
 reconstruyen cifras consultando facturas, compras o movimientos operacionales.
-Los auxiliares por tercero/centro, cambios en patrimonio y flujo de efectivo
-permanecen como evolución del juego completo de estados. La base fiscal y
+Los cambios en patrimonio y flujo de efectivo permanecen como evolución del
+juego completo de estados. La base fiscal y
 exógena versionada sí queda implementada con definiciones normativas, mapeos
 explícitos, ejecuciones inmutables, validaciones y artefactos conciliables.
+
+## Trazabilidad financiera y centros de costo
+
+`Trazabilidad financiera` es el acceso transversal de consulta, separado de la
+configuración de Contabilidad. Compone documentos operativos, estado contable y
+estado fiscal sin crear otro libro ni otra proyección propietaria. El detalle de
+cualquier documento consulta el asiento por `BusinessId + SourceDocumentId` y
+muestra fecha, comprobante, cuentas, débitos, créditos, tercero y centro de costo
+con los nombres congelados al contabilizar. El mismo diálogo se reutiliza desde
+facturas, notas, recepciones, gastos e inventario. Los reportes usan el visor
+nativo común y conservan impresión/PDF y exportación tabular.
+
+Todo asiento exige centro de costo. El aprovisionamiento contable crea uno
+general activo y éste no puede desactivarse mientras sea el único centro activo.
+La resolución automática usa una única jerarquía canónica: centro explícito del
+documento cuando el flujo lo admite; asignación vigente por operación y,
+opcionalmente, contexto de bodega; asignación general; centro general del perfil.
+La bodega no es una dimensión obligatoria ni se infiere como centro: sólo hace
+más específica una regla funcional configurada. El trabajo contable congela el
+identificador resuelto y el asiento congela además nombre y código; cambiar un
+maestro después no reescribe historia.
+
+Una excepción no desaparece. El processor revierte la transacción fallida,
+persiste estado, intento y error del trabajo durable y vuelve a señalar la falla.
+El reintento reconstruye únicamente el job o la fuente durable que falte y la
+unicidad del documento impide un segundo asiento. Los documentos contabilizables
+sin job/asiento también aparecen en excepciones y bloquean el cierre del periodo.
+El auxiliar calcula el saldo acumulado incluyendo movimientos anteriores al rango
+y luego filtra la presentación, evitando presentar como saldo inicial cero una
+cuenta que ya tenía historia.
+
+El ajuste al peso no se oculta dentro del ingreso ni se recalcula al contabilizar.
+La venta congela el importe explícito que explica la diferencia entre subtotal más
+impuestos y total a pagar. Si es positivo se acredita `RoundingGain`; si es negativo
+se debita `RoundingLoss`. Caja o cartera siempre reciben el total efectivamente
+cobrado o financiado, por lo que el comprobante permanece balanceado y el mismo
+importe llega al UBL fiscal como `PayableRoundingAmount`. Un documento sin ajuste
+conserva cero y no genera una línea artificial.
 
 ## Informes fiscales e información exógena
 
@@ -131,14 +173,21 @@ Para reproducir el patrón en otro proceso:
 
 La rebanada se cierra únicamente si pasan sobre SQL Server real:
 
-- empresa sin configuración: cero trabajo y cero señal contable;
+- empresa sin configuración: los efectos comerciales requeridos se completan
+  una vez, con cero asientos y modo contable congelado en falso;
 - activación `Ready`: documentos posteriores producen trabajo y asiento;
 - ventas, devoluciones, compras, devoluciones de compra, gastos, recaudos,
   pagos y caja contabilizan balanceados e idempotentes;
+- una factura con ajuste al peso conserva el ajuste en el snapshot, UBL y cuenta
+  separada, sin alterar líneas ni impuestos;
 - notas débito/crédito de CxC y CxP modifican saldo, guardan transacción firmada
   y producen la naturaleza contable esperada;
 - comprobante manual válido contabiliza una vez y uno desbalanceado se rechaza;
 - diario, mayor, estados, balance de prueba y excepciones concilian;
+- cada documento económico aparece en Trazabilidad financiera y abre el mismo
+  asiento balanceado que su módulo de origen;
+- el centro de costo general existe siempre, las reglas automáticas respetan su
+  vigencia y una falla deja evidencia reintentable sin huecos invisibles;
 - reporting de venta/devolución concilia macro, dimensiones y detalle.
 - el catálogo fiscal coincide con autoridad/año/formato/versión/resolución;
 - un corte sin mapeo o con tercero incompleto queda bloqueado;

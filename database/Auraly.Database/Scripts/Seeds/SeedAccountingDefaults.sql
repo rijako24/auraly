@@ -30,6 +30,8 @@ USING (VALUES
   (N'OwnerContributions',N'Aportes del propietario',N'311505',N'Aportes del propietario',N'Equity',0,19),
   (N'SalesRevenue',N'Ingresos por ventas',N'413595',N'Ingresos por venta de mercancías',N'Revenue',0,20),
   (N'ServiceRevenue',N'Ingresos por servicios',N'415525',N'Ingresos por servicios de software',N'Revenue',0,52),
+  (N'RoundingGain',N'Ajuste al peso a favor',N'429598',N'Ingresos por aproximaciones',N'Revenue',0,58),
+  (N'RoundingLoss',N'Ajuste al peso en contra',N'539598',N'Gastos por aproximaciones',N'Expense',0,59),
   (N'SalesReturns',N'Devoluciones en ventas',N'417595',N'Devoluciones en ventas',N'ContraRevenue',0,21),
   (N'OtherIncome',N'Otros ingresos de caja',N'429595',N'Otros ingresos',N'Revenue',0,22),
   (N'CashOverageIncome',N'Sobrantes de caja',N'429596',N'Sobrantes de caja',N'Revenue',0,23),

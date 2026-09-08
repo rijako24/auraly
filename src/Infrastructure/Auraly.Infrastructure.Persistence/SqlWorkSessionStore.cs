@@ -925,10 +925,10 @@ public sealed partial class SqlWorkSessionStore(
             BEGIN
                 INSERT dbo.AccountingSourceDocuments
                   (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
+                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
                 VALUES
                   (@DocumentId,N'WorkSessionCashDifference',@TenantId,@BusinessId,
-                   @Payload,@Hash,@OccurredAt,@OccurredAt);
+                   @Payload,@Hash,@OccurredAt,@OccurredAt,1);
 
                 INSERT dbo.AccountingPostingJobs
                   (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,

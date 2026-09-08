@@ -543,9 +543,11 @@ public sealed class SqlFiscalOnboardingStore(
                    @ValidFrom=ValidFrom,@ValidUntil=ValidUntil
             FROM fiscal.DianNumberingRanges WITH(UPDLOCK,HOLDLOCK)
             WHERE DianNumberingRangeId=@RangeId AND TenantId=@TenantId
-              AND AssignedBusinessId IS NULL AND ValidUntil>=CONVERT(date,@Now);
+              AND AssignedBusinessId IS NULL
+              AND ValidFrom<=CONVERT(date,@Now)
+              AND ValidUntil>=CONVERT(date,@Now);
             IF @AuthorizationNumber IS NULL
-                THROW 51022,'La resolución de documento soporte ya fue asignada, venció o no existe.',1;
+                THROW 51022,'La resolución de documento soporte ya fue asignada, aún no está vigente, venció o no existe.',1;
             SELECT @SupplierTaxId=SupplierTaxId
             FROM dbo.FiscalIssuerConfigurations
             WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1;

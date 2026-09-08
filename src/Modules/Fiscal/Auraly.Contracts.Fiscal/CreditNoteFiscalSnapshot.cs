@@ -2,6 +2,7 @@ using System.Text.Json;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.Purchasing;
+using Auraly.Contracts.Expenses;
 
 namespace Auraly.Contracts.Fiscal;
 
@@ -11,6 +12,7 @@ public static class FiscalDocumentTypeCodes
     public const string CreditNote = "CreditNote";
     public const string DebitNote = "DebitNote";
     public const string SupportDocument = "SupportDocument";
+    public const string SupportDocumentAdjustment = "SupportDocumentAdjustment";
     public const string ElectronicPayroll = "ElectronicPayroll";
 }
 
@@ -19,7 +21,7 @@ public sealed record PurchaseSupportLineMetadata(
     string UnitCode, string TaxName);
 
 public sealed record PurchaseSupportFiscalSnapshot(
-    GoodsReceiptDocumentPayload Receipt,
+    GoodsReceiptDocumentPayload? Receipt,
     Guid FiscalIssuerConfigurationId,
     string FiscalNumber,
     int Environment,
@@ -27,7 +29,12 @@ public sealed record PurchaseSupportFiscalSnapshot(
     PosSaleUblPartyContract Seller,
     PosSaleUblAuthorizationContract Authorization,
     IReadOnlyList<PurchaseSupportLineMetadata> Lines,
-    string SellerOriginCode = "10");
+    string SellerOriginCode = "10",
+    ExpenseDocumentPayload? Expense = null,
+    PurchaseReturnDocumentPayload? Adjustment = null,
+    string? OriginalSupportNumber = null,
+    string? OriginalSupportCuds = null,
+    DateOnly? OriginalSupportIssuedOn = null);
 
 public static class PurchaseSupportFiscalSnapshotSerializer
 {

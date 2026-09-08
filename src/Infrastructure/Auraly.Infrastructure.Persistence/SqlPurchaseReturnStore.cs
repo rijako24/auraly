@@ -5,6 +5,7 @@ using System.Text.Json;
 using Auraly.Application.Purchasing;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
 using Microsoft.Data.SqlClient;
@@ -192,8 +193,19 @@ public sealed class SqlPurchaseReturnStore(
             var net=lines.Sum(line=>line.NetAmount);
             var tax=lines.Sum(line=>line.TaxAmount);
             var total=lines.Sum(line=>line.LineTotal);
-            var number=await AllocateNumberAsync(connection,transaction,user.BusinessId,cancellationToken);
             var now=timeProvider.GetUtcNow();
+            SqlGoodsReceiptStore.SupportFiscalAllocation? supportAdjustment = null;
+            if (original.Support is not null &&
+                !await SqlDianDocumentQuota.TryReserveAsync(connection, transaction,
+                    user.BusinessId, request.ReturnId, "SupportDocument", now,
+                    cancellationToken))
+                throw new PurchasingValidationException(
+                    "No hay cupo de documentos DIAN para generar la nota de ajuste del documento soporte.");
+            if (original.Support is not null)
+                supportAdjustment = await SqlGoodsReceiptStore.AllocateSupportFiscalAsync(
+                    connection, transaction, user.BusinessId, original.SupplierId,
+                    request.ReturnedAt, now, cancellationToken);
+            var number=await AllocateNumberAsync(connection,transaction,user.BusinessId,cancellationToken);
             var sequence=await AllocateSequenceAsync(connection,transaction,user.BusinessId,now,cancellationToken);
             var payload=new PurchaseReturnDocumentPayload(
                 user.TenantId,user.BusinessId,request.ReturnId,request.OriginalGoodsReceiptId,
@@ -207,6 +219,9 @@ public sealed class SqlPurchaseReturnStore(
             await InsertAsync(connection,transaction,request,user,original,number,
                 idempotencyKey,requestHash,net,tax,total,lines,jobId,sequence,
                 payloadJson,payloadHash,now,cancellationToken);
+            if (original.Support is not null)
+                await InsertSupportAdjustmentFiscalAsync(connection, transaction,
+                    payload, original.Support, supportAdjustment!, now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new PurchaseReturnAcceptance(request.ReturnId,jobId,number.FullNumber,
                 "Accepted",sequence,false);
@@ -258,9 +273,17 @@ public sealed class SqlPurchaseReturnStore(
         CancellationToken cancellationToken)
     {
         await using var command=new SqlCommand("""
-            SELECT r.WarehouseId,r.SupplierId,r.ReceivedAt,r.CurrencyCode
+            SELECT r.WarehouseId,r.SupplierId,r.ReceivedAt,r.CurrencyCode,
+                   fiscal.FiscalNumber,fiscal.UniqueCode,fiscal.IssuedAt,
+                   fiscal.FiscalStatus,snapshot.SnapshotJson
             FROM dbo.GoodsReceipts r WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
+            LEFT JOIN dbo.FiscalDocuments fiscal
+              ON fiscal.DocumentId=r.GoodsReceiptId
+             AND fiscal.BusinessId=r.BusinessId
+             AND fiscal.FiscalDocumentType=N'SupportDocument'
+            LEFT JOIN fiscal.PurchaseSupportFiscalSnapshots snapshot
+              ON snapshot.DocumentId=fiscal.DocumentId
             WHERE r.GoodsReceiptId=@Id AND r.BusinessId=@BusinessId AND r.Status=N'Processed';
             """,connection,transaction);
         command.Parameters.AddWithValue("@Id",request.OriginalGoodsReceiptId);
@@ -270,8 +293,22 @@ public sealed class SqlPurchaseReturnStore(
         if(!await reader.ReadAsync(cancellationToken))
             throw new PurchasingValidationException(
                 "The original goods receipt is not processed or is outside the authenticated business.");
+        SupportDocumentReference? support = null;
+        if (!reader.IsDBNull(4))
+        {
+            if (reader.IsDBNull(5) || reader.IsDBNull(8))
+                throw new PurchasingValidationException(
+                    "El documento soporte original todavía no termina su generación fiscal. Reintenta cuando tenga CUDS.");
+            var status = reader.GetString(7);
+            if (status is "DianRejected" or "PermanentFailure")
+                throw new PurchasingValidationException(
+                    "El documento soporte original fue rechazado o falló y no puede recibir una nota de ajuste.");
+            support = new SupportDocumentReference(reader.GetString(4),
+                reader.GetString(5), DateOnly.FromDateTime(reader.GetDateTimeOffset(6).Date),
+                PurchaseSupportFiscalSnapshotSerializer.Deserialize(reader.GetString(8)));
+        }
         var value=new OriginalReceipt(reader.GetGuid(0),reader.GetGuid(1),
-            reader.GetDateTimeOffset(2),reader.GetString(3));
+            reader.GetDateTimeOffset(2),reader.GetString(3),support);
         if(value.CurrencyCode!="COP")
             throw new PurchasingValidationException(
                 "Purchase returns currently require an original receipt in COP.");
@@ -471,6 +508,54 @@ public sealed class SqlPurchaseReturnStore(
         await job.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static async Task InsertSupportAdjustmentFiscalAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        PurchaseReturnDocumentPayload adjustment,
+        SupportDocumentReference original,
+        SqlGoodsReceiptStore.SupportFiscalAllocation allocation,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var originalMetadata = original.Snapshot.Lines.ToDictionary(line => line.LineNumber);
+        var metadata = adjustment.Lines.Select(line =>
+        {
+            if (!originalMetadata.TryGetValue(line.OriginalLineNumber, out var item))
+                throw new PurchasingValidationException(
+                    $"La línea original {line.OriginalLineNumber} no tiene metadatos fiscales inmutables.");
+            return item with { LineNumber = line.LineNumber };
+        }).ToArray();
+        var snapshot = new PurchaseSupportFiscalSnapshot(null,
+            allocation.IssuerConfigurationId, allocation.FiscalNumber,
+            allocation.Environment, allocation.QrValidationUrl, allocation.Seller,
+            allocation.Authorization, metadata, Adjustment: adjustment,
+            OriginalSupportNumber: original.FiscalNumber,
+            OriginalSupportCuds: original.Cuds,
+            OriginalSupportIssuedOn: original.IssuedOn);
+        await using var command = new SqlCommand("""
+            INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
+              AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
+            VALUES(@DocumentId,@BusinessId,N'PurchaseReturn',N'SupportDocumentAdjustment',
+              @DocumentNumber,@FiscalNumber,N'CUDS',NULL,@IssuedAt,@Status,@Now,@Now);
+            INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
+            VALUES(@DocumentId,@SnapshotJson,@Environment,@Now);
+            INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
+              AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
+            VALUES(@DocumentId,@BusinessId,@IssuerId,@Status,0,@Now,@Now,@Now);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", adjustment.ReturnId);
+        command.Parameters.AddWithValue("@BusinessId", adjustment.BusinessId);
+        command.Parameters.AddWithValue("@DocumentNumber", adjustment.DocumentNumber);
+        command.Parameters.AddWithValue("@FiscalNumber", allocation.FiscalNumber);
+        command.Parameters.AddWithValue("@IssuedAt", adjustment.ReturnedAt);
+        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
+        command.Parameters.AddWithValue("@Now", now);
+        command.Parameters.AddWithValue("@SnapshotJson",
+            PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
+        command.Parameters.AddWithValue("@Environment", snapshot.Environment);
+        command.Parameters.AddWithValue("@IssuerId", snapshot.FiscalIssuerConfigurationId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static void AddMoney(SqlCommand command,string name,decimal value)=>
         AddDecimal(command,name,value,19,4);
     private static void AddDecimal(SqlCommand command,string name,decimal value,byte precision,byte scale)
@@ -479,5 +564,7 @@ public sealed class SqlPurchaseReturnStore(
         parameter.Precision=precision;parameter.Scale=scale;parameter.Value=value;
     }
     private sealed record OriginalReceipt(Guid WarehouseId,Guid SupplierId,
-        DateTimeOffset ReceivedAt,string CurrencyCode);
+        DateTimeOffset ReceivedAt,string CurrencyCode,SupportDocumentReference? Support);
+    private sealed record SupportDocumentReference(string FiscalNumber,string Cuds,
+        DateOnly IssuedOn,PurchaseSupportFiscalSnapshot Snapshot);
 }

@@ -169,8 +169,23 @@ public sealed partial class SqlAccountingPostingProcessor(
                 return;
             }
 
-            var costCenterId = await FindDefaultCostCenterAsync(
-                connection, transaction, source.BusinessId, cancellationToken);
+            var costCenterId = facts.PreferredCostCenterId ?? source.ResolvedCostCenterId ??
+                await ResolveAndFreezeCostCenterAsync(
+                    connection, transaction, source, cancellationToken);
+            if (costCenterId is null)
+            {
+                transaction.Rollback("BeforeFinancialEffects");
+                await MarkPendingConfigurationAsync(connection, transaction, source,
+                    "CostCenterMissing",
+                    "No active automatic or default cost center is configured for this operation.",
+                    cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+            if (facts.PreferredCostCenterId is not null &&
+                facts.PreferredCostCenterId != source.ResolvedCostCenterId)
+                await FreezeCostCenterAsync(connection, transaction, source,
+                    facts.PreferredCostCenterId.Value, cancellationToken);
             var lines = AccountingJournal.Validate(
                 facts.BuildLines(accountIds, costCenterId));
             await InsertEntryAsync(
@@ -181,11 +196,54 @@ public sealed partial class SqlAccountingPostingProcessor(
                     connection, transaction, source, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
-        catch
+        catch (Exception error)
         {
             await transaction.RollbackAsync(CancellationToken.None);
+            await RecordTechnicalFailureAsync(
+                documentId, documentType, businessId, error, CancellationToken.None);
             throw;
         }
+    }
+
+    private async Task RecordTechnicalFailureAsync(
+        Guid documentId, string documentType, Guid businessId, Exception error,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var connection = connections.Create();
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand("""
+                UPDATE dbo.AccountingPostingJobs
+                SET Status=N'Pending',AttemptCount=AttemptCount+1,
+                    LastAttemptAt=@Now,LastErrorCode=N'TechnicalProcessingFailure',
+                    LastErrorMessage=@Message
+                WHERE SourceDocumentId=@DocumentId
+                  AND SourceDocumentType=@DocumentType
+                  AND BusinessId=@BusinessId
+                  AND Status NOT IN(N'Posted',N'CommercialEffectsApplied');
+                """, connection);
+            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            command.Parameters.AddWithValue("@Message", SafeErrorMessage(error));
+            command.Parameters.AddWithValue("@DocumentId", documentId);
+            command.Parameters.AddWithValue("@DocumentType", documentType);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (Exception recordingError)
+        {
+            // Preserve the original processing exception. The transport still
+            // retries/dead-letters it and operational logs retain both failures.
+            error.Data["AccountingFailurePersistence"] = recordingError.GetType().Name;
+        }
+    }
+
+    private static string SafeErrorMessage(Exception error)
+    {
+        var message = string.IsNullOrWhiteSpace(error.Message)
+            ? error.GetType().Name
+            : error.Message.Trim();
+        return message.Length <= 1000 ? message : message[..1000];
     }
 
     private static async Task<SourceEnvelope?> LoadSourceEnvelopeAsync(
@@ -199,7 +257,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         const string sql = """
             SELECT a.TenantId,a.BusinessId,a.SourceDocumentId,
                    a.SourceDocumentType,a.SourcePayloadHash,a.OccurredAt,s.PayloadJson,
-                   a.AccountingEntryRequired
+                   a.ResolvedCostCenterId,a.AccountingEntryRequired
             FROM dbo.AccountingPostingJobs a WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.AccountingSourceDocuments s
               ON s.SourceDocumentId=a.SourceDocumentId
@@ -220,7 +278,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         return new SourceEnvelope(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
             reader.GetString(3), (byte[])reader[4], reader.GetDateTimeOffset(5),
-            reader.GetString(6), reader.GetBoolean(7));
+            reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetGuid(7),
+            reader.GetBoolean(8));
     }
 
     private static FinancialFacts LoadWorkSessionCashDifferenceFacts(
@@ -455,6 +514,96 @@ public sealed partial class SqlAccountingPostingProcessor(
         return value is Guid id ? id : null;
     }
 
+    private static async Task<Guid?> ResolveAndFreezeCostCenterAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        var operationKind = OperationKind(source.DocumentType);
+        await using var command = new SqlCommand("""
+            DECLARE @WarehouseId uniqueidentifier=NULL;
+            IF @DocumentType IN (N'SalesInvoice',N'ServiceInvoice',N'SalesReceipt')
+              SELECT @WarehouseId=WarehouseId FROM dbo.SalesDocuments
+               WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+            ELSE IF @DocumentType=N'SalesReturn'
+              SELECT @WarehouseId=WarehouseId FROM dbo.SalesReturns
+               WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
+            ELSE IF @DocumentType=N'GoodsReceipt'
+              SELECT @WarehouseId=WarehouseId FROM dbo.GoodsReceipts
+               WHERE GoodsReceiptId=@DocumentId AND BusinessId=@BusinessId;
+            ELSE IF @DocumentType=N'GoodsReceiptCostDocument'
+              SELECT @WarehouseId=r.WarehouseId FROM purchasing.GoodsReceiptCostDocuments d
+               INNER JOIN dbo.GoodsReceipts r ON r.GoodsReceiptId=d.GoodsReceiptId
+               WHERE d.CostDocumentId=@DocumentId AND r.BusinessId=@BusinessId;
+            ELSE IF @DocumentType=N'WarehouseTransferReceipt'
+              SELECT @WarehouseId=DestinationWarehouseId FROM dbo.InventoryTransferReceipts
+               WHERE InventoryTransferReceiptId=@DocumentId AND BusinessId=@BusinessId;
+            ELSE IF @OperationKind=N'Inventory'
+              SELECT @WarehouseId=WarehouseId FROM dbo.InventoryOperations
+               WHERE InventoryOperationId=@DocumentId AND BusinessId=@BusinessId;
+
+            DECLARE @Resolved uniqueidentifier=(
+              SELECT TOP(1) assignment.CostCenterId
+              FROM dbo.AccountingCostCenterAssignments assignment
+              INNER JOIN dbo.AccountingCostCenters center
+                ON center.CostCenterId=assignment.CostCenterId
+               AND center.BusinessId=assignment.BusinessId AND center.IsActive=1
+              WHERE assignment.TenantId=@TenantId
+                AND assignment.BusinessId=@BusinessId AND assignment.IsActive=1
+                AND assignment.OperationKind IN (@OperationKind,N'All')
+                AND (assignment.WarehouseId=@WarehouseId OR assignment.WarehouseId IS NULL)
+              ORDER BY CASE WHEN assignment.OperationKind=@OperationKind THEN 0 ELSE 1 END,
+                       CASE WHEN assignment.WarehouseId=@WarehouseId AND @WarehouseId IS NOT NULL THEN 0 ELSE 1 END,
+                       assignment.UpdatedAt DESC);
+            IF @Resolved IS NULL
+              SELECT @Resolved=CostCenterId FROM dbo.AccountingCostCenters
+               WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1;
+            UPDATE dbo.AccountingPostingJobs SET ResolvedCostCenterId=@Resolved
+             WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType
+               AND BusinessId=@BusinessId AND ResolvedCostCenterId IS NULL;
+            SELECT @Resolved;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", source.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
+        command.Parameters.AddWithValue("@OperationKind", operationKind);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is Guid id ? id : null;
+    }
+
+    private static async Task FreezeCostCenterAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        Guid costCenterId, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.AccountingCostCenters
+              WHERE BusinessId=@BusinessId AND CostCenterId=@CostCenterId AND IsActive=1)
+              THROW 51410,N'The preferred accounting cost center is not active for the business.',1;
+            UPDATE dbo.AccountingPostingJobs SET ResolvedCostCenterId=@CostCenterId
+             WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType
+               AND BusinessId=@BusinessId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        command.Parameters.AddWithValue("@CostCenterId", costCenterId);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static string OperationKind(string documentType) => documentType switch
+    {
+        "SalesInvoice" or "ServiceInvoice" or "SalesReceipt" or "SalesReturn" or
+            "SalesDebitNote" or "ReceivablePayment" => "Sales",
+        "GoodsReceipt" or "GoodsReceiptCostDocument" or "PurchaseReturn" or
+            "PayablePayment" => "Purchasing",
+        "Expense" => "Expenses",
+        InventoryDocumentTypes.StockCount or InventoryDocumentTypes.Adjustment or
+            InventoryDocumentTypes.Damage or InventoryDocumentTypes.Conversion or
+            InventoryDocumentTypes.TransferReceipt => "Inventory",
+        _ => "All"
+    };
+
     private static async Task<FinancialFacts> LoadInvoiceFactsAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -519,8 +668,10 @@ public sealed partial class SqlAccountingPostingProcessor(
         if (paid > total) throw new InvalidOperationException("Payments exceed the immutable invoice total.");
         if (paid < total) payments.Add((AccountingCategories.AccountsReceivable, total - paid));
         var cost = await InventoryCostAsync(connection, transaction, source.DocumentId, source.DocumentType, cancellationToken);
+        var roundingAdjustment = decimal.Round(total - untaxed - tax, 4,
+            MidpointRounding.AwayFromZero);
         return FinancialFacts.Invoice(number, partyId, untaxed, tax, total, cost,
-            payments, revenueCategory);
+            payments, revenueCategory, roundingAdjustment);
     }
 
     private static async Task<FinancialFacts> LoadReturnFactsAsync(
@@ -1131,8 +1282,16 @@ public sealed partial class SqlAccountingPostingProcessor(
             var line = lines[index];
             await using var command = new SqlCommand("""
                 INSERT dbo.AccountingEntryLines
-                (EntryId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit)
-                VALUES(@EntryId,@LineNumber,@AccountId,@PartyId,@CostCenterId,@Description,@Debit,@Credit);
+                (EntryId,LineNumber,AccountId,PartyId,PartyIdentificationSnapshot,
+                 PartyNameSnapshot,CostCenterId,CostCenterCodeSnapshot,
+                 CostCenterNameSnapshot,Description,Debit,Credit)
+                SELECT @EntryId,@LineNumber,@AccountId,@PartyId,
+                       party.Identification,party.DisplayName,@CostCenterId,
+                       center.Code,center.Name,@Description,@Debit,@Credit
+                FROM (VALUES(1)) seed(Value)
+                LEFT JOIN dbo.Parties party ON party.PartyId=@PartyId
+                LEFT JOIN dbo.AccountingCostCenters center
+                  ON center.CostCenterId=@CostCenterId;
                 """, connection, transaction);
             command.Parameters.AddWithValue("@EntryId", entryId); command.Parameters.AddWithValue("@LineNumber", index + 1);
             command.Parameters.AddWithValue("@AccountId", line.AccountId); command.Parameters.AddWithValue("@PartyId", (object?)line.PartyId ?? DBNull.Value);
@@ -1274,6 +1433,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         byte[] PayloadHash,
         DateTimeOffset OccurredAt,
         string PayloadJson,
+        Guid? ResolvedCostCenterId,
         bool AccountingEntryRequired);
 
     private sealed record FinancialFactsResult(
@@ -1296,7 +1456,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         Guid? DirectExpenseAccountId = null,
         IReadOnlyList<ManualLineSpec>? DirectLines = null,
         IReadOnlyList<CategoryLineSpec>? DirectCategoryLines = null,
-        string RevenueCategory = AccountingCategories.SalesRevenue)
+        string RevenueCategory = AccountingCategories.SalesRevenue,
+        decimal RoundingAdjustment = 0m)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -1333,6 +1494,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 }
                 values.Add(IsReturn ? AccountingCategories.SalesReturns : RevenueCategory);
                 if (Tax > 0) values.Add(AccountingCategories.OutputVat);
+                if (RoundingAdjustment > 0) values.Add(AccountingCategories.RoundingGain);
+                if (RoundingAdjustment < 0) values.Add(AccountingCategories.RoundingLoss);
                 if (Cost > 0) { values.Add(AccountingCategories.Inventory); values.Add(AccountingCategories.CostOfGoodsSold); }
                 return values;
             }
@@ -1415,6 +1578,12 @@ public sealed partial class SqlAccountingPostingProcessor(
                 foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
                 yield return new(accounts[RevenueCategory], 0, Untaxed, PartyId, costCenter, Description);
                 if (Tax > 0) yield return new(accounts[AccountingCategories.OutputVat], 0, Tax, PartyId, costCenter, Description);
+                if (RoundingAdjustment > 0)
+                    yield return new(accounts[AccountingCategories.RoundingGain], 0,
+                        RoundingAdjustment, PartyId, costCenter, Description);
+                if (RoundingAdjustment < 0)
+                    yield return new(accounts[AccountingCategories.RoundingLoss],
+                        -RoundingAdjustment, 0, PartyId, costCenter, Description);
                 if (Cost > 0) { yield return new(accounts[AccountingCategories.CostOfGoodsSold], Cost, 0, PartyId, costCenter, Description); yield return new(accounts[AccountingCategories.Inventory], 0, Cost, PartyId, costCenter, Description); }
             }
             else
@@ -1425,7 +1594,13 @@ public sealed partial class SqlAccountingPostingProcessor(
                 if (Cost > 0) { yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description); yield return new(accounts[AccountingCategories.CostOfGoodsSold], 0, Cost, PartyId, costCenter, Description); }
             }
         }
-        public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements, string revenueCategory = AccountingCategories.SalesRevenue) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false, false, RevenueCategory: revenueCategory);
+        public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed,
+            decimal tax, decimal total, decimal cost,
+            IReadOnlyList<(string Category, decimal Amount)> settlements,
+            string revenueCategory = AccountingCategories.SalesRevenue,
+            decimal roundingAdjustment = 0m) => new($"Factura de venta {number}", party,
+                untaxed, tax, total, cost, settlements, false, false, false, false,
+                RevenueCategory: revenueCategory, RoundingAdjustment: roundingAdjustment);
         public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false);
         public static FinancialFacts DebitNote(string number, Guid party, decimal untaxed, decimal tax, decimal total) =>
             new($"Nota débito de venta {number}", party, untaxed, tax, total, 0,

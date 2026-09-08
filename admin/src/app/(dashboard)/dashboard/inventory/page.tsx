@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Boxes, ChevronDown, ChevronUp, History, Plus, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { InventoryOperationWorkspace } from "@/components/inventory/inventory-operation-workspace";
+import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { InventoryPhysicalCountWorkspace, InventoryReconciliationDialog, type PhysicalCountDraftSelection } from "@/components/inventory/inventory-physical-count-workspace";
 import { DataTablePagination } from "@/components/tables/data-table-pagination";
@@ -93,12 +94,13 @@ function BalanceTable({items,loading,valuationBasis}:{items:InventoryBalanceItem
 function SimpleTable({headers,rows,loading,onRowClick}:{headers:string[];rows:React.ReactNode[][];loading:boolean;onRowClick?:(index:number)=>void}){return <Card><CardContent className="overflow-x-auto p-0"><table className="w-full text-sm"><thead className="border-b bg-muted/50"><tr>{headers.map(h=><th key={h} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">{h}</th>)}</tr></thead><tbody>{loading?<tr><td colSpan={headers.length} className="p-10 text-center">Cargando…</td></tr>:rows.length===0?<tr><td colSpan={headers.length} className="p-10 text-center text-muted-foreground">No hay información para los filtros seleccionados.</td></tr>:rows.map((row,i)=><tr key={i} onClick={()=>onRowClick?.(i)} className={`border-b last:border-0 ${onRowClick?"cursor-pointer transition-colors hover:bg-muted/40":""}`}>{row.map((cell,j)=><td key={j} className="px-4 py-3 align-middle">{cell}</td>)}</tr>)}</tbody></table></CardContent></Card>}
 function Signed({value}:{value:number}){return <span className={value<0?"font-semibold text-red-600":"font-semibold text-emerald-600"}>{value>0?"+":""}{fmt(value)}</span>}
 function InventoryDetailDialog({detail,onClose}:{detail?:InventoryOperationDetail;onClose:()=>void}){
+ const [showAccounting,setShowAccounting]=useState(false);
  if(!detail)return null;
  const isCount=detail.documentType==="StockCount";
  const isConversion=detail.documentType==="ProductConversion";
  const isTransfer=detail.documentType==="WarehouseTransfer";
  const countValue=isCount?detail.lines.reduce((total,line)=>total+(line.processedUnitCost??0)*Math.abs(line.quantity??0),0):null;
- return <Dialog open onOpenChange={value=>!value&&onClose()}><DialogContent className="flex max-h-[92dvh] max-w-5xl flex-col overflow-hidden p-0">
+ return <><Dialog open={!showAccounting} onOpenChange={value=>!value&&onClose()}><DialogContent className="flex max-h-[92dvh] max-w-5xl flex-col overflow-hidden p-0">
   <DialogHeader className="border-b px-6 py-5"><DialogTitle>{detail.documentNumber??"Documento en preparación"}</DialogTitle><DialogDescription>{documentLabels[detail.documentType]??detail.documentType} · documento inmutable y trazable</DialogDescription></DialogHeader>
   <div className="space-y-5 overflow-y-auto px-6 py-5">
    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -134,8 +136,8 @@ function InventoryDetailDialog({detail,onClose}:{detail?:InventoryOperationDetai
    </table></div>
    {detail.notes&&<div className="rounded-2xl border bg-muted/30 p-4"><p className="text-xs font-medium uppercase text-muted-foreground">Observaciones</p><p className="mt-1">{detail.notes}</p></div>}
   </div>
-  <DialogFooter className="border-t px-6 py-4"><Button onClick={onClose}>Cerrar</Button></DialogFooter>
- </DialogContent></Dialog>;
+  <DialogFooter className="border-t px-6 py-4"><Button variant="outline" onClick={()=>setShowAccounting(true)}>Ver contabilización</Button><Button onClick={onClose}>Cerrar</Button></DialogFooter>
+ </DialogContent></Dialog><AccountingDocumentDialog documentId={showAccounting?detail.documentId:undefined} sourceLabel={detail.documentNumber??"Operación de inventario"} onClose={()=>setShowAccounting(false)}/></>;
 }
 function DetailCard({label,value}:{label:string;value:string}){return <div className="rounded-2xl border bg-muted/20 p-4"><p className="text-xs font-medium uppercase text-muted-foreground">{label}</p><p className="mt-1 text-sm">{value}</p></div>}
 function countDifference(line:InventoryOperationDetail["lines"][number]){return (line.quantity??0)-(line.preCountQuantity??0);}

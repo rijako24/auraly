@@ -85,7 +85,8 @@ public sealed record DianInvoice(
     string CustomizationId = "10",
     string ProfileId = "DIAN 2.1: Factura Electrónica de Venta",
     string UniqueCodeScheme = "CUFE-SHA384",
-    bool BuyerGenerated = false)
+    bool BuyerGenerated = false,
+    decimal PayableRoundingAmount = 0m)
 {
     public void Validate()
     {
@@ -102,7 +103,7 @@ public sealed record DianInvoice(
         if (LineExtensionAmount != Lines.Sum(line => line.UntaxedAmount) ||
             DiscountAmount != Lines.Sum(line => line.DiscountAmount) ||
             TaxInclusiveAmount != TaxExclusiveAmount + Taxes.Sum(tax => tax.Amount) ||
-            PayableAmount != TaxInclusiveAmount)
+            PayableAmount != TaxInclusiveAmount + PayableRoundingAmount)
             throw new ArgumentException("Invoice monetary totals are inconsistent.");
     }
 }

@@ -14,7 +14,9 @@ public sealed record PosCatalogStatus(
     long HighWaterMark,
     long Cursor,
     string? NextPageCursor,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    int TotalProducts,
+    int ProcessedProducts);
 
 public sealed record CapturedCatalogProduct(
     PosCatalogItem Product,
@@ -32,6 +34,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         await using var command = connection.CreateCommand();
         command.CommandText = Schema;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureProgressStateAsync(connection, cancellationToken);
         await EnsureProductFlagsAsync(connection, cancellationToken);
         await InitializePricingAsync(connection, cancellationToken);
     }
@@ -42,7 +45,11 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor,UpdatedAt
+            SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor,UpdatedAt,
+                   TotalProducts,
+                   CASE WHEN Status='Bootstrapping'
+                        THEN (SELECT COUNT(*) FROM PosCatalogStagingProducts)
+                        ELSE TotalProducts END
             FROM PosCatalogState WHERE StateId=1;
             """;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -54,7 +61,9 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             reader.GetInt64(2),
             reader.GetInt64(3),
             reader.IsDBNull(4) ? null : reader.GetString(4),
-            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture));
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
+            reader.GetInt32(6),
+            reader.GetInt32(7));
     }
 
     public async Task BeginBootstrapAsync(
@@ -70,13 +79,14 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             DELETE FROM PosCatalogStagingProducts;
             UPDATE PosCatalogState
             SET Status='Bootstrapping',SessionId=@SessionId,HighWaterMark=@HighWaterMark,
-                NextPageCursor=NULL,UpdatedAt=@Now
+                NextPageCursor=NULL,TotalProducts=@TotalProducts,UpdatedAt=@Now
             WHERE StateId=1;
             """,
             [
                 P("@SessionId", session.SessionId.ToString("D")),
                 P("@HighWaterMark", session.HighWaterMark),
-                P("@Now", DateTimeOffset.UtcNow.ToString("O"))
+                P("@TotalProducts", session.TotalProducts),
+                P("@Now", Clock.GetUtcNow().ToString("O"))
             ],
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -108,7 +118,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         await ExecuteAsync(connection, transaction, """
             UPDATE PosCatalogState SET NextPageCursor=@Next,UpdatedAt=@Now WHERE StateId=1;
             """,
-            [P("@Next", page.NextCursor), P("@Now", DateTimeOffset.UtcNow.ToString("O"))],
+            [P("@Next", page.NextCursor), P("@Now", Clock.GetUtcNow().ToString("O"))],
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -139,7 +149,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             SET Status='Ready',Cursor=HighWaterMark,SessionId=NULL,NextPageCursor=NULL,UpdatedAt=@Now
             WHERE StateId=1;
             """,
-            [P("@Now", DateTimeOffset.UtcNow.ToString("O"))],
+            [P("@Now", Clock.GetUtcNow().ToString("O"))],
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -175,7 +185,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
 
         await ExecuteAsync(connection, transaction,
             "UPDATE PosCatalogState SET Cursor=@Cursor,UpdatedAt=@Now WHERE StateId=1;",
-            [P("@Cursor", page.ToCursor), P("@Now", DateTimeOffset.UtcNow.ToString("O"))],
+            [P("@Cursor", page.ToCursor), P("@Now", Clock.GetUtcNow().ToString("O"))],
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -416,7 +426,14 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
     {
         await using var command = connection.CreateCommand();
         command.Transaction = (SqliteTransaction)transaction;
-        command.CommandText = "SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor,UpdatedAt FROM PosCatalogState WHERE StateId=1;";
+        command.CommandText = """
+            SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor,UpdatedAt,
+                   TotalProducts,
+                   CASE WHEN Status='Bootstrapping'
+                        THEN (SELECT COUNT(*) FROM PosCatalogStagingProducts)
+                        ELSE TotalProducts END
+            FROM PosCatalogState WHERE StateId=1;
+            """;
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) throw new InvalidOperationException("POS catalog state is missing.");
         return new PosCatalogStatus(
@@ -425,7 +442,9 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             reader.GetInt64(2),
             reader.GetInt64(3),
             reader.IsDBNull(4) ? null : reader.GetString(4),
-            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture));
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture),
+            reader.GetInt32(6),
+            reader.GetInt32(7));
     }
 
     private static async Task ExecuteAsync(
@@ -497,6 +516,25 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         }
     }
 
+    private static async Task EnsureProgressStateAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('PosCatalogState');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) columns.Add(reader.GetString(1));
+        }
+        if (columns.Contains("TotalProducts")) return;
+
+        await using var upgrade = connection.CreateCommand();
+        upgrade.CommandText =
+            "ALTER TABLE PosCatalogState ADD COLUMN TotalProducts INTEGER NOT NULL DEFAULT 0;";
+        await upgrade.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private const string ProductColumns = """
         ProductId TEXT PRIMARY KEY,
         ProductCode TEXT NOT NULL,
@@ -532,6 +570,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
           HighWaterMark INTEGER NOT NULL,
           Cursor INTEGER NOT NULL,
           NextPageCursor TEXT NULL,
+          TotalProducts INTEGER NOT NULL DEFAULT 0,
           UpdatedAt TEXT NOT NULL);
         INSERT OR IGNORE INTO PosCatalogState(StateId,Status,HighWaterMark,Cursor,UpdatedAt)
           VALUES(1,'Empty',0,0,'1970-01-01T00:00:00+00:00');

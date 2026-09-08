@@ -198,8 +198,11 @@ error sanitizado y si puede reanudar.
 
 ## Estado de implementación
 
-Ya existen bootstrap durable de catálogo, staging, promoción atómica, cursor
-incremental y persistencia SQLite. Aún faltan el enrolamiento, credenciales
-offline, sincronización de usuarios/permisos, estado de progreso enriquecido,
-shell de login/menú y transporte Pub/Sub real. Ninguno se considera terminado
-hasta estar conectado a la interfaz y cubierto por las pruebas anteriores.
+Ya existen enrolamiento, bootstrap durable de catálogo, staging, promoción
+atómica, cursor incremental, persistencia SQLite y sincronización de identidad.
+Durante la preparación inicial, POS Edge expone a la interfaz la etapa activa,
+el fallo sanitizado y el progreso durable real del catálogo; cada lote actualiza
+la pantalla y una caja sin productos continúa con `0 de 0` sin quedar bloqueada.
+El estado completo descrito en esta decisión y el transporte Pub/Sub real siguen
+siendo trabajo incremental y no se consideran terminados hasta estar conectados
+de punta a punta y cubiertos por las pruebas anteriores.

@@ -40,7 +40,7 @@ public sealed class PosCashMovementTicketTests
         Assert.Contains(expectedTitle, html);
         var expectedTemplate = direction == "In" ? "cash-entry" : "cash-exit";
         Assert.Contains($"data-auraly-report=\"{expectedTemplate}\"", html);
-        Assert.Contains("data-auraly-report-version=\"1\"", html);
+        Assert.Contains("data-auraly-report-version=\"2\"", html);
         Assert.Contains("font:700 12px/1.4 Arial", html);
         Assert.Contains("www.auralyapp.co", html);
         Assert.Contains("Entregado por administraci", html);
@@ -48,7 +48,13 @@ public sealed class PosCashMovementTicketTests
         Assert.DoesNotContain(ticket.DocumentId.ToString("D"), html);
         Assert.Contains("@page{size:80mm", html);
         Assert.Contains("body{width:80mm", html);
-        Assert.Contains("padding:5mm 3mm 2mm 2mm", html);
+        Assert.Contains("padding:5mm 3mm 1mm 2mm", html);
+        Assert.Contains("margin-top:10mm", html);
+        Assert.DoesNotContain("margin-top:26mm", html);
+        var versionOne = PosCashMovementTicketPrinter.RenderHtmlV1(ticket, workstation, 80);
+        Assert.Contains("data-auraly-report-version=\"1\"", versionOne);
+        Assert.Contains("padding:5mm 3mm 2mm 2mm", versionOne);
+        Assert.Contains("margin-top:26mm", versionOne);
         Assert.DoesNotContain("body{text-transform:uppercase", html);
         Assert.Contains("text-transform:uppercase", html);
         Assert.Contains("text-align:center", html);

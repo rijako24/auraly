@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Eye, FileText,
+  ArrowLeft, BookOpenCheck, CheckCircle2, ChevronLeft, ChevronRight, Eye, FileText,
   History, Loader2, Minus, Plus, Printer, ReceiptText, Search,
   ShieldCheck, Trash2, WifiOff,
 } from "lucide-react";
@@ -26,6 +26,7 @@ import {
   openServiceInvoicePrintPreview,
   renderServiceInvoice,
 } from "@/services/service-invoices/service-invoice-print";
+import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
 
 type CartLine = BillableServiceItem & {
   quantity: number;
@@ -188,7 +189,12 @@ export default function ServiceInvoicesPage() {
   </div>;
 }
 
-function ServiceInvoiceDetailView({ value, format, onFormat, onBack, onPrint }: { value: ServiceInvoiceDetail; format: PosPrintTemplateFormat; onFormat: (value: PosPrintTemplateFormat) => void; onBack: () => void; onPrint: () => void }) {
+function ServiceInvoiceDetailView(props: { value: ServiceInvoiceDetail; format: PosPrintTemplateFormat; onFormat: (value: PosPrintTemplateFormat) => void; onBack: () => void; onPrint: () => void }) {
+  const [accountingOpen,setAccountingOpen]=useState(false);
+  return <><div className="mb-3 flex justify-end"><Button variant="outline" onClick={()=>setAccountingOpen(true)}><BookOpenCheck className="mr-2 h-4 w-4"/>Ver contabilización</Button></div><ServiceInvoiceDetailBody {...props}/><AccountingDocumentDialog documentId={accountingOpen?props.value.documentId:undefined} sourceLabel={`Factura de servicios ${props.value.documentNumber}`} onClose={()=>setAccountingOpen(false)}/></>;
+}
+
+function ServiceInvoiceDetailBody({ value, format, onFormat, onBack, onPrint }: { value: ServiceInvoiceDetail; format: PosPrintTemplateFormat; onFormat: (value: PosPrintTemplateFormat) => void; onBack: () => void; onPrint: () => void }) {
   return <div className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><Button variant="ghost" onClick={onBack}><ArrowLeft className="mr-2 h-4 w-4"/>Volver</Button><div className="flex gap-2"><Select value={format} onValueChange={(next) => onFormat(next as PosPrintTemplateFormat)}><SelectTrigger className="w-40"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Receipt">Tirilla</SelectItem><SelectItem value="HalfLetter">Media carta</SelectItem><SelectItem value="HalfLegal">Media oficio</SelectItem><SelectItem value="Letter">Carta</SelectItem></SelectContent></Select><Button onClick={onPrint}><Printer className="mr-2 h-4 w-4"/>Imprimir</Button></div></div><div className="grid gap-4 rounded-2xl bg-slate-950 p-5 text-white md:grid-cols-3"><div><small>Documento</small><strong className="block">{value.documentNumber}</strong></div><div><small>Número DIAN</small><strong className="block">{value.fiscalNumber}</strong></div><div><small>Estado</small><strong className="block">{value.fiscalStatus}</strong></div><div><small>Cliente</small><strong className="block">{value.customerName}</strong></div><div><small>Identificación</small><strong className="block">{value.customerIdentification}</strong></div><div><small>Emisión</small><strong className="block">{new Date(value.issuedAt).toLocaleString("es-CO")}</strong></div></div><div className="overflow-x-auto rounded-2xl border"><table className="w-full text-sm"><thead className="bg-muted"><tr><th className="p-3 text-left">Servicio</th><th className="p-3 text-right">Cant.</th><th className="p-3 text-right">Precio</th><th className="p-3 text-right">IVA</th><th className="p-3 text-right">Total</th></tr></thead><tbody>{value.lines.map((line) => <tr key={line.lineNumber} className="border-t"><td className="p-3"><strong>{line.description}</strong><small className="block text-muted-foreground">{line.serviceCode}</small></td><td className="p-3 text-right">{line.quantity}</td><td className="p-3 text-right">{money.format(line.unitPrice)}</td><td className="p-3 text-right">{money.format(line.taxAmount)}</td><td className="p-3 text-right font-bold">{money.format(line.lineTotal)}</td></tr>)}</tbody></table></div><div className="ml-auto max-w-sm space-y-2 rounded-2xl border p-4"><Row label="Subtotal" value={money.format(value.untaxedAmount)}/><Row label="IVA" value={money.format(value.taxAmount)}/><Row label="Total" value={money.format(value.payableAmount)} strong/></div><p className="break-all rounded-xl bg-muted p-3 text-[10px]"><strong>CUFE</strong><br/>{value.cufe}</p></div>;
 }
 

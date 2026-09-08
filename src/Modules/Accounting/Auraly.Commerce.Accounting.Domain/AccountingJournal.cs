@@ -27,8 +27,20 @@ public static class AccountingJournal
             throw new AccountingRuleException(
                 "Each accounting line must have one positive side and a description.");
 
-        var debit = decimal.Round(lines.Sum(line => line.Debit), 4);
-        var credit = decimal.Round(lines.Sum(line => line.Credit), 4);
+        // SQL persists every monetary line as decimal(19,4). Validate and return
+        // that exact representation so a value cannot balance in memory and
+        // become unbalanced after each individual line is rounded by SQL Server.
+        lines = lines.Select(line => line with
+        {
+            Debit = decimal.Round(line.Debit, 4, MidpointRounding.AwayFromZero),
+            Credit = decimal.Round(line.Credit, 4, MidpointRounding.AwayFromZero)
+        }).ToArray();
+        if (lines.Any(line => (line.Debit > 0) == (line.Credit > 0)))
+            throw new AccountingRuleException(
+                "Each accounting line must remain on exactly one positive side at accounting precision.");
+
+        var debit = lines.Sum(line => line.Debit);
+        var credit = lines.Sum(line => line.Credit);
         if (debit <= 0 || debit != credit)
             throw new AccountingRuleException(
                 $"The accounting entry is not balanced: debit {debit} and credit {credit}.");

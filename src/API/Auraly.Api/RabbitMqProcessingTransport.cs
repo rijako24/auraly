@@ -359,16 +359,7 @@ public sealed class RabbitMqDocumentProcessingHostedService(
                         .GetRequiredService<DocumentProcessingWorker>();
                     var result = await worker.ProcessOneAsync(
                         signal, args.CancellationToken);
-                    if (string.Equals(
-                            signal.DocumentType,
-                            Auraly.Contracts.Sales.PosSaleDocumentTypes.Invoice,
-                            StringComparison.Ordinal) ||
-                        string.Equals(signal.DocumentType,
-                            Auraly.Contracts.Returns.SalesReturnDocumentTypes.SalesReturn,
-                            StringComparison.Ordinal) ||
-                        string.Equals(signal.DocumentType,
-                            Auraly.Contracts.Purchasing.PurchasingDocumentTypes.GoodsReceipt,
-                            StringComparison.Ordinal))
+                    if (FiscalGenerationPolicy.Supports(signal.DocumentType))
                         await fiscalProcessing.RequestGenerationAsync(
                             signal.BusinessId,
                             signal.DocumentId,

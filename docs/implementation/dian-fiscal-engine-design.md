@@ -1,6 +1,6 @@
 # Diseño del motor fiscal DIAN
 
-Fecha de actualización: 2026-08-21.
+Fecha de actualización: 2026-09-07.
 
 ## Flujo vertical conectado
 
@@ -21,11 +21,24 @@ La solicitud HTTP de carga no permanece abierta mientras DIAN procesa. Los worke
 
 Auraly no reconstruye una factura histórica leyendo maestros actuales. El payload congelado contiene emisor, adquirente, autorización/rango, número DIAN, fecha/hora, moneda, líneas, cantidades, unidades, precios, descuentos, impuestos, totales, software y datos mínimos de pago.
 
+Cuando el emisor aplica ajuste al peso, el snapshot comercial y el fiscal congelan
+el mismo valor. El UBL publica `PayableRoundingAmount` y valida que el total a pagar
+sea total con impuestos más dicho ajuste; cero se omite. El motor nunca inventa un
+ajuste durante la generación ni modifica bases o impuestos para forzar el balance.
+
 La prueba SQL modifica nombres maestros después de recibir la venta y demuestra que el UBL conserva los datos históricos. Si falta un dato obligatorio, el proceso pasa a `MissingMandatoryFiscalData`; el servidor no inventa ni corrige silenciosamente la factura emitida.
 
 La antigua responsabilidad de `SalidaDeMercanciaFolio` no se migra. No hace falta una tabla paralela de folio: `SalesDocuments` conserva los datos comerciales de la factura; `FiscalDocuments` es la raíz común para factura y nota crédito; `FiscalSnapshots` y `SalesReturnFiscalSnapshots` conservan los snapshots exactos; `FiscalDocumentProcesses` conserva la evolución fiscal; `FiscalArtifacts` conserva XML, ZIP y respuestas.
 
 Las devoluciones procesadas generan una nota crédito que referencia el número y CUFE originales. Su CUDE se calcula durante la generación fiscal, se persiste una sola vez y se usa sin renumerar en todos los reintentos. Facturas y notas crédito comparten workers, leases, artefactos, intentos y estados, pero conservan snapshots tipados distintos.
+
+Compras y gastos generan documento soporte únicamente cuando la política
+inmutable del proveedor lo exige. Una devolución de compra que referencia ese
+documento genera una nota de ajuste tipo `95`, con CUDS y referencia al CUDS
+original. `FiscalGenerationPolicy` es el único registro de señales operativas que
+pueden despertar generación; el coordinador, workers, procesos, artefactos,
+intentos y transporte siguen siendo los mismos para factura, notas y documento
+soporte.
 
 La prueba de habilitación de devolución recorre la venta original, devolución parcial, `CreditNote` tipo `91`, concepto de corrección `1`, `ProfileExecutionID=2`, CUDE, firma, `SendTestSetAsync` y `GetStatusZip`. También verifica que el transporte productivo no sea invocado. La activación de producción exige evidencia durable de aceptación del set (`GetStatusZip`, código `2`); la aceptación individual de un documento con código `00` no abre esa puerta.
 
@@ -58,6 +71,14 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
 La configuración fiscal visible se concentra en un solo onboarding. Razón social, NIT, responsabilidad fiscal y dirección provienen del perfil legal; el usuario sólo entrega `SoftwareId`, `TestSetId`, PIN y certificado PFX/P12. Cuando el perfil corresponde a una persona natural y no conserva un dígito de verificación separado, el onboarding lo deriva con la regla canónica del NIT colombiano y lo congela en el snapshot fiscal; no altera el tipo de persona ni inventa otra identidad legal. Por decisión de producto del 2026-09-02, el onboarding acepta un PFX/P12 que pueda abrirse con la contraseña suministrada, contenga exactamente una clave privada, esté vigente, identifique exactamente el NIT normalizado del perfil legal —con o sin el dígito de verificación que algunos certificados concatenan— y complete una firma criptográfica de prueba. El adaptador admite además contenedores heredados protegidos con RC2 que proveedores de certificados todavía entregan: los abre mediante el lector PKCS#12 administrado y los normaliza inmediatamente a un PKCS#12 moderno antes del almacenamiento; RC2 nunca se conserva como formato interno. No bloquea la carga por emisor, cadena de confianza ni extensión declarada de uso; la DIAN conserva la autoridad final para aceptar o rechazar el certificado al procesar documentos. El riesgo residual de no validar la cadena se mitiga al exigir identidad, vigencia, posesión efectiva de la clave privada, almacenamiento protegido y la respuesta explícita de DIAN. Esta política sólo debe endurecerse mediante una decisión de producto posterior acompañada de una prueba con certificados reales de los proveedores admitidos.
 
 Después de que el motor registra la aceptación del set de habilitación, Auraly usa `GetNumberingRange` contra producción. Las resoluciones devueltas forman un pool por tenant y conservan su clave técnica cifrada. La activación exige seleccionar una resolución libre para la sede activa. La reserva y la creación de emisor, autorización, series y cursores productivos ocurren en una sola transacción con bloqueo SQL, por lo que dos sedes no pueden tomar la misma resolución. Una asignación activa no se traslada desde la interfaz; una corrección excepcional debe tratarse como operación administrativa auditada y sólo antes de emitir documentos.
+
+El onboarding contiene una configuración independiente para documento soporte.
+La respuesta de `GetNumberingRange` no informa el tipo documental, por lo que se
+exige confirmación explícita del propósito y no se clasifica por prefijos. Una
+resolución libre sólo puede reservarse una vez. La activación valida inicio y fin
+de vigencia, crea `FiscalAuthorization`, `FiscalSeries(DocumentType =
+SupportDocument)` y cursor propios; nunca comparte el consecutivo de
+`SalesInvoice`.
 
 El onboarding presenta los ambientes como una progresión, no como un interruptor reversible. El asistente de habilitación abre el POS con factura electrónica fijada y reutiliza la captura, snapshot, firma y workers fiscales canónicos; la intención queda marcada como `FiscalHabilitationOnly`, conserva exclusivamente la evidencia técnica durable exigida para firma, transmisión y auditoría DIAN, y no genera líneas de venta, pagos, cartera, movimientos de inventario, movimientos de sesión, outbox comercial, trabajos contables ni proyecciones de analítica. Producción permanece bloqueada hasta la aceptación durable del set, la consulta de numeración y la selección explícita de una resolución disponible para la sede.
 

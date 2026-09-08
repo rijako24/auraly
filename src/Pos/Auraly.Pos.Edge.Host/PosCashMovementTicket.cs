@@ -86,7 +86,41 @@ public sealed class PosCashMovementTicketPrinter(
     internal static string RenderHtml(
         PosCashMovementTicket ticket,
         PosWorkstationIdentity? workstation,
-        int paperWidthMillimeters)
+        int paperWidthMillimeters) =>
+        RenderHtml(
+            ticket,
+            workstation,
+            paperWidthMillimeters,
+            ticket.Direction == "In"
+                ? PosPrintTemplateCatalog.CashEntry
+                : PosPrintTemplateCatalog.CashExit,
+            "1mm",
+            "10mm",
+            "6px");
+
+    internal static string RenderHtmlV1(
+        PosCashMovementTicket ticket,
+        PosWorkstationIdentity? workstation,
+        int paperWidthMillimeters) =>
+        RenderHtml(
+            ticket,
+            workstation,
+            paperWidthMillimeters,
+            ticket.Direction == "In"
+                ? PosPrintTemplateCatalog.CashEntryV1
+                : PosPrintTemplateCatalog.CashExitV1,
+            "2mm",
+            "26mm",
+            "10px");
+
+    private static string RenderHtml(
+        PosCashMovementTicket ticket,
+        PosWorkstationIdentity? workstation,
+        int paperWidthMillimeters,
+        PosPrintTemplateVersion template,
+        string bottomPadding,
+        string signatureMargin,
+        string footerMargin)
     {
         if (paperWidthMillimeters is not (58 or 80))
             throw new ArgumentOutOfRangeException(nameof(paperWidthMillimeters));
@@ -94,9 +128,6 @@ public sealed class PosCashMovementTicketPrinter(
             ? string.Empty
             : $"<img src=\"{Encode(workstation.CompanyLogoSource)}\" alt=\"Logo\">";
         var companyName = workstation?.CompanyName ?? "Auraly";
-        var template = ticket.Direction == "In"
-            ? PosPrintTemplateCatalog.CashEntry
-            : PosPrintTemplateCatalog.CashExit;
         var scope = Scope(workstation?.BusinessName, workstation?.WarehouseName);
         var business = string.IsNullOrWhiteSpace(scope)
             ? string.Empty
@@ -108,12 +139,12 @@ public sealed class PosCashMovementTicketPrinter(
             ? string.Empty
             : $"<p><strong>Observación:</strong> {Encode(ticket.Notes)}</p>";
         var html = $$"""
-<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters}}mm;margin:0;padding:5mm 3mm 2mm 2mm;font:10px/1.4 Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:19px;margin:3px;font-weight:800;text-transform:uppercase}h2{font-size:12px;margin:6px 0 3px;font-weight:800;text-transform:uppercase}.scope{margin:2px 0}.detail{font-size:12px;line-height:1.5;overflow-wrap:anywhere}.detail p{margin:6px 0}.amount{display:flex;justify-content:space-between;border-block:2px solid #111;padding:8px 0;margin:12px 0 0;font-size:14px;font-weight:800}.signature{margin-top:26mm;border-top:1px solid #111;text-align:center;padding-top:3px}</style></head><body><header>{{logo}}<h1>{{Encode(companyName)}}</h1><h2>{{(ticket.Direction == "In" ? "Entrada de dinero" : "Salida de dinero")}}</h2>{{business}}</header><div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}<p><strong>Responsable:</strong> {{Encode(ticket.ResponsibleName)}}</p><p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="amount"><span>Valor</span><span>{{Money(ticket.Amount)}}</span></div><div class="signature">Firma</div></body></html>
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters}}mm;margin:0;padding:5mm 3mm {{bottomPadding}} 2mm;font:10px/1.4 Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:19px;margin:3px;font-weight:800;text-transform:uppercase}h2{font-size:12px;margin:6px 0 3px;font-weight:800;text-transform:uppercase}.scope{margin:2px 0}.detail{font-size:12px;line-height:1.5;overflow-wrap:anywhere}.detail p{margin:6px 0}.amount{display:flex;justify-content:space-between;border-block:2px solid #111;padding:8px 0;margin:12px 0 0;font-size:14px;font-weight:800}.signature{margin-top:{{signatureMargin}};border-top:1px solid #111;text-align:center;padding-top:3px}</style></head><body><header>{{logo}}<h1>{{Encode(companyName)}}</h1><h2>{{(ticket.Direction == "In" ? "Entrada de dinero" : "Salida de dinero")}}</h2>{{business}}</header><div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}<p><strong>Responsable:</strong> {{Encode(ticket.ResponsibleName)}}</p><p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="amount"><span>Valor</span><span>{{Money(ticket.Amount)}}</span></div><div class="signature">Firma</div></body></html>
 """;
         return html
             .Replace(
                 "</style>",
-                ".platform-footer{margin-top:10px;text-align:center;font:700 12px/1.4 Arial,sans-serif}</style>",
+                $".platform-footer{{margin-top:{footerMargin};text-align:center;font:700 12px/1.4 Arial,sans-serif}}</style>",
                 StringComparison.Ordinal)
             .Replace(
                 "</body>",

@@ -37,7 +37,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                        fixture.BusinessId, 500_000m, 30, true)))
             profile.EnsureSuccessStatusCode();
 
-        await DisableAccountingAsync();
+        var originalAccounting = await DisableAccountingAsync();
         var accountingRestored = false;
         try
         {
@@ -50,8 +50,10 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                     [new OnlineSalesPayment("Cash", cashDraft.PayableAmount, null)],
                     DocumentType: PosSaleDocumentTypes.Receipt),
                 $"commercial-cash-control-{Guid.NewGuid():N}");
-            Assert.Equal(0, await CountAsync(
-                "AccountingPostingJobs", "SourceDocumentId", cashSale.Receipt.DocumentId));
+            await AssertCommercialOnlyProcessingAsync(cashSale.Receipt.DocumentId);
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id AND MovementType=N'SalePayment'",
+                cashSale.Receipt.DocumentId));
             Assert.Equal("Completed", await ScalarAsync<string>(
                 "SELECT Status FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id",
                 cashSale.Receipt.DocumentId));
@@ -128,7 +130,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                     receivable.ReceivableId));
             await AssertCommercialOnlyProcessingAsync(returnRequest.ReturnId);
 
-            await RestoreAccountingAsync();
+            await RestoreAccountingAsync(originalAccounting);
             accountingRestored = true;
             await ReprocessAsync(sale.Receipt.DocumentId, PosSaleDocumentTypes.Receipt);
             await ReprocessAsync(payment.PaymentId, ReceivablesDocumentTypes.Payment);
@@ -163,7 +165,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         }
         finally
         {
-            if (!accountingRestored) await RestoreAccountingAsync();
+            if (!accountingRestored) await RestoreAccountingAsync(originalAccounting);
         }
     }
 
@@ -327,8 +329,13 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 $"concurrent-{second.PaymentId:N}"));
         try
         {
-            Assert.Single(responses.Where(x => x.StatusCode == HttpStatusCode.Accepted));
-            Assert.Single(responses.Where(x => x.StatusCode == HttpStatusCode.Conflict));
+            var outcomes = await Task.WhenAll(responses.Select(async response =>
+                $"{(int)response.StatusCode} {response.StatusCode}: {await response.Content.ReadAsStringAsync()}"));
+            var detail = string.Join(Environment.NewLine, outcomes);
+            Assert.True(responses.Count(x => x.StatusCode == HttpStatusCode.Accepted) == 1,
+                detail);
+            Assert.True(responses.Count(x => x.StatusCode == HttpStatusCode.Conflict) == 1,
+                detail);
         }
         finally
         {
@@ -651,33 +658,82 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 CancellationToken.None);
     }
 
-    private async Task DisableAccountingAsync()
+    private async Task<AccountingSettingsState> DisableAccountingAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var read = new SqlCommand("""
+            SELECT Status,FunctionalCurrencyCode,EffectiveFrom,OpeningBalanceMode,
+              ActivationRequestedAt,ActivationRequestedByUserId,ActivatedAt,ActivatedByUserId
+            FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+            WHERE TenantId=@TenantId;
+            """, connection, (SqlTransaction)transaction))
+        {
+            read.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await using var reader = await read.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            var state = new AccountingSettingsState(
+                reader.GetString(0), reader.GetString(1),
+                reader.IsDBNull(2) ? null : DateOnly.FromDateTime(reader.GetDateTime(2)),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4),
+                reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                reader.IsDBNull(6) ? null : reader.GetFieldValue<DateTimeOffset>(6),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7));
+            await reader.DisposeAsync();
+
+            await using var command = new SqlCommand("""
+                UPDATE dbo.AccountingTenantSettings
+                SET Status=N'Disabled',EffectiveFrom=NULL,OpeningBalanceMode=NULL,
+                    ActivationRequestedAt=NULL,ActivationRequestedByUserId=NULL,
+                    ActivatedAt=NULL,ActivatedByUserId=NULL,UpdatedAt=SYSDATETIMEOFFSET()
+                WHERE TenantId=@TenantId;
+                """, connection, (SqlTransaction)transaction);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+            await transaction.CommitAsync();
+            return state;
+        }
+    }
+
+    private async Task RestoreAccountingAsync(AccountingSettingsState state)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE dbo.AccountingTenantSettings
-            SET Status=N'Disabled',EffectiveFrom=NULL,OpeningBalanceMode=NULL,
-                ActivatedAt=NULL,ActivatedByUserId=NULL,UpdatedAt=SYSDATETIMEOFFSET()
+            SET Status=@Status,FunctionalCurrencyCode=@Currency,
+                EffectiveFrom=@EffectiveFrom,OpeningBalanceMode=@OpeningMode,
+                ActivationRequestedAt=@RequestedAt,
+                ActivationRequestedByUserId=@RequestedBy,
+                ActivatedAt=@ActivatedAt,ActivatedByUserId=@ActivatedBy,
+                UpdatedAt=SYSDATETIMEOFFSET()
             WHERE TenantId=@TenantId;
             """;
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@Status", state.Status);
+        command.Parameters.AddWithValue("@Currency", state.FunctionalCurrencyCode);
+        command.Parameters.AddWithValue("@EffectiveFrom",
+            state.EffectiveFrom?.ToDateTime(TimeOnly.MinValue) ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@OpeningMode", state.OpeningBalanceMode ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@RequestedAt", state.ActivationRequestedAt ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@RequestedBy", state.ActivationRequestedByUserId ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@ActivatedAt", state.ActivatedAt ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@ActivatedBy", state.ActivatedByUserId ?? (object)DBNull.Value);
         Assert.Equal(1, await command.ExecuteNonQueryAsync());
     }
 
-    private async Task RestoreAccountingAsync()
-    {
-        using var accounting = fixture.CreateAdminClient(
-            AccountingPermissionCodes.Read,
-            AccountingPermissionCodes.Configure,
-            AccountingPermissionCodes.Activate);
-        using var response = await accounting.PostAsJsonAsync(
-            "/api/commerce/v1/accounting/activate",
-            new ActivateAccountingRequest(
-                new DateOnly(2026, 1, 1), "COP", "ZeroDeclared"));
-        response.EnsureSuccessStatusCode();
-    }
+    private sealed record AccountingSettingsState(
+        string Status,
+        string FunctionalCurrencyCode,
+        DateOnly? EffectiveFrom,
+        string? OpeningBalanceMode,
+        DateTimeOffset? ActivationRequestedAt,
+        Guid? ActivationRequestedByUserId,
+        DateTimeOffset? ActivatedAt,
+        Guid? ActivatedByUserId);
 
     private async Task EnsureMappingAsync(SqlConnection connection,
         SqlTransaction transaction, string category, string code)

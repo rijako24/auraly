@@ -542,6 +542,15 @@ export interface PosClient {
     lastSynchronizationError: string | null;
     catalogUpdatedAt: string | null;
     permissions?: string[];
+    catalogProcessedProducts?: number;
+    catalogTotalProducts?: number;
+    catalogProgressPercent?: number | null;
+    preparationStage?: "Identity" | "CatalogStarting" | "Catalog" | "Finalizing";
+    preparationCompletedSteps?: number;
+    preparationTotalSteps?: number;
+    preparationCanResume?: boolean;
+    synchronizationStages?: string[];
+    failedSynchronizationStage?: string | null;
   }>;
   synchronizeNow(): Promise<void>;
   synchronizationEvents(take?: number): Promise<PosSynchronizationEvent[]>;
@@ -756,6 +765,15 @@ export class PosEdgeClient implements PosClient {
       oldestPendingSynchronizationAt: string | null;
       lastSynchronizationError: string | null;
       catalogUpdatedAt: string | null;
+      catalogProcessedProducts: number;
+      catalogTotalProducts: number;
+      catalogProgressPercent: number | null;
+      preparationStage: "Identity" | "CatalogStarting" | "Catalog" | "Finalizing";
+      preparationCompletedSteps: number;
+      preparationTotalSteps: number;
+      preparationCanResume: boolean;
+      synchronizationStages: string[];
+      failedSynchronizationStage: string | null;
     }>("/edge/v1/health");
   }
 

@@ -34,9 +34,9 @@ internal static class SqlAccountingPostingJobWriter
 
             INSERT dbo.AccountingSourceDocuments
             (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
-             PayloadHash,OccurredAt,AcceptedAt)
+             PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
             SELECT p.DocumentId,p.DocumentType,@TenantId,@BusinessId,p.PayloadJson,
-                   p.PayloadHash,@OccurredAt,@CreatedAt
+                   p.PayloadHash,@OccurredAt,@CreatedAt,@AccountingEntryRequired
             FROM dbo.DocumentProcessingPayloads p
             WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
               AND p.BusinessId=@BusinessId
@@ -54,11 +54,12 @@ internal static class SqlAccountingPostingJobWriter
              Status,AttemptCount,CreatedAt)
             SELECT @JobId,s.TenantId,s.BusinessId,s.SourceDocumentId,
                    s.SourceDocumentType,s.PayloadHash,s.OccurredAt,
-                   @AccountingEntryRequired,N'Pending',0,@CreatedAt
+                   s.AccountingEntryRequired,N'Pending',0,@CreatedAt
             FROM dbo.AccountingSourceDocuments s
             WHERE s.SourceDocumentId=@DocumentId
               AND s.SourceDocumentType=@DocumentType
               AND s.BusinessId=@BusinessId
+              AND s.AccountingEntryRequired IS NOT NULL
               AND NOT EXISTS
               (
                 SELECT 1 FROM dbo.AccountingPostingJobs a WITH(UPDLOCK,HOLDLOCK)
@@ -100,9 +101,9 @@ internal static class SqlAccountingPostingJobWriter
 
             INSERT dbo.AccountingSourceDocuments
               (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
-               PayloadHash,OccurredAt,AcceptedAt)
+               PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
             SELECT @DocumentId,@DocumentType,@TenantId,@BusinessId,@Payload,@PayloadHash,
-                   @OccurredAt,@CreatedAt
+                   @OccurredAt,@CreatedAt,@AccountingEntryRequired
             WHERE (@AccountingEntryRequired=1 OR @PreserveCommercialEffects=1)
               AND NOT EXISTS (SELECT 1 FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)
                 WHERE s.SourceDocumentId=@DocumentId AND s.SourceDocumentType=@DocumentType);
@@ -111,9 +112,10 @@ internal static class SqlAccountingPostingJobWriter
               (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
                SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,CreatedAt)
             SELECT @JobId,s.TenantId,s.BusinessId,s.SourceDocumentId,s.SourceDocumentType,
-                   s.PayloadHash,s.OccurredAt,@AccountingEntryRequired,N'Pending',0,@CreatedAt
+                   s.PayloadHash,s.OccurredAt,s.AccountingEntryRequired,N'Pending',0,@CreatedAt
             FROM dbo.AccountingSourceDocuments s
             WHERE s.SourceDocumentId=@DocumentId AND s.SourceDocumentType=@DocumentType
+              AND s.AccountingEntryRequired IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM dbo.AccountingPostingJobs j WITH(UPDLOCK,HOLDLOCK)
                 WHERE j.SourceDocumentId=@DocumentId AND j.SourceDocumentType=@DocumentType);
             """;

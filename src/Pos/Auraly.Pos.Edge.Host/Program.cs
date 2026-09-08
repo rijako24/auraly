@@ -261,6 +261,8 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosFiscalProvisioningSynchronizer>();
         builder.Services.AddSingleton<PosSynchronizationSignal>();
         builder.Services.AddSingleton<PosUiStateSignal>();
+        builder.Services.AddSingleton<IPosSynchronizationProgressSink>(sp =>
+            sp.GetRequiredService<PosUiStateSignal>());
         builder.Services.AddSingleton<PosSynchronizationState>();
         builder.Services.AddSingleton<PosSynchronizationLaneExecutor>();
         builder.Services.AddSingleton<PosSynchronizationWork>();
@@ -744,7 +746,8 @@ public static class PosEdgeHostApplication
             var lastSynchronizationError = closureOutbox.LastError
                 ?? cashOutbox.LastError
                 ?? customerOutbox.LastError
-                ?? saleOutbox.LastError;
+                ?? saleOutbox.LastError
+                ?? syncStatus.LastError;
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
             var fiscalWarnings = await sales.GetFiscalWarningsAsync(
@@ -782,6 +785,25 @@ public static class PosEdgeHostApplication
                 catalogStatus = catalogStatus.Status,
                 catalogCursor = catalogStatus.Cursor,
                 catalogUpdatedAt = catalogStatus.UpdatedAt,
+                catalogProcessedProducts = catalogStatus.ProcessedProducts,
+                catalogTotalProducts = catalogStatus.TotalProducts,
+                catalogProgressPercent = catalogStatus.TotalProducts > 0
+                    ? Math.Min(100, (int)Math.Floor(
+                        catalogStatus.ProcessedProducts * 100d / catalogStatus.TotalProducts))
+                    : catalogStatus.Status == "Ready" ? 100 : (int?)null,
+                preparationStage = !identityReady
+                    ? "Identity"
+                    : catalogStatus.Status == "Bootstrapping"
+                        ? "Catalog"
+                        : catalogStatus.Status != "Ready"
+                            ? "CatalogStarting"
+                            : "Finalizing",
+                preparationCompletedSteps = (identityReady ? 1 : 0) +
+                    (catalogStatus.Status == "Ready" ? 1 : 0),
+                preparationTotalSteps = 2,
+                preparationCanResume = catalogStatus.Status == "Bootstrapping",
+                synchronizationStages = syncStatus.ActiveStages,
+                failedSynchronizationStage = syncStatus.FailedStage,
                 synchronizationInProgress = syncStatus.IsSynchronizing,
                 lastSynchronizationAt = syncStatus.LastSuccessfulAt ?? catalogStatus.UpdatedAt,
                 lastSynchronizationFailed = syncStatus.LastAttemptFailed ||

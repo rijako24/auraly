@@ -3,6 +3,27 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public void Receivables_accounting_cutover_runs_before_dacpac_and_never_retro_posts()
+    {
+        var root = FindRepositoryRoot();
+        var pipeline = File.ReadAllText(Path.Combine(root, "infrastructure", "azure",
+            "Publish-AuralyReleasePipeline.ps1"));
+        var migration = File.ReadAllText(Path.Combine(root, "database",
+            "Auraly.Database", "Scripts", "Migrations",
+            "20260907_AlignReceivablesWithAccountingSource.sql"));
+        var migrationIndex = pipeline.IndexOf(
+            "20260907_AlignReceivablesWithAccountingSource.sql", StringComparison.Ordinal);
+        var reportIndex = pipeline.IndexOf("'/Action:DeployReport'", StringComparison.Ordinal);
+
+        Assert.True(migrationIndex >= 0 && migrationIndex < reportIndex,
+            "The receivables FK cutover must finish before DACPAC planning.");
+        Assert.Contains("AccountingEntryRequired,", migration, StringComparison.Ordinal);
+        Assert.Contains("N'CommercialEffectsApplied'", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("AccountingTenantSettings", migration, StringComparison.Ordinal);
+        Assert.Contains("THROW 51407", migration, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Organization_scope_cutover_is_safe_after_legacy_columns_were_removed()
     {
         var migration = File.ReadAllText(Path.Combine(

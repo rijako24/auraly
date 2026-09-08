@@ -22,6 +22,8 @@ public static class AccountingCategories
     public const string AccountsReceivable = "AccountsReceivable";
     public const string SalesRevenue = "SalesRevenue";
     public const string ServiceRevenue = "ServiceRevenue";
+    public const string RoundingGain = "RoundingGain";
+    public const string RoundingLoss = "RoundingLoss";
     public const string SalesReturns = "SalesReturns";
     public const string OutputVat = "OutputVat";
     public const string Inventory = "Inventory";
@@ -132,6 +134,27 @@ public sealed record AccountingCostCenterView(
     Guid? ParentCostCenterId,
     bool IsDefault,
     bool IsActive);
+
+public sealed record SetAccountingCostCenterStatusRequest(bool IsActive);
+
+public static class AccountingCostCenterOperationKinds
+{
+    public const string All = "All";
+    public const string Sales = "Sales";
+    public const string Purchasing = "Purchasing";
+    public const string Expenses = "Expenses";
+    public const string Inventory = "Inventory";
+    public static bool IsValid(string value) => value is All or Sales or Purchasing or Expenses or Inventory;
+}
+
+public sealed record AccountingCostCenterAssignmentView(
+    Guid AssignmentId, Guid BusinessId, Guid CostCenterId,
+    string CostCenterCode, string CostCenterName, string OperationKind,
+    Guid? WarehouseId, string? WarehouseCode, string? WarehouseName, bool IsActive);
+
+public sealed record SaveAccountingCostCenterAssignmentRequest(
+    Guid AssignmentId, Guid BusinessId, Guid CostCenterId,
+    string OperationKind, Guid? WarehouseId, bool IsActive);
 
 public sealed record CreateAccountingPeriodRequest(
     Guid PeriodId,
@@ -275,7 +298,11 @@ public sealed record AccountingEntryLineView(
     decimal Debit,
     decimal Credit,
     Guid? PartyId,
+    string? PartyIdentification,
+    string? PartyName,
     Guid? CostCenterId,
+    string? CostCenterCode,
+    string? CostCenterName,
     string Description);
 
 public sealed record AccountingEntryView(
@@ -285,6 +312,7 @@ public sealed record AccountingEntryView(
     string SourceDocumentType,
     DateTimeOffset OccurredAt,
     DateTimeOffset PostedAt,
+    string Description,
     decimal DebitTotal,
     decimal CreditTotal,
     IReadOnlyList<AccountingEntryLineView> Lines);
@@ -323,6 +351,21 @@ public sealed record FinancialStatementRow(
 public sealed record AccountingExceptionRow(
     Guid SourceDocumentId, string SourceDocumentType, DateTimeOffset OccurredAt,
     string Status, string? ErrorCode, string? ErrorMessage);
+
+public sealed record AccountingDocumentRow(
+    Guid SourceDocumentId, string SourceDocumentType, string? SourceDocumentNumber,
+    DateTimeOffset OccurredAt, string Status, int AttemptCount,
+    string? ErrorCode, string? ErrorMessage, Guid? EntryId, string? EntryNumber,
+    decimal? DebitTotal, decimal? CreditTotal, DateTimeOffset? PostedAt,
+    string? FiscalDocumentType, string? DianNumber, string? UniqueCodeType,
+    string? UniqueCode, string? FiscalStatus);
+
+public sealed record AccountingDocumentPage(
+    IReadOnlyList<AccountingDocumentRow> Items, int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 :
+        (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
 
 public sealed record AccountingPostingView(
     Guid SourceDocumentId,

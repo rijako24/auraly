@@ -47,7 +47,9 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         await PersistWithholdingSnapshotAsync(session, receipt, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, receipt.SupplierInvoiceDate ?? receipt.ReceivedAt, ids, timeProvider,
-            cancellationToken);
+            cancellationToken, receipt.CreatesPayable
+                ? AccountingJobRequirement.PreserveCommercialEffects
+                : AccountingJobRequirement.AccountingEntryOnly);
         foreach (var costDocument in receipt.AdditionalCostDocuments ?? [])
         {
             await PersistWithholdingSnapshotAsync(session, receipt.BusinessId,
@@ -59,7 +61,9 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             await SqlAccountingPostingJobWriter.InsertSourceAsync(
                 session, receipt.TenantId, receipt.BusinessId, costDocument.CostDocumentId,
                 PurchasingDocumentTypes.GoodsReceiptCostDocument, payload, costDocument.IssuedAt,
-                ids, timeProvider, cancellationToken);
+                ids, timeProvider, cancellationToken, costDocument.CreatesPayable
+                    ? AccountingJobRequirement.PreserveCommercialEffects
+                    : AccountingJobRequirement.AccountingEntryOnly);
         }
         await SqlSalesReportingJobWriter.InsertAsync(
             session, document, ids, timeProvider, cancellationToken);

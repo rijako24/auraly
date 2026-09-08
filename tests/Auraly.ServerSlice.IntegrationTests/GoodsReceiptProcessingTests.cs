@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Application.Fiscal;
+using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -516,6 +519,166 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Purchase_return_of_a_support_document_generates_a_type_95_adjustment_with_original_cuds()
+    {
+        await ConfigureSupportDocumentAsync();
+        var receipt = CreateRequest() with
+        {
+            DocumentId = Guid.NewGuid(),
+            SupplierInvoiceNumber = null,
+            PurchaseEvidenceType = PurchaseEvidenceTypes.BuyerElectronicSupportDocument
+        };
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts,
+            PurchasingPermissionCodes.CreatePurchaseReturns,
+            PurchasingPermissionCodes.ConfirmPurchaseReturns);
+        using (var message = CreateMessage(receipt, $"support-adjustment-source-{receipt.DocumentId:N}"))
+        using (var response = await client.SendAsync(message))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Contains(fixture.DrainFiscalSignals(), item =>
+            item.Signal.DocumentId == receipt.DocumentId &&
+            item.Signal.Stage == FiscalProcessingStage.Generation);
+        await GenerateFiscalAsync(receipt.DocumentId);
+
+        var originalFiscal = await ReadFiscalGenerationAsync(receipt.DocumentId);
+        Assert.True(!string.IsNullOrWhiteSpace(originalFiscal.UniqueCode),
+            $"Original support document was not generated: {originalFiscal.Status} " +
+            $"{originalFiscal.ErrorCode} {originalFiscal.ErrorMessage}");
+        var originalCuds = originalFiscal.UniqueCode!;
+        Assert.Contains("Invoice", await ReadArtifactTextAsync(receipt.DocumentId, "SignedXml"));
+
+        var returnId = Guid.NewGuid();
+        var returnedAt = receipt.ReceivedAt.AddDays(1);
+        var purchaseReturn = new ConfirmPurchaseReturnRequest(
+            returnId, fixture.BusinessId, receipt.DocumentId, returnedAt,
+            "QualityIssue", "Devolución parcial de documento soporte",
+            [new PurchaseReturnLineRequest(1, 2m)]);
+        using (var message = new HttpRequestMessage(
+                   HttpMethod.Post, "/api/commerce/v1/purchase-returns/confirm")
+               { Content = JsonContent.Create(purchaseReturn) })
+        {
+            message.Headers.Add("Idempotency-Key", $"support-adjustment-{returnId:N}");
+            using var response = await client.SendAsync(message);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                $"Expected support adjustment to be accepted, got {response.StatusCode}: {body}");
+        }
+        Assert.Contains(fixture.DrainFiscalSignals(), item =>
+            item.Signal.DocumentId == returnId &&
+            item.Signal.Stage == FiscalProcessingStage.Generation);
+        await GenerateFiscalAsync(returnId);
+
+        Assert.Equal("SupportDocumentAdjustment", await ScalarAsync<string>(
+            "SELECT FiscalDocumentType FROM dbo.FiscalDocuments WHERE DocumentId=@Id", returnId));
+        Assert.Equal("CUDS", await ScalarAsync<string>(
+            "SELECT UniqueCodeType FROM dbo.FiscalDocuments WHERE DocumentId=@Id", returnId));
+        var adjustmentFiscalNumber = await ScalarAsync<string>(
+            "SELECT FiscalNumber FROM dbo.FiscalDocuments WHERE DocumentId=@Id", returnId);
+        var adjustmentAuralyNumber = await ScalarAsync<string>(
+            "SELECT AuralyDocumentNumber FROM dbo.FiscalDocuments WHERE DocumentId=@Id", returnId);
+        Assert.StartsWith("DS", adjustmentFiscalNumber, StringComparison.Ordinal);
+        Assert.NotEqual(adjustmentAuralyNumber, adjustmentFiscalNumber);
+        Assert.NotEqual(await ScalarAsync<string>(
+            "SELECT FiscalNumber FROM dbo.FiscalDocuments WHERE DocumentId=@Id",
+            receipt.DocumentId), adjustmentFiscalNumber);
+        Assert.False(string.IsNullOrWhiteSpace(await ScalarAsync<string>(
+            "SELECT UniqueCode FROM dbo.FiscalDocuments WHERE DocumentId=@Id", returnId)));
+        var snapshot = await ScalarAsync<string>(
+            "SELECT SnapshotJson FROM fiscal.PurchaseSupportFiscalSnapshots WHERE DocumentId=@Id", returnId);
+        Assert.Contains(originalCuds, snapshot, StringComparison.Ordinal);
+        var signedXml = await ReadArtifactTextAsync(returnId, "SignedXml");
+        Assert.Contains("<cbc:CreditNoteTypeCode>95</cbc:CreditNoteTypeCode>", signedXml,
+            StringComparison.Ordinal);
+        Assert.Contains("schemeName=\"CUDS-SHA384\"", signedXml, StringComparison.Ordinal);
+        Assert.Contains(originalCuds, signedXml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Expense_automatically_creates_support_document_only_for_a_supplier_that_requires_it()
+    {
+        await ConfigureSupportDocumentAsync();
+        await SetSupplierPurchaseEvidencePolicyAsync(
+            PurchaseEvidenceTypes.BuyerElectronicSupportDocument);
+        try
+        {
+            using var client = fixture.CreateAdminClient(
+                ExpensePermissionCodes.Read,
+                ExpensePermissionCodes.Create,
+                ExpensePermissionCodes.Configure);
+            var options = await client.GetFromJsonAsync<ExpenseWorkspaceOptions>(
+                "/api/commerce/v1/expenses/options")
+                ?? throw new InvalidOperationException("Expense options were not returned.");
+            var account = options.ExpenseAccounts.First();
+            var center = Assert.Single(options.CostCenters, item => item.IsDefault);
+            var conceptId = Guid.NewGuid();
+            using (var concept = await client.PutAsJsonAsync(
+                       $"/api/commerce/v1/expenses/concepts/{conceptId:D}",
+                       new SaveExpenseConceptRequest(conceptId, fixture.BusinessId,
+                           $"DS-{conceptId:N}"[..16], "Servicio documento soporte",
+                           account.AccountId, center.CostCenterId, null, true)))
+                Assert.Equal(HttpStatusCode.OK, concept.StatusCode);
+
+            var issuedAt = new DateTimeOffset(2026, 9, 1, 10, 0, 0,
+                TimeSpan.FromHours(-5));
+            var supportExpenseId = Guid.NewGuid();
+            using (var request = new HttpRequestMessage(HttpMethod.Post,
+                       "/api/commerce/v1/expenses/confirm")
+                   {
+                       Content = JsonContent.Create(new ConfirmExpenseRequest(
+                           supportExpenseId, fixture.BusinessId, fixture.SupplierId,
+                           conceptId, null, $"PROV-{supportExpenseId:N}", issuedAt,
+                           issuedAt.AddDays(30), "COP", "Servicio de proveedor no obligado",
+                           100_000m, 19_000m, null, null))
+                   })
+            {
+                request.Headers.Add("Idempotency-Key", $"expense-support-{supportExpenseId:N}");
+                using var response = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            }
+
+            Assert.Equal("SupportDocument", await ScalarAsync<string>(
+                "SELECT FiscalDocumentType FROM dbo.FiscalDocuments WHERE DocumentId=@Id",
+                supportExpenseId));
+            Assert.Equal("Expense", await ScalarAsync<string>(
+                "SELECT SourceDocumentType FROM dbo.FiscalDocuments WHERE DocumentId=@Id",
+                supportExpenseId));
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM fiscal.PurchaseSupportFiscalSnapshots WHERE DocumentId=@Id",
+                supportExpenseId));
+            var snapshot = await ScalarAsync<string>(
+                "SELECT SnapshotJson FROM fiscal.PurchaseSupportFiscalSnapshots WHERE DocumentId=@Id",
+                supportExpenseId);
+            Assert.Contains($"\"expenseId\":\"{supportExpenseId:D}\"", snapshot,
+                StringComparison.OrdinalIgnoreCase);
+
+            await SetSupplierPurchaseEvidencePolicyAsync(null);
+            var ordinaryExpenseId = Guid.NewGuid();
+            using (var request = new HttpRequestMessage(HttpMethod.Post,
+                       "/api/commerce/v1/expenses/confirm")
+                   {
+                       Content = JsonContent.Create(new ConfirmExpenseRequest(
+                           ordinaryExpenseId, fixture.BusinessId, fixture.SupplierId,
+                           conceptId, null, $"PROV-{ordinaryExpenseId:N}", issuedAt.AddMinutes(1),
+                           issuedAt.AddDays(30), "COP", "Gasto con soporte ordinario",
+                           50_000m, 0m, null, null))
+                   })
+            {
+                request.Headers.Add("Idempotency-Key", $"expense-ordinary-{ordinaryExpenseId:N}");
+                using var response = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            }
+            Assert.Equal(0, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.FiscalDocuments WHERE DocumentId=@Id",
+                ordinaryExpenseId));
+        }
+        finally
+        {
+            await SetSupplierPurchaseEvidencePolicyAsync(null);
+        }
+    }
+
+    [Fact]
     public async Task Receipt_requires_both_backend_permissions_and_authenticated_business()
     {
         using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts);
@@ -608,15 +771,21 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
               VALUES(NEWID(),@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,@DivisionId,@CityId,
                 N'Carrera 1 # 2-3',1,1,@UserId,SYSDATETIMEOFFSET());
 
-            INSERT dbo.FiscalAuthorizations(FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
-              Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,AuthorizedRangeStart,
-              AuthorizedRangeEnd,IsActive,CreatedAt)
-            VALUES(@AuthorizationId,@BusinessId,@AuthorizationNumber,@IssuerTaxId,2,
-              N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=',N'1',
-              '2026-01-01','2028-12-31',1,999,1,SYSDATETIMEOFFSET());
-            INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-              DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
-            VALUES(@SeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,N'SupportDocument',N'DS',1,999,1,SYSDATETIMEOFFSET());
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.FiscalSeries
+              WHERE BusinessId=@BusinessId AND DeviceId IS NULL AND EmitterKind=N'Server'
+                AND DocumentType=N'SupportDocument' AND IsActive=1)
+            BEGIN
+              INSERT dbo.FiscalAuthorizations(FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
+                Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,AuthorizedRangeStart,
+                AuthorizedRangeEnd,IsActive,CreatedAt)
+              VALUES(@AuthorizationId,@BusinessId,@AuthorizationNumber,@IssuerTaxId,2,
+                N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=',N'1',
+                '2026-01-01','2028-12-31',1,999,1,SYSDATETIMEOFFSET());
+              INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
+                DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+              VALUES(@SeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,N'SupportDocument',N'DS',1,999,1,SYSDATETIMEOFFSET());
+            END;
             """;
         var authorizationId = Guid.NewGuid();
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
@@ -625,7 +794,8 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
         command.Parameters.AddWithValue("@AuthorizationId", authorizationId);
         command.Parameters.AddWithValue("@SeriesId", Guid.NewGuid());
-        command.Parameters.AddWithValue("@AuthorizationNumber", $"SUP-{authorizationId:N}");
+        command.Parameters.AddWithValue("@AuthorizationNumber",
+            DateTimeOffset.UtcNow.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("@IssuerTaxId", ServerSliceFixture.SupplierTaxId);
         await command.ExecuteNonQueryAsync();
     }
@@ -657,6 +827,58 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             ?? throw new InvalidOperationException("The expected SQL scalar was not returned.");
         if (value is DBNull) throw new InvalidOperationException("The expected SQL scalar is null.");
         return (T)Convert.ChangeType(value, typeof(T));
+    }
+
+    private async Task<string> ReadArtifactTextAsync(Guid documentId, string artifactType)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT TOP(1) Content FROM dbo.FiscalArtifacts
+            WHERE DocumentId=@Id AND ArtifactType=@Type
+            ORDER BY ArtifactVersion DESC;
+            """;
+        command.Parameters.AddWithValue("@Id", documentId);
+        command.Parameters.AddWithValue("@Type", artifactType);
+        var bytes = await command.ExecuteScalarAsync() as byte[]
+            ?? throw new InvalidOperationException(
+                $"Fiscal artifact {artifactType} was not generated for {documentId:D}.");
+        return System.Text.Encoding.UTF8.GetString(bytes);
+    }
+
+    private async Task<FiscalGenerationEvidence> ReadFiscalGenerationAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT document.UniqueCode,process.Status,process.LastErrorCode,process.LastErrorMessage
+            FROM dbo.FiscalDocuments document
+            INNER JOIN dbo.FiscalDocumentProcesses process ON process.DocumentId=document.DocumentId
+            WHERE document.DocumentId=@Id;
+            """;
+        command.Parameters.AddWithValue("@Id", documentId);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            throw new InvalidOperationException("The fiscal generation root was not found.");
+        return new FiscalGenerationEvidence(
+            reader.IsDBNull(0) ? null : reader.GetString(0), reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3));
+    }
+
+    private async Task GenerateFiscalAsync(Guid documentId)
+    {
+        using var scope = fixture.CreateScope();
+        var worker = scope.ServiceProvider.GetRequiredService<FiscalGenerationWorker>();
+        var generated = await worker.ProcessAsync(
+            fixture.BusinessId, documentId, $"support-test-{documentId:N}",
+            CancellationToken.None);
+        if (generated) return;
+        var evidence = await ReadFiscalGenerationAsync(documentId);
+        Assert.Fail($"Fiscal generation did not complete: {evidence.Status} " +
+                    $"{evidence.ErrorCode} {evidence.ErrorMessage}");
     }
 
     private async Task<decimal?> ReadNullableDecimalAsync(string column)
@@ -732,6 +954,21 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         await command.ExecuteNonQueryAsync();
     }
 
+    private async Task SetSupplierPurchaseEvidencePolicyAsync(string? policy)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.Suppliers SET PurchaseEvidencePolicy=@Policy
+            WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId;
+            """;
+        command.Parameters.AddWithValue("@Policy", (object?)policy ?? DBNull.Value);
+        command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private async Task ExecuteAsync(
         string sql, Guid otherBusinessId, Guid otherWarehouseId,
         decimal otherQuantity, decimal otherAverage,
@@ -797,4 +1034,6 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     }
 
     private sealed record JobEvidence(string Status, string? LastError);
+    private sealed record FiscalGenerationEvidence(
+        string? UniqueCode, string Status, string? ErrorCode, string? ErrorMessage);
 }

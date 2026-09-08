@@ -38,6 +38,49 @@ public sealed class DianCreditNoteUblTests
         Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
     }
 
+    [Fact]
+    public void Support_document_adjustment_uses_type_95_and_references_the_original_cuds()
+    {
+        var originalCuds = new string('c', 96);
+        var note = CreateNote() with
+        {
+            DocumentNumber = "NADS1",
+            Cude = new string('d', 96),
+            DocumentTypeCode = "95",
+            CustomizationId = "10",
+            ProfileId = "DIAN 2.1: Nota de ajuste al documento soporte en adquisiciones efectuadas a sujetos no obligados a expedir factura o documento equivalente",
+            UniqueCodeScheme = "CUDS-SHA384",
+            OriginalUniqueCodeScheme = "CUDS-SHA384",
+            BuyerGenerated = true,
+            CorrectionCode = "1",
+            Lines =
+            [
+                new DianCreditNoteLine(1, "770123", "999", "Producto", "EA", 1m,
+                    6000m, 1000m, 5000m,
+                    [new DianTax("01", "IVA", 5000m, 950m, 19m)])
+            ],
+            DiscountAmount = 1000m,
+            OriginalInvoice = new DianInvoiceReference(
+                "DS1", originalCuds, new DateOnly(2026, 7, 31))
+        };
+
+        var built = new DianCreditNoteUblBuilder().Build(note);
+        var xml = XDocument.Parse(System.Text.Encoding.UTF8.GetString(built.Xml));
+        var originalReference = xml
+            .Descendants(DianUblNamespaces.Cac + "InvoiceDocumentReference").Single();
+
+        Assert.Equal("95", xml.Descendants(
+            DianUblNamespaces.Cbc + "CreditNoteTypeCode").Single().Value);
+        Assert.Equal("10", xml.Descendants(
+            DianUblNamespaces.Cbc + "CustomizationID").Single().Value);
+        Assert.Equal(originalCuds, originalReference.Element(
+            DianUblNamespaces.Cbc + "UUID")?.Value);
+        Assert.Equal("CUDS-SHA384", originalReference.Element(
+            DianUblNamespaces.Cbc + "UUID")?.Attribute("schemeName")?.Value);
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+    }
+
     private static DianCreditNote CreateNote()
     {
         var address = new DianAddress("11001", "Bogota", "Bogota D.C.", "11", "Calle 1");

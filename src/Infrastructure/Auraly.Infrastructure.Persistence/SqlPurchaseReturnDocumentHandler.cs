@@ -26,7 +26,8 @@ public sealed class SqlPurchaseReturnDocumentHandler(
         foreach(var line in value.Lines.OrderBy(line=>line.LineNumber))
             await ApplyInventoryAsync(session,value,line,cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
-            session,document,value.ReturnedAt,ids,timeProvider,cancellationToken);
+            session,document,value.ReturnedAt,ids,timeProvider,cancellationToken,
+            AccountingJobRequirement.PreserveCommercialEffects);
         await SqlSalesReportingJobWriter.InsertAsync(
             session,document,ids,timeProvider,cancellationToken);
         await InsertOutboxAsync(session,value,document.Payload,cancellationToken);

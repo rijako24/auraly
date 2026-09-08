@@ -388,7 +388,12 @@ function Publish-Database {
             'MoveDispatchReasonsToOwnedSchema.sql',
             '20260903_AlignWorkSessionOperationalScope.sql',
             '20260903_BackfillDispatchSettlementWorkSessions.sql',
-            '20260904_MigratePromotionAndChannelPricing.sql')
+            '20260904_MigratePromotionAndChannelPricing.sql',
+            '20260907_EnableCommercialReceivablesWithoutAccounting.sql',
+            '20260907_FreezeAccountingRequirementOnSource.sql',
+            '20260907_AddAccountingCostCenterAssignments.sql',
+            '20260907_AddSupportDocumentAdjustment.sql',
+            '20260907_AlignReceivablesWithAccountingSource.sql')
         foreach ($migration in $reviewedMigrations) {
             Invoke-ReviewedPreDacpacMigration `
                 -MigrationPath (Join-Path $repoRoot "database/Auraly.Database/Scripts/Migrations/$migration") `

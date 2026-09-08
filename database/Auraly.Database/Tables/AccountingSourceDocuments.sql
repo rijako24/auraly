@@ -8,6 +8,9 @@ CREATE TABLE [dbo].[AccountingSourceDocuments]
     [PayloadHash] BINARY(32) NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     [AcceptedAt] DATETIMEOFFSET(7) NOT NULL,
+    -- Frozen when the immutable source is accepted. NULL is reserved for
+    -- legacy sources whose original accounting mode cannot be proven.
+    [AccountingEntryRequired] BIT NULL,
     CONSTRAINT [PK_AccountingSourceDocuments]
         PRIMARY KEY CLUSTERED ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [FK_AccountingSourceDocuments_Tenants]

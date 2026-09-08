@@ -139,9 +139,9 @@ public sealed class SqlAccountingStore(
             await using var insert = new SqlCommand("""
                 INSERT dbo.AccountingSourceDocuments
                   (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
+                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
                 VALUES(@DocumentId,@DocumentType,@TenantId,@BusinessId,
-                   @Payload,@Hash,@OccurredAt,@Now);
+                   @Payload,@Hash,@OccurredAt,@Now,1);
                 INSERT dbo.AccountingPostingJobs
                   (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
                    SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
@@ -450,6 +450,58 @@ public sealed class SqlAccountingStore(
         return new(request.CostCenterId, request.BusinessId, request.Code, request.Name, request.ParentCostCenterId, request.IsDefault, true);
     }
 
+    public async Task<AccountingCostCenterView> SetCostCenterStatusAsync(
+        AccountingUserIdentity user, Guid costCenterId, bool isActive,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SET XACT_ABORT ON;
+            SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+            BEGIN TRANSACTION;
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
+              WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId)
+              THROW 51411,'The cost center does not belong to the current business.',1;
+            IF @IsActive=0 AND EXISTS(
+              SELECT 1 FROM dbo.AccountingCostCenters
+              WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsDefault=1)
+              THROW 51412,'The default cost center cannot be disabled.',1;
+            IF @IsActive=0 AND EXISTS(
+              SELECT 1 FROM dbo.AccountingCostCenterAssignments WITH(UPDLOCK,HOLDLOCK)
+              WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsActive=1)
+              THROW 51413,'Reassign or disable the active automatic rules before disabling this cost center.',1;
+            IF @IsActive=0 AND NOT EXISTS(
+              SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=@BusinessId AND CostCenterId<>@CostCenterId AND IsActive=1)
+              THROW 51414,'A business must always keep at least one active cost center.',1;
+            UPDATE dbo.AccountingCostCenters SET IsActive=@IsActive
+            WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId;
+            SELECT CostCenterId,BusinessId,Code,Name,ParentCostCenterId,IsDefault,IsActive
+            FROM dbo.AccountingCostCenters
+            WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId;
+            COMMIT TRANSACTION;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@CostCenterId", costCenterId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@IsActive", isActive);
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new AccountingValidationException("The cost center was not updated.");
+            return new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
+                reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.GetBoolean(5), reader.GetBoolean(6));
+        }
+        catch (SqlException exception) when (exception.Number is 51411 or 51412 or 51413 or 51414)
+        {
+            throw new AccountingValidationException(exception.Message);
+        }
+    }
+
     public async Task<AccountingPeriodView> CreatePeriodAsync(
         AccountingUserIdentity user, CreateAccountingPeriodRequest request,
         CancellationToken cancellationToken)
@@ -552,9 +604,20 @@ public sealed class SqlAccountingStore(
             }
             if (status == "Closed") { await transaction.CommitAsync(cancellationToken); return; }
             await using (var pending = new SqlCommand("""
-                SELECT COUNT(*) FROM dbo.AccountingPostingJobs
-                WHERE TenantId=@TenantId AND CAST(OccurredAt AS date) BETWEEN @StartsOn AND @EndsOn
-                  AND Status NOT IN(N'Posted',N'CommercialEffectsApplied');
+                SELECT
+                  (SELECT COUNT(*) FROM dbo.AccountingPostingJobs
+                   WHERE TenantId=@TenantId AND CAST(OccurredAt AS date) BETWEEN @StartsOn AND @EndsOn
+                     AND Status NOT IN(N'Posted',N'CommercialEffectsApplied'))
+                  +
+                  (SELECT COUNT(*) FROM dbo.AccountingSourceDocuments source
+                   WHERE source.TenantId=@TenantId
+                     AND CAST(source.OccurredAt AS date) BETWEEN @StartsOn AND @EndsOn
+                     AND NOT EXISTS(
+                       SELECT 1 FROM dbo.AccountingPostingJobs job
+                       WHERE job.SourceDocumentId=source.SourceDocumentId
+                         AND job.SourceDocumentType=source.SourceDocumentType
+                         AND job.BusinessId=source.BusinessId
+                         AND job.TenantId=source.TenantId));
                 """, connection, transaction))
             {
                 pending.Parameters.AddWithValue("@TenantId", user.TenantId); pending.Parameters.AddWithValue("@StartsOn", startsOn); pending.Parameters.AddWithValue("@EndsOn", endsOn);
@@ -577,37 +640,108 @@ public sealed class SqlAccountingStore(
     public async Task<AccountingPostingView?> RetryPostingAsync(
         AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken)
     {
-        var source = await FindPostingSourceAsync(user, documentId, cancellationToken);
+        var source = await FindPostingSourceAsync(user, documentId, cancellationToken) ??
+            await RecoverMissingPostingJobAsync(user, documentId, cancellationToken);
         if (source is null) return null;
         await postingProcessor.ProcessAsync(documentId, source, user.BusinessId, cancellationToken);
         return await FindPostingAsync(user, documentId, cancellationToken);
     }
 
+    private async Task<string?> RecoverMissingPostingJobAsync(
+        AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await using var command = new SqlCommand("""
+                DECLARE @DocumentType nvarchar(64),@Hash binary(32),
+                        @OccurredAt datetimeoffset(7),@AccountingEntryRequired bit;
+                SELECT @DocumentType=source.SourceDocumentType,@Hash=source.PayloadHash,
+                       @OccurredAt=source.OccurredAt,
+                       @AccountingEntryRequired=source.AccountingEntryRequired
+                FROM dbo.AccountingSourceDocuments source WITH(UPDLOCK,HOLDLOCK)
+                WHERE source.SourceDocumentId=@DocumentId
+                  AND source.BusinessId=@BusinessId AND source.TenantId=@TenantId
+                  AND source.SourceDocumentType IN(SELECT value FROM OPENJSON(@AccountableTypes));
+                IF @DocumentType IS NULL SELECT CAST(NULL AS nvarchar(64));
+                ELSE IF @AccountingEntryRequired IS NULL
+                  THROW 51405,N'The legacy accounting source has no provable frozen mode.',1;
+                ELSE BEGIN
+                  IF NOT EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs WITH(UPDLOCK,HOLDLOCK)
+                    WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType)
+                    INSERT dbo.AccountingPostingJobs
+                      (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
+                       SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,
+                       Status,AttemptCount,CreatedAt)
+                    VALUES(@JobId,@TenantId,@BusinessId,@DocumentId,@DocumentType,@Hash,
+                           @OccurredAt,@AccountingEntryRequired,N'Pending',0,@Now);
+                  SELECT @DocumentType;
+                END;
+                """, connection, transaction);
+            AddScope(command, user, documentId);
+            AddAccountableTypes(command);
+            command.Parameters.AddWithValue("@JobId", ids.NewId());
+            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            var source = await command.ExecuteScalarAsync(cancellationToken) as string;
+            await transaction.CommitAsync(cancellationToken);
+            return source;
+        }
+        catch (SqlException error) when (error.Number == 51405)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingConflictException(error.Message);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    public Task<AccountingPostingView?> GetPostingAsync(
+        AccountingUserIdentity user, Guid documentId,
+        CancellationToken cancellationToken) =>
+        FindPostingAsync(user, documentId, cancellationToken);
+
     public async Task<AccountingEntryView?> GetEntryAsync(
         AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
-        Guid entryId; string number; string type; DateTimeOffset occurred; DateTimeOffset posted; decimal debit; decimal credit;
+        Guid entryId; string number; string type; string description; DateTimeOffset occurred; DateTimeOffset posted; decimal debit; decimal credit;
         await using (var command = new SqlCommand("""
-            SELECT EntryId,EntryNumber,SourceDocumentType,OccurredAt,PostedAt,DebitTotal,CreditTotal
+            SELECT EntryId,EntryNumber,SourceDocumentType,OccurredAt,PostedAt,Description,DebitTotal,CreditTotal
             FROM dbo.AccountingEntries WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND SourceDocumentId=@DocumentId;
             """, connection))
         {
             AddScope(command, user, documentId); await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken)) return null;
-            entryId = reader.GetGuid(0); number = reader.GetString(1); type = reader.GetString(2); occurred = reader.GetDateTimeOffset(3); posted = reader.GetDateTimeOffset(4); debit = reader.GetDecimal(5); credit = reader.GetDecimal(6);
+            entryId = reader.GetGuid(0); number = reader.GetString(1); type = reader.GetString(2); occurred = reader.GetDateTimeOffset(3); posted = reader.GetDateTimeOffset(4); description = reader.GetString(5); debit = reader.GetDecimal(6); credit = reader.GetDecimal(7);
         }
         var lines = new List<AccountingEntryLineView>();
         await using (var command = new SqlCommand("""
-            SELECT l.LineNumber,a.Code,a.Name,l.Debit,l.Credit,l.PartyId,l.CostCenterId,l.Description
-            FROM dbo.AccountingEntryLines l INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+            SELECT l.LineNumber,a.Code,a.Name,l.Debit,l.Credit,l.PartyId,
+                   l.PartyIdentificationSnapshot,l.PartyNameSnapshot,l.CostCenterId,
+                   l.CostCenterCodeSnapshot,l.CostCenterNameSnapshot,l.Description
+            FROM dbo.AccountingEntryLines l
+            INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
             WHERE l.EntryId=@EntryId ORDER BY l.LineNumber;
             """, connection))
         {
             command.Parameters.AddWithValue("@EntryId", entryId); await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken)) lines.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetDecimal(3), reader.GetDecimal(4), reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetString(7)));
+            while (await reader.ReadAsync(cancellationToken)) lines.Add(new(
+                reader.GetInt32(0), reader.GetString(1), reader.GetString(2),
+                reader.GetDecimal(3), reader.GetDecimal(4),
+                reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetGuid(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetString(11)));
         }
-        return new(entryId, number, documentId, type, occurred, posted, debit, credit, lines);
+        return new(entryId, number, documentId, type, occurred, posted, description, debit, credit, lines);
     }
 
     public async Task<IReadOnlyList<TrialBalanceRow>> GetTrialBalanceAsync(
@@ -637,17 +771,23 @@ public sealed class SqlAccountingStore(
     {
         await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT e.EntryId,e.EntryNumber,e.SourceDocumentId,e.SourceDocumentType,e.OccurredAt,
-                   l.Description,l.Debit,l.Credit,
-                   SUM(l.Debit-l.Credit) OVER(
-                     ORDER BY e.OccurredAt,e.EntryNumber,l.LineNumber
-                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-            FROM dbo.AccountingEntries e
-            INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
-            INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
-            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId AND a.Code=@AccountCode
-              AND CAST(e.OccurredAt AS date) BETWEEN @From AND @To
-            ORDER BY e.OccurredAt,e.EntryNumber,l.LineNumber;
+            WITH AccountLines AS (
+              SELECT e.EntryId,e.EntryNumber,e.SourceDocumentId,e.SourceDocumentType,e.OccurredAt,
+                     l.LineNumber,l.Description,l.Debit,l.Credit,
+                     SUM(l.Debit-l.Credit) OVER(
+                       ORDER BY e.OccurredAt,e.EntryNumber,l.LineNumber
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) Balance
+              FROM dbo.AccountingEntries e
+              INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+              INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+              WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId AND a.Code=@AccountCode
+                AND CAST(e.OccurredAt AS date)<=@To
+            )
+            SELECT EntryId,EntryNumber,SourceDocumentId,SourceDocumentType,OccurredAt,
+                   Description,Debit,Credit,Balance
+            FROM AccountLines
+            WHERE CAST(OccurredAt AS date)>=@From
+            ORDER BY OccurredAt,EntryNumber,LineNumber;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -783,12 +923,29 @@ public sealed class SqlAccountingStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT SourceDocumentId,SourceDocumentType,OccurredAt,Status,
-                   LastErrorCode,LastErrorMessage
-            FROM dbo.AccountingPostingJobs
-            WHERE TenantId=@TenantId AND BusinessId=@BusinessId
-              AND Status NOT IN(N'Posted',N'CommercialEffectsApplied')
-              AND CAST(OccurredAt AS date) BETWEEN @From AND @To
+            SELECT exception.SourceDocumentId,exception.SourceDocumentType,
+                   exception.OccurredAt,exception.Status,
+                   exception.LastErrorCode,exception.LastErrorMessage
+            FROM (
+              SELECT SourceDocumentId,SourceDocumentType,OccurredAt,Status,
+                     LastErrorCode,LastErrorMessage
+              FROM dbo.AccountingPostingJobs
+              WHERE TenantId=@TenantId AND BusinessId=@BusinessId
+                AND Status NOT IN(N'Posted',N'CommercialEffectsApplied')
+              UNION ALL
+              SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
+                     N'MissingAccountingJob',N'MissingAccountingJob',
+                     N'The immutable accounting source has no durable posting job.'
+              FROM dbo.AccountingSourceDocuments source
+              WHERE source.TenantId=@TenantId AND source.BusinessId=@BusinessId
+                AND NOT EXISTS(
+                  SELECT 1 FROM dbo.AccountingPostingJobs job
+                  WHERE job.SourceDocumentId=source.SourceDocumentId
+                    AND job.SourceDocumentType=source.SourceDocumentType
+                    AND job.BusinessId=source.BusinessId
+                    AND job.TenantId=source.TenantId)
+            ) exception
+            WHERE CAST(exception.OccurredAt AS date) BETWEEN @From AND @To
             ORDER BY OccurredAt,SourceDocumentType,SourceDocumentId;
             """, connection);
         AddReportScope(command, user, from, to);
@@ -801,6 +958,112 @@ public sealed class SqlAccountingStore(
         return rows;
     }
 
+    public async Task<AccountingDocumentPage> ListDocumentsAsync(
+        AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
+        string? status, string? search, int page, int pageSize,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            WITH posting AS (
+              SELECT SourceDocumentId,SourceDocumentType,OccurredAt,Status,AttemptCount,
+                     LastErrorCode,LastErrorMessage,TenantId,BusinessId
+              FROM dbo.AccountingPostingJobs
+              UNION ALL
+              SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
+                     N'MissingAccountingJob',0,N'MissingAccountingJob',
+                     N'The immutable accounting source has no durable posting job.',
+                     source.TenantId,source.BusinessId
+              FROM dbo.AccountingSourceDocuments source
+              WHERE NOT EXISTS(
+                  SELECT 1 FROM dbo.AccountingPostingJobs job
+                  WHERE job.SourceDocumentId=source.SourceDocumentId
+                    AND job.SourceDocumentType=source.SourceDocumentType
+                    AND job.BusinessId=source.BusinessId
+                    AND job.TenantId=source.TenantId)
+            )
+            SELECT job.SourceDocumentId,job.SourceDocumentType,sourceNumber.DocumentNumber,
+                   job.OccurredAt,job.Status,job.AttemptCount,job.LastErrorCode,
+                   job.LastErrorMessage,entry.EntryId,entry.EntryNumber,
+                   entry.DebitTotal,entry.CreditTotal,entry.PostedAt,
+                   fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,
+                   fiscal.UniqueCode,fiscal.FiscalStatus,COUNT(*) OVER()
+            FROM posting job
+            LEFT JOIN dbo.AccountingEntries entry
+              ON entry.SourceDocumentId=job.SourceDocumentId
+             AND entry.SourceDocumentType=job.SourceDocumentType
+            LEFT JOIN dbo.FiscalDocuments fiscal
+              ON fiscal.DocumentId=job.SourceDocumentId
+             AND fiscal.BusinessId=job.BusinessId
+            OUTER APPLY(SELECT TOP(1) candidate.DocumentNumber FROM (
+              SELECT sale.DocumentNumber FROM dbo.SalesDocuments sale
+               WHERE sale.DocumentId=job.SourceDocumentId
+              UNION ALL SELECT saleReturn.DocumentNumber FROM dbo.SalesReturns saleReturn
+               WHERE saleReturn.ReturnId=job.SourceDocumentId
+              UNION ALL SELECT debitNote.DocumentNumber FROM dbo.SalesDebitNotes debitNote
+               WHERE debitNote.DebitNoteId=job.SourceDocumentId
+              UNION ALL SELECT receipt.DocumentNumber FROM dbo.GoodsReceipts receipt
+               WHERE receipt.GoodsReceiptId=job.SourceDocumentId
+              UNION ALL SELECT purchaseReturn.DocumentNumber FROM dbo.PurchaseReturns purchaseReturn
+               WHERE purchaseReturn.PurchaseReturnId=job.SourceDocumentId
+              UNION ALL SELECT expense.DocumentNumber FROM dbo.Expenses expense
+               WHERE expense.ExpenseId=job.SourceDocumentId
+              UNION ALL SELECT supplierPayment.DocumentNumber FROM dbo.SupplierPayments supplierPayment
+               WHERE supplierPayment.PaymentId=job.SourceDocumentId
+              UNION ALL SELECT customerPayment.DocumentNumber FROM dbo.CustomerPayments customerPayment
+               WHERE customerPayment.PaymentId=job.SourceDocumentId
+              UNION ALL SELECT cashMovement.DocumentNumber FROM dbo.CashMovementDocuments cashMovement
+               WHERE cashMovement.DocumentId=job.SourceDocumentId
+              UNION ALL SELECT operation.DocumentNumber FROM dbo.InventoryOperations operation
+               WHERE operation.InventoryOperationId=job.SourceDocumentId
+              UNION ALL SELECT cost.DocumentNumber FROM purchasing.GoodsReceiptCostDocuments cost
+               WHERE cost.CostDocumentId=job.SourceDocumentId
+            ) candidate) sourceNumber
+            WHERE job.TenantId=@TenantId AND job.BusinessId=@BusinessId
+              AND CAST(job.OccurredAt AS date) BETWEEN @From AND @To
+              AND (@DocumentType IS NULL OR job.SourceDocumentType=@DocumentType)
+              AND (@Status IS NULL OR job.Status=@Status)
+              AND (@Search IS NULL OR sourceNumber.DocumentNumber LIKE N'%'+@Search+N'%'
+                   OR entry.EntryNumber LIKE N'%'+@Search+N'%'
+                   OR CONVERT(nvarchar(36),job.SourceDocumentId) LIKE N'%'+@Search+N'%')
+            ORDER BY job.OccurredAt DESC,job.SourceDocumentId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@DocumentType", (object?)documentType ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+        command.Parameters.AddWithValue("@PageSize", pageSize);
+        var rows = new List<AccountingDocumentRow>();
+        var total = 0;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            total = reader.GetInt32(18);
+            rows.Add(new(reader.GetGuid(0), reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetDateTimeOffset(3),
+                reader.GetString(4), reader.GetInt32(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetGuid(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetDecimal(10),
+                reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+                reader.IsDBNull(12) ? null : reader.GetDateTimeOffset(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14),
+                reader.IsDBNull(15) ? null : reader.GetString(15),
+                reader.IsDBNull(16) ? null : reader.GetString(16),
+                reader.IsDBNull(17) ? null : reader.GetString(17)));
+        }
+        return new(rows, page, pageSize, total);
+    }
+
     private static void AddReportScope(
         SqlCommand command, AccountingUserIdentity user, DateOnly from, DateOnly to)
     {
@@ -809,6 +1072,10 @@ public sealed class SqlAccountingStore(
         command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
     }
+
+    private static void AddAccountableTypes(SqlCommand command) =>
+        command.Parameters.AddWithValue("@AccountableTypes",
+            JsonSerializer.Serialize(AccountingProcessingPolicy.DocumentTypes));
 
     public async Task<AccountingOpeningBalanceView?> GetOpeningBalanceAsync(
         AccountingUserIdentity user, DateOnly effectiveOn,
@@ -1322,8 +1589,8 @@ public sealed class SqlAccountingStore(
                               WHERE SourceDocumentId=@BatchId AND SourceDocumentType=N'AccountingOpeningBalance')
                 BEGIN
                   INSERT dbo.AccountingSourceDocuments
-                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
-                  VALUES(@BatchId,N'AccountingOpeningBalance',@TenantId,@BusinessId,@Payload,@Hash,@OccurredAt,@Now);
+                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+                  VALUES(@BatchId,N'AccountingOpeningBalance',@TenantId,@BusinessId,@Payload,@Hash,@OccurredAt,@Now,1);
                   INSERT dbo.AccountingPostingJobs
                   (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
                    SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
@@ -1360,6 +1627,106 @@ public sealed class SqlAccountingStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) values.Add(new(reader.GetGuid(0),reader.GetGuid(1)));
         return values;
+    }
+
+    public async Task<IReadOnlyList<AccountingCostCenterAssignmentView>> ListCostCenterAssignmentsAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT assignment.AssignmentId,assignment.BusinessId,assignment.CostCenterId,
+                   center.Code,center.Name,assignment.OperationKind,assignment.WarehouseId,
+                   warehouse.Code,warehouse.Name,assignment.IsActive
+            FROM dbo.AccountingCostCenterAssignments assignment
+            INNER JOIN dbo.AccountingCostCenters center
+              ON center.BusinessId=assignment.BusinessId AND center.CostCenterId=assignment.CostCenterId
+            LEFT JOIN dbo.Warehouses warehouse
+              ON warehouse.BusinessId=assignment.BusinessId AND warehouse.WarehouseId=assignment.WarehouseId
+            WHERE assignment.TenantId=@TenantId AND assignment.BusinessId=@BusinessId
+            ORDER BY assignment.OperationKind,warehouse.Code,center.Code;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        var values = new List<AccountingCostCenterAssignmentView>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            values.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+                reader.GetString(3), reader.GetString(4), reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetBoolean(9)));
+        return values;
+    }
+
+    public async Task<AccountingCostCenterAssignmentView> SaveCostCenterAssignmentAsync(
+        AccountingUserIdentity user, SaveAccountingCostCenterAssignmentRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await using var command = new SqlCommand("""
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
+                  WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsActive=1)
+                  THROW 51000,'The cost center is not active in this business.',1;
+                IF @WarehouseId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Warehouses WITH(UPDLOCK,HOLDLOCK)
+                  WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1)
+                  THROW 51000,'The warehouse is not active in this business.',1;
+                DECLARE @Existing uniqueidentifier=(SELECT AssignmentId
+                  FROM dbo.AccountingCostCenterAssignments WITH(UPDLOCK,HOLDLOCK)
+                  WHERE BusinessId=@BusinessId AND OperationKind=@OperationKind
+                    AND (WarehouseId=@WarehouseId OR WarehouseId IS NULL AND @WarehouseId IS NULL));
+                IF @Existing IS NULL
+                BEGIN
+                  INSERT dbo.AccountingCostCenterAssignments
+                    (AssignmentId,TenantId,BusinessId,CostCenterId,OperationKind,WarehouseId,IsActive,CreatedAt,UpdatedAt)
+                  VALUES(@AssignmentId,@TenantId,@BusinessId,@CostCenterId,@OperationKind,@WarehouseId,@IsActive,@Now,@Now);
+                  SET @Existing=@AssignmentId;
+                END
+                ELSE UPDATE dbo.AccountingCostCenterAssignments SET CostCenterId=@CostCenterId,
+                  IsActive=@IsActive,UpdatedAt=@Now WHERE AssignmentId=@Existing;
+                SELECT assignment.AssignmentId,assignment.BusinessId,assignment.CostCenterId,
+                       center.Code,center.Name,assignment.OperationKind,assignment.WarehouseId,
+                       warehouse.Code,warehouse.Name,assignment.IsActive
+                FROM dbo.AccountingCostCenterAssignments assignment
+                INNER JOIN dbo.AccountingCostCenters center ON center.CostCenterId=assignment.CostCenterId
+                LEFT JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=assignment.WarehouseId
+                WHERE assignment.AssignmentId=@Existing;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@AssignmentId", request.AssignmentId);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            command.Parameters.AddWithValue("@CostCenterId", request.CostCenterId);
+            command.Parameters.AddWithValue("@OperationKind", request.OperationKind);
+            command.Parameters.AddWithValue("@WarehouseId", (object?)request.WarehouseId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@IsActive", request.IsActive);
+            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            var value = new AccountingCostCenterAssignmentView(
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+                reader.GetString(3), reader.GetString(4), reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetBoolean(9));
+            await reader.DisposeAsync();
+            await transaction.CommitAsync(cancellationToken);
+            return value;
+        }
+        catch (SqlException error) when (error.Number == 51000)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingConflictException(error.Message);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     public async Task<IReadOnlyList<BankAccountView>> ListBankAccountsAsync(
@@ -1569,7 +1936,7 @@ public sealed class SqlAccountingStore(
             """, connection); AddScope(command, user, documentId); await using var reader = await command.ExecuteReaderAsync(token); if (!await reader.ReadAsync(token)) return null; return new(documentId, reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetGuid(4));
     }
     private static async Task ExecuteMutationAsync(SqlCommand command, CancellationToken token, string conflict) { try { await command.ExecuteNonQueryAsync(token); } catch (SqlException exception) when (IsConflict(exception)) { throw new AccountingConflictException(conflict); } }
-    private static bool IsConflict(SqlException exception) => exception.Number is 2601 or 2627 or 547 or 51400 or 51401 or 51402 or 51403 or 51404;
+    private static bool IsConflict(SqlException exception) => exception.Number is 2601 or 2627 or 547 or 51400 or 51401 or 51402 or 51403 or 51404 or 51405;
     private static void AddMoney(SqlCommand command, string name, decimal value)
     {
         var parameter = command.Parameters.Add(name, SqlDbType.Decimal);

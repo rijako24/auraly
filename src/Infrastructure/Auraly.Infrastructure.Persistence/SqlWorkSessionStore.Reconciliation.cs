@@ -265,8 +265,8 @@ public sealed partial class SqlWorkSessionStore
         await using var command=new SqlCommand("""
             IF EXISTS(SELECT 1 FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId AND Status=N'Ready')
             BEGIN
-              INSERT dbo.AccountingSourceDocuments(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
-              VALUES(@DocumentId,N'WorkSessionClosureReconciliation',@TenantId,@BusinessId,@Payload,@Hash,@At,@At);
+              INSERT dbo.AccountingSourceDocuments(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+              VALUES(@DocumentId,N'WorkSessionClosureReconciliation',@TenantId,@BusinessId,@Payload,@Hash,@At,@At,1);
               INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
               VALUES(@JobId,@TenantId,@BusinessId,@DocumentId,N'WorkSessionClosureReconciliation',@Hash,@At,N'Pending',0,@At);
             END;

@@ -45,7 +45,7 @@ public abstract class SqlCashMovementDocumentHandler(
         await LockAcceptedDocumentAsync(session, movement, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, movement.OccurredAt, ids, timeProvider,
-            cancellationToken);
+            cancellationToken, AccountingJobRequirement.PreserveCommercialEffects);
         await InsertOutboxAsync(
             session, movement, document.Payload, cancellationToken);
     }

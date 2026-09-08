@@ -21,7 +21,8 @@ public sealed class SqlExpenseDocumentHandler(SqlDocumentProcessingSessionAccess
             throw new InvalidOperationException("The immutable expense withholding snapshot does not reconcile.");
         var session = sessions.Current;
         await PersistWithholdingAsync(session, expense, ct);
-        await SqlAccountingPostingJobWriter.InsertAsync(session, document, expense.IssuedAt, ids, timeProvider, ct);
+        await SqlAccountingPostingJobWriter.InsertAsync(session, document, expense.IssuedAt,
+            ids, timeProvider, ct, AccountingJobRequirement.PreserveCommercialEffects);
         await using var command = new SqlCommand("""
             UPDATE dbo.Expenses SET Status=N'Processed',ProcessedAt=@Now
               WHERE ExpenseId=@Id AND BusinessId=@BusinessId AND Status=N'Accepted';

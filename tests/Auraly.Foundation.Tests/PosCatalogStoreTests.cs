@@ -155,7 +155,10 @@ public sealed class PosCatalogStoreTests
             }
 
             var reopened = new PosCatalogStore($"Data Source={path}");
-            Assert.Equal(products[749].ProductId.ToString("D"), (await reopened.StatusAsync()).NextPageCursor);
+            var resumed = await reopened.StatusAsync();
+            Assert.Equal(products[749].ProductId.ToString("D"), resumed.NextPageCursor);
+            Assert.Equal(1_500, resumed.TotalProducts);
+            Assert.Equal(750, resumed.ProcessedProducts);
             for (var offset = 750; offset < products.Length; offset += 250)
             {
                 var items = products.Skip(offset).Take(250).ToArray();
@@ -164,6 +167,9 @@ public sealed class PosCatalogStoreTests
                     session, items, hasMore, hasMore ? items[^1].ProductId.ToString("D") : null));
             }
             await reopened.PromoteBootstrapAsync();
+            var completed = await reopened.StatusAsync();
+            Assert.Equal(1_500, completed.TotalProducts);
+            Assert.Equal(1_500, completed.ProcessedProducts);
 
             await using var connection = new SqliteConnection($"Data Source={path}");
             await connection.OpenAsync();

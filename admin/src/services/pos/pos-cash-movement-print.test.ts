@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cashMovementTicketHtml, printCashMovementTicket } from "./pos-cash-movement-print";
+import { cashMovementTicketHtml, cashMovementTicketHtmlV1, printCashMovementTicket } from "./pos-cash-movement-print";
 
 test("cash movement receipt is professional and omits optional blank fields", () => {
   const html = cashMovementTicketHtml({
@@ -16,11 +16,25 @@ test("cash movement receipt is professional and omits optional blank fields", ()
   assert.match(html, /Sede: Sede Norte · Bodega principal/);
   assert.match(html, /Carol Cairo/);
   assert.match(html, /Firma/);
+  assert.match(html, /margin-top:38px/);
+  assert.doesNotMatch(html, /margin-top:72px/);
+  assert.match(html, /data-auraly-report-version="2"/);
   assert.doesNotMatch(html, /Referencia/);
   assert.doesNotMatch(html, /Observación/);
   assert.doesNotMatch(html, /movement-1/);
   assert.ok(html.indexOf('class="details"') < html.indexOf('class="amount"'));
   assert.ok(html.indexOf('class="amount"') < html.indexOf('class="signature"'));
+});
+
+test("cash movement version one remains unchanged", () => {
+  const html = cashMovementTicketHtmlV1({
+    documentId: "movement-v1", direction: "In", reasonName: "Base inicial",
+    amount: 10000, occurredAt: "2026-08-31T14:30:00-05:00",
+    reference: null, notes: null, responsibleName: "Cajero",
+  }, "Empresa");
+
+  assert.match(html, /margin-top:72px/);
+  assert.doesNotMatch(html, /data-auraly-report-version/);
 });
 
 test("cash movement receipt escapes user-controlled content", () => {

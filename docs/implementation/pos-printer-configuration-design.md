@@ -91,6 +91,12 @@ El catálogo canónico de plantillas vive en `PosPrintTemplateCatalog`. La versi
 no visibles (`data-auraly-report` y `data-auraly-report-version`) para diagnóstico
 y regresión sin agregar texto técnico a la tirilla.
 
+`cash-entry` y `cash-exit` tienen una versión 2 activa que compacta el espacio
+reservado para firma y el remate inferior. La versión 1 permanece disponible e
+inmutable para reproducir el formato publicado originalmente. Las plantillas de
+venta y cierre continúan en versión 1 porque no contienen una altura fija ni un
+espaciador equivalente que deba corregirse.
+
 Un ajuste compatible que corrija el transporte, la nitidez o el soporte de otra
 impresora sin alterar contenido ni composición conserva la versión. Todo cambio
 intencional en campos, jerarquía, orden, márgenes o composición aprobada crea una

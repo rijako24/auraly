@@ -30,7 +30,8 @@ public sealed class SqlPayablePaymentDocumentHandler(
 
         var session = sessions.Current;
         await SqlAccountingPostingJobWriter.InsertAsync(
-            session, document, payment.PaidAt, ids, timeProvider, cancellationToken);
+            session, document, payment.PaidAt, ids, timeProvider, cancellationToken,
+            AccountingJobRequirement.PreserveCommercialEffects);
         await InsertOutboxAsync(session, payment, document.Payload, cancellationToken);
     }
 

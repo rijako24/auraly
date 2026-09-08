@@ -84,7 +84,9 @@ public sealed record PosSaleFiscalSnapshotContract(
     decimal TaxAmount,
     decimal PayableAmount,
     string Cufe,
-    string QrPayload);
+    string QrPayload,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    decimal PayableRoundingAmount = 0m);
 
 public sealed record PosSaleCommercialSnapshotContract(
     string DocumentType,
@@ -94,7 +96,9 @@ public sealed record PosSaleCommercialSnapshotContract(
     decimal UntaxedAmount,
     decimal TaxAmount,
     decimal PayableAmount,
-    WithholdingCalculationSnapshot? Withholding = null)
+    WithholdingCalculationSnapshot? Withholding = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    decimal PayableRoundingAmount = 0m)
 {
     public decimal NetPayableAmount =>
         Withholding?.NetAmount ?? PayableAmount;
