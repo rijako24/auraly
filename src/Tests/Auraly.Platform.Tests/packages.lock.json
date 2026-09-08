@@ -2659,7 +2659,8 @@
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
-          "Auraly.Contracts.Authentication": "[1.0.0, )"
+          "Auraly.Contracts.Authentication": "[1.0.0, )",
+          "Auraly.Contracts.Authorization": "[1.0.0, )"
         }
       },
       "auraly.contracts.parties": {
