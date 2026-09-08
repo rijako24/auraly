@@ -17,7 +17,8 @@ public sealed record OnlineSaleSettlementContext(
     Guid? CustomerId,
     decimal TaxExclusiveAmount,
     decimal VatAmount,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    bool HasBelowCostLine = false);
 
 public sealed record PreparedOnlineSaleSettlement(
     OnlineSaleSettlementContext Context,
@@ -107,6 +108,10 @@ public sealed class OnlineSalesCheckoutService(
         Validate(draftId, request, idempotencyKey);
         var settlement = await PrepareSettlementAsync(
             user, draftId, cancellationToken);
+        if (settlement.Context.HasBelowCostLine &&
+            !user.Permissions.Contains(CommercePermissionCodes.SalesBelowCost))
+            throw new OnlineSalesDraftForbiddenException(
+                $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
         FiscalVerificationMaterial? material = null;
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
         {

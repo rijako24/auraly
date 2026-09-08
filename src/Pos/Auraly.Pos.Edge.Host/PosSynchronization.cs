@@ -14,6 +14,7 @@ public enum PosSynchronizationTrigger
     Security = 2,
     FiscalStatus = 4,
     LocalOutbox = 8,
+    Manual = 16,
     FiscalProvisioning = 32,
     All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning
 }
@@ -166,7 +167,7 @@ internal sealed class PosSynchronizationWork(
                 events.Record(
                     "Warning",
                     "Synchronization",
-                    "Sincronización parcial; los pendientes reintentarán",
+                    "Sincronización parcial; se requiere reintento manual",
                     trigger.ToString());
             }
             else
@@ -189,7 +190,6 @@ internal sealed record PosSynchronizationLane(
     Func<Task> Execute);
 
 internal sealed class PosSynchronizationLaneExecutor(
-    PosSynchronizationSignal signal,
     PosSynchronizationEventLog events,
     ILogger<PosSynchronizationLaneExecutor> logger,
     PosSynchronizationState? state = null,
@@ -222,7 +222,8 @@ internal sealed class PosSynchronizationLaneExecutor(
         }
         catch (Exception exception)
         {
-            state?.StageFailed(lane.Label);
+            var reason = DescribeFailure(lane.Label, exception);
+            state?.StageFailed(lane.Label, reason);
             logger.LogWarning(
                 exception,
                 "POS synchronization lane {Lane} failed without blocking other lanes.",
@@ -232,16 +233,25 @@ internal sealed class PosSynchronizationLaneExecutor(
                 "Synchronization",
                 $"Pendiente de sincronizar: {lane.Label}",
                 exception.Message);
-            signal.Schedule(
-                lane.Trigger,
-                TimeSpan.FromSeconds(5),
-                cancellationToken);
             return false;
         }
         finally
         {
             uiState?.Publish();
         }
+    }
+
+    private static string DescribeFailure(string lane, Exception exception)
+    {
+        if (exception is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound })
+            return $"No fue posible preparar {lane}: el servidor no ofrece una operación requerida por esta versión de Auraly. Actualiza la aplicación o el servidor y pulsa Reintentar.";
+        if (exception is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden })
+            return $"No fue posible preparar {lane}: el servidor rechazó la identidad de esta caja. Revisa el enrolamiento y pulsa Reintentar.";
+        if (exception is HttpRequestException)
+            return $"No fue posible preparar {lane}: no hay una conexión válida con Auraly Server. Comprueba la red y pulsa Reintentar.";
+        if (exception is InvalidDataException)
+            return $"No fue posible preparar {lane}: los datos descargados no pasaron la validación. Pulsa Reintentar; si se repite, informa al supervisor.";
+        return $"No fue posible preparar {lane}. Pulsa Reintentar; si se repite, informa al supervisor.";
     }
 }
 
@@ -453,6 +463,8 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
     PosWebPubSubConnection push,
     PosSynchronizationSignal signal,
     PosSynchronizationWork work,
+    PosSynchronizationState state,
+    PosUiStateSignal uiState,
     ILogger<PosEventDrivenSynchronizationHostedService> logger)
     : BackgroundService
 {
@@ -462,14 +474,19 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
         // A temporary Web PubSub outage must not leave the POS login empty.
         _ = ConnectAsync(stoppingToken);
         signal.Signal(PosSynchronizationTrigger.All);
-        var failedAttempts = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             var trigger = await signal.ReadAsync(stoppingToken);
+            if (state.Current.LastAttemptFailed &&
+                !trigger.HasFlag(PosSynchronizationTrigger.Manual))
+            {
+                logger.LogInformation(
+                    "POS synchronization remains paused after a failure until a manual retry is requested.");
+                continue;
+            }
             try
             {
                 await work.ExecuteAsync(trigger, stoppingToken);
-                failedAttempts = 0;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -477,14 +494,14 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
             }
             catch (Exception exception)
             {
-                failedAttempts++;
                 logger.LogWarning(
                     exception,
-                    "Event-driven POS synchronization failed; the same work remains durable and will retry.");
-                var delay = TimeSpan.FromSeconds(
-                    Math.Min(60, Math.Pow(2, Math.Min(failedAttempts, 6))));
-                await Task.Delay(delay, stoppingToken);
-                signal.Signal(trigger);
+                    "Event-driven POS synchronization stopped and requires a manual retry.");
+                state.StageFailed(
+                    "sincronización",
+                    "La preparación se detuvo por un error inesperado. Pulsa Reintentar; si se repite, informa al supervisor.");
+                state.Failed();
+                uiState.Publish();
             }
         }
     }

@@ -1016,7 +1016,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT s.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount,p.PaymentMethod
+            SELECT s.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount,p.PaymentMethod,p.BankAccountId
             FROM dbo.SupplierPayments p
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
             WHERE p.PaymentId=@DocumentId AND p.BusinessId=@BusinessId AND p.Status=N'Processed';
@@ -1032,11 +1032,14 @@ public sealed partial class SqlAccountingPostingProcessor(
         var currency = reader.GetString(2);
         var amount = reader.GetDecimal(3);
         var method = reader.GetString(4);
+        var bankAccountId = reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5);
         await reader.DisposeAsync();
         if (!string.Equals(currency, "COP", StringComparison.Ordinal))
             throw new InvalidOperationException("Supplier payment accounting currently requires COP.");
-        var settlement = await ResolveSourceCategoryAsync(connection, transaction,
-            "SupplierPaymentMethod", method, cancellationToken);
+        var settlement = method == "BankTransfer" && bankAccountId is { } bankId
+            ? BankAccountCategory(bankId)
+            : await ResolveSourceCategoryAsync(connection, transaction,
+                "SupplierPaymentMethod", method, cancellationToken);
         return FinancialFacts.PayablePayment(number, partyId, amount, settlement);
     }
 
@@ -1047,7 +1050,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT c.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount,p.PaymentMethod
+            SELECT c.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount,p.PaymentMethod,p.BankAccountId
             FROM dbo.CustomerPayments p
             INNER JOIN dbo.Customers c ON c.CustomerId=p.CustomerId
             WHERE p.PaymentId=@DocumentId AND p.BusinessId=@BusinessId AND p.Status=N'Processed';
@@ -1064,9 +1067,12 @@ public sealed partial class SqlAccountingPostingProcessor(
             throw new InvalidOperationException("Customer receipt accounting currently requires COP.");
         var amount = reader.GetDecimal(3);
         var method = reader.GetString(4);
+        var bankAccountId = reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5);
         await reader.DisposeAsync();
-        var settlement = await ResolveSourceCategoryAsync(connection, transaction,
-            "CustomerPaymentMethod", method, cancellationToken);
+        var settlement = method == "BankTransfer" && bankAccountId is { } bankId
+            ? BankAccountCategory(bankId)
+            : await ResolveSourceCategoryAsync(connection, transaction,
+                "CustomerPaymentMethod", method, cancellationToken);
         return FinancialFacts.ReceivablePayment(number, partyId, amount, settlement);
     }
 

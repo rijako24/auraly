@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "./pos-money-input";
-import { lineDiscountPercent, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin, type GridDirection } from "./pos-line-editor-calculation";
+import { lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, type GridDirection } from "./pos-line-editor-calculation";
 
 type EditableLine = {
   lineId: string;
@@ -27,11 +27,15 @@ type EditableLine = {
 export function PosLineEditorDialog({
   lines,
   busy,
+  canEditDescription,
+  canReadCostAndMargin,
   onConfirm,
   onCancel,
 }: {
   lines: PosDraftLine[];
   busy: boolean;
+  canEditDescription: boolean;
+  canReadCostAndMargin: boolean;
   onConfirm: (updates: PosDraftLineUpdate[]) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -91,9 +95,9 @@ export function PosLineEditorDialog({
       const value = Number(raw.replace(",", "."));
       if (!Number.isFinite(value) || value >= 100) return;
       margin = value;
-      const discountPercent = lineDiscountPercent(discount, line.quantity, price);
-      price = salePriceForMargin(cost, margin, discountPercent, line.taxRate);
-      discount = line.quantity * price * discountPercent / 100;
+      const economics = lineEconomicsForMargin(cost, margin, line.taxRate);
+      price = economics.unitPrice;
+      discount = economics.discount;
     } else {
       margin = lineMarginPercent(cost, line.quantity, price, discount, line.taxRate);
     }
@@ -112,7 +116,11 @@ export function PosLineEditorDialog({
     const column = Number(current.dataset.editorColumn);
     if (!Number.isInteger(row) || !Number.isInteger(column)) return false;
     event.preventDefault();
-    const available = drafts.map((line) => line.allowsDocumentCostOverride ? [0, 1, 2, 3, 4, 5] : [0, 2, 3, 4, 5]);
+    const available = drafts.map((line) => [
+      ...(canEditDescription ? [0] : []),
+      ...(canReadCostAndMargin && line.allowsDocumentCostOverride ? [1, 2] : []),
+      3, 4, 5,
+    ]);
     const next = nextGridPosition(row, column, available, event.key as GridDirection);
     const target = next ? event.currentTarget.querySelector<HTMLInputElement>(`input[data-editor-row="${next.row}"][data-editor-column="${next.column}"]:not(:disabled)`) : null;
     target?.focus({ preventScroll: true });
@@ -186,9 +194,9 @@ export function PosLineEditorDialog({
           return <article key={line.lineId} className="overflow-hidden rounded-2xl border bg-white shadow-sm">
             <div className="flex items-center justify-between gap-3 border-b bg-slate-50 px-4 py-3"><div><p className="text-xs font-bold uppercase tracking-wide text-teal-700">Línea {index + 1} · {line.productCode}</p><p className="text-xs text-slate-500">Cantidad: {line.quantity}</p></div><strong className="tabular-nums text-slate-950">{formatMoneyValue(total)}</strong></div>
             <div className="grid gap-x-4 gap-y-3 p-4 sm:grid-cols-2 xl:grid-cols-[minmax(240px,2fr)_repeat(5,minmax(120px,1fr))]">
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700 sm:col-span-2 xl:col-span-1">Nombre del producto en el documento<input data-editor-row={index} data-editor-column={0} maxLength={250} value={line.description} onChange={(event)=>change(line.lineId,{description:event.target.value})} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 font-normal text-slate-950 outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Costo<input data-editor-row={index} data-editor-column={1} inputMode="decimal" disabled={!line.allowsDocumentCostOverride} value={line.unitCost} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"cost",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/>{!line.allowsDocumentCostOverride&&<span className="block text-xs font-normal text-slate-500">Definido por inventario.</span>}</label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Margen %<input data-editor-row={index} data-editor-column={2} inputMode="decimal" value={line.margin} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"margin",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700 sm:col-span-2 xl:col-span-1">Nombre del producto en el documento<input data-editor-row={index} data-editor-column={0} disabled={!canEditDescription} maxLength={250} value={line.description} onChange={(event)=>change(line.lineId,{description:event.target.value})} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 font-normal text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
+              {canReadCostAndMargin&&<label className="space-y-1.5 text-sm font-semibold text-slate-700">Costo<input data-editor-row={index} data-editor-column={1} inputMode="decimal" disabled={!line.allowsDocumentCostOverride} value={line.unitCost} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"cost",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/>{!line.allowsDocumentCostOverride&&<span className="block text-xs font-normal text-slate-500">Definido por inventario.</span>}</label>}
+              {canReadCostAndMargin&&<label className="space-y-1.5 text-sm font-semibold text-slate-700">Margen %<input data-editor-row={index} data-editor-column={2} inputMode="decimal" disabled={!line.allowsDocumentCostOverride} value={line.margin} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"margin",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/>{!line.allowsDocumentCostOverride&&<span className="block text-xs font-normal text-slate-500">Definido por inventario.</span>}</label>}
               <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento<input data-editor-row={index} data-editor-column={3} ref={(element)=>{discountInputs.current[index]=element;}} inputMode="decimal" value={line.discount} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"discount",event.target.value)} className={`h-11 w-full rounded-xl border bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none focus:ring-4 ${invalidDiscount?"border-red-500 focus:ring-red-500/10":"border-slate-300 focus:border-teal-600 focus:ring-teal-600/10"}`}/>{invalidDiscount&&<span className="block text-xs font-normal text-red-700">No puede superar el valor de la línea.</span>}</label>
               <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento %<input data-editor-row={index} data-editor-column={4} inputMode="decimal" value={percentage(discount, line.quantity * price)} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"percentage",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
               <label className="space-y-1.5 text-sm font-semibold text-slate-700">Precio de venta<input data-editor-row={index} data-editor-column={5} inputMode="decimal" value={line.unitPrice} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"price",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>

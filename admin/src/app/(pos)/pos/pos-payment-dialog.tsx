@@ -281,7 +281,7 @@ export function PosPaymentDialog({
   function handleAmountEnter(event: KeyboardEvent<HTMLInputElement>) {
     // Installed WebView versions do not consistently perform the same
     // implicit form action for Enter. Own the keyboard contract here: an
-    // incomplete payment fills the remainder and a complete payment submits
+    // incomplete payment remains editable and only a complete payment submits
     // this same form through its canonical submit handler.
     handlePosPaymentAmountEnter(event, settlement.missing, () => addPayment("Cash"));
   }
@@ -469,7 +469,7 @@ export function PosPaymentDialog({
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-slate-500">
-            F1-F5 cambian el medio enfocado; Enter agrega el saldo faltante y E elimina la fila activa.
+            F1-F5 cambian el medio enfocado; Enter confirma únicamente cuando el pago está completo y E elimina la fila activa.
           </p>
           <PaymentStatus settlement={settlement} />
         </div>

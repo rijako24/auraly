@@ -81,6 +81,11 @@ public sealed record WorkSessionPaymentTotal(
     decimal? Difference = null,
     bool RequiresCount = false);
 
+public sealed record WorkSessionCreditSale(
+    string CustomerName,
+    string DocumentNumber,
+    decimal Amount);
+
 public sealed record WorkSessionClosureView(
     Guid WorkSessionClosureId,
     Guid WorkSessionId,
@@ -105,7 +110,8 @@ public sealed record WorkSessionClosureView(
     long SalesCount = 0,
     int CreditSalesCount = 0,
     decimal CreditSalesAmount = 0,
-    long ReturnCount = 0);
+    long ReturnCount = 0,
+    IReadOnlyList<WorkSessionCreditSale>? CreditSales = null);
 
 public sealed record WorkSessionClosurePreviewView(
     Guid WorkSessionId,
@@ -126,7 +132,8 @@ public sealed record WorkSessionClosurePreviewView(
     long SalesCount = 0,
     int CreditSalesCount = 0,
     decimal CreditSalesAmount = 0,
-    long ReturnCount = 0);
+    long ReturnCount = 0,
+    IReadOnlyList<WorkSessionCreditSale>? CreditSales = null);
 
 public sealed record WorkSessionCashDifferencePayload(
     Guid WorkSessionClosureId,

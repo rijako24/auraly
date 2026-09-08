@@ -40,6 +40,9 @@ Las tablas pertenecen al `BusinessId`; el `TenantId` se valida mediante la relac
 5. La API permite consultar cartera paginada y registrar un recaudo con llave de idempotencia.
 6. El recaudo crea directamente su fuente y trabajo contables durables.
 7. El procesador canónico aplica abonos sin permitir sobrepago y actualiza el estado; contabiliza caja/banco contra cartera únicamente cuando el trabajo requiere asiento.
+8. Los recaudos por transferencia conservan la cuenta bancaria seleccionada; la
+   cuenta principal es el valor predeterminado y el operador puede escoger otra
+   cuenta activa del mismo tenant.
 8. La vista administrativa consulta el libro real y registra abonos; no calcula saldos en el navegador.
 
 ## Concurrencia e idempotencia

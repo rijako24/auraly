@@ -179,12 +179,18 @@ public sealed class PosEnrollmentSessionCompleter(
                 ?? throw new PosLocalLoginException(
                     "EnrollmentSessionConsumed",
                     "La sesión inicial del enrolamiento ya fue utilizada.");
+            if (package.InitialIdentitySnapshot is { } identitySnapshot)
+                await identities.ApplySnapshotAsync(identitySnapshot, cancellationToken);
             await identities.ApplyLeaseUserAsync(access.User, cancellationToken);
             await leases.SaveAsync(access, cancellationToken);
             var session = await identities.LoginFromEnrollmentAsync(
                 access.User.UserId,
                 cancellationToken);
-            enrollments.Save(package with { InitialOfflineAccess = null });
+            enrollments.Save(package with
+            {
+                InitialOfflineAccess = null,
+                InitialIdentitySnapshot = null
+            });
             return session;
         }
         finally

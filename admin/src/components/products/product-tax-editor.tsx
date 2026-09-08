@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { taxProfilesApi, type ProductTaxConfiguration } from "@/services/api/tax-profiles";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { normalizeProductPurchaseTaxTreatment } from "@/lib/product-purchase-tax-treatment";
 
 export interface ProductTaxEditorHandle {
   getValue: () => Omit<ProductTaxConfiguration, "productId">;
@@ -92,6 +93,11 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
   const salesTax = taxes.data?.find((tax) => tax.taxProfileId === salesTaxProfileId);
   const purchaseTax = taxes.data?.find((tax) => tax.taxProfileId === purchaseTaxProfileId);
   useEffect(() => {
+    setPurchaseTaxTreatment((currentTreatment) =>
+      normalizeProductPurchaseTaxTreatment(purchaseTax?.rate, currentTreatment),
+    );
+  }, [purchaseTax?.rate]);
+  useEffect(() => {
     if (salesTax) onSalesTaxRateChange?.(salesTax.rate);
   }, [onSalesTaxRateChange, salesTax]);
 return <section className={`space-y-4 ${embedded ? "" : "rounded-xl border bg-muted/15 p-4"}`}>
@@ -111,7 +117,7 @@ return <section className={`space-y-4 ${embedded ? "" : "rounded-xl border bg-mu
       </div>
       <div className="space-y-2">
         <Label>IVA de compra <span className="text-destructive">*</span></Label>
-        <Select value={purchaseTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((tax) => tax.taxProfileId === value)?.rate ?? 0; setPurchaseTaxProfileId(value); setPurchaseTaxTreatment((current) => rate === 0 ? "NotApplicable" : current === "NotApplicable" ? "DeductibleInputVat" : current); setValidationError(undefined); }}>
+        <Select value={purchaseTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((tax) => tax.taxProfileId === value)?.rate; setPurchaseTaxProfileId(value); setPurchaseTaxTreatment((current) => normalizeProductPurchaseTaxTreatment(rate, current)); setValidationError(undefined); }}>
           <SelectTrigger aria-invalid={Boolean(validationError && !purchaseTaxProfileId)}><SelectValue placeholder="Selecciona IVA de compra" /></SelectTrigger>
           <SelectContent>{(taxes.data ?? []).map((tax) =>
             <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate.toLocaleString("es-CO")} %</SelectItem>)}</SelectContent>

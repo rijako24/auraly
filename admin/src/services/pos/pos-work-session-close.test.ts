@@ -14,7 +14,7 @@ test("online closure uses the authenticated server work-session endpoints", () =
 });
 
 test("closure print view is a receipt with user and every payment breakdown", () => {
-  const html = workSessionClosureHtml({ workSessionClosureId: "close-1", companyName: "Comercializadora & Uno", logoUrl: "https://media.test/logo.png", businessName: "Sede <Uno>", warehouseName: "Principal", userName: "Ana", openedAt: "2026-08-23T10:00:00Z", closedAt: "2026-08-23T12:00:00Z", totalSales: 140, totalRefunds: 0, totalOther: 0, netAmount: 140, expectedCash: 100, countedCash: 100, cashDifference: 0, note: "<script>alert(1)</script>", paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 110, refundAmount: 10, otherAmount: 0, netAmount: 100, countedAmount: 100, difference: 0 }, { paymentMethodCode: "Transfer", salesAmount: 40, refundAmount: 0, otherAmount: 0, netAmount: 40 }] });
+  const html = workSessionClosureHtml({ workSessionClosureId: "close-1", companyName: "Comercializadora & Uno", logoUrl: "https://media.test/logo.png", businessName: "Sede <Uno>", warehouseName: "Principal", userName: "Ana", openedAt: "2026-08-23T10:00:00Z", closedAt: "2026-08-23T12:00:00Z", totalSales: 140, totalRefunds: 0, totalOther: 0, netAmount: 140, expectedCash: 100, countedCash: 100, cashDifference: 0, note: "<script>alert(1)</script>", creditSales: [{ customerName: "Cliente Uno", documentNumber: "FV-10", amount: 25 }], paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 110, refundAmount: 10, otherAmount: 0, netAmount: 100, countedAmount: 100, difference: 0 }, { paymentMethodCode: "Transfer", salesAmount: 40, refundAmount: 0, otherAmount: 0, netAmount: 40, countedAmount: 45, difference: 5 }] });
   assert.match(html, /Comercializadora &amp; Uno/);
   assert.match(html, /Sede: Sede &lt;Uno&gt; · Principal/);
   assert.match(html, /https:\/\/media\.test\/logo\.png/);
@@ -37,14 +37,18 @@ test("closure print view is a receipt with user and every payment breakdown", ()
   assert.match(html, /Cierre:/);
   assert.match(html, /Duración:/);
   assert.match(html, /class="payment" data-payment-method="Cash"/);
-  const cash = html.slice(html.indexOf("data-payment-method=\"Cash\""), html.indexOf("</section>", html.indexOf("data-payment-method=\"Cash\"")));
-  assert.doesNotMatch(cash, />Esperado</);
-  assert.doesNotMatch(cash, />Contado</);
+  const cashStart = html.indexOf("<section class=\"payment\" data-payment-method=\"Cash\"");
+  const cash = html.slice(cashStart, html.indexOf("</section>", cashStart));
+  assert.match(cash, />Esperado</);
+  assert.match(cash, />Contado</);
   const transfer = html.slice(html.indexOf("<h3>Transferencia</h3>"), html.indexOf("<h2>Totales del turno</h2>"));
   assert.doesNotMatch(transfer, />Entradas</);
   assert.doesNotMatch(transfer, />Salidas</);
-  assert.doesNotMatch(transfer, />Esperado</);
-  assert.doesNotMatch(transfer, />Contado</);
+  assert.match(transfer, />Esperado</);
+  assert.match(transfer, />Contado</);
+  assert.match(transfer, />Diferencia</);
+  assert.match(html, /Cliente Uno/);
+  assert.match(html, /FV-10/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
   assert.doesNotMatch(html, /window\.print/);

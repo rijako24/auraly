@@ -202,6 +202,12 @@ public sealed class SqlPayablesStore(
                 await transaction.CommitAsync(cancellationToken);
                 return replay;
             }
+            if (request.PaymentMethod == SupplierPaymentMethods.BankTransfer && request.BankAccountId is null)
+                request = request with
+                {
+                    BankAccountId = await ResolvePrimaryBankAccountAsync(
+                        connection, transaction, user.TenantId, cancellationToken)
+                };
             await ValidateScopeAndAvailabilityAsync(
                 connection, transaction, user, request, settlement, cancellationToken);
             var number = await AllocateNumberAsync(
@@ -218,7 +224,7 @@ public sealed class SqlPayablesStore(
                 settlement.TotalAmount,
                 settlement.Allocations.Select((item, index) =>
                     new SupplierPaymentAllocationSnapshot(index + 1, item.PayableId, item.Amount))
-                    .ToArray(), request.WorkSessionId);
+                    .ToArray(), request.WorkSessionId, request.BankAccountId);
             var payloadJson = SupplierPaymentContractSerializer.Serialize(payload);
             await InsertPaymentAsync(
                 connection, transaction, user, request, settlement, number,
@@ -328,6 +334,8 @@ public sealed class SqlPayablesStore(
             catch (SqlException exception) when (exception.Number is 51200 or 51201 or 51202)
             { throw new PayablesValidationException(exception.Message); }
         }
+        await ValidateBankAccountAsync(connection, transaction, user.TenantId,
+            request.PaymentMethod, request.BankAccountId, cancellationToken);
         foreach (var allocation in settlement.Allocations.OrderBy(item => item.PayableId))
         {
             await using var command = new SqlCommand("""
@@ -427,10 +435,10 @@ public sealed class SqlPayablesStore(
             INSERT dbo.SupplierPayments
               (PaymentId,BusinessId,SupplierId,WorkSessionId,DocumentSeriesId,DocumentNumber,
                DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,
-               PayloadHash,PaidAt,CurrencyCode,PaymentMethod,Reference,Notes,TotalAmount,
+               PayloadHash,PaidAt,CurrencyCode,PaymentMethod,BankAccountId,Reference,Notes,TotalAmount,
                Status,ConfirmedByUserId,AcceptedAt)
             VALUES(@Id,@BusinessId,@SupplierId,@WorkSessionId,@SeriesId,@Number,@Prefix,@SeriesCode,
-               @Consecutive,@Key,@Hash,@PaidAt,@Currency,@Method,@Reference,@Notes,@Total,
+               @Consecutive,@Key,@Hash,@PaidAt,@Currency,@Method,@BankAccountId,@Reference,@Notes,@Total,
                N'Accepted',@UserId,@Now);
             """, connection, transaction);
         command.Parameters.AddWithValue("@Id", request.PaymentId);
@@ -447,6 +455,7 @@ public sealed class SqlPayablesStore(
         command.Parameters.AddWithValue("@PaidAt", request.PaidAt);
         command.Parameters.AddWithValue("@Currency", request.CurrencyCode);
         command.Parameters.AddWithValue("@Method", request.PaymentMethod);
+        command.Parameters.AddWithValue("@BankAccountId", (object?)request.BankAccountId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Reference", (object?)request.Reference ?? DBNull.Value);
         command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
         AddMoney(command, "@Total", settlement.TotalAmount);
@@ -502,8 +511,39 @@ public sealed class SqlPayablesStore(
         {
             request.PaymentId, request.BusinessId, request.SupplierId, request.PaidAt,
             Currency = request.CurrencyCode, request.PaymentMethod, request.Reference,
-            request.Notes, request.WorkSessionId, settlement.TotalAmount, settlement.Allocations
+            request.Notes, request.WorkSessionId, request.BankAccountId, settlement.TotalAmount, settlement.Allocations
         }));
+
+    private static async Task ValidateBankAccountAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId,
+        string method, Guid? bankAccountId, CancellationToken cancellationToken)
+    {
+        if (method != SupplierPaymentMethods.BankTransfer)
+        {
+            if (bankAccountId is not null)
+                throw new PayablesValidationException("Only a bank transfer can select a bank account.");
+            return;
+        }
+        if (bankAccountId is null) return;
+        await using var command = new SqlCommand(
+            "SELECT COUNT_BIG(1) FROM accounting.BankAccounts WHERE BankAccountId=@Id AND TenantId=@TenantId AND IsActive=1",
+            connection, transaction);
+        command.Parameters.AddWithValue("@Id", bankAccountId.Value);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) != 1)
+            throw new PayablesValidationException("The selected bank account is not active for this tenant.");
+    }
+
+    private static async Task<Guid?> ResolvePrimaryBankAccountAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand(
+            "SELECT BankAccountId FROM accounting.BankAccounts WHERE TenantId=@TenantId AND IsPrimary=1 AND IsActive=1",
+            connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return await command.ExecuteScalarAsync(cancellationToken) is Guid id ? id : null;
+    }
 
     private static void AddMoney(SqlCommand command, string name, decimal value)
     {

@@ -21,6 +21,16 @@ export function salePriceForMargin(
   return round(netUnit * (1 + taxRate / 100) / (1 - discountPercent / 100), 6);
 }
 
+export function lineEconomicsForMargin(
+  unitCost: number, marginPercent: number, taxRate: number,
+): { unitPrice: number; discount: number; discountPercent: number } {
+  return {
+    unitPrice: salePriceForMargin(unitCost, marginPercent, 0, taxRate),
+    discount: 0,
+    discountPercent: 0,
+  };
+}
+
 export function nextFocusableIndex(currentIndex: number, length: number, backwards: boolean): number {
   if (length <= 0) return -1;
   if (currentIndex < 0) return backwards ? length - 1 : 0;

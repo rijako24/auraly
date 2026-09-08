@@ -3,12 +3,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CalendarClock, CircleDollarSign, Plus, ReceiptText, Search, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { useConfirmCustomerPayment, useReceivableDetail, useReceivables } from "@/hooks/use-receivables";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
-import type { CustomerPaymentMethod, ReceivableDetail, ReceivableListItem, ReceivableStatus } from "@/services/api/receivables";
+import { receivablesApi, type CustomerPaymentMethod, type ReceivableDetail, type ReceivableListItem, type ReceivableStatus } from "@/services/api/receivables";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ export default function ReceivablesPage() {
   const [paymentTarget,setPaymentTarget]=useState<ReceivableDetail>();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<CustomerPaymentMethod>("Cash");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -58,11 +60,21 @@ export default function ReceivablesPage() {
   });
   const detailQuery = useReceivableDetail(selectedId);
   const confirmPayment = useConfirmCustomerPayment();
+  const settlementQuery = useQuery({
+    queryKey: ["payment-settlement-configuration"],
+    queryFn: receivablesApi.settlementConfiguration,
+    enabled: paymentOpen,
+  });
   const detail = detailQuery.data;
 
   useEffect(() => {
     if (paymentOpen && paymentTarget) setAmount(String(paymentTarget.outstandingAmount));
   }, [paymentOpen, paymentTarget]);
+  useEffect(() => {
+    if (!paymentOpen || method !== "BankTransfer" || bankAccountId) return;
+    const accounts = settlementQuery.data?.bankAccounts ?? [];
+    setBankAccountId((accounts.find(account => account.isPrimary) ?? accounts[0])?.bankAccountId ?? "");
+  }, [bankAccountId, method, paymentOpen, settlementQuery.data]);
 
   const columns = useMemo<ColumnDef<ReceivableListItem>[]>(() => [
     { accessorKey: "documentNumber", header: "Factura", cell: ({ row }) => <div><p className="font-semibold">{row.original.documentNumber}</p><p className="text-xs text-muted-foreground">{row.original.customerName}</p></div> },
@@ -74,7 +86,7 @@ export default function ReceivablesPage() {
 
   const openPayment = () => {
     if (!detail || detail.outstandingAmount <= 0) return;
-    setMethod("Cash"); setReference(""); setNotes("");
+    setMethod("Cash"); setBankAccountId(""); setReference(""); setNotes("");
     setAmount(String(detail.outstandingAmount)); setPaymentTarget(detail); setSelectedId(undefined); setPaymentOpen(true);
   };
 
@@ -86,11 +98,16 @@ export default function ReceivablesPage() {
       toast.error("El valor debe ser mayor que cero y no superar el saldo.");
       return;
     }
+    if (method === "BankTransfer" && !bankAccountId) {
+      toast.error("Selecciona la cuenta bancaria que recibirá la transferencia.");
+      return;
+    }
     try {
       const accepted = await confirmPayment.mutateAsync({
         paymentId: crypto.randomUUID(), businessId, customerId: paymentTarget.customerId,
         workSessionId: null, paidAt: new Date().toISOString(), currencyCode: paymentTarget.currencyCode,
-        paymentMethod: method, reference: reference.trim() || null, notes: notes.trim() || null,
+        paymentMethod: method, bankAccountId: method === "BankTransfer" ? bankAccountId : null,
+        reference: reference.trim() || null, notes: notes.trim() || null,
         allocations: [{ receivableId: paymentTarget.receivableId, amount: parsed }],
       });
       setPaymentOpen(false);setPaymentTarget(undefined);
@@ -117,7 +134,7 @@ export default function ReceivablesPage() {
 
     <Dialog open={!!selectedId} onOpenChange={(open) => !open && setSelectedId(undefined)}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{detail?.documentNumber ?? "Detalle de cartera"}</DialogTitle><DialogDescription>{detail ? `${detail.customerName}${detail.customerIdentification ? ` · ${detail.customerIdentification}` : ""}` : "Cargando información..."}</DialogDescription></DialogHeader>{detailQuery.isLoading ? <p className="py-8 text-center text-muted-foreground">Cargando trazabilidad...</p> : detail ? <div className="space-y-5"><dl className="grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-3"><Metric label="Valor original" value={formatCurrency(detail.originalAmount, detail.currencyCode)} /><Metric label="Saldo actual" value={formatCurrency(detail.outstandingAmount, detail.currencyCode)} emphasized /><Metric label="Vence" value={formatDate(detail.dueDate)} /></dl><section><h3 className="mb-3 text-sm font-semibold">Movimientos</h3><div className="space-y-2">{detail.transactions.map((transaction) => <div key={transaction.transactionId} className="flex items-center justify-between rounded-lg border p-3 text-sm"><div><p className="font-medium">{transaction.type === "Opening" ? "Cuenta por cobrar creada" : "Abono aplicado"}</p><p className="text-xs text-muted-foreground">{formatDateTime(transaction.occurredAt)}</p></div><span className={transaction.type === "Payment" ? "font-semibold text-emerald-700" : "font-semibold"}>{transaction.type === "Payment" ? "−" : "+"}{formatCurrency(transaction.amount, detail.currencyCode)}</span></div>)}</div></section><DialogFooter><Button variant="outline" onClick={() => setSelectedId(undefined)}>Cerrar</Button>{canReceive && detail.outstandingAmount > 0 && <Button onClick={openPayment}><CircleDollarSign className="mr-2 h-4 w-4" /> Registrar abono</Button>}</DialogFooter></div> : <p className="py-8 text-center text-destructive">No fue posible cargar la cuenta por cobrar.</p>}</DialogContent></Dialog>
 
-    <Dialog open={paymentOpen} onOpenChange={open=>{setPaymentOpen(open);if(!open)setPaymentTarget(undefined)}}><DialogContent className="sm:max-w-lg"><form className="space-y-5" onSubmit={submitPayment}><DialogHeader><DialogTitle>Registrar abono</DialogTitle><DialogDescription>El recaudo se aplicará a {paymentTarget?.documentNumber} de forma transaccional e idempotente.</DialogDescription></DialogHeader><div className="space-y-2"><Label htmlFor="receivable-amount">Valor</Label><FormattedNumberInput id="receivable-amount" kind="currency" value={amount} onValueChange={(value) => setAmount(value?.toString() ?? "")} /></div><div className="space-y-2"><Label>Medio de pago</Label><Select value={method} onValueChange={(value) => setMethod(value as CustomerPaymentMethod)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(paymentLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label htmlFor="receivable-reference">Referencia</Label><Input id="receivable-reference" maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Comprobante o referencia" /></div><div className="space-y-2"><Label htmlFor="receivable-notes">Notas</Label><Textarea id="receivable-notes" maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></div><DialogFooter><Button type="button" variant="outline" onClick={() => {setPaymentOpen(false);setPaymentTarget(undefined)}}>Cancelar</Button><Button type="submit" disabled={confirmPayment.isPending}>{confirmPayment.isPending ? "Registrando..." : "Registrar abono"}</Button></DialogFooter></form></DialogContent></Dialog>
+    <Dialog open={paymentOpen} onOpenChange={open=>{setPaymentOpen(open);if(!open)setPaymentTarget(undefined)}}><DialogContent className="sm:max-w-lg"><form className="space-y-5" onSubmit={submitPayment}><DialogHeader><DialogTitle>Registrar abono</DialogTitle><DialogDescription>El recaudo se aplicará a {paymentTarget?.documentNumber} de forma transaccional e idempotente.</DialogDescription></DialogHeader><div className="space-y-2"><Label htmlFor="receivable-amount">Valor</Label><FormattedNumberInput id="receivable-amount" kind="currency" value={amount} onValueChange={(value) => setAmount(value?.toString() ?? "")} /></div><div className="space-y-2"><Label>Medio de pago</Label><Select value={method} onValueChange={(value) => {setMethod(value as CustomerPaymentMethod);setBankAccountId("")}}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(paymentLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>{method === "BankTransfer" && <div className="space-y-2"><Label>Cuenta bancaria</Label><Select value={bankAccountId} onValueChange={setBankAccountId}><SelectTrigger><SelectValue placeholder={settlementQuery.isLoading ? "Cargando cuentas..." : "Selecciona una cuenta"}/></SelectTrigger><SelectContent>{(settlementQuery.data?.bankAccounts ?? []).map(account=><SelectItem key={account.bankAccountId} value={account.bankAccountId}>{account.displayName}{account.isPrimary ? " · Principal" : ""}</SelectItem>)}</SelectContent></Select></div>}<div className="space-y-2"><Label htmlFor="receivable-reference">Referencia</Label><Input id="receivable-reference" maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Comprobante o referencia" /></div><div className="space-y-2"><Label htmlFor="receivable-notes">Notas</Label><Textarea id="receivable-notes" maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></div><DialogFooter><Button type="button" variant="outline" onClick={() => {setPaymentOpen(false);setPaymentTarget(undefined)}}>Cancelar</Button><Button type="submit" disabled={confirmPayment.isPending || (method === "BankTransfer" && (!bankAccountId || settlementQuery.isLoading))}>{confirmPayment.isPending ? "Registrando..." : "Registrar abono"}</Button></DialogFooter></form></DialogContent></Dialog>
   </div>;
 }
 

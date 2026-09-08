@@ -6,6 +6,7 @@ using Auraly.Application.Sales;
 using Auraly.Application.Inventory;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.Authorization;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -285,12 +286,21 @@ public sealed partial class SqlOnlineSalesDraftStore(
         }
 
         DemandActiveVersion(state, expectedVersion);
+        var currentDraft = await ReadDraftAsync(
+            connection, transaction, draftId, cancellationToken);
         var activeLines = await ReadLineProductsAsync(
             connection, transaction, draftId, cancellationToken);
         if (lines.Count != activeLines.Count ||
             activeLines.Any(current => lines.All(line => line.LineId != current.LineId)))
             throw new OnlineSalesDraftValidationException(
                 "Debes enviar exactamente todas las líneas de la venta activa.");
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesChangeDescription) &&
+            lines.Any(line => !string.Equals(
+                line.Description.Trim(),
+                currentDraft.Lines.Single(current => current.LineId == line.LineId).Description,
+                StringComparison.Ordinal)))
+            throw new OnlineSalesDraftForbiddenException(
+                $"Permission '{CommercePermissionCodes.SalesChangeDescription}' is required.");
 
         foreach (var line in lines)
         {

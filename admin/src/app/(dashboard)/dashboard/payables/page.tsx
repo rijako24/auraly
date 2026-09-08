@@ -3,12 +3,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CalendarClock, Landmark, Plus, ReceiptText, Search, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { useConfirmSupplierPayment, usePayableDetail, usePayables } from "@/hooks/use-payables";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
-import type { PayableDetail, PayableListItem, PayableStatus } from "@/services/api/payables";
+import { payablesApi, type PayableDetail, type PayableListItem, type PayableStatus } from "@/services/api/payables";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ export default function PayablesPage() {
   const [paymentTarget,setPaymentTarget]=useState<PayableDetail>();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<"Cash" | "BankTransfer">("BankTransfer");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -53,11 +55,17 @@ export default function PayablesPage() {
   });
   const detailQuery = usePayableDetail(selectedId);
   const confirmPayment = useConfirmSupplierPayment();
+  const settlementQuery = useQuery({queryKey:["payment-settlement-configuration"],queryFn:payablesApi.settlementConfiguration,enabled:paymentOpen});
   const detail = detailQuery.data;
 
   useEffect(() => {
     if (paymentOpen && paymentTarget) setAmount(String(paymentTarget.outstandingAmount));
   }, [paymentOpen, paymentTarget]);
+  useEffect(() => {
+    if (!paymentOpen || method !== "BankTransfer" || bankAccountId) return;
+    const accounts = settlementQuery.data?.bankAccounts ?? [];
+    setBankAccountId((accounts.find(account => account.isPrimary) ?? accounts[0])?.bankAccountId ?? "");
+  }, [bankAccountId, method, paymentOpen, settlementQuery.data]);
 
   const columns = useMemo<ColumnDef<PayableListItem>[]>(() => [
     {
@@ -106,7 +114,7 @@ export default function PayablesPage() {
 
   const openPayment = () => {
     if (!detail || detail.outstandingAmount <= 0) return;
-    setMethod("BankTransfer"); setReference(""); setNotes("");
+    setMethod("BankTransfer"); setBankAccountId(""); setReference(""); setNotes("");
     setAmount(String(detail.outstandingAmount)); setPaymentTarget(detail); setSelectedId(undefined); setPaymentOpen(true);
   };
 
@@ -118,6 +126,10 @@ export default function PayablesPage() {
       toast.error("El valor debe ser mayor que cero y no superar el saldo.");
       return;
     }
+    if (method === "BankTransfer" && !bankAccountId) {
+      toast.error("Selecciona la cuenta bancaria desde la que se hará la transferencia.");
+      return;
+    }
     try {
       const accepted = await confirmPayment.mutateAsync({
         paymentId: crypto.randomUUID(),
@@ -126,6 +138,7 @@ export default function PayablesPage() {
         paidAt: new Date().toISOString(),
         currencyCode: paymentTarget.currencyCode,
         paymentMethod: method,
+        bankAccountId: method === "BankTransfer" ? bankAccountId : null,
         reference: reference.trim() || null,
         notes: notes.trim() || null,
         allocations: [{ payableId: paymentTarget.payableId, amount: parsed }],
@@ -219,10 +232,11 @@ export default function PayablesPage() {
           <form className="space-y-5" onSubmit={submitPayment}>
             <DialogHeader><DialogTitle>Registrar pago</DialogTitle><DialogDescription>El pago se aplicará a {paymentTarget?.documentNumber} mediante el motor transaccional.</DialogDescription></DialogHeader>
             <div className="space-y-2"><Label htmlFor="payable-amount">Valor</Label><FormattedNumberInput id="payable-amount" kind="currency" value={amount} onValueChange={(value) => setAmount(value?.toString() ?? "")} /></div>
-            <div className="space-y-2"><Label>Medio de pago</Label><Select value={method} onValueChange={(value) => setMethod(value as "Cash" | "BankTransfer")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="BankTransfer">Transferencia bancaria</SelectItem><SelectItem value="Cash">Efectivo</SelectItem></SelectContent></Select></div>
+            <div className="space-y-2"><Label>Medio de pago</Label><Select value={method} onValueChange={(value) => {setMethod(value as "Cash" | "BankTransfer");setBankAccountId("")}}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="BankTransfer">Transferencia bancaria</SelectItem><SelectItem value="Cash">Efectivo</SelectItem></SelectContent></Select></div>
+            {method === "BankTransfer" && <div className="space-y-2"><Label>Cuenta bancaria</Label><Select value={bankAccountId} onValueChange={setBankAccountId}><SelectTrigger><SelectValue placeholder={settlementQuery.isLoading ? "Cargando cuentas..." : "Selecciona una cuenta"}/></SelectTrigger><SelectContent>{(settlementQuery.data?.bankAccounts ?? []).map(account=><SelectItem key={account.bankAccountId} value={account.bankAccountId}>{account.displayName}{account.isPrimary ? " · Principal" : ""}</SelectItem>)}</SelectContent></Select></div>}
             <div className="space-y-2"><Label htmlFor="payable-reference">Referencia</Label><Input id="payable-reference" maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Comprobante o referencia bancaria" /></div>
             <div className="space-y-2"><Label htmlFor="payable-notes">Notas</Label><Textarea id="payable-notes" maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></div>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => {setPaymentOpen(false);setPaymentTarget(undefined)}}>Cancelar</Button><Button type="submit" disabled={confirmPayment.isPending}>{confirmPayment.isPending ? "Registrando..." : "Registrar pago"}</Button></DialogFooter>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => {setPaymentOpen(false);setPaymentTarget(undefined)}}>Cancelar</Button><Button type="submit" disabled={confirmPayment.isPending || (method === "BankTransfer" && (!bankAccountId || settlementQuery.isLoading))}>{confirmPayment.isPending ? "Registrando..." : "Registrar pago"}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

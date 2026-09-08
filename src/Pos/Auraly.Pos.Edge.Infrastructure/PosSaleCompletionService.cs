@@ -3,6 +3,7 @@ using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
@@ -66,7 +67,8 @@ public sealed record CompletePosSaleCommand(
     IReadOnlyCollection<OfflineSalePayment> Payments,
     int PaperWidthMillimeters = 80,
     PosSaleUblSnapshotContract? UblSnapshot = null,
-    string DocumentType = PosSaleDocumentTypes.Invoice);
+    string DocumentType = PosSaleDocumentTypes.Invoice,
+    IReadOnlySet<string>? Permissions = null);
 
 public sealed record CompletePosSaleResult(
     PosEdgeIssueResult IssuedSale,
@@ -215,6 +217,11 @@ public sealed class PosSaleCompletionService(
             ?? throw new KeyNotFoundException("The active sale does not exist.");
         if (draft.Status != PosDraftStatus.Active || draft.Lines.Count == 0)
             throw new InvalidOperationException("Only a non-empty active sale can be completed.");
+        if (draft.Lines.Any(line => SaleBelowCostPolicy.IsBelowCost(
+                line.Quantity, line.Net, line.DocumentUnitCost)) &&
+            command.Permissions?.Contains(CommercePermissionCodes.SalesBelowCost) != true)
+            throw new UnauthorizedAccessException(
+                $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
         var withholding = await CalculateWithholdingAsync(draft, command.IssuedAt, ct);
         if (command.Payments.Count == 0 ||
             command.Payments.Sum(payment => payment.Amount) != withholding.NetAmount)

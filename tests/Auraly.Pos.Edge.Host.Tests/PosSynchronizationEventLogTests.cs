@@ -13,10 +13,8 @@ public sealed class PosSynchronizationEventLogTests
     [Fact]
     public async Task Failed_upload_lane_does_not_block_catalog_download_lane()
     {
-        var signal = new PosSynchronizationSignal();
         var events = new PosSynchronizationEventLog(TimeProvider.System);
         var executor = new PosSynchronizationLaneExecutor(
-            signal,
             events,
             NullLogger<PosSynchronizationLaneExecutor>.Instance);
         var catalogExecuted = false;

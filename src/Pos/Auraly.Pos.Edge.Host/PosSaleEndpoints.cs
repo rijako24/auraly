@@ -191,7 +191,8 @@ internal static class PosSaleHostModule
                         payments,
                         settings.PaperWidthMillimeters,
                         request.UblSnapshot,
-                        request.DocumentType),
+                        request.DocumentType,
+                        session.Permissions.ToHashSet(StringComparer.Ordinal)),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
                 if (!result.PrintedDirectly && !string.IsNullOrWhiteSpace(result.PrintError))
@@ -208,6 +209,10 @@ internal static class PosSaleHostModule
             catch (InvalidOperationException error)
             {
                 return Results.Conflict(new { detail = error.Message });
+            }
+            catch (UnauthorizedAccessException error)
+            {
+                return Results.Json(new { detail = error.Message }, statusCode: StatusCodes.Status403Forbidden);
             }
         });
 

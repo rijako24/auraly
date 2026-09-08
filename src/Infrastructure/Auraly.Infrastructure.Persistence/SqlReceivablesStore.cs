@@ -145,7 +145,7 @@ public sealed class SqlReceivablesStore(
 
     public async Task<CustomerPaymentAcceptance> AcceptPaymentAsync(ReceivablesUserIdentity user,string key,ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,CancellationToken token)
     {
-        var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { request.PaymentId,request.BusinessId,request.CustomerId,request.WorkSessionId,request.PaidAt,request.CurrencyCode,request.PaymentMethod,request.Reference,request.Notes,settlement.Allocations }));
+        var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { request.PaymentId,request.BusinessId,request.CustomerId,request.WorkSessionId,request.PaidAt,request.CurrencyCode,request.PaymentMethod,request.BankAccountId,request.Reference,request.Notes,settlement.Allocations }));
         for(var attempt=1;;attempt++)
         {
             try
@@ -166,13 +166,16 @@ public sealed class SqlReceivablesStore(
         try
         {
             var replay=await FindReplayAsync(connection,tx,user.BusinessId,request.PaymentId,key,hash,token); if(replay is not null){await tx.CommitAsync(token);return replay;}
+            if(request.PaymentMethod==CustomerPaymentMethods.BankTransfer && request.BankAccountId is null)
+                request=request with { BankAccountId=await ResolvePrimaryBankAccountAsync(connection,tx,user.TenantId,token) };
             await ValidateAllocationsAsync(connection,tx,user,request,settlement,token);
             var number=await AllocateNumberAsync(connection,tx,user.BusinessId,token); var now=timeProvider.GetUtcNow();
             var sequence=await AllocateSequenceAsync(connection,tx,user.BusinessId,now,token); var movementId=ids.NewId();
             var payload=new CustomerPaymentDocumentPayload(user.TenantId,user.BusinessId,request.PaymentId,request.CustomerId,user.UserId,
                 request.WorkSessionId,number.FullNumber,number.SeriesId,number.Prefix,number.SeriesCode,number.Consecutive,request.PaidAt,
                 request.CurrencyCode,request.PaymentMethod,request.Reference,request.Notes,settlement.TotalAmount,
-                settlement.Allocations.Select((x,i)=>new CustomerPaymentAllocationSnapshot(i+1,x.ReceivableId,x.Amount)).ToArray());
+                settlement.Allocations.Select((x,i)=>new CustomerPaymentAllocationSnapshot(i+1,x.ReceivableId,x.Amount)).ToArray(),
+                request.BankAccountId);
             var json=CustomerPaymentContractSerializer.Serialize(payload); var payloadHash=SHA256.HashData(Encoding.UTF8.GetBytes(json));
             await InsertAcceptedAsync(connection,tx,user,key,request,settlement,number,hash,movementId,sequence,json,payloadHash,now,token);
             await tx.CommitAsync(token); return new(request.PaymentId,movementId,number.FullNumber,"Accepted",sequence,false);
@@ -207,18 +210,20 @@ public sealed class SqlReceivablesStore(
             session.Parameters.AddWithValue("@Id",sessionId);session.Parameters.AddWithValue("@TenantId",user.TenantId);session.Parameters.AddWithValue("@BusinessId",user.BusinessId);session.Parameters.AddWithValue("@UserId",user.UserId);
             if(Convert.ToInt64(await session.ExecuteScalarAsync(token))!=1) throw new ReceivablesValidationException("The work session is not open for this user.");
         }
+        await ValidateBankAccountAsync(c,t,user.TenantId,request.PaymentMethod,request.BankAccountId,token);
     }
 
     private static async Task InsertAcceptedAsync(SqlConnection c,SqlTransaction t,ReceivablesUserIdentity user,string key,ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,AuralyDocumentNumberAssignment number,byte[] hash,Guid movementId,long sequence,string json,byte[] payloadHash,DateTimeOffset now,CancellationToken token)
     {
         await using(var command=new SqlCommand("""
-            INSERT dbo.CustomerPayments(PaymentId,BusinessId,CustomerId,WorkSessionId,DocumentSeriesId,DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,PaidAt,CurrencyCode,PaymentMethod,Reference,Notes,TotalAmount,Status,ConfirmedByUserId,AcceptedAt)
-            VALUES(@Id,@BusinessId,@CustomerId,@SessionId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,@Key,@Hash,@PaidAt,@Currency,@Method,@Reference,@Notes,@Total,N'Accepted',@UserId,@Now);
+            INSERT dbo.CustomerPayments(PaymentId,BusinessId,CustomerId,WorkSessionId,DocumentSeriesId,DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,PaidAt,CurrencyCode,PaymentMethod,BankAccountId,Reference,Notes,TotalAmount,Status,ConfirmedByUserId,AcceptedAt)
+            VALUES(@Id,@BusinessId,@CustomerId,@SessionId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,@Key,@Hash,@PaidAt,@Currency,@Method,@BankAccountId,@Reference,@Notes,@Total,N'Accepted',@UserId,@Now);
             """,c,t))
         {
             command.Parameters.AddWithValue("@Id",request.PaymentId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@CustomerId",request.CustomerId);command.Parameters.AddWithValue("@SessionId",(object?)request.WorkSessionId??DBNull.Value);
             command.Parameters.AddWithValue("@SeriesId",number.SeriesId);command.Parameters.AddWithValue("@Number",number.FullNumber);command.Parameters.AddWithValue("@Prefix",number.Prefix);command.Parameters.AddWithValue("@SeriesCode",number.SeriesCode);command.Parameters.AddWithValue("@Consecutive",number.Consecutive);
             command.Parameters.AddWithValue("@Key",key);command.Parameters.Add("@Hash",SqlDbType.Binary,32).Value=hash;command.Parameters.AddWithValue("@PaidAt",request.PaidAt);command.Parameters.AddWithValue("@Currency",request.CurrencyCode);command.Parameters.AddWithValue("@Method",request.PaymentMethod);
+            command.Parameters.AddWithValue("@BankAccountId",(object?)request.BankAccountId??DBNull.Value);
             command.Parameters.AddWithValue("@Reference",(object?)request.Reference??DBNull.Value);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);Money(command,"@Total",settlement.TotalAmount);command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@Now",now);await command.ExecuteNonQueryAsync(token);
         }
         for(var i=0;i<settlement.Allocations.Count;i++)
@@ -233,6 +238,26 @@ public sealed class SqlReceivablesStore(
             VALUES(@DocumentId,N'ReceivablePayment',@BusinessId,1,@Payload,@PayloadHash,@Now);
             """,c,t);
         job.Parameters.AddWithValue("@JobId",movementId);job.Parameters.AddWithValue("@BusinessId",user.BusinessId);job.Parameters.AddWithValue("@Sequence",sequence);job.Parameters.AddWithValue("@DocumentId",request.PaymentId);job.Parameters.AddWithValue("@Now",now);job.Parameters.AddWithValue("@Payload",json);job.Parameters.Add("@PayloadHash",SqlDbType.Binary,32).Value=payloadHash;await job.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task ValidateBankAccountAsync(SqlConnection c,SqlTransaction t,Guid tenantId,string method,Guid? bankAccountId,CancellationToken token)
+    {
+        if(method!=CustomerPaymentMethods.BankTransfer)
+        {
+            if(bankAccountId is not null) throw new ReceivablesValidationException("Only a bank transfer can select a bank account.");
+            return;
+        }
+        if(bankAccountId is null) return;
+        await using var command=new SqlCommand("SELECT COUNT_BIG(1) FROM accounting.BankAccounts WHERE BankAccountId=@Id AND TenantId=@TenantId AND IsActive=1",c,t);
+        command.Parameters.AddWithValue("@Id",bankAccountId.Value); command.Parameters.AddWithValue("@TenantId",tenantId);
+        if(Convert.ToInt64(await command.ExecuteScalarAsync(token))!=1) throw new ReceivablesValidationException("The selected bank account is not active for this tenant.");
+    }
+
+    private static async Task<Guid?> ResolvePrimaryBankAccountAsync(SqlConnection c,SqlTransaction t,Guid tenantId,CancellationToken token)
+    {
+        await using var command=new SqlCommand("SELECT BankAccountId FROM accounting.BankAccounts WHERE TenantId=@TenantId AND IsPrimary=1 AND IsActive=1",c,t);
+        command.Parameters.AddWithValue("@TenantId",tenantId);
+        return await command.ExecuteScalarAsync(token) is Guid id ? id : null;
     }
 
     private static async Task<CustomerPaymentAcceptance?> FindReplayAsync(SqlConnection c,SqlTransaction t,Guid businessId,Guid paymentId,string key,byte[] hash,CancellationToken token)

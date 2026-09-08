@@ -46,6 +46,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.SalesCreate,
             CommercePermissionCodes.SalesChangePrice,
+            CommercePermissionCodes.SalesChangeDescription,
             CommercePermissionCodes.SalesRestartDraft);
         var opened = await OpenAsync(client, new(
             fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));

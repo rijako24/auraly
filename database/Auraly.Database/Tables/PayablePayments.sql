@@ -14,6 +14,7 @@ CREATE TABLE [dbo].[SupplierPayments]
     [PaidAt] DATETIMEOFFSET(7) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
     [PaymentMethod] NVARCHAR(24) NOT NULL,
+    [BankAccountId] UNIQUEIDENTIFIER NULL,
     [Reference] NVARCHAR(120) NULL,
     [Notes] NVARCHAR(1000) NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
@@ -28,11 +29,14 @@ CREATE TABLE [dbo].[SupplierPayments]
     CONSTRAINT [FK_SupplierPayments_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_SupplierPayments_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_SupplierPayments_Users] FOREIGN KEY ([ConfirmedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_SupplierPayments_BankAccounts] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [UQ_SupplierPayments_Business_Number] UNIQUE ([BusinessId], [DocumentNumber]),
     CONSTRAINT [UQ_SupplierPayments_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [CK_SupplierPayments_Total] CHECK ([TotalAmount] > 0),
     CONSTRAINT [CK_SupplierPayments_Currency] CHECK ([CurrencyCode] = 'COP'),
     CONSTRAINT [CK_SupplierPayments_Method] CHECK ([PaymentMethod] IN (N'Cash', N'BankTransfer')),
+    CONSTRAINT [CK_SupplierPayments_BankAccount] CHECK
+      ([BankAccountId] IS NULL OR [PaymentMethod]=N'BankTransfer'),
     CONSTRAINT [CK_SupplierPayments_Status] CHECK ([Status] IN (N'Accepted', N'Processed'))
 );
 GO

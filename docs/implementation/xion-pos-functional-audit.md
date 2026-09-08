@@ -46,7 +46,7 @@ La decisión de Auraly prevalece cuando existe contradicción. En particular:
 | Observación de línea | `ObservacionDetalle`; `FrmFacturacionObservacionDetalle` | Persiste observación por producto | Detalle local | No implementado | Conservar | Autosave y recuperación |
 | Cambiar descripción | `CambiarDescripcionProducto`; `FrmFacturacionCambiarDescripcion` | Acción autorizada por línea y auditada | Permisos | No implementado | Conservar solo con permiso específico | Denegación y auditoría |
 | Existencia por bodegas | `ExistenciaBodegas` | Consulta servidor bajo demanda | API servidor | Endpoint de disponibilidad | Conservar online, sin persistir saldo | SQLite sin inventario |
-| Rentabilidad | `RentabilidadDeVenta` | Expone costo/margen bajo permiso | Costos locales | Prohibido para POS MVP | Excluir | Contrato sin costos |
+| Rentabilidad | `RentabilidadDeVenta` | Expone costo/margen bajo permiso | Snapshot de costo del documento | Implementado bajo `sales.lines.cost-margin.read`; edición sólo sin control de inventario | Conservar el propietario documental | Prueba de permisos y recálculo |
 | Balanza | `Balanza`, `VenderConBalanza`, `ActivarBalanza`, `AgregarProducto` | Puede leer dispositivo o código pesable; cantidad debe ser mayor que cero | Hardware y producto | Parser de código implementado | Mejorar con adaptador Edge consumido | Peso, timeout y recuperación |
 | Eliminar por búsqueda | `BuscarEliminarProductos` | Permite localizar una línea antes de eliminar | Detalle local | No implementado | Conservar dentro de búsqueda de líneas | Permiso y foco |
 | Pago | `Pagar` | Requiere líneas, resolución, vendedor cuando aplica, validaciones, caja y abre flujo de pagos | Fiscal, inventario, caja, pagos | Confirmación offline básica | Mejorar y conectar | E2E confirmación |
@@ -122,7 +122,9 @@ cheques, retenciones, producción ni parámetros móviles heredados.
 - Los cálculos históricos usan `double`; no son vectores numéricos confiables.
 - La vigencia de lista en una consulta histórica compara inicio/fin en sentido
   incorrecto. Auraly define `inicio <= instante < fin` y lo prueba.
-- El POS histórico consulta y conserva costo/rentabilidad; Auraly no los expone.
+- Auraly expone costo/rentabilidad sólo al supervisor autorizado; el costo y margen
+  de productos con inventario permanecen inmutables y toda emisión bajo costo exige
+  `sales.below-cost` en el servidor local u online.
 - Pedidos consultan servidor y distinguen recuperar uno en POS de facturar una
   selección desde la vista de pedidos. Esa separación se mantiene.
 

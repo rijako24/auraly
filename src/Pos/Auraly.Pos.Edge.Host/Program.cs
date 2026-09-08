@@ -48,7 +48,12 @@ public sealed record CaptureRequest(string Value, Guid? CustomerId);
 public sealed record QuantityRequest(decimal Quantity);
 public sealed record DiscountRequest(decimal Discount);
 public sealed record UpdateDraftLinesRequest(IReadOnlyList<UpdateDraftLineRequest> Lines);
-public sealed record UpdateDraftLineRequest(Guid LineId, string Description, decimal UnitPrice, decimal Discount);
+public sealed record UpdateDraftLineRequest(
+    Guid LineId,
+    string Description,
+    decimal UnitPrice,
+    decimal Discount,
+    decimal DocumentUnitCost = 0);
 public sealed record SelectCustomerRequest(Guid? CustomerId);
 public sealed record SaveTemporaryRequest(string Name, string? Reference, string? Observation);
 public sealed record DirectPrintReceiptRequest(
@@ -676,7 +681,7 @@ public static class PosEdgeHostApplication
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
             return Results.NoContent();
         });
-        edge.MapPost("/synchronization/refresh", (PosSynchronizationSignal synchronization) => { synchronization.Signal(PosSynchronizationTrigger.All); return Results.Accepted(); });
+        edge.MapPost("/synchronization/refresh", (PosSynchronizationSignal synchronization) => { synchronization.Signal(PosSynchronizationTrigger.All | PosSynchronizationTrigger.Manual); return Results.Accepted(); });
         edge.MapGet("/synchronization/events", async (
             int? take,
             PosSynchronizationEventLog events,
@@ -692,11 +697,14 @@ public static class PosEdgeHostApplication
         });
         edge.MapPost("/auth/complete-enrollment", async (
             PosEnrollmentSessionCompleter completer,
+            PosUiStateSignal uiState,
             CancellationToken ct) =>
         {
             try
             {
-                return Results.Ok(await completer.CompleteAsync(ct));
+                var session = await completer.CompleteAsync(ct);
+                uiState.Publish();
+                return Results.Ok(session);
             }
             catch (PosLocalLoginException error)
             {
@@ -725,7 +733,7 @@ public static class PosEdgeHostApplication
             CancellationToken ct) =>
         {
             var catalogStatus = await catalog.StatusAsync(ct);
-            var identityReady = await identities.HasIdentitySnapshotAsync(ct);
+            var identitySnapshotReady = await identities.HasIdentitySnapshotAsync(ct);
             var syncStatus = synchronizationState.Current;
             var saleOutbox = await sales.ReadOutboxStatusAsync(ct);
             var cashOutbox = await cashMovements.ReadOutboxStatusAsync(ct);
@@ -750,6 +758,9 @@ public static class PosEdgeHostApplication
                 ?? syncStatus.LastError;
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
+            // The protected enrollment handoff is sufficient to start the initial
+            // local session while the complete identity snapshot synchronizes.
+            var identityReady = identitySnapshotReady || user is not null;
             var fiscalWarnings = await sales.GetFiscalWarningsAsync(
                 runtime.DeviceId, timeProvider.GetUtcNow(), ct);
             var fiscalPreview = await sales.PreviewNextFiscalNumberAsync(
@@ -843,7 +854,8 @@ public static class PosEdgeHostApplication
                 priced.Add(new {
                     value.ProductId,value.ProductCode,value.Reference,value.Name,value.BaseUnitCode,
                     value.TaxCode,value.TaxRate,unitPrice=resolved.Amount,resolved.CurrencyCode,
-                    value.IsActive,value.IsWeighable,value.AllowsFractionalSale,priceSource=resolved.Source
+                    value.IsActive,value.IsWeighable,value.AllowsFractionalSale,priceSource=resolved.Source,
+                    promotionDiscount=resolved.PromotionDiscount
                 });
             }
             return Results.Ok(new
@@ -1051,15 +1063,25 @@ public static class PosEdgeHostApplication
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
+            var session = sessions.Required();
+            var current = await drafts.GetAsync(new DraftId(draftId), ct)
+                ?? throw new KeyNotFoundException("The active sale does not exist.");
+            if (!session.Permissions.Contains(CommercePermissionCodes.SalesChangeDescription) &&
+                request.Lines.Any(line => !string.Equals(
+                    line.Description.Trim(),
+                    current.Lines.Single(existing => existing.LineId == line.LineId).Description,
+                    StringComparison.Ordinal)))
+                return Results.Forbid();
             var authorization = await authorizer.AuthorizeAsync(
-                sessions.Required(), CommercePermissionCodes.SalesChangePrice, draftId, null,
+                session, CommercePermissionCodes.SalesChangePrice, draftId, null,
                 http.Request.Headers["X-Auraly-Approval-Id"],
                 http.Request.Headers["X-Auraly-Operation-Id"],
                 http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
             var result = await drafts.UpdateLinesAsync(
                 new DraftId(draftId),
                 request.Lines.Select(line => new PosDraftLineDocumentUpdate(
-                    line.LineId, line.Description, line.UnitPrice, line.Discount)).ToArray(),
+                    line.LineId, line.Description, line.UnitPrice, line.Discount,
+                    line.DocumentUnitCost)).ToArray(),
                 ct);
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);

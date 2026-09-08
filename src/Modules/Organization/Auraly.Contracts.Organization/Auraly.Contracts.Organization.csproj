@@ -7,5 +7,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
     <ProjectReference Include="..\..\Authentication\Auraly.Contracts.Authentication\Auraly.Contracts.Authentication.csproj" />
+    <ProjectReference Include="..\..\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
   </ItemGroup>
 </Project>

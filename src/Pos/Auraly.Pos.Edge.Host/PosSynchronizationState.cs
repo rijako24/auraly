@@ -28,7 +28,9 @@ public sealed class PosSynchronizationState
                 IsSynchronizing = true,
                 LastAttemptAt = DateTimeOffset.UtcNow,
                 LastAttemptFailed = false,
-                ActiveStages = []
+                ActiveStages = [],
+                FailedStage = null,
+                LastError = null
             };
     }
 
@@ -55,7 +57,7 @@ public sealed class PosSynchronizationState
             };
     }
 
-    public void StageFailed(string stage)
+    public void StageFailed(string stage, string reason)
     {
         lock (gate)
             status = status with
@@ -64,7 +66,7 @@ public sealed class PosSynchronizationState
                     .Where(value => !string.Equals(value, stage, StringComparison.Ordinal))
                     .ToArray(),
                 FailedStage = stage,
-                LastError = $"No fue posible sincronizar {stage}. Auraly lo intentará de nuevo automáticamente."
+                LastError = reason
             };
     }
 

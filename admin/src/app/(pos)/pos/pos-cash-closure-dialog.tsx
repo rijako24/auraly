@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Calculator, Coins, LockKeyhole, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -136,7 +136,17 @@ function CashCountCalculator({ client, session, onCancel, onLoad }: { client: Po
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+  const denominationInputs = useRef(new Map<string, HTMLInputElement>());
   const rows = denominations.data ?? [];
+  const moveDenomination = (code: string, key: string) => {
+    const current = rows.findIndex(row => row.code === code);
+    const step = key === "ArrowLeft" ? -1 : key === "ArrowRight" ? 1 : key === "ArrowUp" ? -2 : key === "ArrowDown" ? 2 : 0;
+    if (current < 0 || step === 0 || rows.length === 0) return false;
+    const next = (current + step + rows.length) % rows.length;
+    const target = denominationInputs.current.get(rows[next].code);
+    target?.focus(); target?.select();
+    return true;
+  };
   const total = rows.reduce((sum, denomination) => {
     const value = Number(denomination.code);
     const quantity = Number(quantities[denomination.code] ?? 0);
@@ -184,7 +194,7 @@ function CashCountCalculator({ client, session, onCancel, onLoad }: { client: Po
             return <section key={kind} className="space-y-3"><h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">{kind}s</h3><div className="grid gap-3 sm:grid-cols-2">{group.map((denomination) => {
               const quantity = quantities[denomination.code] ?? "";
               const subtotal = Number(denomination.code) * Number(quantity || 0);
-              return <label key={denomination.id} className="flex items-center gap-3 rounded-2xl border bg-white p-3 shadow-sm transition focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100"><span className="min-w-20 font-bold text-slate-800">{denomination.label}</span><span className="text-slate-400">×</span><Input aria-label={`Cantidad de ${denomination.label}`} inputMode="numeric" value={quantity} onChange={(event) => setQuantities((current) => ({ ...current, [denomination.code]: normalizeWorkSessionCountInput(event.target.value) }))} className="h-10 w-20 text-center font-bold" placeholder="0"/><strong className="ml-auto text-sm tabular-nums text-teal-800">{money.format(subtotal)}</strong></label>;
+              return <label key={denomination.id} className="flex items-center gap-3 rounded-2xl border bg-white p-3 shadow-sm transition focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100"><span className="min-w-20 font-bold text-slate-800">{denomination.label}</span><span className="text-slate-400">×</span><Input ref={element=>{if(element)denominationInputs.current.set(denomination.code,element);else denominationInputs.current.delete(denomination.code)}} aria-label={`Cantidad de ${denomination.label}`} inputMode="numeric" value={quantity} onKeyDown={event=>{if(moveDenomination(denomination.code,event.key))event.preventDefault()}} onChange={(event) => setQuantities((current) => ({ ...current, [denomination.code]: normalizeWorkSessionCountInput(event.target.value) }))} className="h-10 w-20 text-center font-bold" placeholder="0"/><strong className="ml-auto text-sm tabular-nums text-teal-800">{money.format(subtotal)}</strong></label>;
             })}</div></section>;
           })}
           <div className="sticky bottom-0 flex items-center justify-between rounded-2xl bg-slate-950 p-5 text-white shadow-xl"><span><small className="block text-slate-300">Efectivo contado</small><strong className="text-sm">Total calculado</strong></span><strong className="text-3xl tabular-nums text-teal-300">{money.format(total)}</strong></div>

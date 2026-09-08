@@ -92,7 +92,17 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             "AccountingEntries", "SourceDocumentId", payment.PaymentId));
         Assert.True(await PayloadHashMatchesAsync(payment.PaymentId));
         Assert.Equal(40_000m, await AccountAmountAsync(payment.PaymentId, "220505", true));
-        Assert.Equal(40_000m, await AccountAmountAsync(payment.PaymentId, "111020", false));
+        var settlementAccountCode = await ScalarAsync<string>(
+            """
+            SELECT COALESCE(a.Code,N'111020')
+            FROM dbo.SupplierPayments p
+            LEFT JOIN accounting.BankAccounts b ON b.BankAccountId=p.BankAccountId
+            LEFT JOIN dbo.AccountingAccounts a
+              ON a.TenantId=b.TenantId AND a.AccountId=b.AccountingAccountId
+            WHERE p.PaymentId=@Id
+            """, payment.PaymentId);
+        Assert.Equal(40_000m, await AccountAmountAsync(
+            payment.PaymentId, settlementAccountCode, false));
 
         using (var duplicate = await SendAsync(
                    client, "/api/commerce/v1/payable-payments/confirm", payment, key))
@@ -317,7 +327,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
 
     private async Task<decimal> AccountAmountAsync(Guid documentId, string code, bool debit)
     {
-        Assert.Contains(code, new[] { "220505", "111020" });
+        Assert.False(string.IsNullOrWhiteSpace(code));
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();

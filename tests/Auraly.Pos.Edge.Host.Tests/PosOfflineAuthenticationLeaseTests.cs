@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
 using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Organization;
 using Auraly.Pos.Edge.Host;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -185,6 +186,70 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Enrollment_completion_installs_the_identity_snapshot_from_the_same_package()
+    {
+        var connectionString = $"Data Source={_databasePath}";
+        var identities = new PosLocalIdentityStore(
+            connectionString,
+            _keyDirectory,
+            new Uuid7AuralyIdGenerator(_clock),
+            _clock);
+        var leases = new PosOfflineLeaseStore(
+            connectionString, _tenantId, _deviceId, CreateVerifier(), _clock);
+        await identities.InitializeAsync();
+        await leases.InitializeAsync();
+        Assert.False(await identities.HasIdentitySnapshotAsync());
+
+        var enrollmentPath = _databasePath + ".enrollment";
+        var enrollment = new PosEdgeEnrollmentStore(enrollmentPath, _keyDirectory);
+        var initialAccess = CreateResponse(_clock.GetUtcNow().AddHours(8));
+        var identitySnapshot = new PosOfflineIdentitySnapshot(
+            "enrollment-snapshot",
+            _clock.GetUtcNow(),
+            _clock.GetUtcNow().AddDays(7),
+            [new PosOfflineUserProjection(
+                initialAccess.User.UserId,
+                initialAccess.User.Username,
+                initialAccess.User.DisplayName,
+                initialAccess.User.Permissions,
+                new PosOfflinePasswordVerifier(
+                    initialAccess.User.PasswordSalt,
+                    initialAccess.User.PasswordHash,
+                    initialAccess.User.PasswordIterations,
+                    initialAccess.User.PasswordChangedAt))]);
+        var documentSeries = new PosEnrollmentDocumentSeries(
+            Guid.NewGuid(), "SalesReceipt", "CVI", "01", 8, 1, 99_999_999);
+        enrollment.Save(new PosEnrollmentPackage(
+            _deviceId,
+            "device-secret",
+            _tenantId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "Negocio principal",
+            "01",
+            "Bodega principal",
+            false,
+            _userId,
+            "Cajera de prueba",
+            documentSeries,
+            null,
+            documentSeries,
+            null,
+            _clock.GetUtcNow(),
+            InitialOfflineAccess: initialAccess,
+            InitialIdentitySnapshot: identitySnapshot));
+
+        var session = await new PosEnrollmentSessionCompleter(
+            enrollment, identities, leases).CompleteAsync();
+
+        Assert.Equal(_userId, session.UserId);
+        Assert.True(await identities.HasIdentitySnapshotAsync());
+        Assert.True(await identities.ContainsUserAsync(initialAccess.User.Username));
+        Assert.Null(enrollment.Load()!.InitialOfflineAccess);
+        Assert.Null(enrollment.Load()!.InitialIdentitySnapshot);
+    }
+
+    [Fact]
     public async Task Prepared_identity_allows_local_login_after_snapshot_and_lease_dates_pass()
     {
         var connectionString = $"Data Source={_databasePath}";
@@ -227,7 +292,7 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
     {
         _signingKey.Dispose();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        foreach (var path in new[] { _databasePath, $"{_databasePath}-wal", $"{_databasePath}-shm" })
+        foreach (var path in new[] { _databasePath, $"{_databasePath}-wal", $"{_databasePath}-shm", $"{_databasePath}.enrollment", $"{_databasePath}.enrollment.new" })
             if (File.Exists(path)) File.Delete(path);
         if (Directory.Exists(_keyDirectory)) Directory.Delete(_keyDirectory, recursive: true);
         return Task.CompletedTask;

@@ -60,6 +60,10 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.Contains(
             CommercePermissionCodes.SalesCreate,
             package.InitialOfflineAccess.User.Permissions);
+        Assert.NotNull(package.InitialIdentitySnapshot);
+        Assert.Contains(
+            package.InitialIdentitySnapshot!.Users,
+            user => user.UserId == package.InitialUserId);
 
         using var repeated = await client.PostAsJsonAsync(
             "/api/pos/v1/enrollments/redeem",

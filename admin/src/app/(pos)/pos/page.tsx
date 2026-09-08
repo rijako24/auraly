@@ -73,6 +73,7 @@ import {
   redeemPosEnrollment,
   waitForRedeemedPosEdge,
 } from "@/services/pos/pos-enrollment";
+import { shouldCompletePosEnrollment } from "@/services/pos/pos-enrollment-transition";
 import {
   canIssuePosDocument,
   dianQuotaExhaustedMessage,
@@ -310,6 +311,7 @@ export default function PosPage() {
   const [saleSettlementError, setSaleSettlementError] = useState(false);
   const [inventoryResolution, setInventoryResolution] = useState<PosInventoryValidation | null>(null);
   const [productSearchOpen, setProductSearchOpen] = useState(false);
+  const [priceVerifierMode, setPriceVerifierMode] = useState(false);
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false);
@@ -650,15 +652,14 @@ export default function PosPage() {
           if (health.dianQuotaAvailable === false && documentType === "SalesInvoice")
             setError(dianQuotaExhaustedMessage);
         }
-        if (
-          client instanceof PosEdgeClient &&
-          health.status === "LoginRequired" &&
-          window.sessionStorage.getItem("auraly.pos.complete-enrollment") === "1"
-        ) {
+        if (client instanceof PosEdgeClient && shouldCompletePosEnrollment(
+          window.sessionStorage.getItem("auraly.pos.complete-enrollment") === "1",
+          health.status,
+        )) {
           try {
             let session = await client.completeEnrollment();
-            session = await client.openWorkSession();
             window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
+            session = await client.openWorkSession();
             if (active) {
               setWorkstation((current) => ({
                 ...current,
@@ -667,12 +668,14 @@ export default function PosPage() {
                 workSessionId: session.workSessionId,
               }));
               setEdgePermissions(session.permissions);
-              setEdgeLoginState(null);
-              setEdgeReady(true);
+              setEdgeLoginError(null);
+              const preparationPending =
+                health.status === "IdentitySynchronizing" || health.status === "Synchronizing";
+              setEdgeLoginState(preparationPending ? "preparing" : null);
+              setEdgeReady(!preparationPending);
             }
             return;
           } catch (caught) {
-            if (caught instanceof PosEdgeError && caught.status === 409) return;
             window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
             if (active) setEdgeLoginError(caught instanceof Error
               ? caught.message
@@ -929,7 +932,8 @@ export default function PosPage() {
     });
   }, [draft, saveOrder]);
 
-  const canOpenCashDrawer = (client?.mode === "edge" ? edgePermissions : permissions)
+  const activePosPermissions = client?.mode === "edge" ? edgePermissions : permissions;
+  const canOpenCashDrawer = activePosPermissions
     .includes("work-sessions.cash.drawer.open");
   const canReadSynchronizationEvents = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.synchronization.events.read");
@@ -1017,7 +1021,13 @@ export default function PosPage() {
         !discountOpen &&
         !confirmation
       ) {
-        setProductSearchOpen(true);
+        if (productSearchOpen) {
+          setPriceVerifierMode((current) => !current);
+          focusProductSearch();
+        } else {
+          setPriceVerifierMode(true);
+          setProductSearchOpen(true);
+        }
       } else if (
         !event.ctrlKey &&
         shortcut === POS_ACTION_SHORTCUTS.customerSearch &&
@@ -2101,6 +2111,11 @@ export default function PosPage() {
   );
 
   async function selectSearchProduct(product: PosCatalogProduct) {
+    if (priceVerifierMode) {
+      setMessage(`${product.name}: ${new Intl.NumberFormat("es-CO", {style:"currency",currency:"COP",maximumFractionDigits:0}).format(product.unitPrice)}${(product.promotionDiscount ?? 0) > 0 ? ` · promoción ${new Intl.NumberFormat("es-CO", {style:"currency",currency:"COP",maximumFractionDigits:0}).format(product.promotionDiscount ?? 0)}` : ""}`);
+      focusProductSearch();
+      return false;
+    }
     const added = await captureSelectedProduct(product);
     if (added) setProductSearchOpen(false);
     return added;
@@ -2108,7 +2123,7 @@ export default function PosPage() {
 
   async function synchronizeNow() {
     if (!client || client.mode !== "edge" || synchronization.inProgress) return;
-    setSynchronization((current) => ({ ...current, inProgress: true, failed: false }));
+    setSynchronization((current) => ({ ...current, inProgress: true, failed: false, error: null }));
     try {
       await client.synchronizeNow();
       setMessage("Auraly está subiendo los pendientes y descargando los cambios de esta estación.");
@@ -2508,8 +2523,18 @@ export default function PosPage() {
               {edgeLoginError ?? synchronization.error}
             </p>
           )}
+          {synchronization.failed && (
+            <button
+              type="button"
+              onClick={() => void synchronizeNow()}
+              disabled={synchronization.inProgress || !serverConnected}
+              className="mt-4 h-11 w-full rounded-xl bg-teal-300 px-4 font-bold text-[#071a1d] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {synchronization.inProgress ? "Reintentando…" : "Reintentar preparación"}
+            </button>
+          )}
           <p className="mt-6 text-center text-xs text-slate-400">
-            Puedes cerrar Auraly: el progreso queda guardado y continúa desde el último checkpoint.
+            Puedes cerrar Auraly: el progreso queda guardado. Si falla, el reintento debe iniciarse manualmente.
           </p>
         </section>
       </main>
@@ -3346,6 +3371,7 @@ export default function PosPage() {
       {productSearchOpen && client && (
         <PosProductSearchDialog
           busy={busy}
+          verifierMode={priceVerifierMode}
           focusRequest={productSearchFocusRequest}
           onSearch={searchProducts}
           connected={serverConnected}
@@ -3354,6 +3380,7 @@ export default function PosPage() {
           onSelect={selectSearchProduct}
           onCancel={() => {
             setProductSearchOpen(false);
+            setPriceVerifierMode(false);
             focusScanner();
           }}
         />
@@ -3480,6 +3507,8 @@ export default function PosPage() {
       {discountOpen && draft && <PosLineEditorDialog
         lines={draft.lines}
         busy={busy}
+        canEditDescription={activePosPermissions.includes("sales.lines.change-description")}
+        canReadCostAndMargin={activePosPermissions.includes("sales.lines.cost-margin.read")}
         onConfirm={applyLineEdits}
         onCancel={() => {
           setDiscountOpen(false);

@@ -49,13 +49,15 @@ public sealed record UpdateCustomerCreditProfileRequest(Guid BusinessId, decimal
 public sealed record CustomerPaymentAllocationRequest(Guid ReceivableId, decimal Amount);
 public sealed record ConfirmCustomerPaymentRequest(Guid PaymentId, Guid BusinessId, Guid CustomerId,
     Guid? WorkSessionId, DateTimeOffset PaidAt, string CurrencyCode, string PaymentMethod,
-    string? Reference, string? Notes, IReadOnlyCollection<CustomerPaymentAllocationRequest> Allocations);
+    string? Reference, string? Notes, IReadOnlyCollection<CustomerPaymentAllocationRequest> Allocations,
+    Guid? BankAccountId = null);
 public sealed record CustomerPaymentAllocationSnapshot(int LineNumber, Guid ReceivableId, decimal Amount);
 public sealed record CustomerPaymentDocumentPayload(Guid TenantId, Guid BusinessId, Guid PaymentId,
     Guid CustomerId, Guid ConfirmedByUserId, Guid? WorkSessionId, string DocumentNumber,
     Guid DocumentSeriesId, string DocumentPrefix, string DocumentSeriesCode, long DocumentConsecutive,
     DateTimeOffset PaidAt, string CurrencyCode, string PaymentMethod, string? Reference, string? Notes,
-    decimal TotalAmount, IReadOnlyList<CustomerPaymentAllocationSnapshot> Allocations);
+    decimal TotalAmount, IReadOnlyList<CustomerPaymentAllocationSnapshot> Allocations,
+    Guid? BankAccountId = null);
 public sealed record CustomerPaymentAcceptance(Guid PaymentId, Guid MovementId, string DocumentNumber,
     string Status, long ProcessingSequence, bool IdempotentReplay);
 

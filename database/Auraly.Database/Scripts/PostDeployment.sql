@@ -54,6 +54,8 @@
 :r .\Migrations\20260903_BackfillDispatchSettlementWorkSessions.sql
 :r .\Migrations\AddTenantInventoryCostBasis.sql
 :r .\Migrations\BackfillPreparedProductPrices.sql
+:r .\Migrations\20260907_NormalizeProductPurchaseTaxTreatment.sql
+:r .\Migrations\20260907_AddPaymentBankAccountSelection.sql
 :r .\Migrations\MigratePricePublicationAuditOrigins.sql
 :r .\Migrations\RemoveLegacyFiscalConfiguration.sql
 GO

@@ -83,6 +83,7 @@ type ClosureForPrint = {
   businessName: string; warehouseName: string | null; userName: string; openedAt: string; closedAt: string;
   totalSales: number; totalRefunds: number; totalOther: number; netAmount: number;
   salesCount?: number; creditSalesCount?: number; creditSalesAmount?: number; returnCount?: number;
+  creditSales?: Array<{ customerName: string; documentNumber: string; amount: number }> | null;
   expectedCash: number; countedCash: number | null; cashDifference: number | null; note: string | null;
   paymentTotals: Array<{ paymentMethodCode: string; salesAmount?: number; refundAmount?: number; otherAmount?: number; netAmount: number; countedAmount?: number | null; difference?: number | null }>;
 };
@@ -107,6 +108,7 @@ export function workSessionClosureHtml(value: ClosureForPrint): string {
   })();
   const cashEntries = value.paymentTotals.reduce((sum, item) => sum + Math.max(0, item.otherAmount ?? 0), 0);
   const cashExits = value.paymentTotals.reduce((sum, item) => sum + Math.abs(Math.min(0, item.otherAmount ?? 0)), 0);
+  const creditRows = (value.creditSales ?? []).map(item => `<div><span>${escapeHtml(item.customerName)} · ${escapeHtml(item.documentNumber)}</span><strong>${escapeHtml(money(item.amount))}</strong></div>`).join("");
   const paymentRows = value.paymentTotals.map(item => {
     const name = workSessionPaymentMethodName(item.paymentMethodCode);
     return `<section class="payment" data-payment-method="${escapeHtml(item.paymentMethodCode)}"><h3>${escapeHtml(name)}</h3>` +
@@ -115,8 +117,10 @@ export function workSessionClosureHtml(value: ClosureForPrint): string {
     (item.paymentMethodCode === "Cash"
       ? row("Entradas", Math.max(0, item.otherAmount ?? 0)) +
         row("Salidas", Math.abs(Math.min(0, item.otherAmount ?? 0)))
-      : "") + `</section>`;
-  }).join("");
+      : "") + (item.countedAmount != null
+        ? row("Esperado", item.netAmount) + row("Contado", item.countedAmount) + row("Diferencia", item.difference ?? item.countedAmount - item.netAmount)
+        : "") + `</section>`;
+  }).join("") + (creditRows ? `<section class="payment"><h3>Clientes a cartera</h3>${creditRows}</section>` : "");
   const logo = value.logoUrl ? `<img src="${escapeHtml(value.logoUrl)}" alt="Logo" />` : "";
   const companyName = value.companyName || value.businessName;
   const location = value.warehouseName

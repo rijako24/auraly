@@ -314,7 +314,8 @@ public sealed partial class SqlWorkSessionStore(
                 metrics.SalesCount,
                 metrics.CreditSalesCount,
                 metrics.CreditSalesAmount,
-                metrics.ReturnCount);
+                metrics.ReturnCount,
+                metrics.CreditSales);
             var snapshot = JsonSerializer.Serialize(closure, Json);
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot));
 
@@ -424,7 +425,8 @@ public sealed partial class SqlWorkSessionStore(
             metrics.SalesCount,
             metrics.CreditSalesCount,
             metrics.CreditSalesAmount,
-            metrics.ReturnCount);
+            metrics.ReturnCount,
+            metrics.CreditSales);
     }
 
     public async Task<WorkSessionClosureView?> GetClosureAsync(
@@ -734,14 +736,31 @@ public sealed partial class SqlWorkSessionStore(
               AND s.TenantId=@TenantId
               AND s.UserId=@UserId
             GROUP BY s.WorkSessionId,s.BusinessId;
+
+            SELECT COALESCE(p.DisplayName,p.LegalName,p.Identification,N'Cliente'),
+                   d.DocumentNumber,d.CreditAmount
+            FROM dbo.SalesDocuments d
+            LEFT JOIN dbo.Customers c ON c.CustomerId=d.CustomerId
+            LEFT JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            WHERE d.WorkSessionId=@WorkSessionId AND d.BusinessId IN(
+                SELECT BusinessId FROM dbo.WorkSessions
+                WHERE WorkSessionId=@WorkSessionId AND TenantId=@TenantId AND UserId=@UserId)
+              AND d.CreditAmount>0
+            ORDER BY d.IssuedAt,d.DocumentId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         command.Parameters.AddWithValue("@TenantId", identity.TenantId);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
-        return new SalesMetrics(
-            reader.GetInt64(0), reader.GetInt32(1), reader.GetDecimal(2), reader.GetInt64(3));
+        var metrics = new SalesMetrics(
+            reader.GetInt64(0), reader.GetInt32(1), reader.GetDecimal(2), reader.GetInt64(3), []);
+        await reader.NextResultAsync(cancellationToken);
+        var creditSales = new List<WorkSessionCreditSale>();
+        while (await reader.ReadAsync(cancellationToken))
+            creditSales.Add(new WorkSessionCreditSale(
+                reader.GetString(0), reader.GetString(1), reader.GetDecimal(2)));
+        return metrics with { CreditSales = creditSales };
     }
 
     public async Task<IReadOnlyList<WorkSessionCashDifferenceView>> ListCashDifferencesAsync(
@@ -990,7 +1009,8 @@ public sealed partial class SqlWorkSessionStore(
     }
 
     private sealed record SalesMetrics(
-        long SalesCount, int CreditSalesCount, decimal CreditSalesAmount, long ReturnCount);
+        long SalesCount, int CreditSalesCount, decimal CreditSalesAmount, long ReturnCount,
+        IReadOnlyList<WorkSessionCreditSale> CreditSales);
 
     private static async Task<(string IdempotencyKey, WorkSessionClosureView Closure)?> ReadClosureAsync(
         SqlConnection connection,

@@ -57,9 +57,14 @@ export interface ConfirmSupplierPaymentRequest {
   paidAt: string;
   currencyCode: string;
   paymentMethod: "Cash" | "BankTransfer";
+  bankAccountId: string | null;
   reference: string | null;
   notes: string | null;
   allocations: Array<{ payableId: string; amount: number }>;
+}
+
+export interface PaymentSettlementConfiguration {
+  bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean }>;
 }
 
 export interface SupplierPaymentAcceptance {
@@ -72,6 +77,8 @@ export interface SupplierPaymentAcceptance {
 }
 
 export const payablesApi = {
+  settlementConfiguration: () =>
+    apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   list: (params: {
     page?: number;
     pageSize?: number;

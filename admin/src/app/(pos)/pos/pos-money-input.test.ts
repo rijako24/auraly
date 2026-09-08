@@ -24,6 +24,11 @@ test("parses the formatted amount used by settlement calculations", () => {
   assert.equal(parseMoneyDraft("$ 60.000,50"), 60_000.5);
 });
 
+test("preserves a negative correction so it cannot become a positive payment", () => {
+  assert.equal(formatMoneyDraft("-2000"), "-2.000");
+  assert.equal(parseMoneyDraft("-2.000"), -2_000);
+});
+
 test("formats stored numeric values consistently", () => {
   assert.equal(formatMoneyValue(0), "0");
   assert.equal(formatMoneyValue(60_000), "60.000");

@@ -13,6 +13,58 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Zero_purchase_vat_is_loaded_and_saved_as_not_applicable()
+    {
+        var (salesTaxProfileId, _, _) = await ConfigureCatalogAsync();
+        var zeroTaxProfileId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.TaxProfiles(
+                TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+            VALUES(@Tax,@Business,@Code,N'01',N'IVA compra 0 %',0,1,SYSDATETIMEOFFSET());
+            """,
+            new SqlParameter("@Tax", zeroTaxProfileId),
+            new SqlParameter("@Business", fixture.BusinessId),
+            new SqlParameter("@Code", ($"VAT0-{zeroTaxProfileId:N}")[..16]));
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        using var creation = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/products",
+            ProductRequest(salesTaxProfileId, [new ProductPriceInput(10_000m)], []));
+        creation.EnsureSuccessStatusCode();
+        var product = (await creation.Content.ReadFromJsonAsync<ProductDetail>())!;
+
+        await ExecuteAsync(
+            """
+            UPDATE dbo.Products
+            SET PurchaseTaxProfileId=@Tax,PurchaseTaxTreatment=N'DeductibleInputVat'
+            WHERE ProductId=@Product;
+            """,
+            new SqlParameter("@Tax", zeroTaxProfileId),
+            new SqlParameter("@Product", product.ProductId));
+
+        var loaded = await admin.GetFromJsonAsync<ProductTaxConfiguration>(
+            $"/api/commerce/v1/products/{product.ProductId:D}/tax-configuration");
+        Assert.NotNull(loaded);
+        Assert.Equal("NotApplicable", loaded.PurchaseTaxTreatment);
+
+        using var saved = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{product.ProductId:D}/tax-configuration",
+            new SaveProductTaxConfigurationRequest(
+                salesTaxProfileId,
+                zeroTaxProfileId,
+                loaded.PurchaseTaxTreatment));
+        saved.EnsureSuccessStatusCode();
+        Assert.Equal("NotApplicable", await ScalarAsync<string>(
+            "SELECT PurchaseTaxTreatment FROM dbo.Products WHERE ProductId=@Product;",
+            new SqlParameter("@Product", product.ProductId)));
+    }
+
+    [Fact]
     public async Task Catalog_delta_coalesces_repeated_product_changes_without_skipping_other_products()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();

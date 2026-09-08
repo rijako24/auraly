@@ -10,6 +10,8 @@ export type PosPreparationHealth = {
   preparationTotalSteps?: number;
   preparationCanResume?: boolean;
   synchronizationStages?: string[];
+  lastSynchronizationFailed?: boolean;
+  lastSynchronizationError?: string | null;
 };
 
 export type PosPreparationView = {
@@ -46,6 +48,19 @@ export function posPreparationView(
     : null;
   const activeStages = (health.synchronizationStages ?? []).join(", ");
 
+  if (health.lastSynchronizationFailed) {
+    return {
+      title: "La preparación se detuvo",
+      detail: health.lastSynchronizationError ?? "No fue posible terminar la preparación de esta caja.",
+      currentResource: activeStages || "Preparación pendiente",
+      resourceProgress: health.catalogProgressPercent ?? null,
+      overallProgress,
+      processedLabel: "Corrige la causa y reintenta cuando estés listo",
+      connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Sin conexión con Auraly",
+      resumeLabel: "El reintento es manual",
+    };
+  }
+
   if (health.preparationStage === "Catalog") {
     const processed = Math.max(0, health.catalogProcessedProducts ?? 0);
     const total = Math.max(0, health.catalogTotalProducts ?? 0);
@@ -62,7 +77,7 @@ export function posPreparationView(
         : "0 productos en este negocio",
       connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Sin conexión con Auraly",
       resumeLabel: health.preparationCanResume
-        ? "Progreso guardado · se reanuda automáticamente"
+        ? "Progreso guardado · usa Reintentar si se detiene"
         : "Validando el catálogo descargado",
     };
   }

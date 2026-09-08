@@ -8,6 +8,9 @@ public static class CommercePermissionCodes
     public const string SalesCreate = "sales.create";
     public const string SalesDiscount = "sales.discount";
     public const string SalesChangePrice = "sales.change-price";
+    public const string SalesChangeDescription = "sales.lines.change-description";
+    public const string SalesReadCostAndMargin = "sales.lines.cost-margin.read";
+    public const string SalesBelowCost = "sales.below-cost";
     public const string SalesReprint = "sales.reprint";
     public const string SalesRemoveLine = "sales.lines.remove";
     public const string SalesRestartDraft = "sales.drafts.restart";

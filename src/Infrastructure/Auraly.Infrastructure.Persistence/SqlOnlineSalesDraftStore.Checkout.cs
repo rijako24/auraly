@@ -33,7 +33,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             state.CustomerId,
             draft.UntaxedAmount,
             draft.TaxAmount,
-            time.GetUtcNow());
+            time.GetUtcNow(),
+            draft.Lines.Any(line => SaleBelowCostPolicy.IsBelowCost(
+                line.Quantity, line.Net, line.DocumentUnitCost)));
     }
 
     public async Task<OnlineSalesFiscalKeyContext> ResolveFiscalKeyContextAsync(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { posEnrollmentProblemDetail } from "./pos-enrollment-error";
+import { shouldCompletePosEnrollment } from "./pos-enrollment-transition";
 
 describe("posEnrollmentProblemDetail", () => {
   it("never exposes an internal server stack to the cashier", async () => {
@@ -24,5 +25,17 @@ describe("posEnrollmentProblemDetail", () => {
       await posEnrollmentProblemDetail(response),
       "La organización alcanzó el máximo de cajas enroladas.",
     );
+  });
+});
+
+describe("shouldCompletePosEnrollment", () => {
+  it("installs the enrollment package while its local preparation finishes", () => {
+    assert.equal(shouldCompletePosEnrollment(true, "IdentitySynchronizing"), true);
+    assert.equal(shouldCompletePosEnrollment(true, "Synchronizing"), true);
+  });
+
+  it("waits only while the unenrolled host is still restarting", () => {
+    assert.equal(shouldCompletePosEnrollment(true, "EnrollmentRequired"), false);
+    assert.equal(shouldCompletePosEnrollment(false, "LoginRequired"), false);
   });
 });

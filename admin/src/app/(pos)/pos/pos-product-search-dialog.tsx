@@ -17,6 +17,7 @@ const money = new Intl.NumberFormat("es-CO", {
 
 export function PosProductSearchDialog({
   busy,
+  verifierMode,
   focusRequest,
   onSearch,
   connected,
@@ -26,6 +27,7 @@ export function PosProductSearchDialog({
   onCancel,
 }: {
   busy: boolean;
+  verifierMode: boolean;
   focusRequest: number;
   onSearch: (term: string, skip: number) => Promise<PosCatalogSearchPage>;
   connected: boolean;
@@ -219,10 +221,10 @@ export function PosProductSearchDialog({
           <div>
             <h2 id="pos-product-search-title" className="flex items-center gap-2 text-xl font-semibold">
               <PackageSearch className="h-5 w-5 text-teal-700" />
-              Buscar producto
+              {verifierMode ? "Verificador de precios" : "Buscar producto"}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Nombre, código interno, referencia, código de barras o alterno.
+              {verifierMode ? "Escanea o busca: Enter sólo consulta. Pulsa F1 para volver a agregar productos." : "Nombre, código interno, referencia, código de barras o alterno."}
             </p>
           </div>
           <button
@@ -328,10 +330,11 @@ export function PosProductSearchDialog({
                 </span>
               </span>
               <span className="hidden text-sm text-slate-600 sm:block">
-                {product.baseUnitCode} - IVA {product.taxRate}%
+                {product.baseUnitCode}
               </span>
               <span className="text-right font-bold tabular-nums text-teal-800">
                 {money.format(product.unitPrice)}
+                {(product.promotionDiscount ?? 0) > 0 && <span className="mt-1 block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">Promoción · ahorra {money.format(product.promotionDiscount ?? 0)}</span>}
                 <small className="mt-0.5 block font-medium text-slate-500">{
                   product.priceSource === "Promotion+PriceChannel" ? "Promoción + canal"
                     : product.priceSource === "Promotion" ? "Promoción"

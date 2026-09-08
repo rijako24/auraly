@@ -122,8 +122,13 @@ public sealed partial class SqlCatalogStore
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
             SELECT p.ProductId,p.TaxProfileId,COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId),
-                   p.PurchaseTaxTreatment
+                   CASE WHEN purchaseTax.Rate=0 THEN N'NotApplicable'
+                        WHEN p.PurchaseTaxTreatment=N'NotApplicable' THEN N'DeductibleInputVat'
+                        ELSE COALESCE(p.PurchaseTaxTreatment,N'DeductibleInputVat') END
             FROM dbo.Products p
+            JOIN dbo.TaxProfiles purchaseTax
+              ON purchaseTax.TaxProfileId=COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId)
+             AND purchaseTax.BusinessId=@BusinessId
             WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId
               AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId);
             """, connection);

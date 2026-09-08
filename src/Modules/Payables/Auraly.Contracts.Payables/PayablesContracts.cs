@@ -97,7 +97,8 @@ public sealed record ConfirmSupplierPaymentRequest(
     string? Reference,
     string? Notes,
     IReadOnlyCollection<SupplierPaymentAllocationRequest> Allocations,
-    Guid? WorkSessionId = null);
+    Guid? WorkSessionId = null,
+    Guid? BankAccountId = null);
 
 public sealed record SupplierPaymentAllocationSnapshot(
     int LineNumber,
@@ -122,7 +123,8 @@ public sealed record SupplierPaymentDocumentPayload(
     string? Notes,
     decimal TotalAmount,
     IReadOnlyList<SupplierPaymentAllocationSnapshot> Allocations,
-    Guid? WorkSessionId = null);
+    Guid? WorkSessionId = null,
+    Guid? BankAccountId = null);
 
 public sealed record SupplierPaymentAcceptance(
     Guid PaymentId,

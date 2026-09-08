@@ -72,6 +72,16 @@ public static class PosEnrollmentApi
                     await Handle(async () =>
                     {
                         var package = await service.RedeemAsync(request, ct);
+                        var identities = services.GetRequiredService<PosOfflineIdentityService>();
+                        package = package with
+                        {
+                            InitialIdentitySnapshot = await identities.SnapshotAsync(
+                                new PosIdentityDeviceScope(
+                                    package.DeviceId,
+                                    package.TenantId,
+                                    package.BusinessId),
+                                ct)
+                        };
                         return await EnrichBrandingAsync(
                             package,
                             cancellationToken => services

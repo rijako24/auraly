@@ -30,7 +30,7 @@ const permissionScopes: Record<string, string[]> = {
   "/dashboard/products/pricing": ["pricing."],
   "/dashboard/products/price-segments": ["pricing.segments."],
   "/dashboard/promotions": ["promotions."],
-  "/pos": ["sales.create", "sales.discount", "sales.change-price", "sales.reprint", "sales.lines.", "sales.drafts.", "sales.void", "pos.", "work-sessions.open", "work-sessions.read", "work-sessions.close", "work-sessions.cash.", "enrolled_devices.", "fiscal.pos."],
+  "/pos": ["sales.create", "sales.discount", "sales.change-price", "sales.below-cost", "sales.reprint", "sales.lines.", "sales.drafts.", "sales.void", "pos.", "work-sessions.open", "work-sessions.read", "work-sessions.close", "work-sessions.cash.", "enrolled_devices.", "fiscal.pos."],
   "/dashboard/inventory": ["inventory."],
   "/dashboard/purchasing/goods-receipts": ["purchasing.goods-receipts."],
   "/dashboard/purchasing/purchase-orders": ["purchasing.purchase-orders."],

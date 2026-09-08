@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { lineDiscountPercent, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin } from "./pos-line-editor-calculation";
+import { lineDiscountPercent, lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin } from "./pos-line-editor-calculation";
 
 test("keeps value and percentage discounts synchronized", () => {
   assert.equal(lineDiscountPercent(20_000, 2, 100_000), 10);
@@ -13,6 +13,14 @@ test("calculates margin from the net untaxed sale", () => {
 
 test("recalculates sale price from margin while preserving discount percentage", () => {
   assert.equal(salePriceForMargin(50_000, 50, 10, 19), 132_222.222222);
+});
+
+test("editing margin clears both discount representations and recalculates price", () => {
+  assert.deepEqual(lineEconomicsForMargin(50_000, 50, 19), {
+    unitPrice: 119_000,
+    discount: 0,
+    discountPercent: 0,
+  });
 });
 
 test("moves keyboard focus forward and backward with wraparound", () => {

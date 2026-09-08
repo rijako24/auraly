@@ -19,12 +19,11 @@ type PosPaymentAmountEnterEvent = {
 export function handlePosPaymentAmountEnter(
   event: PosPaymentAmountEnterEvent,
   missing: number,
-  addCashPayment: () => void,
+  _addCashPayment: () => void,
 ): boolean {
   if (event.key !== "Enter") return false;
   event.preventDefault();
-  if (missing > tolerance) addCashPayment();
-  else event.currentTarget.form?.requestSubmit();
+  if (missing <= tolerance) event.currentTarget.form?.requestSubmit();
   return true;
 }
 

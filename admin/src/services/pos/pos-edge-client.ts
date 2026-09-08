@@ -31,6 +31,7 @@ export type PosCatalogProduct = {
   isWeighable: boolean;
   allowsFractionalSale: boolean;
   priceSource: "Public" | "Base" | "PriceChannel" | "Promotion" | "Promotion+PriceChannel";
+  promotionDiscount?: number;
 };
 export type PosCatalogSearchPage = {
   items: PosCatalogProduct[];

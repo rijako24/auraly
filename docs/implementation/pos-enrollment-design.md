@@ -35,9 +35,21 @@ enrolado.
    operativa y fiscal exclusivas, configuración derivada y credencial.
 10. POS Edge protege el paquete completo mediante el almacén de protección de
     datos del sistema y lo escribe de forma atómica.
-11. Al reiniciar el servicio, SQLite se crea o actualiza automáticamente y el
-    sincronizador real inicia el bootstrap del catálogo.
-12. La venta permanece inhabilitada hasta que el catálogo local queda `Ready`.
+11. La misma respuesta de canje incluye el snapshot inicial completo de
+    usuarios POS autorizados, sus verificadores locales y permisos; no existe
+    una segunda descarga obligatoria de usuarios para terminar el enrolamiento.
+12. Al reiniciar el servicio, SQLite se crea o actualiza automáticamente. Edge
+    instala atómicamente ese snapshot y consume una sola vez el acceso inicial
+    protegido para abrir la identidad local.
+13. El sincronizador de identidades queda como propietario de las puestas al
+    día posteriores al enrolamiento, mientras el bootstrap inicial del catálogo
+    continúa por su cursor durable.
+14. La venta permanece inhabilitada hasta que el catálogo local queda `Ready`.
+
+Si una etapa de la preparación falla, Edge conserva el checkpoint y detiene esa
+ejecución. La interfaz muestra una causa segura y accionable; solo el usuario
+dispara **Reintentar preparación**. No existe un temporizador de reintento de la
+preparación inicial.
 
 La URL predeterminada del host es `http://127.0.0.1:47831`. El host exige el
 token de sesión generado por el lanzador, valida el origen y solo permite HTTP
@@ -48,7 +60,8 @@ para un servidor Auraly de loopback; un servidor remoto debe usar HTTPS.
 El paquete local contiene únicamente lo necesario para operar la caja:
 
 - dispositivo y secreto;
-- usuario que autorizó el enrolamiento;
+- snapshot inicial de todos los usuarios POS autorizados y usuario que autorizó
+  el enrolamiento;
 - tenant, sede, bodega y caja;
 - política de negativos derivada de la bodega;
 - serie operativa offline;
@@ -72,8 +85,8 @@ La experiencia visual es la misma:
 - **Edge sin red:** usa catálogo, series, factura, impresión y outbox locales.
 
 Al arrancar, Edge ejecuta una puesta al día en segundo plano sobre el cursor
-durable y solo reintenta mientras no logra completarla. Después deja de
-consultar el catálogo. El disparo push para cambios ocurridos durante una
+durable. Si falla, conserva el cursor y espera un reintento manual. Después de
+completarla deja de consultar el catálogo. El disparo push para cambios ocurridos durante una
 sesión abierta sigue pendiente de conectar al transporte real; no se simula
 mediante polling continuo.
 
@@ -81,29 +94,11 @@ mediante polling continuo.
 
 Esta rebanada no declara terminado:
 
-- login offline de todos los usuarios;
-- snapshot durable de usuarios, credenciales locales y permisos;
 - menú general offline;
 - revocación y reasignación administrativa explícita de un Edge;
 - selección administrativa de impresora y balanza desde `Periféricos`, con o
   sin enrolamiento;
 - instalador Windows y validación del reinicio automático como servicio.
 
-Actualmente el paquete identifica al usuario que autorizó el equipo, pero no
-sincroniza todavía a todos los cajeros. La impresora queda con el proveedor de
-vista previa y tirilla de 80 mm ya existente hasta que se implemente su maestro.
-
-## Siguiente rebanada recomendada
-
-La siguiente rebanada debe ser **Identidad y sesión local de caja**:
-
-1. sincronización inicial e incremental de usuarios autorizados;
-2. hash local seguro de credenciales o PIN/código de supervisor;
-3. login offline y vigencia;
-4. permisos por acción y autorización de supervisor;
-5. sesión de cajero, entrega y arqueo;
-6. cierre de sesión sin cerrar caja;
-7. revocación de usuario y puesta al día al recuperar conexión.
-
-Debe reutilizar el enrolamiento implementado; no crear otra aplicación ni otro
-protocolo de configuración.
+La impresora queda con el proveedor de vista previa y tirilla de 80 mm ya
+existente hasta que se implemente su maestro.

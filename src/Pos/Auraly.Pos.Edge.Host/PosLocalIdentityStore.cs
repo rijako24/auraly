@@ -338,10 +338,6 @@ public sealed partial class PosLocalIdentityStore(
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        if (!await HasIdentitySnapshotAsync(cancellationToken))
-            throw new PosLocalLoginException(
-                "IdentityUnavailable",
-                "La información de acceso local aún no está lista. Espera a que termine la descarga inicial.");
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);

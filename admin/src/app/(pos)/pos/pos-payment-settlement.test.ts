@@ -10,7 +10,7 @@ import {
 } from "./pos-payment-settlement";
 
 describe("handlePosPaymentAmountEnter", () => {
-  it("adds cash for the remainder while the payment is incomplete", () => {
+  it("does not invent another payment while the written total is incomplete", () => {
     let addedCash = false;
     let submitted = false;
     handlePosPaymentAmountEnter({
@@ -19,7 +19,7 @@ describe("handlePosPaymentAmountEnter", () => {
       currentTarget: { form: { requestSubmit: () => { submitted = true; } } },
     }, 35, () => { addedCash = true; });
 
-    assert.equal(addedCash, true);
+    assert.equal(addedCash, false);
     assert.equal(submitted, false);
   });
 
@@ -74,6 +74,15 @@ describe("splitCreditCheckout", () => {
 });
 
 describe("calculatePaymentSettlement", () => {
+  it("never completes a sale after a cashier writes a negative correction", () => {
+    const settlement = calculatePaymentSettlement(20_000, [
+      { methodCode: "DebitCard", amount: 15_000, reference: null },
+      { methodCode: "Cash", amount: -2_000, reference: null },
+    ]);
+    assert.equal(settlement.received, 13_000);
+    assert.equal(settlement.missing, 7_000);
+    assert.equal(settlement.isValid, false);
+  });
   it("applies the invoice total and returns cash change", () => {
     const result = calculatePaymentSettlement(55, [
       { methodCode: "Cash", amount: 60, reference: null },

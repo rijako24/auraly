@@ -57,6 +57,7 @@ export interface ConfirmCustomerPaymentRequest {
   paidAt: string;
   currencyCode: string;
   paymentMethod: CustomerPaymentMethod;
+  bankAccountId: string | null;
   reference: string | null;
   notes: string | null;
   allocations: Array<{ receivableId: string; amount: number }>;
@@ -71,6 +72,10 @@ export interface CustomerPaymentAcceptance {
   idempotentReplay: boolean;
 }
 
+export interface PaymentSettlementConfiguration {
+  bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean }>;
+}
+
 export interface CustomerCreditProfile {
   customerId: string;
   creditLimit: number | null;
@@ -81,6 +86,8 @@ export interface CustomerCreditProfile {
 }
 
 export const receivablesApi = {
+  settlementConfiguration: () =>
+    apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   getCreditProfile: (customerId: string) =>
     apiClient.get<CustomerCreditProfile>(`/commerce/v1/customers/${customerId}/credit`),
   updateCreditProfile: (customerId: string, request: {

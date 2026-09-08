@@ -100,7 +100,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 {
                     UnitPrice = resolved.EffectiveUnitPrice,
                     CurrencyCode = resolved.Input.CurrencyCode,
-                    PriceSource = resolved.PriceSource
+                    PriceSource = resolved.PriceSource,
+                    PromotionDiscount = resolved.DiscountAmount
                 };
             }).ToList();
         }

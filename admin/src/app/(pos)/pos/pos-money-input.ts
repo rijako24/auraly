@@ -15,6 +15,7 @@ export function formatMoneyValue(value: number): string {
 }
 
 export function formatMoneyDraft(raw: string): string {
+  const negative = raw.trimStart().startsWith("-");
   const normalized = raw
     .replace(/\s/g, "")
     .replace(/\$/g, "")
@@ -28,10 +29,12 @@ export function formatMoneyDraft(raw: string): string {
     : null;
   const integer = integerPart || "0";
   const grouped = wholeNumber.format(Number(integer));
-  return fractionPart === null ? grouped : `${grouped},${fractionPart}`;
+  const formatted = fractionPart === null ? grouped : `${grouped},${fractionPart}`;
+  return negative ? `-${formatted}` : formatted;
 }
 
 export function parseMoneyDraft(value: string): number {
+  const negative = value.trimStart().startsWith("-");
   const normalized = value
     .replace(/\s/g, "")
     .replace(/\$/g, "")
@@ -39,5 +42,5 @@ export function parseMoneyDraft(value: string): number {
     .replace(",", ".")
     .replace(/[^0-9.]/g, "");
   const parsed = Number(normalized);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  return Number.isFinite(parsed) ? (negative ? -parsed : parsed) : 0;
 }

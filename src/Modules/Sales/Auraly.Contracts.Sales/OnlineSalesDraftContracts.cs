@@ -71,7 +71,8 @@ public sealed record OnlineSalesProduct(
     bool IsActive,
     bool IsWeighable,
     bool AllowsFractionalSale,
-    string PriceSource);
+    string PriceSource,
+    decimal PromotionDiscount = 0);
 
 public sealed record OnlineSalesProductPage(
     IReadOnlyList<OnlineSalesProduct> Items,

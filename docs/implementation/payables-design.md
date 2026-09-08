@@ -92,7 +92,8 @@ En COP, el pago contabiliza:
 
 - débito a cuentas por pagar;
 - crédito a caja para `Cash`;
-- crédito a bancos para `BankTransfer`.
+- crédito a la cuenta bancaria activa seleccionada para `BankTransfer`; la cuenta
+  principal se propone por defecto, pero puede cambiarse antes de confirmar.
 
 La categoría `Bank` es explícita: no se reutiliza indebidamente la cuenta puente
 de transferencias. El procesador reconstruye la fuente inmutable desde
@@ -108,7 +109,7 @@ Incluye:
 - búsqueda y filtros combinables;
 - tabla paginada y adaptable;
 - detalle con trazabilidad de movimientos;
-- modal de abono con efectivo o transferencia;
+- modal de abono con efectivo o transferencia y selector de cuenta bancaria;
 - importes COP formateados y estados legibles;
 - invalidación puntual después de aceptar un pago.
 
