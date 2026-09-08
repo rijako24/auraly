@@ -74,15 +74,23 @@ con los nombres congelados al contabilizar. El mismo diálogo se reutiliza desde
 facturas, notas, recepciones, gastos e inventario. Los reportes usan el visor
 nativo común y conservan impresión/PDF y exportación tabular.
 
-Todo asiento exige centro de costo. El aprovisionamiento contable crea uno
-general activo y éste no puede desactivarse mientras sea el único centro activo.
+El runtime actual exige centro de costo. El aprovisionamiento contable crea uno
+general activo y hoy impide desactivar el predeterminado incluso si existen otros.
+El diseño mínimo cerrado del 2026-09-08 está en la sección 8 de
+`../decision-contabilidad-minima-colombia-y-cumplimiento.md`: conserva la asignación
+automática y permite sustituir ese predeterminado, administra las reglas actuales
+y corrige la continuidad de centros en reintentos y devoluciones. Esas correcciones
+están pendientes de implementación; no amplían pasos de POS/ventas/compras.
 La resolución automática usa una única jerarquía canónica: centro explícito del
 documento cuando el flujo lo admite; asignación vigente por operación y,
 opcionalmente, contexto de bodega; asignación general; centro general del perfil.
 La bodega no es una dimensión obligatoria ni se infiere como centro: sólo hace
 más específica una regla funcional configurada. El trabajo contable congela el
-identificador resuelto y el asiento congela además nombre y código; cambiar un
-maestro después no reescribe historia.
+identificador al llegar al paso de resolución y el asiento congela además nombre
+y código; cambiar un maestro después no reescribe un asiento contabilizado.
+Actualmente un pendiente que aún no llegó a ese paso puede tomar reglas posteriores;
+el diseño cerrado exige adelantar y conservar esa resolución antes de validar
+período/mappings, y recuperar el centro original en las devoluciones.
 
 Una excepción no desaparece. El processor revierte la transacción fallida,
 persiste estado, intento y error del trabajo durable y vuelve a señalar la falla.

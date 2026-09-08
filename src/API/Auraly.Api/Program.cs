@@ -193,6 +193,7 @@ builder.Services.AddScoped<SqlSalesReportingProcessor>();
 builder.Services.AddScoped<ISalesReportingStore, SqlSalesReportingStore>();
 builder.Services.AddScoped<SalesReportingService>();
 builder.Services.AddScoped<IAccountingStore, SqlAccountingStore>();
+builder.Services.AddScoped<IBankReconciliationStore, SqlBankReconciliationStore>();
 builder.Services.AddScoped<AccountingService>();
 builder.Services.AddScoped<IComplianceReportingStore, SqlComplianceReportingStore>();
 builder.Services.AddScoped<ComplianceReportingService>();

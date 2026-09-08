@@ -228,7 +228,7 @@ public sealed class SqlAccountingStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT c.CostCenterId,c.BusinessId,c.Code,c.Name,c.ParentCostCenterId,c.IsDefault,c.IsActive
+            SELECT c.CostCenterId,c.BusinessId,c.Code,c.Name,c.ParentCostCenterId,c.IsDefault,c.IsActive,c.RowVersion
             FROM dbo.AccountingCostCenters c
             JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
             WHERE c.BusinessId=@BusinessId AND b.TenantId=@TenantId ORDER BY c.Code;
@@ -239,7 +239,8 @@ public sealed class SqlAccountingStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             values.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetGuid(4), reader.GetBoolean(5), reader.GetBoolean(6)));
+                reader.IsDBNull(4) ? null : reader.GetGuid(4), reader.GetBoolean(5), reader.GetBoolean(6),
+                Convert.ToBase64String((byte[])reader[7])));
         return values;
     }
 
@@ -437,6 +438,10 @@ public sealed class SqlAccountingStore(
         const string sql = """
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51400,'The cost center business is outside the legal entity.',1;
+            IF @ParentCostCenterId IS NOT NULL AND NOT EXISTS(
+              SELECT 1 FROM dbo.AccountingCostCenters
+              WHERE CostCenterId=@ParentCostCenterId AND BusinessId=@BusinessId AND IsActive=1)
+              THROW 51400,'The parent must be active in this business.',1;
             INSERT dbo.AccountingCostCenters
             (CostCenterId,BusinessId,Code,Name,ParentCostCenterId,IsDefault,IsActive,CreatedAt)
             VALUES(@CostCenterId,@BusinessId,@Code,@Name,@ParentCostCenterId,@IsDefault,1,@Now);
@@ -447,59 +452,131 @@ public sealed class SqlAccountingStore(
         command.Parameters.AddWithValue("@Code", request.Code); command.Parameters.AddWithValue("@Name", request.Name); command.Parameters.AddWithValue("@ParentCostCenterId", (object?)request.ParentCostCenterId ?? DBNull.Value);
         command.Parameters.AddWithValue("@IsDefault", request.IsDefault); command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         await ExecuteMutationAsync(command, cancellationToken, "The cost center conflicts with an existing code, parent or default center.");
-        return new(request.CostCenterId, request.BusinessId, request.Code, request.Name, request.ParentCostCenterId, request.IsDefault, true);
+        return (await ListCostCentersAsync(user, cancellationToken)).Single(row => row.CostCenterId == request.CostCenterId);
     }
 
     public async Task<AccountingCostCenterView> SetCostCenterStatusAsync(
-        AccountingUserIdentity user, Guid costCenterId, bool isActive,
+        AccountingUserIdentity user, Guid costCenterId, SetAccountingCostCenterStatusRequest request,
         CancellationToken cancellationToken)
     {
-        const string sql = """
-            SET XACT_ABORT ON;
-            SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
-            BEGIN TRANSACTION;
-            IF NOT EXISTS(
-              SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
-              WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId)
-              THROW 51411,'The cost center does not belong to the current business.',1;
-            IF @IsActive=0 AND EXISTS(
-              SELECT 1 FROM dbo.AccountingCostCenters
-              WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsDefault=1)
-              THROW 51412,'The default cost center cannot be disabled.',1;
-            IF @IsActive=0 AND EXISTS(
-              SELECT 1 FROM dbo.AccountingCostCenterAssignments WITH(UPDLOCK,HOLDLOCK)
-              WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51413,'Reassign or disable the active automatic rules before disabling this cost center.',1;
-            IF @IsActive=0 AND NOT EXISTS(
-              SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
-              WHERE BusinessId=@BusinessId AND CostCenterId<>@CostCenterId AND IsActive=1)
-              THROW 51414,'A business must always keep at least one active cost center.',1;
-            UPDATE dbo.AccountingCostCenters SET IsActive=@IsActive
-            WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId;
-            SELECT CostCenterId,BusinessId,Code,Name,ParentCostCenterId,IsDefault,IsActive
-            FROM dbo.AccountingCostCenters
-            WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId;
-            COMMIT TRANSACTION;
-            """;
+        var current = (await ListCostCentersAsync(user, cancellationToken))
+            .SingleOrDefault(row => row.CostCenterId == costCenterId)
+            ?? throw new AccountingValidationException("El centro no pertenece a esta sede.");
+        return await UpdateCostCenterAsync(user, costCenterId, new(
+            current.Code, current.Name, current.ParentCostCenterId, current.IsDefault,
+            request.IsActive, request.RowVersion ?? ""), cancellationToken);
+    }
+
+    public async Task<AccountingCostCenterView> UpdateCostCenterAsync(
+        AccountingUserIdentity user, Guid costCenterId, UpdateCostCenterRequest request,
+        CancellationToken cancellationToken)
+    {
+        var version = RequiredCostCenterVersion(request.RowVersion);
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@CostCenterId", costCenterId);
-        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-        command.Parameters.AddWithValue("@IsActive", isActive);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
         try
         {
+            await using var command = new SqlCommand("""
+                IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
+                  THROW 51411,'El centro no pertenece a esta empresa.',1;
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
+                  WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND RowVersion=@Version)
+                  THROW 51415,'El centro cambió. Actualiza la lista antes de guardar.',1;
+                IF @ParentCostCenterId IS NOT NULL AND NOT EXISTS(
+                  SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
+                  WHERE CostCenterId=@ParentCostCenterId AND BusinessId=@BusinessId AND IsActive=1)
+                  THROW 51411,'El centro superior debe estar activo en esta sede.',1;
+                DECLARE @Ancestor uniqueidentifier=@ParentCostCenterId;
+                DECLARE @Visited TABLE(Id uniqueidentifier PRIMARY KEY);
+                WHILE @Ancestor IS NOT NULL
+                BEGIN
+                  IF @Ancestor=@CostCenterId OR EXISTS(SELECT 1 FROM @Visited WHERE Id=@Ancestor)
+                    THROW 51411,'El centro superior genera un ciclo.',1;
+                  INSERT @Visited VALUES(@Ancestor);
+                  SELECT @Ancestor=ParentCostCenterId FROM dbo.AccountingCostCenters
+                    WHERE CostCenterId=@Ancestor AND BusinessId=@BusinessId;
+                END;
+                IF @IsDefault=0 AND EXISTS(SELECT 1 FROM dbo.AccountingCostCenters
+                  WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsDefault=1)
+                  THROW 51412,'Selecciona otro centro como predeterminado antes de sustituir este.',1;
+                IF @IsActive=0
+                BEGIN
+                  IF @IsDefault=1
+                    THROW 51412,'El centro predeterminado debe permanecer activo.',1;
+                  DECLARE @Dependencies nvarchar(2048);
+                  SELECT @Dependencies=STRING_AGG(CONVERT(nvarchar(max),Label),N'; ')
+                  FROM (
+                    SELECT N'Centro hijo: '+Code+N' · '+Name Label FROM dbo.AccountingCostCenters
+                    WHERE BusinessId=@BusinessId AND ParentCostCenterId=@CostCenterId AND IsActive=1
+                    UNION ALL
+                    SELECT N'Regla: '+OperationKind+COALESCE(N' / '+CONVERT(nvarchar(36),WarehouseId),N' / general')
+                    FROM dbo.AccountingCostCenterAssignments
+                    WHERE BusinessId=@BusinessId AND CostCenterId=@CostCenterId AND IsActive=1
+                    UNION ALL
+                    SELECT N'Concepto de gasto: '+Code+N' · '+Name FROM dbo.ExpenseConcepts
+                    WHERE BusinessId=@BusinessId AND DefaultCostCenterId=@CostCenterId AND IsActive=1
+                    UNION ALL
+                    SELECT N'Motivo: '+Code+N' · '+Name FROM dbo.BusinessReasons
+                    WHERE BusinessId=@BusinessId AND DefaultCostCenterId=@CostCenterId AND IsActive=1
+                  ) dependencies;
+                  IF @Dependencies IS NOT NULL
+                    THROW 51413,@Dependencies,1;
+                END;
+                IF @IsDefault=1
+                  UPDATE dbo.AccountingCostCenters SET IsDefault=0
+                  WHERE BusinessId=@BusinessId AND IsDefault=1 AND CostCenterId<>@CostCenterId;
+                UPDATE dbo.AccountingCostCenters SET Code=@Code,Name=@Name,
+                  ParentCostCenterId=@ParentCostCenterId,IsDefault=@IsDefault,IsActive=@IsActive
+                WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId;
+                SELECT CostCenterId,BusinessId,Code,Name,ParentCostCenterId,IsDefault,IsActive,RowVersion
+                FROM dbo.AccountingCostCenters WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            command.Parameters.AddWithValue("@CostCenterId", costCenterId);
+            command.Parameters.AddWithValue("@Version", version);
+            command.Parameters.AddWithValue("@Code", request.Code);
+            command.Parameters.AddWithValue("@Name", request.Name);
+            command.Parameters.AddWithValue("@ParentCostCenterId", (object?)request.ParentCostCenterId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@IsDefault", request.IsDefault);
+            command.Parameters.AddWithValue("@IsActive", request.IsActive);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken))
-                throw new AccountingValidationException("The cost center was not updated.");
-            return new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
-                reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetGuid(4),
-                reader.GetBoolean(5), reader.GetBoolean(6));
+            await reader.ReadAsync(cancellationToken);
+            var result = new AccountingCostCenterView(reader.GetGuid(0), reader.GetGuid(1),
+                reader.GetString(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.GetBoolean(5), reader.GetBoolean(6), Convert.ToBase64String((byte[])reader[7]));
+            await reader.DisposeAsync();
+            await transaction.CommitAsync(cancellationToken);
+            return result;
         }
-        catch (SqlException exception) when (exception.Number is 51411 or 51412 or 51413 or 51414)
+        catch (SqlException error) when (error.Number == 51415 || error.Number is 2601 or 2627)
         {
-            throw new AccountingValidationException(exception.Message);
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingConflictException(error.Number == 51415 ? error.Message : "El código del centro ya existe en esta sede.");
         }
+        catch (SqlException error) when (error.Number is 51411 or 51412 or 51413)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingValidationException(error.Message);
+        }
+    }
+
+    private static byte[] RequiredCostCenterVersion(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new AccountingConflictException("Actualiza la lista para obtener la versión vigente.");
+        try
+        {
+            var version = Convert.FromBase64String(value);
+            if (version.Length == 8) return version;
+        }
+        catch (FormatException)
+        {
+            throw new AccountingValidationException("La versión del registro no es válida.");
+        }
+        throw new AccountingValidationException("La versión del registro no es válida.");
     }
 
     public async Task<AccountingPeriodView> CreatePeriodAsync(
@@ -599,7 +676,7 @@ public sealed class SqlAccountingStore(
             {
                 read.Parameters.AddWithValue("@PeriodId", periodId); read.Parameters.AddWithValue("@TenantId", user.TenantId);
                 await using var reader = await read.ExecuteReaderAsync(cancellationToken);
-                if (!await reader.ReadAsync(cancellationToken)) throw new AccountingConflictException("The accounting period does not exist.");
+                if (!await reader.ReadAsync(cancellationToken)) throw new AccountingConflictException("El periodo contable no existe.");
                 startsOn = reader.GetDateTime(0); endsOn = reader.GetDateTime(1); status = reader.GetString(2);
             }
             if (status == "Closed") { await transaction.CommitAsync(cancellationToken); return; }
@@ -622,7 +699,7 @@ public sealed class SqlAccountingStore(
             {
                 pending.Parameters.AddWithValue("@TenantId", user.TenantId); pending.Parameters.AddWithValue("@StartsOn", startsOn); pending.Parameters.AddWithValue("@EndsOn", endsOn);
                 if (Convert.ToInt32(await pending.ExecuteScalarAsync(cancellationToken)) > 0)
-                    throw new AccountingConflictException("The period has documents pending accounting configuration or posting.");
+                    throw new AccountingConflictException("El periodo tiene documentos pendientes de configuración o contabilización.");
             }
             await using (var close = new SqlCommand("""
                 UPDATE dbo.AccountingPeriods SET Status=N'Closed',ClosedAt=@Now,ClosedByUserId=@UserId
@@ -767,13 +844,14 @@ public sealed class SqlAccountingStore(
 
     public async Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(
         AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? costCenterId = null)
     {
         await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
             WITH AccountLines AS (
               SELECT e.EntryId,e.EntryNumber,e.SourceDocumentId,e.SourceDocumentType,e.OccurredAt,
-                     l.LineNumber,l.Description,l.Debit,l.Credit,
+                     l.LineNumber,l.Description,l.Debit,l.Credit,l.CostCenterId,
+                     l.CostCenterCodeSnapshot,l.CostCenterNameSnapshot,
                      SUM(l.Debit-l.Credit) OVER(
                        ORDER BY e.OccurredAt,e.EntryNumber,l.LineNumber
                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) Balance
@@ -781,14 +859,16 @@ public sealed class SqlAccountingStore(
               INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
               INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
               WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId AND a.Code=@AccountCode
+                AND (@CostCenterId IS NULL OR l.CostCenterId=@CostCenterId)
                 AND CAST(e.OccurredAt AS date)<=@To
             )
             SELECT EntryId,EntryNumber,SourceDocumentId,SourceDocumentType,OccurredAt,
-                   Description,Debit,Credit,Balance
+                   Description,Debit,Credit,Balance,LineNumber,CostCenterId,CostCenterCodeSnapshot,CostCenterNameSnapshot
             FROM AccountLines
             WHERE CAST(OccurredAt AS date)>=@From
             ORDER BY OccurredAt,EntryNumber,LineNumber;
             """, connection);
+        command.Parameters.AddWithValue("@CostCenterId", (object?)costCenterId ?? DBNull.Value);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@AccountCode", accountCode);
@@ -799,7 +879,9 @@ public sealed class SqlAccountingStore(
         while (await reader.ReadAsync(cancellationToken)) rows.Add(new(
             reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetString(3),
             reader.GetDateTimeOffset(4), reader.GetString(5), reader.GetDecimal(6),
-            reader.GetDecimal(7), reader.GetDecimal(8)));
+            reader.GetDecimal(7), reader.GetDecimal(8), reader.GetInt32(9),
+            reader.IsDBNull(10) ? null : reader.GetGuid(10),
+            reader.IsDBNull(11) ? null : reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12)));
         return rows;
     }
 
@@ -812,7 +894,8 @@ public sealed class SqlAccountingStore(
         await using var command = new SqlCommand("""
             SELECT e.EntryId,e.EntryNumber,e.OccurredAt,e.SourceDocumentId,
                    e.SourceDocumentType,l.LineNumber,a.Code,a.Name,l.PartyId,
-                   l.CostCenterId,l.Description,l.Debit,l.Credit
+                   l.CostCenterId,l.CostCenterCodeSnapshot,l.CostCenterNameSnapshot,
+                   l.Description,l.Debit,l.Credit
             FROM dbo.AccountingEntries e
             INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
             INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
@@ -827,8 +910,10 @@ public sealed class SqlAccountingStore(
             rows.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetDateTimeOffset(2),
                 reader.GetGuid(3), reader.GetString(4), reader.GetInt32(5), reader.GetString(6),
                 reader.GetString(7), reader.IsDBNull(8) ? null : reader.GetGuid(8),
-                reader.IsDBNull(9) ? null : reader.GetGuid(9), reader.GetString(10),
-                reader.GetDecimal(11), reader.GetDecimal(12)));
+                reader.IsDBNull(9) ? null : reader.GetGuid(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11), reader.GetString(12),
+                reader.GetDecimal(13), reader.GetDecimal(14)));
         return rows;
     }
 
@@ -1130,7 +1215,7 @@ public sealed class SqlAccountingStore(
             if (!string.IsNullOrWhiteSpace(request.RowVersion))
             {
                 try { expectedVersion = Convert.FromBase64String(request.RowVersion); }
-                catch (FormatException) { throw new AccountingValidationException("The opening balance version is invalid."); }
+                catch (FormatException) { throw new AccountingValidationException("La versión del saldo inicial no es válida."); }
             }
             var now = timeProvider.GetUtcNow();
             await using (var command = new SqlCommand("""
@@ -1637,7 +1722,7 @@ public sealed class SqlAccountingStore(
         await using var command = new SqlCommand("""
             SELECT assignment.AssignmentId,assignment.BusinessId,assignment.CostCenterId,
                    center.Code,center.Name,assignment.OperationKind,assignment.WarehouseId,
-                   warehouse.Code,warehouse.Name,assignment.IsActive
+                   warehouse.Code,warehouse.Name,assignment.IsActive,assignment.RowVersion
             FROM dbo.AccountingCostCenterAssignments assignment
             INNER JOIN dbo.AccountingCostCenters center
               ON center.BusinessId=assignment.BusinessId AND center.CostCenterId=assignment.CostCenterId
@@ -1655,7 +1740,7 @@ public sealed class SqlAccountingStore(
                 reader.GetString(3), reader.GetString(4), reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetGuid(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetBoolean(9)));
+                reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetBoolean(9), Convert.ToBase64String((byte[])reader[10])));
         return values;
     }
 
@@ -1670,16 +1755,21 @@ public sealed class SqlAccountingStore(
         try
         {
             await using var command = new SqlCommand("""
-                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
+                IF @IsActive=1 AND NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
                   WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsActive=1)
                   THROW 51000,'The cost center is not active in this business.',1;
-                IF @WarehouseId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Warehouses WITH(UPDLOCK,HOLDLOCK)
+                IF @IsActive=1 AND @WarehouseId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Warehouses WITH(UPDLOCK,HOLDLOCK)
                   WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1)
                   THROW 51000,'The warehouse is not active in this business.',1;
                 DECLARE @Existing uniqueidentifier=(SELECT AssignmentId
                   FROM dbo.AccountingCostCenterAssignments WITH(UPDLOCK,HOLDLOCK)
-                  WHERE BusinessId=@BusinessId AND OperationKind=@OperationKind
-                    AND (WarehouseId=@WarehouseId OR WarehouseId IS NULL AND @WarehouseId IS NULL));
+                  WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND AssignmentId=@AssignmentId);
+                IF @Existing IS NOT NULL AND (@Version IS NULL OR NOT EXISTS(
+                  SELECT 1 FROM dbo.AccountingCostCenterAssignments
+                  WHERE AssignmentId=@Existing AND RowVersion=@Version))
+                  THROW 51000,'La regla cambió. Actualiza la lista antes de guardar.',1;
+                IF @Existing IS NULL AND @Version IS NOT NULL
+                  THROW 51000,'La regla no pertenece a esta sede o ya no existe.',1;
                 IF @Existing IS NULL
                 BEGIN
                   INSERT dbo.AccountingCostCenterAssignments
@@ -1688,15 +1778,18 @@ public sealed class SqlAccountingStore(
                   SET @Existing=@AssignmentId;
                 END
                 ELSE UPDATE dbo.AccountingCostCenterAssignments SET CostCenterId=@CostCenterId,
+                  OperationKind=@OperationKind,WarehouseId=@WarehouseId,
                   IsActive=@IsActive,UpdatedAt=@Now WHERE AssignmentId=@Existing;
                 SELECT assignment.AssignmentId,assignment.BusinessId,assignment.CostCenterId,
                        center.Code,center.Name,assignment.OperationKind,assignment.WarehouseId,
-                       warehouse.Code,warehouse.Name,assignment.IsActive
+                       warehouse.Code,warehouse.Name,assignment.IsActive,assignment.RowVersion
                 FROM dbo.AccountingCostCenterAssignments assignment
                 INNER JOIN dbo.AccountingCostCenters center ON center.CostCenterId=assignment.CostCenterId
                 LEFT JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=assignment.WarehouseId
                 WHERE assignment.AssignmentId=@Existing;
                 """, connection, transaction);
+            command.Parameters.Add("@Version", SqlDbType.Timestamp).Value =
+                request.RowVersion is null ? DBNull.Value : RequiredCostCenterVersion(request.RowVersion);
             command.Parameters.AddWithValue("@AssignmentId", request.AssignmentId);
             command.Parameters.AddWithValue("@TenantId", user.TenantId);
             command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -1712,15 +1805,16 @@ public sealed class SqlAccountingStore(
                 reader.GetString(3), reader.GetString(4), reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetGuid(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetBoolean(9));
+                reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetBoolean(9), Convert.ToBase64String((byte[])reader[10]));
             await reader.DisposeAsync();
             await transaction.CommitAsync(cancellationToken);
             return value;
         }
-        catch (SqlException error) when (error.Number == 51000)
+        catch (SqlException error) when (error.Number is 51000 or 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
-            throw new AccountingConflictException(error.Message);
+            throw new AccountingConflictException(error.Number == 51000 ? error.Message :
+                "Ya existe una regla para esa operación y bodega. Edita la regla existente.");
         }
         catch
         {
@@ -1785,7 +1879,7 @@ public sealed class SqlAccountingStore(
         if (!string.IsNullOrWhiteSpace(request.RowVersion))
         {
             try { expectedVersion = Convert.FromBase64String(request.RowVersion); }
-            catch (FormatException) { throw new AccountingValidationException("The bank account version is invalid."); }
+            catch (FormatException) { throw new AccountingValidationException("La versión de la cuenta bancaria no es válida."); }
         }
 
         await using var connection = connections.Create();
@@ -1800,11 +1894,11 @@ public sealed class SqlAccountingStore(
                     WHERE AccountId=@AccountingAccountId AND TenantId=@TenantId
                       AND IsActive=1 AND AllowsPosting=1 AND AccountType=N'Asset'
                       AND RequiresParty=0)
-                    THROW 51400,N'The bank account must use an active postable asset account that does not require a party.',1;
+                    THROW 51400,N'La cuenta bancaria debe usar un auxiliar activo del activo, contabilizable y sin tercero obligatorio.',1;
                 IF NOT EXISTS(
                     SELECT 1 FROM reference.Options
                     WHERE OptionId=@AccountTypeOptionId AND CatalogCode=N'bank-account-type' AND IsActive=1)
-                    THROW 51400,N'The bank account type is invalid.',1;
+                    THROW 51400,N'El tipo de cuenta bancaria no es válido.',1;
                 """, connection, transaction))
             {
                 validation.Parameters.AddWithValue("@AccountingAccountId", request.AccountingAccountId);
@@ -1815,25 +1909,45 @@ public sealed class SqlAccountingStore(
 
             var exists = false;
             var wasPrimary = false;
+            Guid? previousAccountingAccountId = null;
             await using (var current = new SqlCommand("""
-                SELECT IsPrimary FROM accounting.BankAccounts WITH(UPDLOCK,HOLDLOCK)
+                SELECT IsPrimary,AccountingAccountId FROM accounting.BankAccounts WITH(UPDLOCK,HOLDLOCK)
                 WHERE BankAccountId=@BankAccountId AND TenantId=@TenantId;
                 """, connection, transaction))
             {
                 current.Parameters.AddWithValue("@BankAccountId", request.BankAccountId);
                 current.Parameters.AddWithValue("@TenantId", user.TenantId);
-                var value = await current.ExecuteScalarAsync(cancellationToken);
-                exists = value is not null;
-                wasPrimary = value is bool primary && primary;
+                await using var reader = await current.ExecuteReaderAsync(cancellationToken);
+                exists = await reader.ReadAsync(cancellationToken);
+                if (exists) { wasPrimary = reader.GetBoolean(0); previousAccountingAccountId = reader.GetGuid(1); }
+            }
+
+            if (exists && expectedVersion is null)
+                throw new AccountingConflictException("Actualiza la lista para obtener la versión vigente de la cuenta bancaria.");
+            if (exists && previousAccountingAccountId != request.AccountingAccountId)
+            {
+                await using var used = new SqlCommand("""
+                    SELECT CASE
+                      WHEN EXISTS(SELECT 1 FROM dbo.SalesPayments WHERE BankAccountId=@BankAccountId)
+                        OR EXISTS(SELECT 1 FROM dbo.SalesReturns WHERE BankAccountId=@BankAccountId)
+                        OR EXISTS(SELECT 1 FROM dbo.SalesReturnSettlements WHERE BankAccountId=@BankAccountId)
+                        OR EXISTS(SELECT 1 FROM dbo.SupplierPayments WHERE BankAccountId=@BankAccountId)
+                        OR EXISTS(SELECT 1 FROM dbo.CustomerPayments WHERE BankAccountId=@BankAccountId)
+                        OR EXISTS(SELECT 1 FROM accounting.BankReconciliations WHERE BankAccountId=@BankAccountId)
+                      THEN 1 ELSE 0 END;
+                    """, connection, transaction);
+                used.Parameters.AddWithValue("@BankAccountId", request.BankAccountId);
+                if (Convert.ToBoolean(await used.ExecuteScalarAsync(cancellationToken)))
+                    throw new AccountingConflictException("El auxiliar PUC no puede cambiar porque la cuenta bancaria ya tiene movimientos o conciliaciones.");
             }
 
             var makePrimary = request.IsActive && (request.IsPrimary || !await HasActiveBankAccountAsync(
                 connection, transaction, user.TenantId, request.BankAccountId, cancellationToken));
             if (wasPrimary && request.IsActive && !makePrimary)
-                throw new AccountingConflictException("Select another primary bank account before removing the current primary.");
+                throw new AccountingConflictException("Selecciona otra cuenta principal antes de quitar esta condición.");
             if (wasPrimary && !request.IsActive && await HasActiveBankAccountAsync(
                     connection, transaction, user.TenantId, request.BankAccountId, cancellationToken))
-                throw new AccountingConflictException("Select another primary bank account before deactivating the current primary.");
+                throw new AccountingConflictException("Selecciona otra cuenta principal antes de desactivar esta cuenta.");
 
             if (makePrimary)
             {
@@ -1878,7 +1992,7 @@ public sealed class SqlAccountingStore(
                 save.Parameters.Add("@ExpectedVersion", SqlDbType.Timestamp).Value =
                     (object?)expectedVersion ?? DBNull.Value;
             if (await save.ExecuteNonQueryAsync(cancellationToken) != 1)
-                throw new AccountingConflictException("The bank account changed. Reload it and try again.");
+                throw new AccountingConflictException("La cuenta bancaria cambió. Actualiza la lista e inténtalo de nuevo.");
 
             await EnqueueBankAccountSynchronizationAsync(
                 connection, transaction, user.TenantId, cancellationToken);

@@ -146,7 +146,7 @@ public sealed class SqlTenantProvisioningStore(
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@AdministrativeRoleId,PermissionId,@Now
                 FROM dbo.Permissions
-                WHERE Resource NOT LIKE N'tenants.%'
+                WHERE (Resource NOT LIKE N'tenants.%'
                   AND Resource NOT LIKE N'roles.%'
                   AND Resource NOT LIKE N'users.%'
                   AND Resource NOT LIKE N'audit[_]logs.%'
@@ -154,7 +154,10 @@ public sealed class SqlTenantProvisioningStore(
                   AND Resource NOT LIKE N'conversations.%'
                   AND Resource NOT LIKE N'leads.%'
                   AND Resource NOT LIKE N'campaigns.%'
-                  AND Resource NOT LIKE N'reservations.%';
+                  AND Resource NOT LIKE N'reservations.%')
+                  OR Resource IN(
+                    N'users.read',N'users.create',N'users.update',N'users.delete',N'users.assign_role',N'users.remove_role',
+                    N'roles.read',N'security.users.link-party');
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@AccountantRoleId,PermissionId,@Now
                 FROM dbo.Permissions

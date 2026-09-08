@@ -212,7 +212,7 @@ public sealed class PosArchitectureTests
         Assert.Contains("target < 0 || target >= results.length", productSearchDialog, StringComparison.Ordinal);
         Assert.Contains("input.current?.focus()", productSearchDialog, StringComparison.Ordinal);
         Assert.Contains(
-            "Flechas recorren; Tab entra al listado; Enter agrega; Esc vuelve al lector.",
+            "Flechas recorren; Tab entra al listado; Enter agrega; F1 verifica precios; Esc vuelve al lector.",
             productSearchDialog,
             StringComparison.Ordinal);
         Assert.Contains("data-pos-focus-surface=\"modal\"", productSearchDialog, StringComparison.Ordinal);
@@ -448,7 +448,8 @@ public sealed class PosArchitectureTests
 
         Assert.Contains("const availabilityVersion = useRef(0)", dialog, StringComparison.Ordinal);
         Assert.Contains("availabilityProductId !== selectedProduct.productId", dialog, StringComparison.Ordinal);
-        Assert.Contains("flex h-44 shrink-0 flex-col", dialog, StringComparison.Ordinal);
+        Assert.Contains("flex min-h-44 shrink-0 flex-col", dialog, StringComparison.Ordinal);
+        Assert.Contains("min-h-24 flex-1 overflow-hidden", dialog, StringComparison.Ordinal);
         Assert.Contains("aria-busy=\"true\"", dialog, StringComparison.Ordinal);
         Assert.Contains("Consultando existencias", dialog, StringComparison.Ordinal);
         Assert.Contains("El producto local sigue disponible", dialog, StringComparison.Ordinal);

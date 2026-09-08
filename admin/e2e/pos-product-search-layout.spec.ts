@@ -1,0 +1,78 @@
+import { expect, test } from "@playwright/test";
+
+test("buscador abre para agregar, alinea promociones y muestra existencias sin scroll interno", async ({ page, baseURL }) => {
+  const tenantId="11111111-1111-1111-1111-111111111111",businessId="22222222-2222-2222-2222-222222222222",warehouseId="33333333-3333-3333-3333-333333333333";
+  const user={userId:"44444444-4444-4444-4444-444444444444",tenantId,tenantKey:"TEST",username:"cajero",firstName:"Cajero",lastName:"Prueba",roles:["ADMIN"],permissions:["pos.sales.create","pos.inventory.availability.read"]};
+  const workspace={businessId,warehouseId,businessName:"Sede prueba",warehouseName:"Principal",warehouseCode:"B01",warehouseAllowsNegativeStockSales:true,hasActiveEdgeEnrollment:false};
+  const products=Array.from({length:8},(_,i)=>({productId:`product-${i}`,productCode:`PRD-${i}`,reference:`REF-${i}`,name:i===0?"Producto con promoción":"Producto de inventario "+i,baseUnitCode:"EA",unitPrice:i===0?9840:24000,promotionDiscount:i===0?2460:0,priceSource:i===0?"Promotion":"Public",isWeighable:false}));
+  let availabilityMode:"empty"|"many"|"error"="empty";
+  const draft={draftId:"draft",...workspace,userId:user.userId,workSessionId:"session",status:"Active",version:1,lines:[],untaxedAmount:0,taxAmount:0,payableAmount:0};
+  const writes:string[]=[];
+  await page.context().addCookies([{name:"auth_token",value:"e2e",url:baseURL!,httpOnly:true,sameSite:"Lax"}]);
+  await page.addInitScript(({tenantId,businessId,warehouseId,user})=>{
+    localStorage.setItem("selected_tenant_id",tenantId);localStorage.setItem("selected_business_id",businessId);
+    localStorage.setItem("auth-state",JSON.stringify({state:{isAuthenticated:true,user},version:0}));
+    localStorage.setItem(`auraly.pos.sales-workspace:${tenantId}:${user.userId}`,`${businessId}:${warehouseId}`);
+  },{tenantId,businessId,warehouseId,user});
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    let body:unknown=[];
+    if(path==="/api/auth/me")body=user;
+    else if(path.endsWith("/workspace/bootstrap"))body={tenantId,tenantName:"Prueba",userId:user.userId,userDisplayName:"Cajero Prueba",options:[workspace],canEnrollPosDevice:false,activeEnrolledDeviceCount:0,maximumEnrolledDevices:0};
+    else if(path.endsWith("/workspace/options"))body=[workspace];
+    else if(path.endsWith("/workspace/select"))body=workspace;
+    else if(path.endsWith("/work-sessions/current"))body={workSessionId:"session"};
+    else if(path.endsWith("/drafts/active"))body=draft;
+    else if(path.endsWith("/drafts/products/search"))body={items:products,hasMore:false,nextOffset:null};
+    else if(path.endsWith("/warehouse-availability")){
+      if(availabilityMode==="error")return route.fulfill({status:500,contentType:"application/json",body:JSON.stringify({message:"Error de prueba"})});
+      body=availabilityMode==="empty"?[]:Array.from({length:12},(_,i)=>({...workspace,warehouseId:`warehouse-${i}`,warehouseName:`Bodega ${i+1}`,quantityOnHand:10+i,isCurrentBusiness:true}));
+    } else if(path.endsWith("/settlement-configuration"))body={isAccountingEnabled:false,bankAccounts:[]};
+    else if(path.endsWith("/items")){writes.push(path);body={...draft,lines:[]};}
+    else if(path.includes("/orders"))body={items:[],totalCount:0,totalPages:0,page:1,pageSize:25};
+    await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(body)});
+  });
+  await page.setViewportSize({width:1100,height:850});
+  await page.goto("/pos");
+  await expect(page.locator("#pos-scanner")).toBeEnabled();
+  await page.keyboard.press("F1");
+  const dialog=page.getByRole("dialog",{name:"Buscar producto",exact:true});
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("combobox",{name:"Buscar producto"})).toBeFocused();
+  const options=dialog.getByRole("option");
+  await expect(options).toHaveCount(8);
+  await expect(options.first()).toContainText("Promoción · ahorra");
+  await expect(options.nth(1)).not.toContainText(/Promoción|Público|EA/);
+  await expect(options.first()).not.toContainText("EA");
+  const prices=await options.evaluateAll(rows=>rows.map(row=>row.lastElementChild!.getBoundingClientRect().right));
+  expect(new Set(prices).size).toBe(1);
+  const stocks=page.getByRole("region",{name:"Existencias por sede y bodega"});
+  await expect(stocks).toContainText("No hay bodegas operativas");
+  const stockTable=stocks.locator(":scope > div").last();
+  expect(await stockTable.evaluate(node=>node.scrollHeight<=node.clientHeight)).toBe(true);
+  await dialog.screenshot({path:"test-results/pos-product-search.png"});
+  await page.keyboard.press("F1");
+  await expect(page.getByRole("dialog",{name:"Verificador de precios"})).toBeVisible();
+  await expect(page.getByText("Flechas recorren; Tab entra al listado; Enter consulta; Esc vuelve al lector.")).toBeVisible();
+  await page.keyboard.press("Enter");
+  expect(writes).toHaveLength(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pos-scanner")).toBeFocused();
+  availabilityMode="many";
+  await page.getByRole("button",{name:"Buscar F1",exact:true}).click();
+  await expect(dialog).toBeVisible();
+  await expect(stocks).toContainText("Bodega 12");
+  expect(await stockTable.evaluate(node=>node.scrollHeight<=node.clientHeight)).toBe(true);
+  await stocks.getByText("Bodega 12",{exact:false}).scrollIntoViewIfNeeded();
+  await expect(stocks.getByText("Bodega 12",{exact:false})).toBeVisible();
+  await page.keyboard.press("Escape");
+  availabilityMode="error";
+  await page.keyboard.press("F1");
+  await expect(stocks).toContainText("No fue posible consultar las existencias");
+  await expect(dialog.getByRole("combobox")).toBeFocused();
+  await page.setViewportSize({width:540,height:720});
+  expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth)).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect.poll(()=>writes.length).toBe(1);
+  await expect(dialog).toBeHidden();
+});

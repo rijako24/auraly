@@ -103,7 +103,7 @@ public sealed class SqlComplianceReportingStore(
         {
             await using var reader = await command.ExecuteReaderAsync(token);
             if (await reader.ReadAsync(token)) return ReadMapping(reader);
-            throw new AccountingConflictException("The compliance mapping was not saved.");
+            throw new AccountingConflictException("No fue posible guardar la parametrización del informe fiscal.");
         }
         catch (SqlException exception) when (exception.Number is 2601 or 2627 or 51500 or 51501 or 51502)
         {
@@ -122,9 +122,9 @@ public sealed class SqlComplianceReportingStore(
         try
         {
             var definition = await ReadDefinitionAsync(connection, transaction, request, token)
-                ?? throw new AccountingValidationException("The requested authority/year/version definition does not exist.");
+                ?? throw new AccountingValidationException("No existe la definición solicitada para esa entidad, año y versión.");
             if (!await IsAccountingReadyAsync(connection, transaction, user.TenantId, token))
-                throw new AccountingConflictException("Accounting must be Ready before a fiscal report can be generated.");
+                throw new AccountingConflictException("La contabilidad debe estar lista antes de generar un informe fiscal.");
 
             var mappings = await ReadMappingsAsync(connection, transaction, user, request, token);
             var validations = new List<ComplianceValidationView>();

@@ -6,7 +6,7 @@ export interface AccountingAccount {
 }
 export interface AccountingCostCenter {
   costCenterId: string; businessId: string; code: string; name: string;
-  parentCostCenterId: string | null; isDefault: boolean; isActive: boolean;
+  parentCostCenterId: string | null; isDefault: boolean; isActive: boolean; rowVersion:string;
 }
 export interface AccountingPeriod {
   periodId: string; startsOn: string; endsOn: string; name: string; status: string;
@@ -25,7 +25,7 @@ export interface AccountingReadiness {
   blockingIssues: string[];
   canEditOpeningBalances: boolean;
 }
-export interface AccountingCostCenterAssignment { assignmentId:string;businessId:string;costCenterId:string;costCenterCode:string;costCenterName:string;operationKind:"All"|"Sales"|"Purchasing"|"Expenses"|"Inventory";warehouseId:string|null;warehouseCode:string|null;warehouseName:string|null;isActive:boolean; }
+export interface AccountingCostCenterAssignment { assignmentId:string;businessId:string;costCenterId:string;costCenterCode:string;costCenterName:string;operationKind:"All"|"Sales"|"Purchasing"|"Expenses"|"Inventory";warehouseId:string|null;warehouseCode:string|null;warehouseName:string|null;isActive:boolean;rowVersion:string; }
 export interface ActivateAccounting {
   effectiveFrom: string;
   functionalCurrencyCode: "COP";
@@ -42,12 +42,20 @@ export interface SaveBankAccount {
   bankName:string;accountNumber:string;displayName:string;isPrimary:boolean;
   isActive:boolean;rowVersion:string|null;
 }
+export interface BankReconciliationSummary { reconciliationId:string;bankAccountId:string;bankDisplayName:string;accountingAccountCode:string;accountingAccountName:string;periodFrom:string;periodTo:string;openingBalance:number;closingBalance:number;fileName:string;fileSha256:string;status:"Preparation"|"Closed"|"Reopened";statementLineCount:number;matchedLineCount:number;statementMovementTotal:number;bookMovementTotal:number;difference:number;requiresReview:boolean;rowVersion:string;updatedAt:string; }
+export interface BankStatementLine { statementLineId:string;lineNumber:number;transactionDate:string;description:string;reference:string|null;amount:number;balance:number|null;allocatedAmount:number;isMatched:boolean; }
+export interface BankBookLine { entryId:string;entryLineNumber:number;entryNumber:string;occurredAt:string;businessId:string;businessName:string;sourceDocumentType:string;sourceDocumentId:string;description:string;amount:number;allocatedAmount:number;availableAmount:number; }
+export interface BankReconciliationAllocation { matchId:string;statementLineId:string;entryId:string;entryLineNumber:number;amount:number;createdAt:string; }
+export interface BankReconciliationStatusEvent { statusEventId:string;status:"Closed"|"Reopened";reason:string|null;actorUserId:string;actorName:string;occurredAt:string;statementClosingBalance:number|null;bookClosingBalance:number|null;accountingCutoffPostedAt:string|null; }
+export interface BankReconciliationDetail { summary:BankReconciliationSummary;statementLines:BankStatementLine[];bookLines:BankBookLine[];allocations:BankReconciliationAllocation[];statusEvents:BankReconciliationStatusEvent[]; }
+export interface BankStatementLineImport { lineNumber:number;transactionDate:string;description:string;reference:string|null;amount:number;balance:number|null; }
+export interface ImportBankReconciliation { reconciliationId:string;bankAccountId:string;periodFrom:string;periodTo:string;openingBalance:number;closingBalance:number;fileName:string;fileSha256:string;originalFileBase64:string;lines:BankStatementLineImport[]; }
 export interface AccountingOpeningBalanceLine { lineNumber:number;accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number; }
 export interface AccountingOpeningBalance { batchId:string;businessId:string;effectiveOn:string;currencyCode:string;description:string;status:"Draft"|"Approved"|"Posted";debitTotal:number;creditTotal:number;rowVersion:string;updatedAt:string;approvedAt:string|null;postedAt:string|null;lines:AccountingOpeningBalanceLine[]; }
 export interface SaveAccountingOpeningBalance { batchId:string;businessId:string;effectiveOn:string;currencyCode:"COP";description:string;rowVersion:string|null;lines:Array<Omit<AccountingOpeningBalanceLine,"lineNumber">>; }
 export interface AccountingCategoryDefinition { category: string; displayName: string; accountType: string; isRequired: boolean; displayOrder: number; }
 export interface TrialBalanceRow { accountCode: string; accountName: string; debit: number; credit: number; balance: number; }
-export interface AccountMovementRow { entryId: string; entryNumber: string; sourceDocumentId: string; sourceDocumentType: string; occurredAt: string; description: string; debit: number; credit: number; balance: number; }
+export interface AccountMovementRow { lineNumber:number;costCenterId:string|null;costCenterCode:string|null;costCenterName:string|null;entryId: string; entryNumber: string; sourceDocumentId: string; sourceDocumentType: string; occurredAt: string; description: string; debit: number; credit: number; balance: number; }
 export interface CreateAccount {
   accountId: string; tenantId: string; code: string; name: string;
   accountType: string; allowsPosting: boolean; requiresParty: boolean;
@@ -77,7 +85,7 @@ export interface ConfirmManualVoucher {
   voucherId: string; businessId: string; occurredAt: string; conceptCode: string;
   description: string; lines: Array<{accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number}>;
 }
-export interface AccountingJournalRow { entryId:string;entryNumber:string;occurredAt:string;sourceDocumentId:string;sourceDocumentType:string;lineNumber:number;accountCode:string;accountName:string;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number; }
+export interface AccountingJournalRow { entryId:string;entryNumber:string;occurredAt:string;sourceDocumentId:string;sourceDocumentType:string;lineNumber:number;accountCode:string;accountName:string;partyId:string|null;costCenterId:string|null;costCenterCode:string|null;costCenterName:string|null;description:string;debit:number;credit:number; }
 export interface GeneralLedgerRow { accountCode:string;accountName:string;accountType:string;openingBalance:number;debit:number;credit:number;closingBalance:number; }
 export interface FinancialStatementRow { section:string;accountCode:string;accountName:string;amount:number; }
 export interface AccountingExceptionRow { sourceDocumentId:string;sourceDocumentType:string;occurredAt:string;status:string;errorCode:string|null;errorMessage:string|null; }
@@ -94,9 +102,16 @@ export const accountingApi = {
   accounts: () => apiClient.get<AccountingAccount[]>("/commerce/v1/accounting/accounts"),
   bankAccounts: (includeInactive=false) => apiClient.get<BankAccount[]>("/commerce/v1/accounting/bank-accounts", {includeInactive}),
   saveBankAccount: (request:SaveBankAccount) => apiClient.put<BankAccount>(`/commerce/v1/accounting/bank-accounts/${request.bankAccountId}`,request),
+  bankReconciliations: () => apiClient.get<BankReconciliationSummary[]>("/commerce/v1/accounting/bank-reconciliations"),
+  bankReconciliation: (id:string) => apiClient.get<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}`),
+  importBankReconciliation: (request:ImportBankReconciliation) => apiClient.post<BankReconciliationDetail>("/commerce/v1/accounting/bank-reconciliations",request),
+  allocateBankReconciliation: (id:string,request:{matchId:string;statementLineId:string;entryId:string;entryLineNumber:number;amount:number;rowVersion:string}) => apiClient.post<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}/allocations`,request),
+  reverseBankReconciliationAllocation: (id:string,matchId:string,reason:string,rowVersion:string) => apiClient.post<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}/allocations/${matchId}/reverse`,{reason,rowVersion}),
+  closeBankReconciliation: (id:string,rowVersion:string) => apiClient.post<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}/close`,{rowVersion}),
+  reopenBankReconciliation: (id:string,rowVersion:string,reason:string) => apiClient.post<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}/reopen`,{rowVersion,reason}),
   costCenters: () => apiClient.get<AccountingCostCenter[]>("/commerce/v1/accounting/cost-centers"),
   costCenterAssignments: () => apiClient.get<AccountingCostCenterAssignment[]>("/commerce/v1/accounting/cost-center-assignments"),
-  saveCostCenterAssignment: (request:{assignmentId:string;businessId:string;costCenterId:string;operationKind:AccountingCostCenterAssignment["operationKind"];warehouseId:string|null;isActive:boolean}) => apiClient.put<AccountingCostCenterAssignment>("/commerce/v1/accounting/cost-center-assignments",request),
+  saveCostCenterAssignment: (request:{assignmentId:string;businessId:string;costCenterId:string;operationKind:AccountingCostCenterAssignment["operationKind"];warehouseId:string|null;isActive:boolean;rowVersion?:string|null}) => apiClient.put<AccountingCostCenterAssignment>("/commerce/v1/accounting/cost-center-assignments",request),
   periods: () => apiClient.get<AccountingPeriod[]>("/commerce/v1/accounting/periods"),
   mappings: () => apiClient.get<AccountingMapping[]>("/commerce/v1/accounting/account-mappings"),
   categoryDefinitions: () => apiClient.get<AccountingCategoryDefinition[]>("/commerce/v1/accounting/category-definitions"),
@@ -108,7 +123,8 @@ export const accountingApi = {
   ensureDefaults: () => apiClient.put<AccountingDefaultsResult>("/commerce/v1/accounting/defaults", {}),
   createAccount: (request: CreateAccount) => apiClient.post<AccountingAccount>("/commerce/v1/accounting/accounts", request),
   createCostCenter: (request: CreateCostCenter) => apiClient.post<AccountingCostCenter>("/commerce/v1/accounting/cost-centers", request),
-  setCostCenterStatus: (costCenterId:string,isActive:boolean) => apiClient.put<AccountingCostCenter>(`/commerce/v1/accounting/cost-centers/${costCenterId}/status`,{isActive}),
+  updateCostCenter: (costCenterId:string, request:Omit<AccountingCostCenter,"costCenterId"|"businessId">) => apiClient.put<AccountingCostCenter>(`/commerce/v1/accounting/cost-centers/${costCenterId}`,request),
+  setCostCenterStatus: (costCenterId:string,isActive:boolean,rowVersion:string) => apiClient.put<AccountingCostCenter>(`/commerce/v1/accounting/cost-centers/${costCenterId}/status`,{isActive,rowVersion}),
   createPeriod: (request: CreatePeriod) => apiClient.post<AccountingPeriod>("/commerce/v1/accounting/periods", request),
   setMapping: (request: SetAccountMapping) => apiClient.put<void>("/commerce/v1/accounting/account-mappings", request),
   closePeriod: (periodId: string) => apiClient.post<void>(`/commerce/v1/accounting/periods/${periodId}/close`, {}),
@@ -119,7 +135,7 @@ export const accountingApi = {
   entry: (documentId:string) => apiClient.get<AccountingEntry>(`/commerce/v1/accounting/entries/by-document/${documentId}`),
   documents: (params:{from:string;to:string;documentType?:string;status?:string;search?:string;page?:number;pageSize?:number}) => apiClient.get<AccountingDocumentPage>("/commerce/v1/accounting/documents",params),
   trialBalance: (from: string, to: string) => apiClient.get<TrialBalanceRow[]>(`/commerce/v1/accounting/reports/trial-balance?from=${from}&to=${to}`),
-  accountMovements: (accountCode: string, from: string, to: string) => apiClient.get<AccountMovementRow[]>(`/commerce/v1/accounting/reports/account-movements?accountCode=${encodeURIComponent(accountCode)}&from=${from}&to=${to}`),
+  accountMovements: (accountCode: string, from: string, to: string, costCenterId?:string) => apiClient.get<AccountMovementRow[]>(`/commerce/v1/accounting/reports/account-movements?accountCode=${encodeURIComponent(accountCode)}&from=${from}&to=${to}${costCenterId?`&costCenterId=${encodeURIComponent(costCenterId)}`:""}`),
   journal: (from:string,to:string) => apiClient.get<AccountingJournalRow[]>(`/commerce/v1/accounting/reports/journal?from=${from}&to=${to}`),
   generalLedger: (from:string,to:string) => apiClient.get<GeneralLedgerRow[]>(`/commerce/v1/accounting/reports/general-ledger?from=${from}&to=${to}`),
   balanceSheet: (asOf:string) => apiClient.get<FinancialStatementRow[]>(`/commerce/v1/accounting/reports/balance-sheet?asOf=${asOf}`),

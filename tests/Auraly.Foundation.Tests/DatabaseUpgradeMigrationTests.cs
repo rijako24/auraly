@@ -249,6 +249,14 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("RequireEmployee = 0", auraly, StringComparison.Ordinal);
         Assert.Contains("N'Cajero',N'CASHIER'", roles, StringComparison.Ordinal);
         Assert.Contains("N'Supervisor',N'SUPERVISOR'", roles, StringComparison.Ordinal);
+        Assert.Contains(
+            "N'users.read',N'users.create',N'users.update',N'users.delete',N'users.assign_role',N'users.remove_role'",
+            roles,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "N'roles.read',N'security.users.link-party'",
+            roles,
+            StringComparison.Ordinal);
         Assert.Contains("N'OCASIONAL'", accounting, StringComparison.Ordinal);
         Assert.Contains("N'Gasto ocasional / sin proveedor'", accounting,
             StringComparison.Ordinal);

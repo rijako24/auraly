@@ -81,13 +81,17 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
-    OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND permissionValue.Resource NOT LIKE N'tenants.%'
+    OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND (
+      permissionValue.Resource NOT LIKE N'tenants.%'
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
       AND permissionValue.Resource NOT IN(N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost')
       AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
                      WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
+      OR permissionValue.Resource IN(
+        N'users.read',N'users.create',N'users.update',N'users.delete',N'users.assign_role',N'users.remove_role',
+        N'roles.read',N'security.users.link-party'))
     OR roleValue.NormalizedName=N'ACCOUNTANT' AND (
       permissionValue.Resource LIKE N'accounting.%'
       OR permissionValue.Resource LIKE N'payroll.%'
@@ -132,13 +136,17 @@ WHERE roleValue.IsActive=1
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
-    OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND permissionValue.Resource NOT LIKE N'tenants.%'
+    OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND (
+      permissionValue.Resource NOT LIKE N'tenants.%'
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
       AND permissionValue.Resource NOT IN(N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost')
       AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
                      WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
+      OR permissionValue.Resource IN(
+        N'users.read',N'users.create',N'users.update',N'users.delete',N'users.assign_role',N'users.remove_role',
+        N'roles.read',N'security.users.link-party'))
     OR roleValue.NormalizedName=N'ACCOUNTANT' AND (
       permissionValue.Resource LIKE N'accounting.%'
       OR permissionValue.Resource LIKE N'payroll.%'

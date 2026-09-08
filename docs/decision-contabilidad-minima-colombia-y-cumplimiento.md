@@ -86,18 +86,91 @@ Las reglas se versionan por vigencia y pueden depender de tipo documental, categ
 
 ## 8. Centros de costos
 
-`CostCenters` usa UUIDv7, pertenece a un `BusinessId`, tiene código único, nombre, jerarquía opcional, vigencia y estado.
+### Diseño mínimo cerrado — 2026-09-08
 
-La resolución inicial es:
+Este alcance reemplaza la prioridad anterior por caja y las propuestas de ampliar
+dimensiones o repartir porcentajes. Es una decisión de implementación; las
+correcciones descritas aquí aún no deben presentarse como desplegadas.
 
-1. centro explícito autorizado;
-2. centro de la caja;
-3. centro de la regla operacional;
-4. centro predeterminado del negocio.
+Se conservan `AccountingCostCenters`, `AccountingCostCenterAssignments`,
+`AccountingPostingJobs.ResolvedCostCenterId` y las dimensiones de
+`AccountingEntryLines`. El centro pertenece a la sede (`BusinessId`), con código
+único, nombre libre y centro superior opcional. El contador organiza esos datos
+según su negocio; una bodega sólo es un filtro opcional de una regla existente.
 
-El cajero no lo selecciona normalmente. Cambiar el maestro no reescribe historia. Reclasificar un movimiento contabilizado crea un asiento auditado.
+**Configuración mínima:**
+
+- Crear, editar código/nombre/centro superior y activar/desactivar centros en la
+  pantalla actual, con `accounting.configure`, scope de sede y concurrencia por
+  la versión existente. Validar padre activo de la misma sede y ausencia de ciclos.
+- Conservar exactamente un centro predeterminado activo para que los procesos
+  actuales sigan contabilizando sin nuevas preguntas. El contador puede renombrarlo
+  o sustituirlo por otro en una transacción; `PRINCIPAL` no es una identidad
+  inamovible. No se incorpora un modo adicional de operación sin centros.
+- Conservar los tipos de operación actuales del catálogo y su filtro opcional de
+  bodega. Permitir editar y desactivar las reglas desde la misma lista; cambiar
+  de alcance no deja la regla anterior activa accidentalmente.
+- Desactivar un centro conserva su historia. Impedirlo mientras sea predeterminado,
+  tenga hijos activos, reglas o conceptos/motivos activos que lo usarían en nuevas
+  operaciones. Mostrar las dependencias concretas para corregirlas. Las fuentes
+  ya aceptadas conservan su centro congelado aunque el maestro se desactive después.
+
+**Resolución única en el motor contable existente:**
+
+1. centro ya congelado en la fuente/trabajo, incluidas las líneas explícitas;
+2. en una devolución, centro de la operación original para las partidas que revierte;
+3. centro explícito autorizado en los documentos que ya lo admiten o el centro del
+   concepto/motivo congelado por ese documento;
+4. regla por operación y bodega, luego por operación sin bodega;
+5. regla de todas las operaciones y bodega, luego regla general sin bodega;
+6. predeterminado activo de la sede.
+
+La resolución automática se fija una sola vez al primer intento contable, antes
+de evaluar período/mappings, y persiste también si esas validaciones dejan el
+documento pendiente. No se recalcula silenciosamente en un reintento. Un documento
+histórico pendiente sin centro congelado usa esta resolución una sola vez al
+reintentarse; los asientos contabilizados no se modifican. Si la devolución no
+puede obtener la clasificación original, queda pendiente con causa visible.
+Los asientos manuales conservan los centros explícitos por línea ya admitidos por
+su contrato; un campo vacío significa usar la resolución automática, no «sin centro».
+
+No se cambia el cálculo de importes, impuestos, costo, cartera ni inventario por
+modificar un centro. Cambiar el maestro no reescribe historia. Una reclasificación
+usa el comprobante manual existente, con el mismo auxiliar en débito/crédito y
+centros diferentes; completar esa captura por línea reutiliza el contrato actual.
+
+**Consulta mínima:** agregar filtro por centro y su código/nombre al auxiliar
+contable existente, consultando las líneas del libro con el mismo scope y fechas.
+El saldo inicial y el acumulado aplican el mismo filtro. No se crea un tablero,
+proyección, consolidación jerárquica ni informe de rentabilidad nuevo en este alcance.
+
+**Fuera del alcance:** repartos porcentuales, reglas por cuenta/proyecto/empleado,
+centros compartidos entre sedes, calendarios de vigencia, nuevos tipos de operación,
+campos o pasos obligatorios en POS/ventas/compras, y motores, tablas o colas paralelos.
+
+**Aceptación:** sustitución atómica del predeterminado; edición sin cambiar snapshots;
+reglas editables/desactivables desde UI; dependencias de desactivación visibles;
+rechazo de otra sede y de versiones obsoletas; venta/devolución en el mismo centro
+aunque cambien reglas; pendiente/reintento con centro estable; reclasificación que
+no altera el saldo de la cuenta; auxiliar filtrado que concilia con sus líneas.
+El cambio requiere regresiones de aplicación/SQL/UI y actualización de los textos
+«general obligatorio», «centro adicional» y «sin centro» a esta semántica.
+
+**Cutover y rollback:** no eliminar ni recalcular centros, reglas, fuentes o asientos
+existentes. Reutilizar las versiones y snapshots actuales; cualquier protección
+adicional de esquema se publica por DACPAC. Validar/reparar referencias inválidas
+con evidencia antes de activarla. Un rollback de aplicación conserva esos datos;
+no se revierte a un resolver que ignore centros ya congelados.
 
 ## 9. Contabilización automática
+
+El diseño mínimo unificado de efectivo, tarjetas, cuentas bancarias, abonos y
+conciliación está cerrado en
+[`implementation/bank-accounts-and-reconciliation-design.md`](implementation/bank-accounts-and-reconciliation-design.md).
+Reutiliza este motor, el PUC, sus mappings y comprobantes manuales; separa el
+cobro con tarjeta del abono bancario y del cierre de caja. El mínimo funcional
+está implementado y probado localmente. La publicación permanece pendiente de
+una instrucción posterior.
 
 Cada documento produce un evento contable canónico. La transacción operacional crea obligatoriamente el trabajo contable durable con hash y versión de reglas.
 

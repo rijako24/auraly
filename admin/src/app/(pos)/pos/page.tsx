@@ -1025,7 +1025,7 @@ export default function PosPage() {
           setPriceVerifierMode((current) => !current);
           focusProductSearch();
         } else {
-          setPriceVerifierMode(true);
+          setPriceVerifierMode(false);
           setProductSearchOpen(true);
         }
       } else if (
@@ -2787,7 +2787,7 @@ export default function PosPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setProductSearchOpen(true)}
+                onClick={() => { setPriceVerifierMode(false); setProductSearchOpen(true); }}
                 disabled={busy || !salesReady}
                 className="flex min-w-28 items-center justify-center gap-2 rounded-xl border border-teal-700/25 bg-white px-4 font-semibold text-teal-800 transition hover:bg-teal-50 focus:outline-none focus:ring-4 focus:ring-teal-600/15 disabled:opacity-45"
               >

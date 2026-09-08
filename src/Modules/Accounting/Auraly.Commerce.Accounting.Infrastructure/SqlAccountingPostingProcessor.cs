@@ -64,6 +64,21 @@ public sealed partial class SqlAccountingPostingProcessor(
                 return;
             }
 
+            // Freeze before validation/savepoint so configuration retries keep their classification.
+            var costCenterId = await ResolveAndFreezeCostCenterAsync(
+                connection, transaction, source, cancellationToken);
+            if (costCenterId is null)
+            {
+                var isReturn = source.DocumentType is "SalesReturn" or "PurchaseReturn";
+                await MarkPendingConfigurationAsync(connection, transaction, source,
+                    isReturn ? "OriginalCostCenterMissing" : "CostCenterMissing",
+                    isReturn ? "The original document has no unambiguous accounting cost center. Post or review the original document first."
+                        : "No active automatic or default cost center is configured for this operation.",
+                    cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+
             var periodId = await FindOpenPeriodAsync(
                 connection, transaction, source.TenantId,
                 DateOnly.FromDateTime(source.OccurredAt.Date), cancellationToken);
@@ -175,23 +190,6 @@ public sealed partial class SqlAccountingPostingProcessor(
                 return;
             }
 
-            var costCenterId = facts.PreferredCostCenterId ?? source.ResolvedCostCenterId ??
-                await ResolveAndFreezeCostCenterAsync(
-                    connection, transaction, source, cancellationToken);
-            if (costCenterId is null)
-            {
-                transaction.Rollback("BeforeFinancialEffects");
-                await MarkPendingConfigurationAsync(connection, transaction, source,
-                    "CostCenterMissing",
-                    "No active automatic or default cost center is configured for this operation.",
-                    cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
-                return;
-            }
-            if (facts.PreferredCostCenterId is not null &&
-                facts.PreferredCostCenterId != source.ResolvedCostCenterId)
-                await FreezeCostCenterAsync(connection, transaction, source,
-                    facts.PreferredCostCenterId.Value, cancellationToken);
             var lines = AccountingJournal.Validate(
                 facts.BuildLines(accountIds, costCenterId));
             await InsertEntryAsync(
@@ -422,8 +420,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             _ => $"Ajuste de inventario {number}"
         };
         return FinancialFactsResult.Ready(FinancialFacts.InventoryOperation(
-            description, counterpart, increase, decrease,
-            payload.AccountingCostCenterId));
+            description, counterpart, increase, decrease));
     }
 
     private static async Task<FinancialFactsResult> LoadTransferLossFactsAsync(
@@ -469,8 +466,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             throw new InvalidOperationException("The transfer receipt has no recognized loss value.");
         var description = $"Faltante en traslado {reader.GetString(0)}";
         return FinancialFactsResult.Ready(FinancialFacts.InventoryOperation(
-            description, counterpart, 0, loss,
-            payload.AccountingCostCenterId));
+            description, counterpart, 0, loss));
     }
 
     private static async Task<string> LockPostingStatusAsync(
@@ -507,27 +503,51 @@ public sealed partial class SqlAccountingPostingProcessor(
         return value is Guid id ? id : null;
     }
 
-    private static async Task<Guid?> FindDefaultCostCenterAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        Guid businessId,
-        CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            SELECT CostCenterId FROM dbo.AccountingCostCenters
-            WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        var value = await command.ExecuteScalarAsync(cancellationToken);
-        return value is Guid id ? id : null;
-    }
-
     private static async Task<Guid?> ResolveAndFreezeCostCenterAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
         CancellationToken cancellationToken)
     {
+        if (source.ResolvedCostCenterId is not null) return source.ResolvedCostCenterId;
+        Guid? explicitCenter = source.DocumentType is InventoryDocumentTypes.StockCount or
+            InventoryDocumentTypes.Adjustment or InventoryDocumentTypes.Damage or
+            InventoryDocumentTypes.Conversion or InventoryDocumentTypes.TransferReceipt
+            ? InventoryOperationContractSerializer.Deserialize(source.PayloadJson).AccountingCostCenterId
+            : null;
         var operationKind = OperationKind(source.DocumentType);
         await using var command = new SqlCommand("""
+            DECLARE @Resolved uniqueidentifier=@ExplicitCenter;
+            IF @DocumentType=N'Expense'
+              SELECT @Resolved=CostCenterId FROM dbo.Expenses WHERE ExpenseId=@DocumentId AND BusinessId=@BusinessId;
+            ELSE IF @DocumentType IN (N'CashReceipt',N'CashDisbursement')
+              SELECT @Resolved=CostCenterId FROM dbo.CashMovementDocuments
+              WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId AND DocumentType=@DocumentType;
+            IF @DocumentType IN (N'SalesReturn',N'PurchaseReturn')
+            BEGIN
+              DECLARE @OriginalId uniqueidentifier;
+              IF @DocumentType=N'SalesReturn'
+                SELECT @OriginalId=OriginalDocumentId FROM dbo.SalesReturns WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
+              ELSE
+                SELECT @OriginalId=OriginalGoodsReceiptId FROM dbo.PurchaseReturns WHERE PurchaseReturnId=@DocumentId AND BusinessId=@BusinessId;
+              IF (SELECT COUNT(DISTINCT l.CostCenterId) FROM dbo.AccountingEntries e
+                  JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+                  WHERE e.SourceDocumentId=@OriginalId AND e.BusinessId=@BusinessId AND e.TenantId=@TenantId)=1
+                AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntries e
+                  JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+                  WHERE e.SourceDocumentId=@OriginalId AND e.BusinessId=@BusinessId AND l.CostCenterId IS NULL)
+                SELECT TOP(1) @Resolved=l.CostCenterId FROM dbo.AccountingEntries e
+                  JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+                  WHERE e.SourceDocumentId=@OriginalId AND e.BusinessId=@BusinessId AND e.TenantId=@TenantId;
+              IF @Resolved IS NULL BEGIN SELECT CAST(NULL AS uniqueidentifier); RETURN; END;
+            END;
+            IF @Resolved IS NOT NULL
+            BEGIN
+              IF NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WHERE CostCenterId=@Resolved AND BusinessId=@BusinessId)
+                THROW 51410,'The accepted cost center does not belong to the source business.',1;
+              UPDATE dbo.AccountingPostingJobs SET ResolvedCostCenterId=@Resolved
+                WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType AND BusinessId=@BusinessId
+                  AND ResolvedCostCenterId IS NULL;
+              SELECT @Resolved; RETURN;
+            END;
             DECLARE @WarehouseId uniqueidentifier=NULL;
             IF @DocumentType IN (N'SalesInvoice',N'ServiceInvoice',N'SalesReceipt')
               SELECT @WarehouseId=WarehouseId FROM dbo.SalesDocuments
@@ -549,7 +569,7 @@ public sealed partial class SqlAccountingPostingProcessor(
               SELECT @WarehouseId=WarehouseId FROM dbo.InventoryOperations
                WHERE InventoryOperationId=@DocumentId AND BusinessId=@BusinessId;
 
-            DECLARE @Resolved uniqueidentifier=(
+            SET @Resolved=(
               SELECT TOP(1) assignment.CostCenterId
               FROM dbo.AccountingCostCenterAssignments assignment
               INNER JOIN dbo.AccountingCostCenters center
@@ -575,28 +595,9 @@ public sealed partial class SqlAccountingPostingProcessor(
         command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
         command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
         command.Parameters.AddWithValue("@OperationKind", operationKind);
+        command.Parameters.AddWithValue("@ExplicitCenter", (object?)explicitCenter ?? DBNull.Value);
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return value is Guid id ? id : null;
-    }
-
-    private static async Task FreezeCostCenterAsync(
-        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
-        Guid costCenterId, CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            IF NOT EXISTS(
-              SELECT 1 FROM dbo.AccountingCostCenters
-              WHERE BusinessId=@BusinessId AND CostCenterId=@CostCenterId AND IsActive=1)
-              THROW 51410,N'The preferred accounting cost center is not active for the business.',1;
-            UPDATE dbo.AccountingPostingJobs SET ResolvedCostCenterId=@CostCenterId
-             WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType
-               AND BusinessId=@BusinessId;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
-        command.Parameters.AddWithValue("@CostCenterId", costCenterId);
-        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
-        command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
-        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static string OperationKind(string documentType) => documentType switch
@@ -933,11 +934,11 @@ public sealed partial class SqlAccountingPostingProcessor(
     {
         await using var command = new SqlCommand("""
             SELECT e.DocumentNumber,e.TaxExclusiveAmount,e.VatAmount,e.GrossAmount,
-                   e.ExpenseAccountId,e.CostCenterId,s.PartyId
+                   e.ExpenseAccountId,s.PartyId
             FROM
             (
               SELECT x.DocumentNumber,x.TaxExclusiveAmount,x.VatAmount,x.GrossAmount,
-                     c.ExpenseAccountId,x.CostCenterId,x.SupplierId,x.BusinessId,x.ExpenseId
+                     c.ExpenseAccountId,x.SupplierId,x.BusinessId,x.ExpenseId
               FROM dbo.Expenses x
               JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=x.ExpenseConceptId
             ) e
@@ -951,11 +952,11 @@ public sealed partial class SqlAccountingPostingProcessor(
             throw new InvalidOperationException("The expense was not found for accounting.");
         var number=reader.GetString(0);var untaxed=reader.GetDecimal(1);var vat=reader.GetDecimal(2);
         var total=reader.GetDecimal(3);var accountId=reader.GetGuid(4);
-        Guid? center=reader.IsDBNull(5)?null:reader.GetGuid(5);Guid? party=reader.IsDBNull(6)?null:reader.GetGuid(6);
+        Guid? party=reader.IsDBNull(5)?null:reader.GetGuid(5);
         await reader.DisposeAsync();
         var settlements=await LoadPurchaseWithholdingSettlementsAsync(connection,transaction,source,total,cancellationToken);
         return FinancialFactsResult.Ready(FinancialFacts.Expense(number,party,untaxed,vat,total,
-            settlements,accountId,center));
+            settlements,accountId));
     }
 
     private static async Task<FinancialFactsResult> LoadPurchaseReturnFactsAsync(
@@ -1121,7 +1122,7 @@ public sealed partial class SqlAccountingPostingProcessor(
     {
         await using var command = new SqlCommand("""
             SELECT d.DocumentNumber,d.Direction,d.Amount,
-                   r.CounterpartAccountingCategory,d.CostCenterId
+                   r.CounterpartAccountingCategory
             FROM dbo.CashMovementDocuments d
             INNER JOIN dbo.BusinessReasons r
               ON r.BusinessId=d.BusinessId AND r.ReasonId=d.ReasonId
@@ -1141,7 +1142,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "The cash movement reason has no counterpart accounting category.");
         return FinancialFactsResult.Ready(FinancialFacts.CashMovement(
             reader.GetString(0), reader.GetString(1) == "In", reader.GetDecimal(2),
-            reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetGuid(4)));
+            reader.GetString(3)));
     }
 
     private static async Task<FinancialFactsResult> LoadAccountAdjustmentFactsAsync(
@@ -1466,7 +1467,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         decimal Untaxed, decimal Tax, decimal Total, decimal Cost,
         IReadOnlyList<(string Category, decimal Amount)> Settlements,
         bool IsReturn, bool IsPurchase, bool IsPayablePayment, bool IsReceivablePayment,
-        bool IsCashMovement = false, bool CashIsIn = false, Guid? PreferredCostCenterId = null,
+        bool IsCashMovement = false, bool CashIsIn = false,
         Guid? DirectExpenseAccountId = null,
         IReadOnlyList<ManualLineSpec>? DirectLines = null,
         IReadOnlyList<CategoryLineSpec>? DirectCategoryLines = null,
@@ -1525,29 +1526,27 @@ public sealed partial class SqlAccountingPostingProcessor(
             }
             if (DirectCategoryLines is not null)
             {
-                var effectiveCostCenter = PreferredCostCenterId ?? costCenter;
                 foreach (var line in DirectCategoryLines)
                     yield return new JournalLine(accounts[line.Category], line.Debit,
-                        line.Credit, line.PartyId, effectiveCostCenter, line.Description);
+                        line.Credit, line.PartyId, costCenter, line.Description);
                 yield break;
             }
             if (IsCashMovement)
             {
-                var effectiveCostCenter = PreferredCostCenterId ?? costCenter;
                 var counterpart = Settlements.Single();
                 if (CashIsIn)
                 {
                     yield return new(accounts[AccountingCategories.Cash], Total, 0,
-                        PartyId, effectiveCostCenter, Description);
+                        PartyId, costCenter, Description);
                     yield return new(accounts[counterpart.Category], 0, Total,
-                        PartyId, effectiveCostCenter, Description);
+                        PartyId, costCenter, Description);
                 }
                 else
                 {
                     yield return new(accounts[counterpart.Category], Total, 0,
-                        PartyId, effectiveCostCenter, Description);
+                        PartyId, costCenter, Description);
                     yield return new(accounts[AccountingCategories.Cash], 0, Total,
-                        PartyId, effectiveCostCenter, Description);
+                        PartyId, costCenter, Description);
                 }
                 yield break;
             }
@@ -1568,20 +1567,19 @@ public sealed partial class SqlAccountingPostingProcessor(
 
             if (IsPurchase)
             {
-                var effectiveCostCenter = PreferredCostCenterId ?? costCenter;
-                if (IsReturn)
+                                if (IsReturn)
                 {
                     foreach (var settlement in Settlements)
                         yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
                     if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], 0, Cost, PartyId, costCenter, Description);
-                    if (Untaxed > 0) yield return new(DirectExpenseAccountId ?? accounts[AccountingCategories.PurchasesExpense], 0, Untaxed, PartyId, effectiveCostCenter, Description);
+                    if (Untaxed > 0) yield return new(DirectExpenseAccountId ?? accounts[AccountingCategories.PurchasesExpense], 0, Untaxed, PartyId, costCenter, Description);
                     if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], 0, Tax, PartyId, costCenter, Description);
                 }
                 else
                 {
                     if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description);
-                    if (Untaxed > 0) yield return new(DirectExpenseAccountId ?? accounts[AccountingCategories.PurchasesExpense], Untaxed, 0, PartyId, effectiveCostCenter, Description);
-                    if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, effectiveCostCenter, Description);
+                    if (Untaxed > 0) yield return new(DirectExpenseAccountId ?? accounts[AccountingCategories.PurchasesExpense], Untaxed, 0, PartyId, costCenter, Description);
+                    if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, costCenter, Description);
                     foreach (var settlement in Settlements)
                         yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
                 }
@@ -1627,8 +1625,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 false, false, false, false, DirectCategoryLines: lines);
         public static FinancialFacts Expense(string number, Guid? party, decimal untaxed, decimal vat,
             decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements,
-            Guid accountId, Guid? costCenter) => new($"Gasto {number}", party, untaxed, vat,
-                total, 0, settlements, false, true, false, false, false, false, costCenter, accountId);
+            Guid accountId) => new($"Gasto {number}", party, untaxed, vat,
+                total, 0, settlements, false, true, false, false, false, false, accountId);
         public static FinancialFacts PurchaseReturn(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", party, expense, deductibleVat, total, inventory, settlements, true, true, false, false);
         public static FinancialFacts PurchaseReturnWithUnrefundedLandedCost(
             string number, Guid party, decimal inventory, decimal landedCost,
@@ -1651,9 +1649,9 @@ public sealed partial class SqlAccountingPostingProcessor(
         public static FinancialFacts PayablePayment(string number, Guid party, decimal total, string settlement) => new($"Pago a proveedor {number}", party, 0, 0, total, 0, [(settlement, total)], false, false, true, false);
         public static FinancialFacts ReceivablePayment(string number, Guid partyId, decimal total, string settlement) => new($"Recaudo de cartera {number}", partyId, 0, 0, total, 0, [(settlement, total)], false, false, false, true);
         public static FinancialFacts CashMovement(
-            string number, bool isIn, decimal amount, string counterpart, Guid? costCenter) =>
+            string number, bool isIn, decimal amount, string counterpart) =>
             new($"{(isIn ? "Ingreso" : "Egreso")} de caja {number}", null, 0, 0,
-                amount, 0, [(counterpart, amount)], false, false, false, false, true, isIn, costCenter);
+                amount, 0, [(counterpart, amount)], false, false, false, false, true, isIn);
         public static FinancialFacts CashDifference(
             string description,
             bool surplus,
@@ -1736,8 +1734,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             string description,
             string counterpartCategory,
             decimal increase,
-            decimal decrease,
-            Guid? costCenter)
+            decimal decrease)
         {
             var lines = new List<CategoryLineSpec>(4);
             if (increase > 0)
@@ -1751,7 +1748,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 lines.Add(new(AccountingCategories.Inventory, 0, decrease, null, description));
             }
             return new(description, null, 0, 0, 0, 0, [], false, false, false, false,
-                PreferredCostCenterId: costCenter, DirectCategoryLines: lines);
+                DirectCategoryLines: lines);
         }
     }
 

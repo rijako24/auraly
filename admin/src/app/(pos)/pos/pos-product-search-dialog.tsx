@@ -214,10 +214,10 @@ export function PosProductSearchDialog({
         role="dialog"
         aria-modal="true"
         data-pos-focus-surface="modal"
-        className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-y-auto rounded-2xl bg-white shadow-2xl"
         aria-labelledby="pos-product-search-title"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 p-5">
           <div>
             <h2 id="pos-product-search-title" className="flex items-center gap-2 text-xl font-semibold">
               <PackageSearch className="h-5 w-5 text-teal-700" />
@@ -238,7 +238,7 @@ export function PosProductSearchDialog({
           </button>
         </header>
 
-        <div className="p-5 pb-3">
+        <div className="shrink-0 p-5 pb-3">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
           <input
@@ -285,14 +285,16 @@ export function PosProductSearchDialog({
             )}
           </label>
           <p className="mt-2 text-xs text-slate-500">
-            Flechas recorren; Tab entra al listado; Enter agrega; Esc vuelve al lector.
+            {verifierMode
+              ? "Flechas recorren; Tab entra al listado; Enter consulta; Esc vuelve al lector."
+              : "Flechas recorren; Tab entra al listado; Enter agrega; F1 verifica precios; Esc vuelve al lector."}
           </p>
         </div>
 
         <div
           id="pos-product-results"
           role="listbox"
-          className="min-h-64 flex-1 overflow-auto px-5 pb-5"
+          className="max-h-[45dvh] min-h-48 flex-1 shrink-0 overflow-auto px-5 pb-3"
           onScroll={(event) => {
             const list = event.currentTarget;
             if (list.scrollHeight - list.scrollTop - list.clientHeight < 120) {
@@ -318,7 +320,7 @@ export function PosProductSearchDialog({
               onClick={() => void choose(product)}
               onKeyDown={handleListNavigation}
               disabled={busy}
-              className={`grid w-full grid-cols-[minmax(0,1fr)_130px] items-center gap-4 border-b border-slate-100 px-3 py-3 text-left outline-none transition sm:grid-cols-[minmax(0,1fr)_150px_130px] ${
+              className={`grid min-h-20 w-full grid-cols-[minmax(0,1fr)_110px] items-center gap-x-4 gap-y-1 border-b border-slate-100 px-3 py-3 text-left outline-none transition sm:grid-cols-[minmax(0,1fr)_200px_130px] ${
                 selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : ""
               }`}
             >
@@ -329,17 +331,13 @@ export function PosProductSearchDialog({
                   {product.productCode}{product.reference ? ` - ${product.reference}` : ""}
                 </span>
               </span>
-              <span className="hidden text-sm text-slate-600 sm:block">
-                {product.baseUnitCode}
+              <span className="col-start-1 row-start-2 sm:col-start-2 sm:row-start-1 sm:text-center">
+                {(product.promotionDiscount ?? 0) > 0 && <span className="inline-block rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">Promoción · ahorra {money.format(product.promotionDiscount ?? 0)}</span>}
               </span>
-              <span className="text-right font-bold tabular-nums text-teal-800">
+              <span className="col-start-2 row-start-1 text-right font-bold tabular-nums text-teal-800 sm:col-start-3">
                 {money.format(product.unitPrice)}
-                {(product.promotionDiscount ?? 0) > 0 && <span className="mt-1 block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">Promoción · ahorra {money.format(product.promotionDiscount ?? 0)}</span>}
-                <small className="mt-0.5 block font-medium text-slate-500">{
-                  product.priceSource === "Promotion+PriceChannel" ? "Promoción + canal"
-                    : product.priceSource === "Promotion" ? "Promoción"
-                      : product.priceSource === "PriceChannel" ? "Canal" : "Público"
-                }</small>
+                {product.isWeighable && <small className="ml-1 font-medium text-slate-500">/ {product.baseUnitCode}</small>}
+                {(product.priceSource === "Promotion+PriceChannel" || product.priceSource === "PriceChannel") && <small className="mt-0.5 block font-medium text-slate-500">Precio de canal</small>}
               </span>
             </button>
           ))}
@@ -367,7 +365,7 @@ export function PosProductSearchDialog({
           )}
         </div>
 
-        <section className="flex h-44 shrink-0 flex-col border-t border-slate-200 bg-slate-50/80 px-5 py-4" aria-label="Existencias por sede y bodega">
+        <section className="flex min-h-44 shrink-0 flex-col border-t border-slate-200 bg-slate-50/80 px-5 py-4" aria-label="Existencias por sede y bodega">
           <header className="mb-2 flex shrink-0 items-center justify-between gap-3">
             <div className="min-w-0">
               <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
@@ -402,8 +400,8 @@ export function PosProductSearchDialog({
               {availabilityError}
             </div>
           ) : (
-            <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-200 bg-white">
-              <div className="sticky top-0 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+            <div className="min-h-24 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                 <span>Sede</span><span>Bodega</span><span className="text-right">Existencias</span>
               </div>
               {availability.map((item) => (

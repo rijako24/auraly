@@ -22,7 +22,7 @@ public sealed class ComplianceReportingService(
     {
         Demand(user, AccountingPermissionCodes.Read);
         if (taxYear is < 2000 or > 2200)
-            throw new AccountingValidationException("The tax year is invalid.");
+            throw new AccountingValidationException("El año gravable no es válido.");
         return store.ListDefinitionsAsync(user, taxYear, token);
     }
 
@@ -42,9 +42,9 @@ public sealed class ComplianceReportingService(
         Demand(user, AccountingPermissionCodes.Configure);
         ValidateYear(request.TaxYear);
         if (request.BusinessId is Guid businessId && businessId != user.BusinessId)
-            throw new AccountingForbiddenException("The mapping belongs to another business.");
+            throw new AccountingForbiddenException("La parametrización pertenece a otra sede.");
         if (request.AccountId == Guid.Empty || request.FormatVersion <= 0)
-            throw new AccountingValidationException("The compliance mapping scope is invalid.");
+            throw new AccountingValidationException("La parametrización del informe fiscal está fuera del alcance autorizado.");
         ValidateCode(request.AuthorityCode, 24, "Authority");
         ValidateCode(request.FormatCode, 24, "Format");
         ValidateCode(request.ConceptCode, 24, "Concept");
@@ -67,7 +67,7 @@ public sealed class ComplianceReportingService(
         if (request.FormatVersion <= 0 || request.PeriodFrom == default ||
             request.PeriodTo < request.PeriodFrom ||
             request.PeriodFrom.Year != request.TaxYear || request.PeriodTo.Year != request.TaxYear)
-            throw new AccountingValidationException("The report period must be inside the selected tax year.");
+            throw new AccountingValidationException("El periodo del informe debe estar dentro del año gravable seleccionado.");
         ValidateCode(request.AuthorityCode, 24, "Authority");
         ValidateCode(request.FormatCode, 24, "Format");
         return store.GenerateAsync(user, ids.NewId(), request with
@@ -90,7 +90,7 @@ public sealed class ComplianceReportingService(
     {
         Demand(user, AccountingPermissionCodes.Read);
         if (runId == Guid.Empty)
-            throw new AccountingValidationException("The report run ID is required.");
+            throw new AccountingValidationException("El identificador de la ejecución del informe es obligatorio.");
         return store.GetArtifactAsync(user, runId, token);
     }
 
@@ -103,7 +103,7 @@ public sealed class ComplianceReportingService(
     private static void ValidateYear(short taxYear)
     {
         if (taxYear is < 2000 or > 2200)
-            throw new AccountingValidationException("The tax year is invalid.");
+            throw new AccountingValidationException("El año gravable no es válido.");
     }
 
     private static string? CleanOptional(string? value) =>

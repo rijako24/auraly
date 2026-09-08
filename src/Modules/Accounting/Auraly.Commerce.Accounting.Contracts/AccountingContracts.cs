@@ -8,6 +8,9 @@ public static class AccountingPermissionCodes
     public const string Retry = "accounting.postings.retry";
     public const string Activate = "accounting.activate";
     public const string ManualCreate = "accounting.manual.create";
+    public const string BankReconciliationRead = "accounting.bank-reconciliation.read";
+    public const string BankReconciliationManage = "accounting.bank-reconciliation.manage";
+    public const string BankReconciliationClose = "accounting.bank-reconciliation.close";
 }
 
 public static class AccountingCategories
@@ -118,6 +121,68 @@ public sealed record BankAccountView(
     bool IsActive,
     string RowVersion);
 
+public static class BankReconciliationStatuses
+{
+    public const string Preparation = "Preparation";
+    public const string Closed = "Closed";
+    public const string Reopened = "Reopened";
+}
+
+public sealed record BankStatementLineImport(
+    int LineNumber, DateOnly TransactionDate, string Description,
+    string? Reference, decimal Amount, decimal? Balance);
+
+public sealed record ImportBankReconciliationRequest(
+    Guid ReconciliationId, Guid BankAccountId, DateOnly PeriodFrom, DateOnly PeriodTo,
+    decimal OpeningBalance, decimal ClosingBalance, string FileName,
+    string FileSha256, string OriginalFileBase64,
+    IReadOnlyList<BankStatementLineImport> Lines);
+
+public sealed record BankReconciliationSummaryView(
+    Guid ReconciliationId, Guid BankAccountId, string BankDisplayName,
+    string AccountingAccountCode, string AccountingAccountName,
+    DateOnly PeriodFrom, DateOnly PeriodTo, decimal OpeningBalance,
+    decimal ClosingBalance, string FileName, string FileSha256, string Status,
+    int StatementLineCount, int MatchedLineCount, decimal StatementMovementTotal,
+    decimal BookMovementTotal, decimal Difference, bool RequiresReview, string RowVersion,
+    DateTimeOffset UpdatedAt);
+
+public sealed record BankStatementLineView(
+    Guid StatementLineId, int LineNumber, DateOnly TransactionDate,
+    string Description, string? Reference, decimal Amount, decimal? Balance,
+    decimal AllocatedAmount, bool IsMatched);
+
+public sealed record BankBookLineView(
+    Guid EntryId, int EntryLineNumber, string EntryNumber, DateTimeOffset OccurredAt,
+    Guid BusinessId, string BusinessName, string SourceDocumentType, Guid SourceDocumentId, string Description,
+    decimal Amount, decimal AllocatedAmount, decimal AvailableAmount);
+
+public sealed record BankReconciliationAllocationView(
+    Guid MatchId, Guid StatementLineId, Guid EntryId, int EntryLineNumber,
+    decimal Amount, DateTimeOffset CreatedAt);
+
+public sealed record BankReconciliationStatusEventView(
+    Guid StatusEventId, string Status, string? Reason, Guid ActorUserId,
+    string ActorName, DateTimeOffset OccurredAt, decimal? StatementClosingBalance,
+    decimal? BookClosingBalance, DateTimeOffset? AccountingCutoffPostedAt);
+
+public sealed record BankReconciliationDetailView(
+    BankReconciliationSummaryView Summary,
+    IReadOnlyList<BankStatementLineView> StatementLines,
+    IReadOnlyList<BankBookLineView> BookLines,
+    IReadOnlyList<BankReconciliationAllocationView> Allocations,
+    IReadOnlyList<BankReconciliationStatusEventView> StatusEvents);
+
+public sealed record CreateBankReconciliationAllocationRequest(
+    Guid MatchId, Guid StatementLineId, Guid EntryId,
+    int EntryLineNumber, decimal Amount, string RowVersion);
+
+public sealed record ReverseBankReconciliationAllocationRequest(
+    string Reason, string RowVersion);
+
+public sealed record ChangeBankReconciliationStatusRequest(
+    string RowVersion, string? Reason = null);
+
 public sealed record CreateCostCenterRequest(
     Guid CostCenterId,
     Guid BusinessId,
@@ -133,9 +198,14 @@ public sealed record AccountingCostCenterView(
     string Name,
     Guid? ParentCostCenterId,
     bool IsDefault,
-    bool IsActive);
+    bool IsActive,
+    string RowVersion = "");
 
-public sealed record SetAccountingCostCenterStatusRequest(bool IsActive);
+public sealed record UpdateCostCenterRequest(
+    string Code, string Name, Guid? ParentCostCenterId,
+    bool IsDefault, bool IsActive, string RowVersion);
+
+public sealed record SetAccountingCostCenterStatusRequest(bool IsActive, string? RowVersion = null);
 
 public static class AccountingCostCenterOperationKinds
 {
@@ -150,11 +220,12 @@ public static class AccountingCostCenterOperationKinds
 public sealed record AccountingCostCenterAssignmentView(
     Guid AssignmentId, Guid BusinessId, Guid CostCenterId,
     string CostCenterCode, string CostCenterName, string OperationKind,
-    Guid? WarehouseId, string? WarehouseCode, string? WarehouseName, bool IsActive);
+    Guid? WarehouseId, string? WarehouseCode, string? WarehouseName, bool IsActive,
+    string RowVersion = "");
 
 public sealed record SaveAccountingCostCenterAssignmentRequest(
     Guid AssignmentId, Guid BusinessId, Guid CostCenterId,
-    string OperationKind, Guid? WarehouseId, bool IsActive);
+    string OperationKind, Guid? WarehouseId, bool IsActive, string? RowVersion = null);
 
 public sealed record CreateAccountingPeriodRequest(
     Guid PeriodId,
@@ -333,12 +404,15 @@ public sealed record AccountMovementRow(
     string Description,
     decimal Debit,
     decimal Credit,
-    decimal Balance);
+    decimal Balance,
+    int LineNumber = 0, Guid? CostCenterId = null,
+    string? CostCenterCode = null, string? CostCenterName = null);
 
 public sealed record AccountingJournalRow(
     Guid EntryId, string EntryNumber, DateTimeOffset OccurredAt,
     Guid SourceDocumentId, string SourceDocumentType, int LineNumber,
     string AccountCode, string AccountName, Guid? PartyId, Guid? CostCenterId,
+    string? CostCenterCode, string? CostCenterName,
     string Description, decimal Debit, decimal Credit);
 
 public sealed record GeneralLedgerRow(

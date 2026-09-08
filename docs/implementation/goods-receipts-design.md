@@ -405,6 +405,21 @@ Para compatibilidad con el comportamiento durable existente, una falla transitor
 
 ### Experiencia visual
 
+El detalle confirmado y su reporte incluyen un resumen completo en COP cuando
+existen documentos adicionales: factura principal con IVA, suma de documentos
+asociados con impuestos, total documental, impuestos registrados, retenciones y
+neto a la confirmación. Es una suma de snapshots confirmados; no calcula impuestos,
+no convierte nuevamente monedas y no representa el saldo pendiente después de pagos.
+Los importes de la factura principal continúan separados y no se incrementan por
+facturas de otros proveedores. Si un histórico carece del importe funcional o de
+costo requerido, se muestra «No disponible», no cero ni una conversión inferida.
+
+La suma de `RecognizedInventoryCostAmount` de las líneas se presenta como **costo
+puesto de los productos**, porque también contiene líneas no inventariables que
+el motor contable lleva a gasto. No se etiqueta como saldo o débito de inventario.
+El valor efectivamente reconocido en inventario se verifica en sus movimientos
+y en el asiento canónicos; no se deduce del nombre del producto ni del centro de costo.
+
 La pantalla conserva el recorrido actual para la compra normal. Si no se agrega otra factura, el usuario no ve pasos ni campos nuevos obligatorios.
 
 Debajo de los productos aparece una sección de revelado progresivo “Facturas y otros costos”. La factura principal siempre está visible; “Agregar factura o costo” abre un panel lateral corto. La distribución se calcula automáticamente con un default visible y sólo se abre en detalle cuando el usuario desea cambiarla o existe un dato faltante. No se usan pestañas que oculten errores entre una vista y otra.
@@ -490,3 +505,12 @@ No se reutiliza `Expenses` para las facturas ligadas a la recepción: producirí
 - el detalle histórico reproduce exactamente documentos, impuestos, factores, asignaciones y costo final sin consultar maestros mutables.
 - guardar, cerrar y recuperar un borrador conserva todas las facturas adicionales y su distribución;
 - ningún documento adicional crea un `DocumentProcessingJob` o writer paralelo para simular una segunda recepción.
+
+## Facturas agregadas
+
+La captura usa una sola acción **Agregar factura**. El mismo documento permite
+elegir el tipo de soporte y añadir flete, seguro, arancel, agencia de aduanas,
+manejo, IVA de importación u otro costo directo. “Agregar nacionalización” no
+es otro proceso: era una segunda entrada al mismo editor y se eliminó. El tipo
+`ImportDeclaration` se conserva porque habilita la base aduanera del IVA y la
+clasificación fiscal correspondiente dentro de la factura.

@@ -19,6 +19,7 @@ import { tenantsApi } from "@/services/api/tenants";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
+import {fiscalStatusLabel} from "@/lib/accounting-labels";
 
 const concepts = {
   "1": "Intereses",
@@ -55,7 +56,7 @@ export default function SalesDebitNotesPage() {
       <div className="grid grid-cols-[1fr_1fr_1.4fr_10rem_10rem_7rem] gap-3 bg-muted/60 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><span>Nota</span><span>Factura</span><span>Cliente</span><span>Valor</span><span>Estado DIAN</span><span /></div>
       {list.isLoading && <p className="p-6 text-muted-foreground">Consultando notas…</p>}
       {!list.isLoading && !list.data?.items.length && <p className="p-6 text-muted-foreground">Todavía no hay notas débito.</p>}
-      {list.data?.items.map((item) => <div key={item.debitNoteId} className="grid grid-cols-[1fr_1fr_1.4fr_10rem_10rem_7rem] items-center gap-3 border-t px-4 py-3 text-sm"><div><p className="font-semibold">{item.documentNumber}</p><p className="text-xs text-muted-foreground">{formatDateTime(item.issuedAt)}</p></div><span>{item.originalDocumentNumber}</span><div><p>{item.customerName}</p><p className="text-xs text-muted-foreground">{item.customerIdentification}</p></div><span className="font-semibold">{formatCurrency(item.totalAmount)}</span><Badge variant="outline" className="w-fit">{item.fiscalStatus}</Badge><div className="flex"><Button size="icon" variant="ghost" aria-label={`Contabilidad ${item.documentNumber}`} onClick={() => setAccountingId(item.debitNoteId)}><BookOpenCheck className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Imprimir ${item.documentNumber}`} onClick={() => setPrintId(item.debitNoteId)}><Printer className="h-4 w-4" /></Button></div></div>)}
+      {list.data?.items.map((item) => <div key={item.debitNoteId} className="grid grid-cols-[1fr_1fr_1.4fr_10rem_10rem_7rem] items-center gap-3 border-t px-4 py-3 text-sm"><div><p className="font-semibold">{item.documentNumber}</p><p className="text-xs text-muted-foreground">{formatDateTime(item.issuedAt)}</p></div><span>{item.originalDocumentNumber}</span><div><p>{item.customerName}</p><p className="text-xs text-muted-foreground">{item.customerIdentification}</p></div><span className="font-semibold">{formatCurrency(item.totalAmount)}</span><Badge variant="outline" className="w-fit">{fiscalStatusLabel(item.fiscalStatus)}</Badge><div className="flex"><Button size="icon" variant="ghost" aria-label={`Contabilidad ${item.documentNumber}`} onClick={() => setAccountingId(item.debitNoteId)}><BookOpenCheck className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Imprimir ${item.documentNumber}`} onClick={() => setPrintId(item.debitNoteId)}><Printer className="h-4 w-4" /></Button></div></div>)}
     </div>
     <CreateDebitNote open={createOpen} onClose={() => setCreateOpen(false)} />
     <PrintDebitNote id={printId} onClose={() => setPrintId(undefined)} />

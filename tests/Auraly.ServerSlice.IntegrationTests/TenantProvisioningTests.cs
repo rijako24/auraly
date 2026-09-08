@@ -224,6 +224,23 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         }
         foreach (var permission in new[]
                  {
+                     "users.read", "users.create", "users.update", "users.delete",
+                     "users.assign_role", "users.remove_role", "roles.read",
+                     "security.users.link-party"
+                 })
+            Assert.True(await RoleHasPermissionAsync(
+                result.TenantId, "ADMINISTRATIVE", permission),
+                $"The provisioned administrative role is missing '{permission}'.");
+        foreach (var permission in new[]
+                 {
+                     "roles.create", "roles.update", "roles.delete",
+                     "roles.assign_permissions"
+                 })
+            Assert.False(await RoleHasPermissionAsync(
+                result.TenantId, "ADMINISTRATIVE", permission),
+                $"The provisioned administrative role must not receive '{permission}'.");
+        foreach (var permission in new[]
+                 {
                      "accounting.configure", "accounting.manual.create",
                      "payroll.approve", "payroll.pay", "payables.payments.create",
                      "receivables.payments.create", "expenses.create",

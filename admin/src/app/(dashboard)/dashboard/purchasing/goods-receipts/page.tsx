@@ -50,7 +50,7 @@ import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
 import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
-  nextGoodsReceiptQuantityIndex,
+  nextGoodsReceiptQuantityIndex, summarizeGoodsReceipt,
 } from "@/lib/goods-receipt-calculator";
 import {
   goodsReceiptDraftKey, loadGoodsReceiptDraft, removeGoodsReceiptDraft, saveGoodsReceiptDraft,
@@ -272,13 +272,33 @@ function ReceiptDetailDialog({
     retry:false,
   });
   if (!detail) return null;
+  const totals = summarizeGoodsReceipt(detail);
+  const hasAdditionalCosts = Boolean(detail.additionalCostDocuments?.length);
+  const summaryRows = [
+    { label: "Factura principal (con IVA)", value: totals.principal },
+    { label: "Facturas y costos asociados (con impuestos)", value: totals.additional },
+    { label: "Total de documentos", value: totals.gross },
+    { label: "Impuestos incluidos en los documentos", value: totals.tax },
+    { label: "Retenciones de todos los documentos", value: totals.withholding },
+    { label: "Neto de los documentos", value: totals.net },
+    { label: "Costos adicionales asignados a productos", value: totals.landedCost },
+    { label: "Costo puesto total de los productos", value: totals.inventory },
+  ];
   if(reportOpen)return <Dialog open onOpenChange={value=>!value&&setReportOpen(false)}><DialogContent showClose={false} className="h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] overflow-hidden p-2 sm:p-4"><ReportViewer
     onClose={()=>setReportOpen(false)}
     title={detail.purchaseEvidenceType==="BuyerElectronicSupportDocument"?`Documento soporte ${fiscal.data?.dianNumber??detail.documentNumber}`:`Recepción de compra ${detail.documentNumber}`}
     description={`${detail.supplierName} · ${purchaseEvidenceLabels[detail.purchaseEvidenceType]} · ${new Date(detail.receivedAt).toLocaleDateString("es-CO")}${fiscal.data?.uniqueCode?` · ${fiscal.data.uniqueCodeType} ${fiscal.data.uniqueCode}`:""}`}
     fileName={`${detail.purchaseEvidenceType==="BuyerElectronicSupportDocument"?"documento-soporte":"recepcion-compra"}-${fiscal.data?.dianNumber??detail.documentNumber}`}
-    rows={detail.lines.map(line=>({id:line.lineNumber,linea:line.lineNumber,producto:line.description,presentacion:line.presentationName,cantidad:line.quantity,costoUnitario:line.unitCost,descuento:line.discountAmount,base:line.netAmount,iva:line.taxAmount,total:line.lineTotal}))}
-    columns={[{key:"linea",label:"Línea"},{key:"producto",label:"Producto"},{key:"presentacion",label:"Presentación"},{key:"cantidad",label:"Cantidad",align:"right"},{key:"costoUnitario",label:"Costo unitario",align:"right",format:value=>formatCurrency(Number(value??0))},{key:"descuento",label:"Descuento",align:"right",format:value=>formatCurrency(Number(value??0))},{key:"base",label:"Base",align:"right",format:value=>formatCurrency(Number(value??0))},{key:"iva",label:"IVA",align:"right",format:value=>formatCurrency(Number(value??0))},{key:"total",label:"Total",align:"right",format:value=>formatCurrency(Number(value??0))}]}
+    rows={[
+      { id: "merchandise", __group: `Factura principal · ${detail.currencyCode}` },
+      ...detail.lines.map(line=>({id:line.lineNumber,linea:line.lineNumber,producto:line.description,presentacion:line.presentationName,cantidad:line.quantity,costoUnitario:line.unitCost,descuento:line.discountAmount,base:line.netAmount,iva:line.taxAmount,total:line.lineTotal})),
+      ...(hasAdditionalCosts ? [
+        { id: "receipt-summary", __group: "Resumen completo de la recepción · COP" },
+        ...summaryRows.map((row, index) => ({ id: `summary-${index}`, producto: row.label,
+          total: row.value === null ? "No disponible" : row.value })),
+      ] : []),
+    ]}
+    columns={[{key:"linea",label:"Línea"},{key:"producto",label:"Producto"},{key:"presentacion",label:"Presentación"},{key:"cantidad",label:"Cantidad",align:"right"},{key:"costoUnitario",label:"Costo unitario",align:"right",format:value=>value==null?"":formatCurrency(Number(value))},{key:"descuento",label:"Descuento",align:"right",format:value=>value==null?"":formatCurrency(Number(value))},{key:"base",label:"Base",align:"right",format:value=>value==null?"":formatCurrency(Number(value))},{key:"iva",label:"IVA",align:"right",format:value=>value==null?"":formatCurrency(Number(value))},{key:"total",label:"Total",align:"right",format:value=>typeof value==="number"?formatCurrency(value):String(value??"")}]}
   /></DialogContent></Dialog>;
   return <><Dialog open={!accountingDocumentId} onOpenChange={(value) => !value && onClose()}>
     <DialogContent className="flex max-h-[92dvh] max-w-5xl flex-col overflow-hidden p-0">
@@ -312,8 +332,8 @@ function ReceiptDetailDialog({
                   <th className="px-4 py-3 text-right">Cantidad</th>
                   <th className="px-4 py-3 text-right">Costo unitario</th>
                   <th className="px-4 py-3 text-right">IVA</th>
-                  <th className="px-4 py-3 text-right">Costo puesto</th>
-                  <th className="px-4 py-3 text-right">Total</th>
+                  <th className="px-4 py-3 text-right">Costo puesto / unidad · COP</th>
+                  <th className="px-4 py-3 text-right">Total factura · {detail.currencyCode}</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -337,7 +357,9 @@ function ReceiptDetailDialog({
                     </p>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
-                    {formatCurrency((line.recognizedInventoryCostAmount ?? line.netAmount) / line.quantity)}
+                    {line.recognizedInventoryCostAmount != null && line.quantity > 0
+                      ? formatCurrency(line.recognizedInventoryCostAmount / line.quantity)
+                      : "No disponible"}
                     {(line.allocatedLandedCostAmount ?? 0) > 0 &&
                       <p className="text-xs text-muted-foreground">Incluye +{formatCurrency((line.allocatedLandedCostAmount ?? 0) / line.quantity)}</p>}
                   </td>
@@ -357,6 +379,16 @@ function ReceiptDetailDialog({
           <Amount label={detail.withholding?.withholdingTotal ? "Neto por pagar" : "Total"} value={detail.withholding?.netAmount ?? detail.functionalGrandTotal ?? detail.grandTotal} strong />
           {detail.currencyCode !== "COP" && <p className="pt-2 text-xs text-slate-300">Documento original: {detail.grandTotal} {detail.currencyCode} · tasa {detail.exchangeRate} ({detail.exchangeRateSource})</p>}
         </div>
+        {hasAdditionalCosts && <section aria-label="Resumen completo de la recepción" className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
+          <h3 className="font-semibold">Resumen completo de la recepción · COP</h3>
+          <dl className="mt-4 grid gap-x-8 gap-y-3 md:grid-cols-2">
+            {summaryRows.map(row => <div key={row.label} className="flex items-baseline justify-between gap-4 border-b border-primary/10 pb-2">
+              <dt className="text-sm">{row.label}</dt>
+              <dd className="shrink-0 font-semibold tabular-nums">{row.value === null ? "No disponible" : formatCurrency(row.value)}</dd>
+            </div>)}
+          </dl>
+          <p className="mt-3 text-sm text-muted-foreground">El total de documentos incluye la factura principal y los costos asociados, con sus impuestos. El costo puesto suma los cargos asignados a productos y excluye el IVA descontable; el asiento distingue los productos inventariables de los que van a gasto. El neto corresponde a la confirmación; no descuenta pagos posteriores.</p>
+        </section>}
         <section className="rounded-2xl border p-4">
           <h3 className="font-semibold">Estado contable</h3>
           {(detail.accountingStatuses ?? []).length === 0
@@ -564,18 +596,14 @@ function ReceiptEditor({
     change({ pendingCostDocument: null });
   };
 
-  const addCostDocument = (evidence: PurchaseEvidenceType = "SupplierElectronicInvoice") => {
-    const importDocument = evidence === "ImportDeclaration";
+  const addCostDocument = () => {
+    const evidence: PurchaseEvidenceType = "SupplierElectronicInvoice";
     editCostDocument({
       costDocumentId: crypto.randomUUID(), supplierId: "", purchaseEvidenceType: evidence,
       documentNumber: "", issuedAt: todayInput(), createsPayable: true,
       dueDate: plusDaysFrom(todayInput(), 30), currencyCode: "COP", exchangeRate: 1,
       exchangeRateDate: todayInput(), exchangeRateSource: "FunctionalCurrency",
-      lines: importDocument ? [
-        newCostLine(1, "CustomsDuty", "Arancel", "Capitalize", "Value"),
-        { ...newCostLine(2, "ImportVat", "IVA de importación", "Expense", "None"),
-          taxCode: "01", taxRate: 19, taxTreatment: "DeductibleInputVat" },
-      ] : [newCostLine(1, "Freight", "Flete de compra", "Capitalize", "Value")],
+      lines: [newCostLine(1, "Freight", "Flete de compra", "Capitalize", "Value")],
     });
   };
   const updateCostDocument = (values: Partial<GoodsReceiptCostDocument>) => {
@@ -1202,7 +1230,7 @@ function ReceiptEditor({
             className="flex w-full items-center justify-between gap-4 text-left"
             aria-expanded={costsExpanded}>
             <span><strong className="block">Facturas y otros costos</strong>
-              <small className="text-muted-foreground">Opcional · flete, seguro, gastos directos y nacionalización</small></span>
+              <small className="text-muted-foreground">Opcional · flete, seguro, gastos directos y costos de importación</small></span>
             <span className="flex items-center gap-2">
               {draft.additionalCostDocuments.length > 0 && <Badge variant="secondary">{draft.additionalCostDocuments.length}</Badge>}
               <ChevronDown className={`h-5 w-5 transition-transform ${costsExpanded ? "rotate-180" : ""}`} />
@@ -1211,16 +1239,10 @@ function ReceiptEditor({
           {costsExpanded && <div className="space-y-5 border-t pt-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <p className="max-w-3xl text-sm text-muted-foreground">Cada documento conserva su proveedor, vencimiento, IVA, retención y cuenta por pagar. Solo el valor marcado como capitalizable se distribuye al inventario.</p>
-              <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => addCostDocument()}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
-                <Button type="button" variant="outline" onClick={() => addCostDocument("ImportDeclaration")}><Plus className="mr-2 h-4 w-4" />Agregar nacionalización</Button></div>
+              <Button type="button" variant="outline" onClick={addCostDocument}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
             </div>
-            <CostDocumentGrid title="Facturas adicionales"
-              documents={draft.additionalCostDocuments.filter((document) => document.purchaseEvidenceType !== "ImportDeclaration")}
-              supplierNames={resolvedCostSupplierNames}
-              onOpen={(document) => editCostDocument(structuredClone(document))}
-              onRemove={(id) => change({ additionalCostDocuments: draft.additionalCostDocuments.filter((document) => document.costDocumentId !== id) })} />
-            <CostDocumentGrid title="Nacionalización"
-              documents={draft.additionalCostDocuments.filter((document) => document.purchaseEvidenceType === "ImportDeclaration")}
+            <CostDocumentGrid title="Facturas agregadas"
+              documents={draft.additionalCostDocuments}
               supplierNames={resolvedCostSupplierNames}
               onOpen={(document) => editCostDocument(structuredClone(document))}
               onRemove={(id) => change({ additionalCostDocuments: draft.additionalCostDocuments.filter((document) => document.costDocumentId !== id) })} />
@@ -1237,7 +1259,7 @@ function ReceiptEditor({
             return <Dialog key={document.costDocumentId} open onOpenChange={(value) => !value && closeCostDocument()}>
               <DialogContent className="flex max-h-[92dvh] max-w-6xl flex-col overflow-hidden p-0">
               <DialogHeader className="border-b px-6 py-5">
-                <DialogTitle>{committedIndex >= 0 ? "Editar" : "Agregar"} {document.purchaseEvidenceType === "ImportDeclaration" ? "nacionalización" : "factura adicional"}</DialogTitle>
+                <DialogTitle>{committedIndex >= 0 ? "Editar" : "Agregar"} factura</DialogTitle>
                 <DialogDescription>{evidenceLabel}. Captura sus conceptos, impuestos, distribución y vencimiento independiente.</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 overflow-y-auto px-6 py-5">

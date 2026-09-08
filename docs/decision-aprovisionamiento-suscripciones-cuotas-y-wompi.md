@@ -106,6 +106,14 @@ permisos desde el propietario canónico de roles. El administrador del tenant de
 plataforma `@auraly` conserva el catálogo completo. Las plantillas
 `ADMINISTRATIVE` tampoco reciben estas capacidades automáticamente.
 
+La plantilla `ADMINISTRATIVE` sí incluye la gestión operativa de cuentas del
+tenant: consultar, crear, actualizar, activar o desactivar usuarios; asignar y
+retirar roles; consultar el catálogo de roles; y vincular la cuenta con su
+tercero. No recibe creación, edición, eliminación ni configuración de permisos
+de roles, ni permisos de tenant o plataforma. La delegación de roles conserva
+la validación autoritativa del backend y no permite escalar más allá de los
+permisos efectivos del actor.
+
 Los cupos pertenecen al tenant y cubren todas sus sedes. El tenant solo puede ver su uso e iniciar una compra. No escribe límites ni precios. Plataforma con `tenants.capacity.update` puede ajustar cualquier tenant con motivo y auditoría.
 
 La capacidad aplicada siempre sale de las líneas de la cotización efectivamente pagada (o exenta), nunca del formulario del navegador. Al aprovisionar se comparan referencia, versión de catálogo, moneda, importe y cada cantidad comprada antes de materializar los límites. La vista del tenant muestra, por recurso, `usado / contratado / disponible`, fecha de corte y compras pendientes. Las ampliaciones solo aumentan capacidad cuando su propio pago queda confirmado.

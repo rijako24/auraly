@@ -13,6 +13,8 @@ using Auraly.Contracts.Dispatching;
 using Auraly.Fiscal.Core;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -150,18 +152,19 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 "/api/commerce/v1/accounting/cost-center-assignments",
                 new SaveAccountingCostCenterAssignmentRequest(
                     assignmentId, fixture.BusinessId, centerId,
-                    AccountingCostCenterOperationKinds.All, fixture.WarehouseId, false));
+                    AccountingCostCenterOperationKinds.All, fixture.WarehouseId, false,
+                    await RuleVersionAsync(accounting, assignmentId)));
             disable.EnsureSuccessStatusCode();
 
             using var deactivate = await accounting.PutAsJsonAsync(
                 $"/api/commerce/v1/accounting/cost-centers/{centerId:D}/status",
-                new SetAccountingCostCenterStatusRequest(false));
+                new SetAccountingCostCenterStatusRequest(false, await CenterVersionAsync(accounting, centerId)));
             deactivate.EnsureSuccessStatusCode();
             Assert.False((await deactivate.Content.ReadFromJsonAsync<AccountingCostCenterView>())!.IsActive);
 
             using var reactivate = await accounting.PutAsJsonAsync(
                 $"/api/commerce/v1/accounting/cost-centers/{centerId:D}/status",
-                new SetAccountingCostCenterStatusRequest(true));
+                new SetAccountingCostCenterStatusRequest(true, await CenterVersionAsync(accounting, centerId)));
             reactivate.EnsureSuccessStatusCode();
 
             var defaultCenterId = await ScalarAsync<Guid>("""
@@ -170,8 +173,142 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 """, fixture.BusinessId);
             using var rejectDefault = await accounting.PutAsJsonAsync(
                 $"/api/commerce/v1/accounting/cost-centers/{defaultCenterId:D}/status",
-                new SetAccountingCostCenterStatusRequest(false));
+                new SetAccountingCostCenterStatusRequest(false, await CenterVersionAsync(accounting, defaultCenterId)));
             Assert.Equal(HttpStatusCode.BadRequest, rejectDefault.StatusCode);
+        }
+    }
+
+    private static async Task<string> CenterVersionAsync(HttpClient client, Guid id) =>
+        (await client.GetFromJsonAsync<AccountingCostCenterView[]>(
+            "/api/commerce/v1/accounting/cost-centers"))!.Single(row => row.CostCenterId == id).RowVersion;
+
+    private static async Task<string> RuleVersionAsync(HttpClient client, Guid id) =>
+        (await client.GetFromJsonAsync<AccountingCostCenterAssignmentView[]>(
+            "/api/commerce/v1/accounting/cost-center-assignments"))!.Single(row => row.AssignmentId == id).RowVersion;
+
+    [Fact]
+    public async Task Cost_center_edits_enforce_versions_dependencies_cycles_and_replace_default_atomically()
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+        using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
+        var original = (await client.GetFromJsonAsync<AccountingCostCenterView[]>("/api/commerce/v1/accounting/cost-centers"))!.Single(row => row.IsDefault);
+        var parentId = Guid.NewGuid(); var childId = Guid.NewGuid(); var ruleId = Guid.NewGuid();
+        foreach (var request in new[] {
+            new CreateCostCenterRequest(parentId, fixture.BusinessId, $"P-{parentId:N}"[..16], "Administración", null, false),
+            new CreateCostCenterRequest(childId, fixture.BusinessId, $"H-{childId:N}"[..16], "Proyecto", parentId, false) })
+        {
+            using var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers", request);
+            response.EnsureSuccessStatusCode();
+        }
+        var parentVersion = await CenterVersionAsync(client, parentId);
+        using (var dependency = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{parentId}/status", new SetAccountingCostCenterStatusRequest(false, parentVersion)))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, dependency.StatusCode);
+            Assert.Contains("Centro hijo", await dependency.Content.ReadAsStringAsync());
+        }
+        using (var cycle = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{parentId}", new UpdateCostCenterRequest("CYCLE", "Ciclo", childId, false, true, parentVersion)))
+            Assert.Equal(HttpStatusCode.BadRequest, cycle.StatusCode);
+        var rule = new SaveAccountingCostCenterAssignmentRequest(ruleId, fixture.BusinessId, childId, "Inventory", null, true);
+        using (var create = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule)) create.EnsureSuccessStatusCode();
+        var ruleVersion = await RuleVersionAsync(client, ruleId);
+        using (var edit = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule with { OperationKind = "Expenses", WarehouseId = fixture.WarehouseId, RowVersion = ruleVersion })) edit.EnsureSuccessStatusCode();
+        using (var stale = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule with { RowVersion = ruleVersion }))
+            Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        var rules = (await client.GetFromJsonAsync<AccountingCostCenterAssignmentView[]>("/api/commerce/v1/accounting/cost-center-assignments"))!;
+        Assert.Single(rules, row => row.AssignmentId == ruleId);
+        Assert.DoesNotContain(rules, row => row.CostCenterId == childId && row.OperationKind == "Inventory");
+        using (var dependency = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{childId}/status", new SetAccountingCostCenterStatusRequest(false, await CenterVersionAsync(client, childId))))
+            Assert.Equal(HttpStatusCode.BadRequest, dependency.StatusCode);
+        var replacement = new UpdateCostCenterRequest($"NEW-{parentId:N}"[..16], "Centro predeterminado elegido", null, true, true, parentVersion);
+        try
+        {
+            using (var replace = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{parentId}", replacement)) replace.EnsureSuccessStatusCode();
+            var centers = (await client.GetFromJsonAsync<AccountingCostCenterView[]>("/api/commerce/v1/accounting/cost-centers"))!;
+            Assert.Equal(parentId, Assert.Single(centers, row => row.IsActive && row.IsDefault).CostCenterId);
+            using (var stale = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{parentId}", replacement))
+                Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+            using var forbidden = fixture.CreateAdminClient(AccountingPermissionCodes.Read);
+            using (var denied = await forbidden.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{parentId}", replacement))
+                Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        }
+        finally
+        {
+            using var restore = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{original.CostCenterId}", new UpdateCostCenterRequest(original.Code, original.Name, original.ParentCostCenterId, true, true, await CenterVersionAsync(client, original.CostCenterId)));
+            restore.EnsureSuccessStatusCode();
+            var currentRule = (await client.GetFromJsonAsync<AccountingCostCenterAssignmentView[]>("/api/commerce/v1/accounting/cost-center-assignments"))!.Single(row => row.AssignmentId == ruleId);
+            using var disable = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule with { OperationKind=currentRule.OperationKind, WarehouseId=currentRule.WarehouseId, IsActive=false, RowVersion=currentRule.RowVersion });
+            disable.EnsureSuccessStatusCode();
+        }
+    }
+
+    [Fact]
+    public async Task Pending_voucher_freezes_before_period_validation_and_reclassification_keeps_account_balance()
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.Retry);
+        using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
+        using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate", new ActivateAccountingRequest(new DateOnly(2026,1,1), "COP", "ZeroDeclared"))) activate.EnsureSuccessStatusCode();
+        var centerA = Guid.NewGuid(); var centerB = Guid.NewGuid();
+        foreach (var id in new[] {centerA, centerB})
+        {
+            using var create = await client.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers", new CreateCostCenterRequest(id, fixture.BusinessId, $"R-{id:N}"[..16], "Reclasificación", null, false));
+            create.EnsureSuccessStatusCode();
+        }
+        var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
+        var account = accounts.First(row => row.IsActive && row.AllowsPosting && !row.RequiresParty);
+        var originalDefault = (await client.GetFromJsonAsync<AccountingCostCenterView[]>("/api/commerce/v1/accounting/cost-centers"))!.Single(row => row.IsDefault);
+        var voucher = new ConfirmManualAccountingVoucherRequest(Guid.NewGuid(), fixture.BusinessId,
+            new DateTimeOffset(2026,8,20,12,0,0,TimeSpan.FromHours(-5)), "AJUSTE", "Reclasificar centro",
+            [new(account.AccountId,null,centerA,"Mismo auxiliar",125m,0),new(account.AccountId,null,centerB,"Mismo auxiliar",0,125m)]);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var period = new SqlCommand("UPDATE dbo.AccountingPeriods SET Status=@Status WHERE TenantId=@TenantId", connection);
+        period.Parameters.AddWithValue("@TenantId",fixture.TenantId);
+        period.Parameters.AddWithValue("@Status","Closed");
+        await period.ExecuteNonQueryAsync();
+        try
+        {
+            using var accepted = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers", voucher);
+            Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
+            for(var attempt=0; attempt<100 && await PostingStatusAsync(voucher.VoucherId,AccountingManualDocumentTypes.ManualVoucher) != AccountingPostingStatuses.PendingConfiguration; attempt++) await Task.Delay(100);
+            Assert.Equal("OpenPeriodMissing", await ScalarAsync<string>("SELECT LastErrorCode FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", voucher.VoucherId));
+            Assert.Equal(originalDefault.CostCenterId, await ScalarAsync<Guid>("SELECT ResolvedCostCenterId FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", voucher.VoucherId));
+            var replacement = new UpdateCostCenterRequest($"NEW-{centerA:N}"[..16], "Nuevo predeterminado", null,true,true,await CenterVersionAsync(client,centerA));
+            using var replace = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{centerA}",replacement);
+            replace.EnsureSuccessStatusCode();
+            using var disable = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{centerB}/status",new SetAccountingCostCenterStatusRequest(false,await CenterVersionAsync(client,centerB)));
+            disable.EnsureSuccessStatusCode();
+            period.Parameters["@Status"].Value="Open";
+            await period.ExecuteNonQueryAsync();
+            using var retry=await client.PostAsync($"/api/commerce/v1/accounting/postings/{voucher.VoucherId}/retry",null);
+            Assert.True(retry.IsSuccessStatusCode,await retry.Content.ReadAsStringAsync());
+            await AssertBalancedAsync(voucher.VoucherId);
+            Assert.Equal(originalDefault.CostCenterId, await ScalarAsync<Guid>("SELECT ResolvedCostCenterId FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",voucher.VoucherId));
+            var entry=(await client.GetFromJsonAsync<AccountingEntryView>($"/api/commerce/v1/accounting/entries/by-document/{voucher.VoucherId}"))!;
+            Assert.Contains(entry.Lines,line=>line.CostCenterId==centerA && line.Debit==125);
+            Assert.Contains(entry.Lines,line=>line.CostCenterId==centerB && line.Credit==125);
+            foreach(var (center,expected) in new[]{(centerA,125m),(centerB,-125m)})
+            {
+                var rows=(await client.GetFromJsonAsync<AccountMovementRow[]>($"/api/commerce/v1/accounting/reports/account-movements?accountCode={account.Code}&from=2026-08-20&to=2026-08-31&costCenterId={center}"))!;
+                var row=Assert.Single(rows);
+                Assert.Equal(expected,row.Balance);
+                Assert.NotNull(row.CostCenterCode);
+            }
+            Assert.Equal(0m,entry.DebitTotal-entry.CreditTotal);
+            // A later range includes the previous posted balance with the same filter.
+            var later=voucher with {VoucherId=Guid.NewGuid(),OccurredAt=voucher.OccurredAt.AddDays(1),Lines=[new(account.AccountId,null,centerA,"Ajuste posterior",10m,0),new(account.AccountId,null,null,"Contrapartida automática",0,10m)]};
+            using var acceptedLater=await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers",later);
+            acceptedLater.EnsureSuccessStatusCode();
+            await AssertBalancedAsync(later.VoucherId);
+            var filtered=(await client.GetFromJsonAsync<AccountMovementRow[]>($"/api/commerce/v1/accounting/reports/account-movements?accountCode={account.Code}&from=2026-08-21&to=2026-08-31&costCenterId={centerA}"))!;
+            Assert.Equal(135m,filtered.First().Balance);
+            Assert.Equal(125m,filtered.Last().Balance);
+        }
+        finally
+        {
+            period.Parameters["@Status"].Value="Open";await period.ExecuteNonQueryAsync();
+            using var restore=await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{originalDefault.CostCenterId}",new UpdateCostCenterRequest(originalDefault.Code,originalDefault.Name,originalDefault.ParentCostCenterId,true,true,await CenterVersionAsync(client,originalDefault.CostCenterId)));
+            restore.EnsureSuccessStatusCode();
         }
     }
 
@@ -323,6 +460,13 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Contains(settlementConfiguration.BankAccounts,
             account => account.BankAccountId == bankAccountId && account.IsPrimary);
 
+        var laterCenterId=Guid.NewGuid(); var laterRuleId=Guid.NewGuid();
+        using(var center=await accounting.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers",
+            new CreateCostCenterRequest(laterCenterId,fixture.BusinessId,$"L-{laterCenterId:N}"[..16],"Ventas futuras",null,false))) center.EnsureSuccessStatusCode();
+        var laterRule=new SaveAccountingCostCenterAssignmentRequest(laterRuleId,fixture.BusinessId,laterCenterId,"Sales",fixture.WarehouseId,true);
+        using(var rule=await accounting.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments",laterRule)) rule.EnsureSuccessStatusCode();
+        try
+        {
         var salesReturn = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, request.DocumentId,
             new DateTimeOffset(2026, 8, 31, 15, 0, 0, TimeSpan.FromHours(-5)),
@@ -350,6 +494,16 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal("TR-RETURN-2000|Reintegro confirmado por el banco", await ScalarAsync<string>(
             "SELECT CONCAT(Reference,N'|',Notes) FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id",
             salesReturn.ReturnId));
+        Assert.Equal(await ScalarAsync<Guid>("SELECT ResolvedCostCenterId FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",request.DocumentId),
+            await ScalarAsync<Guid>("SELECT ResolvedCostCenterId FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",salesReturn.ReturnId));
+        Assert.NotEqual(laterCenterId,await ScalarAsync<Guid>("SELECT ResolvedCostCenterId FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",salesReturn.ReturnId));
+        }
+        finally
+        {
+            using var disable=await accounting.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments",
+                laterRule with {IsActive=false,RowVersion=await RuleVersionAsync(accounting,laterRuleId)});
+            disable.EnsureSuccessStatusCode();
+        }
     }
 
     [Fact]
@@ -2030,6 +2184,271 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Card_settlement_reconciles_the_real_bank_without_duplicating_revenue()
+    {
+        await GrantReconciliationRolePermissionsAsync();
+        using var client = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate,
+            AccountingPermissionCodes.BankReconciliationRead,
+            AccountingPermissionCodes.BankReconciliationManage,
+            AccountingPermissionCodes.BankReconciliationClose);
+        using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var bankLedgerId = Guid.NewGuid();
+        using (var account = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
+                   new CreateAccountingAccountRequest(bankLedgerId, fixture.TenantId,
+                       $"1119{suffix}", $"Banco conciliación {suffix}", "Asset", true, false)))
+            account.EnsureSuccessStatusCode();
+        Guid bankTypeId;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("SELECT TOP(1) OptionId FROM reference.Options WHERE CatalogCode=N'bank-account-type' AND IsActive=1 ORDER BY SortOrder", connection);
+            bankTypeId = (Guid)(await command.ExecuteScalarAsync())!;
+        }
+        var bankId = Guid.NewGuid();
+        using (var bank = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bankId:D}",
+                   new SaveBankAccountRequest(bankId, bankLedgerId, bankTypeId, "Banco conciliable",
+                       suffix, $"Cuenta conciliable {suffix}", false, true, null)))
+            bank.EnsureSuccessStatusCode();
+
+        var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
+        var mappings = (await client.GetFromJsonAsync<AccountingMappingView[]>("/api/commerce/v1/accounting/account-mappings"))!;
+        Guid Mapped(string category) => mappings.Last(value => value.Category == category &&
+            (value.BusinessId is null || value.BusinessId == fixture.BusinessId)).AccountId;
+        var expense = accounts.First(value => value.AccountType == "Expense" && value.AllowsPosting && !value.RequiresParty).AccountId;
+
+        const decimal grossCardPayment = 11_900m;
+        var sale = WithUblSnapshot(fixture.CreateValidRequest(9_983)) with
+        {
+            Payments = [new(1, "CreditCard", grossCardPayment, "CARD-11900", "Visa", "APP-CARD")]
+        };
+        await SetWarehouseNegativeSalesPolicyAsync(false);
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(sale);
+            using var saleResponse = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(saleResponse.IsSuccessStatusCode, await saleResponse.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+        }
+        await AssertBalancedAsync(sale.DocumentId);
+        Assert.Equal(grossCardPayment, await AccountAmountAsync(sale.DocumentId, "130515", true));
+
+        var voucherId = Guid.NewGuid();
+        using (var voucher = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers",
+                   new ConfirmManualAccountingVoucherRequest(voucherId, fixture.BusinessId,
+                       new DateTimeOffset(2026, 9, 5, 12, 0, 0, TimeSpan.FromHours(-5)),
+                       "CARD_SETTLEMENT", "Liquidación operador de tarjetas",
+                       [
+                           new(bankLedgerId, null, null, "Abono neto al banco", 11_543m, 0m),
+                           new(expense, null, null, "Comisión soportada", 357m, 0m),
+                           new(Mapped(AccountingCategories.CreditCardClearing), null, null,
+                               "Cancelación del cobro bruto", 0m, grossCardPayment)
+                       ])))
+            Assert.Equal(HttpStatusCode.Accepted, voucher.StatusCode);
+        await AssertBalancedAsync(voucherId);
+        Assert.Equal(grossCardPayment, await AccountAmountAsync(voucherId, "130515", false));
+        Assert.Equal(0, await ScalarAsync<int>("""
+            SELECT COUNT(*) FROM dbo.AccountingEntries e
+            JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+            JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+            WHERE e.SourceDocumentId=@Id AND a.AccountType=N'Revenue'
+            """, voucherId));
+
+        var csv = Encoding.UTF8.GetBytes("fecha;descripcion;referencia;valor;saldo\n2026-09-05;Abono tarjetas;OP-1;11543;11543\n");
+        var reconciliationId = Guid.NewGuid();
+        using var importedResponse = await client.PostAsJsonAsync("/api/commerce/v1/accounting/bank-reconciliations",
+            new ImportBankReconciliationRequest(reconciliationId, bankId,
+                new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30), 0m, 11_543m,
+                "extracto-septiembre.csv", Convert.ToHexString(SHA256.HashData(csv)), Convert.ToBase64String(csv),
+                [new(1, new DateOnly(2026, 9, 5), "Abono tarjetas", "OP-1", 11_543m, 11_543m)]));
+        Assert.Equal(HttpStatusCode.Created, importedResponse.StatusCode);
+        var imported = (await importedResponse.Content.ReadFromJsonAsync<BankReconciliationDetailView>())!;
+        var statement = Assert.Single(imported.StatementLines);
+        var book = Assert.Single(imported.BookLines);
+        Assert.Equal(11_543m, book.Amount);
+
+        using (var duplicate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/bank-reconciliations",
+                   new ImportBankReconciliationRequest(Guid.NewGuid(), bankId,
+                       new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30), 0m, 11_543m,
+                       "duplicado.csv", Convert.ToHexString(SHA256.HashData(csv)), Convert.ToBase64String(csv),
+                       [new(1, new DateOnly(2026, 9, 5), "Abono tarjetas", "OP-1", 11_543m, 11_543m)])))
+            Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        using (var prematureClose = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/close",
+                   new ChangeBankReconciliationStatusRequest(imported.Summary.RowVersion)))
+            Assert.Equal(HttpStatusCode.BadRequest, prematureClose.StatusCode);
+        using (var excess = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/allocations",
+                   new CreateBankReconciliationAllocationRequest(Guid.NewGuid(), statement.StatementLineId,
+                       book.EntryId, book.EntryLineNumber, 11_544m, imported.Summary.RowVersion)))
+            Assert.Equal(HttpStatusCode.BadRequest, excess.StatusCode);
+
+        using var allocationResponse = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/allocations",
+            new CreateBankReconciliationAllocationRequest(Guid.NewGuid(), statement.StatementLineId,
+                book.EntryId, book.EntryLineNumber, 11_543m, imported.Summary.RowVersion));
+        allocationResponse.EnsureSuccessStatusCode();
+        var allocated = (await allocationResponse.Content.ReadFromJsonAsync<BankReconciliationDetailView>())!;
+        Assert.True(Assert.Single(allocated.StatementLines).IsMatched);
+
+        using var closeResponse = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/close",
+            new ChangeBankReconciliationStatusRequest(allocated.Summary.RowVersion));
+        closeResponse.EnsureSuccessStatusCode();
+        var closed = (await closeResponse.Content.ReadFromJsonAsync<BankReconciliationDetailView>())!;
+        Assert.Equal(BankReconciliationStatuses.Closed, closed.Summary.Status);
+        Assert.Equal(0m, closed.Summary.Difference);
+        var closeEvent = Assert.Single(closed.StatusEvents);
+        Assert.Equal(BankReconciliationStatuses.Closed, closeEvent.Status);
+        Assert.Equal(11_543m, closeEvent.BookClosingBalance);
+
+        using var stale = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/reopen",
+            new ChangeBankReconciliationStatusRequest(allocated.Summary.RowVersion, "Versión anterior"));
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        using var reopen = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/reopen",
+            new ChangeBankReconciliationStatusRequest(closed.Summary.RowVersion, "Corrección documentada"));
+        reopen.EnsureSuccessStatusCode();
+        var reopened = (await reopen.Content.ReadFromJsonAsync<BankReconciliationDetailView>())!;
+        Assert.Collection(reopened.StatusEvents,
+            first => Assert.Equal(BankReconciliationStatuses.Closed, first.Status),
+            second =>
+            {
+                Assert.Equal(BankReconciliationStatuses.Reopened, second.Status);
+                Assert.Equal("Corrección documentada", second.Reason);
+            });
+    }
+
+    [Fact]
+    public async Task Reconciliation_covers_all_businesses_previous_entries_and_retroactive_changes()
+    {
+        await GrantReconciliationRolePermissionsAsync();
+        using var client = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate,
+            AccountingPermissionCodes.BankReconciliationRead,
+            AccountingPermissionCodes.BankReconciliationManage,
+            AccountingPermissionCodes.BankReconciliationClose);
+        using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var bankLedgerId = Guid.NewGuid();
+        using (var account = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
+                   new CreateAccountingAccountRequest(bankLedgerId, fixture.TenantId,
+                       $"1120{suffix}", $"Banco multisedes {suffix}", "Asset", true, false)))
+            account.EnsureSuccessStatusCode();
+        var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>(
+            "/api/commerce/v1/accounting/accounts"))!;
+        var counterpartId = accounts.First(value => value.AccountType == "Expense" &&
+            value.AllowsPosting && !value.RequiresParty).AccountId;
+        var bankTypeId = await ScalarAsync<Guid>("""
+            SELECT TOP(1) OptionId FROM reference.Options
+            WHERE CatalogCode=N'bank-account-type' AND IsActive=1 ORDER BY SortOrder
+            """, Guid.Empty);
+        var bankId = Guid.NewGuid();
+        using (var bank = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/accounting/bank-accounts/{bankId:D}",
+                   new SaveBankAccountRequest(bankId, bankLedgerId, bankTypeId,
+                       "Banco multisedes", suffix, $"Cuenta multisedes {suffix}", false, true, null)))
+            bank.EnsureSuccessStatusCode();
+
+        var secondBusinessId = Guid.NewGuid();
+        await CreateBusinessWithUserAccessAsync(secondBusinessId, fixture.UserId);
+        var previousEntryId = await InsertPostedBankEntryAsync(
+            secondBusinessId, bankLedgerId, counterpartId,
+            new DateTimeOffset(2026, 8, 31, 9, 0, 0, TimeSpan.FromHours(-5)), 10m);
+
+        var csv = Encoding.UTF8.GetBytes(
+            "fecha;descripcion;referencia;valor;saldo\n2026-09-01;Movimiento anterior;ANT-1;10;10\n");
+        var reconciliationId = Guid.NewGuid();
+        using var importedResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/accounting/bank-reconciliations",
+            new ImportBankReconciliationRequest(reconciliationId, bankId,
+                new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30), 0m, 10m,
+                "extracto-multisedes.csv", Convert.ToHexString(SHA256.HashData(csv)),
+                Convert.ToBase64String(csv),
+                [new(1, new DateOnly(2026, 9, 1), "Movimiento anterior", "ANT-1", 10m, 10m)]));
+        Assert.Equal(HttpStatusCode.Created, importedResponse.StatusCode);
+        var imported = (await importedResponse.Content
+            .ReadFromJsonAsync<BankReconciliationDetailView>())!;
+        var previousBookLine = Assert.Single(imported.BookLines);
+        Assert.Equal(previousEntryId, previousBookLine.EntryId);
+        Assert.Equal(secondBusinessId, previousBookLine.BusinessId);
+        Assert.Equal(new DateTimeOffset(2026, 8, 31, 9, 0, 0,
+            TimeSpan.FromHours(-5)), previousBookLine.OccurredAt);
+
+        using var allocatedResponse = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/allocations",
+            new CreateBankReconciliationAllocationRequest(Guid.NewGuid(),
+                Assert.Single(imported.StatementLines).StatementLineId,
+                previousBookLine.EntryId, previousBookLine.EntryLineNumber,
+                10m, imported.Summary.RowVersion));
+        allocatedResponse.EnsureSuccessStatusCode();
+        var allocated = (await allocatedResponse.Content
+            .ReadFromJsonAsync<BankReconciliationDetailView>())!;
+
+        var pendingSourceId = await InsertPendingBankSourceAsync(
+            secondBusinessId, bankId,
+            new DateTimeOffset(2026, 8, 30, 9, 0, 0, TimeSpan.FromHours(-5)));
+        using (var blockedClose = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/close",
+                   new ChangeBankReconciliationStatusRequest(allocated.Summary.RowVersion)))
+            Assert.Equal(HttpStatusCode.BadRequest, blockedClose.StatusCode);
+        await DeletePendingBankSourceAsync(pendingSourceId);
+
+        using var closeResponse = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}/close",
+            new ChangeBankReconciliationStatusRequest(allocated.Summary.RowVersion));
+        closeResponse.EnsureSuccessStatusCode();
+        var closed = (await closeResponse.Content
+            .ReadFromJsonAsync<BankReconciliationDetailView>())!;
+        Assert.Single(closed.StatusEvents);
+
+        using var restricted = fixture.CreateUserClient(Guid.NewGuid(),
+            AccountingPermissionCodes.BankReconciliationRead);
+        using (var list = await restricted.GetAsync(
+                   "/api/commerce/v1/accounting/bank-reconciliations"))
+            Assert.Equal(HttpStatusCode.Forbidden, list.StatusCode);
+
+        await InsertPostedBankEntryAsync(
+            secondBusinessId, bankLedgerId, counterpartId,
+            new DateTimeOffset(2026, 9, 2, 9, 0, 0, TimeSpan.FromHours(-5)), 5m,
+            DateTimeOffset.UtcNow.AddMinutes(1));
+        var changed = await client.GetFromJsonAsync<BankReconciliationDetailView>(
+            $"/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:D}");
+        Assert.NotNull(changed);
+        Assert.True(changed.Summary.RequiresReview);
+        Assert.Contains(changed.BookLines, line => line.AvailableAmount == 5m &&
+            line.BusinessId == secondBusinessId);
+
+        var octoberCsv = Encoding.UTF8.GetBytes(
+            "fecha;descripcion;referencia;valor;saldo\n2026-10-01;Movimiento;OCT-1;1;11\n");
+        using var nextImport = await client.PostAsJsonAsync(
+            "/api/commerce/v1/accounting/bank-reconciliations",
+            new ImportBankReconciliationRequest(Guid.NewGuid(), bankId,
+                new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31), 10m, 11m,
+                "extracto-octubre.csv", Convert.ToHexString(SHA256.HashData(octoberCsv)),
+                Convert.ToBase64String(octoberCsv),
+                [new(1, new DateOnly(2026, 10, 1), "Movimiento", "OCT-1", 1m, 11m)]));
+        Assert.Equal(HttpStatusCode.Conflict, nextImport.StatusCode);
+    }
+
+    [Fact]
     public async Task Accounting_endpoints_enforce_permission_and_scope()
     {
         using var denied = fixture.CreateAdminClient();
@@ -2041,6 +2460,9 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 Guid.NewGuid(), fixture.BusinessId, DateTimeOffset.UtcNow,
                 "TEST", "Sin permiso", []));
         Assert.Equal(HttpStatusCode.Forbidden, manual.StatusCode);
+        using var reconciliation = await denied.GetAsync(
+            "/api/commerce/v1/accounting/bank-reconciliations");
+        Assert.Equal(HttpStatusCode.Forbidden, reconciliation.StatusCode);
         using var configured = fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
         using var wrongScope = await configured.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
             new CreateAccountingAccountRequest(Guid.NewGuid(), Guid.NewGuid(), "9999", "Fuera de alcance", "Asset", true, false));
@@ -2462,6 +2884,143 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             .Select(index => reader.IsDBNull(index) ? "<null>" : Convert.ToString(reader.GetValue(index)))
             .ToArray();
         Assert.Fail($"Dispatch accounting did not complete: {string.Join(" | ", values)}");
+    }
+
+    private async Task GrantReconciliationRolePermissionsAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+            SELECT NEWID(),@RoleId,permission.PermissionId,SYSUTCDATETIME()
+            FROM dbo.Permissions permission
+            WHERE permission.Resource IN
+              (N'accounting.bank-reconciliation.read',
+               N'accounting.bank-reconciliation.manage',
+               N'accounting.bank-reconciliation.close')
+              AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing
+                WHERE existing.RoleId=@RoleId AND existing.PermissionId=permission.PermissionId);
+            """, connection);
+        command.Parameters.AddWithValue("@RoleId", fixture.RoleId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task CreateBusinessWithUserAccessAsync(Guid businessId, Guid userId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.Businesses
+              (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
+            VALUES(@BusinessId,@TenantId,@Name,N'Sede para conciliación integral',N'Bogotá',
+              N'3000000000',CONCAT(@BusinessId,N'@test.local'),N'https://auraly.test',1,SYSUTCDATETIME());
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            VALUES(NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
+            INSERT dbo.AccountingCostCenters
+              (CostCenterId,BusinessId,Code,Name,IsDefault,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,N'PRINCIPAL',N'Operación principal',1,1,SYSUTCDATETIME());
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@Name", $"Sede conciliación {businessId:N}"[..31]);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@RoleId", fixture.RoleId);
+        Assert.Equal(3, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task<Guid> InsertPostedBankEntryAsync(
+        Guid businessId, Guid bankLedgerId, Guid counterpartId,
+        DateTimeOffset occurredAt, decimal amount, DateTimeOffset? postedAt = null)
+    {
+        var sourceId = Guid.NewGuid();
+        var entryId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            DECLARE @PeriodId uniqueidentifier=(SELECT TOP(1) PeriodId
+              FROM dbo.AccountingPeriods WHERE TenantId=@TenantId
+                AND StartsOn<=CONVERT(date,@OccurredAt) AND EndsOn>=CONVERT(date,@OccurredAt)
+              ORDER BY StartsOn DESC);
+            IF @PeriodId IS NULL THROW 52000,N'No existe período para la partida bancaria de prueba.',1;
+            INSERT dbo.AccountingSourceDocuments
+              (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
+               PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+            VALUES(@SourceId,N'BankReconciliationTest',@TenantId,@BusinessId,N'{}',
+               HASHBYTES('SHA2_256',CONVERT(varbinary(36),@SourceId)),@OccurredAt,SYSUTCDATETIME(),1);
+            INSERT dbo.AccountingPostingJobs
+              (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+               SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,
+               CreatedAt,LastAttemptAt,CompletedAt)
+            VALUES(NEWID(),@TenantId,@BusinessId,@SourceId,N'BankReconciliationTest',
+               HASHBYTES('SHA2_256',CONVERT(varbinary(36),@SourceId)),@OccurredAt,1,N'Posted',1,
+               SYSUTCDATETIME(),SYSUTCDATETIME(),SYSUTCDATETIME());
+            INSERT dbo.AccountingEntries
+              (EntryId,TenantId,BusinessId,PeriodId,SourceDocumentId,SourceDocumentType,
+               EntryNumber,OccurredAt,PostedAt,Description,DebitTotal,CreditTotal,
+               SourcePayloadHash,RuleVersion)
+            VALUES(@EntryId,@TenantId,@BusinessId,@PeriodId,@SourceId,N'BankReconciliationTest',
+               @EntryNumber,@OccurredAt,@PostedAt,N'Partida bancaria de prueba',@Amount,@Amount,
+               HASHBYTES('SHA2_256',CONVERT(varbinary(36),@SourceId)),1);
+            INSERT dbo.AccountingEntryLines
+              (EntryId,LineNumber,AccountId,Description,Debit,Credit)
+            VALUES(@EntryId,1,@BankLedgerId,N'Movimiento banco',@Amount,0),
+                  (@EntryId,2,@CounterpartId,N'Contrapartida',0,@Amount);
+            """, connection);
+        command.Parameters.AddWithValue("@SourceId", sourceId);
+        command.Parameters.AddWithValue("@EntryId", entryId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@OccurredAt", occurredAt);
+        command.Parameters.AddWithValue("@PostedAt", postedAt ?? DateTimeOffset.UtcNow);
+        command.Parameters.AddWithValue("@EntryNumber", $"BK-{entryId:N}"[..24]);
+        command.Parameters.AddWithValue("@BankLedgerId", bankLedgerId);
+        command.Parameters.AddWithValue("@CounterpartId", counterpartId);
+        var money = command.Parameters.Add("@Amount", System.Data.SqlDbType.Decimal);
+        money.Precision = 19;
+        money.Scale = 4;
+        money.Value = amount;
+        Assert.Equal(5, await command.ExecuteNonQueryAsync());
+        return entryId;
+    }
+
+    private async Task<Guid> InsertPendingBankSourceAsync(
+        Guid businessId, Guid bankAccountId, DateTimeOffset occurredAt)
+    {
+        var sourceId = Guid.NewGuid();
+        var payload = $"{{\"bankAccountId\":\"{bankAccountId:D}\"}}";
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.AccountingSourceDocuments
+              (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
+               PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+            VALUES(@SourceId,N'PendingBankTest',@TenantId,@BusinessId,@Payload,
+               HASHBYTES('SHA2_256',CONVERT(varbinary(max),@Payload)),@OccurredAt,SYSUTCDATETIME(),1);
+            INSERT dbo.AccountingPostingJobs
+              (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+               SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,CreatedAt)
+            VALUES(NEWID(),@TenantId,@BusinessId,@SourceId,N'PendingBankTest',
+               HASHBYTES('SHA2_256',CONVERT(varbinary(max),@Payload)),@OccurredAt,1,N'Pending',0,SYSUTCDATETIME());
+            """, connection);
+        command.Parameters.AddWithValue("@SourceId", sourceId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@Payload", payload);
+        command.Parameters.AddWithValue("@OccurredAt", occurredAt);
+        Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        return sourceId;
+    }
+
+    private async Task DeletePendingBankSourceAsync(Guid sourceId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            DELETE dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PendingBankTest';
+            DELETE dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PendingBankTest';
+            """, connection);
+        command.Parameters.AddWithValue("@Id", sourceId);
+        Assert.Equal(2, await command.ExecuteNonQueryAsync());
     }
 
     private async Task<T> ScalarAsync<T>(string sql, Guid id)
