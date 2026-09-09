@@ -26,6 +26,7 @@
     "test:approval-permissions": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-approval-client.test.js\"",
     "test:line-editor": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-line-editor-calculation.test.js\"",
     "test:catalog-drafts": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/lib/catalog-draft-store.test.js\"",
+    "test:product-category-hierarchy": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/components/products/product-category-hierarchy.test.js\"",
     "test:pwa": "node scripts/verify-pwa-launch-assets.mjs",
     "build": "next build",
     "postbuild": "node scripts/prepare-standalone.mjs",

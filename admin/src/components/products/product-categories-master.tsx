@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { MasterHierarchyExplorer, type MasterHierarchyNode } from "@/components/masters/master-hierarchy-explorer";
 import { ProductCommercialMasters } from "@/components/products/product-commercial-masters";
+import { toProductCategoryHierarchyNode } from "@/components/products/product-category-hierarchy";
 import { useCreateProductCategory, useProductCategories } from "@/hooks/use-products";
 import { productsApi, type ProductCategory } from "@/services/api/products";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -24,7 +25,7 @@ export function ProductCategoriesMaster({ canManage }: { canManage: boolean }) {
   const client = useQueryClient();
   const [editor, setEditor] = useState<Editor | null>(null);
   const [saving, setSaving] = useState(false);
-  const nodes: MasterHierarchyNode[] = (categories.data ?? []).map((item) => ({ id: item.productCategoryId, parentId: item.parentProductCategoryId, level: item.depth - 1, name: item.name, active: item.isActive }));
+  const nodes: MasterHierarchyNode[] = (categories.data ?? []).map(toProductCategoryHierarchyNode);
   const openCreate = (level: number, parent: MasterHierarchyNode | null) => setEditor({ category: null, parent, level, name: "", order: "0", active: true });
   const openEdit = (node: MasterHierarchyNode) => setEditor({ category: (categories.data ?? []).find((item) => item.productCategoryId === node.id)!, parent: node.parentId ? nodes.find((item) => item.id === node.parentId) ?? null : null, level: node.level, name: node.name, order: String((categories.data ?? []).find((item) => item.productCategoryId === node.id)?.displayOrder ?? 0), active: node.active });
   const save = async () => {

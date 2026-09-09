@@ -148,5 +148,7 @@
     ,"src/lib/change-password.test.ts"
     ,"src/lib/tenant-legal-identity.ts"
     ,"src/lib/tenant-legal-identity.test.ts"
+    ,"src/components/products/product-category-hierarchy.ts"
+    ,"src/components/products/product-category-hierarchy.test.ts"
   ]
 }

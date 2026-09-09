@@ -11,6 +11,8 @@ test.describe.serial("maestros administrables desde la interfaz", () => {
     const countryName = `País UI ${suffix}`;
     const areaName = `Área UI ${suffix}`;
     const lineName = `Línea UI ${suffix}`;
+    const groupName = `Grupo UI ${suffix}`;
+    const subgroupName = `Subgrupo UI ${suffix}`;
 
     await page.goto("/dashboard/settings/masters");
     const hierarchySearch = page.getByPlaceholder(/Buscar en toda la jerarqu.a/);
@@ -45,8 +47,21 @@ test.describe.serial("maestros administrables desde la interfaz", () => {
     await dialog.getByLabel("Nombre").fill(lineName);
     await dialog.getByRole("button", { name: "Guardar", exact: true }).click();
     await productHierarchySearch.fill(lineName);
-    await expect(page.getByText(areaName, { exact: true })).toBeVisible();
-    await expect(page.getByText(lineName, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: `Crear grupo en ${lineName}` }).click();
+    dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Nombre").fill(groupName);
+    await dialog.getByRole("button", { name: "Guardar", exact: true }).click();
+    await productHierarchySearch.fill(groupName);
+    await page.getByRole("button", { name: `Crear subgrupo en ${groupName}` }).click();
+    dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Nombre").fill(subgroupName);
+    await dialog.getByRole("button", { name: "Guardar", exact: true }).click();
+    await productHierarchySearch.fill(subgroupName);
+    for (const [name, level] of [[areaName, 0], [lineName, 1], [groupName, 2], [subgroupName, 3]] as const) {
+      const row = page.locator(`[data-hierarchy-level="${level}"]`, { hasText: name });
+      await expect(row).toBeVisible();
+      await expect(row.locator(":scope > div")).toHaveCSS("grid-column-start", String(level + 1));
+    }
   });
 
   test("marca, unidad e IVA permiten buscar, editar e inactivar", async ({ page }) => {
