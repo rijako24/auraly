@@ -31,6 +31,10 @@ public sealed record DocumentProcessingWork(
 
 public interface IDocumentProcessingWorkSource
 {
+    Task<IReadOnlyList<DocumentProcessingSignal>> ListReadySignalsAsync(
+        int take,
+        CancellationToken cancellationToken);
+
     Task<DocumentProcessingWork> LoadAsync(
         DocumentProcessingSignal signal,
         CancellationToken cancellationToken);

@@ -329,48 +329,6 @@ public static class PosEdgeHostApplication
                     .GetRequiredService<PosLocalIdentityStore>();
                 var userSession = await identities.ResolveAsync(
                     userToken, context.RequestAborted);
-                if (userSession is not null)
-                {
-                    var leases = context.RequestServices
-                        .GetRequiredService<PosOfflineLeaseStore>();
-                    var leaseId = await leases.ActiveLeaseIdForUserAsync(
-                        userSession.UserId, context.RequestAborted);
-                    // A login completed while the enrolled POS is genuinely
-                    // offline has no server lease to validate yet. It remains a
-                    // valid local login; only a lease that the server has
-                    // actually issued can later be reported as replaced.
-                    var loginIsActive = true;
-                    if (leaseId is not null)
-                    {
-                        try
-                        {
-                            var server = context.RequestServices
-                                .GetRequiredService<PosOfflineLeaseClient>();
-                            loginIsActive = await server.IsActiveAsync(
-                                leaseId.Value,
-                                userSession.UserId,
-                                context.RequestAborted);
-                        }
-                        catch (HttpRequestException exception)
-                            when (exception.StatusCode is null)
-                        {
-                            // A signed local lease remains authoritative while the
-                            // enrolled POS is genuinely offline.
-                            loginIsActive = true;
-                        }
-                        catch (TaskCanceledException)
-                            when (!context.RequestAborted.IsCancellationRequested)
-                        {
-                            loginIsActive = true;
-                        }
-                    }
-                    if (!loginIsActive)
-                    {
-                        await identities.RevokeActiveSessionsAsync(
-                            "ReplacedByNewLogin", context.RequestAborted);
-                        userSession = null;
-                    }
-                }
                 if (userSession is null)
                 {
                     var endReason = await identities.SessionEndReasonAsync(
@@ -1409,6 +1367,7 @@ public static class PosEdgeHostApplication
         path.StartsWithSegments("/edge/v1") &&
         !path.Equals("/edge/v1/health") &&
         !path.Equals("/edge/v1/auth/login") &&
+        !path.Equals("/edge/v1/auth/complete-enrollment") &&
         !path.Equals("/edge/v1/enrollment/redeem") &&
         !path.StartsWithSegments("/edge/v1/configuration/printers") &&
         !path.StartsWithSegments("/edge/v1/print") &&

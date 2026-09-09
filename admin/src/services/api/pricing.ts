@@ -28,6 +28,7 @@ export interface PriceRevisionListItem {
   origin: "GoodsReceipt" | "Product";
   averageUnitCost?: number | null;
   latestUnitCost?: number | null;
+  latestLandedUnitCost?: number | null;
 }
 
 export interface PriceRevisionPage {

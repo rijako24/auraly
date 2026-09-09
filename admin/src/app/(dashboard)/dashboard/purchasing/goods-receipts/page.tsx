@@ -48,9 +48,11 @@ import { partiesApi } from "@/services/api/parties";
 import { tenantCommercialApi } from "@/services/api/tenants";
 import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
+import { useActiveProductOptionScroll } from "@/components/products/use-active-product-option-scroll";
 import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
-  nextGoodsReceiptQuantityIndex, summarizeGoodsReceipt,
+  nextGoodsReceiptEditorTarget, previewGoodsReceiptPurchaseCosts, summarizeGoodsReceipt,
+  type GoodsReceiptEditorField,
 } from "@/lib/goods-receipt-calculator";
 import {
   goodsReceiptDraftKey, loadGoodsReceiptDraft, removeGoodsReceiptDraft, saveGoodsReceiptDraft,
@@ -274,15 +276,43 @@ function ReceiptDetailDialog({
   if (!detail) return null;
   const totals = summarizeGoodsReceipt(detail);
   const hasAdditionalCosts = Boolean(detail.additionalCostDocuments?.length);
-  const summaryRows = [
-    { label: "Factura principal (con IVA)", value: totals.principal },
-    { label: "Facturas y costos asociados (con impuestos)", value: totals.additional },
-    { label: "Total de documentos", value: totals.gross },
-    { label: "Impuestos incluidos en los documentos", value: totals.tax },
-    { label: "Retenciones de todos los documentos", value: totals.withholding },
-    { label: "Neto de los documentos", value: totals.net },
-    { label: "Costos adicionales asignados a productos", value: totals.landedCost },
-    { label: "Costo puesto total de los productos", value: totals.inventory },
+  const hasExtendedSummary = detail.currencyCode !== "COP" || hasAdditionalCosts;
+  const expensedCosts = (detail.additionalCostDocuments ?? []).reduce((total, document) =>
+    total + document.lines.filter(line => line.costTreatment === "Expense").reduce((sum, line) =>
+      sum + (line.functionalAmount ?? line.amount * document.exchangeRate) +
+        (line.taxTreatment === "CapitalizedCost"
+          ? line.functionalTaxAmount ?? line.taxAmount * document.exchangeRate : 0), 0), 0);
+  const deductibleVat = detail.lines.reduce((sum, line) => sum +
+    (line.taxTreatment === "DeductibleInputVat" ? line.functionalTaxAmount ?? 0 : 0), 0) +
+    (detail.additionalCostDocuments ?? []).reduce((total, document) => total +
+      document.lines.reduce((sum, line) => sum + (line.taxTreatment === "DeductibleInputVat"
+        ? line.functionalTaxAmount ?? line.taxAmount * document.exchangeRate : 0), 0), 0);
+  const mainWithholdingRows = (detail.withholding?.lines ?? []).map(line => ({
+    label: `${line.name}${hasExtendedSummary ? " mercancía" : ""} (${line.rate}%)`,
+    value: -line.amount,
+  }));
+  const additionalWithheld = (detail.additionalCostDocuments ?? []).reduce((total, document) =>
+    total + (document.withholding?.withholdingTotal ?? 0), 0);
+  const summaryRows = hasExtendedSummary ? [
+    { label: "Mercancía antes de IVA", value: detail.functionalNetAmount },
+    { label: "Costos capitalizados", value: totals.landedCost },
+    { label: "Valor que entra al inventario", value: totals.inventory },
+    ...(expensedCosts > 0 ? [{ label: "Costos llevados al gasto", value: expensedCosts }] : []),
+    { label: "IVA descontable separado", value: deductibleVat },
+    { label: "Total bruto de documentos", value: totals.gross },
+    ...mainWithholdingRows,
+    ...(additionalWithheld > 0
+      ? [{ label: "Retenciones otras facturas", value: -additionalWithheld }]
+      : []),
+    { label: "Total retenciones", value: totals.withholding === null ? null : -totals.withholding },
+    { label: "Cuentas por pagar netas", value: totals.net },
+  ] : [
+    { label: "Subtotal antes de IVA", value: totals.principal === null ? null : detail.functionalNetAmount },
+    { label: "IVA de compra", value: totals.principal === null ? null : detail.functionalTaxAmount },
+    { label: "Total factura", value: totals.principal },
+    ...mainWithholdingRows,
+    { label: "Total retenciones", value: totals.withholding === null ? null : -totals.withholding },
+    { label: detail.createsPayable ? "Neto por pagar" : "Total pagado", value: totals.net },
   ];
   if(reportOpen)return <Dialog open onOpenChange={value=>!value&&setReportOpen(false)}><DialogContent showClose={false} className="h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] overflow-hidden p-2 sm:p-4"><ReportViewer
     onClose={()=>setReportOpen(false)}
@@ -292,7 +322,7 @@ function ReceiptDetailDialog({
     rows={[
       { id: "merchandise", __group: `Factura principal · ${detail.currencyCode}` },
       ...detail.lines.map(line=>({id:line.lineNumber,linea:line.lineNumber,producto:line.description,presentacion:line.presentationName,cantidad:line.quantity,costoUnitario:line.unitCost,descuento:line.discountAmount,base:line.netAmount,iva:line.taxAmount,total:line.lineTotal})),
-      ...(hasAdditionalCosts ? [
+      ...(hasExtendedSummary ? [
         { id: "receipt-summary", __group: "Resumen completo de la recepción · COP" },
         ...summaryRows.map((row, index) => ({ id: `summary-${index}`, producto: row.label,
           total: row.value === null ? "No disponible" : row.value })),
@@ -370,25 +400,11 @@ function ReceiptDetailDialog({
           </div>
         </div>
         <div className="ml-auto grid w-full max-w-sm gap-2 rounded-2xl bg-slate-950 p-5 text-white">
-          <p className="pb-1 text-xs font-semibold uppercase tracking-wide text-slate-300">Factura principal · COP contable</p>
-          <Amount label="Subtotal" value={detail.functionalNetAmount ?? detail.netAmount} />
-          <Amount label="IVA" value={detail.functionalTaxAmount ?? detail.taxAmount} />
-          <Amount label="Total bruto" value={detail.functionalGrandTotal ?? detail.grandTotal} />
-          {(detail.withholding?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} (${line.rate}%)`} value={-line.amount} />)}
-          {detail.withholding && detail.withholding.withholdingTotal > 0 && <Amount label="Total retenciones" value={-detail.withholding.withholdingTotal} />}
-          <Amount label={detail.withholding?.withholdingTotal ? "Neto por pagar" : "Total"} value={detail.withholding?.netAmount ?? detail.functionalGrandTotal ?? detail.grandTotal} strong />
+          <p className="pb-1 text-xs font-semibold uppercase tracking-wide text-slate-300">{hasExtendedSummary ? "Resumen consolidado · COP" : "Resumen de la compra"}</p>
+          {summaryRows.map((row, index) => <Amount key={row.label} label={row.label}
+            value={row.value} strong={index === summaryRows.length - 1} />)}
           {detail.currencyCode !== "COP" && <p className="pt-2 text-xs text-slate-300">Documento original: {detail.grandTotal} {detail.currencyCode} · tasa {detail.exchangeRate} ({detail.exchangeRateSource})</p>}
         </div>
-        {hasAdditionalCosts && <section aria-label="Resumen completo de la recepción" className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
-          <h3 className="font-semibold">Resumen completo de la recepción · COP</h3>
-          <dl className="mt-4 grid gap-x-8 gap-y-3 md:grid-cols-2">
-            {summaryRows.map(row => <div key={row.label} className="flex items-baseline justify-between gap-4 border-b border-primary/10 pb-2">
-              <dt className="text-sm">{row.label}</dt>
-              <dd className="shrink-0 font-semibold tabular-nums">{row.value === null ? "No disponible" : formatCurrency(row.value)}</dd>
-            </div>)}
-          </dl>
-          <p className="mt-3 text-sm text-muted-foreground">El total de documentos incluye la factura principal y los costos asociados, con sus impuestos. El costo puesto suma los cargos asignados a productos y excluye el IVA descontable; el asiento distingue los productos inventariables de los que van a gasto. El neto corresponde a la confirmación; no descuenta pagos posteriores.</p>
-        </section>}
         <section className="rounded-2xl border p-4">
           <h3 className="font-semibold">Estado contable</h3>
           {(detail.accountingStatuses ?? []).length === 0
@@ -481,7 +497,7 @@ function ReceiptEditor({
   const productListRef = useRef<HTMLDivElement>(null);
   const productPickerRef = useRef<HTMLDivElement>(null);
   const [activeProductIndex, setActiveProductIndex] = useState(0);
-  const quantityRefs = useRef(new Map<string, HTMLInputElement>());
+  const editorCellRefs = useRef(new Map<string, HTMLInputElement>());
   const productItems = useMemo(
     () => products.data?.pages.flatMap((page) => page.items) ?? [], [products.data],
   );
@@ -495,6 +511,7 @@ function ReceiptEditor({
   }, [productMenuOpen]);
 
   useEffect(() => setActiveProductIndex(0), [productSearch, includeUnassociated, draft?.supplierId]);
+  useActiveProductOptionScroll(productListRef, activeProductIndex, productMenuOpen, productItems.length);
 
   const withholdingPreviewReady = Boolean(
     open && businessId && draft?.supplierId && draft.supplierInvoiceDate &&
@@ -550,6 +567,16 @@ function ReceiptEditor({
   if (!draft || !businessId) return null;
   const totals = calculateGoodsReceiptTotals(draft.lines);
   const mainRate = draft.currencyCode === "COP" ? 1 : draft.exchangeRate;
+  const previewCostDocuments = editingCostDocument
+    ? draft.additionalCostDocuments.some(document => document.costDocumentId === editingCostDocument.costDocumentId)
+      ? draft.additionalCostDocuments.map(document => document.costDocumentId === editingCostDocument.costDocumentId
+        ? editingCostDocument : document)
+      : [...draft.additionalCostDocuments, editingCostDocument]
+    : draft.additionalCostDocuments;
+  const purchaseCostPreview = previewGoodsReceiptPurchaseCosts(
+    draft.lines, draft.currencyCode, draft.exchangeRate, previewCostDocuments,
+  );
+  const purchaseCostByLine = new Map(purchaseCostPreview.map(line => [line.lineNumber, line]));
   const mainInventoryCost = draft.lines.reduce((sum, line) => {
     const calculated = calculateGoodsReceiptLine(line);
     return sum + (calculated.net + (line.taxTreatment === "CapitalizedCost" ? calculated.tax : 0)) * mainRate;
@@ -737,7 +764,7 @@ function ReceiptEditor({
     change({ lines });
     setProductSearch("");
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      const quantity = quantityRefs.current.get(lines[lineIndex].productId);
+      const quantity = editorCellRefs.current.get(editorCellKey(lines[lineIndex].productId, "quantity"));
       quantity?.focus();
       quantity?.select();
       quantity?.scrollIntoView({ block: "nearest" });
@@ -780,15 +807,25 @@ function ReceiptEditor({
     }
   };
 
-  const focusQuantity = (index: number) => {
-    if (draft.lines.length === 0) return;
-    const bounded = nextGoodsReceiptQuantityIndex(index, 0, draft.lines.length);
-    quantityRefs.current.get(draft.lines[bounded].productId)?.focus();
-  };
-
-  const moveQuantityFocus = (productId: string, offset: number) => {
-    const index = draft.lines.findIndex((line) => line.productId === productId);
-    if (index >= 0) focusQuantity(index + offset);
+  const moveEditorFocus = (
+    event: KeyboardEvent<HTMLInputElement>,
+    productId: string,
+    field: GoodsReceiptEditorField,
+  ) => {
+    const rowIndex = draft.lines.findIndex(line => line.productId === productId);
+    const target = nextGoodsReceiptEditorTarget(rowIndex, field, event.key, draft.lines.length);
+    if (!target) return;
+    event.preventDefault();
+    if (target.kind === "product-search") {
+      scanRef.current?.focus();
+      scanRef.current?.select();
+      return;
+    }
+    const nextLine = draft.lines[target.rowIndex];
+    const input = editorCellRefs.current.get(editorCellKey(nextLine.productId, target.field));
+    input?.focus();
+    input?.select();
+    input?.scrollIntoView({ block: "nearest" });
   };
 
   const capture = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -1113,7 +1150,7 @@ function ReceiptEditor({
                 }
               }}>
               {productItems.map((product, index) =>
-                <button key={product.productId} type="button" role="option" aria-selected={index === activeProductIndex}
+                <button key={product.productId} type="button" role="option" data-product-option-index={index} aria-selected={index === activeProductIndex}
                   className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left ${index === activeProductIndex ? "bg-emerald-50" : "hover:bg-muted"}`}
                   onMouseEnter={() => setActiveProductIndex(index)}
                   onClick={() => selectProduct(product)}
@@ -1146,13 +1183,12 @@ function ReceiptEditor({
               <thead className="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <tr><th className="w-[34%] px-4 py-3">Producto</th><th className="w-[17%] px-3 py-3">Cantidad recibida</th>
                   <th className="w-[14%] px-3 py-3">Costo unitario</th><th className="w-[12%] px-3 py-3">Descuento</th>
-                  <th className="w-[7%] px-3 py-3 text-center">IVA</th><th className="w-[11%] px-3 py-3 text-right">Factura / inventario</th>
+                  <th className="w-[7%] px-3 py-3 text-center">IVA</th><th className="w-[11%] px-3 py-3 text-right">Costo compra</th>
                   <th className="w-[5%]" /></tr>
               </thead>
               <tbody>{draft.lines.map((line) => {
                 const calculatedLine = calculateGoodsReceiptLine(line);
-                const lineInventoryCost = (calculatedLine.net +
-                  (line.taxTreatment === "CapitalizedCost" ? calculatedLine.tax : 0)) * mainRate;
+                const costPreview = purchaseCostByLine.get(line.lineNumber);
                 return <tr key={line.productId} className="border-t align-top">
                   <td className="break-words px-4 py-3"><p className="font-semibold">{line.description}</p>
                     <p className="text-xs text-muted-foreground">IVA de compra {line.taxRate} % · {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}</p>
@@ -1160,8 +1196,9 @@ function ReceiptEditor({
                     <p className="text-xs text-muted-foreground">{line.presentationQuantity} {line.presentationName.toLowerCase()} × {line.unitsPerPresentation} = {line.quantity} {goodsReceiptUnitLabel(line.baseUnitCode, line.quantity)}</p></td>
                   <td className="px-3 py-2"><Input type="number" min="0.000001" step="0.001"
                     ref={(element) => {
-                      if (element) quantityRefs.current.set(line.productId, element);
-                      else quantityRefs.current.delete(line.productId);
+                      const key = editorCellKey(line.productId, "quantity");
+                      if (element) editorCellRefs.current.set(key, element);
+                      else editorCellRefs.current.delete(key);
                     }}
                     value={line.presentationQuantity}
                     aria-label={`Cantidad en ${line.presentationName}`}
@@ -1169,15 +1206,7 @@ function ReceiptEditor({
                       const presentationQuantity = Number(event.target.value);
                       updateLine(line.productId, { presentationQuantity, quantity: calculateBaseQuantity(presentationQuantity, line.unitsPerPresentation) });
                     }}
-                    onKeyDown={(event) => {
-                      if (event.key === "ArrowDown") {
-                        event.preventDefault(); moveQuantityFocus(line.productId, 1);
-                      } else if (event.key === "ArrowUp") {
-                        event.preventDefault(); moveQuantityFocus(line.productId, -1);
-                      } else if (event.key === "Enter") {
-                        event.preventDefault(); scanRef.current?.focus(); scanRef.current?.select();
-                      }
-                    }} />
+                    onKeyDown={(event) => moveEditorFocus(event, line.productId, "quantity")} />
                     {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) > 1 && <Select
                       value={line.unitsPerPresentation === 1 ? "base" : "package"}
                       onValueChange={(value) => {
@@ -1198,17 +1227,33 @@ function ReceiptEditor({
                       placeholder="Motivo obligatorio del excedente" maxLength={500} />}
                   </td>
                   <td className="px-3 py-2"><FormattedNumberInput kind="currency"
+                    ref={(element) => {
+                      const key = editorCellKey(line.productId, "unitCost");
+                      if (element) editorCellRefs.current.set(key, element);
+                      else editorCellRefs.current.delete(key);
+                    }}
                     ariaLabel={`Costo unitario de ${line.description}`}
                     value={line.unitCost} onValueChange={(value) =>
-                      updateLine(line.productId, { unitCost: value ?? 0 })} /></td>
+                      updateLine(line.productId, { unitCost: value ?? 0 })}
+                    onKeyDown={(event) => moveEditorFocus(event, line.productId, "unitCost")} /></td>
                   <td className="px-3 py-2"><FormattedNumberInput kind="currency"
+                    ref={(element) => {
+                      const key = editorCellKey(line.productId, "discount");
+                      if (element) editorCellRefs.current.set(key, element);
+                      else editorCellRefs.current.delete(key);
+                    }}
                     ariaLabel={`Descuento de ${line.description}`}
                     value={line.discountAmount} onValueChange={(value) =>
-                      updateLine(line.productId, { discountAmount: value ?? 0 })} /></td>
+                      updateLine(line.productId, { discountAmount: value ?? 0 })}
+                    onKeyDown={(event) => moveEditorFocus(event, line.productId, "discount")} /></td>
                   <td className="px-3 py-4 text-center">{line.taxRate} %</td>
                   <td className="break-words px-3 py-4 text-right text-xs">
-                    <p className="font-semibold">Factura {formatCurrency(calculatedLine.total)} {draft.currencyCode}</p>
-                    <p className="mt-1 text-muted-foreground">Al inventario {formatCurrency(lineInventoryCost)} COP</p>
+                    <p className="font-semibold">{costPreview?.purchaseUnitCost == null
+                      ? "—" : formatCurrency(costPreview.purchaseUnitCost)} COP</p>
+                    <p className="mt-1 text-muted-foreground">Factura {formatCurrency(calculatedLine.total)} {draft.currencyCode}</p>
+                    {line.quantity > 0 && (costPreview?.allocatedAdditionalCost ?? 0) > 0 && <p className="text-muted-foreground">
+                      Incluye +{formatCurrency(costPreview!.allocatedAdditionalCost / line.quantity)} prorrateado
+                    </p>}
                   </td>
                   <td className="pr-3"><Button type="button" size="icon" variant="ghost"
                     aria-label={`Eliminar ${line.description}`}
@@ -1303,6 +1348,20 @@ function ReceiptEditor({
                   </div>;
                 })}
                 <Button type="button" variant="outline" size="sm" onClick={() => addCostLine(document)}><Plus className="mr-2 h-4 w-4" />Agregar concepto</Button>
+              </div>
+              <div className="rounded-xl border bg-emerald-50/40 p-3">
+                <p className="text-sm font-semibold">Prorrateo en productos · vista previa</p>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  {draft.lines.map(product => {
+                    const preview = purchaseCostByLine.get(product.lineNumber);
+                    return <div key={product.productId} className="flex items-start justify-between gap-3 rounded-lg bg-background px-3 py-2 text-sm">
+                      <span className="min-w-0"><strong className="block truncate">{product.description}</strong>
+                        <small className="text-muted-foreground">Costo compra / unidad</small></span>
+                      <span className="shrink-0 text-right"><strong className="block">{preview?.purchaseUnitCost == null ? "—" : formatCurrency(preview.purchaseUnitCost)}</strong>
+                        <small className="text-muted-foreground">+{formatCurrency(preview?.allocatedAdditionalCost ?? 0)} asignado</small></span>
+                    </div>;
+                  })}
+                </div>
               </div>
               <div className="grid gap-3 rounded-xl border bg-background p-3 text-sm md:grid-cols-2 xl:grid-cols-5">
                 <DocumentTotal label="Subtotal" value={documentNet} suffix={document.currencyCode} />
@@ -1571,12 +1630,16 @@ function CostDocumentGrid({ title, documents, supplierNames, onOpen, onRemove }:
   </section>;
 }
 
+function editorCellKey(productId: string, field: GoodsReceiptEditorField) {
+  return `${productId}:${field}`;
+}
+
 function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return <div className="space-y-2"><Label>{label}</Label>{children}</div>;
 }
-function Amount({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
+function Amount({ label, value, strong = false }: { label: string; value: number | null; strong?: boolean }) {
   return <div className={`flex justify-between ${strong ? "border-t border-white/20 pt-3 text-lg" : "text-sm"}`}>
-    <dt className="text-slate-300">{label}</dt><dd className="font-semibold">{formatCurrency(value)}</dd>
+    <dt className="text-slate-300">{label}</dt><dd className="font-semibold">{value === null ? "No disponible" : formatCurrency(value)}</dd>
   </div>;
 }
 function DocumentTotal({ label, value, suffix, strong = false }: {

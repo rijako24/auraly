@@ -100,7 +100,8 @@ public sealed record PriceRevisionListItem(
     string ConcurrencyToken,
     string Origin,
     decimal? AverageUnitCost,
-    decimal? LatestUnitCost);
+    decimal? LatestUnitCost,
+    decimal? LatestLandedUnitCost);
 
 public sealed record PriceRevisionPage(
     IReadOnlyList<PriceRevisionListItem> Items,

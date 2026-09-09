@@ -82,6 +82,11 @@ login solicita una única actualización de identidades con la credencial del
 equipo y vuelve a validar localmente. Una contraseña incorrecta de un usuario ya
 conocido no provoca llamadas al servidor.
 
+Cada equipo conserva una sola autenticación local activa: un login nuevo cierra
+el token local anterior y su navegador vuelve al login al recibir
+`LoginReplaced`. El token nuevo no se invalida por una concesión histórica ni por
+una respuesta tardía originada con el token anterior.
+
 ## Menú y módulos
 
 Después del login el menú se deriva de permisos efectivos:

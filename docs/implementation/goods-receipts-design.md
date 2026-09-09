@@ -354,6 +354,14 @@ Todo efecto monetario de la recepción entra al motor contable. Purchasing captu
 - diferencias en cambio;
 - notas crédito, devoluciones y reversos.
 
+El cálculo de retenciones termina antes de entrar a Accounting. Purchasing invoca
+el motor tributario con el perfil propio del proveedor, guarda el snapshot de
+bruto, líneas retenidas y neto, y crea la cuenta por pagar por ese neto. Accounting
+no invoca `WithholdingEngine`, no vuelve a seleccionar reglas y no deriva una
+retención: únicamente contabiliza el snapshot persistido y rechaza documentos que
+no concilien. Así, reintentos o cambios posteriores de configuración no alteran
+una recepción ya confirmada.
+
 La pantalla de recepción no pide una cuenta contable. El usuario elige el tipo económico real —flete, seguro, arancel, agencia, manejo u otro costo directo— y el tratamiento permitido. El motor resuelve la cuenta efectiva mediante el sistema vigente de categorías y `AccountCategoryMappings`, con alcance tenant/business y fechas de vigencia.
 
 Se agregan únicamente las categorías contables que representan comportamientos realmente distintos y no existen hoy:
@@ -514,3 +522,26 @@ manejo, IVA de importación u otro costo directo. “Agregar nacionalización”
 es otro proceso: era una segunda entrada al mismo editor y se eliminó. El tipo
 `ImportDeclaration` se conserva porque habilita la base aduanera del IVA y la
 clasificación fiscal correspondiente dentro de la factura.
+
+## Captura operativa y confirmación
+
+La tabla de captura muestra **Costo compra** por unidad: mercancía neta, IVA que
+sea mayor valor y costos adicionales capitalizables ya prorrateados. La vista
+previa se recalcula mientras se edita cada factura y usa las mismas reglas de valor,
+cantidad, peso, volumen, reparto igual o manual que el calculador autoritativo del
+backend. La confirmación siempre recalcula y valida el snapshot antes de persistirlo.
+
+El selector compartido de productos mantiene visible la opción activa al navegar
+con flechas. En recepción, Enter agrega y enfoca cantidad; izquierda/derecha recorren
+cantidad, costo unitario y descuento, arriba/abajo conservan la columna, y Enter
+regresa al producto.
+
+Aceptar una recepción persiste primero encabezado, líneas, payload y
+`DocumentProcessingJob` en una sola transacción. Después intenta publicar la señal
+directamente con el sender canónico de Service Bus, con un presupuesto máximo de
+dos segundos; no existe un buffer intermedio en memoria. Si el broker no confirma
+dentro de ese presupuesto, la respuesta no pierde el documento ya aceptado: el
+hosted service canónico vuelve a publicar los jobs pendientes desde
+`DocumentProcessingJobs`. Conteos, ajustes, averías, conversiones y ambos extremos
+de un traslado comparten el mismo publicador; no se crea otra tabla, otro motor,
+otro writer ni otro servicio desplegable.

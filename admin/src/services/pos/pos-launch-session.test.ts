@@ -5,11 +5,17 @@ import {
   installedPosLaunchDestination,
   usesEnrolledPosRuntime,
 } from "./pos-launch-session";
+import { isCurrentEdgeUserSession } from "./pos-edge-session";
 import {
   canIssuePosDocument,
   fiscalConfigurationRequiredMessage,
   fiscalLaunchReadinessError,
 } from "./pos-fiscal-guard";
+
+test("a delayed response from an old Edge login cannot clear the new login", () => {
+  assert.equal(isCurrentEdgeUserSession("session-a", "session-b"), false);
+  assert.equal(isCurrentEdgeUserSession("session-b", "session-b"), true);
+});
 
 test("electronic invoices require active fiscal configuration", () => {
   assert.equal(canIssuePosDocument("SalesInvoice", false), false);

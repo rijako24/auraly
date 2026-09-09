@@ -10,6 +10,39 @@ public sealed class SqlDocumentProcessingWorkSource(
     TimeProvider timeProvider)
     : IDocumentProcessingWorkSource
 {
+    public async Task<IReadOnlyList<DocumentProcessingSignal>> ListReadySignalsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TOP(@Take) j.JobId,j.BusinessId,j.DocumentId,j.DocumentType,
+              CAST(CASE WHEN j.DocumentType=N'PosSale'
+                    AND (JSON_VALUE(p.PayloadJson,'$.fiscalHabilitationOnly')=N'true'
+                      OR JSON_VALUE(p.PayloadJson,'$.FiscalHabilitationOnly')=N'true')
+                THEN 0 ELSE 1 END AS bit) AS EconomicEffectsEnabled
+            FROM dbo.DocumentProcessingJobs j
+            INNER JOIN dbo.BusinessProcessingCursors cursorState
+              ON cursorState.BusinessId=j.BusinessId
+            INNER JOIN dbo.DocumentProcessingPayloads p
+              ON p.DocumentId=j.DocumentId AND p.DocumentType=j.DocumentType
+            WHERE j.Status IN(N'Pending',N'RetryScheduled')
+              AND j.AvailableAt<=SYSDATETIMEOFFSET()
+              AND j.ProcessingSequence=cursorState.LastCompletedSequence+1
+            ORDER BY j.CreatedAt,j.JobId;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@Take", Math.Clamp(take, 1, 500));
+        var result = new List<DocumentProcessingSignal>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result.Add(new(
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+                reader.GetString(3), reader.GetBoolean(4)));
+        return result;
+    }
+
     public async Task<DocumentProcessingWork> LoadAsync(
         DocumentProcessingSignal signal,
         CancellationToken cancellationToken)

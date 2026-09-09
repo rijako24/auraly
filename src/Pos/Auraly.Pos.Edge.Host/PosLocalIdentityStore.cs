@@ -489,7 +489,7 @@ public sealed partial class PosLocalIdentityStore(
             close.Transaction = transaction;
             close.CommandText = """
                 UPDATE PosLocalUserSessions
-                SET EndedAt=$now,EndReason='UserChanged'
+                SET EndedAt=$now,EndReason='ReplacedByNewLogin'
                 WHERE EndedAt IS NULL;
                 UPDATE PosOfflineUsers
                 SET FailedCount=0,LockedUntil=NULL
@@ -606,23 +606,6 @@ public sealed partial class PosLocalIdentityStore(
             """;
         command.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
         command.Parameters.AddWithValue("$hash", TokenHash(token));
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    public async Task RevokeActiveSessionsAsync(
-        string reason,
-        CancellationToken cancellationToken = default)
-    {
-        await using var connection = new SqliteConnection(connectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            UPDATE PosLocalUserSessions
-            SET EndedAt=$now,EndReason=$reason
-            WHERE EndedAt IS NULL;
-            """;
-        command.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
-        command.Parameters.AddWithValue("$reason", reason);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

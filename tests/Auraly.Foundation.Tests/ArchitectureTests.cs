@@ -290,6 +290,73 @@ public sealed class ArchitectureTests
             Assert.Contains(queue.Setting, readiness, StringComparison.Ordinal);
         }
     }
+
+    [Fact]
+    public void Accounting_only_consumes_persisted_withholding_snapshots()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var accountingRoot = Path.Combine(repositoryRoot, "src", "Modules", "Accounting");
+        var source = string.Join(
+            Environment.NewLine,
+            Directory.GetFiles(accountingRoot, "*.cs", SearchOption.AllDirectories)
+                .Where(path => !path.Contains(
+                    $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(File.ReadAllText));
+
+        Assert.Contains("DocumentWithholdingSnapshots", source, StringComparison.Ordinal);
+        Assert.Contains("DocumentWithholdingLines", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WithholdingEngine", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WithholdingService", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CalculateWithholding", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Purchase_and_pos_surfaces_keep_withholding_and_net_amount_visible()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var goodsReceipt = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(dashboard)", "dashboard",
+            "purchasing", "goods-receipts", "page.tsx"));
+        var pos = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
+        var payment = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos", "pos-payment-dialog.tsx"));
+        var escReceipt = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Infrastructure",
+            "EscPosReceiptPrinter.cs"));
+
+        Assert.Contains("Total retenciones", goodsReceipt, StringComparison.Ordinal);
+        Assert.Contains("Cuentas por pagar netas", goodsReceipt, StringComparison.Ordinal);
+        Assert.Contains("Neto por pagar", goodsReceipt, StringComparison.Ordinal);
+        Assert.Contains("TotalRow label=\"Retenciones\"", pos, StringComparison.Ordinal);
+        Assert.Contains("Neto por cobrar", pos, StringComparison.Ordinal);
+        Assert.Contains("PaymentMetric label=\"Retenciones\"", payment, StringComparison.Ordinal);
+        Assert.Contains("Total retenciones", escReceipt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Inventory_confirmations_share_the_time_bounded_document_queue_publisher()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var inventoryService = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Modules", "Inventory",
+            "Auraly.Application.Inventory", "InventoryOperationService.cs"));
+        var serviceBusPublisher = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "API", "Auraly.Api",
+            "ServiceBusDocumentProcessingHostedService.cs"));
+
+        Assert.Contains("IDocumentProcessingSignalPublisher signals", inventoryService, StringComparison.Ordinal);
+        Assert.Contains("ConfirmCountAsync", inventoryService, StringComparison.Ordinal);
+        Assert.Contains("ConfirmAdjustmentAsync", inventoryService, StringComparison.Ordinal);
+        Assert.Contains("DispatchTransferAsync", inventoryService, StringComparison.Ordinal);
+        Assert.Contains("ReceiveTransferAsync", inventoryService, StringComparison.Ordinal);
+        Assert.Contains("ConfirmDamageAsync", inventoryService, StringComparison.Ordinal);
+        Assert.Contains("ConfirmConversionAsync", inventoryService, StringComparison.Ordinal);
+        Assert.Contains("TimeSpan.FromSeconds(2)", serviceBusPublisher, StringComparison.Ordinal);
+        Assert.DoesNotContain("Channel<", serviceBusPublisher, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -10,6 +10,7 @@ import type { TenantBranding } from "@/services/api/tenants";
 import { printWorkSessionClosure, workSessionClosureHtml } from "./pos-work-session-close";
 import { announceSessionReplacement } from "@/lib/auth-session";
 import { buildLoginRedirect } from "@/lib/login-redirect";
+import { isCurrentEdgeUserSession } from "./pos-edge-session";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -339,8 +340,16 @@ type PosEdgeCompleteSaleResult = Omit<PosCompleteSaleResult, "receipt"> & {
   receipt: PosEdgePrintableReceipt;
 };
 
-function announceEdgeLoginReplacement(status: number, code?: string): void {
+function announceEdgeLoginReplacement(
+  status: number,
+  code: string | undefined,
+  requestSessionToken: string | null,
+): void {
   if (status !== 401 || code !== "LoginReplaced" || typeof window === "undefined") return;
+  if (!isCurrentEdgeUserSession(
+    requestSessionToken,
+    window.localStorage.getItem("auraly.pos.user-session"),
+  )) return;
   window.localStorage.removeItem("auraly.pos.user-session");
   announceSessionReplacement(buildLoginRedirect(
     window.location.pathname,
@@ -947,16 +956,20 @@ export class PosEdgeClient implements PosClient {
   }
 
   async logout() {
+    const sessionToClose = this.userSessionToken;
     try {
-      if (this.userSessionToken) {
+      if (sessionToClose) {
         await this.requestVoid("/edge/v1/auth/logout", { method: "POST" });
       }
     } catch {
       // Closing the browser-held session must remain possible while Edge restarts
       // or the server is unavailable. The opaque local token is removed below.
     } finally {
-      this.userSessionToken = null;
-      window.localStorage.removeItem("auraly.pos.user-session");
+      if (this.userSessionToken === sessionToClose) this.userSessionToken = null;
+      if (isCurrentEdgeUserSession(
+        sessionToClose,
+        window.localStorage.getItem("auraly.pos.user-session"),
+      )) window.localStorage.removeItem("auraly.pos.user-session");
     }
   }
 
@@ -1265,14 +1278,15 @@ export class PosEdgeClient implements PosClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const requestSessionToken = this.userSessionToken;
     const response = await fetch(`${EDGE_BASE_URL}${path}`, {
       ...init,
       cache: "no-store",
       headers: {
         "Content-Type": "application/json",
         "X-Auraly-Edge-Session": this.sessionToken,
-        ...(this.userSessionToken
-          ? { "X-Auraly-User-Session": this.userSessionToken }
+        ...(requestSessionToken
+          ? { "X-Auraly-User-Session": requestSessionToken }
           : {}),
         ...init.headers,
       },
@@ -1283,7 +1297,7 @@ export class PosEdgeClient implements PosClient {
       try {
         const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
         detail = problem.detail || problem.title || detail;
-        announceEdgeLoginReplacement(response.status, problem.code || problem.title);
+        announceEdgeLoginReplacement(response.status, problem.code || problem.title, requestSessionToken);
         throw new PosEdgeError(detail, response.status, problem.code || problem.title);
       } catch (parsed) {
         if (parsed instanceof PosEdgeError) throw parsed;
@@ -1305,14 +1319,15 @@ export class PosEdgeClient implements PosClient {
     init: RequestInit,
     acceptedStatuses: number[],
   ): Promise<T> {
+    const requestSessionToken = this.userSessionToken;
     const response = await fetch(`${EDGE_BASE_URL}${path}`, {
       ...init,
       cache: "no-store",
       headers: {
         "Content-Type": "application/json",
         "X-Auraly-Edge-Session": this.sessionToken,
-        ...(this.userSessionToken
-          ? { "X-Auraly-User-Session": this.userSessionToken }
+        ...(requestSessionToken
+          ? { "X-Auraly-User-Session": requestSessionToken }
           : {}),
         ...init.headers,
       },
@@ -1324,7 +1339,7 @@ export class PosEdgeClient implements PosClient {
     try {
       const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
       detail = problem.detail || problem.title || detail;
-      announceEdgeLoginReplacement(response.status, problem.code || problem.title);
+      announceEdgeLoginReplacement(response.status, problem.code || problem.title, requestSessionToken);
       throw new PosEdgeError(detail, response.status, problem.code || problem.title);
     } catch (parsed) {
       if (parsed instanceof PosEdgeError) throw parsed;
@@ -1333,14 +1348,15 @@ export class PosEdgeClient implements PosClient {
   }
 
   private async requestVoid(path: string, init: RequestInit = {}): Promise<void> {
+    const requestSessionToken = this.userSessionToken;
     const response = await fetch(`${EDGE_BASE_URL}${path}`, {
       ...init,
       cache: "no-store",
       headers: {
         "Content-Type": "application/json",
         "X-Auraly-Edge-Session": this.sessionToken,
-        ...(this.userSessionToken
-          ? { "X-Auraly-User-Session": this.userSessionToken }
+        ...(requestSessionToken
+          ? { "X-Auraly-User-Session": requestSessionToken }
           : {}),
         ...init.headers,
       },
@@ -1351,7 +1367,7 @@ export class PosEdgeClient implements PosClient {
       try {
         const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
         detail = problem.detail || problem.title || detail;
-        announceEdgeLoginReplacement(response.status, problem.code || problem.title);
+        announceEdgeLoginReplacement(response.status, problem.code || problem.title, requestSessionToken);
       } catch {
         // The local host may intentionally return plain text for simple failures.
       }

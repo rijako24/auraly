@@ -88,6 +88,23 @@ public sealed class SqlPricingStore(
                 AND (b.SharesProductPrices=1 AND balanceBusiness.SharesProductPrices=1
                      OR balance.BusinessId=@BusinessId)
             ) averageCost
+            OUTER APPLY (
+              SELECT TOP(1)
+                receiptLine.RecognizedInventoryCostAmount / NULLIF(receiptLine.Quantity,0)
+                  AS LatestLandedUnitCost
+              FROM dbo.GoodsReceiptLines receiptLine
+              INNER JOIN dbo.GoodsReceipts receipt
+                ON receipt.GoodsReceiptId=receiptLine.GoodsReceiptId
+              INNER JOIN dbo.Businesses receiptBusiness
+                ON receiptBusiness.BusinessId=receipt.BusinessId
+              WHERE receiptLine.ProductId=candidate.ProductId
+                AND receipt.Status=N'Processed'
+                AND receiptBusiness.TenantId=@TenantId
+                AND (b.SharesProductPrices=1 AND receiptBusiness.SharesProductPrices=1
+                     OR receipt.BusinessId=@BusinessId)
+                AND receiptLine.Quantity>0
+              ORDER BY receipt.ReceivedAt DESC,receipt.GoodsReceiptId DESC,receiptLine.LineNumber DESC
+            ) latestLandedCost
             WHERE b.TenantId=@TenantId
               AND (@Status IS NULL OR candidate.Status=@Status
                    OR (@Status=N'Pending' AND candidate.Status IN(N'PendingReview',N'Approved')))
@@ -108,7 +125,8 @@ public sealed class SqlPricingStore(
               SupplierName,PreviousObservedUnitCost,ObservedUnitCost,CurrentSalePrice,CurrentPricePublishedAt,CurrentMarginPercent,
               TargetMarginPercent,SuggestedSalePrice,SalesTaxRate,EffectiveMarginAfterRounding,
               candidate.Status,candidate.CreatedAt,candidate.RowVersion,candidate.Origin,
-              averageCost.AverageUnitCost,latestCost.LatestUnitCost
+              averageCost.AverageUnitCost,latestCost.LatestUnitCost,
+              latestLandedCost.LatestLandedUnitCost
             """ + Environment.NewLine + rows + Environment.NewLine + """
             ORDER BY candidate.CreatedAt DESC,candidate.CandidateId
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
@@ -128,7 +146,8 @@ public sealed class SqlPricingStore(
                 reader.IsDBNull(12) ? null : reader.GetDecimal(12),reader.GetDecimal(13),reader.GetDecimal(14),
                 reader.IsDBNull(15) ? null : reader.GetDecimal(15),reader.GetString(16),
                 reader.GetDateTimeOffset(17),Convert.ToBase64String(reader.GetFieldValue<byte[]>(18)),reader.GetString(19),
-                reader.IsDBNull(20) ? null : reader.GetDecimal(20),reader.IsDBNull(21) ? null : reader.GetDecimal(21)));
+                reader.IsDBNull(20) ? null : reader.GetDecimal(20),reader.IsDBNull(21) ? null : reader.GetDecimal(21),
+                reader.IsDBNull(22) ? null : reader.GetDecimal(22)));
         return new(items, query.Page, query.PageSize, total);
     }
     public async Task<PriceProposalSource?> GetProposalAsync(

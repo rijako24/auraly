@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useGoodsReceiptProducts } from "@/hooks/use-goods-receipts";
 import { formatCurrency } from "@/lib/utils";
 import type { GoodsReceiptProduct } from "@/services/api/goods-receipts";
+import { useActiveProductOptionScroll } from "./use-active-product-option-scroll";
 
 interface SupplierProductPickerProps {
   supplierId?: string;
@@ -30,6 +31,7 @@ export const SupplierProductPicker = forwardRef<HTMLInputElement, SupplierProduc
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const productsQuery = useGoodsReceiptProducts(supplierId, search, includeUnassociated);
   const products = useMemo(
     () => productsQuery.data?.pages.flatMap((page) => page.items) ?? [],
@@ -46,6 +48,7 @@ export const SupplierProductPicker = forwardRef<HTMLInputElement, SupplierProduc
     document.addEventListener("pointerdown", closeOnOutsidePointer, true);
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
   }, [open]);
+  useActiveProductOptionScroll(listRef, activeIndex, open, products.length);
 
   function choose(product: GoodsReceiptProduct) {
     setSearch("");
@@ -111,9 +114,10 @@ export const SupplierProductPicker = forwardRef<HTMLInputElement, SupplierProduc
         <Plus className="mr-2 h-4 w-4" /> Agregar
       </Button>
     </div>
-    {open && products.length > 0 && <div role="listbox" onScroll={onScroll}
+    {open && products.length > 0 && <div ref={listRef} role="listbox" onScroll={onScroll}
       className="absolute z-40 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border bg-background p-2 shadow-xl [&_strong]:font-normal">
       {products.map((product, index) => <button key={product.productId} type="button" role="option"
+        data-product-option-index={index}
         aria-selected={index === activeIndex}
         className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left ${index === activeIndex ? "bg-emerald-50" : "hover:bg-muted"}`}
         onMouseEnter={() => setActiveIndex(index)} onMouseDown={(event) => event.preventDefault()}

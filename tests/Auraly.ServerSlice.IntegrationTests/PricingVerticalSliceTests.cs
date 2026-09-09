@@ -58,6 +58,8 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pricing/proposals?page=1&pageSize=20&status=PendingReview");
         var proposal = Assert.Single(pending!.Items.Where(x => x.ProductId == productId));
         Assert.Equal(8_500m, proposal.ObservedUnitCost);
+        Assert.Equal(8_500m, proposal.LatestUnitCost);
+        Assert.Equal(8_500m, proposal.LatestLandedUnitCost);
         Assert.Equal(10_000m, proposal.CurrentSalePrice);
 
         using var calculatedResponse = await pricing.PostAsJsonAsync(

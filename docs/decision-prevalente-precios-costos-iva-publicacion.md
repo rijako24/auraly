@@ -271,3 +271,12 @@ Consulta realizada el 8 de agosto de 2026:
 - DIAN, Oficio 900227 de 2020: artículos 485, 488 y soporte del impuesto descontable. https://normograma.dian.gov.co/dian/compilacion/docs/oficio_dian_900227_2020.htm
 
 La configuración tributaria del producto facilita la operación, pero no sustituye la validación fiscal de cada documento ni constituye por sí sola asesoría tributaria.
+
+## 12. Referencias visibles para preparar precio
+
+La bandeja de preparación presenta juntas tres referencias sin cambiar su
+propietario: costo promedio ponderado de inventario, último costo del proveedor
+(mercancía neta comparable) y último costo puesto por unidad reconocido en una
+recepción procesada. La base de la propuesta continúa obedeciendo
+`Tenant.InventoryCostBasis`; mostrar las tres referencias no recalcula ni sustituye
+esa política.

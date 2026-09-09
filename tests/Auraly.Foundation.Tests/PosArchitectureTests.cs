@@ -448,8 +448,10 @@ public sealed class PosArchitectureTests
 
         Assert.Contains("const availabilityVersion = useRef(0)", dialog, StringComparison.Ordinal);
         Assert.Contains("availabilityProductId !== selectedProduct.productId", dialog, StringComparison.Ordinal);
-        Assert.Contains("flex min-h-44 shrink-0 flex-col", dialog, StringComparison.Ordinal);
-        Assert.Contains("min-h-24 flex-1 overflow-hidden", dialog, StringComparison.Ordinal);
+        Assert.Contains("h-[calc(100dvh-2rem)] max-h-[48rem]", dialog, StringComparison.Ordinal);
+        Assert.Contains("flex h-44 shrink-0 flex-col", dialog, StringComparison.Ordinal);
+        Assert.Contains("min-h-0 flex-1 overflow-y-auto", dialog, StringComparison.Ordinal);
+        Assert.Contains("availabilityPending ? \"visible\" : \"invisible\"", dialog, StringComparison.Ordinal);
         Assert.Contains("aria-busy=\"true\"", dialog, StringComparison.Ordinal);
         Assert.Contains("Consultando existencias", dialog, StringComparison.Ordinal);
         Assert.Contains("El producto local sigue disponible", dialog, StringComparison.Ordinal);
@@ -484,6 +486,35 @@ public sealed class PosArchitectureTests
         Assert.Contains("Probar balanza", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("receiptBrandMarkup(branding ??", onlineClient, StringComparison.Ordinal);
         Assert.DoesNotContain("<h1>Auraly</h1>", onlineClient, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Shared_inventory_product_pickers_keep_the_active_option_visible()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var hook = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "components", "products",
+            "use-active-product-option-scroll.ts"));
+        var productPicker = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "components", "products",
+            "product-picker.tsx"));
+        var supplierPicker = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "components", "products",
+            "supplier-product-picker.tsx"));
+        var inventoryOperation = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "components", "inventory",
+            "inventory-operation-workspace.tsx"));
+        var inventoryCount = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "components", "inventory",
+            "inventory-physical-count-workspace.tsx"));
+
+        Assert.Contains("scrollIntoView({ block: \"nearest\" })", hook, StringComparison.Ordinal);
+        Assert.Contains("useActiveProductOptionScroll(listRef", productPicker, StringComparison.Ordinal);
+        Assert.Contains("data-product-option-index={index}", productPicker, StringComparison.Ordinal);
+        Assert.Contains("useActiveProductOptionScroll(listRef", supplierPicker, StringComparison.Ordinal);
+        Assert.Contains("data-product-option-index={index}", supplierPicker, StringComparison.Ordinal);
+        Assert.Contains("<ProductPicker", inventoryOperation, StringComparison.Ordinal);
+        Assert.Contains("<ProductPicker", inventoryCount, StringComparison.Ordinal);
     }
 
     [Fact]

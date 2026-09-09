@@ -9,12 +9,36 @@ namespace Auraly.Api;
 
 public sealed record DocumentProcessingServiceBusOptions(string QueueName);
 
-public sealed class ServiceBusDocumentProcessingPublisher(ServiceBusSender sender)
+public sealed class ServiceBusDocumentProcessingPublisher(
+    ServiceBusSender sender,
+    ILogger<ServiceBusDocumentProcessingPublisher> logger)
     : IDocumentProcessingSignalPublisher
 {
-    public async Task PublishAsync(DocumentProcessingSignal signal, CancellationToken cancellationToken = default)
+    private static readonly TimeSpan SendBudget = TimeSpan.FromSeconds(2);
+
+    public async Task PublishAsync(
+        DocumentProcessingSignal signal,
+        CancellationToken cancellationToken = default)
     {
         DocumentProcessingSignalCodec.Validate(signal);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(SendBudget);
+        try
+        {
+            await sender.SendMessageAsync(CreateMessage(signal), timeout.Token);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException || timeout.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                exception,
+                "Service Bus did not accept movement {MovementId} within the request budget; the durable job remains pending for recovery.",
+                signal.MovementId);
+        }
+    }
+
+    internal static ServiceBusMessage CreateMessage(DocumentProcessingSignal signal)
+    {
         var message = new ServiceBusMessage(BinaryData.FromString(
             DocumentProcessingSignalCodec.Serialize(signal)))
         {
@@ -24,12 +48,13 @@ public sealed class ServiceBusDocumentProcessingPublisher(ServiceBusSender sende
             ContentType = "application/json"
         };
         message.ApplicationProperties["documentId"] = signal.DocumentId.ToString("D");
-        await sender.SendMessageAsync(message, cancellationToken);
+        return message;
     }
 }
 
 public sealed class DocumentProcessingHostedService(
     ServiceBusClient client,
+    ServiceBusSender sender,
     DocumentProcessingServiceBusOptions options,
     IServiceScopeFactory scopeFactory,
     FiscalProcessingCoordinator fiscalProcessing,
@@ -38,6 +63,8 @@ public sealed class DocumentProcessingHostedService(
     ILogger<DocumentProcessingHostedService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan RecoveryInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan RecoverySendBudget = TimeSpan.FromSeconds(2);
     private const int MaximumDeliveries = 5;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -55,6 +82,7 @@ public sealed class DocumentProcessingHostedService(
         processor.ProcessMessageAsync += ProcessMessageAsync;
         processor.ProcessErrorAsync += ProcessErrorAsync;
         await processor.StartProcessingAsync(stoppingToken);
+        var recovery = RecoverSignalsAsync(stoppingToken);
         try
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
@@ -65,7 +93,45 @@ public sealed class DocumentProcessingHostedService(
         finally
         {
             await processor.StopProcessingAsync(CancellationToken.None);
+            await IgnoreCancellation(recovery);
         }
+    }
+
+    private async Task RecoverSignalsAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(RecoveryInterval);
+        do
+        {
+            try
+            {
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var source = scope.ServiceProvider
+                    .GetRequiredService<IDocumentProcessingWorkSource>();
+                foreach (var signal in await source.ListReadySignalsAsync(100, cancellationToken))
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeout.CancelAfter(RecoverySendBudget);
+                    await sender.SendMessageAsync(
+                        ServiceBusDocumentProcessingPublisher.CreateMessage(signal),
+                        timeout.Token);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Document-processing signal recovery failed.");
+            }
+        }
+        while (await timer.WaitForNextTickAsync(cancellationToken));
+    }
+
+    private static async Task IgnoreCancellation(Task task)
+    {
+        try { await task; }
+        catch (OperationCanceledException) { }
     }
 
     private async Task ProcessMessageAsync(ProcessSessionMessageEventArgs args)

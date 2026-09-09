@@ -9,6 +9,7 @@ using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -592,6 +593,65 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Offline_customer_withholding_is_collected_net_and_travels_in_the_sale_and_receipt()
+    {
+        var customers = await Client.GetFromJsonAsync<CustomerSearchPageContract>(
+            "/edge/v1/customers?search=300&take=50");
+        var customer = Assert.Single(customers!.Items);
+        var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
+        Assert.NotNull(active);
+
+        var selectedResponse = await Client.PutAsJsonAsync(
+            $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
+            new SelectCustomerRequest(customer.CustomerId));
+        selectedResponse.EnsureSuccessStatusCode();
+        var captureResponse = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        captureResponse.EnsureSuccessStatusCode();
+        var draft = (await captureResponse.Content.ReadFromJsonAsync<PosCaptureResult>())!.Draft!;
+
+        var settlement = await Client.GetFromJsonAsync<WithholdingCalculationSnapshot>(
+            $"/edge/v1/drafts/{draft.DraftId.Value:D}/settlement");
+        Assert.NotNull(settlement);
+        Assert.Equal(draft.PayableAmount, settlement!.GrossAmount);
+        Assert.Equal(
+            decimal.Round(draft.UntaxedAmount * 0.025m, 4, MidpointRounding.AwayFromZero),
+            settlement.WithholdingTotal);
+        Assert.Equal(settlement.GrossAmount - settlement.WithholdingTotal, settlement.NetAmount);
+        Assert.Single(settlement.Lines);
+
+        var completedResponse = await Client.PostAsJsonAsync(
+            $"/edge/v1/drafts/{draft.DraftId.Value:D}/complete",
+            new CompleteDraftRequest(
+                null,
+                [new CompletePaymentRequest("Cash", settlement.NetAmount, null)]));
+        completedResponse.EnsureSuccessStatusCode();
+        var completed = await completedResponse.Content.ReadFromJsonAsync<CompletePosSaleResult>();
+        Assert.NotNull(completed);
+        Assert.Equal(settlement.WithholdingTotal, completed!.Receipt.WithholdingTotal);
+        Assert.Equal(settlement.NetAmount, completed.Receipt.NetPayableAmount);
+        Assert.Single(completed.Receipt.Withholdings!);
+        Assert.Equal(settlement.NetAmount, Assert.Single(completed.Receipt.Payments).Amount);
+
+        var printed = Assert.Single(_printer.Receipts);
+        Assert.Equal(settlement.WithholdingTotal, printed.WithholdingTotal);
+        Assert.Equal(settlement.NetAmount, printed.NetPayableAmount);
+        var rendered = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(printed));
+        Assert.Contains("Total retenciones", rendered);
+        Assert.Contains("Total", rendered);
+
+        using var scope = _factory!.Services.CreateScope();
+        var sales = scope.ServiceProvider.GetRequiredService<PosEdgeSaleStore>();
+        var pending = Assert.Single(await sales.GetPendingOutboxAsync());
+        var upload = PosSaleContractSerializer.Deserialize(pending.Payload);
+        Assert.Equal(settlement.WithholdingTotal,
+            upload.CommercialSnapshot.Withholding!.WithholdingTotal);
+        Assert.Equal(settlement.NetAmount, upload.CommercialSnapshot.NetPayableAmount);
+        Assert.Equal(settlement.NetAmount, Assert.Single(upload.Payments).Amount);
+    }
+
+    [Fact]
     public async Task Direct_print_failure_does_not_fail_or_leave_the_sale_active()
     {
         var capture = await Client.PostAsJsonAsync(
@@ -948,9 +1008,13 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         login.EnsureSuccessStatusCode();
         var replacement = await login.Content.ReadFromJsonAsync<PosLocalUserSession>();
 
+        using var previousSessionResponse = await Client.GetAsync("/edge/v1/drafts/active");
+        Assert.Equal(HttpStatusCode.Unauthorized, previousSessionResponse.StatusCode);
+        var previousSessionProblem = await previousSessionResponse.Content
+            .ReadFromJsonAsync<JsonElement>();
         Assert.Equal(
-            HttpStatusCode.Unauthorized,
-            (await Client.GetAsync("/edge/v1/drafts/active")).StatusCode);
+            "LoginReplaced",
+            previousSessionProblem.GetProperty("code").GetString());
 
         using var replacementClient = _factory.CreateClient();
         replacementClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
@@ -963,6 +1027,64 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             "/edge/v1/drafts/active");
         Assert.Equal(captured!.Draft!.DraftId, restored!.DraftId);
         Assert.Single(restored.Lines);
+    }
+
+    [Fact]
+    public async Task A_reenrolled_device_does_not_revoke_its_new_login_from_a_historical_lease()
+    {
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO PosOfflineAuthenticationLeases(
+                  LeaseId,TenantId,UserId,DeviceId,KeyId,Algorithm,SignedPayload,Signature,
+                  IssuedAt,NotBefore,ExpiresAt,LastObservedAt,Status,UpdatedAt)
+                SELECT $lease,$tenant,UserId,$oldDevice,'key','ES256','payload','signature',
+                  $issued,$issued,$expires,$issued,'Active',$issued
+                FROM PosOfflineUsers WHERE NormalizedUsername='CASHIER';
+                """;
+            command.Parameters.AddWithValue("$lease", Guid.NewGuid().ToString("D"));
+            command.Parameters.AddWithValue("$tenant", Guid.NewGuid().ToString("D"));
+            command.Parameters.AddWithValue("$oldDevice", Guid.NewGuid().ToString("D"));
+            command.Parameters.AddWithValue("$issued", DateTimeOffset.UtcNow.AddDays(-2).ToString("O"));
+            command.Parameters.AddWithValue("$expires", DateTimeOffset.UtcNow.AddDays(2).ToString("O"));
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        var handler = new RejectingHistoricalLeaseHandler();
+        using var factory = _factory!.WithWebHostBuilder(webHost =>
+            webHost.ConfigureServices(services =>
+            {
+                services.RemoveAll<HttpClient>();
+                services.AddSingleton(new HttpClient(handler)
+                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+        using var login = await client.PostAsJsonAsync(
+            "/edge/v1/auth/login",
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
+        login.EnsureSuccessStatusCode();
+        var session = await login.Content.ReadFromJsonAsync<PosLocalUserSession>();
+        client.DefaultRequestHeaders.Add("X-Auraly-User-Session", session!.Token);
+
+        using var open = await client.PostAsync("/edge/v1/work-sessions/current", null);
+
+        open.EnsureSuccessStatusCode();
+        Assert.Equal(0, handler.ActiveLeaseChecks);
+    }
+
+    [Fact]
+    public async Task Complete_enrollment_reaches_its_endpoint_without_an_existing_local_login()
+    {
+        using var client = _factory!.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+
+        using var response = await client.PostAsync("/edge/v1/auth/complete-enrollment", null);
+
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.NotEqual("LocalLoginRequired", problem.GetProperty("code").GetString());
     }
 
     public async Task InitializeAsync()
@@ -1128,7 +1250,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     "3001234567",
                     "Cliente POS",
                     priceChannelId,
-                    true),
+                    true,
+                    AppliesWithholding: true,
+                    TaxResponsibilities: ["O-23"]),
                 new PosCustomerPricing(
                     tierCustomerId,
                     "4001234567",
@@ -1141,6 +1265,13 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     "Cliente canal excluido",
                     excludedChannelId,
                     true)
+            ],
+            [
+                new PosWithholdingRule(
+                    Guid.NewGuid(), 1, "RF-OFFLINE", "Retefuente venta offline",
+                    "IncomeTax", "Sale", "Accrual", "TaxExclusiveAmount",
+                    null, null, 2.5m, 0m, ["O-23"],
+                    new DateOnly(2026, 1, 1), null, true)
             ]));
     }
 
@@ -1233,6 +1364,27 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     Encoding.UTF8,
                     "application/problem+json")
             });
+    }
+
+    private sealed class RejectingHistoricalLeaseHandler : HttpMessageHandler
+    {
+        public int ActiveLeaseChecks { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath.EndsWith("/active", StringComparison.Ordinal) == true)
+            {
+                ActiveLeaseChecks++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new { active = false })
+                });
+            }
+            return Task.FromException<HttpResponseMessage>(
+                new HttpRequestException("Auraly Server is offline."));
+        }
     }
 
     private sealed class RetiredEnrollmentHandler(

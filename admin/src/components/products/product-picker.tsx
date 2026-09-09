@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { inventoryApi, type InventoryProductItem } from "@/services/api/inventory";
 import { productsApi } from "@/services/api/products";
+import { useActiveProductOptionScroll } from "./use-active-product-option-scroll";
 
 const PRODUCT_PAGE_SIZE = 50;
 
@@ -68,6 +69,7 @@ export function ProductPicker({
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
   }, [open]);
   useEffect(() => { if (activeIndex !== null && activeIndex >= products.length) setActiveIndex(null); }, [activeIndex, products.length]);
+  useActiveProductOptionScroll(listRef, activeIndex, open, products.length);
 
   function choose(product: InventoryProductItem) {
     onSelect(product); setSearch(""); setOpen(false);
@@ -102,7 +104,7 @@ export function ProductPicker({
     if (products.length === 0) return <p className={messageClass}>No hay productos activos que coincidan con la búsqueda.</p>;
     return <>
       <div className="px-3 py-2 text-xs text-muted-foreground">{products.length.toLocaleString("es-CO")} de {totalCount.toLocaleString("es-CO")} productos</div>
-      {products.map((product, index) => <button key={product.productId} type="button" role="option" aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 border-t px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}>
+      {products.map((product, index) => <button key={product.productId} type="button" role="option" data-product-option-index={index} aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 border-t px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}>
         <span className="min-w-0"><strong className="block truncate">{product.productName}</strong>{conversionOnly && product.conversionFactor && <small className="block truncate text-muted-foreground">Factor {product.conversionFactor}</small>}</span>
         <small className="min-w-0 truncate text-muted-foreground">{product.productCode || "Sin código"}{product.reference ? ` · ${product.reference}` : ""}</small>
         <span className="flex items-center justify-end gap-3 text-xs text-muted-foreground">{product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span>

@@ -127,3 +127,22 @@ Los escenarios nuevos prueban:
 - Una revocación, desactivación o cambio de permisos ocurrido mientras el POS
   está totalmente desconectado solo se conoce al reconectar. Esta es una
   consecuencia explícita del acceso local durable sin vencimiento temporal.
+
+## Invariante de sesión local después del enrolamiento
+
+Una sesión creada por `PosLocalIdentityStore` se resuelve exclusivamente contra
+la proyección local vigente. El middleware de Edge no vuelve a consultar en cada
+request el estado remoto de una concesión histórica: una concesión perteneciente
+a un enrolamiento anterior no puede revocar la sesión recién creada. El reemplazo
+entre logins locales sigue siendo transaccional al crear la nueva sesión, y las
+revocaciones reales llegan por el delta de seguridad canónico al reconectar.
+
+El cliente conserva además el token que originó cada request. Una respuesta tardía
+`LoginReplaced` sólo puede limpiar ese mismo token; nunca el token de un login más
+nuevo realizado mientras la petición anterior estaba en vuelo.
+
+Dentro del mismo Edge, crear un login cierra atómicamente la autenticación local
+anterior con `ReplacedByNewLogin`. La petición siguiente del navegador anterior
+recibe `LoginReplaced` y vuelve al login, mientras la sesión recién creada continúa
+vigente. Esta exclusividad local no reactiva ni consulta concesiones remotas de
+compatibilidad.

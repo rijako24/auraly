@@ -105,6 +105,11 @@ versión publicada. Navegador, aplicación instalada, caja enrolada y formatos d
 hoja consumen la misma versión documental: el transporte nunca crea una versión
 paralela.
 
+Una versión publicada es inmutable y no se elimina, aunque deje de ser la activa.
+La reimpresión histórica resuelve la versión congelada con el documento y no la
+reemplaza por la versión vigente. Esta regla aplica también a facturación, POS y
+los demás reportes fuera de tirilla que usen el catálogo canónico.
+
 Todas las salidas operativas usan contenido con capitalización natural, títulos
 de documento y sección destacados, alineación clara y jerarquía en negrita para
 totales, medios de pago y valores de efectivo. La impresión directa conserva el

@@ -249,6 +249,7 @@ Ejecutar primero pruebas enfocadas y luego ampliar proporcionalmente al riesgo. 
 
 - Actualizar documentacion estable cuando cambia un contrato, source of truth, flujo operativo o comando.
 - Registrar una decision/ADR cuando cambien limites, persistencia, topologia, seguridad, consistencia o contratos publicos; no para detalles locales reversibles.
+- Las plantillas publicadas de facturacion, POS, tirillas y reportes son inmutables. Todo cambio intencional de campos, contenido, orden, margenes, composicion o semantica crea una version nueva en el catalogo canonico y agrega sus pruebas; nunca modifica ni elimina una version ya publicada. La reimpresion historica conserva la version congelada con el documento. Un arreglo exclusivo del transporte o renderer solo puede conservar version cuando no cambia la salida documental aprobada.
 - No crear bitacoras de trabajo o archivos `*_COMPLETADO.md`. La evidencia temporal pertenece al issue/PR; la regla vigente pertenece al documento canonico.
 - Marcar deuda con causa, riesgo, propietario y condicion de resolucion; `TODO` sin contexto no es gestion de deuda.
 - No preservar comportamiento incorrecto por compatibilidad accidental. Hacer explicito si la compatibilidad es contractual y planear la migracion.

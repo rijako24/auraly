@@ -6,6 +6,8 @@ import {
   calculateGoodsReceiptTotals,
   goodsReceiptUnitLabel,
   nextGoodsReceiptQuantityIndex,
+  nextGoodsReceiptEditorTarget,
+  previewGoodsReceiptPurchaseCosts,
   summarizeGoodsReceipt,
 } from "./goods-receipt-calculator";
 
@@ -88,5 +90,56 @@ describe("goods receipt calculator", () => {
     assert.equal(nextGoodsReceiptQuantityIndex(2, 1, 3), 2);
     assert.equal(nextGoodsReceiptQuantityIndex(1, -1, 3), 0);
     assert.equal(nextGoodsReceiptQuantityIndex(0, -1, 3), 0);
+  });
+
+  it("moves across editable receipt cells and returns to product search with Enter", () => {
+    assert.deepEqual(nextGoodsReceiptEditorTarget(1, "quantity", "ArrowRight", 3),
+      { kind: "cell", rowIndex: 1, field: "unitCost" });
+    assert.deepEqual(nextGoodsReceiptEditorTarget(1, "unitCost", "ArrowRight", 3),
+      { kind: "cell", rowIndex: 1, field: "discount" });
+    assert.deepEqual(nextGoodsReceiptEditorTarget(1, "discount", "ArrowLeft", 3),
+      { kind: "cell", rowIndex: 1, field: "unitCost" });
+    assert.deepEqual(nextGoodsReceiptEditorTarget(1, "discount", "ArrowDown", 3),
+      { kind: "cell", rowIndex: 2, field: "discount" });
+    assert.deepEqual(nextGoodsReceiptEditorTarget(1, "quantity", "Enter", 3),
+      { kind: "product-search" });
+    assert.deepEqual(nextGoodsReceiptEditorTarget(1, "unitCost", "Enter", 3),
+      { kind: "product-search" });
+    assert.deepEqual(nextGoodsReceiptEditorTarget(1, "discount", "Enter", 3),
+      { kind: "product-search" });
+  });
+
+  it("shows purchase cost with value-prorated invoices before confirmation", () => {
+    const preview = previewGoodsReceiptPurchaseCosts([
+      { lineNumber: 1, quantity: 1, unitCost: 3_000, discountAmount: 0, taxRate: 0,
+        taxTreatment: "NotApplicable" },
+      { lineNumber: 2, quantity: 1, unitCost: 1_000, discountAmount: 0, taxRate: 19,
+        taxTreatment: "DeductibleInputVat" },
+    ], "COP", 1, [{
+      currencyCode: "COP", exchangeRate: 1,
+      lines: [{ lineNumber: 1, amount: 1_595_000, taxAmount: 0,
+        taxTreatment: "NotApplicable", costTreatment: "Capitalize", allocationMethod: "Value" }],
+    }]);
+
+    assert.deepEqual(preview, [
+      { lineNumber: 1, allocatedAdditionalCost: 1_196_250,
+        recognizedInventoryCost: 1_199_250, purchaseUnitCost: 1_199_250 },
+      { lineNumber: 2, allocatedAdditionalCost: 398_750,
+        recognizedInventoryCost: 399_750, purchaseUnitCost: 399_750 },
+    ]);
+  });
+
+  it("rounds functional base and capitalized tax exactly like the backend", () => {
+    const preview = previewGoodsReceiptPurchaseCosts([
+      { lineNumber: 1, quantity: 1, unitCost: 0.00005, discountAmount: 0, taxRate: 100,
+        taxTreatment: "CapitalizedCost" },
+    ], "USD", 1, []);
+
+    assert.deepEqual(preview, [{
+      lineNumber: 1,
+      allocatedAdditionalCost: 0,
+      recognizedInventoryCost: 0.0002,
+      purchaseUnitCost: 0.0002,
+    }]);
   });
 });

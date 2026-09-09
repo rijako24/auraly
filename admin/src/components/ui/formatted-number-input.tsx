@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEventHandler } from "react";
+import { forwardRef, useEffect, useState, type KeyboardEventHandler } from "react";
 import { Input } from "@/components/ui/input";
 import {
   decimalInputFromNumber,
@@ -9,20 +9,7 @@ import {
 } from "@/lib/formatted-decimal-input";
 import { cn } from "@/lib/utils";
 
-export function FormattedNumberInput({
-  value,
-  onValueChange,
-  kind = "number",
-  commitMode = "change",
-  className,
-  disabled,
-  id,
-  onKeyDown,
-  invalid = false,
-  ariaLabel,
-  placeholder,
-  allowNegative = false,
-}: {
+export const FormattedNumberInput = forwardRef<HTMLInputElement, {
   value: string | number;
   onValueChange: (value: number | null) => void;
   kind?: "currency" | "percent" | "number";
@@ -35,7 +22,20 @@ export function FormattedNumberInput({
   ariaLabel?: string;
   placeholder?: string;
   allowNegative?: boolean;
-}) {
+}>(function FormattedNumberInput({
+  value,
+  onValueChange,
+  kind = "number",
+  commitMode = "change",
+  className,
+  disabled,
+  id,
+  onKeyDown,
+  invalid = false,
+  ariaLabel,
+  placeholder,
+  allowNegative = false,
+}, ref) {
   const canonical = decimalInputFromNumber(value);
   const parsed = parseDecimalInput(canonical, allowNegative);
   const formatted = formatDecimalInput(canonical, 4, allowNegative);
@@ -57,6 +57,7 @@ export function FormattedNumberInput({
   return <div className="relative">
     {kind === "currency" && <span className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 font-medium text-muted-foreground">$</span>}
     <Input
+      ref={ref}
       id={id}
       aria-label={ariaLabel}
       aria-invalid={invalid}
@@ -104,7 +105,7 @@ export function FormattedNumberInput({
     />
     {kind === "percent" && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>}
   </div>;
-}
+});
 
 function sameNumber(left: number | null, right: number | null): boolean {
   return left === right || (left !== null && right !== null && Math.abs(left - right) < 0.000001);
