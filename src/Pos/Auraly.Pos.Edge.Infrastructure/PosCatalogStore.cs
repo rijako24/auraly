@@ -141,8 +141,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             status.HighWaterMark != page.HighWaterMark)
             throw new InvalidOperationException("The bootstrap page does not belong to the active session.");
 
-        foreach (var item in page.Items)
-            await UpsertAsync(connection, transaction, item, staging: true, cancellationToken);
+        await UpsertBatchAsync(connection, transaction, page.Items, staging: true, cancellationToken);
 
         await ExecuteAsync(connection, transaction, """
             UPDATE PosCatalogState SET NextPageCursor=@Next,UpdatedAt=@Now WHERE StateId=1;
@@ -202,15 +201,17 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             throw new InvalidOperationException("The incremental page is outside the durable local cursor.");
 
         var expectedVersion = status.Cursor;
+        var products = new List<PosCatalogItem>(page.Changes.Count);
         foreach (var change in page.Changes)
         {
             if (change.Version <= expectedVersion)
                 throw new InvalidOperationException("Catalog changes must be strictly ordered.");
-            await UpsertAsync(connection, transaction, change.Product, staging: false, cancellationToken);
+            products.Add(change.Product);
             expectedVersion = change.Version;
         }
         if (expectedVersion != page.ToCursor)
             throw new InvalidOperationException("The catalog response cursor does not match its changes.");
+        await UpsertBatchAsync(connection, transaction, products, staging: false, cancellationToken);
 
         await ExecuteAsync(connection, transaction,
             "UPDATE PosCatalogState SET Cursor=@Cursor,UpdatedAt=@Now WHERE StateId=1;",
@@ -356,17 +357,19 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         return values;
     }
 
-    private static async Task UpsertAsync(
+    private static async Task UpsertBatchAsync(
         SqliteConnection connection,
         System.Data.Common.DbTransaction transaction,
-        PosCatalogItem item,
+        IReadOnlyCollection<PosCatalogItem> items,
         bool staging,
         CancellationToken ct)
     {
         var products = staging ? "PosCatalogStagingProducts" : "PosCatalogProducts";
         var barcodes = staging ? "PosCatalogStagingBarcodes" : "PosCatalogBarcodes";
         var identifiers = staging ? "PosCatalogStagingIdentifiers" : "PosCatalogIdentifiers";
-        await ExecuteAsync(connection, transaction, $"""
+        await using var productCommand = connection.CreateCommand();
+        productCommand.Transaction = (SqliteTransaction)transaction;
+        productCommand.CommandText = $"""
             INSERT INTO {products}
               (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
                ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent)
@@ -385,32 +388,68 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               TargetMarginPercent=excluded.TargetMarginPercent;
             DELETE FROM {barcodes} WHERE ProductId=@ProductId;
             DELETE FROM {identifiers} WHERE ProductId=@ProductId;
-            """,
-            [
-                P("@ProductId", item.ProductId.ToString("D")), P("@ProductCode", item.ProductCode),
-                P("@Reference", item.Reference), P("@Name", item.Name), P("@BaseUnitCode", item.BaseUnitCode),
-                P("@TaxCode", item.TaxCode), P("@TaxRate", item.TaxRate), P("@UnitPrice", item.UnitPrice),
-                P("@UnitCost", item.UnitCost), P("@ManagesStock", item.ManagesStock ? 1 : 0),
-                P("@CurrencyCode", item.CurrencyCode), P("@IsActive", item.IsActive ? 1 : 0),
-                P("@IsWeighable", item.IsWeighable ? 1 : 0),
-                P("@AllowsFractionalSale", item.AllowsFractionalSale ? 1 : 0),
-                P("@ScaleJson", item.Scale is null ? null : JsonSerializer.Serialize(item.Scale)),
-                P("@ScalePrefix", item.Scale?.BarcodePrefix), P("@CategoryName", item.CategoryName),
-                P("@ProductCategoryId", item.ProductCategoryId?.ToString("D")),
-                P("@ProductBrandId", item.ProductBrandId?.ToString("D")),
-                P("@ProductCategoryAncestorIds", JsonSerializer.Serialize(item.ProductCategoryAncestorIds ?? [])),
-                P("@AverageUnitCost", item.AverageUnitCost),P("@LatestUnitCost", item.LatestUnitCost),
-                P("@TargetMarginPercent", item.TargetMarginPercent)
-            ],
-            ct);
-        foreach (var barcode in item.Barcodes.Distinct(StringComparer.OrdinalIgnoreCase))
-            await ExecuteAsync(connection, transaction,
-                $"INSERT INTO {barcodes}(ProductId,Value) VALUES(@ProductId,@Value);",
-                [P("@ProductId", item.ProductId.ToString("D")), P("@Value", barcode)], ct);
-        foreach (var identifier in item.Identifiers)
-            await ExecuteAsync(connection, transaction,
-                $"INSERT INTO {identifiers}(ProductId,Type,Value) VALUES(@ProductId,@Type,@Value);",
-                [P("@ProductId", item.ProductId.ToString("D")), P("@Type", identifier.Type), P("@Value", identifier.Value)], ct);
+            """;
+        foreach (var name in new[]
+                 {
+                     "@ProductId", "@ProductCode", "@Reference", "@Name", "@BaseUnitCode", "@TaxCode",
+                     "@TaxRate", "@UnitPrice", "@UnitCost", "@ManagesStock", "@CurrencyCode", "@IsActive",
+                     "@IsWeighable", "@AllowsFractionalSale", "@ScaleJson", "@ScalePrefix", "@CategoryName",
+                     "@ProductCategoryId", "@ProductBrandId", "@ProductCategoryAncestorIds", "@AverageUnitCost",
+                     "@LatestUnitCost", "@TargetMarginPercent"
+                 })
+            productCommand.Parameters.Add(P(name, null));
+
+        await using var barcodeCommand = connection.CreateCommand();
+        barcodeCommand.Transaction = (SqliteTransaction)transaction;
+        barcodeCommand.CommandText =
+            $"INSERT INTO {barcodes}(ProductId,Value) VALUES(@ProductId,@Value);";
+        barcodeCommand.Parameters.Add(P("@ProductId", null));
+        barcodeCommand.Parameters.Add(P("@Value", null));
+
+        await using var identifierCommand = connection.CreateCommand();
+        identifierCommand.Transaction = (SqliteTransaction)transaction;
+        identifierCommand.CommandText =
+            $"INSERT INTO {identifiers}(ProductId,Type,Value) VALUES(@ProductId,@Type,@Value);";
+        identifierCommand.Parameters.Add(P("@ProductId", null));
+        identifierCommand.Parameters.Add(P("@Type", null));
+        identifierCommand.Parameters.Add(P("@Value", null));
+
+        await productCommand.PrepareAsync(ct);
+        await barcodeCommand.PrepareAsync(ct);
+        await identifierCommand.PrepareAsync(ct);
+
+        foreach (var item in items)
+        {
+            var productId = item.ProductId.ToString("D");
+            var values = new object?[]
+            {
+                productId, item.ProductCode, item.Reference, item.Name, item.BaseUnitCode, item.TaxCode,
+                item.TaxRate, item.UnitPrice, item.UnitCost, item.ManagesStock ? 1 : 0, item.CurrencyCode,
+                item.IsActive ? 1 : 0, item.IsWeighable ? 1 : 0, item.AllowsFractionalSale ? 1 : 0,
+                item.Scale is null ? null : JsonSerializer.Serialize(item.Scale), item.Scale?.BarcodePrefix,
+                item.CategoryName, item.ProductCategoryId?.ToString("D"), item.ProductBrandId?.ToString("D"),
+                JsonSerializer.Serialize(item.ProductCategoryAncestorIds ?? []), item.AverageUnitCost,
+                item.LatestUnitCost, item.TargetMarginPercent
+            };
+            for (var index = 0; index < values.Length; index++)
+                productCommand.Parameters[index].Value = values[index] ?? DBNull.Value;
+            await productCommand.ExecuteNonQueryAsync(ct);
+
+            barcodeCommand.Parameters[0].Value = productId;
+            foreach (var barcode in item.Barcodes.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                barcodeCommand.Parameters[1].Value = barcode;
+                await barcodeCommand.ExecuteNonQueryAsync(ct);
+            }
+
+            identifierCommand.Parameters[0].Value = productId;
+            foreach (var identifier in item.Identifiers)
+            {
+                identifierCommand.Parameters[1].Value = identifier.Type;
+                identifierCommand.Parameters[2].Value = identifier.Value;
+                await identifierCommand.ExecuteNonQueryAsync(ct);
+            }
+        }
     }
 
     private static PosCatalogItem ReadProduct(SqliteDataReader reader)
