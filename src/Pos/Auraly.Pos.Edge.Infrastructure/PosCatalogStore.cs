@@ -367,6 +367,23 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         var products = staging ? "PosCatalogStagingProducts" : "PosCatalogProducts";
         var barcodes = staging ? "PosCatalogStagingBarcodes" : "PosCatalogBarcodes";
         var identifiers = staging ? "PosCatalogStagingIdentifiers" : "PosCatalogIdentifiers";
+        var effectiveItems = items
+            .GroupBy(item => item.ProductId)
+            .Select(group => group.Last())
+            .ToArray();
+
+        foreach (var chunk in effectiveItems.Chunk(400))
+        {
+            var parameters = chunk
+                .Select((item, index) => P($"@ProductId{index}", item.ProductId.ToString("D")))
+                .ToArray();
+            var productIds = string.Join(',', parameters.Select(parameter => parameter.ParameterName));
+            await ExecuteAsync(connection, transaction, $"""
+                DELETE FROM {barcodes} WHERE ProductId IN ({productIds});
+                DELETE FROM {identifiers} WHERE ProductId IN ({productIds});
+                """, parameters, ct);
+        }
+
         await using var productCommand = connection.CreateCommand();
         productCommand.Transaction = (SqliteTransaction)transaction;
         productCommand.CommandText = $"""
@@ -386,8 +403,6 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               ProductCategoryAncestorIds=excluded.ProductCategoryAncestorIds,
               AverageUnitCost=excluded.AverageUnitCost,LatestUnitCost=excluded.LatestUnitCost,
               TargetMarginPercent=excluded.TargetMarginPercent;
-            DELETE FROM {barcodes} WHERE ProductId=@ProductId;
-            DELETE FROM {identifiers} WHERE ProductId=@ProductId;
             """;
         foreach (var name in new[]
                  {
@@ -418,7 +433,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         await barcodeCommand.PrepareAsync(ct);
         await identifierCommand.PrepareAsync(ct);
 
-        foreach (var item in items)
+        foreach (var item in effectiveItems)
         {
             var productId = item.ProductId.ToString("D");
             var values = new object?[]
