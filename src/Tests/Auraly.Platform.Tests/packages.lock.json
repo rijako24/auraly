@@ -2587,7 +2587,8 @@
           "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Domain": "[1.0.0, )",
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
-          "Microsoft.Data.SqlClient": "[5.2.2, )"
+          "Microsoft.Data.SqlClient": "[5.2.2, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[8.0.3, )"
         }
       },
       "auraly.commerce.taxation.application": {
