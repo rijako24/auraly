@@ -14,6 +14,7 @@ export interface ProductMerchandising {
   manageInventory: boolean;
   allowsFractionalSale: boolean;
   isWeighable: boolean;
+  unitGrossWeightKg: number | null;
   scale: ProductScale | null;
   barcodes: ProductBarcode[];
   link: ProductLink | null;

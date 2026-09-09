@@ -123,7 +123,8 @@ public sealed record GoodsReceiptLineRequest(
     Guid? PurchaseOrderLineId = null,
     string? OverReceiptReason = null,
     decimal? TotalGrossWeightKg = null,
-    decimal? TotalVolumeM3 = null);
+    decimal? TotalVolumeM3 = null,
+    decimal? UnitGrossWeightKg = null);
 
 public sealed record ConfirmGoodsReceiptRequest(
     Guid DocumentId,
@@ -173,7 +174,8 @@ public sealed record GoodsReceiptLineSnapshot(
     decimal FunctionalTaxAmount = 0,
     decimal FunctionalLineTotal = 0,
     decimal AllocatedLandedCostAmount = 0,
-    decimal RecognizedInventoryCostAmount = 0);
+    decimal RecognizedInventoryCostAmount = 0,
+    decimal? UnitGrossWeightKg = null);
 
 public sealed record GoodsReceiptCostAllocationSnapshot(
     int CostLineNumber, int ReceiptLineNumber, decimal Factor,
@@ -357,7 +359,8 @@ public sealed record GoodsReceiptProductOption(
     string? SupplierProductCode, decimal? LatestUnitCost, decimal? AverageUnitCost,
     string TaxCode, decimal TaxRate, string TaxTreatment, IReadOnlyList<string> Barcodes, string BaseUnitCode,
     bool IsAssociated, string PurchasePresentationName = "Unidad",
-    decimal UnitsPerPresentation = 1, bool IsPrimary = false);
+    decimal UnitsPerPresentation = 1, bool IsPrimary = false,
+    decimal? UnitGrossWeightKg = null);
 
 public sealed record AssociateGoodsReceiptProductRequest(
     Guid SupplierId, Guid ProductId, string? SupplierProductCode, bool IsPrimary,

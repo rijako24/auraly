@@ -21,6 +21,7 @@ public interface IGoodsReceiptStore
 
 public sealed class GoodsReceiptService(
     IGoodsReceiptStore store,
+    IGoodsReceiptWorkspaceStore workspaceStore,
     IDocumentProcessingSignalPublisher signalPublisher,
     WithholdingService withholdingService)
 {
@@ -42,7 +43,12 @@ public sealed class GoodsReceiptService(
             throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
         if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.ImportDeclaration)
             throw new PurchasingValidationException("An import declaration must be added as a nationalization cost document.");
-        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
+        var productWeights = await workspaceStore.GetUnitGrossWeightsAsync(
+            user, request.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
+        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines.Select(line => line with
+        {
+            UnitGrossWeightKg = productWeights.GetValueOrDefault(line.ProductId)
+        }).ToArray());
         ValidateEvidenceTaxTreatment(request.PurchaseEvidenceType, normalizedLines);
         var calculation = Calculate(normalizedLines);
         if (request.ExchangeRate <= 0)
@@ -130,7 +136,12 @@ public sealed class GoodsReceiptService(
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
         if (currency.Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
 
-        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
+        var productWeights = await workspaceStore.GetUnitGrossWeightsAsync(
+            user, request.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
+        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines.Select(line => line with
+        {
+            UnitGrossWeightKg = productWeights.GetValueOrDefault(line.ProductId)
+        }).ToArray());
         if (request.PurchaseOrderId is null && normalizedLines.Any(line => line.PurchaseOrderLineId is not null))
             throw new PurchasingValidationException("PurchaseOrderId is required when receipt lines reference an order.");
         if (request.PurchaseOrderId is not null && normalizedLines.Any(line => line.PurchaseOrderLineId is null))

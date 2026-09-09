@@ -33,8 +33,9 @@ export interface ProductMerchandisingEditorHandle {
   getValue: () => import("@/services/api/product-merchandising").SaveProductMerchandising;
   save: () => Promise<void>;
 }
+export type ProductMerchandisingEditorDraft = ProductMerchandising;
 
-export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorHandle, { productId: string; embedded?: boolean }>(function ProductMerchandisingEditor({ productId, embedded = false }, ref) {
+export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorHandle, { productId: string; embedded?: boolean; initialDraft?: ProductMerchandisingEditorDraft; onDraftChange?: (draft: ProductMerchandisingEditorDraft) => void }>(function ProductMerchandisingEditor({ productId, embedded = false, initialDraft, onDraftChange }, ref) {
   const client = useQueryClient();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const config = useQuery({
@@ -58,10 +59,14 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
   const [showUnitCreate, setShowUnitCreate] = useState(false);
 
   useEffect(() => {
-    if (config.data) {
+    if (!initialDraft && config.data) {
       setForm({ ...config.data, linkedProducts: config.data.linkedProducts ?? [] });
     }
-  }, [config.data]);
+  }, [config.data, initialDraft]);
+  useEffect(() => {
+    if (initialDraft) setForm({ ...initialDraft, linkedProducts: initialDraft.linkedProducts ?? [] });
+  }, [initialDraft]);
+  useEffect(() => { if (form) onDraftChange?.(form); }, [form, onDraftChange]);
 
   const chain = useMemo(
     () => categoryChain(categories.data ?? [], form?.productCategoryId ?? null),
@@ -77,6 +82,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
       manageInventory: form!.link?.sharesInventory ? false : form!.manageInventory,
       allowsFractionalSale: form!.allowsFractionalSale,
       isWeighable: form!.isWeighable,
+      unitGrossWeightKg: form!.unitGrossWeightKg,
       scale: form!.isWeighable ? form!.scale : null,
       barcodes: form!.barcodes,
       conversionMaximumLossPercent: form!.conversionMaximumLossPercent,
@@ -124,6 +130,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
         manageInventory: form.link?.sharesInventory ? false : form.manageInventory,
         allowsFractionalSale: form.allowsFractionalSale,
         isWeighable: form.isWeighable,
+        unitGrossWeightKg: form.unitGrossWeightKg,
         scale: form.isWeighable ? form.scale : null,
         barcodes: form.barcodes,
         conversionMaximumLossPercent: form.conversionMaximumLossPercent,
@@ -233,7 +240,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
 
     <div className={`space-y-5 ${embedded ? "" : "p-5"}`}>
       <Block id="product-classification" icon={Tags} title="Clasificación, marca y unidad" description="Auraly conserva la ruta completa y la unidad real en la que se vende.">
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-4">
           {["Área", "Línea", "Grupo", "Subgrupo"].map((label, depth) => {
             const parent = depth === 0 ? null : chain[depth - 1]?.productCategoryId ?? null;
             const options = (categories.data ?? []).filter(
@@ -256,7 +263,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
           })}
         </div>
       <div className="mt-5 border-t pt-5">
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-4">
           <div className="space-y-1.5">
             <Label>Marca</Label>
             <Select value={form.productBrandId ?? none} onValueChange={(value) => setForm({ ...form, productBrandId: value === none ? null : value })}>
@@ -267,6 +274,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
               </SelectContent>
             </Select>
           </div>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
           <div className="space-y-1.5">
             <Label>Unidad en la que se vende</Label>
             <Select value={form.baseUnitCode} onValueChange={(value) => setForm({ ...form, baseUnitCode: value })}>
@@ -278,6 +286,12 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">Describe qué cantidad se vende; la regla de fracciones pertenece al producto.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Peso del producto (kg)</Label>
+            <Input aria-label="Peso del producto en kilogramos" type="number" inputMode="decimal" min="0.000001" step="0.000001" value={form.unitGrossWeightKg ?? ""} onChange={(event) => setForm({ ...form, unitGrossWeightKg: event.target.value === "" ? null : Number(event.target.value) })} />
+            <p className="text-xs text-muted-foreground">Peso bruto de una unidad base, siempre en kg; se usa para prorratear fletes.</p>
+          </div>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">

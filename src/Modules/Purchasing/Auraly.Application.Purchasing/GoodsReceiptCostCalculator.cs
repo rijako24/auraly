@@ -90,7 +90,7 @@ public static class GoodsReceiptCostCalculator
                 source.PurchaseOrderLineId, source.OverReceiptReason, false,
                 source.TotalGrossWeightKg, source.TotalVolumeM3,
                 functionalNet, functionalTax, Money(line.LineTotal * exchange.Rate),
-                landed, recognized);
+                landed, recognized, source.UnitGrossWeightKg);
         }).ToArray();
 
         return new(

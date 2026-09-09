@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("recepción totaliza documentos asociados y conserva costo puesto separado en pantalla y reporte", async ({ page, baseURL }) => {
+test("recepción totaliza documentos asociados y conserva costo total separado en pantalla y reporte", async ({ page, baseURL }) => {
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
   const documentId = "33333333-3333-3333-3333-333333333333";
@@ -56,20 +56,30 @@ test("recepción totaliza documentos asociados y conserva costo puesto separado 
   await page.goto("/dashboard/purchasing/goods-receipts");
   await page.getByRole("button", { name: "Nueva entrada" }).click();
   const editor = page.getByRole("dialog", { name: "Recepción de compra" });
+  await expect(editor.getByRole("columnheader", { name: "Costo unitario" })).toBeVisible();
+  await expect(editor.getByRole("columnheader", { name: /Costo total/ })).toHaveCount(0);
+  await expect(editor.getByRole("columnheader", { name: "Total factura · COP" })).toBeVisible();
   await editor.getByRole("button", { name: /Facturas y otros costos/ }).click();
   await expect(editor.getByRole("button", { name: "Agregar factura", exact: true })).toHaveCount(1);
   await expect(editor.getByRole("button", { name: /Agregar nacionalización/i })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.getByText("EMC-RESUMEN", { exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "EMC-RESUMEN" });
-  const summary = dialog.getByRole("region", { name: "Resumen completo de la recepción" });
-  await expect(summary.getByText("Total de documentos", { exact: true }).locator("..")).toContainText("7.950");
-  await expect(summary.getByText("Impuestos incluidos en los documentos").locator("..")).toContainText("950");
-  await expect(summary.getByText("Costo puesto total de los productos").locator("..")).toContainText("6.000");
+  await expect(dialog.getByText("Total bruto de documentos", { exact: true }).locator("..")).toContainText("7.950");
+  await expect(dialog.getByText("IVA descontable separado", { exact: true }).locator("..")).toContainText("0");
+  await expect(dialog.getByText("Valor que entra al inventario", { exact: true }).locator("..")).toContainText("6.000");
   await expect(dialog.getByRole("columnheader", { name: "Total factura · COP" })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Costo unitario" })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Descuento" })).toBeVisible();
+  await expect(dialog.getByText("Incluye +$ 1.500 COP prorrateado", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Costo total $ 4.500 COP", { exact: true })).toBeVisible();
+  const firstProduct = dialog.getByRole("row").filter({ hasText: "Producto 1" });
+  await expect(firstProduct).toContainText("$ 0");
+  await expect(firstProduct).toContainText("$ 3.570");
+  await page.screenshot({ path: "test-results/goods-receipt-line-costs.png", fullPage: true });
   await dialog.getByRole("button", { name: "Abrir reporte" }).click();
-  await expect(page.getByRole("row").filter({ hasText: "Total de documentos" })).toContainText("7.950");
-  await expect(page.getByRole("row").filter({ hasText: "Costo puesto total de los productos" })).toContainText("6.000");
+  await expect(page.getByRole("row").filter({ hasText: "Total bruto de documentos" })).toContainText("7.950");
+  await expect(page.getByRole("row").filter({ hasText: "Valor que entra al inventario" })).toContainText("6.000");
   await expect(page.getByText(/NaN/)).toHaveCount(0);
   await page.screenshot({ path: "test-results/goods-receipt-totals.png", fullPage: true });
 });

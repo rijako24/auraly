@@ -58,6 +58,7 @@ export interface GoodsReceiptLine {
   remainingQuantity?: number | null;
   totalGrossWeightKg?: number | null;
   totalVolumeM3?: number | null;
+  unitGrossWeightKg?: number | null;
 }
 
 export interface GoodsReceiptLineSnapshot extends GoodsReceiptLine {
@@ -215,6 +216,7 @@ export interface GoodsReceiptProduct {
   purchasePresentationName: string;
   unitsPerPresentation: number;
   isPrimary: boolean;
+  unitGrossWeightKg: number | null;
 }
 
 export interface GoodsReceiptProductPage {

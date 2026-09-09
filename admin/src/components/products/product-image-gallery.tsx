@@ -69,9 +69,10 @@ export interface ProductImageEditorHandle {
   }>>;
   save: () => Promise<void>;
 }
+export interface ProductImageEditorDraft { pending: PendingProductImage[]; removedIds: string[]; primaryId?: string }
 
-export const ProductImageEditor = forwardRef<ProductImageEditorHandle, { productId: string }>(
-  function ProductImageEditor({ productId }, ref) {
+export const ProductImageEditor = forwardRef<ProductImageEditorHandle, { productId: string; initialDraft?: ProductImageEditorDraft; onDraftChange?: (draft: ProductImageEditorDraft) => void }>(
+  function ProductImageEditor({ productId, initialDraft, onDraftChange }, ref) {
     const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
     const queryClient = useQueryClient();
     const inputRef = useRef<HTMLInputElement>(null);
@@ -88,10 +89,22 @@ export const ProductImageEditor = forwardRef<ProductImageEditorHandle, { product
     pendingRef.current = pending;
 
     useEffect(() => {
+      if (initialDraft) return;
       if (!pending.length && !removedIds.length) {
         setPrimaryId(query.data?.find((image) => image.isPrimary)?.productImageId);
       }
-    }, [pending.length, query.data, removedIds.length]);
+    }, [initialDraft, pending.length, query.data, removedIds.length]);
+
+    useEffect(() => {
+      if (!initialDraft) return;
+      setPending(current => {
+        current.forEach(image => URL.revokeObjectURL(image.previewUrl));
+        return initialDraft.pending.map(image => ({ ...image, previewUrl: URL.createObjectURL(image.file) }));
+      });
+      setRemovedIds(initialDraft.removedIds);
+      setPrimaryId(initialDraft.primaryId);
+    }, [initialDraft]);
+    useEffect(() => { onDraftChange?.({ pending, removedIds, primaryId }); }, [onDraftChange, pending, primaryId, removedIds]);
 
     useEffect(() => () => {
       pendingRef.current.forEach((image) => URL.revokeObjectURL(image.previewUrl));

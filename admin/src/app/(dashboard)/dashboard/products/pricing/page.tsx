@@ -243,7 +243,7 @@ export default function PricingPage() {
       cell: ({ row }) => <div className="min-w-40 space-y-1 text-sm">
         <p>Promedio: <span className="font-medium">{row.original.averageUnitCost == null ? "Sin movimientos" : formatCurrency(row.original.averageUnitCost)}</span></p>
         <p>Último proveedor: <span className="font-medium">{row.original.latestUnitCost == null ? "Sin recepciones" : formatCurrency(row.original.latestUnitCost)}</span></p>
-        <p>Último costo puesto: <span className="font-medium">{row.original.latestLandedUnitCost == null ? "Sin recepciones" : formatCurrency(row.original.latestLandedUnitCost)}</span></p>
+        <p>Último costo total: <span className="font-medium">{row.original.latestLandedUnitCost == null ? "Sin recepciones" : formatCurrency(row.original.latestLandedUnitCost)}</span></p>
       </div>,
     },
     {

@@ -26,6 +26,7 @@ export interface ProductPricingEditorValue {
   roundingIncrement: number;
   roundingMode: PricingRoundingMode;
 }
+export interface ProductPricingEditorDraft { cost: string; salePrice: string; margin: string; increment: string; roundingMode: PricingRoundingMode; lastEdited: ProductPricingField; salesTaxRate?: number }
 export interface ProductPricingEditorHandle { getValue: () => ProductPricingEditorValue; validate: () => void; save: () => Promise<void> }
 
 export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
@@ -34,7 +35,9 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   productId: string;
   productName: string;
   onSaved?: (result: PreparedProductPrice) => void;
-}>(function ProductPricingEditor({ productId, productName, onSaved, embedded = false, salesTaxRateOverride }, ref) {
+  initialDraft?: ProductPricingEditorDraft;
+  onDraftChange?: (draft: ProductPricingEditorDraft) => void;
+}>(function ProductPricingEditor({ productId, productName, onSaved, embedded = false, salesTaxRateOverride, initialDraft, onDraftChange }, ref) {
   const context = useProductPricingContext(productId);
   const savePrepared = useSavePreparedProductPrice();
   const [cost, setCost] = useState("");
@@ -48,7 +51,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   const previousSalesTaxRate = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!context.data) return;
+    if (!context.data || initialDraft) return;
     const loadedCost = context.data.costBasisAmount;
     const loadedMargin = context.data.currentMarginPercent
       ?? (loadedCost === null
@@ -66,10 +69,16 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
     setLastEdited(loadedCost === null ? "salePrice" : "margin");
     previousSalesTaxRate.current = context.data.salesTaxRate;
     setDirty(false);
-  }, [context.data]);
+  }, [context.data, initialDraft]);
+  useEffect(() => {
+    if (!initialDraft) return;
+    setCost(initialDraft.cost);setSalePrice(initialDraft.salePrice);setMargin(initialDraft.margin);setIncrement(initialDraft.increment);setRoundingMode(initialDraft.roundingMode);setLastEdited(initialDraft.lastEdited);setDirty(true);
+    previousSalesTaxRate.current = initialDraft.salesTaxRate ?? 0;
+  }, [initialDraft]);
 
   const effectiveSalesTaxRate = salesTaxRateOverride ?? context.data?.salesTaxRate ?? 0;
   const publicSalePrice = context.data?.publicSalePrice;
+  useEffect(() => { onDraftChange?.({ cost, salePrice, margin, increment, roundingMode, lastEdited, salesTaxRate: effectiveSalesTaxRate }); }, [cost, effectiveSalesTaxRate, increment, lastEdited, margin, onDraftChange, roundingMode, salePrice]);
 
   useEffect(() => {
     if (!context.data || previousSalesTaxRate.current === null) return;

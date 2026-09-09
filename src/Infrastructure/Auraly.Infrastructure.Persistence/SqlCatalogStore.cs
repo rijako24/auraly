@@ -77,15 +77,15 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 ? """
                   INSERT dbo.Products
                     (ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,Description,ProductCategoryId,CategoryName,ProductBrandId,BaseUnitCode,TaxProfileId,
-                     PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,ConversionMaximumLossPercent,AllowsFractionalSale,IsWeighable,IsActive,Source,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
+                     PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,UnitGrossWeightKg,ConversionMaximumLossPercent,AllowsFractionalSale,IsWeighable,IsActive,Source,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
                   VALUES
                     (@ProductId,@TenantId,@BusinessId,@ProductCode,@Reference,@Reference,@Name,@Description,@ProductCategoryId,(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),@ProductBrandId,@BaseUnitCode,@TaxProfileId,
-                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@ConversionMaximumLossPercent,@AllowsFractionalSale,@IsWeighable,1,0,N'COP',@Now,NULL,@UserId,NULL);
+                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@UnitGrossWeightKg,@ConversionMaximumLossPercent,@AllowsFractionalSale,@IsWeighable,1,0,N'COP',@Now,NULL,@UserId,NULL);
                   """
                 : """
                   UPDATE dbo.Products SET ProductCode=@ProductCode,Reference=@Reference,Sku=@Reference,Name=@Name,
                     Description=@Description,ProductCategoryId=@ProductCategoryId,CategoryName=(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),ProductBrandId=@ProductBrandId,BaseUnitCode=@BaseUnitCode,TaxProfileId=@TaxProfileId,
-                    PurchaseTaxProfileId=@PurchaseTaxProfileId,PurchaseTaxTreatment=@PurchaseTaxTreatment,ManageStock=@ManageInventory,ConversionMaximumLossPercent=@ConversionMaximumLossPercent,AllowsFractionalSale=@AllowsFractionalSale,IsWeighable=@IsWeighable,UpdatedAt=@Now,UpdatedByUserId=@UserId
+                    PurchaseTaxProfileId=@PurchaseTaxProfileId,PurchaseTaxTreatment=@PurchaseTaxTreatment,ManageStock=@ManageInventory,UnitGrossWeightKg=@UnitGrossWeightKg,ConversionMaximumLossPercent=@ConversionMaximumLossPercent,AllowsFractionalSale=@AllowsFractionalSale,IsWeighable=@IsWeighable,UpdatedAt=@Now,UpdatedByUserId=@UserId
                   WHERE ProductId=@ProductId AND COALESCE(TenantId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=Products.BusinessId))=@TenantId;
                   IF @@ROWCOUNT=0 THROW 51010, 'Product was not found in the authenticated scope.', 1;
                   DELETE FROM dbo.ProductBarcodes WHERE ProductId=@ProductId;
@@ -758,7 +758,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
              FROM dbo.SupplierProducts sp JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId
              JOIN dbo.SupplierCostAgreements c ON c.SupplierProductId=sp.SupplierProductId AND c.IsActive=1
              WHERE sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId AND sp.IsActive=1 FOR JSON PATH),
-          p.TaxProfileId,p.PurchaseTaxProfileId,p.PurchaseTaxTreatment,p.Description,p.BaseUnitCode,p.ManageStock,p.IsWeighable
+          p.TaxProfileId,p.PurchaseTaxProfileId,p.PurchaseTaxTreatment,p.Description,p.BaseUnitCode,p.ManageStock,p.IsWeighable,p.UnitGrossWeightKg
         FROM dbo.Products p
         JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
         """;
@@ -795,7 +795,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             reader.IsDBNull(12) ? null : reader.GetString(12),
             reader.IsDBNull(13) ? "EA" : reader.GetString(13),
             reader.GetBoolean(14),
-            reader.GetBoolean(15));
+            reader.GetBoolean(15),
+            reader.IsDBNull(16) ? null : reader.GetDecimal(16));
     }
 
     private async Task<List<PosCatalogItem>> PosItemsAsync(
@@ -936,6 +937,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
          P("@Reference", r.Reference), P("@Name", r.Name.Trim()), P("@Description", r.Description), P("@BaseUnitCode", r.BaseUnitCode.Trim()),
          P("@TaxProfileId", r.TaxProfileId), P("@PurchaseTaxProfileId", r.PurchaseTaxProfileId == Guid.Empty ? r.TaxProfileId : r.PurchaseTaxProfileId),
          P("@PurchaseTaxTreatment", r.PurchaseTaxTreatment), P("@ManageInventory", r.ManageInventory), P("@IsWeighable", r.IsWeighable),
+         P("@UnitGrossWeightKg", r.UnitGrossWeightKg),
          P("@ConversionMaximumLossPercent", r.ConversionMaximumLossPercent),
          P("@ProductCategoryId", r.ProductCategoryId), P("@ProductBrandId", r.ProductBrandId), P("@AllowsFractionalSale", r.AllowsFractionalSale),
          P("@ParentProductId", r.Link?.ParentProductId),

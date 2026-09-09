@@ -27,11 +27,16 @@ internal static class GoodsReceiptLineNormalizer
         if (presentationQuantity * line.UnitsPerPresentation != line.Quantity)
             throw new PurchasingValidationException(
                 "Quantity must equal PresentationQuantity multiplied by UnitsPerPresentation.");
+        if (line.UnitGrossWeightKg is <= 0)
+            throw new PurchasingValidationException("UnitGrossWeightKg must be greater than zero when provided.");
 
         return line with
         {
             PresentationName = presentation,
-            PresentationQuantity = presentationQuantity
+            PresentationQuantity = presentationQuantity,
+            TotalGrossWeightKg = line.UnitGrossWeightKg is { } unitWeight
+                ? decimal.Round(unitWeight * line.Quantity, 6, MidpointRounding.AwayFromZero)
+                : line.TotalGrossWeightKg
         };
     }
 }

@@ -23,6 +23,7 @@ const pathLabels: Record<string, string> = {
   leads: "Leads",
   payments: "Pagos",
   accounting: "Contabilidad",
+  payroll: "Nómina",
   "financial-traceability": "Trazabilidad financiera",
   purchasing: "Compras",
   "goods-receipts": "Recepciones de compra",

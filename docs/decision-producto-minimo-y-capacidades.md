@@ -168,6 +168,10 @@ ProductScaleConfiguration
 ```
 
 `IsWeighable = false` implica que no existe configuración de balanza activa.
+La implicación inversa no aplica: un producto puede venderse por peso mediante
+captura manual autorizada sin tener una balanza configurada. Por tanto,
+`IsWeighable = true` admite `ProductScaleConfiguration` nula; si existe una
+configuración activa, el producto sí debe ser pesable.
 
 ### Bodega
 
@@ -191,6 +195,12 @@ cajas; no se duplica por producto ni por caja.
 
 La unidad base vive como referencia en Producto. Las presentaciones y
 conversiones viven en `ProductUnits` y en el módulo de Conversión ya definido.
+
+`Products.UnitGrossWeightKg` conserva opcionalmente el peso bruto de una unidad
+base, siempre expresado en kilogramos y sin redefinir la unidad de venta. Lo usa
+Purchasing para calcular el peso total de una recepción y prorratear fletes u
+otros costos por peso. Es un dato administrativo del servidor y se excluye del
+catálogo offline del POS.
 
 Lotes y seriales siguen fuera del MVP. Por tanto no se crean campos vacíos para
 ellos.

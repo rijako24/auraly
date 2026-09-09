@@ -37,7 +37,8 @@ public sealed record PurchaseOrderLine(
     decimal TaxAmount, decimal LineTotal, string PresentationName,
     decimal PresentationQuantity, decimal UnitsPerPresentation,
     decimal Rotation30Days, decimal Rotation90Days, decimal DailyDemand90Days,
-    decimal CurrentStock, decimal IncomingQuantity, DateTimeOffset? RotationCalculatedAt);
+    decimal CurrentStock, decimal IncomingQuantity, DateTimeOffset? RotationCalculatedAt,
+    decimal? UnitGrossWeightKg = null);
 
 public sealed record PurchaseOrderDetail(
     Guid PurchaseOrderId, string? DocumentNumber, string Status,

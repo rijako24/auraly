@@ -17,6 +17,7 @@ import {
   ClipboardCheck,
   PackageX,
   RefreshCw,
+  Save,
   Scale,
   Trash2,
 } from "lucide-react";
@@ -401,13 +402,27 @@ export function InventoryOperationWorkspace({
     );
   }
 
-  function clear() {
+  async function discardDraft() {
     latestDraft.current = null;
-    void removeInventoryOperationDraft(draftKey);
-    setDocumentId(crypto.randomUUID());
-    setLines([]);
-    setNotes("");
-    focusSearch();
+    try {
+      await removeInventoryOperationDraft(draftKey);
+      onCancel();
+    } catch {
+      toast.error("No fue posible descartar el borrador local.");
+    }
+  }
+
+  async function saveDraftAndClose() {
+    const pendingDraft = latestDraft.current;
+    if (!pendingDraft) return;
+    try {
+      await saveInventoryOperationDraft(pendingDraft);
+      latestDraft.current = null;
+      toast.success("Borrador guardado en este dispositivo.");
+      onCancel();
+    } catch {
+      toast.error("No fue posible guardar el borrador.");
+    }
   }
 
   const mutation = useMutation({
@@ -485,7 +500,8 @@ export function InventoryOperationWorkspace({
     },
     onSuccess: async (result) => {
       toast.success(`${result.documentNumber} fue enviado al motor`);
-      clear();
+      latestDraft.current = null;
+      await removeInventoryOperationDraft(draftKey);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["inventory-balances"] }),
         queryClient.invalidateQueries({ queryKey: ["inventory-movements"] }),
@@ -494,6 +510,7 @@ export function InventoryOperationWorkspace({
         queryClient.invalidateQueries({ queryKey: ["inventory-operation-products"] }),
         queryClient.invalidateQueries({ queryKey: ["product-picker"] }),
       ]);
+      onCompleted("documents");
     },
     onError: (error: { message?: string }) =>
       toast.error(error.message ?? "No fue posible confirmar la operación"),
@@ -575,7 +592,6 @@ export function InventoryOperationWorkspace({
               value={physicalCountDraft}
               businessId={businessId}
               permissions={permissions}
-              onCancel={onCancel}
               onCompleted={onCompleted}
             />
           : <PhysicalCountCreationForm
@@ -692,14 +708,17 @@ export function InventoryOperationWorkspace({
           <Field label="Observaciones">
             <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={1000} />
           </Field>
-          <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-4">
-            <Button type="button" variant="outline" disabled={mutation.isPending || lines.length === 0} onClick={clear}>Limpiar</Button>
-            {!allowed && <span className="text-sm text-amber-700">No tienes permiso para confirmar esta operación.</span>}
-            <Button disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()}>
-              {mutation.isPending
-                ? "Procesando…"
-                : kind === "transfer" ? "Confirmar salida" : `Confirmar ${selected.label.toLowerCase()}`}
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+            <Button type="button" variant="ghost" className="text-destructive" disabled={mutation.isPending || !hasLocalCapture} onClick={() => void discardDraft()}><Trash2 className="mr-2 h-4 w-4" />Descartar borrador</Button>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <Button type="button" variant="outline" disabled={mutation.isPending || !hasLocalCapture} onClick={() => void saveDraftAndClose()}><Save className="mr-2 h-4 w-4" />Guardar borrador</Button>
+              {!allowed && <span className="text-sm text-amber-700">No tienes permiso para confirmar esta operación.</span>}
+              <Button disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()}>
+                {mutation.isPending
+                  ? "Procesando…"
+                  : kind === "transfer" ? "Confirmar salida" : `Confirmar ${selected.label.toLowerCase()}`}
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card></>}

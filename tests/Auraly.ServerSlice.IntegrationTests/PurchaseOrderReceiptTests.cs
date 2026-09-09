@@ -56,6 +56,15 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
         Assert.False(string.IsNullOrWhiteSpace(saved.ConcurrencyToken));
         Assert.Equal(2m, Assert.Single(saved.Lines).OrderedQuantity);
 
+        using var changedSave = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/purchase-orders/{purchaseOrderId:D}/draft",
+            draftRequest with
+            {
+                ConcurrencyToken = saved.ConcurrencyToken,
+                Lines = [line with { OrderedQuantity = 3m, PresentationQuantity = 3m }]
+            });
+        changedSave.EnsureSuccessStatusCode();
+
         var confirmRequest = new ConfirmPurchaseOrderRequest(
             purchaseOrderId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
             orderedAt, orderedAt.AddDays(7), "COP", "Captura local",
@@ -70,6 +79,9 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
         var confirmBody = await confirm.Content.ReadAsStringAsync();
         Assert.True(confirm.StatusCode == HttpStatusCode.Created,
             $"Expected confirmation to succeed, got {confirm.StatusCode}: {confirmBody}");
+        var confirmed = await client.GetFromJsonAsync<PurchaseOrderDetail>(
+            $"/api/commerce/v1/purchase-orders/{purchaseOrderId:D}");
+        Assert.Equal(2m, Assert.Single(confirmed!.Lines).OrderedQuantity);
     }
 
     [Fact]

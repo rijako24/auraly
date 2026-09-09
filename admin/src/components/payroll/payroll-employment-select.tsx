@@ -3,6 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { PagedEntitySelect, type PagedEntityOption } from "@/components/forms/paged-entity-select";
 import { payrollApi, type PayrollEmployment } from "@/services/api/payroll";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export function PayrollEmploymentSelect({ value, onChange, selectedOption, placeholder = "Buscar trabajador", includeInactive = false }: {
   value: string;
@@ -11,14 +13,18 @@ export function PayrollEmploymentSelect({ value, onChange, selectedOption, place
   placeholder?: string;
   includeInactive?: boolean;
 }) {
+  const tenantId = useTenantContextStore(state => state.selectedTenantId);
+  const businessId = useBusinessContextStore(state => state.selectedBusinessId);
   const selected = useQuery({
-    queryKey: ["payroll-employment-select-value", value],
+    queryKey: ["payroll-employment-select-value", tenantId, businessId, value],
     queryFn: async () => (await payrollApi.employments({ page:1, pageSize:1, employmentId:value })).items[0] ?? null,
-    enabled: Boolean(value) && !selectedOption,
+    enabled: Boolean(tenantId && businessId && value) && !selectedOption,
   });
   const resolved = selectedOption ?? (selected.data ? option(selected.data) : null);
   return <PagedEntitySelect
-    queryKey={["payroll-employment-select", includeInactive]}
+    key={`${tenantId}:${businessId}`}
+    queryKey={["payroll-employment-select", tenantId, businessId, includeInactive]}
+    disabled={!tenantId || !businessId}
     value={value}
     onChange={(id, _option, item) => onChange(id, item)}
     loadPage={(search,page,pageSize) => payrollApi.employments({ page, pageSize, search:search||undefined, isActive:includeInactive?undefined:true })}

@@ -210,8 +210,10 @@ public sealed class CatalogService(
             throw new CatalogValidationException("Name, base unit, sales VAT and purchase VAT are required.");
         if (!PurchasingTaxTreatmentIsSupported(request.PurchaseTaxTreatment))
             throw new CatalogValidationException("The purchase VAT treatment is invalid.");
-        if (request.IsWeighable != (request.Scale is not null))
-            throw new CatalogValidationException("A weighable product requires exactly one scale configuration.");
+        if (request.Scale is not null && !request.IsWeighable)
+            throw new CatalogValidationException("A scale configuration requires a product sold by weight.");
+        if (request.UnitGrossWeightKg is <= 0)
+            throw new CatalogValidationException("Product weight must be greater than zero when provided.");
         if (request.Prices.Count != 1 || request.Prices.Any(price => price.Amount <= 0))
             throw new CatalogValidationException(
                 "Every sellable product requires exactly one positive base price for its business.");

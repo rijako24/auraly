@@ -13,6 +13,39 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Product_weight_is_persisted_and_a_weight_product_can_be_saved_without_a_scale()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var request = ProductRequest(taxProfileId, [new ProductPriceInput(10_000m)], []) with
+        {
+            Name = $"Producto con peso {Guid.NewGuid():N}",
+            AllowsFractionalSale = true,
+            IsWeighable = true,
+            Scale = null,
+            UnitGrossWeightKg = 1.275m
+        };
+        using var client = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create, CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update, CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+
+        using var response = await client.PostAsJsonAsync("/api/commerce/v1/products", request);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        var product = (await response.Content.ReadFromJsonAsync<ProductDetail>())!;
+        Assert.Equal(1.275m, product.UnitGrossWeightKg);
+
+        var merchandising = await client.GetFromJsonAsync<ProductMerchandisingConfiguration>(
+            $"/api/commerce/v1/products/{product.ProductId:D}/merchandising");
+        Assert.NotNull(merchandising);
+        Assert.True(merchandising.IsWeighable);
+        Assert.Null(merchandising.Scale);
+        Assert.Equal(1.275m, merchandising.UnitGrossWeightKg);
+        Assert.Equal(1.275m, await ScalarAsync<decimal>(
+            "SELECT UnitGrossWeightKg FROM dbo.Products WHERE ProductId=@Product;",
+            new SqlParameter("@Product", product.ProductId)));
+    }
+
+    [Fact]
     public async Task Zero_purchase_vat_is_loaded_and_saved_as_not_applicable()
     {
         var (salesTaxProfileId, _, _) = await ConfigureCatalogAsync();

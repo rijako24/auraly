@@ -350,10 +350,15 @@ export function PhysicalCountCreationForm({
     return () => window.clearTimeout(timer);
   }, [hydratedKey, localDraftKey, persistLocalCapture]);
 
-  function closeAndPreserve() {
-    void persistLocalCapture()
-      .catch(() => toast.error("No fue posible guardar el avance local del conteo."))
-      .finally(onCancel);
+  async function discardLocalCapture() {
+    persistOnUnmount.current = false;
+    try {
+      await removeInventoryOperationDraft(localDraftKey);
+      onCancel();
+    } catch {
+      persistOnUnmount.current = true;
+      toast.error("No fue posible descartar el borrador local del conteo.");
+    }
   }
 
   function addProduct(product: InventoryProductItem) {
@@ -471,9 +476,11 @@ export function PhysicalCountCreationForm({
       <Textarea value={notes} onChange={event => setNotes(event.target.value)} maxLength={1000} placeholder="Opcional" />
     </Field>
     <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-      <div><p className="text-sm text-muted-foreground">{lines.length} {lines.length === 1 ? "producto" : "productos"} en el conteo</p>{lines.length > 0 && !reason && <p className="mt-1 text-sm text-amber-700">Selecciona el motivo para guardar o aplicar este conteo.</p>}</div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="ghost" className="text-destructive" onClick={() => void discardLocalCapture()}><Trash2 className="mr-2 h-4 w-4" />Descartar borrador</Button>
+        <div><p className="text-sm text-muted-foreground">{lines.length} {lines.length === 1 ? "producto" : "productos"} en el conteo</p>{lines.length > 0 && !reason && <p className="mt-1 text-sm text-amber-700">Selecciona el motivo para guardar o aplicar este conteo.</p>}</div>
+      </div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" onClick={closeAndPreserve}>Cerrar</Button>
         <Button variant="outline" disabled={!canOpenDraftDialog || !canSave || saveDraft.isPending || apply.isPending} onClick={() => setDraftDialogOpen(true)}>
           <Save className="mr-2 h-4 w-4" />Guardar borrador
         </Button>
@@ -620,7 +627,6 @@ export function InventoryReconciliationDialog({
             </Card>
           </>}
         </div>
-        <DialogFooter className="border-t px-6 py-4"><Button variant="outline" onClick={onClose}>Cerrar</Button></DialogFooter>
       </DialogContent>
     </Dialog>;
 }
@@ -629,13 +635,11 @@ export function PhysicalCountDraftEditForm({
   value,
   businessId,
   permissions,
-  onCancel,
   onCompleted,
 }: {
   value: PhysicalCountDraftSelection;
   businessId: string;
   permissions: Set<string>;
-  onCancel: () => void;
   onCompleted: (destination: "documents" | "drafts") => void;
 }) {
   const draft = value?.count.drafts.find(item => item.draftId === value.draftId);
@@ -694,14 +698,25 @@ export function PhysicalCountDraftEditForm({
   });
   const apply = useMutation({
     mutationFn: async () => {
-      const saved = await inventoryApi.savePhysicalCountDraft(value!.count.inventoryPhysicalCountId, draft!.draftId, {
+      const countId = value!.count.inventoryPhysicalCountId;
+      const saveCurrent = (sourceDraft: InventoryPhysicalCountDraft) => inventoryApi.savePhysicalCountDraft(countId, sourceDraft.draftId, {
         businessId,
-        version: draft!.version,
+        version: sourceDraft.version,
         name: name.trim(),
         readyForReconciliation: hasCountedProduct && (captureStage === "Count" || recountsComplete),
         captureStage,
-        lines: mergeDraftLines(draft!, lines),
+        lines: mergeDraftLines(sourceDraft, lines),
       });
+      let saved: InventoryPhysicalCountDetail;
+      try {
+        saved = await saveCurrent(draft!);
+      } catch (error) {
+        if (!isConflict(error)) throw error;
+        const current = await inventoryApi.physicalCount(countId);
+        const currentDraft = current.drafts.find(item => item.draftId === draft!.draftId);
+        if (!currentDraft) throw new Error("El borrador ya no existe.");
+        saved = await saveCurrent(currentDraft);
+      }
       const updated = saved.drafts.find(item => item.draftId === draft!.draftId);
       if (!updated) throw new Error("No fue posible recuperar la versión guardada del borrador.");
       const reconciliation = await inventoryApi.prepareReconciliation(saved.inventoryPhysicalCountId, {
@@ -736,7 +751,6 @@ export function PhysicalCountDraftEditForm({
     <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
       <p className="text-sm text-muted-foreground">{lines.length} {lines.length === 1 ? "producto" : "productos"} cargados del borrador</p>
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" onClick={onCancel}>Cerrar</Button>
         {canCapture && <Button variant="outline" disabled={save.isPending || apply.isPending} onClick={() => setDraftDialogOpen(true)}><Save className="mr-2 h-4 w-4" />Guardar borrador</Button>}
         {captureStage === "Count" && <Button variant="outline" disabled={!countsComplete || save.isPending || apply.isPending} onClick={() => { setCaptureStage("Recount"); window.requestAnimationFrame(() => window.requestAnimationFrame(() => { const input = recountRefs.current.get(lines.find(line => !validNumber(line.recount))?.productId ?? lines[0]?.productId); input?.focus(); input?.select(); })); }}><RefreshCw className="mr-2 h-4 w-4" />Recontar</Button>}
         {canApply && <Button disabled={!applyValid || save.isPending || apply.isPending} onClick={() => apply.mutate()}>{apply.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}Aplicar inventario</Button>}
@@ -894,6 +908,10 @@ function dayBoundary(value: string, next = false) {
   const date = new Date(`${value}T00:00:00`);
   if (next) date.setDate(date.getDate() + 1);
   return date.toISOString();
+}
+
+function isConflict(error: unknown) {
+  return Boolean(error && typeof error === "object" && "statusCode" in error && error.statusCode === 409);
 }
 
 function localDateValue() {

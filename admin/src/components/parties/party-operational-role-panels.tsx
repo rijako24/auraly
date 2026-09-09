@@ -35,7 +35,9 @@ type RegisterSave = (key: string, handler: () => Promise<void>) => () => void;
 
 const creditMoney = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave }: { customerId: string; editing: boolean; registerSave: RegisterSave }) {
+export type PartyCustomerCreditDraft = { enabled: boolean; limit: string; dueDays: string };
+
+export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave, initialDraft, onDraftChange }: { customerId: string; editing: boolean; registerSave: RegisterSave; initialDraft?: PartyCustomerCreditDraft; onDraftChange?: (draft: PartyCustomerCreditDraft) => void }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canRead = permissions.has("receivables.read");
@@ -46,11 +48,20 @@ export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave
   const [limit, setLimit] = useState("");
   const [dueDays, setDueDays] = useState("30");
   useEffect(() => {
+    if (initialDraft) {
+      setEnabled(initialDraft.enabled);
+      setLimit(initialDraft.limit);
+      setDueDays(initialDraft.dueDays);
+      return;
+    }
     if (!profile.data) return;
     setEnabled(profile.data.isCreditEnabled);
     setLimit(profile.data.creditLimit == null ? "" : formatDecimalInput(String(profile.data.creditLimit), 0));
     setDueDays(String(profile.data.defaultDueDays));
-  }, [profile.data]);
+  }, [initialDraft, profile.data]);
+  useEffect(() => {
+    if (initialDraft || profile.data) onDraftChange?.({ enabled, limit, dueDays });
+  }, [dueDays, enabled, initialDraft, limit, onDraftChange, profile.data]);
   const save = async () => {
     if (!businessId || !canManage) return;
     const days = Number(dueDays);
@@ -88,15 +99,17 @@ export function CustomerCreditTermsFields({ enabled, limit, dueDays, onLimitChan
 
 function CreditReadValue({label,value,help}:{label:string;value:string;help:string}) { return <div className="space-y-2"><Label>{label}</Label><p className="rounded-xl border bg-background p-3 font-medium">{value}</p><p className="text-xs text-muted-foreground">{help}</p></div>; }
 
-export function PartyCustomerTaxRolePanel({ customerId, editing, primarySite, registerSave }: { customerId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
-  return <PartyCounterpartyTaxRolePanel counterpartyId={customerId} role="customer" editing={editing} primarySite={primarySite} registerSave={registerSave}/>;
+export type PartyCounterpartyTaxDraft = { appliesWithholding: boolean; responsibilities: string[] };
+
+export function PartyCustomerTaxRolePanel({ customerId, editing, primarySite, registerSave, initialDraft, onDraftChange }: { customerId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave; initialDraft?: PartyCounterpartyTaxDraft; onDraftChange?: (draft: PartyCounterpartyTaxDraft) => void }) {
+  return <PartyCounterpartyTaxRolePanel counterpartyId={customerId} role="customer" editing={editing} primarySite={primarySite} registerSave={registerSave} initialDraft={initialDraft} onDraftChange={onDraftChange}/>;
 }
 
-export function PartySupplierTaxRolePanel({ supplierId, editing, primarySite, registerSave }: { supplierId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
-  return <PartyCounterpartyTaxRolePanel counterpartyId={supplierId} role="supplier" editing={editing} primarySite={primarySite} registerSave={registerSave}/>;
+export function PartySupplierTaxRolePanel({ supplierId, editing, primarySite, registerSave, initialDraft, onDraftChange }: { supplierId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave; initialDraft?: PartyCounterpartyTaxDraft; onDraftChange?: (draft: PartyCounterpartyTaxDraft) => void }) {
+  return <PartyCounterpartyTaxRolePanel counterpartyId={supplierId} role="supplier" editing={editing} primarySite={primarySite} registerSave={registerSave} initialDraft={initialDraft} onDraftChange={onDraftChange}/>;
 }
 
-function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primarySite, registerSave }: { counterpartyId: string; role: "customer" | "supplier"; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
+function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primarySite, registerSave, initialDraft, onDraftChange }: { counterpartyId: string; role: "customer" | "supplier"; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave; initialDraft?: PartyCounterpartyTaxDraft; onDraftChange?: (draft: PartyCounterpartyTaxDraft) => void }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const queryClient = useQueryClient();
   const profile = useQuery({ queryKey: ["withholding-profile", businessId, counterpartyId], queryFn: () => taxationApi.getProfile(counterpartyId), enabled: Boolean(businessId && counterpartyId), retry: false });
@@ -108,9 +121,17 @@ function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primaryS
   const [responsibilityToAdd, setResponsibilityToAdd] = useState("");
 
   useEffect(() => {
+    if (initialDraft) {
+      setAppliesWithholding(initialDraft.appliesWithholding);
+      setResponsibilities(new Set(initialDraft.responsibilities));
+      return;
+    }
     setAppliesWithholding(profile.data?.appliesWithholding ?? false);
     setResponsibilities(new Set(profile.data?.responsibilities ?? []));
-  }, [profile.data]);
+  }, [initialDraft, profile.data]);
+  useEffect(() => {
+    if (initialDraft || profile.data) onDraftChange?.({ appliesWithholding, responsibilities: [...responsibilities] });
+  }, [appliesWithholding, initialDraft, onDraftChange, profile.data, responsibilities]);
 
   const save = async () => {
     if (!businessId) return;
@@ -154,7 +175,9 @@ export function CounterpartyWithholdingRules({ rules, loading, error, role, resp
   </div>;
 }
 
-export function PartyEmployeeRolePanel({ partyId, employeeId, editing, registerSave }: { partyId: string; employeeId: string; editing: boolean; registerSave: RegisterSave }) {
+export type PartyEmployeeDraft = { selectedIds: string[]; active: boolean; customSchedule: boolean; workingHours: WorkingHour[] };
+
+export function PartyEmployeeRolePanel({ partyId, employeeId, editing, registerSave, initialDraft, onDraftChange }: { partyId: string; employeeId: string; editing: boolean; registerSave: RegisterSave; initialDraft?: PartyEmployeeDraft; onDraftChange?: (draft: PartyEmployeeDraft) => void }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const canReadPayroll = useAuthStore((state) => state.user?.permissions.includes("payroll.read") ?? false);
   const employeeQuery = useQuery({ queryKey: ["employees", employeeId], queryFn: () => employeesApi.getById(employeeId) });
@@ -168,15 +191,28 @@ export function PartyEmployeeRolePanel({ partyId, employeeId, editing, registerS
   const [workingHours, setWorkingHours] = useState<WorkingHour[]>(defaultHours);
 
   useEffect(() => {
+    if (initialDraft) {
+      setSelectedIds(new Set(initialDraft.selectedIds));
+      setActive(initialDraft.active);
+      return;
+    }
     if (!employeeQuery.data) return;
     setSelectedIds(new Set(employeeQuery.data.serviceIds ?? []));
     setActive(employeeQuery.data.isActive);
-  }, [employeeQuery.data]);
+  }, [employeeQuery.data, initialDraft]);
   useEffect(() => {
+    if (initialDraft) {
+      setCustomSchedule(initialDraft.customSchedule);
+      setWorkingHours(initialDraft.workingHours.length ? initialDraft.workingHours : defaultHours);
+      return;
+    }
     if (!hoursQuery.data) return;
     setCustomSchedule(!hoursQuery.data.usesBusinessFallback);
     setWorkingHours(hoursQuery.data.workingHours.length ? hoursQuery.data.workingHours : defaultHours);
-  }, [hoursQuery.data]);
+  }, [hoursQuery.data, initialDraft]);
+  useEffect(() => {
+    if (initialDraft || (employeeQuery.data && hoursQuery.data)) onDraftChange?.({ selectedIds: [...selectedIds], active, customSchedule, workingHours });
+  }, [active, customSchedule, employeeQuery.data, hoursQuery.data, initialDraft, onDraftChange, selectedIds, workingHours]);
 
   const save = async () => {
     const employee = employeeQuery.data;
@@ -213,7 +249,9 @@ export function PartyEmployeeRolePanel({ partyId, employeeId, editing, registerS
   </div>;
 }
 
-export function PartyUserRolePanel({ user, editing, registerSave }: { user: UserRoleDetail; editing: boolean; registerSave: RegisterSave }) {
+export type PartyUserDraft = { selectedIds: string[]; active: boolean; approvalValidity: "once" | "8" | "168" | "always"; revokeApprovalCredential: boolean };
+
+export function PartyUserRolePanel({ user, editing, registerSave, initialDraft, onDraftChange }: { user: UserRoleDetail; editing: boolean; registerSave: RegisterSave; initialDraft?: PartyUserDraft; onDraftChange?: (draft: PartyUserDraft) => void }) {
   const userId = user.userId;
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const roles = useRoles({ page: 1, pageSize: 500 });
@@ -242,8 +280,18 @@ export function PartyUserRolePanel({ user, editing, registerSave }: { user: User
     [user.roles, businessId],
   );
 
-  useEffect(() => { setActive(user.isActive); }, [user.isActive]);
-  useEffect(() => { setSelectedIds(new Set(scopedAssignments.map((item) => item.roleId))); }, [scopedAssignments]);
+  useEffect(() => {
+    setActive(initialDraft?.active ?? user.isActive);
+    setApprovalValidity(initialDraft?.approvalValidity ?? "always");
+    setRevokeApprovalCredential(initialDraft?.revokeApprovalCredential ?? false);
+    setNewPassword("");
+    setApprovalSecret("");
+    setApprovalConfirmation("");
+  }, [initialDraft, user.isActive]);
+  useEffect(() => { setSelectedIds(new Set(initialDraft?.selectedIds ?? scopedAssignments.map((item) => item.roleId))); }, [initialDraft, scopedAssignments]);
+  useEffect(() => {
+    onDraftChange?.({ selectedIds: [...selectedIds], active, approvalValidity, revokeApprovalCredential });
+  }, [active, approvalValidity, onDraftChange, revokeApprovalCredential, selectedIds]);
 
   const save = async () => {
     if (!businessId) return;

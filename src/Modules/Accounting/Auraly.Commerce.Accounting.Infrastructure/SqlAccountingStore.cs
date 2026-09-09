@@ -1396,8 +1396,6 @@ public sealed class SqlAccountingStore(
                 SELECT 1 FROM dbo.AccountingTenantSettings
                 WHERE TenantId=@TenantId AND EffectiveFrom IS NOT NULL) THEN 1
               WHEN @Status=N'Ready' AND @OpeningBalanceMode=N'ZeroDeclared'
-               AND NOT EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs
-                              WHERE TenantId=@TenantId AND CreatedAt>=@ActivatedAt)
                AND NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments
                               WHERE TenantId=@TenantId AND AcceptedAt>=@ActivatedAt)
                AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntries

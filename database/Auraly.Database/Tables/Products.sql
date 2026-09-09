@@ -19,6 +19,7 @@ CREATE TABLE [dbo].[Products] (
     [CategoryName] NVARCHAR(150) NULL,
     [Currency] NVARCHAR(10) NOT NULL DEFAULT N'COP',
     [ManageStock] BIT NOT NULL DEFAULT 0,
+    [UnitGrossWeightKg] DECIMAL(19, 6) NULL,
     [ConversionMaximumLossPercent] DECIMAL(9,6) NULL,
     [AllowsFractionalSale] BIT NOT NULL CONSTRAINT [DF_Products_AllowsFractionalSale] DEFAULT 0,
     [IsWeighable] BIT NOT NULL CONSTRAINT [DF_Products_IsWeighable] DEFAULT 0,
@@ -50,6 +51,7 @@ CREATE TABLE [dbo].[Products] (
         ON DELETE NO ACTION,
     CONSTRAINT [CK_Products_Source] CHECK ([Source] IN (0, 1)),
     CONSTRAINT [CK_Products_WeighableFractional] CHECK ([IsWeighable] = 0 OR [AllowsFractionalSale] = 1),
+    CONSTRAINT [CK_Products_UnitGrossWeightKg] CHECK ([UnitGrossWeightKg] IS NULL OR [UnitGrossWeightKg] > 0),
     CONSTRAINT [CK_Products_ConversionMaximumLossPercent] CHECK ([ConversionMaximumLossPercent] IS NULL OR [ConversionMaximumLossPercent] BETWEEN 0 AND 100),
     CONSTRAINT [CK_Products_CanonicalFields] CHECK (
         [ProductCode] IS NULL OR

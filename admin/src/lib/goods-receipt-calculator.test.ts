@@ -8,6 +8,7 @@ import {
   nextGoodsReceiptQuantityIndex,
   nextGoodsReceiptEditorTarget,
   previewGoodsReceiptPurchaseCosts,
+  shouldShowLandedUnitCost,
   summarizeGoodsReceipt,
 } from "./goods-receipt-calculator";
 
@@ -129,6 +130,29 @@ describe("goods receipt calculator", () => {
     ]);
   });
 
+  it("recalculates a weight allocation across every current product", () => {
+    const freight = [{
+      currencyCode: "COP", exchangeRate: 1,
+      lines: [{ lineNumber: 1, amount: 100_000, taxAmount: 0,
+        taxTreatment: "NotApplicable", costTreatment: "Capitalize", allocationMethod: "Weight" }],
+    }];
+    const first = { lineNumber: 1, quantity: 2, unitCost: 10_000, discountAmount: 0,
+      taxRate: 0, taxTreatment: "NotApplicable", totalGrossWeightKg: 2 };
+
+    assert.equal(
+      previewGoodsReceiptPurchaseCosts([first], "COP", 1, freight)[0].allocatedAdditionalCost,
+      100_000,
+    );
+
+    const recalculated = previewGoodsReceiptPurchaseCosts([
+      first,
+      { lineNumber: 2, quantity: 3, unitCost: 10_000, discountAmount: 0,
+        taxRate: 0, taxTreatment: "NotApplicable", totalGrossWeightKg: 6 },
+    ], "COP", 1, freight);
+
+    assert.deepEqual(recalculated.map(line => line.allocatedAdditionalCost), [25_000, 75_000]);
+  });
+
   it("rounds functional base and capitalized tax exactly like the backend", () => {
     const preview = previewGoodsReceiptPurchaseCosts([
       { lineNumber: 1, quantity: 1, unitCost: 0.00005, discountAmount: 0, taxRate: 100,
@@ -141,5 +165,12 @@ describe("goods receipt calculator", () => {
       recognizedInventoryCost: 0.0002,
       purchaseUnitCost: 0.0002,
     }]);
+  });
+
+  it("shows the landed unit cost only when it changes the entered unit cost", () => {
+    assert.equal(shouldShowLandedUnitCost(1_000, "COP", 1, 1_000), false);
+    assert.equal(shouldShowLandedUnitCost(1_000, "COP", 1, 2_000), true);
+    assert.equal(shouldShowLandedUnitCost(10, "USD", 4_000, 40_000), false);
+    assert.equal(shouldShowLandedUnitCost(10, "USD", 4_000, 41_000), true);
   });
 });

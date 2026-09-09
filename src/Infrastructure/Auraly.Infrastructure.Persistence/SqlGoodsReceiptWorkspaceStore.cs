@@ -14,6 +14,30 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     TimeProvider timeProvider,
     IAuralyIdGenerator ids) : IGoodsReceiptWorkspaceStore
 {
+    public async Task<IReadOnlyDictionary<Guid, decimal?>> GetUnitGrossWeightsAsync(
+        PurchasingUserIdentity user, IReadOnlyCollection<Guid> productIds,
+        CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0) return new Dictionary<Guid, decimal?>();
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT product.ProductId,product.UnitGrossWeightKg
+            FROM dbo.Products product
+            JOIN OPENJSON(@ProductIdsJson) WITH (ProductId UNIQUEIDENTIFIER '$') requested
+              ON requested.ProductId=product.ProductId
+            WHERE product.TenantId=@TenantId AND product.IsActive=1;
+            """;
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@ProductIdsJson", JsonSerializer.Serialize(productIds.Distinct()));
+        var result = new Dictionary<Guid, decimal?>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result[reader.GetGuid(0)] = reader.IsDBNull(1) ? null : reader.GetDecimal(1);
+        return result;
+    }
+
     public async Task<GoodsReceiptWorkspaceOptions> GetOptionsAsync(
         PurchasingUserIdentity user, CancellationToken cancellationToken)
     {
@@ -143,7 +167,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                    COALESCE(p.BaseUnitCode,N'EA'),
                    CONVERT(BIT,CASE WHEN sp.SupplierProductId IS NULL THEN 0 ELSE 1 END),
                    COALESCE(sp.PurchasePresentationName,N'Unidad'),COALESCE(sp.UnitsPerPresentation,1),
-                   COALESCE(sp.IsPrimary,CONVERT(BIT,0))
+                   COALESCE(sp.IsPrimary,CONVERT(BIT,0)),p.UnitGrossWeightKg
             FROM dbo.Products p
             LEFT JOIN dbo.SupplierProducts sp
               ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
@@ -255,7 +279,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                        COALESCE(tp.Code,N'00'),COALESCE(tp.Rate,0),
                        COALESCE(p.PurchaseTaxTreatment,N'DeductibleInputVat'),
                        COALESCE(b.Barcodes,N''),COALESCE(p.BaseUnitCode,N'EA'),CONVERT(BIT,1),
-                       sp.PurchasePresentationName,sp.UnitsPerPresentation,sp.IsPrimary
+                       sp.PurchasePresentationName,sp.UnitsPerPresentation,sp.IsPrimary,p.UnitGrossWeightKg
                 FROM dbo.Products p
                 INNER JOIN dbo.SupplierProducts sp
                   ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
@@ -325,7 +349,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4),
             reader.IsDBNull(5) ? null : reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetDecimal(6),
             reader.GetString(7), reader.GetDecimal(8), reader.GetString(9), barcodes, reader.GetString(11), reader.GetBoolean(12),
-            reader.GetString(13), reader.GetDecimal(14), reader.GetBoolean(15));
+            reader.GetString(13), reader.GetDecimal(14), reader.GetBoolean(15),
+            reader.IsDBNull(16) ? null : reader.GetDecimal(16));
     }
     public async Task<GoodsReceiptPage> ListAsync(
         PurchasingUserIdentity user, string? search, string? status,
@@ -852,12 +877,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                    ExchangeRate,ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson
             FROM dbo.GoodsReceiptDrafts
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId;
-            SELECT LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
-                   TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,
-                   PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,PurchaseOrderLineId,OverReceiptReason,
-                   TotalGrossWeightKg,TotalVolumeM3
-            FROM dbo.GoodsReceiptDraftLines
-            WHERE GoodsReceiptDraftId=@Id ORDER BY LineNumber;
+            SELECT receiptLine.LineNumber,receiptLine.ProductId,receiptLine.DescriptionSnapshot,receiptLine.Quantity,receiptLine.UnitCost,receiptLine.DiscountAmount,
+                   receiptLine.TaxCode,receiptLine.TaxRate,receiptLine.TaxTreatment,receiptLine.NetAmount,receiptLine.TaxAmount,receiptLine.LineTotal,
+                   receiptLine.PresentationNameSnapshot,receiptLine.PresentationQuantity,receiptLine.UnitsPerPresentation,receiptLine.PurchaseOrderLineId,receiptLine.OverReceiptReason,
+                   receiptLine.TotalGrossWeightKg,receiptLine.TotalVolumeM3,product.UnitGrossWeightKg
+            FROM dbo.GoodsReceiptDraftLines receiptLine
+            JOIN dbo.Products product ON product.ProductId=receiptLine.ProductId
+            WHERE receiptLine.GoodsReceiptDraftId=@Id ORDER BY receiptLine.LineNumber;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@Id", draftId);
@@ -896,7 +922,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.IsDBNull(15) ? null : reader.GetGuid(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16), false,
                 reader.IsDBNull(17) ? null : reader.GetDecimal(17),
-                reader.IsDBNull(18) ? null : reader.GetDecimal(18)));
+                reader.IsDBNull(18) ? null : reader.GetDecimal(18),
+                UnitGrossWeightKg: reader.IsDBNull(19) ? null : reader.GetDecimal(19)));
         return new(header.Id, header.Business, header.Warehouse, header.Supplier, header.Invoice,
             header.InvoiceDate, header.Received, header.Payable, header.Due, header.Currency,
             header.Notes, header.Net, header.Tax, header.Total, lines, header.Updated, header.Token,

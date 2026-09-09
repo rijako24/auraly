@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, useRef, useState } from "react";
+import { KeyboardEvent, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BarChart3, ChevronDown, CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, SlidersHorizontal, Truck, X } from "lucide-react";
@@ -9,12 +9,12 @@ import { toast } from "sonner";
 import { ProductLearningSection } from "@/components/products/product-learning-section";
 import { ProductCreateWorkspace, ProductFormSection } from "@/components/products/product-create-workspace";
 import { ProductOverview } from "@/components/products/product-overview";
-import { ProductPricingEditor, type ProductPricingEditorHandle } from "@/components/products/product-price-publisher";
-import { ProductMerchandisingEditor, type ProductMerchandisingEditorHandle } from "@/components/products/product-merchandising-editor";
-import { ProductSupplierEditor, type ProductSupplierEditorHandle } from "@/components/products/product-supplier-editor";
-import { ProductTaxEditor, type ProductTaxEditorHandle } from "@/components/products/product-tax-editor";
-import { ProductRecognitionSections, type ProductRecognitionSectionsHandle } from "@/components/products/product-recognition-sections";
-import { ProductImageEditor, type ProductImageEditorHandle } from "@/components/products/product-image-gallery";
+import { ProductPricingEditor, type ProductPricingEditorDraft, type ProductPricingEditorHandle } from "@/components/products/product-price-publisher";
+import { ProductMerchandisingEditor, type ProductMerchandisingEditorDraft, type ProductMerchandisingEditorHandle } from "@/components/products/product-merchandising-editor";
+import { ProductSupplierEditor, type ProductSupplierEditorDraft, type ProductSupplierEditorHandle } from "@/components/products/product-supplier-editor";
+import { ProductTaxEditor, type ProductTaxEditorDraft, type ProductTaxEditorHandle } from "@/components/products/product-tax-editor";
+import { ProductRecognitionSections, type ProductRecognitionEditorDraft, type ProductRecognitionSectionsHandle } from "@/components/products/product-recognition-sections";
+import { ProductImageEditor, type ProductImageEditorDraft, type ProductImageEditorHandle } from "@/components/products/product-image-gallery";
 import { DataTable } from "@/components/tables/data-table";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
@@ -50,6 +50,9 @@ import {
 } from "@/services/api/products";
 import { productMerchandisingApi } from "@/services/api/product-merchandising";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useAuthStore } from "@/stores/auth-store";
+import { useCatalogDraft } from "@/hooks/use-catalog-draft";
+import { catalogDraftKey } from "@/lib/catalog-draft-store";
 
 interface ProductFormState {
   name: string;
@@ -75,6 +78,7 @@ function productToForm(product: Product): ProductFormState {
     categoryName: product.categoryName ?? "",
   };
 }
+interface ProductEditDraft { form:ProductFormState;merchandising?:ProductMerchandisingEditorDraft;pricing?:ProductPricingEditorDraft;supplier?:ProductSupplierEditorDraft;taxes?:ProductTaxEditorDraft;recognition?:ProductRecognitionEditorDraft;images?:ProductImageEditorDraft }
 
 type TriState = "all" | "yes" | "no";
 
@@ -87,6 +91,7 @@ const triValue = (value: TriState): boolean | undefined => value === "all" ? und
 export default function ProductsPage() {
   const queryClient = useQueryClient();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const userId = useAuthStore((state) => state.user?.userId);
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -140,8 +145,18 @@ export default function ProductsPage() {
   const [savingProduct, setSavingProduct] = useState(false);
   const [productValidationError, setProductValidationError] = useState<string>();
   const [editingSalesTaxRate, setEditingSalesTaxRate] = useState<number>();
+  const [restoredEditDraft,setRestoredEditDraft]=useState<ProductEditDraft>();
+  const [merchandisingDraft,setMerchandisingDraft]=useState<ProductMerchandisingEditorDraft>();
+  const [pricingDraft,setPricingDraft]=useState<ProductPricingEditorDraft>();
+  const [supplierDraft,setSupplierDraft]=useState<ProductSupplierEditorDraft>();
+  const [taxDraft,setTaxDraft]=useState<ProductTaxEditorDraft>();
+  const [recognitionDraft,setRecognitionDraft]=useState<ProductRecognitionEditorDraft>();
+  const [imageDraft,setImageDraft]=useState<ProductImageEditorDraft>();
   const [reportRows,setReportRows]=useState<Array<Record<string,string|number>>|null>(null);
   const [loadingReport,setLoadingReport]=useState(false);
+  const productEditDraftKey=businessId&&userId&&selectedProduct?catalogDraftKey("product-edit",userId,businessId,selectedProduct.productId):null;
+  const productEditDraft=useMemo<ProductEditDraft>(()=>({form,merchandising:merchandisingDraft,pricing:pricingDraft,supplier:supplierDraft,taxes:taxDraft,recognition:recognitionDraft,images:imageDraft}),[form,imageDraft,merchandisingDraft,pricingDraft,recognitionDraft,supplierDraft,taxDraft]);
+  const clearProductEditDraft=useCatalogDraft({draftKey:productEditDraftKey,enabled:Boolean(selectedProduct&&modalMode==="edit"),value:productEditDraft,restore:stored=>{setForm({...emptyForm,...stored.form});setRestoredEditDraft(stored);setMerchandisingDraft(stored.merchandising);setPricingDraft(stored.pricing);setSupplierDraft(stored.supplier);setTaxDraft(stored.taxes);setRecognitionDraft(stored.recognition);setImageDraft(stored.images)},onError:operation=>toast.error(operation==="load"?"No fue posible recuperar la edición guardada de este producto.":operation==="save"?"No fue posible guardar la recuperación automática del producto.":"No fue posible limpiar la recuperación local del producto.")});
 
   const openReport=async()=>{if(!businessId||loadingReport)return;setLoadingReport(true);try{const products:Product[]=[];let next=1,totalPages=1;do{const result=await productsApi.list(businessId,{page:next,pageSize:200,includeInactive});products.push(...result.items);totalPages=result.totalPages;next+=1}while(next<=totalPages);setReportRows(products.sort((left,right)=>left.name.localeCompare(right.name,"es",{sensitivity:"base"})).map(product=>({id:product.productId,code:product.productCode??product.sku??"Sin código",description:product.name,price:product.unitPrice,currency:product.currency||"COP"})))}catch{toast.error("No fue posible cargar todos los productos para el reporte.")}finally{setLoadingReport(false)}};
 
@@ -151,6 +166,7 @@ export default function ProductsPage() {
   };
 
   const openEditing = (product: Product) => {
+    resetProductEditState();
     setSelectedProduct(product);
     setForm(productToForm(product));
     setProductValidationError(undefined);
@@ -158,18 +174,27 @@ export default function ProductsPage() {
     setModalMode("edit");
   };
 
-  const closeModal = () => {
+  const dismissModal = () => {
+    resetProductEditState();
     setSelectedProduct(null);
     setEditingSalesTaxRate(undefined);
     setModalMode("details");
   };
 
+  const cancelModal = async () => {
+    if (modalMode === "edit") await clearProductEditDraft();
+    dismissModal();
+  };
+
   const beginEditing = () => {
     if (!selectedProduct) return;
+    resetProductEditState();
     setForm(productToForm(selectedProduct));
     setEditingSalesTaxRate(undefined);
     setModalMode("edit");
   };
+
+  function resetProductEditState(){setRestoredEditDraft(undefined);setMerchandisingDraft(undefined);setPricingDraft(undefined);setSupplierDraft(undefined);setTaxDraft(undefined);setRecognitionDraft(undefined);setImageDraft(undefined)}
 
   const handleReviewLearning = async (
     alias: ProductAlias,
@@ -254,6 +279,7 @@ export default function ProductsPage() {
         purchaseTaxTreatment: taxes.purchaseTaxTreatment,
         manageInventory: merchandising.manageInventory,
         isWeighable: merchandising.isWeighable,
+        unitGrossWeightKg: merchandising.unitGrossWeightKg,
         barcodes: merchandising.barcodes,
         identifiers: [],
         prices: [{
@@ -283,7 +309,7 @@ export default function ProductsPage() {
       ]);
       setProductValidationError(undefined);
       toast.success("Producto guardado completamente");
-      closeModal();
+      await cancelModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo guardar el producto";
       setProductValidationError(message);
@@ -484,7 +510,7 @@ export default function ProductsPage() {
         />
       )}
 
-      <Dialog open={selectedProduct !== null} onOpenChange={(open) => !open && closeModal()}>
+      <Dialog open={selectedProduct !== null} onOpenChange={(open) => { if(!open)dismissModal() }}>
         <DialogContent className="h-[96dvh] max-h-[96dvh] w-[96vw] max-w-[1480px] overflow-hidden p-0">
           {selectedProduct && (
             <div className="grid h-full min-h-0 lg:grid-cols-[250px_1fr]">
@@ -544,31 +570,31 @@ export default function ProductsPage() {
                   </div>
                 </ProductFormSection>
 
-                <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} />
+                <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} initialDraft={restoredEditDraft?.merchandising} onDraftChange={setMerchandisingDraft} />
 
                 <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
-                  <ProductSupplierEditor ref={supplierEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} />
+                  <ProductSupplierEditor ref={supplierEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} initialDraft={restoredEditDraft?.supplier} onDraftChange={setSupplierDraft} />
                 </ProductFormSection>
 
                 <ProductFormSection id="product-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decisión explícita.">
                   <div className="space-y-5">
-                    <ProductTaxEditor ref={taxEditorRef} embedded productId={selectedProduct.productId} onSalesTaxRateChange={setEditingSalesTaxRate} />
-                    <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} />
+                    <ProductTaxEditor ref={taxEditorRef} embedded productId={selectedProduct.productId} onSalesTaxRateChange={setEditingSalesTaxRate} initialDraft={restoredEditDraft?.taxes} onDraftChange={setTaxDraft} />
+                    <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} initialDraft={restoredEditDraft?.pricing} onDraftChange={setPricingDraft} />
                   </div>
                 </ProductFormSection>
                 <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Los archivos se transfieren al almacenamiento y su metadata se confirma con el único guardado del producto.">
-                  <ProductImageEditor ref={imageEditorRef} productId={selectedProduct.productId} />
+                  <ProductImageEditor ref={imageEditorRef} productId={selectedProduct.productId} initialDraft={restoredEditDraft?.images} onDraftChange={setImageDraft} />
                 </ProductFormSection>
                 <details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-muted/10">
                   <summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary>
-                  <div className="space-y-5 border-t p-5"><ProductRecognitionSections ref={recognitionEditorRef} productId={selectedProduct.productId} editable aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div>
+                  <div className="space-y-5 border-t p-5"><ProductRecognitionSections ref={recognitionEditorRef} productId={selectedProduct.productId} editable aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} initialDraft={restoredEditDraft?.recognition} onDraftChange={setRecognitionDraft} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div>
                 </details>
               </div>}
               </div>
               <footer className="flex flex-col-reverse gap-3 border-t bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-muted-foreground">{modalMode === "edit" ? "Una sola acción guarda toda la ficha del producto." : "Toda la información se presenta en el mismo orden usado al crear y editar."}</p>
                 <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={closeModal}>{modalMode === "edit" ? "Cancelar" : "Cerrar"}</Button>
+                  <Button type="button" variant="outline" onClick={() => modalMode === "edit" ? void cancelModal() : dismissModal()}>{modalMode === "edit" ? "Cancelar" : "Cerrar"}</Button>
                   {modalMode === "edit" && <Button type="button" onClick={() => void saveProduct()} disabled={savingProduct}>{savingProduct ? "Guardando producto…" : "Guardar producto"}</Button>}
                 </div>
               </footer>

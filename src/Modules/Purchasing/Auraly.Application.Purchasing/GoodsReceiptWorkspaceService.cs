@@ -7,6 +7,7 @@ public interface IGoodsReceiptWorkspaceStore
 {
     Task<GoodsReceiptWorkspaceOptions> GetOptionsAsync(PurchasingUserIdentity user, CancellationToken cancellationToken);
     Task<GoodsReceiptProductPage> FindProductsAsync(PurchasingUserIdentity user, Guid supplierId, string? search, bool includeUnassociated, int page, int pageSize, CancellationToken cancellationToken);
+    Task<IReadOnlyDictionary<Guid, decimal?>> GetUnitGrossWeightsAsync(PurchasingUserIdentity user, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken);
     Task<GoodsReceiptProductOption> AssociateProductAsync(PurchasingUserIdentity user, AssociateGoodsReceiptProductRequest request, CancellationToken cancellationToken);
     Task<GoodsReceiptPage> ListAsync(PurchasingUserIdentity user, string? search, string? status, int page, int pageSize, CancellationToken cancellationToken);
     Task<GoodsReceiptDraft?> GetDraftAsync(PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken);
@@ -82,7 +83,7 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
     }
 
 
-    public Task<GoodsReceiptDraft> SaveDraftAsync(
+    public async Task<GoodsReceiptDraft> SaveDraftAsync(
         PurchasingUserIdentity user, SaveGoodsReceiptDraftRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -104,7 +105,12 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
         if (currency.Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
 
         GoodsReceiptCalculation? calculation = null;
-        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
+        var productWeights = await store.GetUnitGrossWeightsAsync(
+            user, request.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
+        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines.Select(line => line with
+        {
+            UnitGrossWeightKg = productWeights.GetValueOrDefault(line.ProductId)
+        }).ToArray());
         if (request.PurchaseOrderId is null && normalizedLines.Any(line => line.PurchaseOrderLineId is not null))
             throw new PurchasingValidationException("PurchaseOrderId is required when draft lines reference an order.");
         if (request.PurchaseOrderId is not null && normalizedLines.Any(line => line.PurchaseOrderLineId is null))
@@ -162,7 +168,7 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
                 AdditionalCostDocuments: normalizedDocuments), calculation);
         }
 
-        return store.SaveDraftAsync(user, request with
+        return await store.SaveDraftAsync(user, request with
         {
             CurrencyCode = currency,
             SupplierInvoiceNumber = Normalize(request.SupplierInvoiceNumber, 80),

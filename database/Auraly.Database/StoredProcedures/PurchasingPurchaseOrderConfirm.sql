@@ -44,13 +44,6 @@ BEGIN
         WHERE NOT EXISTS(SELECT 1 FROM dbo.Products p WHERE p.ProductId=input.ProductId AND p.IsActive=1 AND (p.TenantId=@TenantId OR p.BusinessId=@BusinessId))
     ) THROW 51202,'A product is invalid.',1;
 
-    DECLARE @StoredDraftVersion VARBINARY(8);
-    SELECT @StoredDraftVersion=RowVersion FROM purchasing.PurchaseOrderDrafts WITH(UPDLOCK,HOLDLOCK)
-    WHERE PurchaseOrderId=@PurchaseOrderId AND BusinessId=@BusinessId;
-    IF @StoredDraftVersion IS NULL AND @DraftRowVersion IS NOT NULL THROW 51204,'The draft no longer exists.',1;
-    IF @StoredDraftVersion IS NOT NULL AND (@DraftRowVersion IS NULL OR @StoredDraftVersion<>@DraftRowVersion)
-        THROW 51204,'The draft changed in another session.',1;
-
     DECLARE @SeriesId UNIQUEIDENTIFIER,@Prefix NVARCHAR(8),@SeriesCode NVARCHAR(16),@Padding TINYINT,@RangeEnd BIGINT,@Consecutive BIGINT;
     SELECT TOP(1) @SeriesId=ds.DocumentSeriesId,@Prefix=ds.Prefix,@SeriesCode=ds.SeriesCode,@Padding=ds.Padding,
         @RangeEnd=ds.RangeEnd,@Consecutive=COALESCE(seriesCursor.NextConsecutive,ds.RangeStart)

@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net;
 using System.Text.Json;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Payroll.Contracts;
@@ -22,6 +23,7 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
             PayrollPermissionCodes.Calculate, PayrollPermissionCodes.Approve,
              PayrollPermissionCodes.Pay, PayrollPermissionCodes.Configure,
              PayrollPermissionCodes.Fiscal, AccountingPermissionCodes.Read,
+             AccountingPermissionCodes.Configure,
              PartyWorkspacePermissionCodes.Read);
 
         var options = await GetAsync<PayrollWorkspaceOptions>(client,
@@ -73,6 +75,16 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
             new { rowVersion = ruleSet.RowVersion });
         Assert.Equal("Approved", ruleSet.Status);
 
+        using (var partialCoverage = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/payroll/runs",
+                   new CreatePayrollRunRequest(Guid.NewGuid(), fixture.BusinessId, ruleSetId,
+                       Option(PayrollCatalogCodes.PayFrequency, "Monthly"), "Regular", null,
+                       new DateOnly(2025, 12, 16), new DateOnly(2026, 1, 15), new DateOnly(2026, 1, 15))))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, partialCoverage.StatusCode);
+            Assert.Contains("vigente", await partialCoverage.Content.ReadAsStringAsync());
+        }
+
         var concepts = new Dictionary<string, Guid>(StringComparer.Ordinal);
         foreach (var definition in Concepts())
         {
@@ -106,9 +118,7 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 new DateOnly(2026, 1, 1), null, true, null));
 
         var employmentId = Guid.NewGuid();
-        var employment = await PutAsync<PayrollEmploymentView>(client,
-            $"/api/commerce/v1/payroll/employments/{employmentId:D}",
-            new SavePayrollEmploymentRequest(employmentId, partyId, fixture.BusinessId, null,
+        var employmentRequest = new SavePayrollEmploymentRequest(employmentId, partyId, fixture.BusinessId, null,
                 Option(PayrollCatalogCodes.ContractType, "Indefinite"),
                 Option(PayrollCatalogCodes.SalaryType, "Ordinary"),
                 Option(PayrollCatalogCodes.PayFrequency, "Monthly"),
@@ -119,7 +129,9 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 "CERT-EMP-001", new DateOnly(2026, 8, 1), null, 3_000_000m,
                   null, null, Option(PayrollCatalogCodes.Bank, "Bancolombia"),
                   Option(PayrollCatalogCodes.BankAccountType, "Savings"),
-                  "12345678901", true, null));
+                  "12345678901", true, null);
+        var employment = await PutAsync<PayrollEmploymentView>(client,
+            $"/api/commerce/v1/payroll/employments/{employmentId:D}", employmentRequest);
         Assert.Equal(employeeOption.EmployeeId, employment.EmployeeId);
 
         var agreementId = Guid.NewGuid();
@@ -147,6 +159,62 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal("Calculated", run.Status);
         Assert.Equal(100_000m + 240_000m, run.TotalDeductions);
 
+        // Two calculated drafts can reference the same novelty. Only one may consume it.
+        var overlappingId = Guid.NewGuid();
+        await PostAsync<PayrollRunView>(client, "/api/commerce/v1/payroll/runs",
+            new CreatePayrollRunRequest(overlappingId, fixture.BusinessId, ruleSetId,
+                Option(PayrollCatalogCodes.PayFrequency, "Monthly"), "Regular", null,
+                new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 30), new DateOnly(2026, 8, 31)));
+        var overlapping = await PostAsync<PayrollRunView>(client,
+            $"/api/commerce/v1/payroll/runs/{overlappingId:D}/calculate", new { });
+
+        // Approval must validate the actual remaining authority, not its earlier snapshot.
+        var agreements = (await GetAsync<PayrollWorkspaceOptions>(client,
+            "/api/commerce/v1/payroll/options")).DeductionAgreements;
+        var agreement = Assert.Single(agreements, item => item.DeductionAgreementId == agreementId);
+        var agreementRequest = new SavePayrollDeductionAgreementRequest(agreementId,
+            employmentId, loanConceptId, agreement.AuthorityOptionId, null,
+            agreement.ReferenceNumber, agreement.EvidenceUrl, agreement.EffectiveFrom,
+            agreement.EffectiveTo, 50_000m, 50_000m, agreement.Priority,
+            agreement.MustProtectMinimumNetPay, true, agreement.RowVersion);
+        var reducedAgreement = await PutAsync<PayrollDeductionAgreementView>(client,
+            $"/api/commerce/v1/payroll/deduction-agreements/{agreementId:D}", agreementRequest);
+        using (var invalidApproval = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/commerce/v1/payroll/runs/{runId:D}/approve")
+               { Content = JsonContent.Create(new { rowVersion = run.RowVersion }) })
+        {
+            invalidApproval.Headers.Add("Idempotency-Key", $"cert-{runId:D}");
+            using var rejected = await client.SendAsync(invalidApproval);
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+            Assert.Contains("saldo autorizado", await rejected.Content.ReadAsStringAsync());
+        }
+        var inactiveAgreement = await PutAsync<PayrollDeductionAgreementView>(client,
+            $"/api/commerce/v1/payroll/deduction-agreements/{agreementId:D}",
+            agreementRequest with { AuthorizedTotal = 500_000m, InstallmentAmount = 100_000m,
+                IsActive = false, RowVersion = reducedAgreement.RowVersion });
+        using (var inactiveApproval = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/commerce/v1/payroll/runs/{runId:D}/approve")
+               { Content = JsonContent.Create(new { rowVersion = run.RowVersion }) })
+        {
+            inactiveApproval.Headers.Add("Idempotency-Key", $"cert-{runId:D}");
+            using var rejected = await client.SendAsync(inactiveApproval);
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+            Assert.Contains("autorización", await rejected.Content.ReadAsStringAsync());
+        }
+        await PutAsync<PayrollDeductionAgreementView>(client,
+            $"/api/commerce/v1/payroll/deduction-agreements/{agreementId:D}",
+            agreementRequest with { AuthorizedTotal = 500_000m, InstallmentAmount = 100_000m,
+                IsActive = true, RowVersion = inactiveAgreement.RowVersion });
+
+        var payrollCenterId = Guid.NewGuid();
+        await PostAsync<AccountingCostCenterView>(client, "/api/commerce/v1/accounting/cost-centers",
+            new CreateCostCenterRequest(payrollCenterId, fixture.BusinessId,
+                "PAYROLL-AUDIT", "Administración laboral", null, false));
+        await PutAsync<AccountingCostCenterAssignmentView>(client,
+            "/api/commerce/v1/accounting/cost-center-assignments",
+            new SaveAccountingCostCenterAssignmentRequest(Guid.NewGuid(), fixture.BusinessId,
+                payrollCenterId, AccountingCostCenterOperationKinds.All, null, true));
+
         using var approveRequest = new HttpRequestMessage(HttpMethod.Post,
             $"/api/commerce/v1/payroll/runs/{runId:D}/approve")
         {
@@ -156,6 +224,19 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
         using (var approve = await client.SendAsync(approveRequest))
             Assert.True(approve.IsSuccessStatusCode, await approve.Content.ReadAsStringAsync());
         await AssertBalancedEntryAsync(runId, PayrollAccountingDocumentTypes.Accrual);
+        await AssertPayrollCostCenterAsync(runId, payrollCenterId);
+
+        using (var duplicate = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/commerce/v1/payroll/runs/{overlappingId:D}/approve")
+               { Content = JsonContent.Create(new { rowVersion = overlapping.RowVersion }) })
+        {
+            duplicate.Headers.Add("Idempotency-Key", $"cert-{overlappingId:D}");
+            using var rejected = await client.SendAsync(duplicate);
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+            Assert.Contains("ya fue liquidada", await rejected.Content.ReadAsStringAsync());
+        }
+        Assert.Equal("Calculated", (await GetAsync<PayrollRunView>(client,
+            $"/api/commerce/v1/payroll/runs/{overlappingId:D}")).Status);
 
         var listedRuns = await GetAsync<PayrollRunSummary[]>(client,
             "/api/commerce/v1/payroll/runs");
@@ -169,6 +250,37 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"),
                 new DateOnly(2026, 8, 31), "BANK-CERT-001"));
         await AssertBalancedEntryAsync(batchId, PayrollAccountingDocumentTypes.Payment);
+        await AssertPayrollCostCenterAsync(batchId, payrollCenterId);
+
+        // The standard accounting auxiliary must reconcile payroll by cost center.
+        var entry = await GetAsync<AccountingEntryView>(client,
+            $"/api/commerce/v1/accounting/entries/by-document/{runId:D}");
+        var salaryAccount = entry.Lines.First(line => line.Debit > 0).AccountCode;
+        var movements = await GetAsync<AccountMovementRow[]>(client,
+            $"/api/commerce/v1/accounting/reports/account-movements?accountCode={salaryAccount}&from=2026-08-01&to=2026-08-31&costCenterId={payrollCenterId:D}");
+        Assert.Contains(movements, item => item.SourceDocumentId == runId && item.CostCenterId == payrollCenterId);
+        Assert.All(movements, item => Assert.Equal(payrollCenterId, item.CostCenterId));
+
+        // Renaming the master and replaying approval must preserve posted classification.
+        var centers = await GetAsync<AccountingCostCenterView[]>(client,
+            "/api/commerce/v1/accounting/cost-centers");
+        var center = Assert.Single(centers, item => item.CostCenterId == payrollCenterId);
+        await PutAsync<AccountingCostCenterView>(client,
+            $"/api/commerce/v1/accounting/cost-centers/{payrollCenterId:D}",
+            new UpdateCostCenterRequest(center.Code, "Nombre posterior", null, false, true, center.RowVersion));
+        using (var replay = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/commerce/v1/payroll/runs/{runId:D}/approve")
+               { Content = JsonContent.Create(new { rowVersion = run.RowVersion }) })
+        {
+            replay.Headers.Add("Idempotency-Key", $"cert-{runId:D}");
+            using var response = await client.SendAsync(replay);
+            response.EnsureSuccessStatusCode();
+        }
+        await AssertPayrollCostCenterAsync(runId, payrollCenterId);
+        await AssertPayrollCostCenterAsync(batchId, payrollCenterId);
+        var replayedEntry = await GetAsync<AccountingEntryView>(client,
+            $"/api/commerce/v1/accounting/entries/by-document/{runId:D}");
+        Assert.Equal(entry.EntryId, replayedEntry.EntryId);
 
         var issuer = options.FiscalIssuers.Single(value => value.FiscalIssuerConfigurationId == fixture.FiscalIssuerConfigurationId);
         await PutAsync<ElectronicPayrollConfigurationView>(client,
@@ -180,10 +292,28 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 true, null));
         await PutAsync<PayrollSettingsView>(client, "/api/commerce/v1/payroll/settings",
             new SavePayrollSettingsRequest(false, true, null));
+        // Later contract changes must not rewrite the approved fiscal source.
+        await PutAsync<PayrollEmploymentView>(client,
+            $"/api/commerce/v1/payroll/employments/{employmentId:D}",
+            employmentRequest with { MonthlySalary = 4_000_000m, ContractNumber = "CHANGED-AFTER-APPROVAL",
+                RowVersion = employment.RowVersion });
         var electronic = await PostAsync<ElectronicPayrollPeriodView>(client,
             "/api/commerce/v1/payroll/electronic-periods",
             new GenerateElectronicPayrollPeriodRequest(Guid.NewGuid(), fixture.BusinessId, 2026, 8));
         Assert.Single(electronic.Documents);
+        await using (var fiscalConnection = new SqlConnection(fixture.ConnectionString))
+        {
+            await fiscalConnection.OpenAsync();
+            await using var snapshotQuery = fiscalConnection.CreateCommand();
+            snapshotQuery.CommandText = "SELECT SourceSnapshotJson FROM payroll.ElectronicDocuments WHERE ElectronicPayrollDocumentId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId";
+            snapshotQuery.Parameters.AddWithValue("@Id", electronic.Documents[0].ElectronicPayrollDocumentId);
+            snapshotQuery.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            snapshotQuery.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            var snapshot = PayrollContractSerializer.DeserializeElectronic((string)(await snapshotQuery.ExecuteScalarAsync())!);
+            Assert.Equal(3_000_000m, snapshot.MonthlySalary);
+            Assert.Equal("CERT-EMP-001", snapshot.EmployeeCode);
+            Assert.Equal(run.TotalEarnings, snapshot.Earnings);
+        }
         Assert.Contains(fixture.DrainFiscalSignals(), signal =>
             signal.Signal.DocumentId == electronic.Documents[0].FiscalDocumentId);
 
@@ -335,6 +465,35 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@PaymentMethod", paymentMethod);
         var rowVersion = (byte[])(await command.ExecuteScalarAsync())!;
         return (partyId, employmentId, rowVersion);
+    }
+
+    private async Task AssertPayrollCostCenterAsync(Guid documentId, Guid expectedCenterId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT j.ResolvedCostCenterId,l.CostCenterId,l.CostCenterCodeSnapshot,l.CostCenterNameSnapshot
+            FROM dbo.AccountingPostingJobs j
+            JOIN dbo.AccountingEntries e ON e.SourceDocumentId=j.SourceDocumentId
+              AND e.SourceDocumentType=j.SourceDocumentType AND e.BusinessId=j.BusinessId
+            JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+            WHERE j.SourceDocumentId=@Id AND j.TenantId=@TenantId AND j.BusinessId=@BusinessId;
+            """;
+        command.Parameters.AddWithValue("@Id", documentId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync();
+        var count = 0;
+        while (await reader.ReadAsync())
+        {
+            Assert.Equal(expectedCenterId, reader.GetGuid(0));
+            Assert.Equal(expectedCenterId, reader.GetGuid(1));
+            Assert.Equal("PAYROLL-AUDIT", reader.GetString(2));
+            Assert.Equal("Administración laboral", reader.GetString(3));
+            count++;
+        }
+        Assert.True(count >= 2);
     }
 
     private async Task AssertBalancedEntryAsync(Guid documentId, string documentType)

@@ -94,7 +94,9 @@ otros inventarios siguen visibles, pero quedan deshabilitados para evitar mezcla
 bodegas o alcances. El administrador decide cuáles participan y pulsa
 `Conciliar seleccionados`.
 
-La selección guarda el identificador y versión de cada borrador. Una nueva
+La selección envía el identificador de cada borrador. Al conciliar, el servidor
+toma su único estado actual y congela allí la versión usada para trazabilidad;
+una versión antigua enviada por la pantalla no bloquea la confirmación. Una nueva
 conciliación reemplaza la activa anterior. Nunca se mezclan bodegas, sesiones o
 alcances.
 

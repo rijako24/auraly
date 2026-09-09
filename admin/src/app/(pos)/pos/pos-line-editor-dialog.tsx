@@ -45,8 +45,7 @@ export function PosLineEditorDialog({
   const discountInputs = useRef<Array<HTMLInputElement | null>>([]);
 
   useEffect(() => {
-    discountInputs.current[0]?.focus();
-    discountInputs.current[0]?.select();
+    focusEditorControl(discountInputs.current[0]);
   }, []);
 
   useEffect(() => {
@@ -123,8 +122,7 @@ export function PosLineEditorDialog({
     ]);
     const next = nextGridPosition(row, column, available, event.key as GridDirection);
     const target = next ? event.currentTarget.querySelector<HTMLInputElement>(`input[data-editor-row="${next.row}"][data-editor-column="${next.column}"]:not(:disabled)`) : null;
-    target?.focus({ preventScroll: true });
-    target?.select();
+    focusEditorControl(target);
     return true;
   };
 
@@ -160,7 +158,7 @@ export function PosLineEditorDialog({
   };
 
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/70 sm:items-center sm:p-4">
-    <form role="dialog" aria-modal="true" aria-labelledby="pos-line-editor-title" aria-keyshortcuts="Enter Escape" onSubmit={submit} onKeyDown={(event)=>{
+    <form role="dialog" aria-modal="true" aria-labelledby="pos-line-editor-title" aria-keyshortcuts="Enter Escape" data-pos-focus-surface="modal" onSubmit={submit} onKeyDown={(event)=>{
       if (moveInGrid(event)) return;
       if (event.key === "Tab") {
         event.preventDefault();
@@ -168,8 +166,7 @@ export function PosLineEditorDialog({
         const current = controls.indexOf(document.activeElement as HTMLInputElement | HTMLButtonElement);
         const next = nextFocusableIndex(current, controls.length, event.shiftKey);
         const target = controls[next];
-        target?.focus({ preventScroll: true });
-        if (target instanceof HTMLInputElement) target.select();
+        focusEditorControl(target);
         return;
       }
       if(event.key==="Enter"){
@@ -181,7 +178,7 @@ export function PosLineEditorDialog({
         <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/10 text-teal-200"><PencilLine className="h-5 w-5"/></span><div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-300">Cambio puntual</p><h2 id="pos-line-editor-title" className="text-xl font-bold">Editar líneas de esta venta</h2><p className="mt-1 text-sm text-slate-300">Nombre, costo para margen, descuento y precio. El producto maestro no se modifica.</p></div></div>
         <span className="hidden items-center gap-2 rounded-full border border-teal-300/30 bg-teal-300/10 px-3 py-1.5 text-xs font-semibold text-teal-100 sm:flex"><ShieldCheck className="h-4 w-4"/>Solo este documento</span>
       </header>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">
+      <div data-testid="pos-line-editor-scroll-region" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">
         <section className="flex flex-col gap-4 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-teal-50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-700 text-white"><CircleDollarSign className="h-5 w-5" /></span><div><strong className="text-slate-950">Distribuir cargo adicional</strong><p className="mt-1 text-sm text-slate-600">Suma un valor a la venta y lo reparte por igual por cada unidad, respetando la cantidad de cada línea.</p></div></div>
           <Button type="button" variant="outline" className="shrink-0 border-teal-300 bg-white" onClick={() => setChargeOpen(true)}>Agregar y distribuir</Button>
@@ -226,6 +223,13 @@ export function PosLineEditorDialog({
       </DialogContent>
     </Dialog>
   </div>;
+}
+
+function focusEditorControl(target: HTMLInputElement | HTMLButtonElement | null | undefined) {
+  if (!target) return;
+  target.focus({ preventScroll: true });
+  if (target instanceof HTMLInputElement) target.select();
+  target.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function toEditable(line: PosDraftLine): EditableLine {

@@ -176,6 +176,11 @@ user activates accounting explicitly. If the user initially selected
 been accepted since that activation. The first movement makes that decision
 immutable.
 
+Operational documents created before accounting activation do not close this
+window, even if a technical posting job for one of them is created afterwards.
+Only an accounting source accepted after activation or an entry posted after
+activation makes the zero-opening decision immutable.
+
 Withholding rules remain owned by the taxation module and are presented inside
 the accounting workspace. Their required responsibilities and every
 customer/supplier tax profile must reference active values from the canonical
@@ -218,6 +223,13 @@ Stable UI choices such as opening mode and account nature are rows in the
 canonical `reference.Options` table. Accounts, parties, cost centers, periods,
 opening batches and opening lines retain dedicated domain tables. Free text is
 limited to business data such as names and descriptions.
+
+Financial traceability filters by date range, accounting state and the exact
+source document type. The `accounting-document-type` reference catalog supplies
+the visible operation selector and its codes must remain equal to
+`AccountingProcessingPolicy.DocumentTypes`; an integration regression prevents
+the catalog and posting engine from diverging. The same filter is applied to the
+paged screen query and every page included in its exported report.
 
 Permissions are seeded idempotently for administrators:
 

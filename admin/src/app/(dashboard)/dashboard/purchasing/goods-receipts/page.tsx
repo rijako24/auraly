@@ -6,7 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   ArchiveRestore, Barcode, ChevronDown, CircleAlert, CircleDollarSign, FileText, PackagePlus, Plus, Save,
-  Search, Trash2, Truck, Warehouse, X,
+  Search, Trash2, Truck, Warehouse,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
@@ -51,7 +51,7 @@ import { purchaseOrdersApi } from "@/services/api/purchase-orders";
 import { useActiveProductOptionScroll } from "@/components/products/use-active-product-option-scroll";
 import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
-  nextGoodsReceiptEditorTarget, previewGoodsReceiptPurchaseCosts, summarizeGoodsReceipt,
+  nextGoodsReceiptEditorTarget, previewGoodsReceiptPurchaseCosts, shouldShowLandedUnitCost, summarizeGoodsReceipt,
   type GoodsReceiptEditorField,
 } from "@/lib/goods-receipt-calculator";
 import {
@@ -89,6 +89,10 @@ const purchaseEvidenceLabels: Record<string, string> = {
   ForeignCommercialInvoice: "Factura comercial del exterior",
   ImportDeclaration: "Declaración de importación",
 };
+const withDerivedWeight = (line: GoodsReceiptLine): GoodsReceiptLine =>
+  line.unitGrossWeightKg && line.unitGrossWeightKg > 0
+    ? { ...line, totalGrossWeightKg: Math.round(line.quantity * line.unitGrossWeightKg * 1_000_000) / 1_000_000 }
+    : line;
 export default function GoodsReceiptsPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const userId = useAuthStore((state) => state.user?.userId);
@@ -361,8 +365,8 @@ function ReceiptDetailDialog({
                   <th className="px-4 py-3 text-left">Presentación</th>
                   <th className="px-4 py-3 text-right">Cantidad</th>
                   <th className="px-4 py-3 text-right">Costo unitario</th>
+                  <th className="px-4 py-3 text-right">Descuento</th>
                   <th className="px-4 py-3 text-right">IVA</th>
-                  <th className="px-4 py-3 text-right">Costo puesto / unidad · COP</th>
                   <th className="px-4 py-3 text-right">Total factura · {detail.currencyCode}</th>
                 </tr>
               </thead>
@@ -379,19 +383,23 @@ function ReceiptDetailDialog({
                     </p>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{line.quantity}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{formatCurrency(line.unitCost)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    <p>{formatCurrency(line.unitCost)} {detail.currencyCode}</p>
+                    {line.recognizedInventoryCostAmount != null && line.quantity > 0 &&
+                      shouldShowLandedUnitCost(line.unitCost, detail.currencyCode,
+                        detail.exchangeRate, line.recognizedInventoryCostAmount / line.quantity) && <>
+                      {(line.allocatedLandedCostAmount ?? 0) > 0 && <p className="text-xs text-muted-foreground">
+                        Incluye +{formatCurrency((line.allocatedLandedCostAmount ?? 0) / line.quantity)} COP prorrateado
+                      </p>}
+                      <p className="text-xs font-semibold">Costo total {formatCurrency(line.recognizedInventoryCostAmount / line.quantity)} COP</p>
+                    </>}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">{formatCurrency(line.discountAmount)}</td>
                   <td className="px-4 py-3 text-right">
                     <p className="tabular-nums">{line.taxRate}%</p>
                     <p className="text-xs text-muted-foreground">
                       {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}
                     </p>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {line.recognizedInventoryCostAmount != null && line.quantity > 0
-                      ? formatCurrency(line.recognizedInventoryCostAmount / line.quantity)
-                      : "No disponible"}
-                    {(line.allocatedLandedCostAmount ?? 0) > 0 &&
-                      <p className="text-xs text-muted-foreground">Incluye +{formatCurrency((line.allocatedLandedCostAmount ?? 0) / line.quantity)}</p>}
                   </td>
                   <td className="px-4 py-3 text-right font-medium tabular-nums">{formatCurrency(line.lineTotal)}</td>
                 </tr>)}
@@ -494,6 +502,7 @@ function ReceiptEditor({
   const confirm = useConfirmGoodsReceipt();
   const router = useRouter();
   const scanRef = useRef<HTMLInputElement>(null);
+  const persistInFlight = useRef<Promise<GoodsReceiptDraft | null> | null>(null);
   const productListRef = useRef<HTMLDivElement>(null);
   const productPickerRef = useRef<HTMLDivElement>(null);
   const [activeProductIndex, setActiveProductIndex] = useState(0);
@@ -531,7 +540,7 @@ function ReceiptEditor({
       return goodsReceiptsApi.previewWithholding({
         businessId, supplierId: draft.supplierId,
         supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate)!,
-        lines: draft.lines,
+        lines: draft.lines.map(withDerivedWeight),
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: null,
         purchaseEvidenceType: draft.purchaseEvidenceType as PurchaseEvidenceType,
@@ -714,7 +723,7 @@ function ReceiptEditor({
     receivedAt: new Date().toISOString(), createsPayable: draft.createsPayable,
     dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
     currencyCode: draft.currencyCode, notes: draft.notes.trim() || null,
-    lines: draft.lines, concurrencyToken: draft.concurrencyToken,
+    lines: draft.lines.map(withDerivedWeight), concurrencyToken: draft.concurrencyToken,
     purchaseEvidenceType: draft.purchaseEvidenceType || null,
     purchaseOrderId: draft.purchaseOrderId || null,
     exchangeRate: draft.exchangeRate, exchangeRateDate: draft.exchangeRateDate || null,
@@ -722,19 +731,41 @@ function ReceiptEditor({
     additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments),
   });
 
-  const persist = async (notify = true) => {
+  const persistOnce = async (notify: boolean) => {
+    const desired = request();
     try {
-      const saved = await save.mutateAsync(request());
+      let saved: GoodsReceiptDraft;
+      try {
+        saved = await save.mutateAsync(desired);
+      } catch (error) {
+        if (apiStatusCode(error) !== 409) throw error;
+        const latest = await goodsReceiptsApi.getDraft(desired.draftId);
+        saved = await save.mutateAsync({
+          ...desired,
+          concurrencyToken: latest.concurrencyToken,
+        });
+      }
       change({ concurrencyToken: saved.concurrencyToken });
       if (notify) {
         toast.success("Borrador guardado y disponible para recuperar.");
         onClear();
       }
       return saved;
-    } catch {
-      toast.error("No fue posible guardar. El borrador pudo cambiar en otra sesión.");
+    } catch (error) {
+      toast.error(apiStatusCode(error) === 409
+        ? "El borrador volvió a cambiar mientras se guardaba. Ábrelo desde la lista y vuelve a intentar."
+        : apiErrorMessage(error, "No fue posible guardar el borrador."));
       return null;
     }
+  };
+
+  const persist = (notify = true) => {
+    if (persistInFlight.current) return persistInFlight.current;
+    const operation = persistOnce(notify).finally(() => {
+      if (persistInFlight.current === operation) persistInFlight.current = null;
+    });
+    persistInFlight.current = operation;
+    return operation;
   };
 
   const addProduct = (product: GoodsReceiptProduct) => {
@@ -742,11 +773,11 @@ function ReceiptEditor({
     const lineIndex = existing ? draft.lines.findIndex((line) => line.productId === product.productId) : draft.lines.length;
     const lines = existing
       ? draft.lines.map((line) => line.productId === product.productId
-        ? {
+        ? withDerivedWeight({
           ...line,
           presentationQuantity: line.presentationQuantity + 1,
           quantity: line.quantity + line.unitsPerPresentation,
-        } : line)
+        }) : line)
       : [...draft.lines, {
         lineNumber: draft.lines.length + 1, productId: product.productId,
         description: product.name, quantity: product.unitsPerPresentation,
@@ -760,6 +791,10 @@ function ReceiptEditor({
         preferredUnitsPerPresentation: product.unitsPerPresentation,
         latestUnitCost: product.latestUnitCost,
         averageUnitCost: product.averageUnitCost,
+        unitGrossWeightKg: product.unitGrossWeightKg,
+        totalGrossWeightKg: product.unitGrossWeightKg
+          ? Math.round(product.unitGrossWeightKg * product.unitsPerPresentation * 1_000_000) / 1_000_000
+          : null,
       } satisfies GoodsReceiptLine];
     change({ lines });
     setProductSearch("");
@@ -855,7 +890,7 @@ function ReceiptEditor({
 
   const updateLine = (productId: string, values: Partial<GoodsReceiptLine>) =>
     change({ lines: draft.lines.map((line) =>
-      line.productId === productId ? { ...line, ...values } : line) });
+      line.productId === productId ? withDerivedWeight({ ...line, ...values }) : line) });
 
   const deleteDraft = async () => {
     if (!draft.concurrencyToken) return;
@@ -880,12 +915,6 @@ function ReceiptEditor({
       return;
     }
     try {
-      let confirmationToken = draft.concurrencyToken;
-      if (!confirmationToken) {
-        const saved = await persist(false);
-        if (!saved) return;
-        confirmationToken = saved.concurrencyToken;
-      }
       const accepted = await confirm.mutateAsync({
         documentId: draft.draftId, businessId, warehouseId: draft.warehouseId,
         supplierId: draft.supplierId,
@@ -894,8 +923,8 @@ function ReceiptEditor({
         supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
         receivedAt: new Date().toISOString(), createsPayable: draft.createsPayable,
         dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
-        currencyCode: draft.currencyCode, notes: draft.notes.trim() || null, lines: draft.lines,
-        draftConcurrencyToken: confirmationToken,
+        currencyCode: draft.currencyCode, notes: draft.notes.trim() || null, lines: draft.lines.map(withDerivedWeight),
+        draftConcurrencyToken: null,
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: null,
         purchaseEvidenceType: draft.purchaseEvidenceType,
@@ -934,9 +963,13 @@ function ReceiptEditor({
       </DialogHeader>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-        {options.isError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          No fue posible cargar los catálogos de recepción. Los campos dependientes quedan bloqueados para evitar guardar códigos inválidos; vuelve a intentar antes de confirmar.
+        {options.isError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <span className="flex min-w-0 items-start gap-2"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>No fue posible cargar los catálogos de recepción. Los campos dependientes y el guardado quedan bloqueados hasta recuperarlos.</span>
+          </span>
+          <Button type="button" size="sm" variant="outline" disabled={options.isFetching} onClick={() => void options.refetch()}>
+            {options.isFetching ? "Reintentando…" : "Reintentar"}
+          </Button>
         </div>}
         <section className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
           <Field label="Orden de compra (opcional)">
@@ -969,6 +1002,10 @@ function ReceiptEditor({
                     overReceiptReason: null,
                     orderedQuantity: line.orderedQuantity,
                     remainingQuantity: line.remainingQuantity,
+                    unitGrossWeightKg: line.unitGrossWeightKg,
+                    totalGrossWeightKg: line.unitGrossWeightKg
+                      ? Math.round(line.remainingQuantity * line.unitGrossWeightKg * 1_000_000) / 1_000_000
+                      : null,
                   })),
                 });
                 toast.success(`${order.documentNumber} fue recuperada. Puedes ajustar las cantidades realmente recibidas.`);
@@ -1181,9 +1218,10 @@ function ReceiptEditor({
           <div className="overflow-hidden">
             <table className="w-full table-fixed text-sm">
               <thead className="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <tr><th className="w-[34%] px-4 py-3">Producto</th><th className="w-[17%] px-3 py-3">Cantidad recibida</th>
-                  <th className="w-[14%] px-3 py-3">Costo unitario</th><th className="w-[12%] px-3 py-3">Descuento</th>
-                  <th className="w-[7%] px-3 py-3 text-center">IVA</th><th className="w-[11%] px-3 py-3 text-right">Costo compra</th>
+                <tr><th className="w-[29%] px-4 py-3">Producto</th><th className="w-[16%] px-3 py-3">Cantidad recibida</th>
+                  <th className="w-[19%] px-3 py-3">Costo unitario</th><th className="w-[10%] px-3 py-3">Descuento</th>
+                  <th className="w-[7%] px-3 py-3 text-center">IVA</th>
+                  <th className="w-[14%] px-3 py-3 text-right">Total factura · {draft.currencyCode}</th>
                   <th className="w-[5%]" /></tr>
               </thead>
               <tbody>{draft.lines.map((line) => {
@@ -1235,7 +1273,14 @@ function ReceiptEditor({
                     ariaLabel={`Costo unitario de ${line.description}`}
                     value={line.unitCost} onValueChange={(value) =>
                       updateLine(line.productId, { unitCost: value ?? 0 })}
-                    onKeyDown={(event) => moveEditorFocus(event, line.productId, "unitCost")} /></td>
+                    onKeyDown={(event) => moveEditorFocus(event, line.productId, "unitCost")} />
+                    {line.quantity > 0 && shouldShowLandedUnitCost(line.unitCost,
+                      draft.currencyCode, draft.exchangeRate, costPreview?.purchaseUnitCost) &&
+                      <div className="mt-1 text-right text-xs tabular-nums">
+                      {(costPreview?.allocatedAdditionalCost ?? 0) > 0 && <p className="text-muted-foreground">Incluye +{formatCurrency(costPreview!.allocatedAdditionalCost / line.quantity)} COP prorrateado</p>}
+                      <p className="font-semibold">Costo total {costPreview?.purchaseUnitCost == null ? "—" : formatCurrency(costPreview.purchaseUnitCost)} COP</p>
+                    </div>}
+                  </td>
                   <td className="px-3 py-2"><FormattedNumberInput kind="currency"
                     ref={(element) => {
                       const key = editorCellKey(line.productId, "discount");
@@ -1247,13 +1292,8 @@ function ReceiptEditor({
                       updateLine(line.productId, { discountAmount: value ?? 0 })}
                     onKeyDown={(event) => moveEditorFocus(event, line.productId, "discount")} /></td>
                   <td className="px-3 py-4 text-center">{line.taxRate} %</td>
-                  <td className="break-words px-3 py-4 text-right text-xs">
-                    <p className="font-semibold">{costPreview?.purchaseUnitCost == null
-                      ? "—" : formatCurrency(costPreview.purchaseUnitCost)} COP</p>
-                    <p className="mt-1 text-muted-foreground">Factura {formatCurrency(calculatedLine.total)} {draft.currencyCode}</p>
-                    {line.quantity > 0 && (costPreview?.allocatedAdditionalCost ?? 0) > 0 && <p className="text-muted-foreground">
-                      Incluye +{formatCurrency(costPreview!.allocatedAdditionalCost / line.quantity)} prorrateado
-                    </p>}
+                  <td className="px-3 py-4 text-right font-semibold tabular-nums">
+                    {formatCurrency(calculatedLine.total)} {draft.currencyCode}
                   </td>
                   <td className="pr-3"><Button type="button" size="icon" variant="ghost"
                     aria-label={`Eliminar ${line.description}`}
@@ -1342,7 +1382,7 @@ function ReceiptEditor({
                       <Field label="Tratamiento del costo"><Select value={line.costTreatment} onValueChange={(costTreatment: "Capitalize" | "Expense") => updateCostLine(document, line.lineNumber, { costTreatment, allocationMethod: costTreatment === "Expense" ? "None" : (line.allocationMethod === "None" ? "Value" : line.allocationMethod), eligibleReceiptLineNumbers: null, manualAllocations: null })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostTreatments.length)}><SelectValue placeholder="Cargando tratamientos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostTreatments ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                       {line.costTreatment === "Capitalize" && <Field label="Cómo prorratear"><Select value={line.allocationMethod} onValueChange={(allocationMethod: PurchaseCostAllocationMethod) => updateCostLine(document, line.lineNumber, { allocationMethod, eligibleReceiptLineNumbers: allocationMethod === "Manual" ? draft.lines.map((item) => item.lineNumber) : null, manualAllocations: allocationMethod === "Manual" ? draft.lines.map((item) => ({ receiptLineNumber: item.lineNumber, functionalAmount: 0 })) : null })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostAllocationMethods.length)}><SelectValue placeholder="Cargando métodos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostAllocationMethods ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>}
                     </div>
-                    {(line.allocationMethod === "Weight" || line.allocationMethod === "Volume") && <div className="grid gap-2 rounded-xl bg-muted/25 p-3 md:grid-cols-2"><p className="text-sm text-muted-foreground md:col-span-2">Indica el {line.allocationMethod === "Weight" ? "peso bruto total" : "volumen total"} de cada producto; el motor usará esa proporción.</p>{draft.lines.map((product) => <Field key={product.productId} label={product.description}><Input aria-label={`${line.allocationMethod === "Weight" ? "Peso" : "Volumen"} de ${product.description}`} type="number" min="0.000001" step="0.001" value={(line.allocationMethod === "Weight" ? product.totalGrossWeightKg : product.totalVolumeM3) ?? ""} onChange={(event) => updateLine(product.productId, line.allocationMethod === "Weight" ? { totalGrossWeightKg: Number(event.target.value) } : { totalVolumeM3: Number(event.target.value) })} /></Field>)}</div>}
+                    {(line.allocationMethod === "Weight" || line.allocationMethod === "Volume") && <div className="grid gap-2 rounded-xl bg-muted/25 p-3 md:grid-cols-2"><p className="text-sm text-muted-foreground md:col-span-2">{line.allocationMethod === "Weight" ? "El peso total se calcula con la cantidad recibida y el peso en kg registrado en cada producto. Solo debes completar productos antiguos que aún no tengan peso." : "Indica el volumen total de cada producto; el motor usará esa proporción."}</p>{draft.lines.map((product) => <Field key={product.productId} label={product.description}>{line.allocationMethod === "Weight" && product.unitGrossWeightKg ? <div className="rounded-lg border bg-background px-3 py-2 text-sm"><strong>{new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.totalGrossWeightKg ?? 0)} kg</strong><p className="text-xs text-muted-foreground">{new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.unitGrossWeightKg)} kg por unidad × {new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.quantity)}</p></div> : <Input aria-label={`${line.allocationMethod === "Weight" ? "Peso" : "Volumen"} de ${product.description}`} type="number" min="0.000001" step="0.001" value={(line.allocationMethod === "Weight" ? product.totalGrossWeightKg : product.totalVolumeM3) ?? ""} onChange={(event) => updateLine(product.productId, line.allocationMethod === "Weight" ? { totalGrossWeightKg: event.target.value === "" ? null : Number(event.target.value) } : { totalVolumeM3: event.target.value === "" ? null : Number(event.target.value) })} />}</Field>)}</div>}
                     {line.allocationMethod === "Manual" && <div className="grid gap-2 rounded-xl bg-muted/25 p-3 md:grid-cols-2"><p className="text-sm text-muted-foreground md:col-span-2">Distribuye exactamente {formatCurrency(manualTarget)} COP. La diferencia debe quedar en cero.</p>{draft.lines.map((product) => <Field key={product.productId} label={product.description}><FormattedNumberInput kind="currency" value={line.manualAllocations?.find((allocation) => allocation.receiptLineNumber === product.lineNumber)?.functionalAmount ?? 0} onValueChange={(value) => updateManualAllocation(document, line, product.lineNumber, value ?? 0)} /></Field>)}<p className={`text-sm font-medium md:col-span-2 ${Math.abs(manualTarget - manualAssigned) < 0.0001 ? "text-emerald-700" : "text-amber-700"}`}>Diferencia pendiente: {formatCurrency(manualTarget - manualAssigned)} COP</p></div>}
                     <div className="grid gap-3 text-sm md:grid-cols-3"><DocumentTotal label="Base" value={line.amount} suffix={document.currencyCode} /><DocumentTotal label="IVA" value={line.taxAmount} suffix={document.currencyCode} /><DocumentTotal label={line.costTreatment === "Capitalize" ? `Al inventario · ${allocationLabel}` : "Al gasto"} value={(line.amount + capitalizedTax) * rate} suffix="COP" /></div>
                   </div>;
@@ -1356,9 +1396,9 @@ function ReceiptEditor({
                     const preview = purchaseCostByLine.get(product.lineNumber);
                     return <div key={product.productId} className="flex items-start justify-between gap-3 rounded-lg bg-background px-3 py-2 text-sm">
                       <span className="min-w-0"><strong className="block truncate">{product.description}</strong>
-                        <small className="text-muted-foreground">Costo compra / unidad</small></span>
+                        <small className="text-muted-foreground">Costo total / unidad · COP</small></span>
                       <span className="shrink-0 text-right"><strong className="block">{preview?.purchaseUnitCost == null ? "—" : formatCurrency(preview.purchaseUnitCost)}</strong>
-                        <small className="text-muted-foreground">+{formatCurrency(preview?.allocatedAdditionalCost ?? 0)} asignado</small></span>
+                        <small className="text-muted-foreground">Compra {formatCurrency(preview && product.quantity > 0 ? (preview.recognizedInventoryCost - preview.allocatedAdditionalCost) / product.quantity : 0)} + prorrateo {formatCurrency(preview && product.quantity > 0 ? preview.allocatedAdditionalCost / product.quantity : 0)}</small></span>
                     </div>;
                   })}
                 </div>
@@ -1484,19 +1524,16 @@ function ReceiptEditor({
       <DialogFooter className="border-t bg-background px-6 py-4 sm:justify-between">
         {draft.concurrencyToken
           ? <Button type="button" variant="ghost" className="text-destructive" disabled={remove.isPending} onClick={deleteDraft}>
-              <Trash2 className="mr-2 h-4 w-4" /> Eliminar borrador
+              <Trash2 className="mr-2 h-4 w-4" /> Descartar borrador
             </Button>
           : <Button type="button" variant="ghost" className="text-destructive" onClick={onClear}>
-              Descartar captura
+              <Trash2 className="mr-2 h-4 w-4" /> Descartar borrador
             </Button>}
         <div className="grid w-full gap-2 sm:flex sm:w-auto sm:justify-end">
-          <Button type="button" variant="outline" onClick={onClose}>
-            <X className="mr-2 h-4 w-4" /> Cerrar
-          </Button>
-          <Button type="button" variant="secondary" disabled={save.isPending} onClick={() => persist()}>
+          <Button type="button" variant="secondary" disabled={save.isPending || !options.data} onClick={() => persist()}>
             <Save className="mr-2 h-4 w-4" /> Guardar borrador
           </Button>
-          {canConfirm && <Button type="button" disabled={confirm.isPending} onClick={confirmEntry}>
+          {canConfirm && <Button type="button" disabled={confirm.isPending || !options.data} onClick={confirmEntry}>
               <ArchiveRestore className="mr-2 h-4 w-4" /> Confirmar entrada
             </Button>}
         </div>
@@ -1534,6 +1571,7 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
       preferredUnitsPerPresentation: line.preferredUnitsPerPresentation,
       presentationQuantity: line.presentationQuantity, unitsPerPresentation: line.unitsPerPresentation,
       totalGrossWeightKg: line.totalGrossWeightKg, totalVolumeM3: line.totalVolumeM3,
+      unitGrossWeightKg: line.unitGrossWeightKg,
     })),
     withholdingConceptCode: "", withholdingJurisdictionCode: "",
     purchaseOrderId: draft.purchaseOrderId ?? "",
@@ -1594,6 +1632,15 @@ function allowedPurchaseEvidenceTypes(policy: string | null) {
   if (policy === "BuyerElectronicSupportDocument") return ["BuyerElectronicSupportDocument", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
   if (policy === "InternalReceiptVoucher") return ["InternalReceiptVoucher", "ForeignCommercialInvoice"];
   return ["SupplierElectronicInvoice", "BuyerElectronicSupportDocument", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
+}
+
+function apiStatusCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("statusCode" in error)) return null;
+  return typeof error.statusCode === "number" ? error.statusCode : null;
+}
+
+function apiErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
 function CostDocumentGrid({ title, documents, supplierNames, onOpen, onRemove }: {

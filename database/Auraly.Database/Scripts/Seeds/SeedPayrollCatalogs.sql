@@ -13,6 +13,22 @@ DECLARE @Options TABLE
 );
 
 INSERT @Options VALUES
+('71010000-0000-0000-0000-000000000001',N'payroll-run-kind',N'Regular',N'Liquidación regular',NULL,NULL,10),
+('71010000-0000-0000-0000-000000000002',N'payroll-run-kind',N'Adjustment',N'Ajuste por diferencias',NULL,NULL,20),
+('71020000-0000-0000-0000-000000000001',N'payroll-workflow-status',N'Draft',N'Borrador',NULL,NULL,10),
+('71020000-0000-0000-0000-000000000002',N'payroll-workflow-status',N'Calculated',N'Calculada',NULL,NULL,20),
+('71020000-0000-0000-0000-000000000003',N'payroll-workflow-status',N'Approved',N'Aprobada',NULL,NULL,30),
+('71020000-0000-0000-0000-000000000004',N'payroll-workflow-status',N'Voided',N'Anulada',NULL,NULL,40),
+('71020000-0000-0000-0000-000000000005',N'payroll-workflow-status',N'Confirmed',N'Confirmado',NULL,NULL,50),
+('71020000-0000-0000-0000-000000000006',N'payroll-workflow-status',N'Retired',N'Retirada',NULL,NULL,60),
+('71020000-0000-0000-0000-000000000007',N'payroll-workflow-status',N'Consumed',N'Liquidada',NULL,NULL,70),
+('71020000-0000-0000-0000-000000000009',N'payroll-workflow-status',N'Submitted',N'Enviado',NULL,NULL,90),
+('71020000-0000-0000-0000-00000000000A',N'payroll-workflow-status',N'Closed',N'Cerrado',NULL,NULL,100),
+('71020000-0000-0000-0000-000000000011',N'payroll-workflow-status',N'Generated',N'Generado',NULL,NULL,170),
+('71020000-0000-0000-0000-000000000012',N'payroll-workflow-status',N'Queued',N'En procesamiento fiscal',NULL,NULL,180),
+('71020000-0000-0000-0000-000000000013',N'payroll-workflow-status',N'Accepted',N'Aceptado por la DIAN',NULL,NULL,190),
+('71020000-0000-0000-0000-000000000014',N'payroll-workflow-status',N'Rejected',N'Rechazado por la DIAN',NULL,NULL,200),
+('71020000-0000-0000-0000-000000000015',N'payroll-workflow-status',N'Failed',N'Requiere revisión',NULL,NULL,210),
 ('71000000-0000-0000-0000-000000000001',N'payroll-contract-type',N'Indefinite',N'Término indefinido',NULL,NULL,10),
 ('71000000-0000-0000-0000-000000000002',N'payroll-contract-type',N'FixedTerm',N'Término fijo',NULL,NULL,20),
 ('71000000-0000-0000-0000-000000000003',N'payroll-contract-type',N'WorkOrLabor',N'Obra o labor',NULL,NULL,30),

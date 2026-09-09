@@ -104,6 +104,7 @@ export interface CreateCatalogProductRequest {
   purchaseTaxTreatment: "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
   manageInventory: boolean;
   isWeighable: boolean;
+  unitGrossWeightKg?: number | null;
   barcodes: Array<{ value: string; isPrimary: boolean }>;
   identifiers: Array<{ type: string; value: string }>;
   prices: Array<{
@@ -169,7 +170,7 @@ export const productsApi = {
     suppliers: Array<{ supplierId: string; identification: string; name: string; supplierProductCode: string | null;
       baseUnitCost: number; isPrimary: boolean; purchasePresentationName: string; unitsPerPresentation: number }> | null;
     salesTaxProfileId: string; purchaseTaxProfileId: string; purchaseTaxTreatment: string; description: string | null;
-    baseUnitCode: string; manageInventory: boolean; isWeighable: boolean;
+    baseUnitCode: string; manageInventory: boolean; isWeighable: boolean; unitGrossWeightKg: number | null;
   }>(`/commerce/v1/products/${productId}`),
   rotation: (productId: string) => apiClient.get<ProductRotationDetail[]>(`/commerce/v1/products/${productId}/rotation`),
   listCategories: (businessId: string, includeInactive = false) => apiClient.get<ProductCategory[]>(`/businesses/${businessId}/product-categories`, { includeInactive }),

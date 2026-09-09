@@ -71,7 +71,8 @@ public sealed record SaveProductRequest(
     IReadOnlyCollection<LinkedProductInput>? LinkedProducts = null,
     decimal? ConversionMaximumLossPercent = null,
     IReadOnlyCollection<ProductAliasInput>? Aliases = null,
-    IReadOnlyCollection<ProductImageInput>? Images = null);
+    IReadOnlyCollection<ProductImageInput>? Images = null,
+    decimal? UnitGrossWeightKg = null);
 
 public sealed record ProductDetail(
     Guid ProductId,
@@ -89,7 +90,8 @@ public sealed record ProductDetail(
     string? Description = null,
     string BaseUnitCode = "EA",
     bool ManageInventory = true,
-    bool IsWeighable = false);
+    bool IsWeighable = false,
+    decimal? UnitGrossWeightKg = null);
 
 public sealed record ProductPageRequest(
     int PageSize = 50,

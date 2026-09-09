@@ -185,7 +185,7 @@ Un registro por línea de costo y línea recibida:
 
 La suma asignada debe ser exactamente igual al importe capitalizable de la línea de costo. La asignación es calculada por backend, previsualizada en UI y congelada al confirmar.
 
-El borrador recuperable forma parte del mismo slice: guardar la recepción persiste documentos, líneas y criterios manuales adicionales bajo el `GoodsReceiptDraftId` y su `RowVersion`. Reabrir un borrador no puede perder facturas ni recalcular silenciosamente una distribución manual. La confirmación elimina el borrador sólo después de crear el snapshot definitivo de manera atómica.
+El borrador recuperable forma parte del mismo slice: guardar la recepción persiste documentos, líneas y criterios manuales adicionales bajo el `GoodsReceiptDraftId` y su `RowVersion`. Reabrir un borrador no puede perder facturas ni recalcular silenciosamente una distribución manual. `RowVersion` protege únicamente guardar o descartar esa única copia editable; no representa un historial. Al confirmar, el payload visible es la autoridad y ninguna versión del borrador puede bloquearlo. La confirmación elimina el borrador sólo después de crear el snapshot definitivo de manera atómica.
 
 #### Snapshot logístico en la línea recibida
 
@@ -194,7 +194,26 @@ Para no depender de maestros que luego cambien, cada `GoodsReceiptLine` congela 
 - peso bruto total en kg;
 - volumen total en m³.
 
-El formulario puede proponerlos desde la presentación del proveedor, pero el usuario los valida contra packing list o documento de transporte. No se inventa peso o volumen faltante.
+`Products.UnitGrossWeightKg` es el peso bruto por unidad base del producto y siempre
+se expresa en kilogramos, independientemente de la unidad usada para venderlo. Es
+un dato del catálogo administrativo y no forma parte del catálogo descargado al
+POS. En una recepción, Purchasing lo lee dentro del tenant autenticado y calcula
+`cantidad base recibida × UnitGrossWeightKg`; ese total alimenta cualquier
+distribución por peso y queda congelado en `GoodsReceiptLines.TotalGrossWeightKg`
+al confirmar. El mismo enriquecimiento ocurre al guardar el borrador y al
+confirmar, incluida una recepción recuperada desde una orden de compra, por lo
+que el servidor no confía en un peso enviado por el navegador.
+
+Mientras el documento está en edición, un método automático de prorrateo no
+congela la lista de líneas elegibles: agregar, quitar o cambiar la cantidad de un
+producto recalcula la distribución completa sobre todas las líneas actuales. La
+confirmación vuelve a calcularla en servidor y congela únicamente el reparto
+final en el snapshot inmutable.
+
+Los productos antiguos pueden no tener todavía ese maestro. Sólo en ese caso el
+formulario permite capturar el peso bruto total de la línea; nunca inventa un
+valor. El volumen continúa siendo un dato explícito de la recepción cuando el
+método elegido lo requiere.
 
 ### Catálogos, no listas quemadas
 

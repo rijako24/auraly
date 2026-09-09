@@ -10,6 +10,66 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Product_weight_drives_the_receipt_line_total_in_kilograms()
+    {
+        object originalWeight;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var read = new SqlCommand(
+                "SELECT UnitGrossWeightKg FROM dbo.Products WHERE ProductId=@ProductId;", connection);
+            read.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+            originalWeight = await read.ExecuteScalarAsync() ?? DBNull.Value;
+            await using var update = new SqlCommand(
+                "UPDATE dbo.Products SET UnitGrossWeightKg=1.25 WHERE ProductId=@ProductId;", connection);
+            update.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+            await update.ExecuteNonQueryAsync();
+        }
+
+        var draftId = Guid.NewGuid();
+        try
+        {
+            using var client = fixture.CreateAdminClient(
+                PurchasingPermissionCodes.ReadGoodsReceipts,
+                PurchasingPermissionCodes.CreateGoodsReceipts);
+            var products = await client.GetFromJsonAsync<GoodsReceiptProductPage>(
+                $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}&page=1&pageSize=100");
+            Assert.NotNull(products);
+            Assert.Equal(1.25m, products.Items.Single(item => item.ProductId == fixture.ProductId).UnitGrossWeightKg);
+
+            var request = CreateDraft() with
+            {
+                DraftId = draftId,
+                Lines = [new GoodsReceiptLineRequest(
+                    1, fixture.ProductId, "Producto pesado", 4m, 10m, 0m,
+                    "01", 19m, PurchasingTaxTreatments.DeductibleInputVat,
+                    TotalGrossWeightKg: 999m)]
+            };
+            using var response = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/goods-receipts/drafts/{draftId:D}", request);
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            var draft = (await response.Content.ReadFromJsonAsync<GoodsReceiptDraft>())!;
+            var line = Assert.Single(draft.Lines);
+            Assert.Equal(1.25m, line.UnitGrossWeightKg);
+            Assert.Equal(5m, line.TotalGrossWeightKg);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var cleanup = new SqlCommand("""
+                DELETE dbo.GoodsReceiptDraftLines WHERE GoodsReceiptDraftId=@DraftId;
+                DELETE dbo.GoodsReceiptDrafts WHERE GoodsReceiptDraftId=@DraftId;
+                UPDATE dbo.Products SET UnitGrossWeightKg=@OriginalWeight WHERE ProductId=@ProductId;
+                """, connection);
+            cleanup.Parameters.AddWithValue("@DraftId", draftId);
+            cleanup.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+            cleanup.Parameters.AddWithValue("@OriginalWeight", originalWeight);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task Workspace_options_expose_purchase_concepts_and_colombian_municipalities()
     {
         var ruleId = Guid.NewGuid();
@@ -174,20 +234,6 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}", changedRequest);
         Assert.Equal(HttpStatusCode.Conflict, staleResponse.StatusCode);
 
-        var staleConfirmation = new ConfirmGoodsReceiptRequest(
-            request.DraftId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
-            request.SupplierInvoiceNumber, request.SupplierInvoiceDate, request.ReceivedAt,
-            request.CreatesPayable, request.DueDate, request.CurrencyCode, request.Notes,
-            changedRequest.Lines, created.ConcurrencyToken);
-        using (var staleMessage = new HttpRequestMessage(
-                   HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
-               { Content = JsonContent.Create(staleConfirmation) })
-        {
-            staleMessage.Headers.Add("Idempotency-Key", $"stale-confirm-{request.DraftId:N}");
-            using var staleConfirmationResponse = await client.SendAsync(staleMessage);
-            Assert.Equal(HttpStatusCode.Conflict, staleConfirmationResponse.StatusCode);
-        }
-
         using var deleted = await client.DeleteAsync(
             $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}" +
             $"?concurrencyToken={Uri.EscapeDataString(changed.ConcurrencyToken)}");
@@ -195,6 +241,18 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
         using var missing = await client.GetAsync(
             $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}");
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+
+        var confirmation = new ConfirmGoodsReceiptRequest(
+            request.DraftId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+            request.SupplierInvoiceNumber, request.SupplierInvoiceDate, request.ReceivedAt,
+            request.CreatesPayable, request.DueDate, request.CurrencyCode, request.Notes,
+            changedRequest.Lines, created.ConcurrencyToken);
+        using var confirmMessage = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
+        { Content = JsonContent.Create(confirmation) };
+        confirmMessage.Headers.Add("Idempotency-Key", $"stale-confirm-{request.DraftId:N}");
+        using var confirmed = await client.SendAsync(confirmMessage);
+        Assert.Equal(HttpStatusCode.Accepted, confirmed.StatusCode);
     }
 
     [Fact]

@@ -64,14 +64,14 @@ public sealed class SqlPurchaseOrderStore(SqlServerConnectionFactory connections
 
     public async Task<PurchaseOrderConfirmation> ConfirmAsync(PurchasingUserIdentity user,string idempotencyKey,ConfirmPurchaseOrderRequest request,PurchaseOrderCalculation calculation,CancellationToken ct)
     {
-        var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new{request,calculation}));
+        var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new{request=request with { DraftConcurrencyToken=null },calculation}));
         await using var connection=connections.Create();await connection.OpenAsync(ct);await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,ct);
         try
         {
             await using var command=Procedure("purchasing.PurchaseOrderConfirm",connection,transaction);
             AddCommon(command,user,request.PurchaseOrderId,request.WarehouseId,request.SupplierId,request.OrderedAt,request.ExpectedAt,request.CurrencyCode,request.Notes,calculation);
             command.Parameters.AddWithValue("@IdempotencyKey",idempotencyKey);command.Parameters.Add("@PayloadHash",SqlDbType.Binary,32).Value=hash;
-            command.Parameters.Add("@DraftRowVersion",SqlDbType.VarBinary,8).Value=(object?)DecodeToken(request.DraftConcurrencyToken)??DBNull.Value;
+            command.Parameters.Add("@DraftRowVersion",SqlDbType.VarBinary,8).Value=DBNull.Value;
             command.Parameters.AddWithValue("@LinesJson",BuildLinesJson(request.Lines,calculation));command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
             await using var reader=await command.ExecuteReaderAsync(ct);await reader.ReadAsync(ct);var result=new PurchaseOrderConfirmation(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetBoolean(3));await reader.CloseAsync();await transaction.CommitAsync(ct);return result;
         }
@@ -121,7 +121,7 @@ public sealed class SqlPurchaseOrderStore(SqlServerConnectionFactory connections
         await using var reader=await command.ExecuteReaderAsync(ct);if(!await reader.ReadAsync(ct))return null;
         var header=new{Id=reader.GetGuid(0),Number=reader.IsDBNull(1)?null:reader.GetString(1),Status=reader.GetString(2),WarehouseId=reader.IsDBNull(3)?(Guid?)null:reader.GetGuid(3),Warehouse=reader.IsDBNull(4)?null:reader.GetString(4),SupplierId=reader.IsDBNull(5)?(Guid?)null:reader.GetGuid(5),Supplier=reader.IsDBNull(6)?null:reader.GetString(6),Ordered=reader.GetFieldValue<DateTimeOffset>(7),Expected=reader.IsDBNull(8)?(DateTimeOffset?)null:reader.GetFieldValue<DateTimeOffset>(8),Currency=reader.GetString(9),Notes=reader.IsDBNull(10)?null:reader.GetString(10),Net=reader.GetDecimal(11),Tax=reader.GetDecimal(12),Total=reader.GetDecimal(13),Updated=reader.GetFieldValue<DateTimeOffset>(14),Token=reader.GetString(15)};
         await reader.NextResultAsync(ct);var lines=new List<PurchaseOrderLine>();
-        while(await reader.ReadAsync(ct))lines.Add(new(reader.GetGuid(0),reader.GetInt32(1),reader.GetGuid(2),reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetDecimal(9),reader.GetDecimal(10),reader.GetString(11),reader.GetDecimal(12),reader.GetString(13),reader.GetDecimal(14),reader.GetDecimal(15),reader.GetDecimal(16),reader.GetString(17),reader.GetDecimal(18),reader.GetDecimal(19),reader.GetDecimal(20),reader.GetDecimal(21),reader.GetDecimal(22),reader.GetDecimal(23),reader.GetDecimal(24),reader.IsDBNull(25)?null:reader.GetFieldValue<DateTimeOffset>(25)));
+        while(await reader.ReadAsync(ct))lines.Add(new(reader.GetGuid(0),reader.GetInt32(1),reader.GetGuid(2),reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetDecimal(9),reader.GetDecimal(10),reader.GetString(11),reader.GetDecimal(12),reader.GetString(13),reader.GetDecimal(14),reader.GetDecimal(15),reader.GetDecimal(16),reader.GetString(17),reader.GetDecimal(18),reader.GetDecimal(19),reader.GetDecimal(20),reader.GetDecimal(21),reader.GetDecimal(22),reader.GetDecimal(23),reader.GetDecimal(24),reader.IsDBNull(25)?null:reader.GetFieldValue<DateTimeOffset>(25),reader.IsDBNull(26)?null:reader.GetDecimal(26)));
         return new(header.Id,header.Number,header.Status,header.WarehouseId,header.Warehouse,header.SupplierId,header.Supplier,header.Ordered,header.Expected,header.Currency,header.Notes,header.Net,header.Tax,header.Total,header.Updated,header.Token,lines);
     }
 

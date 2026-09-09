@@ -15,8 +15,9 @@ export interface ProductTaxEditorHandle {
   validate: () => void;
   save: () => Promise<void>;
 }
+export type ProductTaxEditorDraft = Omit<ProductTaxConfiguration, "productId">;
 
-export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: string; embedded?: boolean; onSalesTaxRateChange?: (rate: number) => void }>(function ProductTaxEditor({ productId, embedded = false, onSalesTaxRateChange }, ref) {
+export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: string; embedded?: boolean; onSalesTaxRateChange?: (rate: number) => void; initialDraft?: ProductTaxEditorDraft; onDraftChange?: (draft: ProductTaxEditorDraft) => void }>(function ProductTaxEditor({ productId, embedded = false, onSalesTaxRateChange, initialDraft, onDraftChange }, ref) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const client = useQueryClient();
   const taxes = useQuery({
@@ -36,11 +37,16 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
   const [validationError, setValidationError] = useState<string>();
 
   useEffect(() => {
-    if (!current.data) return;
+    if (!current.data || initialDraft) return;
     setSalesTaxProfileId(current.data.salesTaxProfileId);
     setPurchaseTaxProfileId(current.data.purchaseTaxProfileId);
     setPurchaseTaxTreatment(current.data.purchaseTaxTreatment);
-  }, [current.data]);
+  }, [current.data, initialDraft]);
+  useEffect(() => {
+    if (!initialDraft) return;
+    setSalesTaxProfileId(initialDraft.salesTaxProfileId);setPurchaseTaxProfileId(initialDraft.purchaseTaxProfileId);setPurchaseTaxTreatment(initialDraft.purchaseTaxTreatment);
+  }, [initialDraft]);
+  useEffect(() => { onDraftChange?.({ salesTaxProfileId, purchaseTaxProfileId, purchaseTaxTreatment }); }, [onDraftChange, purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId]);
 
   const save = useMutation({
     mutationFn: () => taxProfilesApi.saveProduct(productId, {

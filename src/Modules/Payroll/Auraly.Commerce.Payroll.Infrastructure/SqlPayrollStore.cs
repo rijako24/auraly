@@ -9,13 +9,15 @@ using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Commerce.Payroll.Domain;
 using Auraly.Contracts.Fiscal;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Logging;
 
 namespace Auraly.Commerce.Payroll.Infrastructure;
 
 public sealed class SqlPayrollStore(
     PayrollSqlConnectionFactory connections,
     IAuralyIdGenerator ids,
-    TimeProvider timeProvider) : IPayrollStore
+    TimeProvider timeProvider,
+    ILogger<SqlPayrollStore> logger) : IPayrollStore
 {
     public async Task<PayrollEmploymentPage> PageEmploymentsAsync(
         PayrollUserIdentity user, int page, int pageSize, string? search,
@@ -945,10 +947,12 @@ public sealed class SqlPayrollStore(
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51740,N'La empresa está fuera del tenant.',1;
             IF NOT EXISTS(SELECT 1 FROM payroll.RuleSets WHERE RuleSetId=@RuleSetId AND (TenantId=@TenantId OR TenantId IS NULL)
-              AND Status=N'Approved' AND EffectiveFrom<=@PeriodEnd AND (EffectiveTo IS NULL OR EffectiveTo>=@PeriodStart))
+              AND Status=N'Approved' AND EffectiveFrom<=@PeriodStart AND (EffectiveTo IS NULL OR EffectiveTo>=@PeriodEnd))
               THROW 51741,N'El conjunto de reglas no está aprobado o vigente.',1;
             IF NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@Frequency AND CatalogCode=N'payroll-pay-frequency' AND IsActive=1)
               THROW 51742,N'La periodicidad no es válida.',1;
+            IF NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE Code=@Kind AND CatalogCode=N'payroll-run-kind' AND IsActive=1)
+              THROW 51742,N'El tipo de liquidación no está activo.',1;
             IF @OriginalId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM payroll.Runs WHERE PayrollRunId=@OriginalId AND TenantId=@TenantId AND BusinessId=@BusinessId AND Status=N'Approved')
               THROW 51743,N'La liquidación original no está aprobada.',1;
             IF @OriginalId IS NOT NULL AND EXISTS(SELECT 1 FROM payroll.Runs WHERE PayrollRunId=@OriginalId
@@ -1130,8 +1134,41 @@ public sealed class SqlPayrollStore(
             foreach (var calculation in calculations)
             {
                 var employeeId = ids.NewId();
-                var employeeSnapshot = JsonSerializer.Serialize(new { calculation.EmploymentId, calculation.PartyId });
                 await using (var employee = new SqlCommand("""
+                    DECLARE @EmployeeSnapshot nvarchar(max)=(
+                      SELECT 1 AS SnapshotVersion,e.EmploymentId,e.PartyId,
+                        COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),N'Trabajador') AS EmployeeName,
+                        COALESCE(p.Identification,N'') AS Identification,
+                        COALESCE(idtype.DianCode,N'') AS IdentificationTypeCode,
+                        COALESCE(p.FirstName,N'') AS FirstName,COALESCE(p.LastName,N'') AS FirstSurname,
+                        e.ContractNumber,e.StartDate,e.EndDate,e.MonthlySalary,
+                        CONVERT(bit,CASE WHEN salary.Code=N'Integral' THEN 1 ELSE 0 END) AS IntegralSalary,
+                        COALESCE(contract.DianCode,N'') AS ContractTypeCode,
+                        COALESCE(worker.DianCode,N'') AS WorkerTypeCode,
+                        COALESCE(subtype.DianCode,N'00') AS WorkerSubtypeCode,
+                        COALESCE(payment.DianCode,N'') AS PaymentMethodCode,
+                        COALESCE(frequency.DianCode,N'') AS PayrollPeriodCode,
+                        bank.Label AS Bank,accountType.MetadataCode AS BankAccountType,e.BankAccountNumber
+                      FROM payroll.Employments e
+                            JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
+                      JOIN payroll.CatalogOptions salary ON salary.OptionId=e.SalaryTypeOptionId
+                      JOIN payroll.CatalogOptions contract ON contract.OptionId=e.ContractTypeOptionId
+                      JOIN payroll.CatalogOptions worker ON worker.OptionId=e.WorkerTypeOptionId
+                      LEFT JOIN payroll.CatalogOptions subtype ON subtype.OptionId=e.WorkerSubtypeOptionId
+                      JOIN payroll.CatalogOptions payment ON payment.OptionId=e.PaymentMethodOptionId
+                      JOIN payroll.CatalogOptions frequency ON frequency.OptionId=e.PayFrequencyOptionId
+                      LEFT JOIN payroll.CatalogOptions bank ON bank.OptionId=e.BankOptionId
+                        AND bank.CatalogCode=N'payroll-bank'
+                      LEFT JOIN payroll.CatalogOptions accountType ON accountType.OptionId=e.BankAccountTypeOptionId
+                        AND accountType.CatalogCode=N'payroll-bank-account-type'
+                      LEFT JOIN payroll.CatalogOptions idtype
+                        ON idtype.CatalogCode=N'payroll-identification-type'
+                       AND idtype.Code=p.IdentificationTypeCode AND idtype.IsActive=1
+                      WHERE e.EmploymentId=@EmploymentId AND e.PartyId=@PartyId
+                              AND e.TenantId=@TenantId AND e.BusinessId=@BusinessId
+                      FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER);
+                    IF @EmployeeSnapshot IS NULL
+                      THROW 51750,N'La relación laboral cambió antes de guardar el cálculo.',1;
                     INSERT payroll.RunEmployees(PayrollRunEmployeeId,TenantId,PayrollRunId,EmploymentId,PartyId,
                       EmployeeSnapshotJson,RuleSnapshotJson,WorkedDays,Earnings,Deductions,EmployerContributions,
                       Provisions,NetPayable,CalculationHash)
@@ -1141,7 +1178,8 @@ public sealed class SqlPayrollStore(
                 {
                     employee.Parameters.AddWithValue("@Id", employeeId); employee.Parameters.AddWithValue("@TenantId", user.TenantId); employee.Parameters.AddWithValue("@RunId", runId);
                     employee.Parameters.AddWithValue("@EmploymentId", calculation.EmploymentId); employee.Parameters.AddWithValue("@PartyId", calculation.PartyId);
-                    employee.Parameters.AddWithValue("@EmployeeSnapshot", employeeSnapshot); employee.Parameters.AddWithValue("@RuleSnapshot", ruleSnapshot);
+                    employee.Parameters.AddWithValue("@RuleSnapshot", ruleSnapshot);
+                    employee.Parameters.AddWithValue("@BusinessId", user.BusinessId);
                     Decimal(employee, "@Days", calculation.WorkedDays, 4); Decimal(employee, "@Earnings", calculation.Earnings, 4); Decimal(employee, "@Deductions", calculation.Deductions, 4);
                     Decimal(employee, "@Employer", calculation.EmployerContributions, 4); Decimal(employee, "@Provisions", calculation.Provisions, 4); Decimal(employee, "@Net", calculation.NetPayable, 4);
                     employee.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = calculation.CalculationHash;
@@ -1224,6 +1262,38 @@ public sealed class SqlPayrollStore(
                 start, end, payment, description, accountingLines);
             var json = PayrollContractSerializer.Serialize(payload); var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(json)); var jobId = ids.NewId(); var now = timeProvider.GetUtcNow();
             await using var approve = new SqlCommand("""
+                -- A calculated draft must not consume a novelty already approved in
+                -- another run, or a deduction whose authority changed after calculation.
+                IF EXISTS(
+                  SELECT 1 FROM payroll.RunLines l
+                  JOIN payroll.RunEmployees e ON e.PayrollRunEmployeeId=l.PayrollRunEmployeeId
+                  JOIN payroll.Novelties n WITH(UPDLOCK,HOLDLOCK) ON n.NoveltyId=l.NoveltyId
+                  WHERE e.PayrollRunId=@RunId AND n.Status<>N'Approved')
+                  THROW 51761,N'Una novedad ya fue liquidada. Recalcula antes de aprobar.',1;
+                IF EXISTS(
+                  SELECT 1 FROM payroll.RunLines l
+                  JOIN payroll.RunEmployees e ON e.PayrollRunEmployeeId=l.PayrollRunEmployeeId
+                  JOIN payroll.Novelties n ON n.NoveltyId=l.NoveltyId
+                  JOIN payroll.DeductionAgreements a WITH(UPDLOCK,HOLDLOCK)
+                    ON a.DeductionAgreementId=l.DeductionAgreementId
+                  WHERE e.PayrollRunId=@RunId AND
+                    (a.TenantId<>@TenantId OR a.EmploymentId<>e.EmploymentId
+                     OR a.ConceptId<>l.ConceptId OR a.IsActive=0
+                     OR NULLIF(LTRIM(RTRIM(a.EvidenceUrl)),N'') IS NULL
+                     OR a.EffectiveFrom>n.StartDate OR a.EffectiveTo<n.EndDate))
+                  THROW 51762,N'La autorización de un descuento cambió. Revisa el acuerdo y recalcula.',1;
+                IF EXISTS(
+                  SELECT 1 FROM payroll.DeductionAgreements a WITH(UPDLOCK,HOLDLOCK)
+                  JOIN (SELECT l.DeductionAgreementId,SUM(l.Amount) Amount
+                    FROM payroll.RunLines l
+                    JOIN payroll.RunEmployees e ON e.PayrollRunEmployeeId=l.PayrollRunEmployeeId
+                    WHERE e.PayrollRunId=@RunId AND l.DeductionAgreementId IS NOT NULL
+                    GROUP BY l.DeductionAgreementId) deductions
+                    ON deductions.DeductionAgreementId=a.DeductionAgreementId
+                  WHERE a.AuthorizedTotal IS NOT NULL
+                    AND a.DeductedToDate+deductions.Amount>a.AuthorizedTotal)
+                  THROW 51763,N'Los descuentos superan el saldo autorizado. Revisa el acuerdo y recalcula.',1;
+
                 DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS(
                   SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
                   WHERE TenantId=@TenantId AND Status=N'Ready'
@@ -1265,7 +1335,7 @@ public sealed class SqlPayrollStore(
         }
         catch (Exception error) when (error is PayrollConflictException or PayrollNotFoundException)
         { await tx.RollbackAsync(CancellationToken.None); throw; }
-        catch (SqlException error) when (error.Number == 51760) { await tx.RollbackAsync(CancellationToken.None); throw new PayrollConflictException(error.Message); }
+        catch (SqlException error) when (error.Number is >= 51760 and <= 51763) { await tx.RollbackAsync(CancellationToken.None); throw new PayrollConflictException(error.Message); }
         catch { await tx.RollbackAsync(CancellationToken.None); throw; }
     }
 
@@ -1342,17 +1412,17 @@ public sealed class SqlPayrollStore(
             var lines = new Dictionary<Guid, List<ElectronicPayrollSnapshotLine>>();
             await using (var source = new SqlCommand("""
                 SELECT re.PartyId,
-                       COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),N'Trabajador'),
-                       COALESCE(p.Identification,N''),r.PayrollRunId,re.EmploymentId,
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.EmployeeName ELSE COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),N'Trabajador') END,
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.Identification ELSE COALESCE(p.Identification,N'') END,r.PayrollRunId,re.EmploymentId,
                        r.PaymentDate,re.WorkedDays,re.Earnings,re.Deductions,
                        re.EmployerContributions,re.Provisions,re.NetPayable,
-                       COALESCE(idtype.DianCode,N''),COALESCE(p.FirstName,N''),COALESCE(p.LastName,N''),
-                       e.ContractNumber,e.StartDate,e.EndDate,e.MonthlySalary,
-                       CONVERT(bit,CASE WHEN salary.Code=N'Integral' THEN 1 ELSE 0 END),
-                       COALESCE(contract.DianCode,N''),COALESCE(worker.DianCode,N''),
-                       COALESCE(subtype.DianCode,N'00'),COALESCE(payment.DianCode,N''),
-                       COALESCE(frequency.DianCode,N''),bank.Label,accountType.MetadataCode,
-                       e.BankAccountNumber
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.IdentificationTypeCode ELSE COALESCE(idtype.DianCode,N'') END,CASE WHEN snap.SnapshotVersion=1 THEN snap.FirstName ELSE COALESCE(p.FirstName,N'') END,CASE WHEN snap.SnapshotVersion=1 THEN snap.FirstSurname ELSE COALESCE(p.LastName,N'') END,
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.ContractNumber ELSE e.ContractNumber END,CASE WHEN snap.SnapshotVersion=1 THEN snap.StartDate ELSE e.StartDate END,CASE WHEN snap.SnapshotVersion=1 THEN snap.EndDate ELSE e.EndDate END,CASE WHEN snap.SnapshotVersion=1 THEN snap.MonthlySalary ELSE e.MonthlySalary END,
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.IntegralSalary ELSE CONVERT(bit,CASE WHEN salary.Code=N'Integral' THEN 1 ELSE 0 END) END,
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.ContractTypeCode ELSE COALESCE(contract.DianCode,N'') END,CASE WHEN snap.SnapshotVersion=1 THEN snap.WorkerTypeCode ELSE COALESCE(worker.DianCode,N'') END,
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.WorkerSubtypeCode ELSE COALESCE(subtype.DianCode,N'00') END,CASE WHEN snap.SnapshotVersion=1 THEN snap.PaymentMethodCode ELSE COALESCE(payment.DianCode,N'') END,
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.PayrollPeriodCode ELSE COALESCE(frequency.DianCode,N'') END,CASE WHEN snap.SnapshotVersion=1 THEN snap.Bank ELSE bank.Label END,CASE WHEN snap.SnapshotVersion=1 THEN snap.BankAccountType ELSE accountType.MetadataCode END,
+                       CASE WHEN snap.SnapshotVersion=1 THEN snap.BankAccountNumber ELSE e.BankAccountNumber END,snap.SnapshotVersion
                 FROM payroll.Runs r
                 JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId
                 JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=re.TenantId
@@ -1370,6 +1440,13 @@ public sealed class SqlPayrollStore(
                 LEFT JOIN payroll.CatalogOptions idtype
                   ON idtype.CatalogCode=N'payroll-identification-type'
                  AND idtype.Code=p.IdentificationTypeCode AND idtype.IsActive=1
+                OUTER APPLY OPENJSON(re.EmployeeSnapshotJson) WITH(
+                  SnapshotVersion int,EmployeeName nvarchar(500),Identification nvarchar(100),
+                  IdentificationTypeCode nvarchar(20),FirstName nvarchar(200),FirstSurname nvarchar(200),
+                  ContractNumber nvarchar(100),StartDate date,EndDate date,MonthlySalary decimal(19,4),
+                  IntegralSalary bit,ContractTypeCode nvarchar(20),WorkerTypeCode nvarchar(20),
+                  WorkerSubtypeCode nvarchar(20),PaymentMethodCode nvarchar(20),PayrollPeriodCode nvarchar(20),
+                  Bank nvarchar(300),BankAccountType nvarchar(100),BankAccountNumber nvarchar(100)) snap
                 WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId
                   AND r.Status=N'Approved' AND r.PeriodStart>=@Start AND r.PeriodEnd<=@End
                 ORDER BY re.PartyId,r.PaymentDate,r.PayrollRunId;
@@ -1393,6 +1470,11 @@ public sealed class SqlPayrollStore(
                 while (await reader.ReadAsync(ct))
                 {
                     var partyId = reader.GetGuid(0);
+                    if (reader.IsDBNull(28))
+                        logger.LogWarning("PayrollLegacyEmployeeSnapshot: tenant {TenantId}, business {BusinessId}, run {PayrollRunId} has no historical employee data; the legacy consolidation uses current master data.",
+                            user.TenantId,user.BusinessId,reader.GetGuid(3));
+                    else if (reader.GetInt32(28) != 1)
+                        throw new PayrollValidationException("La versión del snapshot laboral no es compatible con la consolidación electrónica.");
                     if (!employees.TryGetValue(partyId, out var employee))
                     {
                         employee = new ElectronicEmployeeSnapshotSeed(

@@ -148,6 +148,36 @@ VALUES
 
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
 VALUES
+('73000000-0000-0000-0000-000000000001',N'accounting-document-type',N'SalesInvoice',N'Factura de venta',NULL,10),
+('73000000-0000-0000-0000-000000000002',N'accounting-document-type',N'ServiceInvoice',N'Factura de servicios',NULL,20),
+('73000000-0000-0000-0000-000000000003',N'accounting-document-type',N'SalesReceipt',N'Documento POS',NULL,30),
+('73000000-0000-0000-0000-000000000004',N'accounting-document-type',N'SalesReturn',N'Devolución de venta',NULL,40),
+('73000000-0000-0000-0000-000000000005',N'accounting-document-type',N'SalesDebitNote',N'Nota débito de venta',NULL,50),
+('73000000-0000-0000-0000-000000000006',N'accounting-document-type',N'GoodsReceipt',N'Recepción de compra',NULL,60),
+('73000000-0000-0000-0000-000000000007',N'accounting-document-type',N'GoodsReceiptCostDocument',N'Factura agregada a la compra',NULL,70),
+('73000000-0000-0000-0000-000000000008',N'accounting-document-type',N'PurchaseReturn',N'Devolución a proveedor',NULL,80),
+('73000000-0000-0000-0000-000000000009',N'accounting-document-type',N'PayablePayment',N'Pago a proveedor',NULL,90),
+('73000000-0000-0000-0000-00000000000A',N'accounting-document-type',N'ReceivablePayment',N'Abono de cliente',NULL,100),
+('73000000-0000-0000-0000-00000000000B',N'accounting-document-type',N'CashReceipt',N'Recibo de caja',NULL,110),
+('73000000-0000-0000-0000-00000000000C',N'accounting-document-type',N'CashDisbursement',N'Comprobante de egreso',NULL,120),
+('73000000-0000-0000-0000-00000000000D',N'accounting-document-type',N'Expense',N'Gasto',NULL,130),
+('73000000-0000-0000-0000-00000000000E',N'accounting-document-type',N'AccountAdjustment',N'Nota contable',NULL,140),
+('73000000-0000-0000-0000-00000000000F',N'accounting-document-type',N'ManualAccountingVoucher',N'Comprobante manual',NULL,150),
+('73000000-0000-0000-0000-000000000010',N'accounting-document-type',N'AccountingOpeningBalance',N'Saldo inicial',NULL,160),
+('73000000-0000-0000-0000-000000000011',N'accounting-document-type',N'WorkSessionCashDifference',N'Diferencia de caja',NULL,170),
+('73000000-0000-0000-0000-000000000012',N'accounting-document-type',N'WorkSessionClosureReconciliation',N'Conciliación de cierre',NULL,180),
+('73000000-0000-0000-0000-000000000013',N'accounting-document-type',N'PayrollAccrual',N'Causación de nómina',NULL,190),
+('73000000-0000-0000-0000-000000000014',N'accounting-document-type',N'PayrollPayment',N'Pago de nómina',NULL,200),
+('73000000-0000-0000-0000-000000000015',N'accounting-document-type',N'PayrollAdjustment',N'Ajuste de nómina',NULL,210),
+('73000000-0000-0000-0000-000000000016',N'accounting-document-type',N'StockCount',N'Conteo de inventario',NULL,220),
+('73000000-0000-0000-0000-000000000017',N'accounting-document-type',N'InventoryAdjustment',N'Ajuste de inventario',NULL,230),
+('73000000-0000-0000-0000-000000000018',N'accounting-document-type',N'Damage',N'Baja de inventario',NULL,240),
+('73000000-0000-0000-0000-000000000019',N'accounting-document-type',N'ProductConversion',N'Conversión de producto',NULL,250),
+('73000000-0000-0000-0000-00000000001A',N'accounting-document-type',N'WarehouseTransferReceipt',N'Recepción de traslado',NULL,260),
+('73000000-0000-0000-0000-00000000001B',N'accounting-document-type',N'DispatchCashDifference',N'Diferencia de recaudo',NULL,270);
+
+INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
+VALUES
 ('6A000000-0000-0000-0000-000000000001',N'tax-responsibility',N'O-13',N'Gran contribuyente',N'Responsabilidad fiscal DIAN O-13.',10),
 ('6A000000-0000-0000-0000-000000000002',N'tax-responsibility',N'O-15',N'Autorretenedor',N'Responsabilidad fiscal DIAN O-15.',20),
 ('6A000000-0000-0000-0000-000000000003',N'tax-responsibility',N'O-23',N'Agente de retención de IVA',N'Responsabilidad fiscal DIAN O-23.',30),
@@ -170,7 +200,7 @@ WHEN NOT MATCHED BY SOURCE
         N'inventory-operation-type',N'agent-bot-type',N'accounting-account-type',
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',
-        N'accounting-withholding-kind',N'accounting-opening-balance-mode',N'accounting-cost-center-operation',
+        N'accounting-withholding-kind',N'accounting-opening-balance-mode',N'accounting-cost-center-operation',N'accounting-document-type',
         N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type',N'tax-responsibility',
         N'purchase-cost-evidence-type',N'purchase-cost-kind',N'purchase-cost-treatment',
         N'purchase-cost-allocation-method',N'purchase-tax-rate',N'purchase-tax-treatment',

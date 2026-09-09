@@ -142,6 +142,8 @@
     ,"src/lib/party-identification.test.ts"
     ,"src/lib/party-tax-profile.ts"
     ,"src/lib/party-tax-profile.test.ts"
+    ,"src/lib/catalog-draft-store.ts"
+    ,"src/lib/catalog-draft-store.test.ts"
     ,"src/lib/change-password.ts"
     ,"src/lib/change-password.test.ts"
     ,"src/lib/tenant-legal-identity.ts"

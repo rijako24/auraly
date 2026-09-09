@@ -54,10 +54,18 @@ test("preserves fractional quantities and the requested total within money preci
   assert.throws(() => prorateAdditionalSaleValue(result, 0));
 });
 
-test("moves through the editable sale-line grid and skips disabled cost cells", () => {
-  const columns = [[0, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5]];
+test("moves through editable columns and stops at the horizontal edges", () => {
+  const columns = [[0, 2, 3, 4, 5]];
   assert.deepEqual(nextGridPosition(0, 3, columns, "ArrowRight"), { row: 0, column: 4 });
-  assert.deepEqual(nextGridPosition(0, 0, columns, "ArrowLeft"), { row: 0, column: 5 });
+  assert.deepEqual(nextGridPosition(0, 3, columns, "ArrowLeft"), { row: 0, column: 2 });
+  assert.equal(nextGridPosition(0, 0, columns, "ArrowLeft"), null);
+  assert.equal(nextGridPosition(0, 5, columns, "ArrowRight"), null);
+});
+
+test("moves between sale lines, skips disabled cells and stops at the first and last line", () => {
+  const columns = [[0, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5], [], [0, 3, 4, 5]];
   assert.deepEqual(nextGridPosition(1, 1, columns, "ArrowUp"), { row: 0, column: 0 });
-  assert.deepEqual(nextGridPosition(1, 4, columns, "ArrowDown"), { row: 0, column: 4 });
+  assert.deepEqual(nextGridPosition(1, 4, columns, "ArrowDown"), { row: 3, column: 4 });
+  assert.equal(nextGridPosition(0, 3, columns, "ArrowUp"), null);
+  assert.equal(nextGridPosition(3, 3, columns, "ArrowDown"), null);
 });

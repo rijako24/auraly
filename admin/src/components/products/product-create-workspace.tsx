@@ -26,6 +26,9 @@ import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { taxProfilesApi } from "@/services/api/tax-profiles";
 import { partiesApi } from "@/services/api/parties";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useAuthStore } from "@/stores/auth-store";
+import { useCatalogDraft } from "@/hooks/use-catalog-draft";
+import { catalogDraftKey } from "@/lib/catalog-draft-store";
 
 const none = "__none__";
 const sections = [
@@ -43,6 +46,7 @@ interface Props { open: boolean; onOpenChange: (open: boolean) => void; onCreate
 interface CreateState {
   reference: string; name: string; description: string;
   productCategoryId: string | null; productBrandId: string | null; baseUnitCode: string;
+  unitGrossWeightKg: number | null;
   manageInventory: boolean; allowsFractionalSale: boolean; isWeighable: boolean;
   salesTaxProfileId: string; purchaseTaxProfileId: string;
   purchaseTaxTreatment: "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
@@ -52,9 +56,18 @@ interface CreateState {
   supplierId: string | null; supplierProductCode: string; packageName: string; unitsPerPackage: number;
 }
 
+interface ProductCreateDraft {
+  form: CreateState;
+  barcode: string;
+  pendingImages: PendingProductImage[];
+  linkedProducts: LinkedProduct[];
+  conversionMaximumLossPercent: number | null;
+  selectedSupplier: { name: string; identification: string } | null;
+}
+
 const initialState: CreateState = {
   reference: "", name: "", description: "", productCategoryId: null,
-  productBrandId: null, baseUnitCode: "EA", manageInventory: true, allowsFractionalSale: false,
+  productBrandId: null, baseUnitCode: "EA", unitGrossWeightKg: null, manageInventory: true, allowsFractionalSale: false,
   isWeighable: false, salesTaxProfileId: "", purchaseTaxProfileId: "",
   purchaseTaxTreatment: "DeductibleInputVat", cost: 0, margin: 0, salePrice: 0, barcodes: [],
   scaleCode: "", scalePrefix: "", scaleDecimals: 3, supplierId: null, supplierProductCode: "",
@@ -63,6 +76,7 @@ const initialState: CreateState = {
 
 export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const userId = useAuthStore((state) => state.user?.userId);
   const queryClient = useQueryClient();
   const [form, setForm] = useState(initialState);
   const [barcode, setBarcode] = useState("");
@@ -72,6 +86,41 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
   const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
   const [conversionMaximumLossPercent, setConversionMaximumLossPercent] = useState<number | null>(null);
   const [selectedSupplier, setSelectedSupplier] = useState<{ name: string; identification: string } | null>(null);
+  const localDraftKey = businessId && userId
+    ? catalogDraftKey("product-create", userId, businessId)
+    : null;
+  const localDraft = useMemo<ProductCreateDraft>(() => ({
+    form,
+    barcode,
+    pendingImages,
+    linkedProducts,
+    conversionMaximumLossPercent,
+    selectedSupplier,
+  }), [barcode, conversionMaximumLossPercent, form, linkedProducts, pendingImages, selectedSupplier]);
+  const clearLocalDraft = useCatalogDraft({
+    draftKey: localDraftKey,
+    enabled: open,
+    value: localDraft,
+    restore: stored => {
+      setForm({ ...initialState, ...stored.form });
+      setBarcode(stored.barcode ?? "");
+      setPendingImages(current => {
+        current.forEach(image => URL.revokeObjectURL(image.previewUrl));
+        return (stored.pendingImages ?? []).map(image => ({
+          ...image,
+          previewUrl: URL.createObjectURL(image.file),
+        }));
+      });
+      setLinkedProducts(stored.linkedProducts ?? []);
+      setConversionMaximumLossPercent(stored.conversionMaximumLossPercent ?? null);
+      setSelectedSupplier(stored.selectedSupplier ?? null);
+    },
+    onError: operation => toast.error(operation === "load"
+      ? "No fue posible recuperar el producto guardado en este dispositivo."
+      : operation === "save"
+        ? "No fue posible guardar la recuperación automática del producto."
+        : "No fue posible limpiar la recuperación local del producto."),
+  });
   const categories = useProductCategories(false);
   const purchasePresentations = useReferenceOptions("purchase-presentation", open);
   const brands = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands, enabled: open, staleTime: 5 * 60 * 1000 });
@@ -123,6 +172,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         productCode: "", reference: form.reference.trim() || null,
         name: form.name.trim(), description: form.description.trim() || null,
         baseUnitCode: form.baseUnitCode, taxProfileId: form.salesTaxProfileId,
+        unitGrossWeightKg: form.unitGrossWeightKg,
         purchaseTaxProfileId: form.purchaseTaxProfileId, purchaseTaxTreatment: form.purchaseTaxTreatment,
         manageInventory: form.manageInventory, isWeighable: form.isWeighable,
         barcodes: form.barcodes, identifiers: [], prices: [{ amount: form.salePrice, currencyCode: "COP",
@@ -143,6 +193,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
           productCategoryId: form.productCategoryId,
           productBrandId: form.productBrandId,
           baseUnitCode: form.baseUnitCode,
+          unitGrossWeightKg: form.unitGrossWeightKg,
           manageInventory: form.manageInventory,
           allowsFractionalSale: form.allowsFractionalSale,
           isWeighable: form.isWeighable,
@@ -162,13 +213,35 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
     },
     onSuccess: async (product) => {
       await queryClient.invalidateQueries({ queryKey: ["products", businessId] });
-      pendingImages.forEach((image) => URL.revokeObjectURL(image.previewUrl));
-      setForm(initialState); setBarcode(""); setPendingImages([]); setLinkedProducts([]); setConversionMaximumLossPercent(null); setValidationError(undefined); setFieldErrors({});
+      await clearLocalDraft();
+      resetCapture();
       toast.success("Producto creado. El precio quedó preparado para publicación.");
       onOpenChange(false); onCreated?.(product.productId);
     },
     onError: (error: { message?: string }) => { const message = error.message ?? "No fue posible crear el producto."; setValidationError(message); toast.error(message); },
   });
+
+  function resetCapture() {
+    pendingImages.forEach(image => URL.revokeObjectURL(image.previewUrl));
+    setForm(initialState);
+    setBarcode("");
+    setPendingImages([]);
+    setLinkedProducts([]);
+    setConversionMaximumLossPercent(null);
+    setSelectedSupplier(null);
+    setValidationError(undefined);
+    setFieldErrors({});
+  }
+
+  async function cancelCapture() {
+    await clearLocalDraft();
+    resetCapture();
+    onOpenChange(false);
+  }
+
+  function dismissCapture() {
+    onOpenChange(false);
+  }
 
   function setCategory(depth: number, value: string) {
     setForm((current) => ({ ...current, productCategoryId: value === none ? (depth === 0 ? null : chain[depth - 1]?.productCategoryId ?? null) : value }));
@@ -190,7 +263,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
     } catch { toast.error("Revisa el costo, el margen y el precio de venta."); }
   }
 
-  return <Dialog open={open} onOpenChange={onOpenChange}>
+  return <Dialog open={open} onOpenChange={value => { if (value) onOpenChange(true); else dismissCapture(); }}>
     <DialogContent className="h-[96dvh] max-h-[96dvh] w-[96vw] max-w-[1480px] overflow-hidden p-0">
       <div className="grid h-full min-h-0 lg:grid-cols-[250px_1fr]">
         <aside className="hidden border-r bg-slate-950 p-6 text-white lg:block">
@@ -215,7 +288,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
               </Section>
               <Section id="new-classification" icon={Tags} title="Clasificación, marca y unidad" description="Auraly conserva la ruta completa y la unidad real en la que se vende.">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{["Área", "Línea", "Grupo", "Subgrupo"].map((label, depth) => { const parent = depth === 0 ? null : chain[depth - 1]?.productCategoryId ?? null; const items = (categories.data ?? []).filter((item) => item.depth === depth && item.parentProductCategoryId === parent); return <Field key={label} label={label}><Select value={chain[depth]?.productCategoryId ?? none} disabled={depth > 0 && !parent} onValueChange={(value) => setCategory(depth, value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={none}>Sin {label.toLowerCase()}</SelectItem>{items.map((item) => <SelectItem key={item.productCategoryId} value={item.productCategoryId}>{item.name}</SelectItem>)}</SelectContent></Select></Field>; })}</div>
-                <div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Marca"><Select value={form.productBrandId ?? none} onValueChange={(value) => setForm({ ...form, productBrandId: value === none ? null : value })}><SelectTrigger><SelectValue placeholder="Sin marca" /></SelectTrigger><SelectContent><SelectItem value={none}>Sin marca</SelectItem>{(brands.data ?? []).map((item) => <SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>)}</SelectContent></Select></Field><Field label="Unidad en la que se vende" error={fieldErrors.baseUnitCode}><Select value={form.baseUnitCode} onValueChange={(value) => setForm({ ...form, baseUnitCode: value })}><SelectTrigger aria-invalid={Boolean(fieldErrors.baseUnitCode)}><SelectValue /></SelectTrigger><SelectContent>{(units.data ?? []).map((item) => <SelectItem key={item.productUnitId} value={item.code}>{item.name} · {item.symbol}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">Describe qué cantidad se vende; la regla de fracciones pertenece al producto.</p></Field></div>
+                <div className="mt-4 space-y-4"><Field label="Marca"><Select value={form.productBrandId ?? none} onValueChange={(value) => setForm({ ...form, productBrandId: value === none ? null : value })}><SelectTrigger><SelectValue placeholder="Sin marca" /></SelectTrigger><SelectContent><SelectItem value={none}>Sin marca</SelectItem>{(brands.data ?? []).map((item) => <SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>)}</SelectContent></Select></Field><div className="grid gap-4 md:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]"><Field label="Unidad en la que se vende" error={fieldErrors.baseUnitCode}><Select value={form.baseUnitCode} onValueChange={(value) => setForm({ ...form, baseUnitCode: value })}><SelectTrigger aria-invalid={Boolean(fieldErrors.baseUnitCode)}><SelectValue /></SelectTrigger><SelectContent>{(units.data ?? []).map((item) => <SelectItem key={item.productUnitId} value={item.code}>{item.name} · {item.symbol}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">Describe qué cantidad se vende; la regla de fracciones pertenece al producto.</p></Field><Field label="Peso del producto (kg)"><Input aria-label="Peso del producto en kilogramos" type="number" inputMode="decimal" min="0.000001" step="0.000001" value={form.unitGrossWeightKg ?? ""} onChange={(event) => setForm({ ...form, unitGrossWeightKg: event.target.value === "" ? null : Number(event.target.value) })} /><p className="text-xs text-muted-foreground">Peso bruto de una unidad base, siempre en kg; se usa para prorratear fletes.</p></Field></div></div>
               </Section>
               <Section id="new-sale" icon={Barcode} title="Captura, cantidad y balanza" description="Varios códigos de barras y reglas de cantidad en un mismo lugar.">
                 <div className="flex gap-2"><Input value={barcode} onChange={(e) => setBarcode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addBarcode(); } }} placeholder="Escanea o escribe un código" /><Button type="button" variant="outline" onClick={addBarcode}>Agregar</Button></div>
@@ -269,7 +342,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
               </Section>
             </div>
           </div>
-          <footer className="flex flex-col-reverse gap-3 border-t bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground">Los cambios de catálogo notifican a los equipos enrolados.</p><div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button><Button type="button" onClick={() => { setValidationError(undefined); create.mutate(); }} disabled={create.isPending}><Check className="mr-2 h-4 w-4" />{create.isPending ? "Creando…" : "Crear producto"}</Button></div></footer>
+          <footer className="flex flex-col-reverse gap-3 border-t bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground">Los cambios de catálogo notifican a los equipos enrolados.</p><div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => void cancelCapture()}>Cancelar</Button><Button type="button" onClick={() => { setValidationError(undefined); create.mutate(); }} disabled={create.isPending}><Check className="mr-2 h-4 w-4" />{create.isPending ? "Creando…" : "Crear producto"}</Button></div></footer>
         </div>
       </div>
     </DialogContent>

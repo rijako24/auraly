@@ -61,7 +61,8 @@ public sealed class DianPayrollLiveE2ETests(ITestOutputHelper output)
             new HashSet<string> { PayrollPermissionCodes.Read, PayrollPermissionCodes.Fiscal });
         var payrollStore = new SqlPayrollStore(
             new PayrollSqlConnectionFactory(new AuralySqlConnectionSource(connectionString)),
-            new Uuid7AuralyIdGenerator(TimeProvider.System), TimeProvider.System);
+            new Uuid7AuralyIdGenerator(TimeProvider.System), TimeProvider.System,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SqlPayrollStore>.Instance);
         var period = await payrollStore.GenerateElectronicPeriodAsync(identity,
             new GenerateElectronicPayrollPeriodRequest(periodId, businessId, 2026, 8),
             CancellationToken.None);

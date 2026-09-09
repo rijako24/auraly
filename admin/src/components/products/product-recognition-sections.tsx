@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, SearchCheck, Tags } from "lucide-react";
-import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -78,6 +78,7 @@ function ConfiguredAliasCard({ alias }: { alias: ProductAlias }) {
 }
 
 export interface ProductRecognitionSectionsHandle { getValue: () => string[]; save: () => Promise<void> }
+export interface ProductRecognitionEditorDraft { alias: string }
 
 interface ProductRecognitionSectionsProps {
   aliases: ProductAlias[];
@@ -86,6 +87,8 @@ interface ProductRecognitionSectionsProps {
   isError: boolean;
   productId?: string;
   editable?: boolean;
+  initialDraft?: ProductRecognitionEditorDraft;
+  onDraftChange?: (draft: ProductRecognitionEditorDraft) => void;
 }
 
 export const ProductRecognitionSections = forwardRef<ProductRecognitionSectionsHandle, ProductRecognitionSectionsProps>(function ProductRecognitionSections({
@@ -95,9 +98,13 @@ export const ProductRecognitionSections = forwardRef<ProductRecognitionSectionsH
   isError,
   productId,
   editable = false,
+  initialDraft,
+  onDraftChange,
 }, ref) {
   const addAlias = useAddProductAlias();
   const [alias, setAlias] = useState("");
+  useEffect(() => { if (initialDraft) setAlias(initialDraft.alias); }, [initialDraft]);
+  useEffect(() => { onDraftChange?.({ alias }); }, [alias, onDraftChange]);
   const submitAlias = useCallback(async () => {
     const value = alias.trim();
     if (!productId || !value) return;

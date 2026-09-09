@@ -72,7 +72,8 @@ public sealed record ProductMerchandisingConfiguration(
     IReadOnlyCollection<ProductBarcodeInput> Barcodes,
     ProductLinkDetail? Link,
     IReadOnlyCollection<LinkedProductDetail> LinkedProducts,
-    decimal? ConversionMaximumLossPercent = null);
+    decimal? ConversionMaximumLossPercent = null,
+    decimal? UnitGrossWeightKg = null);
 
 public sealed record SaveProductMerchandisingRequest(
     Guid? ProductCategoryId,
@@ -85,4 +86,5 @@ public sealed record SaveProductMerchandisingRequest(
     IReadOnlyCollection<ProductBarcodeInput> Barcodes,
     ProductLinkInput? Link,
     IReadOnlyCollection<LinkedProductInput> LinkedProducts,
-    decimal? ConversionMaximumLossPercent = null);
+    decimal? ConversionMaximumLossPercent = null,
+    decimal? UnitGrossWeightKg = null);

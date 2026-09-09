@@ -431,7 +431,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         using (var prepare = await client.PostAsJsonAsync(
                    $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations",
                    new PrepareInventoryReconciliationRequest(fixture.BusinessId,
-                       [new(firstDraft, 2), new(secondDraft, 2)])))
+                       [new(firstDraft, 1), new(secondDraft, 1)])))
         {
             Assert.True(prepare.StatusCode == HttpStatusCode.Created,
                 $"Expected Created but received {prepare.StatusCode}: {await prepare.Content.ReadAsStringAsync()}");

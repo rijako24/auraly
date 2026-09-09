@@ -80,7 +80,8 @@ public sealed class ProductMerchandisingService(
         if (request.LinkedProducts.Any(link => link.AllowsConversion) &&
             (!request.ManageInventory || request.ConversionMaximumLossPercent is null))
             throw new CatalogValidationException("A convertible family must manage inventory and define its maximum conversion loss.");
-        if (request.IsWeighable != (request.Scale is not null)) throw new CatalogValidationException("Scale capture requires exactly one scale configuration.");
+        if (request.Scale is not null && !request.IsWeighable) throw new CatalogValidationException("Scale capture requires a product sold by weight.");
+        if (request.UnitGrossWeightKg is <= 0) throw new CatalogValidationException("Product weight must be greater than zero when provided.");
         if (request.Barcodes.Any(x => string.IsNullOrWhiteSpace(x.Value)) ||
             request.Barcodes.Select(x => x.Value.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.Barcodes.Count ||
             request.Barcodes.Count(x => x.IsPrimary) > 1)

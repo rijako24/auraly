@@ -9,6 +9,7 @@ export interface PurchaseOrderLine {
   presentationQuantity: number; unitsPerPresentation: number; rotation30Days: number;
   rotation90Days: number; dailyDemand90Days: number; currentStock: number; incomingQuantity: number;
   rotationCalculatedAt: string | null;
+  unitGrossWeightKg?: number | null;
 }
 export interface PurchaseOrderDetail {
   purchaseOrderId: string; documentNumber: string | null; status: PurchaseOrderStatus;

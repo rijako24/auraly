@@ -25,6 +25,7 @@
     "test:approval-push": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-approval-synchronization.test.js\" \".pos-test-dist/lib/pos-approval-push-key.test.js\" && node --test scripts/verify-pwa-push-behavior.mjs",
     "test:approval-permissions": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-approval-client.test.js\"",
     "test:line-editor": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-line-editor-calculation.test.js\"",
+    "test:catalog-drafts": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/lib/catalog-draft-store.test.js\"",
     "test:pwa": "node scripts/verify-pwa-launch-assets.mjs",
     "build": "next build",
     "postbuild": "node scripts/prepare-standalone.mjs",

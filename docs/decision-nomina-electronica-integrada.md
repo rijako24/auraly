@@ -73,6 +73,8 @@ Catálogos mínimos:
 - tipos de trabajador y subtipo DIAN;
 - medios de pago de nómina;
 - naturalezas, clases de cálculo y tratamientos de conceptos;
+- tipos de liquidación (`payroll-run-kind`), validados al crear el borrador;
+- etiquetas de estados (`payroll-workflow-status`) para la presentación en admin;
 - tipos y autoridad de deducción;
 - tipos de novedad y motivos operativos aplicables;
 - categorías de mapeo contable y códigos DIAN.
@@ -125,6 +127,28 @@ aplica una unicidad por trabajador liquidado para impedir doble pago. El medio
 de pago resuelve desde catálogo su categoría contable de salida (`Bank` o
 `Cash`); no existe un `switch` de negocio en la aplicación.
 
+El conjunto de reglas debe cubrir todo el período de la liquidación. Al aprobar,
+la misma transacción bloquea las novedades y acuerdos utilizados: rechaza una
+novedad consumida por otra liquidación, una autorización desactivada o fuera de
+vigencia y la suma de descuentos que exceda el saldo autorizado actual. Estos
+conflictos conservan el borrador calculado sin fuentes contables ni consumos
+parciales; el usuario corrige el acuerdo o recalcula antes de aprobar.
+
+El cálculo conserva identidad, contrato, salario, códigos DIAN y datos de pago en
+`RunEmployees.EmployeeSnapshotJson` con `SnapshotVersion=1`. La consolidación
+electrónica toma esos datos históricos, incluidos los valores nulos, para que
+editar el maestro después de aprobar no cambie la fuente fiscal.
+
+Excepción de compatibilidad para liquidaciones anteriores sin ese snapshot:
+se conserva la lectura histórica del maestro actual y se emite la advertencia
+estructurada `PayrollLegacyEmployeeSnapshot`, identificando tenant, sede y
+liquidación sin publicar datos personales. El motivo es que los valores
+originales no se pueden reconstruir automáticamente y bloquear estos documentos
+rompería el flujo existente. El riesgo es una diferencia entre datos laborales
+actuales e históricos; se mitiga revisando esos períodos antes de transmitir y
+recalculando los borradores. La excepción se retira cuando se hayan conciliado
+los períodos anteriores; no aplica a nuevas liquidaciones calculadas.
+
 Una liquidación `Adjustment` conserva período y periodicidad del documento
 original y procesa únicamente novedades nuevas como diferencias. Por ello no
 repite salario ni conceptos ya aprobados; una diferencia que aumenta el valor
@@ -150,6 +174,15 @@ El perfil contable colombiano incluye de forma idempotente todas las categorías
 laborales. La pantalla de configuración de Nómina cruza el catálogo
 `payroll-accounting-category`, las definiciones del perfil y las cuentas activas
 del tenant; no mantiene una lista paralela en frontend.
+
+La nómina, sus ajustes y pagos reutilizan la resolución de centros del único
+`SqlAccountingPostingProcessor`: regla general (`All`) sin bodega y, en su
+ausencia, predeterminado activo de la sede. El primer intento congela
+`AccountingPostingJobs.ResolvedCostCenterId`; las líneas del asiento conservan
+el identificador, código y nombre del centro. Cambiar reglas o maestros no
+reclasifica los asientos anteriores. El auxiliar contable existente permite
+consultar estos movimientos por centro. No se agregan distribuciones por
+empleado ni porcentajes en este alcance mínimo.
 
 ## 8. Nómina electrónica
 
@@ -211,6 +244,21 @@ La navegación de Nómina separa liquidaciones, relaciones laborales, novedades 
 descuentos, pagos, documentos electrónicos, reportes y configuración. La pestaña
 Empleado de Terceros consulta la relación laboral por `PartyId` y enlaza a Nómina;
 no permite editar ni replica salario o contrato en `dbo.Employees`.
+
+El workspace comparte encabezado, colores, radios y navegación visual con
+Contabilidad; las pestañas conservan semántica y navegación por teclado. Cada
+acción principal aparece en su sección. Las consultas y selecciones se aíslan
+por tenant y sede, y cambiar de contexto desmonta los formularios y el detalle
+anterior. Una consulta fallida presenta reintento y no se muestra como colección
+vacía. La configuración enlaza los centros contables y la pestaña electrónica
+enlaza la configuración DIAN existente, sin duplicar esos maestros.
+
+Editar la serie electrónica conserva el software, referencia segura del PIN y
+TestSet de nómina ya configurados, incluso cuando difieren de facturación. Una
+serie nueva parte de las credenciales del emisor y exige verificar externamente
+que ese software esté habilitado para nómina. La UI no equipara la preparación
+del mes con aceptación DIAN; permite recuperar un período preparado aunque el
+cupo actual esté agotado, dejando la reserva al motor fiscal canónico.
 
 Los reportes de nómina son una extensión nativa de Reporting, no consultas
 embebidas en la página. El catálogo versionable vive en

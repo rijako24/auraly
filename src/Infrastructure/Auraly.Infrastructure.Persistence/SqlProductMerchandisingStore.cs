@@ -136,12 +136,12 @@ public sealed class SqlProductMerchandisingStore(
                   THROW 51020,'The selected product category is invalid.',1;
                 IF @BrandId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.ProductBrands WHERE ProductBrandId=@BrandId AND BusinessId=@BusinessId AND IsActive=1)
                   THROW 51020,'The selected product brand is invalid.',1;
-                UPDATE dbo.Products SET ProductCategoryId=@CategoryId,CategoryName=(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@CategoryId),ProductBrandId=@BrandId,BaseUnitCode=@UnitCode,ManageStock=@ManageInventory,ConversionMaximumLossPercent=@MaximumLoss,AllowsFractionalSale=@Fractional,IsWeighable=@Weighable,UpdatedAt=@Now,UpdatedByUserId=@UserId WHERE ProductId=@ProductId;
+                UPDATE dbo.Products SET ProductCategoryId=@CategoryId,CategoryName=(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@CategoryId),ProductBrandId=@BrandId,BaseUnitCode=@UnitCode,ManageStock=@ManageInventory,UnitGrossWeightKg=@UnitGrossWeightKg,ConversionMaximumLossPercent=@MaximumLoss,AllowsFractionalSale=@Fractional,IsWeighable=@Weighable,UpdatedAt=@Now,UpdatedByUserId=@UserId WHERE ProductId=@ProductId;
                 DELETE dbo.ProductBarcodes WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
                 DELETE dbo.ProductScaleConfigurations WHERE ProductId=@ProductId;
                 """, connection, transaction))
             {
-                command.Parameters.AddRange([P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@UserId", user.UserId), P("@ProductId", productId), P("@CategoryId", request.ProductCategoryId), P("@BrandId", request.ProductBrandId), P("@UnitCode", request.BaseUnitCode), P("@ManageInventory", request.ManageInventory), P("@MaximumLoss", request.ConversionMaximumLossPercent), P("@Fractional", request.AllowsFractionalSale), P("@Weighable", request.IsWeighable), P("@Now", now)]);
+                command.Parameters.AddRange([P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@UserId", user.UserId), P("@ProductId", productId), P("@CategoryId", request.ProductCategoryId), P("@BrandId", request.ProductBrandId), P("@UnitCode", request.BaseUnitCode), P("@ManageInventory", request.ManageInventory), P("@UnitGrossWeightKg", request.UnitGrossWeightKg), P("@MaximumLoss", request.ConversionMaximumLossPercent), P("@Fractional", request.AllowsFractionalSale), P("@Weighable", request.IsWeighable), P("@Now", now)]);
                 await command.ExecuteNonQueryAsync(ct);
             }
 
@@ -270,7 +270,7 @@ public sealed class SqlProductMerchandisingStore(
           (SELECT child.ProductId AS ChildProductId,COALESCE(child.ProductCode,child.Sku) AS ChildProductCode,child.Name AS ChildProductName,
                   links.SharesInventory,links.InventoryFactor,links.SharesPrice,links.PriceFactor,links.AllowsConversion,links.ConversionFactor
              FROM dbo.ProductLinks links JOIN dbo.Products child ON child.ProductId=links.ChildProductId AND child.TenantId=p.TenantId WHERE links.BusinessId=@BusinessId AND links.ParentProductId=p.ProductId AND links.IsActive=1 ORDER BY child.Name FOR JSON PATH)
-          ,l.AllowsConversion,l.ConversionFactor,p.ConversionMaximumLossPercent
+          ,l.AllowsConversion,l.ConversionFactor,p.ConversionMaximumLossPercent,p.UnitGrossWeightKg
         FROM dbo.Products p
         LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
         LEFT JOIN dbo.ProductLinks l ON l.ChildProductId=p.ProductId AND l.BusinessId=@BusinessId AND l.IsActive=1
@@ -285,7 +285,7 @@ public sealed class SqlProductMerchandisingStore(
         var barcodes = r.IsDBNull(13) ? [] : JsonSerializer.Deserialize<ProductBarcodeInput[]>(r.GetString(13)) ?? [];
         var link = r.IsDBNull(14) ? null : new ProductLinkDetail(r.GetGuid(14), r.IsDBNull(15) ? string.Empty : r.GetString(15), r.GetString(16), r.GetBoolean(17), r.IsDBNull(18) ? null : r.GetDecimal(18), r.GetBoolean(19), r.IsDBNull(20) ? null : r.GetDecimal(20), r.GetBoolean(22), r.IsDBNull(23) ? null : r.GetDecimal(23));
         var linkedProducts = r.IsDBNull(21) ? [] : JsonSerializer.Deserialize<LinkedProductDetail[]>(r.GetString(21)) ?? [];
-        return new(r.GetGuid(0), r.IsDBNull(1) ? null : r.GetGuid(1), r.IsDBNull(2) ? null : r.GetGuid(2), r.GetString(3), r.GetBoolean(4), r.GetBoolean(5), r.GetBoolean(6), scale, barcodes, link, linkedProducts, r.IsDBNull(24) ? null : r.GetDecimal(24));
+        return new(r.GetGuid(0), r.IsDBNull(1) ? null : r.GetGuid(1), r.IsDBNull(2) ? null : r.GetGuid(2), r.GetString(3), r.GetBoolean(4), r.GetBoolean(5), r.GetBoolean(6), scale, barcodes, link, linkedProducts, r.IsDBNull(24) ? null : r.GetDecimal(24), r.IsDBNull(25) ? null : r.GetDecimal(25));
     }
 
     private static async Task ExecuteAsync(SqlConnection connection, SqlTransaction transaction, string sql, SqlParameter[] parameters, CancellationToken ct)

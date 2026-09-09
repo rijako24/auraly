@@ -21,6 +21,7 @@ export interface ProductSupplierEditorValue {
   purchasePresentationName: string;
   unitsPerPresentation: number;
 }
+export interface ProductSupplierEditorDraft { supplierId: string; selectedSupplier: { name: string; identification: string } | null; supplierProductCode: string; packageName: string; unitsPerPackage: string }
 export interface ProductSupplierEditorHandle { getValue: () => ProductSupplierEditorValue; validate: () => void; save: () => Promise<void> }
 
 export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
@@ -28,7 +29,9 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   productId: string;
   productName: string;
   saleUnitName?: string;
-}>(function ProductSupplierEditor({ productId, productName, saleUnitName = "unidad de venta", embedded = false }, ref) {
+  initialDraft?: ProductSupplierEditorDraft;
+  onDraftChange?: (draft: ProductSupplierEditorDraft) => void;
+}>(function ProductSupplierEditor({ productId, productName, saleUnitName = "unidad de venta", embedded = false, initialDraft, onDraftChange }, ref) {
   const client = useQueryClient();
   const purchasePresentations = useReferenceOptions("purchase-presentation");
   const [supplierId, setSupplierId] = useState("");
@@ -44,6 +47,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   });
 
   useEffect(() => {
+    if (initialDraft) return;
     const primary = catalogProduct.data?.suppliers?.find((supplier) => supplier.isPrimary)
       ?? catalogProduct.data?.suppliers?.[0];
     if (!primary) return;
@@ -52,7 +56,12 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
     setSupplierProductCode(primary.supplierProductCode ?? "");
     setPackageName(primary.purchasePresentationName || "Unidad");
     setUnitsPerPackage(String(primary.unitsPerPresentation || 1));
-  }, [catalogProduct.data]);
+  }, [catalogProduct.data, initialDraft]);
+  useEffect(() => {
+    if (!initialDraft) return;
+    setSupplierId(initialDraft.supplierId);setSelectedSupplier(initialDraft.selectedSupplier);setSupplierProductCode(initialDraft.supplierProductCode);setPackageName(initialDraft.packageName);setUnitsPerPackage(initialDraft.unitsPerPackage);
+  }, [initialDraft]);
+  useEffect(() => { onDraftChange?.({ supplierId, selectedSupplier, supplierProductCode, packageName, unitsPerPackage }); }, [onDraftChange, packageName, selectedSupplier, supplierId, supplierProductCode, unitsPerPackage]);
 
   const relation = useQuery({
     queryKey: ["product-supplier-relation", supplierId, productId],
@@ -64,6 +73,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   });
 
   useEffect(() => {
+    if (initialDraft) return;
     const current = relation.data;
     if (!current) {
       setSupplierProductCode("");
@@ -74,7 +84,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
     setSupplierProductCode(current.supplierProductCode ?? "");
     setPackageName(current.purchasePresentationName || "Unidad");
     setUnitsPerPackage(String(current.unitsPerPresentation || 1));
-  }, [relation.data]);
+  }, [initialDraft, relation.data]);
 
   const save = useMutation({
     mutationFn: () => goodsReceiptsApi.associateProduct({

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Api;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Purchasing;
@@ -28,6 +29,21 @@ public sealed class AccountingSliceCollection : ICollectionFixture<ServerSliceFi
 [Trait("EngineCertification", "Accounting")]
 public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Accounting_document_type_catalog_matches_the_processing_policy()
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read);
+        using var response = await client.GetAsync(
+            "/api/commerce/v1/reference-options/accounting-document-type");
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        var options = await response.Content.ReadFromJsonAsync<IReadOnlyList<ReferenceOption>>();
+        Assert.NotNull(options);
+        Assert.Equal(
+            AccountingProcessingPolicy.DocumentTypes.Order(StringComparer.Ordinal),
+            options.Select(option => option.Code).Order(StringComparer.Ordinal));
+    }
+
     [Fact]
     public async Task Sales_adjustment_to_peso_is_frozen_balanced_and_posted_separately()
     {
@@ -636,6 +652,44 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             activateInZero.EnsureSuccessStatusCode();
             var readiness = await activateInZero.Content.ReadFromJsonAsync<AccountingReadinessView>();
             Assert.True(readiness!.CanEditOpeningBalances);
+        }
+        var priorSourceId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                INSERT dbo.AccountingSourceDocuments
+                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
+                   PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+                VALUES(@Id,N'PriorOperationalMovementTest',@TenantId,@BusinessId,N'{}',
+                   HASHBYTES('SHA2_256',CONVERT(varbinary(36),@Id)),'2025-12-31','2025-12-31',1);
+                INSERT dbo.AccountingPostingJobs
+                  (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+                   SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,CreatedAt)
+                VALUES(NEWID(),@TenantId,@BusinessId,@Id,N'PriorOperationalMovementTest',
+                   HASHBYTES('SHA2_256',CONVERT(varbinary(36),@Id)),'2025-12-31',1,N'Posted',1,SYSUTCDATETIME());
+                """, connection);
+            command.Parameters.AddWithValue("@Id", priorSourceId);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        }
+        using (var readinessAfterPriorMovement = await accounting.GetAsync(
+                   "/api/commerce/v1/accounting/readiness"))
+        {
+            readinessAfterPriorMovement.EnsureSuccessStatusCode();
+            Assert.True((await readinessAfterPriorMovement.Content
+                .ReadFromJsonAsync<AccountingReadinessView>())!.CanEditOpeningBalances);
+        }
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                DELETE dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id;
+                DELETE dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id;
+                """, connection);
+            command.Parameters.AddWithValue("@Id", priorSourceId);
+            Assert.Equal(2, await command.ExecuteNonQueryAsync());
         }
         using (var missing = await accounting.GetAsync(
                    $"/api/commerce/v1/accounting/readiness?effectiveFrom={effectiveOn:yyyy-MM-dd}&openingBalanceMode=ImportedAndApproved"))

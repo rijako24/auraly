@@ -38,7 +38,9 @@ async function authenticate(page: Page) {
   }, { tenant: tenantId, business: businessId, user: userId, granted: permissions });
 }
 
-async function mockApi(page: Page) {
+async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: boolean } = {}) {
+  let receiptSaveAttempts = 0;
+  const receiptSaveTokens: Array<string | null> = [];
   await page.route("**/api/**", route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -114,8 +116,21 @@ async function mockApi(page: Page) {
     if (path.endsWith("/goods-receipts/withholding-preview") || path.endsWith("/goods-receipts/cost-withholding-preview")) return json(route, {
       grossAmount: 14_000, withholdingTotal: 0, netAmount: 14_000, lines: [],
     });
-    if (path.endsWith("/parties")) return json(route, {
-      items: [{ partyId: "88888888-8888-8888-8888-888888888888", supplierId: "88888888-8888-8888-8888-888888888888", displayName: "Proveedor Andino", identification: "900100200", email: null, roles: ["Supplier"], isActive: true, supplierDefaultPaymentDueDays: 30 }],
+    if (path.includes("/goods-receipts/drafts/") && route.request().method() === "GET") return json(route, {
+      draftId: path.split("/").at(-1), concurrencyToken: "server-current-token",
+    });
+    if (path.includes("/goods-receipts/drafts/") && route.request().method() === "PUT") {
+      receiptSaveAttempts += 1;
+      const request = route.request().postDataJSON() as { draftId: string; concurrencyToken: string | null };
+      receiptSaveTokens.push(request.concurrencyToken);
+      if (settings.conflictOnFirstReceiptSave && receiptSaveAttempts === 1) return route.fulfill({
+        status: 409, contentType: "application/problem+json",
+        body: JSON.stringify({ detail: "The draft changed in another session." }),
+      });
+      return json(route, { draftId: request.draftId, concurrencyToken: "saved-current-token" });
+    }
+    if (path.endsWith("/parties/role-options")) return json(route, {
+      items: [{ partyId: "88888888-8888-8888-8888-888888888888", roleId: "88888888-8888-8888-8888-888888888888", role: "Supplier", displayName: "Proveedor Andino", identification: "900100200", supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 }],
       page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
     });
     if (path.endsWith("/goods-receipts") || path.endsWith("/purchase-orders")) return json(route, {
@@ -123,6 +138,10 @@ async function mockApi(page: Page) {
     });
     return json(route, []);
   });
+  return {
+    receiptSaveAttempts: () => receiptSaveAttempts,
+    receiptSaveTokens: () => [...receiptSaveTokens],
+  };
 }
 
 function field(scope: Locator, label: string) {
@@ -198,7 +217,17 @@ test("cada operación de inventario conserva combos, productos y captura local",
     await expect(dialog.getByRole("textbox", { name: "Cantidad de Arroz premium" })).toHaveValue(item.quantity);
     await expect(field(dialog, "Observaciones").getByRole("textbox")).toHaveValue(item.note);
     await item.assertExtra();
-    await dialog.getByRole("button", { name: "Limpiar" }).click();
+    if (item.button === "Movimientos de mercancía") {
+      await dialog.getByRole("button", { name: "Guardar borrador" }).click();
+      await expect(dialog).toBeHidden();
+      await page.getByRole("button", { name: "Nueva operación" }).click();
+      await expect(dialog.getByRole("heading", { name: item.button })).toBeVisible();
+      await expect(dialog.getByRole("textbox", { name: "Cantidad de Arroz premium" })).toHaveValue(item.quantity);
+      await expect(field(dialog, "Observaciones").getByRole("textbox")).toHaveValue(item.note);
+    }
+    await dialog.getByRole("button", { name: "Descartar borrador" }).click();
+    await expect(dialog).toBeHidden();
+    await page.getByRole("button", { name: "Nueva operación" }).click();
   }
 });
 
@@ -218,7 +247,7 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await page.getByRole("option", { name: /Arroz premium/ }).click();
   await dialog.getByRole("spinbutton", { name: "Cantidad en Caja" }).fill("7");
   await dialog.getByPlaceholder("Observaciones de recepción").fill("recepción persistente");
-  await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -243,10 +272,26 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await expect(dialog.getByText("Arroz premium", { exact: true })).toBeVisible();
   await expect(dialog.getByRole("spinbutton", { name: "Cantidad en Caja" })).toHaveValue("7");
   await expect(dialog.getByPlaceholder("Observaciones de recepción")).toHaveValue("recepción persistente");
-  await dialog.getByRole("button", { name: "Descartar captura" }).click();
+  await dialog.getByRole("button", { name: "Descartar borrador" }).click();
 });
 
-test("recepción simple sigue directa y la importación carga catálogos y conceptos contables", async ({ page }) => {
+test("guardar recepción recupera un token vencido sin exigir varios intentos", async ({ page }) => {
+  const mock = await mockApi(page, { conflictOnFirstReceiptSave: true });
+  await authenticate(page);
+  await page.goto("/dashboard/purchasing/goods-receipts");
+  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  const dialog = page.getByRole("dialog", { name: "Recepción de compra" });
+
+  await dialog.getByRole("button", { name: "Guardar borrador" }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Borrador guardado y disponible para recuperar.")).toBeVisible();
+  expect(mock.receiptSaveAttempts()).toBe(2);
+  expect(mock.receiptSaveTokens()).toEqual([null, "server-current-token"]);
+  await expect(page.getByText(/pudo cambiar en otra sesión/i)).toHaveCount(0);
+});
+
+test("recepción simple sigue directa y la factura adicional carga catálogos y conceptos contables", async ({ page }) => {
   await mockApi(page);
   await authenticate(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
@@ -265,8 +310,13 @@ test("recepción simple sigue directa y la importación carga catálogos y conce
   await page.getByRole("option", { name: /Arroz premium/ }).click();
 
   await expect(dialog.getByRole("button", { name: /Facturas y otros costos/ })).toHaveAttribute("aria-expanded", "false");
-  await expect(dialog.getByText(/Factura .* COP/)).toBeVisible();
-  await expect(dialog.getByText(/Al inventario .* COP/)).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Cantidad recibida" })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Costo unitario" })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Descuento" })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Total factura · COP" })).toBeVisible();
+  const productRow = dialog.getByText("Arroz premium", { exact: true }).locator("xpath=ancestor::tr");
+  await expect(productRow).toContainText("$ 12.000 COP");
+  await expect(productRow.getByText(/Costo total/)).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Confirmar entrada" })).toBeEnabled();
   await expect(dialog.getByText("Resumen de la compra", { exact: false })).toBeVisible();
   await expect(dialog.getByText("Total factura", { exact: true })).toBeVisible();
@@ -278,12 +328,16 @@ test("recepción simple sigue directa y la importación carga catálogos y conce
   await expect(field(dialog, "Fuente de la tasa").getByRole("combobox")).toContainText("Tasa pactada");
 
   await dialog.getByRole("button", { name: /Facturas y otros costos/ }).click();
-  await dialog.getByRole("button", { name: "Agregar nacionalización" }).click();
-  const costs = page.getByRole("dialog", { name: "Agregar nacionalización" });
+  await dialog.getByRole("button", { name: "Agregar factura" }).click();
+  const costs = page.getByRole("dialog", { name: "Agregar factura" });
   await expect(costs).toBeVisible();
   await expect(costs.getByText(/^Concepto 1$/)).toHaveCount(0);
-  await expect(field(costs, "Concepto").getByRole("combobox").first()).toContainText("Arancel");
-  await expect(field(costs, "Concepto").getByRole("combobox").nth(1)).toContainText("IVA de importación");
+  const firstConcept = field(costs, "Concepto").getByRole("combobox").first();
+  await expect(firstConcept).toContainText("Flete");
+  await select(page, firstConcept, "Arancel");
+  await costs.getByRole("button", { name: "Agregar concepto" }).click();
+  const secondConcept = field(costs, "Concepto").getByRole("combobox").nth(1);
+  await select(page, secondConcept, "IVA de importación");
   await expect(field(costs, "Tratamiento del IVA").getByRole("combobox")).toContainText("IVA descontable");
   await expect(costs.getByText(/El IVA descontable se reconoce separado/)).toBeVisible();
   await costs.getByRole("combobox", { name: "Seleccionar supplier" }).click();
@@ -295,5 +349,5 @@ test("recepción simple sigue directa y la importación carga catálogos y conce
   await expect(declarationRow).toContainText("Proveedor Andino");
   await expect(dialog.getByRole("columnheader", { name: "Antes de IVA" })).toBeVisible();
   await declarationRow.getByRole("button", { name: "Ver" }).click();
-  await expect(page.getByRole("dialog", { name: "Editar nacionalización" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Editar factura" })).toBeVisible();
 });

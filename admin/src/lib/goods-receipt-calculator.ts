@@ -150,6 +150,18 @@ export type GoodsReceiptPurchaseCostPreview = {
   purchaseUnitCost: number | null;
 };
 
+export function shouldShowLandedUnitCost(
+  unitCost: number,
+  currencyCode: string,
+  exchangeRate: number,
+  landedUnitCost: number | null | undefined,
+) {
+  if (landedUnitCost == null || !Number.isFinite(landedUnitCost)) return false;
+  const functionalUnitCost = unitCost * (currencyCode === "COP" ? 1 : exchangeRate);
+  return Number.isFinite(functionalUnitCost) &&
+    Math.abs(landedUnitCost - functionalUnitCost) >= 0.0001;
+}
+
 // UI preview of the backend-owned allocation. Confirmation recalculates and validates
 // the same values in GoodsReceiptCostCalculator before anything is persisted.
 export function previewGoodsReceiptPurchaseCosts(

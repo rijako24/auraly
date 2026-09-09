@@ -53,7 +53,7 @@ BEGIN
         l.UnitCost,l.DiscountAmount,l.TaxCode,l.TaxRate,l.TaxTreatment,l.NetAmount,l.TaxAmount,l.LineTotal,
         l.PresentationNameSnapshot,l.PresentationQuantity,l.UnitsPerPresentation,
         COALESCE(r.NetUnitsSold30Days,0),COALESCE(r.NetUnitsSold90Days,0),COALESCE(r.DailyDemand90Days,0),
-        COALESCE(b.QuantityOnHand,0),COALESCE(incoming.Quantity,0),r.CalculatedAt
+        COALESCE(b.QuantityOnHand,0),COALESCE(incoming.Quantity,0),r.CalculatedAt,p.UnitGrossWeightKg
     FROM
     (
         SELECT LineId,LineNumber,ProductId,DescriptionSnapshot,OrderedQuantity,

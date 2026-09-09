@@ -347,10 +347,10 @@ public sealed class SqlInventoryPhysicalCountStore(
             foreach(var draft in request.Drafts)
             {
                 const string validateDraft="""
-                    IF NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLists WHERE InventoryPhysicalCountListId=@DraftId AND InventoryPhysicalCountId=@CountId AND Status=N'Ready' AND Version=@Version)
-                      THROW 51202,'A selected draft is not ready or changed. Reload before reconciling.',1;
+                    IF NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLists WHERE InventoryPhysicalCountListId=@DraftId AND InventoryPhysicalCountId=@CountId AND Status=N'Ready')
+                      THROW 51202,'A selected draft is not ready for reconciliation.',1;
                     """;
-                await ExecuteAsync(connection,transaction,validateDraft,token,P("@DraftId",draft.DraftId),P("@CountId",countId),P("@Version",draft.Version));
+                await ExecuteAsync(connection,transaction,validateDraft,token,P("@DraftId",draft.DraftId),P("@CountId",countId));
             }
             var reconciliationId=Guid.NewGuid();var now=timeProvider.GetUtcNow();
             const string create="""
@@ -363,8 +363,13 @@ public sealed class SqlInventoryPhysicalCountStore(
             await ExecuteAsync(connection,transaction,create,token,P("@ReconciliationId",reconciliationId),P("@CountId",countId),P("@BusinessId",user.BusinessId),P("@UserId",user.UserId),P("@Now",now));
             foreach(var draft in request.Drafts)
             {
-                const string selectDraft="INSERT dbo.InventoryPhysicalCountReconciliationDrafts(InventoryPhysicalCountReconciliationId,InventoryPhysicalCountListId,DraftVersion) VALUES(@ReconciliationId,@DraftId,@Version);";
-                await ExecuteAsync(connection,transaction,selectDraft,token,P("@ReconciliationId",reconciliationId),P("@DraftId",draft.DraftId),P("@Version",draft.Version));
+                const string selectDraft="""
+                    INSERT dbo.InventoryPhysicalCountReconciliationDrafts(InventoryPhysicalCountReconciliationId,InventoryPhysicalCountListId,DraftVersion)
+                    SELECT @ReconciliationId,InventoryPhysicalCountListId,Version
+                    FROM dbo.InventoryPhysicalCountLists
+                    WHERE InventoryPhysicalCountListId=@DraftId AND InventoryPhysicalCountId=@CountId AND Status=N'Ready';
+                    """;
+                await ExecuteAsync(connection,transaction,selectDraft,token,P("@ReconciliationId",reconciliationId),P("@DraftId",draft.DraftId),P("@CountId",countId));
             }
             const string totals="""
                 UPDATE reconciliation SET
@@ -510,8 +515,6 @@ public sealed class SqlInventoryPhysicalCountStore(
             var headerSql=$"""
                 IF NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliations r WITH(UPDLOCK,HOLDLOCK) INNER JOIN dbo.InventoryPhysicalCounts c ON c.InventoryPhysicalCountId=r.InventoryPhysicalCountId WHERE r.InventoryPhysicalCountReconciliationId=@ReconciliationId AND r.InventoryPhysicalCountId=@CountId AND r.Status=N'Active' AND c.BusinessId=@BusinessId)
                   THROW 51202,'The active inventory reconciliation was not found.',1;
-                IF EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLists draft ON draft.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND selected.DraftVersion<>draft.Version)
-                  THROW 51202,'A selected draft changed. Reconcile again before applying.',1;
                 IF (SELECT {countColumn} FROM dbo.InventoryPhysicalCountReconciliations WHERE InventoryPhysicalCountReconciliationId=@ReconciliationId)=0
                   THROW 51201,'This reconciliation section has no products.',1;
                 UPDATE dbo.InventoryPhysicalCountReconciliations SET {documentColumn}=COALESCE({documentColumn},@DocumentId),{statusColumn}=N'Processing' WHERE InventoryPhysicalCountReconciliationId=@ReconciliationId AND ({statusColumn} IS NULL OR {statusColumn}=N'Processing');

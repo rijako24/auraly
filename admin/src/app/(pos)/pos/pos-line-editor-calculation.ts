@@ -74,13 +74,15 @@ export function nextGridPosition(
     const columns = availableColumns[row] ?? [];
     if (columns.length === 0) return null;
     const current = columns.indexOf(column);
-    const next = nextFocusableIndex(current, columns.length, direction === "ArrowLeft");
-    return { row, column: columns[next] };
+    if (current < 0) return null;
+    const next = current + (direction === "ArrowRight" ? 1 : -1);
+    return next >= 0 && next < columns.length ? { row, column: columns[next] } : null;
   }
 
   const step = direction === "ArrowDown" ? 1 : -1;
-  for (let offset = 1; offset <= availableColumns.length; offset += 1) {
-    const targetRow = (row + step * offset + availableColumns.length) % availableColumns.length;
+  for (let targetRow = row + step;
+    targetRow >= 0 && targetRow < availableColumns.length;
+    targetRow += step) {
     const columns = availableColumns[targetRow] ?? [];
     if (columns.length === 0) continue;
     const targetColumn = columns.includes(column)
