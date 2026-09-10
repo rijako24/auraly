@@ -20,7 +20,11 @@ public sealed class SqlInventoryOperationStore(
     SqlDocumentProcessingSessionAccessor processingSessions,
     SqlInventoryOperationProcessor processor) : IInventoryOperationStore
 {
-    public async Task<StockCountDraft> StartCountAsync(InventoryUserIdentity user, StartStockCountRequest request, CancellationToken cancellationToken)
+    public Task<StockCountDraft> StartCountAsync(InventoryUserIdentity user, StartStockCountRequest request, CancellationToken cancellationToken) =>
+        ExecuteWithDeadlockRetryAsync(
+            () => StartCountAttemptAsync(user, request, cancellationToken), cancellationToken);
+
+    private async Task<StockCountDraft> StartCountAttemptAsync(InventoryUserIdentity user, StartStockCountRequest request, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -60,6 +64,14 @@ public sealed class SqlInventoryOperationStore(
             await transaction.CommitAsync(cancellationToken);
             return new StockCountDraft(request.DocumentId, "Draft", baseSequence, lines);
         }
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            throw;
+        }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
@@ -68,7 +80,12 @@ public sealed class SqlInventoryOperationStore(
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
 
-    public async Task<InventoryOperationAcceptance> ConfirmCountAsync(InventoryUserIdentity user, Guid documentId, string idempotencyKey, ConfirmStockCountRequest request, CancellationToken cancellationToken)
+    public Task<InventoryOperationAcceptance> ConfirmCountAsync(InventoryUserIdentity user, Guid documentId, string idempotencyKey, ConfirmStockCountRequest request, CancellationToken cancellationToken) =>
+        ExecuteWithDeadlockRetryAsync(
+            () => ConfirmCountAttemptAsync(user, documentId, idempotencyKey, request, cancellationToken),
+            cancellationToken);
+
+    private async Task<InventoryOperationAcceptance> ConfirmCountAttemptAsync(InventoryUserIdentity user, Guid documentId, string idempotencyKey, ConfirmStockCountRequest request, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -99,6 +116,14 @@ public sealed class SqlInventoryOperationStore(
             await transaction.CommitAsync(cancellationToken);
             return acceptance;
         }
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            throw;
+        }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
 
@@ -107,7 +132,16 @@ public sealed class SqlInventoryOperationStore(
             request.WarehouseId, null, request.OccurredAt, request.ReasonCode, null, request.CostCenterId, null, request.Notes,
             request.Lines.Select(line => new LineInput(line.LineNumber, "ADJUSTMENT", line.ProductId, line.QuantityChange, null, line.ExplicitUnitCost, null)).ToArray(), request, cancellationToken);
 
-    public async Task<InventoryOperationAcceptance> DispatchTransferAsync(
+    public Task<InventoryOperationAcceptance> DispatchTransferAsync(
+        InventoryUserIdentity user,
+        string idempotencyKey,
+        DispatchWarehouseTransferRequest request,
+        CancellationToken cancellationToken) =>
+        ExecuteWithDeadlockRetryAsync(
+            () => DispatchTransferAttemptAsync(user, idempotencyKey, request, cancellationToken),
+            cancellationToken);
+
+    private async Task<InventoryOperationAcceptance> DispatchTransferAttemptAsync(
         InventoryUserIdentity user,
         string idempotencyKey,
         DispatchWarehouseTransferRequest request,
@@ -164,6 +198,14 @@ public sealed class SqlInventoryOperationStore(
             await transaction.CommitAsync(cancellationToken);
             return acceptance;
         }
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            throw;
+        }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
@@ -172,7 +214,19 @@ public sealed class SqlInventoryOperationStore(
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
 
-    public async Task<InventoryOperationAcceptance> ReceiveTransferAsync(
+    public Task<InventoryOperationAcceptance> ReceiveTransferAsync(
+        InventoryUserIdentity user,
+        Guid transferId,
+        string idempotencyKey,
+        ReceiveWarehouseTransferRequest request,
+        byte[] rowVersion,
+        CancellationToken cancellationToken) =>
+        ExecuteWithDeadlockRetryAsync(
+            () => ReceiveTransferAttemptAsync(
+                user, transferId, idempotencyKey, request, rowVersion, cancellationToken),
+            cancellationToken);
+
+    private async Task<InventoryOperationAcceptance> ReceiveTransferAttemptAsync(
         InventoryUserIdentity user,
         Guid transferId,
         string idempotencyKey,
@@ -265,6 +319,14 @@ public sealed class SqlInventoryOperationStore(
             await transaction.CommitAsync(cancellationToken);
             return acceptance;
         }
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            throw;
+        }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
@@ -355,6 +417,21 @@ public sealed class SqlInventoryOperationStore(
         IReadOnlyList<LineInput> inputLines, object requestForHash, CancellationToken cancellationToken)
     {
         var requestHash = Hash(requestForHash);
+        return await ExecuteWithDeadlockRetryAsync(
+            () => AcceptNewAttemptAsync(
+                user, idempotencyKey, documentId, documentType, warehouseId,
+                destinationWarehouseId, occurredAt, reasonCode, conversionType,
+                costCenterId, baseSequence, notes, inputLines, requestHash,
+                cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<InventoryOperationAcceptance> AcceptNewAttemptAsync(
+        InventoryUserIdentity user, string idempotencyKey, Guid documentId, string documentType,
+        Guid warehouseId, Guid? destinationWarehouseId, DateTimeOffset occurredAt, string reasonCode,
+        string? conversionType, Guid? costCenterId, long? baseSequence, string? notes,
+        IReadOnlyList<LineInput> inputLines, byte[] requestHash, CancellationToken cancellationToken)
+    {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
@@ -428,12 +505,38 @@ public sealed class SqlInventoryOperationStore(
             await transaction.CommitAsync(cancellationToken);
             return acceptance;
         }
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            throw;
+        }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
             throw new InventoryConflictException("The document or idempotency key is already in use.");
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
+    }
+
+    private async Task<T> ExecuteWithDeadlockRetryAsync<T>(
+        Func<Task<T>> action,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await action();
+            }
+            catch (SqlException exception) when (exception.Number == 1205 && attempt < 4)
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(25 * attempt), timeProvider, cancellationToken);
+            }
+        }
     }
 
     private async Task<InventoryOperationAcceptance> AcceptDraftAsync(
