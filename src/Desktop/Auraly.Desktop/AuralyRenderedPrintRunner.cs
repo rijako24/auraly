@@ -507,9 +507,10 @@ internal sealed class AuralyRenderedPrintForm : Form
             }
         }
         // Feed the printed content beyond the cutter before issuing the cut.
-        // Four standard text lines cover the printhead-to-cutter gap used by
-        // common Epson, Xprinter and ESC/POS-compatible thermal printers.
-        output.Write([0x1B, 0x64, 0x04, 0x1D, 0x56, 0x41, 0x03]);
+        // Keep only the minimum advance before the partial cut. The raster is
+        // already cropped to the last ink row, so a larger feed becomes a
+        // visible blank tail on every receipt.
+        output.Write(EscPosThermalCommands.MinimumFeedAndPartialCut);
         return output.ToArray();
     }
 

@@ -39,6 +39,7 @@ public sealed partial class PosLocalIdentityStore(
     IAuralyIdGenerator ids,
     TimeProvider timeProvider)
 {
+    private const int CurrentPermissionProjectionVersion = 2;
     private const int MaximumFailures = 5;
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan SessionDuration = TimeSpan.FromHours(24);
@@ -70,7 +71,8 @@ public sealed partial class PosLocalIdentityStore(
                 IssuedAt TEXT NOT NULL,
                 ValidUntil TEXT NOT NULL,
                 LastSynchronizedAt TEXT NOT NULL,
-                SecurityCursor INTEGER NULL);
+                SecurityCursor INTEGER NULL,
+                PermissionProjectionVersion INTEGER NOT NULL DEFAULT 2);
             CREATE TABLE IF NOT EXISTS PosLocalUserSessions(
                 SessionId TEXT NOT NULL PRIMARY KEY,
                 WorkSessionId TEXT NOT NULL,
@@ -209,14 +211,16 @@ public sealed partial class PosLocalIdentityStore(
         state.Transaction = (SqliteTransaction)transaction;
         state.CommandText = """
             INSERT INTO PosIdentityState(
-                Singleton,Revision,IssuedAt,ValidUntil,LastSynchronizedAt,SecurityCursor)
-            VALUES(1,$revision,$issued,$valid,$now,$cursor)
+                Singleton,Revision,IssuedAt,ValidUntil,LastSynchronizedAt,SecurityCursor,
+                PermissionProjectionVersion)
+            VALUES(1,$revision,$issued,$valid,$now,$cursor,2)
             ON CONFLICT(Singleton) DO UPDATE SET
                 Revision=excluded.Revision,
                 IssuedAt=excluded.IssuedAt,
                 ValidUntil=excluded.ValidUntil,
                 LastSynchronizedAt=excluded.LastSynchronizedAt,
-                SecurityCursor=excluded.SecurityCursor;
+                SecurityCursor=excluded.SecurityCursor,
+                PermissionProjectionVersion=excluded.PermissionProjectionVersion;
             """;
         state.Parameters.AddWithValue("$revision", snapshot.Revision);
         state.Parameters.AddWithValue("$issued", Format(snapshot.IssuedAt));
@@ -235,6 +239,19 @@ public sealed partial class PosLocalIdentityStore(
         command.CommandText = "SELECT SecurityCursor FROM PosIdentityState WHERE Singleton=1;";
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return value is null or DBNull ? null : Convert.ToInt64(value);
+    }
+
+    public async Task<bool> RequiresFullSecuritySnapshotAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT PermissionProjectionVersion FROM PosIdentityState WHERE Singleton=1;";
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is null or DBNull ||
+            Convert.ToInt32(value) < CurrentPermissionProjectionVersion;
     }
 
     public async Task ApplyChangesAsync(
@@ -718,6 +735,15 @@ public sealed partial class PosLocalIdentityStore(
         {
             await using var upgrade = connection.CreateCommand();
             upgrade.CommandText = "ALTER TABLE PosIdentityState ADD COLUMN SecurityCursor INTEGER NULL;";
+            await upgrade.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (!stateColumns.Contains("PermissionProjectionVersion"))
+        {
+            await using var upgrade = connection.CreateCommand();
+            // Version 1 may have had a complete snapshot overwritten by the
+            // minimal authentication lease. Force one authoritative refresh.
+            upgrade.CommandText =
+                "ALTER TABLE PosIdentityState ADD COLUMN PermissionProjectionVersion INTEGER NOT NULL DEFAULT 1;";
             await upgrade.ExecuteNonQueryAsync(cancellationToken);
         }
     }

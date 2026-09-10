@@ -9,7 +9,17 @@ export function cashMovementTicketHtml(
   warehouseName?: string | null,
 ) {
   return cashMovementTicketHtmlVersion(ticket, companyName, businessName,
-    warehouseName, 2, "38px");
+    warehouseName, 3, "72px", false, true, true);
+}
+
+export function cashMovementTicketHtmlV2(
+  ticket: PosCashMovementTicket,
+  companyName: string,
+  businessName?: string | null,
+  warehouseName?: string | null,
+) {
+  return cashMovementTicketHtmlVersion(ticket, companyName, businessName,
+    warehouseName, 2, "38px", true, false, false);
 }
 
 export function cashMovementTicketHtmlV1(
@@ -19,7 +29,7 @@ export function cashMovementTicketHtmlV1(
   warehouseName?: string | null,
 ) {
   return cashMovementTicketHtmlVersion(ticket, companyName, businessName,
-    warehouseName, 1, "72px");
+    warehouseName, 1, "72px", true, false, false);
 }
 
 function cashMovementTicketHtmlVersion(
@@ -27,21 +37,31 @@ function cashMovementTicketHtmlVersion(
   companyName: string,
   businessName: string | null | undefined,
   warehouseName: string | null | undefined,
-  version: 1 | 2,
+  version: 1 | 2 | 3,
   signatureMargin: string,
+  includeWarehouse: boolean,
+  dashedAmount: boolean,
+  separateResponsible: boolean,
 ) {
   const title = ticket.direction === "In" ? "Entrada de dinero" : "Salida de dinero";
-  const location = [businessName ? `Sede: ${businessName}` : "", warehouseName ?? ""]
+  const location = [businessName ? `Sede: ${businessName}` : "", includeWarehouse ? warehouseName ?? "" : ""]
     .filter(Boolean)
     .join(" · ");
   const optional = [
     ticket.reference ? row("Referencia", ticket.reference) : "",
     ticket.notes ? row("Observación", ticket.notes) : "",
   ].join("");
+  const responsible = row("Responsable", ticket.responsibleName,
+    separateResponsible ? "responsible" : "");
+  const responsibleInDetails = separateResponsible ? "" : responsible;
+  const responsibleBlock = separateResponsible ? responsible : "";
   const report = ticket.direction === "In" ? "cash-entry" : "cash-exit";
   const metadata = version === 1 ? "" : ` data-auraly-report="${report}" data-auraly-report-version="${version}"`;
+  const responsibleStyle = separateResponsible
+    ? ".responsible{padding-top:7px;border-top:1px dashed #999}"
+    : "";
   return `<!doctype html><html lang="es"${metadata}><head><meta charset="utf-8"><title>${title}</title><style>
-@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}${posReceiptTypographyCss}body{width:72mm;margin:0 auto;color:#111;font:12px/1.4 ui-monospace,Consolas,monospace}header{border-bottom:1px dashed #555;padding-bottom:8px}h1{margin:0;font:800 19px/1.2 Arial,sans-serif;text-transform:uppercase}h2{margin:6px 0 3px;font-size:13px;text-transform:uppercase}.scope{margin:2px 0;color:#333}.details{font-size:13px;padding-top:8px}.row{display:flex;justify-content:space-between;gap:10px;margin:6px 0}.row span:first-child{font-weight:700}.row span:last-child{text-align:right;overflow-wrap:anywhere}.amount{display:flex;justify-content:space-between;margin:12px 0 0;border-block:2px solid #111;padding:9px 0;font-size:17px;font-weight:800}.signature{margin-top:${signatureMargin};border-top:1px solid #111;padding-top:4px;text-align:center}</style></head><body><header><h1>${escapeHtml(companyName || "Empresa")}</h1><h2>${title}</h2>${location ? `<p class="scope">${escapeHtml(location)}</p>` : ""}</header><section class="details">${row("Motivo", ticket.reasonName)}${optional}${row("Responsable", ticket.responsibleName)}${row("Fecha y hora", new Date(ticket.occurredAt).toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" }))}</section><div class="amount"><span>Valor</span><strong>${money(ticket.amount)}</strong></div><div class="signature">Firma</div><script>addEventListener('load',()=>setTimeout(()=>window.print(),150));</script></body></html>`;
+@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}${posReceiptTypographyCss}body{width:72mm;margin:0 auto;color:#111;font:12px/1.4 ui-monospace,Consolas,monospace}header{border-bottom:1px dashed #555;padding-bottom:8px}h1{margin:0;font:800 19px/1.2 Arial,sans-serif;text-transform:uppercase}h2{margin:6px 0 3px;font-size:13px;text-transform:uppercase}.scope{margin:2px 0;color:#333}.details{font-size:13px;padding-top:8px}.row{display:flex;justify-content:space-between;gap:10px;margin:6px 0}.row span:first-child{font-weight:700}.row span:last-child{text-align:right;overflow-wrap:anywhere}${responsibleStyle}.amount{display:flex;justify-content:space-between;margin:12px 0 0;border-block:2px ${dashedAmount ? "dashed" : "solid"} #111;padding:9px 0;font-size:17px;font-weight:800}.signature{margin-top:${signatureMargin};border-top:1px solid #111;padding-top:4px;text-align:center}</style></head><body><header><h1>${escapeHtml(companyName || "Empresa")}</h1><h2>${title}</h2>${location ? `<p class="scope">${escapeHtml(location)}</p>` : ""}</header>${responsibleBlock}<section class="details">${row("Motivo", ticket.reasonName)}${optional}${responsibleInDetails}${row("Fecha y hora", new Date(ticket.occurredAt).toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" }))}</section><div class="amount"><span>Valor</span><strong>${money(ticket.amount)}</strong></div><div class="signature">Firma</div><script>addEventListener('load',()=>setTimeout(()=>window.print(),150));</script></body></html>`;
 }
 
 export function printCashMovementTicket(html: string) {
@@ -51,8 +71,8 @@ export function printCashMovementTicket(html: string) {
   );
 }
 
-function row(label: string, value: string) {
-  return `<div class="row"><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>`;
+function row(label: string, value: string, className = "") {
+  return `<div class="row${className ? ` ${className}` : ""}"><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>`;
 }
 
 function money(value: number) {

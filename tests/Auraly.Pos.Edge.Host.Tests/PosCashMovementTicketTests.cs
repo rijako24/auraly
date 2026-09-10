@@ -32,7 +32,7 @@ public sealed class PosCashMovementTicketTests
         Assert.Contains(expectedTitle, raw);
         Assert.Contains("Motivo: Base inicial", raw);
         Assert.Contains("Firma:", raw);
-        Assert.Contains("\n\n\nFirma:", raw);
+        Assert.Contains("\n\n\n\n\n\nFirma:", raw);
         Assert.DoesNotContain(ticket.DocumentId.ToString("D"), raw);
         Assert.Contains("Carol Cairo", raw);
         Assert.Equal(new byte[] { 0x1B, 0x40, 0x1B, 0x61, 0x01 }, rawBytes.Take(5).ToArray());
@@ -40,7 +40,7 @@ public sealed class PosCashMovementTicketTests
         Assert.Contains(expectedTitle, html);
         var expectedTemplate = direction == "In" ? "cash-entry" : "cash-exit";
         Assert.Contains($"data-auraly-report=\"{expectedTemplate}\"", html);
-        Assert.Contains("data-auraly-report-version=\"2\"", html);
+        Assert.Contains("data-auraly-report-version=\"3\"", html);
         Assert.Contains("font:700 12px/1.4 Arial", html);
         Assert.Contains("www.auralyapp.co", html);
         Assert.Contains("Entregado por administraci", html);
@@ -49,8 +49,16 @@ public sealed class PosCashMovementTicketTests
         Assert.Contains("@page{size:80mm", html);
         Assert.Contains("body{width:80mm", html);
         Assert.Contains("padding:5mm 3mm 1mm 2mm", html);
-        Assert.Contains("margin-top:10mm", html);
-        Assert.DoesNotContain("margin-top:26mm", html);
+        Assert.Contains("margin-top:26mm", html);
+        Assert.Contains("border-block:2px dashed #111", html);
+        Assert.Contains("class=\"responsible\"", html);
+        Assert.DoesNotContain("Bodega que no debe imprimirse", html);
+        Assert.DoesNotContain("Bodega que no debe imprimirse", raw);
+        var versionTwo = PosCashMovementTicketPrinter.RenderHtmlV2(ticket, workstation, 80);
+        Assert.Contains("data-auraly-report-version=\"2\"", versionTwo);
+        Assert.Contains("margin-top:10mm", versionTwo);
+        Assert.Contains("Sede: Sede principal - Bodega que no debe imprimirse", versionTwo);
+        Assert.Contains("border-block:2px solid #111", versionTwo);
         var versionOne = PosCashMovementTicketPrinter.RenderHtmlV1(ticket, workstation, 80);
         Assert.Contains("data-auraly-report-version=\"1\"", versionOne);
         Assert.Contains("padding:5mm 3mm 2mm 2mm", versionOne);
@@ -58,12 +66,14 @@ public sealed class PosCashMovementTicketTests
         Assert.DoesNotContain("body{text-transform:uppercase", html);
         Assert.Contains("text-transform:uppercase", html);
         Assert.Contains("text-align:center", html);
-        Assert.Contains("Sede: Sede principal - Bodega que no debe imprimirse", html);
-        Assert.Contains("Sede: Sede principal - Bodega que no", raw);
+        Assert.Contains("Sede: Sede principal", html);
+        Assert.Contains("Sede: Sede principal", raw);
         Assert.True(html.IndexOf("class=\"amount\"", StringComparison.Ordinal) <
                     html.IndexOf("class=\"signature\"", StringComparison.Ordinal));
         Assert.True(html.IndexOf("Responsable:", StringComparison.Ordinal) <
                     html.IndexOf("class=\"amount\"", StringComparison.Ordinal));
+        Assert.True(html.IndexOf("class=\"responsible\"", StringComparison.Ordinal) <
+                    html.IndexOf("class=\"detail\"", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -48,7 +48,8 @@ public sealed class PosIdentitySynchronizer(
         var previous = (await identities.ReadIdentitySummariesAsync(cancellationToken))
             .ToDictionary(user => user.UserId);
         var cursor = await identities.SecurityCursorAsync(cancellationToken);
-        if (cursor is null)
+        if (cursor is null ||
+            await identities.RequiresFullSecuritySnapshotAsync(cancellationToken))
         {
             var snapshot = await GetAsync<PosOfflineIdentitySnapshot>(
                 $"/api/pos/v1/identity/snapshot?businessId={scope.BusinessId:D}", cancellationToken);

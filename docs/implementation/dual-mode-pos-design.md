@@ -27,8 +27,23 @@ el cierre de caja no controla la visibilidad del resto de Auraly.
 |---|---|---|---|
 | No enrolado, en línea | Servidor y cookie HttpOnly | Shell normal de Auraly | Según permisos |
 | No enrolado, sin red | No disponible | Pantalla de conexión | No disponibles |
-| Enrolado, en línea | Verificador local del dispositivo; sincronización de seguridad en segundo plano | POS | La sesión local solo autoriza capacidades locales de Facturación |
-| Enrolado, sin red | Verificador local del dispositivo | POS | No disponibles si requieren servidor |
+| Enrolado, en línea | Verificador local del dispositivo y, cuando el perfil tiene módulos de servidor, sesión web en el mismo acceso | POS para un perfil exclusivamente operativo; shell normal para un perfil administrativo | Según los permisos efectivos del servidor |
+| Enrolado, sin red | Verificador local del dispositivo | POS si tiene `sales.create` | No disponibles si requieren servidor |
+
+En un equipo enrolado hay un solo formulario de acceso. El host local valida la
+identidad y mantiene la continuidad de caja. Si la proyección del usuario incluye
+algún módulo que requiere servidor, el mismo envío establece además la sesión web
+y abre el destino autorizado por el servidor; no se obliga al administrador a
+entrar primero como cajero ni se añade un segundo enlace de login. Si el servidor
+no está disponible, el acceso local conserva Facturación y nunca inventa acceso a
+módulos administrativos.
+
+La proyección de seguridad es la única propietaria de los permisos locales. El
+lease offline prueba y limita el traspaso usuario-dispositivo y puede refrescar el
+verificador de contraseña, pero no reemplaza ni reduce los permisos descargados
+por el snapshot o sus deltas. Una actualización del formato de esa proyección
+fuerza una resincronización completa una sola vez; después vuelve al cursor
+incremental normal.
 
 El usuario puede abrir el lanzador desde el POS sin entregar ni cerrar la caja.
 Si regresa a Facturación, reanuda la sesión física y el turno que continúen

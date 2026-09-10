@@ -115,6 +115,9 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(0m, await ScalarAsync<decimal>("SELECT TotalValueChange FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", conversionId));
         Assert.Equal(0m, await ScalarAsync<decimal>("SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id", conversionId));
         Assert.Equal(1, await CountAsync("ServerOutboxMessages", conversionId));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'ProductConversion'",
+            conversionId));
         Assert.Equal("Completed", await JobStatusAsync(conversionId));
 
         using var detailResponse = await client.GetAsync($"/api/commerce/v1/inventory/operations/{conversionId:D}");

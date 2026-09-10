@@ -24,6 +24,16 @@ public sealed partial class PosLocalIdentityStore
         await connection.OpenAsync(cancellationToken);
         await using var transaction =
             await connection.BeginTransactionAsync(cancellationToken);
+        var hasProjectedIdentity = false;
+        await using (var existing = connection.CreateCommand())
+        {
+            existing.Transaction = (SqliteTransaction)transaction;
+            existing.CommandText =
+                "SELECT COUNT(1) FROM PosOfflineUsers WHERE UserId=$id;";
+            existing.Parameters.AddWithValue("$id", user.UserId.ToString("D"));
+            hasProjectedIdentity = Convert.ToInt32(
+                await existing.ExecuteScalarAsync(cancellationToken)) > 0;
+        }
         await using (var command = connection.CreateCommand())
         {
             command.Transaction = (SqliteTransaction)transaction;
@@ -38,7 +48,6 @@ public sealed partial class PosLocalIdentityStore
                     DisplayName=excluded.DisplayName,
                     ProtectedPasswordVerifier=excluded.ProtectedPasswordVerifier,
                     IsActive=1,FailedCount=0,LockedUntil=NULL;
-                DELETE FROM PosOfflineUserPermissions WHERE UserId=$id;
                 """;
             command.Parameters.AddWithValue("$id", user.UserId.ToString("D"));
             command.Parameters.AddWithValue("$username", user.Username);
@@ -48,7 +57,12 @@ public sealed partial class PosLocalIdentityStore
             command.Parameters.AddWithValue("$verifier", protectedVerifier);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        foreach (var permission in user.Permissions.Distinct(StringComparer.Ordinal))
+        // The security snapshot/delta is the canonical permission owner. A
+        // lease may refresh identity credentials, but must never downgrade or
+        // expand an already projected user's authorization set.
+        foreach (var permission in hasProjectedIdentity
+                     ? Array.Empty<string>()
+                     : user.Permissions.Distinct(StringComparer.Ordinal))
         {
             await using var command = connection.CreateCommand();
             command.Transaction = (SqliteTransaction)transaction;

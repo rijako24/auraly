@@ -8,6 +8,14 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class EscPosReceiptRendererTests
 {
+    [Fact]
+    public void Rendered_thermal_receipts_use_only_one_feed_line_before_cut()
+    {
+        Assert.Equal(
+            new byte[] { 0x1B, 0x64, 0x01, 0x1D, 0x56, 0x41, 0x03 },
+            EscPosThermalCommands.MinimumFeedAndPartialCut.ToArray());
+    }
+
     [Theory]
     [InlineData(58)]
     [InlineData(80)]

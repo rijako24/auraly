@@ -91,9 +91,11 @@ El catálogo canónico de plantillas vive en `PosPrintTemplateCatalog`. La versi
 no visibles (`data-auraly-report` y `data-auraly-report-version`) para diagnóstico
 y regresión sin agregar texto técnico a la tirilla.
 
-`cash-entry` y `cash-exit` tienen una versión 2 activa que compacta el espacio
-reservado para firma y el remate inferior. La versión 1 permanece disponible e
-inmutable para reproducir el formato publicado originalmente. Las plantillas de
+`cash-entry` y `cash-exit` tienen una versión 3 activa: muestran únicamente la
+sede en el encabezado, separan al responsable como dato propio, usan reglas
+punteadas alrededor del valor y recuperan el espacio amplio de firma. Las
+versiones 1 y 2 permanecen disponibles e inmutables para reproducir los formatos
+publicados originalmente. Las plantillas de
 venta y cierre continúan en versión 1 porque no contienen una altura fija ni un
 espaciador equivalente que deba corregirse.
 
@@ -104,6 +106,11 @@ nueva versión en el catálogo y sus pruebas; no se modifica silenciosamente la
 versión publicada. Navegador, aplicación instalada, caja enrolada y formatos de
 hoja consumen la misma versión documental: el transporte nunca crea una versión
 paralela.
+
+El adaptador térmico recorta la imagen hasta la última fila con tinta y avanza
+una sola línea antes del corte parcial. Ese avance pertenece al transporte y no
+a la plantilla; aumentar esa alimentación agrega una cola blanca a todos los
+reportes y no crea una versión documental nueva.
 
 Una versión publicada es inmutable y no se elimina, aunque deje de ser la activa.
 La reimpresión histórica resuelve la versión congelada con el documento y no la

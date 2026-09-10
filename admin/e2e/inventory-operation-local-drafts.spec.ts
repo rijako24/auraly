@@ -10,6 +10,7 @@ const permissions = [
   "dashboard.read", "inventory.read", "inventory.physical-counts.manage",
   "inventory.physical-counts.capture", "inventory.counts.confirm",
   "inventory.adjustments.confirm", "inventory.transfers.dispatch",
+  "inventory.transfers.receive",
   "inventory.conversions.confirm", "inventory.damages.confirm",
   "purchasing.goods-receipts.read", "purchasing.goods-receipts.create",
   "purchasing.goods-receipts.confirm", "catalog.costs.manage",
@@ -38,9 +39,11 @@ async function authenticate(page: Page) {
   }, { tenant: tenantId, business: businessId, user: userId, granted: permissions });
 }
 
-async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: boolean } = {}) {
+async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: boolean; transferWorkflow?: boolean } = {}) {
   let receiptSaveAttempts = 0;
   const receiptSaveTokens: Array<string | null> = [];
+  let transferId: string | null = null;
+  let transferStatus = "Dispatched";
   await page.route("**/api/**", route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -60,9 +63,36 @@ async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: bool
       items: [{ productId, productCode: "PRD-001", reference: "ARROZ", productName: "Arroz premium", unitCode: "EA", quantityOnHand: 25, averageUnitCost: 2_000, saleUnitPrice: 3_000, familyRootProductId: productId, conversionFactor: 1, maximumLossPercent: 10 }],
       page: 1, pageSize: 50, totalCount: 1, totalPages: 1,
     });
-    if (path.endsWith("/inventory/balances") || path.endsWith("/inventory/movements") || path.endsWith("/inventory/operations")) return json(route, {
+    if (path.endsWith("/inventory/operations")) return json(route, {
+      items: settings.transferWorkflow && transferId ? [{
+        documentId: transferId, documentType: "WarehouseTransfer", documentNumber: "TRB00-00000001",
+        warehouseId: primaryWarehouseId, warehouseName: "Principal", destinationWarehouseId: auxiliaryWarehouseId,
+        destinationWarehouseName: "Auxiliar", reasonCode: "TEST_REASON", status: transferStatus,
+        occurredAt: new Date().toISOString(), lineCount: 1, totalValueChange: 0,
+        conversionInputEquivalent: null, conversionOutputEquivalent: null, conversionLossQuantity: null,
+        conversionLossPercent: null, conversionMaximumLossPercent: null,
+      }] : [], page: 1, pageSize: 20, totalCount: transferId ? 1 : 0, totalPages: transferId ? 1 : 0,
+    });
+    if (path.endsWith("/inventory/balances") || path.endsWith("/inventory/movements")) return json(route, {
       items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0,
     });
+    if (settings.transferWorkflow && path.endsWith("/warehouse-transfers/dispatch") && route.request().method() === "POST") {
+      const request = route.request().postDataJSON() as { documentId: string };
+      transferId = request.documentId;
+      transferStatus = "Dispatched";
+      return json(route, { documentId: transferId, movementId: crypto.randomUUID(), documentType: "WarehouseTransfer", documentNumber: "TRB00-00000001", status: "DispatchPending", processingSequence: 1, idempotentReplay: false });
+    }
+    if (settings.transferWorkflow && transferId && path.endsWith(`/warehouse-transfers/${transferId}`) && route.request().method() === "GET") return json(route, {
+      transferId, documentNumber: "TRB00-00000001", sourceWarehouseId: primaryWarehouseId,
+      sourceWarehouseName: "Principal", destinationWarehouseId: auxiliaryWarehouseId,
+      destinationWarehouseName: "Auxiliar", reasonCode: "TEST_REASON", notes: null,
+      status: transferStatus, dispatchedAt: new Date().toISOString(), receivedAt: null,
+      rowVersion: "AAAAAAAB", lines: [{ lineNumber: 1, productId, productCode: "PRD-001", productName: "Arroz premium", dispatchedQuantity: 3, receivedQuantity: 0, lostQuantity: 0, pendingQuantity: 3 }],
+    });
+    if (settings.transferWorkflow && transferId && path.endsWith(`/warehouse-transfers/${transferId}/receipts`) && route.request().method() === "POST") {
+      transferStatus = "Received";
+      return json(route, { documentId: crypto.randomUUID(), movementId: crypto.randomUUID(), documentType: "WarehouseTransferReceipt", documentNumber: "TRB00-00000001", status: "ReceiptPending", processingSequence: 2, idempotentReplay: false });
+    }
     if (path.endsWith("/goods-receipts/options")) return json(route, {
       warehouses: [{ warehouseId: primaryWarehouseId, code: "PPL", name: "Principal" }],
       suppliers: [],
@@ -229,6 +259,43 @@ test("cada operación de inventario conserva combos, productos y captura local",
     await expect(dialog).toBeHidden();
     await page.getByRole("button", { name: "Nueva operación" }).click();
   }
+});
+
+test("despachar limpia el traslado y la entrada se confirma desde su fila", async ({ page }) => {
+  await mockApi(page, { transferWorkflow: true });
+  await authenticate(page);
+  await page.goto("/dashboard/inventory");
+  await page.getByRole("button", { name: "Nueva operación" }).click();
+  const operation = page.getByRole("dialog", { name: "Nueva operación" });
+  await operation.getByRole("button", { name: /^Traslado/ }).click();
+  await expect(operation.getByText("Traslados pendientes de entrada", { exact: true })).toHaveCount(0);
+  await select(page, field(operation, "Bodega de origen").getByRole("combobox"), "Principal");
+  await select(page, field(operation, "Bodega de destino").getByRole("combobox"), "Auxiliar");
+  await select(page, field(operation, "Motivo").getByRole("combobox"), "Motivo de prueba");
+  await addProduct(page, operation);
+  await operation.getByRole("textbox", { name: "Cantidad de Arroz premium" }).fill("3");
+  await field(operation, "Observaciones").getByRole("textbox").fill("sale y debe limpiarse");
+  await operation.getByRole("button", { name: "Confirmar salida" }).click();
+  await expect(operation).toBeHidden();
+
+  const transferRow = page.getByRole("row").filter({ hasText: "TRB00-00000001" });
+  await expect(transferRow).toContainText("Pendiente de entrada");
+  await expect(transferRow.getByRole("button", { name: "Confirmar entrada" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Nueva operación" }).click();
+  await expect(operation.getByRole("heading", { name: "Traslado", exact: true })).toBeVisible();
+  await expect(operation.getByRole("textbox", { name: "Cantidad de Arroz premium" })).toHaveCount(0);
+  await expect(field(operation, "Observaciones").getByRole("textbox")).toHaveValue("");
+  await page.keyboard.press("Escape");
+  await expect(operation).toBeHidden();
+
+  await transferRow.getByRole("button", { name: "Confirmar entrada" }).click();
+  const receipt = page.getByRole("dialog", { name: /Confirmar entrada/ });
+  await expect(receipt.getByLabel("Cantidad recibida de Arroz premium")).toHaveValue("3");
+  await receipt.getByRole("button", { name: "Confirmar entrada" }).click();
+  await expect(receipt).toBeHidden();
+  await expect(transferRow).toContainText("Recibido");
+  await expect(transferRow.getByRole("button", { name: "Confirmar entrada" })).toHaveCount(0);
 });
 
 test("recepción conserva proveedor, bodega, soporte, producto y cantidades", async ({ page }) => {

@@ -82,6 +82,30 @@ test("la devolución ofrece destinos independientes y enlaza la reversión de ta
   const originalPayment = dialog.getByText("Pago de tarjeta por reversar", { exact: true }).locator("..");
   await originalPayment.getByRole("combobox").click();
   await expect(page.getByRole("option", { name: /Visa · APP-900/ })).toBeVisible();
+  await page.getByRole("option", { name: /Visa · APP-900/ }).click();
+  const quantity = dialog.getByRole("spinbutton", { name: "Cantidad a devolver de Producto" });
+  const productRow = quantity.locator("..");
+  await quantity.fill("0.5");
+  await expect(productRow).toContainText("119.000");
+  await expect(productRow).toContainText("59.500");
+  await expect(dialog.getByText("Valor estimado").locator("../..")).toContainText("59.500");
+});
+
+test("el modal de periféricos cubre el viewport completo desde el body", async ({ page }) => {
+  await authenticate(page);
+  await page.route("**/api/commerce/v1/pos/workspace/options", route => json(route, []));
+  await page.route("**/api/commerce/v1/routes?**", route => json(route, { items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 0 }));
+  await page.route("**/api/commerce/v1/orders?**", route => json(route, { items: [], page: 1, pageSize: 20, totalCount: 0, hasMore: false }));
+  await page.route("**/api/commerce/v1/pos/installer", route => json(route, { downloadUrl: "/auraly-installer.exe", version: "1.0.0", sha256: "test", tenantPreconfigured: false }));
+
+  await page.goto("/dashboard/orders");
+  await page.getByRole("button", { name: "Configurar plantillas e impresoras" }).click();
+
+  const backdrop = page.getByTestId("peripherals-dialog-backdrop");
+  await expect(page.getByRole("dialog", { name: "Periféricos" })).toBeVisible();
+  expect(await backdrop.evaluate(element => element.parentElement === document.body)).toBe(true);
+  await expect(backdrop).toHaveCSS("position", "fixed");
+  expect(await backdrop.boundingBox()).toEqual({ x: 0, y: 0, width: 1440, height: 1000 });
 });
 
 function movement(key: string, movementType: "Sale" | "Refund" | "CashIn" | "CashOut", sourceDocumentType: "SalesInvoice" | "SalesReceipt" | "SalesReturn" | "CashMovement", documentNumber: string, amount: number) {

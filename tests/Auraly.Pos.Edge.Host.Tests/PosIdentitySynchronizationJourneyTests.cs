@@ -15,6 +15,70 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PosIdentitySynchronizationJourneyTests
 {
     [Fact]
+    public async Task Legacy_lease_downgrade_is_repaired_once_from_the_authoritative_snapshot()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(), $"auraly-identity-projection-upgrade-{Guid.NewGuid():N}.db");
+        var keyDirectory = Path.Combine(
+            Path.GetTempPath(), $"auraly-identity-projection-upgrade-keys-{Guid.NewGuid():N}");
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var userId = Guid.NewGuid();
+            var verifier = PosOfflinePasswordHasher.Hash("Admin-Password-1", now);
+            var authoritative = new PosOfflineIdentitySnapshot(
+                "authoritative-v2", now, now.AddDays(1),
+                [new PosOfflineUserProjection(
+                    userId, "admin", "Administrador Auraly",
+                    [CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesDiscount],
+                    verifier)],
+                Cursor: 42);
+            var handler = new MutableIdentityServerHandler(authoritative);
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test") };
+            var identities = new PosLocalIdentityStore(
+                $"Data Source={databasePath}", keyDirectory,
+                new Uuid7AuralyIdGenerator(TimeProvider.System), TimeProvider.System);
+            await identities.InitializeAsync();
+            await identities.ApplySnapshotAsync(authoritative);
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+                await using var corrupt = connection.CreateCommand();
+                corrupt.CommandText = """
+                    UPDATE PosIdentityState SET PermissionProjectionVersion=1;
+                    DELETE FROM PosOfflineUserPermissions WHERE UserId=$id;
+                    INSERT INTO PosOfflineUserPermissions(UserId,PermissionCode)
+                    VALUES($id,$salesCreate);
+                    """;
+                corrupt.Parameters.AddWithValue("$id", userId.ToString("D"));
+                corrupt.Parameters.AddWithValue("$salesCreate", CommercePermissionCodes.SalesCreate);
+                await corrupt.ExecuteNonQueryAsync();
+            }
+
+            var synchronizer = new PosIdentitySynchronizer(
+                http,
+                new PosDeviceCredentials(Guid.NewGuid(), "device-secret"),
+                new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()),
+                identities,
+                new PosSynchronizationEventLog(TimeProvider.System));
+            await synchronizer.SynchronizeAsync();
+
+            var repaired = Assert.Single(await identities.ReadIdentitySummariesAsync());
+            Assert.Contains(CommercePermissionCodes.SalesDiscount, repaired.Permissions);
+            Assert.False(await identities.RequiresFullSecuritySnapshotAsync());
+            Assert.Equal(1, handler.RequestCount);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            foreach (var path in new[] { databasePath, databasePath + "-wal", databasePath + "-shm" })
+                if (File.Exists(path)) File.Delete(path);
+            if (Directory.Exists(keyDirectory)) Directory.Delete(keyDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Connected_login_refreshes_a_stale_local_password_and_keeps_the_pos_session()
     {
         var databasePath = Path.Combine(

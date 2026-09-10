@@ -63,7 +63,6 @@ import {
   defaultInventoryOperationKind,
   type InventoryOperationKind,
 } from "@/lib/inventory-operation-launch";
-import { WarehouseTransferReceiptPanel } from "@/components/inventory/warehouse-transfer-receipt-panel";
 
 export type WarehouseOption = { id: string; name: string };
 type OperationKind = InventoryOperationKind;
@@ -152,7 +151,10 @@ export function InventoryOperationWorkspace({
   initialKind?: InventoryOperationKind;
   physicalCountDraft?: PhysicalCountDraftSelection;
   onCancel: () => void;
-  onCompleted: (inventoryDestination?: "documents" | "drafts") => void;
+  onCompleted: (
+    inventoryDestination?: "documents" | "drafts",
+    completedKind?: InventoryOperationKind,
+  ) => void;
 }) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<OperationKind>(initialKind);
@@ -167,6 +169,8 @@ export function InventoryOperationWorkspace({
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [activeKindHydrated, setActiveKindHydrated] = useState(Boolean(physicalCountDraft));
   const latestDraft = useRef<DurableInventoryOperationDraft | null>(null);
+  const pendingDraftSave = useRef<Promise<void>>(Promise.resolve());
+  const suppressDraftPersistence = useRef(false);
 
   const selected = operationOptions.find((option) => option.id === kind)!;
   const allowed = permissions.has(selected.permission);
@@ -191,7 +195,7 @@ export function InventoryOperationWorkspace({
     warehouseId || destinationId || reason || notes.trim() || lines.length,
   );
 
-  latestDraft.current = hydratedKey === draftKey && hasLocalCapture ? {
+  latestDraft.current = !suppressDraftPersistence.current && hydratedKey === draftKey && hasLocalCapture ? {
     key: draftKey,
     businessId,
     kind,
@@ -286,11 +290,12 @@ export function InventoryOperationWorkspace({
   useEffect(() => {
     if (hydratedKey !== draftKey) return;
     const timer = window.setTimeout(() => {
+      if (suppressDraftPersistence.current) return;
       if (!hasLocalCapture) {
         void removeInventoryOperationDraft(draftKey);
         return;
       }
-      void saveInventoryOperationDraft({
+      pendingDraftSave.current = saveInventoryOperationDraft({
         key: draftKey,
         businessId,
         kind,
@@ -304,7 +309,9 @@ export function InventoryOperationWorkspace({
         valuationBasis,
         lines,
         updatedAt: new Date().toISOString(),
-      }).catch(() => toast.error("No fue posible guardar el avance local."));
+      }).catch(() => {
+        toast.error("No fue posible guardar el avance local.");
+      });
     }, 120);
     return () => window.clearTimeout(timer);
   }, [
@@ -403,8 +410,10 @@ export function InventoryOperationWorkspace({
   }
 
   async function discardDraft() {
+    suppressDraftPersistence.current = true;
     latestDraft.current = null;
     try {
+      await pendingDraftSave.current;
       await removeInventoryOperationDraft(draftKey);
       onCancel();
     } catch {
@@ -417,6 +426,7 @@ export function InventoryOperationWorkspace({
     if (!pendingDraft) return;
     try {
       await saveInventoryOperationDraft(pendingDraft);
+      suppressDraftPersistence.current = true;
       latestDraft.current = null;
       toast.success("Borrador guardado en este dispositivo.");
       onCancel();
@@ -500,7 +510,9 @@ export function InventoryOperationWorkspace({
     },
     onSuccess: async (result) => {
       toast.success(`${result.documentNumber} fue enviado al motor`);
+      suppressDraftPersistence.current = true;
       latestDraft.current = null;
+      await pendingDraftSave.current;
       await removeInventoryOperationDraft(draftKey);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["inventory-balances"] }),
@@ -510,7 +522,7 @@ export function InventoryOperationWorkspace({
         queryClient.invalidateQueries({ queryKey: ["inventory-operation-products"] }),
         queryClient.invalidateQueries({ queryKey: ["product-picker"] }),
       ]);
-      onCompleted("documents");
+      onCompleted("documents", kind);
     },
     onError: (error: { message?: string }) =>
       toast.error(error.message ?? "No fue posible confirmar la operación"),
@@ -563,7 +575,7 @@ export function InventoryOperationWorkspace({
       <div className="grid gap-3 md:grid-cols-5">
         {operationOptions.map((option) => {
           const Icon = option.icon;
-          const enabled = permissions.has(option.permission) || (option.id === "transfer" && permissions.has("inventory.transfers.receive"));
+          const enabled = permissions.has(option.permission);
           return (
             <button
               key={option.id}
@@ -602,7 +614,6 @@ export function InventoryOperationWorkspace({
               onCompleted={onCompleted}
             />
       ) : <>
-      {kind === "transfer" && permissions.has("inventory.transfers.receive") && <WarehouseTransferReceiptPanel businessId={businessId} warehouses={warehouses} />}
       <Card>
         <CardHeader><CardTitle>{selected.label}</CardTitle></CardHeader>
         <CardContent className="space-y-4">

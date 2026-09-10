@@ -2,6 +2,7 @@
 
 import { Download, Loader2, Printer, Save, Scale, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   PosEdgeClient,
   loadBrowserPrinterConfiguration,
@@ -95,15 +96,17 @@ export function PosPrinterDialog({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4">
-      <section className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div data-testid="peripherals-dialog-backdrop" className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4">
+      <section role="dialog" aria-modal="true" aria-labelledby="peripherals-dialog-title" className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <header className="flex shrink-0 items-start justify-between border-b px-6 py-5">
           <div>
             <p className="text-xs font-bold uppercase tracking-[.16em] text-teal-700">
               Equipo local
             </p>
-            <h2 className="mt-1 flex items-center gap-2 text-xl font-bold">
+            <h2 id="peripherals-dialog-title" className="mt-1 flex items-center gap-2 text-xl font-bold">
               <Printer className="h-5 w-5" /> Periféricos
             </h2>
             <p className="mt-1 text-sm text-slate-600">
@@ -170,7 +173,8 @@ export function PosPrinterDialog({
           </button>
         </footer>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

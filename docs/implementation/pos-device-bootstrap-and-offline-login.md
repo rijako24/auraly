@@ -87,6 +87,13 @@ el token local anterior y su navegador vuelve al login al recibir
 `LoginReplaced`. El token nuevo no se invalida por una concesión histórica ni por
 una respuesta tardía originada con el token anterior.
 
+El snapshot y sus deltas son la autoridad única de permisos locales. El lease de
+compatibilidad solo acredita el traspaso y actualiza el verificador; si el usuario
+ya pertenece a la proyección, aplicar el lease no toca sus permisos. El formato
+local versiona esta regla para que las instalaciones afectadas por la sobrescritura
+histórica pidan un snapshot completo una sola vez al reconectar y luego continúen
+con deltas.
+
 ## Menú y módulos
 
 Después del login el menú se deriva de permisos efectivos:
@@ -95,6 +102,9 @@ Después del login el menú se deriva de permisos efectivos:
 - módulos online aparecen según permisos;
 - sin conexión, una ruta online aparece deshabilitada con `Requiere conexión`;
 - con conexión, la API vuelve a validar usuario, negocio y permiso;
+- si el perfil local posee módulos de servidor, el mismo envío del login crea la
+  sesión web y abre el shell autorizado; si el servidor está temporalmente caído,
+  conserva Facturación local sin conceder esos módulos;
 - un navegador no enrolado puede usar módulos online, pero no simula impresión,
   periféricos, outbox ni venta offline.
 

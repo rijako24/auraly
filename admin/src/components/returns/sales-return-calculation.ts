@@ -7,8 +7,13 @@ export interface SalesReturnCalculationLine {
 
 export interface SalesReturnSelection {
   selectedLineNumbers: number[];
+  lineTotals: Record<number, number>;
   estimatedTotal: number;
   isValid: boolean;
+}
+
+export function salesReturnPurchasedUnitPrice(line: SalesReturnCalculationLine): number {
+  return line.soldQuantity > 0 ? line.lineTotal / line.soldQuantity : 0;
 }
 
 export function calculateSalesReturnSelection(
@@ -16,6 +21,7 @@ export function calculateSalesReturnSelection(
   quantities: Record<number, number>,
 ): SalesReturnSelection {
   const selectedLineNumbers: number[] = [];
+  const lineTotals: Record<number, number> = {};
   let estimatedTotal = 0;
   let isValid = true;
 
@@ -28,8 +34,10 @@ export function calculateSalesReturnSelection(
     }
     if (quantity === 0) continue;
     selectedLineNumbers.push(line.originalLineNumber);
-    estimatedTotal += line.lineTotal * quantity / line.soldQuantity;
+    const lineTotal = salesReturnPurchasedUnitPrice(line) * quantity;
+    lineTotals[line.originalLineNumber] = lineTotal;
+    estimatedTotal += lineTotal;
   }
 
-  return { selectedLineNumbers, estimatedTotal, isValid };
+  return { selectedLineNumbers, lineTotals, estimatedTotal, isValid };
 }

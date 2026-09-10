@@ -60,7 +60,10 @@ public sealed class PosCashMovementTicketPrinter(
         BoldLine(stream, workstation?.CompanyName ?? "Auraly");
         Write(stream, [0x1D, 0x21, 0x00]);
         BoldLine(stream, ticket.Direction == "In" ? "Entrada de dinero" : "Salida de dinero");
-        var scope = Scope(workstation?.BusinessName, workstation?.WarehouseName);
+        var scope = Scope(
+            workstation?.BusinessName,
+            includeWarehouse: false,
+            warehouseName: workstation?.WarehouseName);
         if (!string.IsNullOrWhiteSpace(scope))
             Wrapped(stream, scope, columns);
         Line(stream, new string('-', columns));
@@ -74,9 +77,7 @@ public sealed class PosCashMovementTicketPrinter(
         Line(stream, $"Fecha: {ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}");
         Line(stream, new string('-', columns));
         BoldLine(stream, Pair("Valor", Money(ticket.Amount), columns));
-        Line(stream, string.Empty);
-        Line(stream, string.Empty);
-        Line(stream, string.Empty);
+        for (var line = 0; line < 6; line++) Line(stream, string.Empty);
         Line(stream, "Firma: ______________________");
         Line(stream, string.Empty);
         Write(stream, [0x1D, 0x56, 0x41, 0x03]);
@@ -95,8 +96,29 @@ public sealed class PosCashMovementTicketPrinter(
                 ? PosPrintTemplateCatalog.CashEntry
                 : PosPrintTemplateCatalog.CashExit,
             "1mm",
+            "26mm",
+            "6px",
+            includeWarehouse: false,
+            dashedAmount: true,
+            separateResponsible: true);
+
+    internal static string RenderHtmlV2(
+        PosCashMovementTicket ticket,
+        PosWorkstationIdentity? workstation,
+        int paperWidthMillimeters) =>
+        RenderHtml(
+            ticket,
+            workstation,
+            paperWidthMillimeters,
+            ticket.Direction == "In"
+                ? PosPrintTemplateCatalog.CashEntryV2
+                : PosPrintTemplateCatalog.CashExitV2,
+            "1mm",
             "10mm",
-            "6px");
+            "6px",
+            includeWarehouse: true,
+            dashedAmount: false,
+            separateResponsible: false);
 
     internal static string RenderHtmlV1(
         PosCashMovementTicket ticket,
@@ -111,7 +133,10 @@ public sealed class PosCashMovementTicketPrinter(
                 : PosPrintTemplateCatalog.CashExitV1,
             "2mm",
             "26mm",
-            "10px");
+            "10px",
+            includeWarehouse: true,
+            dashedAmount: false,
+            separateResponsible: false);
 
     private static string RenderHtml(
         PosCashMovementTicket ticket,
@@ -120,7 +145,10 @@ public sealed class PosCashMovementTicketPrinter(
         PosPrintTemplateVersion template,
         string bottomPadding,
         string signatureMargin,
-        string footerMargin)
+        string footerMargin,
+        bool includeWarehouse,
+        bool dashedAmount,
+        bool separateResponsible)
     {
         if (paperWidthMillimeters is not (58 or 80))
             throw new ArgumentOutOfRangeException(nameof(paperWidthMillimeters));
@@ -128,7 +156,8 @@ public sealed class PosCashMovementTicketPrinter(
             ? string.Empty
             : $"<img src=\"{Encode(workstation.CompanyLogoSource)}\" alt=\"Logo\">";
         var companyName = workstation?.CompanyName ?? "Auraly";
-        var scope = Scope(workstation?.BusinessName, workstation?.WarehouseName);
+        var scope = Scope(workstation?.BusinessName, includeWarehouse,
+            workstation?.WarehouseName);
         var business = string.IsNullOrWhiteSpace(scope)
             ? string.Empty
             : $"<p class=\"scope\">{Encode(scope)}</p>";
@@ -138,8 +167,18 @@ public sealed class PosCashMovementTicketPrinter(
         var notes = string.IsNullOrWhiteSpace(ticket.Notes)
             ? string.Empty
             : $"<p><strong>Observación:</strong> {Encode(ticket.Notes)}</p>";
+        var responsibleInDetails = separateResponsible
+            ? string.Empty
+            : $"<p><strong>Responsable:</strong> {Encode(ticket.ResponsibleName)}</p>";
+        var responsibleBlock = separateResponsible
+            ? $"<p class=\"responsible\"><strong>Responsable:</strong> {Encode(ticket.ResponsibleName)}</p>"
+            : string.Empty;
+        var responsibleStyle = separateResponsible
+            ? ".responsible{margin:8px 0;padding-top:7px;border-top:1px dashed #999}"
+            : string.Empty;
+        var amountBorder = dashedAmount ? "dashed" : "solid";
         var html = $$"""
-<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters}}mm;margin:0;padding:5mm 3mm {{bottomPadding}} 2mm;font:10px/1.4 Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:19px;margin:3px;font-weight:800;text-transform:uppercase}h2{font-size:12px;margin:6px 0 3px;font-weight:800;text-transform:uppercase}.scope{margin:2px 0}.detail{font-size:12px;line-height:1.5;overflow-wrap:anywhere}.detail p{margin:6px 0}.amount{display:flex;justify-content:space-between;border-block:2px solid #111;padding:8px 0;margin:12px 0 0;font-size:14px;font-weight:800}.signature{margin-top:{{signatureMargin}};border-top:1px solid #111;text-align:center;padding-top:3px}</style></head><body><header>{{logo}}<h1>{{Encode(companyName)}}</h1><h2>{{(ticket.Direction == "In" ? "Entrada de dinero" : "Salida de dinero")}}</h2>{{business}}</header><div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}<p><strong>Responsable:</strong> {{Encode(ticket.ResponsibleName)}}</p><p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="amount"><span>Valor</span><span>{{Money(ticket.Amount)}}</span></div><div class="signature">Firma</div></body></html>
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters}}mm;margin:0;padding:5mm 3mm {{bottomPadding}} 2mm;font:10px/1.4 Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:19px;margin:3px;font-weight:800;text-transform:uppercase}h2{font-size:12px;margin:6px 0 3px;font-weight:800;text-transform:uppercase}.scope{margin:2px 0}.detail{font-size:12px;line-height:1.5;overflow-wrap:anywhere}.detail p{margin:6px 0}{{responsibleStyle}}.amount{display:flex;justify-content:space-between;border-block:2px {{amountBorder}} #111;padding:8px 0;margin:12px 0 0;font-size:14px;font-weight:800}.signature{margin-top:{{signatureMargin}};border-top:1px solid #111;text-align:center;padding-top:3px}</style></head><body><header>{{logo}}<h1>{{Encode(companyName)}}</h1><h2>{{(ticket.Direction == "In" ? "Entrada de dinero" : "Salida de dinero")}}</h2>{{business}}</header>{{responsibleBlock}}<div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}{{responsibleInDetails}}<p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="amount"><span>Valor</span><span>{{Money(ticket.Amount)}}</span></div><div class="signature">Firma</div></body></html>
 """;
         return html
             .Replace(
@@ -159,10 +198,15 @@ public sealed class PosCashMovementTicketPrinter(
     private static string Money(decimal value) =>
         value.ToString("C0", CultureInfo.GetCultureInfo("es-CO"));
     private static string Encode(string value) => WebUtility.HtmlEncode(value);
-    private static string Scope(string? businessName, string? warehouseName)
+    private static string Scope(
+        string? businessName,
+        bool includeWarehouse,
+        string? warehouseName)
     {
         var business = string.IsNullOrWhiteSpace(businessName) ? null : $"Sede: {businessName}";
-        var warehouse = string.IsNullOrWhiteSpace(warehouseName) ? null : warehouseName;
+        var warehouse = includeWarehouse && !string.IsNullOrWhiteSpace(warehouseName)
+            ? warehouseName
+            : null;
         return string.Join(" - ", new[] { business, warehouse }.Where(value => value is not null));
     }
     private static string Pair(string label, string value, int columns)

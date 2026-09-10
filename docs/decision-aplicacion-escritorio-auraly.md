@@ -22,7 +22,7 @@ No es técnicamente seguro ni posible que una página web instale silenciosament
 2. Si no existe tenant en la URL, el login solicita empresa, usuario y contraseña. El ejemplo de empresa es `@auraly`.
 3. Si el enlace contiene el tenant key, por ejemplo `?tenant=@auraly`, el campo empresa aparece resuelto y no se puede editar.
 4. Sin enrolamiento, el login siempre valida contra Auraly Server y un fallo de red no se sustituye por una credencial almacenada en el navegador.
-5. Con enrolamiento, la misma pantalla visual delega la autenticación al runtime local protegido y entra a Facturación; no existe una segunda pantalla de “cajero”.
+5. Con enrolamiento, la misma pantalla visual valida primero la identidad en el runtime local protegido. Un perfil exclusivamente operativo entra a Facturación; un perfil con módulos de servidor y conectividad establece en el mismo envío su sesión web y abre el destino autorizado. No existe una segunda pantalla de “cajero”.
 6. Un login online correcto recuerda el tenant key en ese dispositivo. Un intento fallido nunca reemplaza el valor recordado.
 7. El tenant key es inmutable después de crear la empresa. La aplicación puede copiar un enlace empresarial, pero no modificar la clave.
 
@@ -104,6 +104,8 @@ El navegador no intenta emular capacidades locales. POS Edge no implementa otro 
 - el catálogo, identidad autorizada, consecutivos y documentos necesarios se guardan localmente;
 - una vez completada la preparación, el paso del tiempo no invalida la identidad local ni obliga a contactar al servidor para iniciar sesión; el usuario puede entrar cuantas veces necesite con la credencial protegida descargada;
 - una conexión disponible actualiza usuarios, permisos, bloqueos y revocaciones mediante la sincronización de seguridad existente, pero una falla de red no convierte en inválida una preparación durable ya completada;
+- el snapshot y los deltas de seguridad son los únicos propietarios de los permisos locales; el lease de traspaso puede refrescar el verificador, pero nunca sustituye, amplía ni reduce una proyección de permisos ya instalada;
+- una instalación que proviene de la versión que permitía al lease pisar la proyección marca ese formato como anterior y descarga una sola vez el snapshot completo; después retoma la sincronización incremental por cursor;
 - al abrir, POS Edge inicia la actualización de identidades en segundo plano sin bloquear a usuarios ya descargados; si el usuario escrito no existe localmente, el submit visible conserva su estado de carga, espera como máximo una única actualización serializada y reintenta localmente, cubriendo la carrera con usuarios creados mientras la aplicación estuvo cerrada;
 - una contraseña incorrecta de un usuario ya presente nunca dispara sincronización ni consulta de autenticación al servidor;
 - el primer usuario con permiso `sales.create` que elige trabajar sin conexión entra a ventas automáticamente cuando termina la descarga inicial, sin un segundo login;
@@ -157,7 +159,7 @@ Las entradas y salidas de efectivo son movimientos explícitos del turno, con mo
 ## 9. Criterios de aceptación
 
 1. Web y ejecutable presentan exactamente el mismo login general; no existe un login separado de cajero.
-2. Una instalación no enrolada solo autentica contra el servidor; una instalación enrolada usa el runtime local para Facturación.
+2. Una instalación no enrolada solo autentica contra el servidor; una instalación enrolada usa el runtime local para Facturación y, cuando el perfil conectado posee módulos de servidor, establece la sesión web desde el mismo login.
 3. El tenant key no se puede editar después de crearlo.
 4. El dispositivo recuerda la última empresa solo tras autenticación correcta.
 5. El instalador descargado no contiene información del tenant.

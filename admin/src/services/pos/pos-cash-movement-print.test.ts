@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cashMovementTicketHtml, cashMovementTicketHtmlV1, printCashMovementTicket } from "./pos-cash-movement-print";
+import { cashMovementTicketHtml, cashMovementTicketHtmlV1, cashMovementTicketHtmlV2, printCashMovementTicket } from "./pos-cash-movement-print";
 
 test("cash movement receipt is professional and omits optional blank fields", () => {
   const html = cashMovementTicketHtml({
@@ -13,17 +13,33 @@ test("cash movement receipt is professional and omits optional blank fields", ()
   assert.doesNotMatch(html, /body\s*\{[^}]*text-transform:\s*uppercase/);
   assert.match(html, /header, footer \{ text-align: center/);
   assert.match(html, /Empresa Uno/);
-  assert.match(html, /Sede: Sede Norte · Bodega principal/);
+  assert.match(html, /Sede: Sede Norte/);
+  assert.doesNotMatch(html, /Bodega principal/);
   assert.match(html, /Carol Cairo/);
   assert.match(html, /Firma/);
-  assert.match(html, /margin-top:38px/);
-  assert.doesNotMatch(html, /margin-top:72px/);
-  assert.match(html, /data-auraly-report-version="2"/);
+  assert.match(html, /margin-top:72px/);
+  assert.match(html, /border-block:2px dashed #111/);
+  assert.match(html, /class="row responsible"/);
+  assert.match(html, /data-auraly-report-version="3"/);
   assert.doesNotMatch(html, /Referencia/);
   assert.doesNotMatch(html, /Observación/);
   assert.doesNotMatch(html, /movement-1/);
   assert.ok(html.indexOf('class="details"') < html.indexOf('class="amount"'));
+  assert.ok(html.indexOf('class="row responsible"') < html.indexOf('class="details"'));
   assert.ok(html.indexOf('class="amount"') < html.indexOf('class="signature"'));
+});
+
+test("cash movement version two remains unchanged", () => {
+  const html = cashMovementTicketHtmlV2({
+    documentId: "movement-v2", direction: "Out", reasonName: "Gasto",
+    amount: 2000, occurredAt: "2026-09-09T15:08:00-05:00",
+    reference: "65165", notes: "prueba", responsibleName: "Administrador Dev",
+  }, "Auraly", "AURALY", "Bodega de venta Auraly");
+
+  assert.match(html, /data-auraly-report-version="2"/);
+  assert.match(html, /Sede: AURALY · Bodega de venta Auraly/);
+  assert.match(html, /margin-top:38px/);
+  assert.match(html, /border-block:2px solid #111/);
 });
 
 test("cash movement version one remains unchanged", () => {

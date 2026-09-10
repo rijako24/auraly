@@ -5,6 +5,12 @@ using Auraly.Contracts.Sales;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
+public static class EscPosThermalCommands
+{
+    public static ReadOnlySpan<byte> MinimumFeedAndPartialCut =>
+        [0x1B, 0x64, 0x01, 0x1D, 0x56, 0x41, 0x03];
+}
+
 public sealed class EscPosReceiptRenderer
 {
     private static readonly byte[] Initialize = [0x1B, 0x40];

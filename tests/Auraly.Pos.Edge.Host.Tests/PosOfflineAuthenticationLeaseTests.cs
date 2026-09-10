@@ -211,7 +211,7 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
                 initialAccess.User.UserId,
                 initialAccess.User.Username,
                 initialAccess.User.DisplayName,
-                initialAccess.User.Permissions,
+                [CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesDiscount],
                 new PosOfflinePasswordVerifier(
                     initialAccess.User.PasswordSalt,
                     initialAccess.User.PasswordHash,
@@ -243,6 +243,7 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
             enrollment, identities, leases).CompleteAsync();
 
         Assert.Equal(_userId, session.UserId);
+        Assert.Contains(CommercePermissionCodes.SalesDiscount, session.Permissions);
         Assert.True(await identities.HasIdentitySnapshotAsync());
         Assert.True(await identities.ContainsUserAsync(initialAccess.User.Username));
         Assert.Null(enrollment.Load()!.InitialOfflineAccess);

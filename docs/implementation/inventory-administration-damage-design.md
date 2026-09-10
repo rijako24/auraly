@@ -45,7 +45,7 @@ Todas las consultas usan el Business autenticado y paginación del servidor. El 
 
 ## Interfaz
 
-`/dashboard/inventory` concentra tres contextos estables: Existencias, Kárdex y Operaciones. Operaciones lista y filtra inventarios físicos, ajustes, traslados, conversiones y averías. `Nueva operación` es una acción global que abre el formulario específico sin convertir cada formulario en una pestaña principal. Usa los componentes visuales de Auraly, selector de bodega no nativo, búsqueda combinada y estados vacíos/carga. El menú requiere `inventory.read`; confirmar averías requiere `inventory.damages.confirm`.
+`/dashboard/inventory` concentra tres contextos estables: Existencias, Kárdex y Operaciones. Operaciones lista y filtra inventarios físicos, ajustes, traslados, conversiones y averías. `Nueva operación` es una acción global que abre la creación y confirmación de salida de cada documento sin convertir cada formulario en una pestaña principal. La entrada de un traslado ya despachado se recupera desde la fila del traslado en `Operaciones > Traslados`; los estados `Dispatched` y `PartiallyReceived` muestran `Confirmar entrada` únicamente con `inventory.transfers.receive`. Esa acción invoca el mismo caso de uso canónico de recepción y no crea otro motor, writer ni documento propietario. Usa los componentes visuales de Auraly, selector de bodega no nativo, búsqueda combinada y estados vacíos/carga. El menú requiere `inventory.read`; confirmar averías requiere `inventory.damages.confirm`.
 
 ## Coordinación de inventario físico
 
@@ -68,7 +68,7 @@ Los permisos se separan por responsabilidad: `inventory.physical-counts.manage` 
 El proyecto SQL provisiona las series operativas CTI, AJI, TRB, CNV y AVE para negocios que aún no poseen una serie activa. No son prefijos DIAN. Los permisos se asignan al rol Administrator mediante el postdeployment.
 ## Cierre de la captura operativa
 
-La acción `Inventario > Nueva operación` es el único punto de entrada para inventarios físicos, ajustes, traslados, conversiones y averías. No replica reglas de negocio: consume los casos de uso canónicos y todos los documentos confirmados entran al mismo motor ordenado mediante su señal RabbitMQ. En todos los formularios, la acción primaria de confirmar o aplicar se ubica al extremo derecho del pie de acciones.
+La acción `Inventario > Nueva operación` es el punto de entrada para crear inventarios físicos, ajustes, salidas de traslado, conversiones y averías. La confirmación de entrada se abre desde el traslado pendiente en el historial, porque continúa un documento existente en vez de crear otro. No replica reglas de negocio: ambos momentos del traslado consumen sus casos de uso canónicos y todos los documentos confirmados entran al mismo motor ordenado mediante su señal RabbitMQ. Al confirmar una salida, el formulario espera que termine su autoguardado pendiente y luego elimina el borrador local, de modo que una escritura tardía no pueda restaurar el traslado ya enviado. En todos los formularios, la acción primaria de confirmar o aplicar se ubica al extremo derecho del pie de acciones.
 
 Reglas de teclado comunes a sus grillas:
 
