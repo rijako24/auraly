@@ -56,7 +56,7 @@ test("saldos iniciales busca cualquier tercero activo sin filtrar por rol", asyn
   await expect(page.getByText("Acreedor Logístico")).toBeVisible();
   await expect(page.getByText("Cliente Contado")).toBeVisible();
   const url = new URL(partyRequest);
-  expect(url.searchParams.has("role")).toBe(false);
+  expect(url.searchParams.get("role")).toBe("Any");
   expect(Number(url.searchParams.get("pageSize"))).toBeLessThanOrEqual(100);
 });
 

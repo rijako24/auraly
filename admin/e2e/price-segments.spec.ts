@@ -11,7 +11,7 @@ async function login(page: Page) {
   }, { tenantId, businessId });
 }
 
-test("canales administra precios por cantidad y modos calculados sin listas", async ({ page }) => {
+test("canales administra precios por cantidad, modos calculados e informes", async ({ page }) => {
   test.setTimeout(120_000);
   const tierChannelId = "99999999-9999-7999-8999-999999999999";
   const productId = "77777777-7777-7777-7777-777777777777";
@@ -93,7 +93,7 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   await login(page);
   await page.goto("/dashboard/products/price-segments");
   await expect(page.getByRole("heading", { name: "Canales de precios" })).toBeVisible();
-  await expect(page.getByText(/lista de precios/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Lista de precios" })).toHaveCount(2);
 
   await page.getByRole("button", { name: "Nuevo canal" }).click();
   const createDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });

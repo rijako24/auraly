@@ -127,6 +127,22 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.Contains("different tenant than its promotion", migration,
             StringComparison.Ordinal);
+        var resolveCategory = migration.IndexOf(
+            "SET ProductCategoryId=category.ProductCategoryId", StringComparison.Ordinal);
+        var removeConditionName = migration.IndexOf(
+            "ALTER TABLE dbo.PromotionConditions DROP COLUMN CategoryName", StringComparison.Ordinal);
+        var removeBenefitName = migration.IndexOf(
+            "ALTER TABLE dbo.PromotionBenefits DROP COLUMN CategoryName", StringComparison.Ordinal);
+        Assert.True(resolveCategory >= 0 && removeConditionName > resolveCategory,
+            "Promotion category identifiers must be preserved before removing condition names.");
+        Assert.True(removeBenefitName > resolveCategory,
+            "Promotion category identifiers must be preserved before removing benefit names.");
+        Assert.Contains("must resolve to exactly one category in its business", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("COL_LENGTH(N'dbo.PromotionConditions', N'CategoryName') IS NOT NULL",
+            migration, StringComparison.Ordinal);
+        Assert.Contains("COL_LENGTH(N'dbo.PromotionBenefits', N'CategoryName') IS NOT NULL",
+            migration, StringComparison.Ordinal);
         Assert.DoesNotContain("DROP TABLE dbo.Promotions", migration,
             StringComparison.OrdinalIgnoreCase);
     }

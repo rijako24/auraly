@@ -160,7 +160,6 @@ public sealed class WorkSessionService(
         Guid workSessionId,
         CancellationToken cancellationToken = default)
     {
-        Demand(identity, WorkSessionPermissionCodes.Read);
         if (workSessionId == Guid.Empty)
             throw new WorkSessionValidationException("WorkSessionId is required.");
         return await store.HasPausedSalesAsync(identity, workSessionId, cancellationToken)

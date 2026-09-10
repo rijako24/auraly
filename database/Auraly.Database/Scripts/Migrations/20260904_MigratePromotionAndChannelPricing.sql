@@ -183,4 +183,110 @@ BEGIN
     ALTER TABLE dbo.PromotionApplications ALTER COLUMN TenantId UNIQUEIDENTIFIER NOT NULL;
 END;
 
+-- Promotion category rules used to keep a free-form category name. Resolve
+-- every historical rule inside its original business before the DACPAC plans
+-- the cutover to canonical category identifiers. A missing or ambiguous match
+-- aborts the release instead of silently changing the promotion semantics.
+IF OBJECT_ID(N'dbo.PromotionConditions', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PromotionConditions', N'CategoryName') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.PromotionConditions', N'BusinessId') IS NULL
+        THROW 51715, 'Promotion condition category names cannot be resolved without their legacy business scope.', 1;
+
+    IF COL_LENGTH(N'dbo.PromotionConditions', N'ProductCategoryId') IS NULL
+        ALTER TABLE dbo.PromotionConditions ADD ProductCategoryId UNIQUEIDENTIFIER NULL;
+    IF COL_LENGTH(N'dbo.PromotionConditions', N'ServiceCategoryId') IS NULL
+        ALTER TABLE dbo.PromotionConditions ADD ServiceCategoryId UNIQUEIDENTIFIER NULL;
+
+    EXEC sys.sp_executesql N'
+        IF EXISTS(
+            SELECT 1
+            FROM dbo.PromotionConditions conditionValue
+            WHERE conditionValue.ItemType=3
+              AND (SELECT COUNT_BIG(*)
+                   FROM dbo.ProductCategories category
+                   WHERE category.BusinessId=conditionValue.BusinessId
+                     AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(conditionValue.CategoryName)))<>1)
+            THROW 51716,''Every product-category promotion condition must resolve to exactly one category in its business.'',1;
+
+        IF EXISTS(
+            SELECT 1
+            FROM dbo.PromotionConditions conditionValue
+            WHERE conditionValue.ItemType=4
+              AND (SELECT COUNT_BIG(*)
+                   FROM dbo.ServiceCategories category
+                   WHERE category.BusinessId=conditionValue.BusinessId
+                     AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(conditionValue.CategoryName)))<>1)
+            THROW 51717,''Every service-category promotion condition must resolve to exactly one category in its business.'',1;
+
+        UPDATE conditionValue
+        SET ProductCategoryId=category.ProductCategoryId
+        FROM dbo.PromotionConditions conditionValue
+        INNER JOIN dbo.ProductCategories category
+            ON category.BusinessId=conditionValue.BusinessId
+           AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(conditionValue.CategoryName))
+        WHERE conditionValue.ItemType=3;
+
+        UPDATE conditionValue
+        SET ServiceCategoryId=category.ServiceCategoryId
+        FROM dbo.PromotionConditions conditionValue
+        INNER JOIN dbo.ServiceCategories category
+            ON category.BusinessId=conditionValue.BusinessId
+           AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(conditionValue.CategoryName))
+        WHERE conditionValue.ItemType=4;';
+
+    ALTER TABLE dbo.PromotionConditions DROP COLUMN CategoryName;
+END;
+
+IF OBJECT_ID(N'dbo.PromotionBenefits', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PromotionBenefits', N'CategoryName') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.PromotionBenefits', N'BusinessId') IS NULL
+        THROW 51718, 'Promotion benefit category names cannot be resolved without their legacy business scope.', 1;
+
+    IF COL_LENGTH(N'dbo.PromotionBenefits', N'ProductCategoryId') IS NULL
+        ALTER TABLE dbo.PromotionBenefits ADD ProductCategoryId UNIQUEIDENTIFIER NULL;
+    IF COL_LENGTH(N'dbo.PromotionBenefits', N'ServiceCategoryId') IS NULL
+        ALTER TABLE dbo.PromotionBenefits ADD ServiceCategoryId UNIQUEIDENTIFIER NULL;
+
+    EXEC sys.sp_executesql N'
+        IF EXISTS(
+            SELECT 1
+            FROM dbo.PromotionBenefits benefit
+            WHERE benefit.TargetItemType=3
+              AND (SELECT COUNT_BIG(*)
+                   FROM dbo.ProductCategories category
+                   WHERE category.BusinessId=benefit.BusinessId
+                     AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(benefit.CategoryName)))<>1)
+            THROW 51719,''Every product-category promotion benefit must resolve to exactly one category in its business.'',1;
+
+        IF EXISTS(
+            SELECT 1
+            FROM dbo.PromotionBenefits benefit
+            WHERE benefit.TargetItemType=4
+              AND (SELECT COUNT_BIG(*)
+                   FROM dbo.ServiceCategories category
+                   WHERE category.BusinessId=benefit.BusinessId
+                     AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(benefit.CategoryName)))<>1)
+            THROW 51720,''Every service-category promotion benefit must resolve to exactly one category in its business.'',1;
+
+        UPDATE benefit
+        SET ProductCategoryId=category.ProductCategoryId
+        FROM dbo.PromotionBenefits benefit
+        INNER JOIN dbo.ProductCategories category
+            ON category.BusinessId=benefit.BusinessId
+           AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(benefit.CategoryName))
+        WHERE benefit.TargetItemType=3;
+
+        UPDATE benefit
+        SET ServiceCategoryId=category.ServiceCategoryId
+        FROM dbo.PromotionBenefits benefit
+        INNER JOIN dbo.ServiceCategories category
+            ON category.BusinessId=benefit.BusinessId
+           AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(benefit.CategoryName))
+        WHERE benefit.TargetItemType=4;';
+
+    ALTER TABLE dbo.PromotionBenefits DROP COLUMN CategoryName;
+END;
+
 COMMIT TRANSACTION;
