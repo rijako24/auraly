@@ -261,7 +261,7 @@ test("cada operación de inventario conserva combos, productos y captura local",
   }
 });
 
-test("despachar limpia el traslado y la entrada se confirma desde su fila", async ({ page }) => {
+test("despachar limpia el traslado y abre desde su fila una entrada editable", async ({ page }) => {
   await mockApi(page, { transferWorkflow: true });
   await authenticate(page);
   await page.goto("/dashboard/inventory");
@@ -291,8 +291,15 @@ test("despachar limpia el traslado y la entrada se confirma desde su fila", asyn
 
   await transferRow.getByRole("button", { name: "Confirmar entrada" }).click();
   const receipt = page.getByRole("dialog", { name: /Confirmar entrada/ });
-  await expect(receipt.getByLabel("Cantidad recibida de Arroz premium")).toHaveValue("3");
-  await receipt.getByRole("button", { name: "Confirmar entrada" }).click();
+  await expect(receipt).toContainText("Salida confirmada desde Principal");
+  await expect(receipt).toContainText("Auxiliar");
+  const receivedQuantity = receipt.getByLabel("Cantidad recibida de Arroz premium");
+  const confirmReceipt = receipt.getByRole("button", { name: "Confirmar entrada" });
+  await expect(receivedQuantity).toHaveValue("");
+  await expect(confirmReceipt).toBeDisabled();
+  await receivedQuantity.fill("3");
+  await expect(confirmReceipt).toBeEnabled();
+  await confirmReceipt.click();
   await expect(receipt).toBeHidden();
   await expect(transferRow).toContainText("Recibido");
   await expect(transferRow.getByRole("button", { name: "Confirmar entrada" })).toHaveCount(0);

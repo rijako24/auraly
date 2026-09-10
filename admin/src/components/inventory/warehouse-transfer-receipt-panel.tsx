@@ -35,16 +35,19 @@ export function WarehouseTransferReceiptDialog({ businessId, transferId, onClose
 
   useEffect(() => {
     if (!detail.data) return;
-    setQuantities(Object.fromEntries(detail.data.lines.map((line) => [line.lineNumber, String(line.pendingQuantity)])));
+    setQuantities(Object.fromEntries(detail.data.lines.map((line) => [line.lineNumber, ""])));
     setDifferenceReason("");
     setNotes("");
   }, [detail.data]);
 
-  const changed = useMemo(() => detail.data?.lines.some(
-    (line) => Number(quantities[line.lineNumber] ?? 0) !== line.pendingQuantity,
+  const allQuantitiesEntered = useMemo(() => detail.data?.lines.every(
+    (line) => Boolean(quantities[line.lineNumber]?.trim()),
   ) ?? false, [detail.data, quantities]);
+  const changed = useMemo(() => allQuantitiesEntered && (detail.data?.lines.some(
+    (line) => Number(quantities[line.lineNumber] ?? 0) !== line.pendingQuantity,
+  ) ?? false), [allQuantitiesEntered, detail.data, quantities]);
   const selectedDifferenceReason = (reasons.data ?? []).find((item) => item.code === differenceReason);
-  const valid = Boolean(detail.data) && detail.data!.lines.every((line) => {
+  const valid = Boolean(detail.data) && allQuantitiesEntered && detail.data!.lines.every((line) => {
     const value = Number(quantities[line.lineNumber]);
     return Number.isFinite(value) && value >= 0 && value <= line.pendingQuantity;
   }) && (
