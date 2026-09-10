@@ -7,6 +7,7 @@ using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
+using Auraly.Domain.Inventory;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -42,16 +43,16 @@ public sealed class SqlSalesReturnDocumentHandler(
         await MarkProcessedAsync(session, value, cancellationToken);
     }
 
-    private Task ApplyInventoryAsync(
+    private async Task ApplyInventoryAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         SalesReturnDocumentPayload value,
         SalesReturnLineSnapshot line,
         CancellationToken cancellationToken)
     {
         if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable)
-            return Task.CompletedTask;
+            return;
 
-        return inventoryWriter.PostAsync(
+        _ = await inventoryWriter.PostAsync(
             session,
             new InventoryLedgerPosting(
                 value.BusinessId,
@@ -63,7 +64,7 @@ public sealed class SqlSalesReturnDocumentHandler(
                 "SalesReturn",
                 line.Quantity,
                 line.RecognizedUnitCost,
-                InventoryValuationModes.WeightedAverageReceipt,
+                InventoryValuationMode.WeightedAverageReceipt,
                 value.ReturnedAt),
             cancellationToken);
     }

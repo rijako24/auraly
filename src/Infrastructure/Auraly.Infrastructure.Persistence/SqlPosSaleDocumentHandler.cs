@@ -3,6 +3,7 @@ using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Sales;
+using Auraly.Domain.Inventory;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -214,7 +215,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 "Sale",
                 -line.Quantity,
                 null,
-                InventoryValuationModes.AverageCost,
+                InventoryValuationMode.AverageCost,
                 request.CommercialSnapshot.IssuedAt),
             cancellationToken);
     }

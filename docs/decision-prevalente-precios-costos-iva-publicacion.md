@@ -177,7 +177,7 @@ WeightedAverageCost
 
 El aprovisionamiento propone `LatestReceiptCost` y permite elegir `WeightedAverageCost`; la empresa puede cambiarlo después. El promedio se calcula siempre. Esta configuración solo elige la base de la propuesta y del análisis comercial.
 
-Si una recepción ocurre en una sede compartida, solo aumenta las existencias de la bodega receptora. El nuevo costo promedio se calcula con la suma real de existencias del grupo y se propaga como costo común a sus balances y precios preparados. Una venta que deja saldo negativo nunca se transforma en saldo cero: mientras el grupo no tenga unidades positivas se conserva el último promedio válido; cuando una entrada cruza de saldo no positivo a positivo, el nuevo promedio parte del costo real de esa entrada.
+Si una recepción ocurre en una sede compartida, solo aumenta las existencias de la bodega receptora. El nuevo costo promedio se calcula con la suma real de existencias del grupo y se propaga como costo común a sus balances y precios preparados. Una venta que deja saldo negativo nunca se transforma en saldo cero: mientras el grupo no tenga unidades positivas se conserva el último promedio válido —también después de entradas parciales que aún dejen saldo negativo o exactamente cero—; cuando una entrada cruza de saldo no positivo a positivo, el nuevo promedio parte del costo real de esa entrada. `InventoryValuationCalculator` es el único propietario de esta fórmula y `SqlInventoryLedgerWriter` su única puerta transaccional de aplicación.
 
 ## 7. Precios y rentabilidad
 

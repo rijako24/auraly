@@ -74,7 +74,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             "/api/commerce/v1/warehouse-transfers/dispatch", transfer, transferKey);
         Assert.True(replay.IdempotentReplay);
         Assert.Equal(20m, (await BalanceAsync(fixture.WarehouseId, source)).Quantity);
-        Assert.Equal((0m, 0m, 0m), await BalanceAsync(destination, source));
+        Assert.Equal((0m, 5m, 0m), await BalanceAsync(destination, source));
         var transit = await ScalarAsync<Guid>("SELECT WarehouseId FROM dbo.Warehouses WHERE BusinessId=(SELECT BusinessId FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id) AND Code=N'TRA'", transferId);
         Assert.Equal((3m, 5m, 15m), await BalanceAsync(transit, source));
         Assert.Equal(2, await CountAsync("InventoryMovements", transferId));
@@ -91,7 +91,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                 "TRANSFER_SHORTAGE", "Se verificó la pérdida de una unidad en tránsito", transferDetail.RowVersion,
                 [new(1, source, 2m)]), $"receipt-{receiptId:N}");
         Assert.Equal((2m, 5m, 10m), await BalanceAsync(destination, source));
-        Assert.Equal((0m, 0m, 0m), await BalanceAsync(transit, source));
+        Assert.Equal((0m, 5m, 0m), await BalanceAsync(transit, source));
         Assert.Equal((3m, 2m), await TransferQuantitiesAsync(transferId, 1));
         Assert.Equal("Received", await ScalarAsync<string>("SELECT Status FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", transferId));
         Assert.Equal(1m, await ScalarAsync<decimal>(
@@ -145,8 +145,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                 [new(1,"INPUT",outputOne,2m,null), new(2,"INPUT",outputTwo,1m,null), new(3,"OUTPUT",source,4m,null)]),
             $"conversion-reverse-{reverseId:N}");
         Assert.Equal((20m, 5m, 100m), await BalanceAsync(fixture.WarehouseId, source));
-        Assert.Equal((0m, 0m, 0m), await BalanceAsync(fixture.WarehouseId, outputOne));
-        Assert.Equal((0m, 0m, 0m), await BalanceAsync(fixture.WarehouseId, outputTwo));
+        Assert.Equal((0m, 6m, 0m), await BalanceAsync(fixture.WarehouseId, outputOne));
+        Assert.Equal((0m, 8m, 0m), await BalanceAsync(fixture.WarehouseId, outputTwo));
     }
 
     [Fact]
@@ -636,10 +636,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var accepted = await SendAsync(client, "/api/commerce/v1/inventory-damages/confirm", request, key);
         var replay = await SendAsync(client, "/api/commerce/v1/inventory-damages/confirm", request, key);
         Assert.False(accepted.IdempotentReplay); Assert.True(replay.IdempotentReplay);
-        Assert.Equal((7m,5m,35m), await BalanceAsync(fixture.WarehouseId, product));
+        Assert.Equal((7m,3.5m,24.5m), await BalanceAsync(fixture.WarehouseId, product));
         var damagedWarehouseId = await ScalarAsync<Guid>(
             "SELECT DestinationWarehouseId FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", damageId);
-        Assert.Equal((3m,0m,0m), await BalanceAsync(damagedWarehouseId, product));
+        Assert.Equal((3m,3.5m,10.5m), await BalanceAsync(damagedWarehouseId, product));
         Assert.Equal(-3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'InventoryDamage'", damageId));
         Assert.Equal(3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'DamageWarehouseIn'", damageId));
         Assert.Equal(2, await CountAsync("InventoryMovements", damageId)); Assert.Equal(1, await CountAsync("ServerOutboxMessages", damageId));
@@ -652,14 +652,14 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(15m, await ScalarAsync<decimal>(
             "SELECT SUM(line.Credit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'Damage' AND account.Code=N'143505'", damageId));
         var balances = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
-        var row = Assert.Single(balances!.Items.Where(x => x.ProductId == product)); Assert.Equal(5m,row.AverageUnitCost); Assert.Equal(35m,row.InventoryValue);
+        var row = Assert.Single(balances!.Items.Where(x => x.ProductId == product)); Assert.Equal(3.5m,row.AverageUnitCost); Assert.Equal(24.5m,row.InventoryValue);
         foreach (var search in new[] { $"REF-{product:N}", $"BAR-{product:N}" })
         {
             var result = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search={search}&page=1&pageSize=20");
             Assert.Contains(result!.Items, item => item.ProductId == product);
         }
         var products = await client.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
-        var productRow = Assert.Single(products!.Items.Where(x => x.ProductId == product)); Assert.Equal(7m, productRow.QuantityOnHand); Assert.Equal(5m, productRow.AverageUnitCost);
+        var productRow = Assert.Single(products!.Items.Where(x => x.ProductId == product)); Assert.Equal(7m, productRow.QuantityOnHand); Assert.Equal(3.5m, productRow.AverageUnitCost);
         foreach (var search in new[] { $"I-{product:N}", $"REF-{product:N}", $"BAR-{product:N}" })
         {
             var result = await client.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search={search}&page=1&pageSize=20");
@@ -714,7 +714,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                 [new(1, "INPUT", source, 10m, null), new(2, "OUTPUT", output, 9.5m, null)]),
             $"conversion-loss-{conversionId:N}");
 
-        Assert.Equal((0m, 0m, 0m), await BalanceAsync(fixture.WarehouseId, source));
+        Assert.Equal((0m, 5m, 0m), await BalanceAsync(fixture.WarehouseId, source));
         Assert.Equal((9.5m, 5m, 47.5m), await BalanceAsync(fixture.WarehouseId, output));
         Assert.Equal(-2.5m, await ScalarAsync<decimal>(
             "SELECT TotalValueChange FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", conversionId));
@@ -758,6 +758,44 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal((0m, 0m, 0m), await BalanceAsync(fixture.WarehouseId, output));
         Assert.Equal(0, await CountAsync("InventoryMovements", conversionId));
         Assert.Equal(0, await CountAsync("ServerOutboxMessages", conversionId));
+    }
+
+    [Fact]
+    public async Task Every_adjustment_uses_the_canonical_average_cost_across_zero_and_negative_stock()
+    {
+        var product = Guid.NewGuid();
+        await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(InventoryPermissionCodes.Adjust);
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, "Costo inicial",
+            [new(1, product, 10m, 5m)]));
+        Assert.Equal((10m, 5m, 50m), await BalanceAsync(fixture.WarehouseId, product));
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, "Agota existencia",
+            [new(1, product, -10m, null)]));
+        Assert.Equal((0m, 5m, 0m), await BalanceAsync(fixture.WarehouseId, product));
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, "Cruza a negativo",
+            [new(1, product, -2m, null)]));
+        Assert.Equal((-2m, 5m, -10m), await BalanceAsync(fixture.WarehouseId, product));
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, "Entrada parcial en negativo",
+            [new(1, product, 1m, 7m)]));
+        Assert.Equal((-1m, 5m, -5m), await BalanceAsync(fixture.WarehouseId, product));
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, "Entrada cruza a positivo",
+            [new(1, product, 2m, 9m)]));
+        Assert.Equal((1m, 9m, 9m), await BalanceAsync(fixture.WarehouseId, product));
     }
 
     [Fact]

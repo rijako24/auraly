@@ -166,6 +166,8 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         try
         {
             await SetPrimaryCostStateAsync(-10m, 5_000m, -50_000m, true, "WeightedAverageCost");
+            Assert.Equal(-10m, await ReadNullableDecimalAsync("QuantityOnHand"));
+            Assert.Equal(5_000m, await ReadNullableDecimalAsync("AverageUnitCost"));
             var request = CreateRequest() with
             {
                 DocumentId = Guid.NewGuid(),
@@ -187,9 +189,11 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             Assert.Equal("Completed", (await ReadJobAsync(request.DocumentId)).Status);
 
+            Assert.Equal(-10m, await ScalarAsync<decimal>(
+                "SELECT QuantityBefore FROM dbo.InventoryMovements WHERE DocumentId=@Id", request.DocumentId));
             Assert.Equal(-6m, await ReadNullableDecimalAsync("QuantityOnHand"));
-            Assert.Equal(6_000m, await ReadNullableDecimalAsync("AverageUnitCost"));
-            Assert.Equal(-36_000m, await ReadNullableDecimalAsync("InventoryValue"));
+            Assert.Equal(5_000m, await ReadNullableDecimalAsync("AverageUnitCost"));
+            Assert.Equal(-30_000m, await ReadNullableDecimalAsync("InventoryValue"));
         }
         finally
         {
@@ -917,10 +921,18 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            UPDATE dbo.InventoryBalances
-            SET QuantityOnHand=@Quantity,AverageUnitCost=@Average,InventoryValue=@Value,
-                UpdatedAt=SYSUTCDATETIME()
-            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+            IF EXISTS(
+                SELECT 1 FROM dbo.InventoryBalances
+                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId)
+              UPDATE dbo.InventoryBalances
+              SET QuantityOnHand=@Quantity,AverageUnitCost=@Average,InventoryValue=@Value,
+                  UpdatedAt=SYSUTCDATETIME()
+              WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+            ELSE
+              INSERT dbo.InventoryBalances(
+                  BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
+                  InventoryValue,LastProcessingSequence,UpdatedAt)
+              VALUES(@BusinessId,@WarehouseId,@ProductId,@Quantity,@Average,@Value,0,SYSUTCDATETIME());
             UPDATE dbo.Businesses SET SharesProductPrices=@SharesPrices
             WHERE BusinessId=@BusinessId;
             UPDATE dbo.Tenants SET InventoryCostBasis=@CostBasis

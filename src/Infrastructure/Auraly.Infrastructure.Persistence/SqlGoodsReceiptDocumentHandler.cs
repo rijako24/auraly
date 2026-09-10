@@ -196,13 +196,10 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         var priceFormationCost = acquisitionUnitCost;
         if (state.ManageStock)
         {
-            var projectedValuation = WeightedAverageCost.ApplyReceipt(
-                state.QuantityOnHand, state.InventoryValue, inventoryLine.Quantity,
-                acquisitionUnitCost / inventoryTarget.Factor);
-            await ApplyInventoryReceiptAsync(
+            var valuation = await ApplyInventoryReceiptAsync(
                 session, receipt, inventoryLine, acquisitionUnitCost / inventoryTarget.Factor, cancellationToken);
             if (state.PriceFormationCostBasis == "WeightedAverageCost")
-                priceFormationCost = projectedValuation.AverageUnitCostAfter * inventoryTarget.Factor;
+                priceFormationCost = valuation.AverageUnitCostAfter * inventoryTarget.Factor;
         }
         await RecordSupplierCostAsync(
             session, receipt, line, supplierUnitCost, state.PreviousObservedUnitCost,
@@ -220,7 +217,6 @@ public sealed class SqlGoodsReceiptDocumentHandler(
     {
         const string sql = """
             SELECT inventoryProduct.ManageStock,pp.Amount,lc.LatestUnitCost,
-                   COALESCE(pool.QuantityOnHand,0),COALESCE(pool.AverageUnitCost,0),COALESCE(pool.InventoryValue,0),
                    COALESCE(tax.Rate,0),tenant.InventoryCostBasis,pp.TargetMarginPercent,
                    COALESCE(pp.RoundingIncrement,1),COALESCE(pp.RoundingMode,N'Nearest')
             FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
@@ -242,21 +238,6 @@ public sealed class SqlGoodsReceiptDocumentHandler(
               ON pp.ProductId=p.ProductId AND pp.BusinessId=@BusinessId AND pp.IsActive=1
             LEFT JOIN dbo.SupplierProductLatestCosts lc WITH (UPDLOCK,HOLDLOCK)
               ON lc.BusinessId=@BusinessId AND lc.SupplierId=@SupplierId AND lc.ProductId=p.ProductId
-            OUTER APPLY
-            (
-              SELECT SUM(balance.QuantityOnHand) QuantityOnHand,
-                     CASE WHEN SUM(balance.QuantityOnHand)=0 THEN MAX(balance.AverageUnitCost)
-                          ELSE SUM(balance.InventoryValue)/SUM(balance.QuantityOnHand) END AverageUnitCost,
-                     SUM(balance.InventoryValue) InventoryValue
-              FROM dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
-              INNER JOIN dbo.Businesses poolBusiness WITH (UPDLOCK,HOLDLOCK)
-                ON poolBusiness.BusinessId=balance.BusinessId
-              WHERE balance.ProductId=inventoryProduct.ProductId
-                AND ((business.SharesProductPrices=1
-                      AND poolBusiness.TenantId=business.TenantId
-                      AND poolBusiness.SharesProductPrices=1 AND poolBusiness.IsActive=1)
-                  OR (business.SharesProductPrices=0 AND balance.BusinessId=@BusinessId))
-            ) pool
             WHERE p.ProductId=@ProductId
               AND (p.TenantId=business.TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
             """;
@@ -274,13 +255,11 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             reader.GetBoolean(0),
             reader.GetDecimal(1),
             reader.IsDBNull(2) ? null : reader.GetDecimal(2),
-            reader.GetDecimal(3), reader.GetDecimal(4), reader.GetDecimal(5),
-            true,
-            reader.GetDecimal(6),reader.GetString(7),reader.IsDBNull(8) ? null : reader.GetDecimal(8),
-            reader.GetDecimal(9),reader.GetString(10));
+            reader.GetDecimal(3),reader.GetString(4),reader.IsDBNull(5) ? null : reader.GetDecimal(5),
+            reader.GetDecimal(6),reader.GetString(7));
     }
 
-    private Task ApplyInventoryReceiptAsync(
+    private Task<InventoryLedgerPostingResult> ApplyInventoryReceiptAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         GoodsReceiptDocumentPayload receipt,
         GoodsReceiptLineSnapshot line,
@@ -298,7 +277,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
                 "GoodsReceipt",
                 line.Quantity,
                 acquisitionUnitCost,
-                InventoryValuationModes.WeightedAverageReceipt,
+                InventoryValuationMode.WeightedAverageReceipt,
                 receipt.ReceivedAt),
             cancellationToken);
 
@@ -488,10 +467,6 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         bool ManageStock,
         decimal CurrentSalePrice,
         decimal? PreviousObservedUnitCost,
-        decimal QuantityOnHand,
-        decimal AverageUnitCost,
-        decimal InventoryValue,
-        bool HasInventoryBalance,
         decimal SalesTaxRate,
         string PriceFormationCostBasis,
         decimal? TargetMarginPercent,

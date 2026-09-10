@@ -89,6 +89,27 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void Inventory_average_cost_has_one_calculator_and_one_transactional_writer()
+    {
+        var sourceFiles = CSharpFiles("src").ToArray();
+        var calculatorCallers = sourceFiles
+            .Where(file => File.ReadAllText(file).Contains(
+                "InventoryValuationCalculator.Calculate(", StringComparison.Ordinal))
+            .ToArray();
+
+        var caller = Assert.Single(calculatorCallers);
+        Assert.Equal(
+            Path.Combine(RepositoryRoot, "src", "Infrastructure",
+                "Auraly.Infrastructure.Persistence", "SqlInventoryLedgerWriter.cs"),
+            caller);
+
+        var allSource = string.Join('\n', sourceFiles.Select(File.ReadAllText));
+        Assert.DoesNotContain("WriteCalculatedAsync", allSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("CalculatedInventoryLedgerPosting", allSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("WeightedAverageCost.ApplyReceipt", allSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pos_sale_processing_preserves_the_original_work_session()
     {
         var persistence = Path.Combine(

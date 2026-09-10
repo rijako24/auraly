@@ -32,8 +32,9 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 
 - SQL es la fuente de orden, lease, estado e idempotencia; la cola solo despierta consumidores.
 - Cada tipo documental tiene un handler. El handler no es un motor nuevo.
-- `SqlInventoryLedgerWriter` es el único writer lógico de balances y movimientos. Centraliza bloqueo, existencia, costo, cantidad, valor, upsert y kardex.
-- `SqlInventoryOperationProcessor` calcula conteos, ajustes, traslados, conversiones y averías, pero entrega la escritura al writer común.
+- `InventoryValuationCalculator` es el único propietario de las fórmulas de costo promedio, valor y costo reconocido; no conoce SQL ni tipos documentales.
+- `SqlInventoryLedgerWriter` es la única puerta transaccional de valoración y escritura: bloquea y carga el estado, invoca una vez la calculadora, y persiste balance, revaloración común, kardex y notificación.
+- `SqlInventoryOperationProcessor` coordina conteos, ajustes, traslados, conversiones y averías, incluida la asignación explícita de merma, pero no calcula costo promedio ni escribe balances por fuera del writer común.
 - POS sale, recepción, devolución de venta y devolución de compra usan el mismo writer con la política de valoración correspondiente.
 
 Para agregar un efecto: extender el contrato/handler correcto, elegir una política de valoración existente o modelar una nueva allí, agregar prueba de idempotencia/concurrencia y no tocar las tablas desde otro componente.

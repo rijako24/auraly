@@ -118,7 +118,7 @@ public sealed class SqlInventoryOperationProcessor(
         {
             var change = InventoryOperationRules.CountAdjustment(line.Quantity, line.SystemQuantityAtBase ?? throw new InvalidOperationException("The stock count base is missing."));
             if (change == 0) { await UpdateLineResultAsync(session, operation.DocumentId, line.LineNumber, balances[(operation.WarehouseId,line.ProductId)].AverageCost, 0m, cancellationToken); continue; }
-            total += await ApplyAsync(session, operation, line, operation.WarehouseId, change, null, "StockCountAdjustment", balances, cancellationToken);
+            total += (await ApplyAsync(session, operation, line, operation.WarehouseId, change, null, "StockCountAdjustment", balances, cancellationToken)).ValueChange;
         }
         return InventoryOperationRules.Money(total);
     }
@@ -128,7 +128,7 @@ public sealed class SqlInventoryOperationProcessor(
     {
         var total = 0m;
         foreach (var line in operation.Lines.OrderBy(line => line.LineNumber))
-            total += await ApplyAsync(session, operation, line, operation.WarehouseId, line.Quantity, line.ExplicitUnitCost, "InventoryAdjustment", balances, cancellationToken);
+            total += (await ApplyAsync(session, operation, line, operation.WarehouseId, line.Quantity, line.ExplicitUnitCost, "InventoryAdjustment", balances, cancellationToken)).ValueChange;
         return InventoryOperationRules.Money(total);
     }
 
@@ -140,10 +140,10 @@ public sealed class SqlInventoryOperationProcessor(
         var total = 0m;
         foreach (var line in operation.Lines.OrderBy(line => line.LineNumber))
         {
-            total += await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity,
-                null, "InventoryDamage", balances, cancellationToken);
-            total += await ApplyAsync(session, operation, line, damagedWarehouse, line.Quantity,
-                0m, "DamageWarehouseIn", balances, cancellationToken, false);
+            total += (await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity,
+                null, "InventoryDamage", balances, cancellationToken)).ValueChange;
+            total += (await ApplyAsync(session, operation, line, damagedWarehouse, line.Quantity,
+                0m, "DamageWarehouseIn", balances, cancellationToken, false)).ValueChange;
         }
         return InventoryOperationRules.Money(total);
     }
@@ -155,10 +155,11 @@ public sealed class SqlInventoryOperationProcessor(
         var total = 0m;
         foreach (var line in operation.Lines.OrderBy(line => line.LineNumber))
         {
-            var source = balances[(operation.WarehouseId, line.ProductId)];
-            var transferCost = source.AverageCost;
-            total += await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity, null, "TransferOut", balances, cancellationToken, false);
-            total += await ApplyAsync(session, operation, line, destination, line.Quantity, transferCost, "TransferIn", balances, cancellationToken);
+            var source = await ApplyAsync(session, operation, line, operation.WarehouseId,
+                -line.Quantity, null, "TransferOut", balances, cancellationToken, false);
+            total += source.ValueChange;
+            total += (await ApplyAsync(session, operation, line, destination, line.Quantity,
+                source.RecognizedUnitCost, "TransferIn", balances, cancellationToken)).ValueChange;
         }
         return InventoryOperationRules.Money(total);
     }
@@ -177,9 +178,9 @@ public sealed class SqlInventoryOperationProcessor(
             var source = balances[(posting.WarehouseId, line.ProductId)];
             if (source.Quantity < line.Quantity)
                 throw new InvalidOperationException($"Insufficient inventory for product '{line.ProductCode}'.");
-            var cost = source.AverageCost;
-            await ApplyAsync(session, posting, line, posting.WarehouseId, -line.Quantity, null,
+            var sourcePosting = await ApplyAsync(session, posting, line, posting.WarehouseId, -line.Quantity, null,
                 "TransferDispatchOut", balances, cancellationToken, false);
+            var cost = sourcePosting.RecognizedUnitCost;
             await ApplyAsync(session, posting, line, transit, line.Quantity, cost,
                 "TransferDispatchInTransit", balances, cancellationToken, false);
             const string updateLine = """
@@ -308,22 +309,11 @@ public sealed class SqlInventoryOperationProcessor(
         var state = balances[(warehouseId, line.ProductId)];
         if (state.Quantity < quantity)
             throw new InvalidOperationException("The transit inventory is insufficient for this receipt.");
-        var beforeQuantity = state.Quantity;
-        var beforeAverage = state.AverageCost;
-        var afterQuantity = InventoryOperationRules.Quantity(beforeQuantity - quantity);
-        var valueChange = -InventoryOperationRules.Money(quantity * frozenUnitCost);
-        var afterValue = afterQuantity == 0 ? 0m : InventoryOperationRules.Money(state.Value + valueChange);
-        if (afterValue < 0)
-            throw new InvalidOperationException("The frozen transfer cost exceeds the inventory value remaining in transit.");
-        var afterAverage = afterQuantity == 0 ? 0m : InventoryOperationRules.Quantity(afterValue / afterQuantity);
-        await inventoryWriter.WriteCalculatedAsync(session, new CalculatedInventoryLedgerPosting(
-            operation.BusinessId, warehouseId, line.ProductId, operation.DocumentId, operation.DocumentType,
-            line.LineNumber, movementType, state.Exists, -quantity, beforeQuantity, afterQuantity,
-            beforeAverage, afterAverage, frozenUnitCost, valueChange, afterValue, operation.OccurredAt), cancellationToken);
-        state.Quantity = afterQuantity;
-        state.AverageCost = afterAverage;
-        state.Value = afterValue;
-        state.Exists = true;
+        var result = await inventoryWriter.PostAsync(session, new InventoryLedgerPosting(
+            operation.BusinessId, warehouseId, line.ProductId, operation.DocumentId,
+            operation.DocumentType, line.LineNumber, movementType, -quantity, frozenUnitCost,
+            InventoryValuationMode.SpecifiedCostIssue, operation.OccurredAt), cancellationToken);
+        UpdateBalanceStates(balances, warehouseId, line.ProductId, result);
     }
 
     private async Task<decimal> ProcessConversionAsync(SqlDocumentProcessingSessionAccessor.Session session,
@@ -336,7 +326,8 @@ public sealed class SqlInventoryOperationProcessor(
                 throw new InvalidOperationException("The conversion input inventory is insufficient.");
         var inputCost = 0m;
         foreach (var line in inputs)
-            inputCost -= await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity, null, "ConversionInput", balances, cancellationToken);
+            inputCost -= (await ApplyAsync(session, operation, line, operation.WarehouseId,
+                -line.Quantity, null, "ConversionInput", balances, cancellationToken)).ValueChange;
         var lossCost = operation.ConversionLossQuantity > 0
             ? InventoryOperationRules.Money(inputCost * operation.ConversionLossQuantity.Value /
                 operation.ConversionInputEquivalent!.Value)
@@ -348,7 +339,8 @@ public sealed class SqlInventoryOperationProcessor(
         for (var index = 0; index < outputs.Length; index++)
         {
             var unitCost = InventoryOperationRules.Quantity(allocations[index] / outputs[index].Quantity);
-            total += await ApplyAsync(session, operation, outputs[index], operation.WarehouseId, outputs[index].Quantity, unitCost, "ConversionOutput", balances, cancellationToken);
+            total += (await ApplyAsync(session, operation, outputs[index], operation.WarehouseId,
+                outputs[index].Quantity, unitCost, "ConversionOutput", balances, cancellationToken)).ValueChange;
         }
         return InventoryOperationRules.Money(total);
     }
@@ -385,37 +377,17 @@ public sealed class SqlInventoryOperationProcessor(
             throw new InvalidOperationException("The conversion configuration snapshot is inconsistent.");
     }
 
-    private async Task<decimal> ApplyAsync(SqlDocumentProcessingSessionAccessor.Session session,
+    private async Task<InventoryLedgerPostingResult> ApplyAsync(SqlDocumentProcessingSessionAccessor.Session session,
         InventoryOperationDocumentPayload operation, InventoryOperationLineSnapshot line, Guid warehouseId,
         decimal quantityChange, decimal? inboundUnitCost, string movementType,
         Dictionary<(Guid, Guid), BalanceState> balances, CancellationToken cancellationToken, bool updateLine = true)
     {
-        var state = balances[(warehouseId, line.ProductId)];
-        var beforeQuantity = state.Quantity;
-        var beforeAverage = state.AverageCost;
-        decimal valueChange;
-        decimal afterQuantity;
-        decimal afterAverage;
-        decimal afterValue;
-        decimal recognizedCost;
-        if (quantityChange > 0)
-        {
-            recognizedCost = inboundUnitCost ?? state.AverageCost;
-            var valuation = WeightedAverageCost.ApplyReceipt(state.Quantity, state.Value, quantityChange, recognizedCost);
-            afterQuantity = valuation.QuantityAfter; afterAverage = valuation.AverageUnitCostAfter; afterValue = valuation.InventoryValueAfter; valueChange = valuation.ReceiptValue;
-        }
-        else
-        {
-            var outgoing = -quantityChange;
-            recognizedCost = state.AverageCost;
-            afterQuantity = InventoryOperationRules.Quantity(state.Quantity - outgoing);
-            valueChange = -InventoryOperationRules.Money(outgoing * recognizedCost);
-            afterValue = afterQuantity == 0 ? 0m : InventoryOperationRules.Money(state.Value + valueChange);
-            afterAverage = afterQuantity == 0 ? 0m : state.AverageCost;
-        }
-        await inventoryWriter.WriteCalculatedAsync(
+        var mode = quantityChange > 0 && inboundUnitCost is not null
+            ? InventoryValuationMode.WeightedAverageReceipt
+            : InventoryValuationMode.AverageCost;
+        var result = await inventoryWriter.PostAsync(
             session,
-            new CalculatedInventoryLedgerPosting(
+            new InventoryLedgerPosting(
                 operation.BusinessId,
                 warehouseId,
                 line.ProductId,
@@ -423,20 +395,34 @@ public sealed class SqlInventoryOperationProcessor(
                 operation.DocumentType,
                 line.LineNumber,
                 movementType,
-                state.Exists,
                 quantityChange,
-                beforeQuantity,
-                afterQuantity,
-                beforeAverage,
-                afterAverage,
-                recognizedCost,
-                valueChange,
-                afterValue,
+                inboundUnitCost,
+                mode,
                 operation.OccurredAt),
             cancellationToken);
-        state.Quantity=afterQuantity; state.AverageCost=afterAverage; state.Value=afterValue; state.Exists=true;
-        if(updateLine) await UpdateLineResultAsync(session,operation.DocumentId,line.LineNumber,recognizedCost,valueChange,cancellationToken);
-        return valueChange;
+        UpdateBalanceStates(balances, warehouseId, line.ProductId, result);
+        if (updateLine)
+            await UpdateLineResultAsync(
+                session, operation.DocumentId, line.LineNumber,
+                result.RecognizedUnitCost, result.ValueChange, cancellationToken);
+        return result;
+    }
+
+    private static void UpdateBalanceStates(
+        Dictionary<(Guid Warehouse, Guid Product), BalanceState> balances,
+        Guid warehouseId,
+        Guid productId,
+        InventoryLedgerPostingResult result)
+    {
+        var target = balances[(warehouseId, productId)];
+        target.Quantity = result.QuantityAfter;
+        target.Exists = true;
+        foreach (var entry in balances.Where(entry => entry.Key.Product == productId))
+        {
+            entry.Value.AverageCost = result.AverageUnitCostAfter;
+            entry.Value.Value = InventoryOperationRules.Money(
+                entry.Value.Quantity * result.AverageUnitCostAfter);
+        }
     }
 
     private static async Task UpdateLineResultAsync(SqlDocumentProcessingSessionAccessor.Session session,Guid documentId,int line,decimal cost,decimal value,CancellationToken cancellationToken)

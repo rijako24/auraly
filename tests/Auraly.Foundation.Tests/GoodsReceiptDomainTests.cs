@@ -55,35 +55,169 @@ public sealed class GoodsReceiptDomainTests
     [Fact]
     public void Weighted_average_adds_received_value_without_losing_precision()
     {
-        var result = WeightedAverageCost.ApplyReceipt(4m, 20_000m, 6m, 7_500m);
+        var result = InventoryValuationCalculator.Calculate(
+            State(4m, 6_500m, 20_000m), 6m, 7_500m,
+            InventoryValuationMode.WeightedAverageReceipt);
 
         Assert.Equal(10m, result.QuantityAfter);
         Assert.Equal(65_000m, result.InventoryValueAfter);
         Assert.Equal(6_500m, result.AverageUnitCostAfter);
-        Assert.Equal(45_000m, result.ReceiptValue);
+        Assert.Equal(45_000m, result.ValueChange);
     }
 
     [Fact]
     public void Weighted_average_preserves_negative_stock_and_does_not_corrupt_cost()
     {
-        var result = WeightedAverageCost.ApplyReceipt(-10m, -50_000m, 4m, 6_000m);
+        var result = InventoryValuationCalculator.Calculate(
+            State(-10m, 5_000m, -50_000m), 4m, 6_000m,
+            InventoryValuationMode.WeightedAverageReceipt);
 
         Assert.Equal(-6m, result.QuantityAfter);
-        Assert.Equal(6_000m, result.AverageUnitCostAfter);
-        Assert.Equal(-36_000m, result.InventoryValueAfter);
-        Assert.Equal(24_000m, result.ReceiptValue);
+        Assert.Equal(5_000m, result.AverageUnitCostAfter);
+        Assert.Equal(-30_000m, result.InventoryValueAfter);
+        Assert.Equal(24_000m, result.ValueChange);
     }
 
     [Fact]
     public void Receipt_crossing_negative_stock_starts_positive_inventory_at_receipt_cost()
     {
-        var result = WeightedAverageCost.ApplyReceipt(-10m, -50_000m, 14m, 6_000m);
+        var result = InventoryValuationCalculator.Calculate(
+            State(-10m, 5_000m, -50_000m), 14m, 6_000m,
+            InventoryValuationMode.WeightedAverageReceipt);
 
         Assert.Equal(4m, result.QuantityAfter);
         Assert.Equal(6_000m, result.AverageUnitCostAfter);
         Assert.Equal(24_000m, result.InventoryValueAfter);
-        Assert.Equal(84_000m, result.ReceiptValue);
+        Assert.Equal(84_000m, result.ValueChange);
     }
+
+    [Fact]
+    public void Repeated_receipts_do_not_change_average_while_stock_remains_negative()
+    {
+        var first = InventoryValuationCalculator.Calculate(
+            State(-10m, 5_000m, -50_000m), 4m, 6_000m,
+            InventoryValuationMode.WeightedAverageReceipt);
+        var second = InventoryValuationCalculator.Calculate(
+            State(first.QuantityAfter, first.AverageUnitCostAfter, first.InventoryValueAfter),
+            3m, 8_000m, InventoryValuationMode.WeightedAverageReceipt);
+
+        Assert.Equal(-3m, second.QuantityAfter);
+        Assert.Equal(5_000m, second.AverageUnitCostAfter);
+        Assert.Equal(-15_000m, second.InventoryValueAfter);
+    }
+
+    [Theory]
+    [InlineData(-10, 0)]
+    [InlineData(-15, -5)]
+    public void Average_cost_issue_never_erases_last_cost_at_or_below_zero(
+        decimal quantityChange,
+        decimal expectedQuantity)
+    {
+        var result = InventoryValuationCalculator.Calculate(
+            State(10m, 5_000m, 50_000m), quantityChange, null,
+            InventoryValuationMode.AverageCost);
+
+        Assert.Equal(expectedQuantity, result.QuantityAfter);
+        Assert.Equal(5_000m, result.AverageUnitCostAfter);
+        Assert.Equal(expectedQuantity * 5_000m, result.InventoryValueAfter);
+        Assert.Equal(quantityChange * 5_000m, result.ValueChange);
+    }
+
+    [Fact]
+    public void Sequential_sales_keep_the_last_average_through_zero_and_negative_stock()
+    {
+        var state = State(3m, 5_000m, 15_000m);
+        foreach (var expectedQuantity in new[] { 2m, 1m, 0m, -1m })
+        {
+            var sale = InventoryValuationCalculator.Calculate(
+                state, -1m, null, InventoryValuationMode.AverageCost);
+
+            Assert.Equal(expectedQuantity, sale.QuantityAfter);
+            Assert.Equal(5_000m, sale.AverageUnitCostAfter);
+            Assert.Equal(expectedQuantity * 5_000m, sale.InventoryValueAfter);
+            state = State(
+                sale.QuantityAfter,
+                sale.AverageUnitCostAfter,
+                sale.InventoryValueAfter);
+        }
+
+        var partialReceipt = InventoryValuationCalculator.Calculate(
+            state, 0.5m, 7_000m, InventoryValuationMode.WeightedAverageReceipt);
+        Assert.Equal(-0.5m, partialReceipt.QuantityAfter);
+        Assert.Equal(5_000m, partialReceipt.AverageUnitCostAfter);
+
+        var positiveReceipt = InventoryValuationCalculator.Calculate(
+            State(
+                partialReceipt.QuantityAfter,
+                partialReceipt.AverageUnitCostAfter,
+                partialReceipt.InventoryValueAfter),
+            1m, 9_000m, InventoryValuationMode.WeightedAverageReceipt);
+        Assert.Equal(0.5m, positiveReceipt.QuantityAfter);
+        Assert.Equal(9_000m, positiveReceipt.AverageUnitCostAfter);
+        Assert.Equal(4_500m, positiveReceipt.InventoryValueAfter);
+    }
+
+    [Fact]
+    public void Receipt_after_stock_reached_zero_uses_the_new_real_cost()
+    {
+        var issue = InventoryValuationCalculator.Calculate(
+            State(10m, 5_000m, 50_000m), -10m, null,
+            InventoryValuationMode.AverageCost);
+        var receipt = InventoryValuationCalculator.Calculate(
+            State(issue.QuantityAfter, issue.AverageUnitCostAfter, issue.InventoryValueAfter),
+            4m, 6_500m, InventoryValuationMode.WeightedAverageReceipt);
+
+        Assert.Equal(4m, receipt.QuantityAfter);
+        Assert.Equal(6_500m, receipt.AverageUnitCostAfter);
+        Assert.Equal(26_000m, receipt.InventoryValueAfter);
+    }
+
+    [Fact]
+    public void Specified_cost_issue_preserves_last_cost_when_it_empties_the_balance()
+    {
+        var result = InventoryValuationCalculator.Calculate(
+            State(3m, 6_000m, 18_000m), -3m, 6_000m,
+            InventoryValuationMode.SpecifiedCostIssue);
+
+        Assert.Equal(0m, result.QuantityAfter);
+        Assert.Equal(6_000m, result.AverageUnitCostAfter);
+        Assert.Equal(0m, result.InventoryValueAfter);
+        Assert.Equal(-18_000m, result.ValueChange);
+    }
+
+    [Fact]
+    public void Valuation_uses_the_whole_business_pool_not_one_warehouse()
+    {
+        var issue = InventoryValuationCalculator.Calculate(
+            new InventoryValuationState(
+                QuantityOnHand: 5m,
+                AverageUnitCost: 4_000m,
+                PoolQuantityOnHand: 10m,
+                PoolInventoryValue: 60_000m),
+            -2m,
+            null,
+            InventoryValuationMode.AverageCost);
+        var returnToSupplier = InventoryValuationCalculator.Calculate(
+            new InventoryValuationState(
+                QuantityOnHand: 5m,
+                AverageUnitCost: 6_000m,
+                PoolQuantityOnHand: 10m,
+                PoolInventoryValue: 60_000m),
+            -2m,
+            5_000m,
+            InventoryValuationMode.SpecifiedCostIssue);
+
+        Assert.Equal(6_000m, issue.AverageUnitCostBefore);
+        Assert.Equal(6_000m, issue.RecognizedUnitCost);
+        Assert.Equal(6_250m, returnToSupplier.AverageUnitCostAfter);
+        Assert.Equal(18_750m, returnToSupplier.InventoryValueAfter);
+    }
+
+    private static InventoryValuationState State(
+        decimal quantity,
+        decimal average,
+        decimal value) =>
+        new(quantity, average, quantity, value);
 
     [Fact]
     public void Payable_requires_a_valid_due_date_and_preserves_the_opening_balance()
