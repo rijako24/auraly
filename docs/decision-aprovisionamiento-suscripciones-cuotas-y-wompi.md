@@ -97,14 +97,14 @@ El endpoint de eventos es un router, no un aprovisionador genérico. La referenc
 
 ## Entitlements y permisos
 
-El rol `ADMINISTRATOR` aprovisionado para una empresa cliente no recibe por
-defecto las capacidades opt-in de agentes y agenda: `agents.*`,
-`conversations.*`, `leads.*`, `campaigns.*` ni `reservations.*`. Esto cubre
-Agente IA, canales y contactos de atención, conversaciones, leads, campañas,
-reservas y calendario. Las vistas aparecen únicamente después de asignar sus
-permisos desde el propietario canónico de roles. El administrador del tenant de
-plataforma `@auraly` conserva el catálogo completo. Las plantillas
-`ADMINISTRATIVE` tampoco reciben estas capacidades automáticamente.
+El rol `ADMINISTRATOR` aprovisionado para una empresa cliente recibe todos los
+permisos aplicables dentro de su tenant, incluidas las capacidades de agentes y
+agenda: `agents.*`, `conversations.*`, `leads.*`, `campaigns.*` y
+`reservations.*`. La disponibilidad comercial de cada módulo se controla mediante
+el entitlement de la suscripción, no dejando incompleto el rol administrador. El
+administrador del tenant de plataforma `@auraly` conserva el catálogo completo,
+incluidos los permisos exclusivos de plataforma. Las plantillas `ADMINISTRATIVE`
+no reciben estas capacidades automáticamente.
 
 La plantilla `ADMINISTRATIVE` sí incluye la gestión operativa de cuentas del
 tenant: consultar, crear, actualizar, activar o desactivar usuarios; asignar y

@@ -108,7 +108,9 @@ public static class OnlineSalesDraftApi
                 ? StatusCodes.Status403Forbidden
                 : exception.Code is "InvalidApproval" or "AlreadyDecidedOrExpired"
                     ? StatusCodes.Status409Conflict
-                    : StatusCodes.Status400BadRequest;
+                    : exception.Code == "ApprovalRequired"
+                        ? StatusCodes.Status428PreconditionRequired
+                        : StatusCodes.Status400BadRequest;
             return Results.Problem(exception.Message, statusCode: statusCode, title: exception.Code);
         }
         catch (OnlineSalesDraftForbiddenException exception)
@@ -261,10 +263,28 @@ group.MapPost("/{draftId:guid}/items", async (
             Guid draftId,
             RemoveOnlineSalesTemporaryRequest request,
             OnlineSalesDraftService service,
+            PosApprovalService approvals,
             CancellationToken ct) =>
-            await Handle(() => service.RemoveTemporaryAsync(
-                context.User.ToOnlineSalesUserIdentity(),
-                draftId, request, IdempotencyKey(context), ct)));
+            await Handle(() =>
+            {
+                var user = context.User.ToOnlineSalesUserIdentity();
+                var authorizedUser = user with
+                {
+                    Permissions = user.Permissions
+                        .Append(CommercePermissionCodes.SalesDeletePausedDraft)
+                        .ToHashSet(StringComparer.Ordinal)
+                };
+                return ExecuteSensitiveAsync(
+                    context,
+                    approvals,
+                    draftId,
+                    null,
+                    CommercePermissionCodes.SalesDeletePausedDraft,
+                    () => service.RemoveTemporaryAsync(
+                        authorizedUser,
+                        draftId, request, IdempotencyKey(context), ct),
+                    ct);
+            }));
 
 
         group.MapPost("/{draftId:guid}/complete", async (
@@ -344,7 +364,9 @@ group.MapPost("/{draftId:guid}/items", async (
                 ? StatusCodes.Status403Forbidden
                 : exception.Code is "InvalidApproval" or "AlreadyDecidedOrExpired"
                     ? StatusCodes.Status409Conflict
-                    : StatusCodes.Status400BadRequest;
+                    : exception.Code == "ApprovalRequired"
+                        ? StatusCodes.Status428PreconditionRequired
+                        : StatusCodes.Status400BadRequest;
             return Results.Problem(exception.Message, statusCode: statusCode, title: exception.Code);
         }
         catch (OnlineSalesDraftForbiddenException exception)

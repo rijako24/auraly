@@ -385,6 +385,54 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Paused_sales_require_the_dedicated_close_permission()
+    {
+        var userId = await CreateUserAsync("work-session-paused-sale");
+        using var cashier = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close);
+        var opened = await OpenAsync(cashier, new OpenWorkSessionRequest(
+            fixture.BusinessId,
+            fixture.WarehouseId,
+            null));
+        await InsertPausedSaleAsync(opened.WorkSessionId, userId);
+
+        using (var preview = new HttpRequestMessage(
+                   HttpMethod.Get,
+                   $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview"))
+        {
+            preview.Headers.Add("X-Auraly-Draft-Id", Guid.NewGuid().ToString("D"));
+            using var response = await cashier.SendAsync(preview);
+            Assert.Equal((HttpStatusCode)428, response.StatusCode);
+        }
+
+        using (var close = CreateCloseRequest(
+                   opened.WorkSessionId,
+                   Guid.NewGuid().ToString("D"),
+                   new CloseWorkSessionRequest(0m, "Venta pausada autorizable")))
+        {
+            close.Headers.Add("X-Auraly-Draft-Id", Guid.NewGuid().ToString("D"));
+            using var response = await cashier.SendAsync(close);
+            Assert.Equal((HttpStatusCode)428, response.StatusCode);
+        }
+
+        using var administrator = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.CloseWithPausedSales);
+        var closure = await CloseAsync(
+            administrator,
+            opened.WorkSessionId,
+            Guid.NewGuid().ToString("D"),
+            new CloseWorkSessionRequest(0m, "Cierre con permiso explícito"));
+        Assert.Equal(opened.WorkSessionId, closure.WorkSessionId);
+    }
+
+    [Fact]
     public async Task Work_session_opens_resumes_closes_and_reopens_with_immutable_totals()
     {
         var userId = await CreateUserAsync("work-session");
@@ -719,6 +767,27 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                N'CashIn',N'Transfer',20000,N'Comprobante 20.000',N'test:transfer-20',SYSUTCDATETIME(),@UserId);
             """;
         command.Parameters.AddWithValue("@SessionId", workSessionId);
+        command.Parameters.AddWithValue("@UserId", userId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task InsertPausedSaleAsync(Guid workSessionId, Guid userId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT dbo.SalesDrafts(
+              SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,Status,
+              Name,Version,CreatedAt,UpdatedAt,SavedAt)
+            VALUES(
+              NEWID(),@BusinessId,@WarehouseId,@WorkSessionId,@UserId,N'Temporary',
+              N'Cotización de mostrador pausada',1,SYSDATETIMEOFFSET(),
+              SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+            """;
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         command.Parameters.AddWithValue("@UserId", userId);
         await command.ExecuteNonQueryAsync();
     }

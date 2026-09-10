@@ -1167,14 +1167,24 @@ public static class PosEdgeHostApplication
                 ct)));
         edge.MapDelete("/temporaries/{draftId:guid}", async (
             Guid draftId,
+            HttpContext http,
             PosDraftStore drafts,
             PosEdgeRuntimeContext context,
+            PosSensitiveActionAuthorizer authorizer,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
+            var authorization = await authorizer.AuthorizeAsync(
+                sessions.Required(), CommercePermissionCodes.SalesDeletePausedDraft,
+                draftId, null,
+                http.Request.Headers["X-Auraly-Approval-Id"],
+                http.Request.Headers["X-Auraly-Operation-Id"],
+                http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
             await drafts.DeleteTemporaryAsync(
                 new DraftId(draftId),
                 context.BusinessId,
                 ct);
+            await authorizer.CompleteAsync(authorization, ct);
             return Results.NoContent();
         });
         edge.MapPosSaleCompletion();

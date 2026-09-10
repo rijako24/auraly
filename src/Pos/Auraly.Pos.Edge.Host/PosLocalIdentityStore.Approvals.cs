@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.Sqlite;
 
 namespace Auraly.Pos.Edge.Host;
@@ -165,7 +166,9 @@ public sealed partial class PosLocalIdentityStore
             CommercePermissionCodes.SalesChangePrice or
             CommercePermissionCodes.SalesRemoveLine or
             CommercePermissionCodes.SalesRestartDraft or
-            Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close))
+            CommercePermissionCodes.SalesDeletePausedDraft or
+            WorkSessionPermissionCodes.Close or
+            WorkSessionPermissionCodes.CloseWithPausedSales))
             throw new PosLocalApprovalException(
                 "UnsupportedPermission", "La acción no admite autorización delegada.");
     }

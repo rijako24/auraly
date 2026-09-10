@@ -598,7 +598,7 @@ export interface PosClient {
     observation: string,
   ): Promise<PosDraft>;
   temporaries(search?: string): Promise<PosDraft[]>;
-  deleteTemporary(draftId: string): Promise<void>;
+  deleteTemporary(draftId: string, authorization?: PosSensitiveAuthorization): Promise<void>;
   recoverTemporary(draftId: string): Promise<PosDraft>;
   validateDraftInventory(draftId: string): Promise<PosInventoryValidation>;
   previewSettlement(draftId: string): Promise<PosSaleSettlement>;
@@ -1122,8 +1122,11 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosDraft[]>(`/edge/v1/temporaries${query}`);
   }
 
-  deleteTemporary(draftId: string) {
-    return this.requestVoid(`/edge/v1/temporaries/${draftId}`, { method: "DELETE" });
+  deleteTemporary(draftId: string, authorization?: PosSensitiveAuthorization) {
+    return this.requestVoid(`/edge/v1/temporaries/${draftId}`, {
+      method: "DELETE",
+      headers: sensitiveHeaders(authorization),
+    });
   }
 
   recoverTemporary(draftId: string) {

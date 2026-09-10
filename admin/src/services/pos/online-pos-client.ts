@@ -754,11 +754,16 @@ export class OnlinePosClient implements PosClient {
     return drafts.map((draft) => this.mapDraft(draft));
   }
 
-  async deleteTemporary(draftId: string) {
+  async deleteTemporary(draftId: string, authorization?: PosSensitiveAuthorization) {
     const active = await this.ensureActive();
     await request<OnlineDraft>(
       `/api/commerce/v1/pos/drafts/temporaries/${draftId}/remove`,
-      this.mutation({ expectedVersion: this.version(draftId) }),
+      this.mutation(
+        { expectedVersion: this.version(draftId) },
+        "POST",
+        authorization?.operationId,
+        authorization?.approvalRequestId,
+      ),
     );
     this.versions.delete(draftId);
     this.activeDraftId = active.draftId.value;

@@ -48,6 +48,13 @@ y total contado. Imprimir el conteo no abre, cierra ni modifica la sesión.
 
 El siguiente usuario abre una nueva sesión en el mismo equipo. Si la aplicación se interrumpe, la sesión abierta se recupera y no se reemplaza silenciosamente.
 
+Si la sesión conserva ventas pausadas, el cierre exige el permiso ordinario
+`work-sessions.close-with-paused-sales`. Un usuario que solo tenga
+`work-sessions.close` debe obtener autorización POS antes de abrir el conteo y antes
+de cerrar. El servidor vuelve a comprobar las ventas pausadas dentro de la transacción
+de cierre para cubrir carreras; el rol Cajero no recibe este permiso por defecto y el
+rol Administrador sí lo recibe siempre.
+
 Cada usuario mantiene una sesión web abierta y puede mantener una sesión local por
 equipo enrolado. Pestañas y navegadores web recuperan el mismo `WorkSessionId` web;
 un Edge recupera únicamente el suyo. Cambiar la autenticación activa no abre ni

@@ -273,19 +273,33 @@ public class UserService : IUserService
             ?? throw new NotFoundException(nameof(AppRole), roleId);
         var actor = await _unitOfWork.AppUsers.GetByIdAsync(actorUserId, ct)
             ?? throw new NotFoundException(nameof(AppUser), actorUserId);
-        if (targetUser.TenantId != actor.TenantId || role.TenantId != targetUser.TenantId)
-            throw new ForbiddenException("El usuario, el rol y quien lo asigna deben pertenecer a la misma organización.");
-
         var actorPermissions = (await _unitOfWork.Permissions.GetResourcesByUserIdAsync(actorUserId, null, ct)).ToHashSet(StringComparer.Ordinal);
+        var actorTenant = await _unitOfWork.Tenants.GetByIdAsync(actor.TenantId, ct)
+            ?? throw new NotFoundException(nameof(Tenant), actor.TenantId);
+        var targetTenant = await _unitOfWork.Tenants.GetByIdAsync(targetUser.TenantId, ct)
+            ?? throw new NotFoundException(nameof(Tenant), targetUser.TenantId);
+        var isAuralyAdministrator =
+            string.Equals(actorTenant.TenantKey, PlatformPermissions.PlatformTenantKey,
+                StringComparison.OrdinalIgnoreCase) &&
+            actorPermissions.Contains(PlatformPermissions.TenantsRead);
+        if (role.TenantId != targetUser.TenantId ||
+            targetUser.TenantId != actor.TenantId && !isAuralyAdministrator)
+            throw new ForbiddenException("El usuario y el rol deben pertenecer a la organización seleccionada, y quien lo asigna debe tener alcance sobre ella.");
+
         var rolePermissions = role.RolePermissions.Select(item => item.Permission.Resource).ToArray();
-        var unauthorized = rolePermissions.FirstOrDefault(resource => !actorPermissions.Contains(resource));
+        var unauthorized = isAuralyAdministrator
+            ? null
+            : rolePermissions.FirstOrDefault(resource => !actorPermissions.Contains(resource));
         if (unauthorized is not null)
             throw new ForbiddenException($"No puede delegar un rol con el permiso '{unauthorized}' porque no lo posee.");
 
         if (rolePermissions.Any(PlatformPermissions.IsPlatformPermission))
         {
-            if (!string.Equals(actor.Tenant.TenantKey, PlatformPermissions.PlatformTenantKey, StringComparison.OrdinalIgnoreCase)
-                || !actorPermissions.Contains(PlatformPermissions.Assign))
+            if (!string.Equals(targetTenant.TenantKey, PlatformPermissions.PlatformTenantKey,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(actorTenant.TenantKey, PlatformPermissions.PlatformTenantKey,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !actorPermissions.Contains(PlatformPermissions.Assign))
                 throw new ForbiddenException("Los roles con permisos de plataforma solo se pueden delegar dentro de @auraly por un usuario autorizado.");
         }
         return role;

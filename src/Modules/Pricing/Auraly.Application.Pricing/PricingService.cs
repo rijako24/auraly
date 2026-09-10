@@ -19,6 +19,20 @@ public sealed record PreparedDirectProductPricePublication(
     decimal? TargetMarginPercent, decimal SalePrice, decimal? EffectiveMarginPercent,
     decimal RoundingIncrement, string RoundingMode);
 
+public sealed record PriceChannelReportProductSource(
+    Guid ProductId, string ProductCode, string ProductName,
+    decimal PublicAmount, string CurrencyCode,
+    Guid? ProductCategoryId, Guid? ProductBrandId,
+    IReadOnlyCollection<Guid> ProductCategoryAncestorIds,
+    decimal AverageCost, decimal LatestCost, decimal? TargetMarginPercent);
+
+public sealed record PriceChannelReportSource(
+    Guid PriceChannelId, string Code, string Name, string Strategy,
+    decimal? Value, bool IsActive,
+    IReadOnlyCollection<PriceChannelReportProductSource> Products,
+    IReadOnlyCollection<PriceChannelTierRule> Tiers,
+    IReadOnlyCollection<PriceChannelExclusionRule> Exclusions);
+
 public interface IPricingStore
 {
     Task<PriceRevisionPage> ListAsync(PricingUserIdentity user, PriceRevisionQuery query, CancellationToken ct);
@@ -29,6 +43,8 @@ public interface IPricingStore
     Task<ProductPricingContext?> GetProductContextAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
     Task<PreparedProductPrice> SavePreparedProductAsync(PricingUserIdentity user, PreparedDirectProductPricePublication value, DateTimeOffset now, CancellationToken ct);
     Task<IReadOnlyList<ProductPriceHistoryItem>> HistoryAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
+    Task<PriceChannelReportSource?> GetChannelReportSourceAsync(
+        PricingUserIdentity user, Guid priceChannelId, CancellationToken ct);
 }
 
 public sealed class PricingService(
@@ -152,6 +168,47 @@ public sealed class PricingService(
     {
         Require(user, PricingPermissionCodes.ReadHistory);
         return store.HistoryAsync(user, productId, ct);
+    }
+
+    public async Task<PriceChannelProductReport> ChannelProductReportAsync(
+        PricingUserIdentity user, Guid priceChannelId, CancellationToken ct)
+    {
+        Require(user, PricingPermissionCodes.ReadSegments);
+        if (priceChannelId == Guid.Empty)
+            throw new PricingValidationException("El canal de precios es obligatorio.");
+        var source = await store.GetChannelReportSourceAsync(user, priceChannelId, ct)
+            ?? throw new PricingNotFoundException("El canal de precios no existe en el negocio seleccionado.");
+        var channel = new PriceChannelRule(source.PriceChannelId, source.Strategy, source.Value);
+        var rows = new List<PriceChannelProductReportRow>();
+        foreach (var product in source.Products.OrderBy(value => value.ProductName, StringComparer.CurrentCulture))
+        {
+            var context = new PriceChannelProductContext(
+                product.ProductId, product.ProductCategoryId, product.ProductBrandId,
+                product.ProductCategoryAncestorIds, product.CurrencyCode,
+                product.AverageCost, product.LatestCost, product.TargetMarginPercent);
+            if (PriceChannelResolver.IsExcluded(source.PriceChannelId, context, source.Exclusions))
+                continue;
+
+            IEnumerable<decimal> quantities = string.Equals(
+                    source.Strategy, PriceChannelStrategies.TieredProductPrice,
+                    StringComparison.Ordinal)
+                ? source.Tiers.Where(value => value.ProductId == product.ProductId)
+                    .Select(value => value.MinimumQuantity).Append(1m).Distinct().Order()
+                : new[] { 1m };
+            foreach (var quantity in quantities)
+            {
+                var resolution = PriceChannelResolver.Resolve(
+                    source.PriceChannelId, product.PublicAmount, quantity, context,
+                    [channel], source.Tiers, source.Exclusions);
+                rows.Add(new(
+                    product.ProductId, product.ProductCode, product.ProductName, quantity,
+                    product.PublicAmount, resolution.Amount ?? product.PublicAmount,
+                    product.CurrencyCode,
+                    resolution.Applied ? "Canal" : "Precio público"));
+            }
+        }
+        return new(source.PriceChannelId, source.Code, source.Name, source.Strategy,
+            source.IsActive, rows);
     }
 
     private static PriceCalculationResult CalculateCore(PriceCalculationRequest request)

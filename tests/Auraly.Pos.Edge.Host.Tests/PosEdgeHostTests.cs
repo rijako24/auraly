@@ -548,7 +548,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         pausedResponse.EnsureSuccessStatusCode();
         var paused = await pausedResponse.Content.ReadFromJsonAsync<PosDraft>();
 
-        var deleted = await Client.DeleteAsync(
+        using var deleted = await Client.DeleteAsync(
             $"/edge/v1/temporaries/{paused!.DraftId.Value:D}");
         Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
         var remaining = await Client.GetFromJsonAsync<PosDraft[]>(
@@ -1180,6 +1180,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     ["sales.create", "sales.discount", "sales.reprint", "sales.void",
                         CommercePermissionCodes.SalesRemoveLine,
                         CommercePermissionCodes.SalesRestartDraft,
+                        CommercePermissionCodes.SalesDeletePausedDraft,
                         PosSynchronizationPermissions.ReadEvents,
                         Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close],
                     password)

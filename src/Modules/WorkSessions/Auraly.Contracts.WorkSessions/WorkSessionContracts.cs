@@ -8,6 +8,7 @@ public static class WorkSessionPermissionCodes
     public const string Read = "work-sessions.read";
     public const string Open = "work-sessions.open";
     public const string Close = "work-sessions.close";
+    public const string CloseWithPausedSales = "work-sessions.close-with-paused-sales";
     public const string ManageCash = "work-sessions.cash.manage";
     public const string OpenCashDrawer = "work-sessions.cash.drawer.open";
     public const string ConfigureCashReasons = "work-sessions.cash-reasons.configure";
@@ -55,7 +56,8 @@ public sealed record DeviceCloseWorkSessionRequest(
     decimal? CountedCash,
     string? Note,
     Guid AuthorizedByUserId,
-    IReadOnlyList<WorkSessionPaymentCount>? PaymentCounts = null);
+    IReadOnlyList<WorkSessionPaymentCount>? PaymentCounts = null,
+    bool AuthorizedToCloseWithPausedSales = false);
 
 public sealed record WorkSessionView(
     Guid WorkSessionId,

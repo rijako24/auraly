@@ -142,6 +142,19 @@ Los catalogos globales/oficiales se cargan mediante seeds idempotentes del proye
 - Los tests expresan expectativas y contratos, pero no copian el algoritmo productivo para calcular el mismo resultado.
 - Una migracion temporal de ruta exige telemetria, compatibilidad definida y condicion de retiro. No quedan dos rutas activas indefinidamente "por seguridad".
 
+### Autorizacion administrativa
+
+- Cada permiso nuevo se registra en el catalogo canónico y queda asignado al rol
+  `ADMINISTRATOR` por sincronización determinista. No se mantiene una lista manual
+  incompleta de permisos administrativos.
+- El administrador del tenant recibe todo permiso aplicable dentro de su tenant; las
+  capacidades contratadas se controlan por entitlement, no retirando permisos al rol.
+- Los recursos `tenants.*` y `platform.*` pertenecen exclusivamente al alcance de
+  plataforma. El administrador de `@auraly` recibe el catálogo completo y, al operar
+  sobre un tenant seleccionado autorizado, sus permisos efectivos abarcan todas las
+  acciones de ese tenant. Esta regla nunca habilita a un administrador cliente para
+  cruzar tenants.
+
 ## 9. Preflight para motores y catalogos
 
 Antes de implementar:

@@ -38,6 +38,10 @@ public interface IWorkSessionStore
         WorkSessionIdentity identity,
         Guid workSessionId,
         CancellationToken cancellationToken);
+    Task<bool> HasPausedSalesAsync(
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        CancellationToken cancellationToken);
     Task<IReadOnlyList<WorkSessionCashDifferenceView>> ListCashDifferencesAsync(
         WorkSessionIdentity identity,
         DateOnly from,
@@ -145,9 +149,23 @@ public sealed class WorkSessionService(
         CloseWorkSessionRequest request,
         CancellationToken cancellationToken = default)
     {
-        Demand(identity, WorkSessionPermissionCodes.Close);
+        Demand(identity, await RequiredClosePermissionAsync(
+            identity, workSessionId, cancellationToken));
         return await CloseCoreAsync(
             identity, workSessionId, idempotencyKey, request, cancellationToken);
+    }
+
+    public async Task<string> RequiredClosePermissionAsync(
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.Read);
+        if (workSessionId == Guid.Empty)
+            throw new WorkSessionValidationException("WorkSessionId is required.");
+        return await store.HasPausedSalesAsync(identity, workSessionId, cancellationToken)
+            ? WorkSessionPermissionCodes.CloseWithPausedSales
+            : WorkSessionPermissionCodes.Close;
     }
 
     public Task<WorkSessionClosureView> CloseFromDeviceAsync(

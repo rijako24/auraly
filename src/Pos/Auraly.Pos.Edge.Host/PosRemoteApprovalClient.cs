@@ -136,7 +136,8 @@ public sealed record PosSensitiveActionAuthorization(
     Guid? RemoteApprovalRequestId,
     Guid OperationId,
     PosLocalUserSession User,
-    Guid AuthorizedByUserId);
+    Guid AuthorizedByUserId,
+    string PermissionResource);
 
 public sealed class PosSensitiveActionAuthorizer(
     PosLocalIdentityStore local,
@@ -157,7 +158,8 @@ public sealed class PosSensitiveActionAuthorizer(
             var authorization = await local.AuthorizeSensitiveAsync(
                 user, permissionResource, draftId, lineId, supervisorSecret, cancellationToken);
             return new PosSensitiveActionAuthorization(
-                authorization, null, Guid.Empty, user, authorization.AuthorizedByUserId);
+                authorization, null, Guid.Empty, user, authorization.AuthorizedByUserId,
+                permissionResource);
         }
 
         if (!Guid.TryParse(approvalRequestHeader, out var approvalRequestId) ||
@@ -166,7 +168,8 @@ public sealed class PosSensitiveActionAuthorizer(
         var reservation = await remote.ReserveAsync(
             approvalRequestId, user, draftId, lineId, permissionResource, operationId, cancellationToken);
         return new PosSensitiveActionAuthorization(
-            null, approvalRequestId, operationId, user, reservation.AuthorizedByUserId);
+            null, approvalRequestId, operationId, user, reservation.AuthorizedByUserId,
+            permissionResource);
     }
 
     public async Task CompleteAsync(

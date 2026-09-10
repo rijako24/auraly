@@ -1,4 +1,5 @@
 using Auraly.Contracts.Pricing;
+using Auraly.Application.Pricing;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Platform.Application.Identity.Interfaces;
@@ -16,6 +17,7 @@ public static class PriceSegmentsApi
         group.MapGet("/", ListAsync);
         group.MapPost("/", SaveAsync);
         group.MapGet("/{id:guid}/items", ItemsAsync);
+        group.MapGet("/{id:guid}/product-price-report", ProductPriceReportAsync);
         group.MapPut("/{id:guid}/items/{productId:guid}", SaveItemAsync);
         group.MapDelete("/{id:guid}/items/{productId:guid}", DeleteItemAsync);
         group.MapPut("/{id:guid}/settings", SaveChannelSettingsAsync);
@@ -144,6 +146,28 @@ public static class PriceSegmentsApi
             items.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? "" : reader.GetString(1),
                 reader.GetString(2), reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5)));
         return Results.Ok(items);
+    }
+
+    private static async Task<IResult> ProductPriceReportAsync(
+        HttpContext context, Guid id, PricingService service, CancellationToken ct)
+    {
+        try
+        {
+            return Results.Ok(await service.ChannelProductReportAsync(
+                context.User.ToPricingIdentity(), id, ct));
+        }
+        catch (PricingNotFoundException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: StatusCodes.Status404NotFound);
+        }
+        catch (PricingValidationException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (PricingForbiddenException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
     }
 
     private static async Task<IResult> SaveItemAsync(

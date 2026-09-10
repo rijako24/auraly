@@ -204,8 +204,21 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
                 "Eliminar luego", null, null, recovered.Version));
         var savedAgain = Assert.Single(await ListAsync(restarted, context));
         Assert.Equal("Eliminar luego", savedAgain.Name);
+
+        using (var unauthorizedRemoval = Mutation(
+                   $"/api/commerce/v1/pos/drafts/temporaries/{savedAgain.DraftId:D}/remove",
+                   new RemoveOnlineSalesTemporaryRequest(savedAgain.Version)))
+        using (var unauthorizedResponse = await restarted.SendAsync(unauthorizedRemoval))
+            Assert.Equal((HttpStatusCode)428, unauthorizedResponse.StatusCode);
+
+        using var privileged = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesRestartDraft,
+            CommercePermissionCodes.SalesDeletePausedDraft,
+            WorkSessionPermissionCodes.Open);
         var stillActive = await MutateAsync<OnlineSalesDraft>(
-            restarted,
+            privileged,
             $"/api/commerce/v1/pos/drafts/temporaries/{savedAgain.DraftId:D}/remove",
             new RemoveOnlineSalesTemporaryRequest(savedAgain.Version));
         Assert.Equal(afterSecondPause.DraftId, stillActive.DraftId);

@@ -208,6 +208,7 @@ export default function PosPage() {
   const discountAuthorization = useRef<PosSensitiveAuthorization | null>(null);
   const lineRemovalAuthorization = useRef<PosSensitiveAuthorization | null>(null);
   const restartAuthorization = useRef<PosSensitiveAuthorization | null>(null);
+  const temporaryRemovalAuthorization = useRef<PosSensitiveAuthorization | null>(null);
   const shortcutAction = useRef<(event: KeyboardEvent, shortcut: string) => void>(() => undefined);
   const protectedActionHandlers = useRef({
     discount: () => Promise.resolve(),
@@ -1510,8 +1511,11 @@ export default function PosPage() {
     try {
       const activeDraft = draft ?? await client.activeDraft();
       if (!draft) setDraft(activeDraft);
+      const closePermission = temporaries.length > 0
+        ? "work-sessions.close-with-paused-sales"
+        : "work-sessions.close";
       await authorizeSensitiveEntry(
-        "work-sessions.close",
+        closePermission,
         null,
         {
           action: "OpenWorkSessionClosure",
@@ -1574,8 +1578,11 @@ export default function PosPage() {
         router.push("/dashboard");
       };
 
+      const closePermission = temporaries.length > 0
+        ? "work-sessions.close-with-paused-sales"
+        : "work-sessions.close";
       await authorizeSensitiveConfirmation(
-        "work-sessions.close",
+        closePermission,
         null,
         {
           action: "ConfirmWorkSessionClosure",
@@ -1876,9 +1883,21 @@ export default function PosPage() {
     return validation.isValid;
   }
 
-  function requestDeleteTemporary(id: string, name: string) {
+  async function requestDeleteTemporary(id: string, name: string) {
     if (busy) return;
-    setConfirmation({ kind: "temporary", draftId: id, name });
+    try {
+      await authorizeSensitiveEntry(
+        "sales.drafts.paused.delete",
+        null,
+        { action: "OpenDeletePausedSale", draftId: id, name },
+        async (authorization) => {
+          temporaryRemovalAuthorization.current = authorization;
+          setConfirmation({ kind: "temporary", draftId: id, name });
+        },
+      );
+    } catch (caught) {
+      showError(caught);
+    }
   }
 
   async function deleteTemporary(id: string) {
@@ -1886,8 +1905,9 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
-      await client.deleteTemporary(id);
+      await client.deleteTemporary(id, temporaryRemovalAuthorization.current ?? undefined);
       await refreshTemporaries();
+      temporaryRemovalAuthorization.current = null;
       setMessage("Venta en espera eliminada");
     } catch (caught) {
       showError(caught);
@@ -3569,6 +3589,7 @@ export default function PosPage() {
           onCancel={() => {
             if (confirmation.kind === "line") lineRemovalAuthorization.current = null;
             if (confirmation.kind === "sale") restartAuthorization.current = null;
+            if (confirmation.kind === "temporary") temporaryRemovalAuthorization.current = null;
             setConfirmation(null);
             focusScanner();
           }}

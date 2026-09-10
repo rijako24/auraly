@@ -405,6 +405,16 @@ Precio final
 
 Facturación muestra el canal activo cerca del cliente. El cambio manual requiere permiso y vuelve a validar precios.
 
+### Lista de precios del canal
+
+Cada fila del listado de canales y su acción `Ver` ofrecen el reporte **Lista de
+precios del canal**. La consulta usa el resolvedor canónico de Pricing y muestra
+producto, código, cantidad evaluada, precio público, precio efectivo del canal y
+origen del cálculo. Solo incluye productos activos con precio vigente para el negocio
+y elimina las exclusiones por producto, marca o jerarquía de categoría. En estrategias
+escalonadas genera una fila para la cantidad uno y para cada mínimo de tramo, sin crear
+una fórmula paralela en la UI.
+
 ---
 
 ## 11. Proyecto de base de datos

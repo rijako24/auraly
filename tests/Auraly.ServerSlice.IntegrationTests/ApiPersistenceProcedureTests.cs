@@ -2,6 +2,7 @@ using System.Data;
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Api;
+using Auraly.Contracts.Pricing;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -131,6 +132,18 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
             Assert.Equal("PercentageOverBasePrice", updated.Strategy);
             Assert.Equal(7.5m, updated.Value);
 
+            var report = await client.GetFromJsonAsync<PriceChannelProductReport>(
+                $"/api/commerce/v1/pricing/segments/{channelId:D}/product-price-report");
+            Assert.NotNull(report);
+            Assert.Equal(channelId, report.PriceChannelId);
+            var productRow = Assert.Single(
+                report.Items,
+                item => item.ProductId == fixture.ProductId && item.MinimumQuantity == 1m);
+            Assert.Equal(
+                decimal.Round(productRow.PublicAmount * 1.075m, 2, MidpointRounding.ToEven),
+                productRow.ChannelAmount);
+            Assert.Equal("Canal", productRow.PriceSource);
+
             using var negativeCostPercentage = await client.PutAsJsonAsync(
                 $"/api/commerce/v1/pricing/segments/{channelId:D}/settings",
                 new SavePriceChannelSettingsRequest(
@@ -210,6 +223,10 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
             Assert.Contains(exclusions, exclusion =>
                 exclusion.ScopeType == "Category" && exclusion.ScopeId == lineId
                 && exclusion.CategoryDepth == 1 && exclusion.ScopeName.Contains("Línea exclusión"));
+            var report = await client.GetFromJsonAsync<PriceChannelProductReport>(
+                $"/api/commerce/v1/pricing/segments/{channel.Id:D}/product-price-report");
+            Assert.NotNull(report);
+            Assert.DoesNotContain(report.Items, item => item.ProductId == fixture.ProductId);
         }
         finally
         {

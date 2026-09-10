@@ -13,6 +13,7 @@ VALUES
     (N'WorkSessions',N'Read',N'work-sessions.read',N'Consultar la sesión de trabajo propia'),
     (N'WorkSessions',N'Open',N'work-sessions.open',N'Abrir o recuperar la sesión de trabajo propia'),
     (N'WorkSessions',N'Close',N'work-sessions.close',N'Cerrar y conciliar la sesión de trabajo propia'),
+    (N'WorkSessions',N'CloseWithPausedSales',N'work-sessions.close-with-paused-sales',N'Cerrar la sesión de trabajo cuando conserva ventas pausadas'),
     (N'WorkSessions',N'ReadDifferences',N'work-sessions.differences.read',N'Consultar cierres y sus diferencias por medio de pago'),
     (N'WorkSessions',N'ReconcileClosures',N'work-sessions.closures.reconcile',N'Conciliar cierres y reclasificar medios de pago');
 
@@ -30,6 +31,7 @@ JOIN dbo.Permissions p ON p.Resource IN
     N'work-sessions.read',
     N'work-sessions.open',
     N'work-sessions.close',
+    N'work-sessions.close-with-paused-sales',
     N'work-sessions.differences.read',
     N'work-sessions.closures.reconcile'
 )

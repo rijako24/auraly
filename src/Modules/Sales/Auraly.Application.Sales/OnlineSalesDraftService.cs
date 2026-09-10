@@ -333,6 +333,7 @@ public sealed class OnlineSalesDraftService(
         CancellationToken cancellationToken = default)
     {
         DemandPermission(user);
+        DemandPermission(user, CommercePermissionCodes.SalesDeletePausedDraft);
         ValidateMutation(temporaryDraftId, request.ExpectedVersion, idempotencyKey);
         return await drafts.RemoveTemporaryAsync(
             user, temporaryDraftId, request, idempotencyKey, cancellationToken);
@@ -358,6 +359,13 @@ public sealed class OnlineSalesDraftService(
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OnlineSalesDraftForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
+    }
+
+    private static void DemandPermission(OnlineSalesUserIdentity user, string permission)
+    {
+        if (!user.Permissions.Contains(permission))
+            throw new OnlineSalesDraftForbiddenException(
+                $"Permission '{permission}' is required.");
     }
 
     private static void ValidateMutation(

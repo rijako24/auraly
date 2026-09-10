@@ -63,7 +63,8 @@ public sealed class PosWorkSessionClosureServerClient(
                 input.CountedCash,
                 input.Note,
                 authorizedByUserId,
-                input.PaymentCounts),
+                input.PaymentCounts,
+                session.Permissions.Contains(WorkSessionPermissionCodes.CloseWithPausedSales)),
             input.OperationId,
             cancellationToken);
     }
@@ -242,6 +243,8 @@ public static class PosWorkSessionClosureEndpoints
             PosLocalSessionAccessor sessions,
             PosSensitiveActionAuthorizer authorizer,
             PosPendingClosureAuthorizationStore pending,
+            PosDraftStore drafts,
+            PosEdgeRuntimeContext runtime,
             PosOfflineWorkSessionClosureService offline,
             PosCashDrawer cashDrawer,
             CancellationToken ct) =>
@@ -252,9 +255,17 @@ public static class PosWorkSessionClosureEndpoints
                     [nameof(request.DraftId)] = ["La venta activa es obligatoria."]
                 });
             var session = sessions.Required();
+            var hasPausedSales = await drafts.HasTemporariesAsync(
+                runtime.BusinessId,
+                new Auraly.BuildingBlocks.Domain.Identifiers.WorkSessionId(session.WorkSessionId),
+                new Auraly.BuildingBlocks.Domain.Identifiers.UserId(session.UserId),
+                ct);
+            var requiredPermission = hasPausedSales
+                ? WorkSessionPermissionCodes.CloseWithPausedSales
+                : WorkSessionPermissionCodes.Close;
             var authorization = await authorizer.AuthorizeAsync(
                 session,
-                WorkSessionPermissionCodes.Close,
+                requiredPermission,
                 request.DraftId,
                 null,
                 context.Request.Headers["X-Auraly-Approval-Id"],
@@ -302,7 +313,12 @@ public static class PosWorkSessionClosureEndpoints
                     request.AuthorizationToken,
                     session.WorkSessionId);
                 var closure = await offline.CloseAsync(
-                    session, request, authorization.AuthorizedByUserId, ct);
+                    session, request, authorization.AuthorizedByUserId,
+                    string.Equals(
+                        authorization.PermissionResource,
+                        WorkSessionPermissionCodes.CloseWithPausedSales,
+                        StringComparison.Ordinal),
+                    ct);
                 await authorizer.CompleteAsync(authorization, ct);
                 await offline.MarkClosedAsync(session, closure.ClosedAt, ct);
                 pending.Remove(request.AuthorizationToken);

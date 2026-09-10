@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Pencil, Plus, Radio, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, FileText, Pencil, Plus, Radio, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
+import { ReportViewer } from "@/components/reports/report-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { ProductPicker } from "@/components/products/product-picker";
 import { PriceChannelExclusionDraftEditor, PriceChannelExclusions, type DraftPriceChannelExclusion } from "@/components/pricing/price-channel-exclusions";
 import { formatCurrency } from "@/lib/utils";
-import { priceSegmentsApi, type PriceChannelStrategy, type PriceSegmentItem, type PriceSegmentSummary } from "@/services/api/price-segments";
+import { priceSegmentsApi, type PriceChannelProductReport, type PriceChannelStrategy, type PriceSegmentItem, type PriceSegmentSummary } from "@/services/api/price-segments";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -49,6 +50,8 @@ export function PriceSegmentsManager() {
   const [createProduct, setCreateProduct] = useState<CreateProductDraft | null>(null);
   const [createProductPrices, setCreateProductPrices] = useState<ItemDraft[]>([]);
   const [createExclusions, setCreateExclusions] = useState<DraftPriceChannelExclusion[]>([]);
+  const [report, setReport] = useState<PriceChannelProductReport | null>(null);
+  const [loadingReportId, setLoadingReportId] = useState<string | null>(null);
 
   const segments = useQuery({ queryKey: ["price-segments"], queryFn: priceSegmentsApi.list });
   const items = useQuery({
@@ -157,6 +160,40 @@ export function PriceSegmentsManager() {
     requestAnimationFrame(() => document.getElementById("new-channel-product-search")?.focus());
   }
 
+  async function openProductPriceReport(segment: PriceSegmentSummary) {
+    if (loadingReportId) return;
+    setLoadingReportId(segment.id);
+    try {
+      const value = await priceSegmentsApi.productPriceReport(segment.id);
+      setDetailOpen(false);
+      setSelected(null);
+      setReport(value);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible cargar la lista de precios del canal.");
+    } finally {
+      setLoadingReportId(null);
+    }
+  }
+
+  if (report) return <div className="space-y-4">
+    <Button variant="ghost" onClick={() => setReport(null)}><ArrowLeft className="mr-2 h-4 w-4" />Volver a canales</Button>
+    <ReportViewer
+      onClose={() => setReport(null)}
+      title="Lista de precios del canal"
+      description={`${report.name} · ${report.items.length.toLocaleString("es-CO")} precios efectivos${report.isActive ? "" : " · canal inactivo"}`}
+      fileName={`lista-precios-${report.code.toLocaleLowerCase("es-CO")}`}
+      rows={report.items.map((item) => ({ ...item, id: `${item.productId}-${item.minimumQuantity}` }))}
+      columns={[
+        { key: "productCode", label: "Código interno" },
+        { key: "productName", label: "Producto" },
+        { key: "minimumQuantity", label: "Cantidad desde", align: "right" },
+        { key: "publicAmount", label: "Precio público", align: "right", format: (value, row) => formatCurrency(Number(value), String(row.currencyCode || "COP")) },
+        { key: "channelAmount", label: "Precio del canal", align: "right", format: (value, row) => formatCurrency(Number(value), String(row.currencyCode || "COP")) },
+        { key: "priceSource", label: "Origen" },
+      ]}
+    />
+  </div>;
+
   return <div className="space-y-6">
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
@@ -174,10 +211,10 @@ export function PriceSegmentsManager() {
           <Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre" />
         </div>
         <div className="overflow-hidden rounded-xl border">
-          <table className="w-full text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Nombre</th><th className="px-4 py-3 text-right">Modo</th><th className="px-4 py-3 text-right">Clientes</th><th className="px-4 py-3 text-right">Estado</th></tr></thead><tbody>
+          <table className="w-full text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Nombre</th><th className="px-4 py-3 text-right">Modo</th><th className="px-4 py-3 text-right">Clientes</th><th className="px-4 py-3 text-right">Estado</th><th className="px-4 py-3 text-right">Informe</th></tr></thead><tbody>
           {filtered.map((segment) =>
-            <tr key={segment.id} className="cursor-pointer border-t transition hover:bg-muted/40" onClick={() => { setSelected(segment); setDetailOpen(true); setEditingChannel(false); setName(segment.name); setChannelStrategy(segment.strategy ?? "TieredProductPrice"); setChannelValue(segment.value ?? 0); }}><td className="px-4 py-4 font-semibold">{segment.name}</td><td className="px-4 py-4 text-right">{channelStrategyLabel(segment.strategy)}</td><td className="px-4 py-4 text-right tabular-nums">{segment.customerCount}</td><td className="px-4 py-4 text-right"><Badge variant={segment.isActive ? "secondary" : "outline"}>{segment.isActive ? "Activo" : "Inactivo"}</Badge></td></tr>)}
-          {!segments.isLoading && filtered.length === 0 && <tr><td colSpan={4} className="p-12 text-center text-muted-foreground">Sin datos</td></tr>}
+            <tr key={segment.id} className="cursor-pointer border-t transition hover:bg-muted/40" onClick={() => { setSelected(segment); setDetailOpen(true); setEditingChannel(false); setName(segment.name); setChannelStrategy(segment.strategy ?? "TieredProductPrice"); setChannelValue(segment.value ?? 0); }}><td className="px-4 py-4 font-semibold">{segment.name}</td><td className="px-4 py-4 text-right">{channelStrategyLabel(segment.strategy)}</td><td className="px-4 py-4 text-right tabular-nums">{segment.customerCount}</td><td className="px-4 py-4 text-right"><Badge variant={segment.isActive ? "secondary" : "outline"}>{segment.isActive ? "Activo" : "Inactivo"}</Badge></td><td className="px-4 py-3 text-right"><Button type="button" size="sm" variant="outline" disabled={Boolean(loadingReportId)} onClick={(event) => { event.stopPropagation(); void openProductPriceReport(segment); }}><FileText className="mr-2 h-4 w-4" />{loadingReportId === segment.id ? "Cargando…" : "Lista de precios"}</Button></td></tr>)}
+          {!segments.isLoading && filtered.length === 0 && <tr><td colSpan={5} className="p-12 text-center text-muted-foreground">Sin datos</td></tr>}
           </tbody></table>
         </div>
       </CardContent>
@@ -219,7 +256,7 @@ export function PriceSegmentsManager() {
           <DialogHeader>
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary"><Radio className="h-5 w-5" /></span><div><DialogTitle>{editingChannel ? "Editar canal de precios" : selected.name}</DialogTitle><DialogDescription>{selected.code} · {selected.customerCount} cliente(s) · {selected.isActive ? "Activo" : "Inactivo"}</DialogDescription></div></div>
-              {!editingChannel && canManage && <Button type="button" onClick={() => setEditingChannel(true)}><Pencil className="mr-2 h-4 w-4" />Editar canal</Button>}
+              {!editingChannel && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={Boolean(loadingReportId)} onClick={() => void openProductPriceReport(selected)}><FileText className="mr-2 h-4 w-4" />Lista de precios</Button>{canManage && <Button type="button" onClick={() => setEditingChannel(true)}><Pencil className="mr-2 h-4 w-4" />Editar canal</Button>}</div>}
             </div>
           </DialogHeader>
           <section className="space-y-4 rounded-2xl border bg-muted/15 p-5">

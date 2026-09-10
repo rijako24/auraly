@@ -215,11 +215,22 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             result.TenantId, "CASHIER", "fiscal.configuration.read"));
         foreach (var permission in new[]
                  {
+                     "sales.drafts.paused.delete",
+                     "work-sessions.close-with-paused-sales"
+                 })
+        {
+            Assert.False(await RoleHasPermissionAsync(
+                result.TenantId, "CASHIER", permission));
+            Assert.True(await RoleHasPermissionAsync(
+                result.TenantId, "ADMINISTRATOR", permission));
+        }
+        foreach (var permission in new[]
+                 {
                      "agents.read", "agents.update", "conversations.read",
                      "leads.read", "campaigns.read", "reservations.read"
                  })
         {
-            Assert.False(await RoleHasPermissionAsync(
+            Assert.True(await RoleHasPermissionAsync(
                 result.TenantId, "ADMINISTRATOR", permission));
             Assert.False(await RoleHasPermissionAsync(
                 result.TenantId, "ADMINISTRATIVE", permission));
@@ -431,9 +442,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             permission.StartsWith("tenants.", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(authentication.User.Permissions, permission =>
             permission.StartsWith("platform.", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(authentication.User.Permissions, permission =>
-            new[] { "agents.", "conversations.", "leads.", "campaigns.", "reservations." }
-                .Any(prefix => permission.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)));
+        Assert.Contains("agents.read", authentication.User.Permissions);
+        Assert.Contains("reservations.read", authentication.User.Permissions);
         Assert.Equal(
             await TenantAdministratorPermissionCountAsync(),
             authentication.User.Permissions.Count);
@@ -964,11 +974,6 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             FROM dbo.Permissions permissionValue
             WHERE permissionValue.Resource NOT LIKE N'tenants.%'
               AND permissionValue.Resource NOT LIKE N'platform.%'
-              AND permissionValue.Resource NOT LIKE N'agents.%'
-              AND permissionValue.Resource NOT LIKE N'conversations.%'
-              AND permissionValue.Resource NOT LIKE N'leads.%'
-              AND permissionValue.Resource NOT LIKE N'campaigns.%'
-              AND permissionValue.Resource NOT LIKE N'reservations.%'
               AND NOT EXISTS(
                 SELECT 1
                 FROM dbo.AppRoles roleValue
@@ -1035,12 +1040,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             SELECT COUNT(*)
             FROM dbo.Permissions
             WHERE Resource NOT LIKE N'tenants.%'
-              AND Resource NOT LIKE N'platform.%'
-              AND Resource NOT LIKE N'agents.%'
-              AND Resource NOT LIKE N'conversations.%'
-              AND Resource NOT LIKE N'leads.%'
-              AND Resource NOT LIKE N'campaigns.%'
-              AND Resource NOT LIKE N'reservations.%';
+              AND Resource NOT LIKE N'platform.%';
             """, connection);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }

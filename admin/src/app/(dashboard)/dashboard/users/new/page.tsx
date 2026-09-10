@@ -21,6 +21,10 @@ export default function NewUserPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const partyId = searchParams.get("partyId") ?? undefined;
+  const requestedReturnTo = searchParams.get("returnTo");
+  const returnTo = requestedReturnTo?.startsWith("/dashboard/")
+    ? requestedReturnTo
+    : "/dashboard/parties";
   const partyNameParts = (searchParams.get("name")?.trim() ?? "").split(/\s+/).filter(Boolean);
   const firstName = partyNameParts.shift() ?? "";
   const { data: rolesData, isLoading, isError, refetch } = useRoles({ page: 1, pageSize: 100 });
@@ -64,14 +68,13 @@ export default function NewUserPage() {
     if (Object.keys(nextErrors).length > 0) return;
     setIsSubmitting(true);
     try {
-      const created = await usersApi.create(form as unknown as Parameters<typeof usersApi.create>[0]);
-      await Promise.all(
-        Array.from(selectedRoles).map((roleId) =>
-          usersApi.assignRole(created.userId, { roleId })
-        )
-      );
+      await usersApi.create({
+        ...form,
+        phoneNumber: form.phoneNumber.trim() || null,
+        roles: Array.from(selectedRoles).map((roleId) => ({ roleId })),
+      });
       toast.success("Usuario creado");
-      router.push("/dashboard/parties");
+      router.push(returnTo);
     } catch {
       toast.error("No se pudo crear el usuario");
     } finally {
@@ -86,7 +89,7 @@ export default function NewUserPage() {
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
-          <Link href="/dashboard/parties"><ArrowLeft className="h-4 w-4" /></Link>
+          <Link href={returnTo}><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
         <div className="flex-1">
           <h1 className="text-2xl font-semibold tracking-tight">Nuevo Usuario</h1>
@@ -128,7 +131,7 @@ export default function NewUserPage() {
 
         <div className="flex gap-2">
           <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Creando..." : "Crear Usuario"}</Button>
-          <Button variant="outline" asChild><Link href="/dashboard/parties">Cancelar</Link></Button>
+          <Button variant="outline" asChild><Link href={returnTo}>Cancelar</Link></Button>
         </div>
       </form>
     </div>

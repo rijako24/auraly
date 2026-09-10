@@ -589,6 +589,28 @@ public sealed class PosDraftStore
         return values;
     }
 
+    public async Task<bool> HasTemporariesAsync(
+        BusinessId businessId,
+        WorkSessionId workSessionId,
+        UserId userId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT 1 FROM PosDrafts
+            WHERE BusinessId=@BusinessId AND WorkSessionId=@WorkSessionId
+              AND UserId=@UserId AND Status='Temporary'
+            LIMIT 1;
+            """;
+        command.Parameters.AddRange([
+            P("@BusinessId", businessId.Value),
+            P("@WorkSessionId", workSessionId.Value),
+            P("@UserId", userId.Value)
+        ]);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
     public async Task DeleteTemporaryAsync(
         DraftId draftId,
         BusinessId businessId,

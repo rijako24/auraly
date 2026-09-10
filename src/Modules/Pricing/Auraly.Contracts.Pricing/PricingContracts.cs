@@ -10,6 +10,7 @@ public static class PricingPermissionCodes
     public const string BulkPublish = "pricing.bulk-publish";
     public const string ManageRounding = "pricing.rounding.manage";
     public const string ReadHistory = "pricing.history.read";
+    public const string ReadSegments = "pricing.segments.read";
 }
 
 public static class PriceInputModes
@@ -178,3 +179,21 @@ public sealed record ProductPriceHistoryItem(
     decimal? CostBasisAmount, decimal? EffectiveMarginPercent, string? InputMode,
     DateTimeOffset ValidFrom, DateTimeOffset? ValidUntil, Guid? PublishedByUserId,
     DateTimeOffset? PublishedAt, bool IsActive);
+
+public sealed record PriceChannelProductReport(
+    Guid PriceChannelId,
+    string Code,
+    string Name,
+    string Strategy,
+    bool IsActive,
+    IReadOnlyList<PriceChannelProductReportRow> Items);
+
+public sealed record PriceChannelProductReportRow(
+    Guid ProductId,
+    string ProductCode,
+    string ProductName,
+    decimal MinimumQuantity,
+    decimal PublicAmount,
+    decimal ChannelAmount,
+    string CurrencyCode,
+    string PriceSource);

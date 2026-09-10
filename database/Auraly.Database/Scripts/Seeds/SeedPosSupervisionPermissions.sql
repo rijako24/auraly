@@ -8,6 +8,7 @@ INSERT @Permissions(Module,Action,Resource,Description)
 VALUES
     (N'Sales',N'RemoveLine',N'sales.lines.remove',N'Retirar una línea de una venta en curso'),
     (N'Sales',N'RestartDraft',N'sales.drafts.restart',N'Reiniciar completamente una venta en curso'),
+    (N'Sales',N'DeletePausedDraft',N'sales.drafts.paused.delete',N'Eliminar una venta pausada desde el punto de venta'),
     (N'POS',N'AuthorizeSensitiveAction',N'pos.approvals.authorize',N'Aprobar acciones sensibles solicitadas desde el punto de venta'),
     (N'POS',N'ReadApprovals',N'pos.approvals.read',N'Consultar solicitudes de aprobación del punto de venta'),
     (N'POS',N'ReceiveApprovalNotifications',N'pos.approvals.receive_notifications',N'Recibir notificaciones remotas de solicitudes de aprobación POS'),
@@ -44,7 +45,7 @@ CROSS JOIN dbo.Permissions permissionValue
 WHERE roleValue.IsActive=1
   AND roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR',N'ADMINISTRATIVE',N'SUPERVISOR')
   AND permissionValue.Resource IN(
-      N'sales.lines.remove',N'sales.drafts.restart',
+      N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',
       N'pos.workspace.change')
   AND NOT EXISTS(

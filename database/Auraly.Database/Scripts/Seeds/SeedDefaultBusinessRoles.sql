@@ -38,9 +38,7 @@ JOIN dbo.Tenants tenantValue ON tenantValue.TenantId=roleValue.TenantId
 JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
 WHERE roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
   AND tenantValue.TenantKey<>N'@auraly'
-  AND (permissionValue.Resource LIKE N'tenants.%' OR permissionValue.Resource LIKE N'platform.%'
-    OR EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
-              WHERE permissionValue.Resource LIKE optIn.Prefix+N'%'));
+  AND (permissionValue.Resource LIKE N'tenants.%' OR permissionValue.Resource LIKE N'platform.%');
 
 INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
 SELECT NEWID(),tenant.TenantId,preset.Name,preset.NormalizedName,preset.Description,1,preset.IsSystemRole,SYSUTCDATETIME()
@@ -71,12 +69,12 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.synchronization.events.read',N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
+      N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
       N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',
@@ -118,20 +116,18 @@ WHERE roleValue.IsActive=1
   AND (
     roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
       AND (permissionValue.Resource NOT LIKE N'tenants.%' AND permissionValue.Resource NOT LIKE N'platform.%'
-        AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
-                       WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.synchronization.events.read',N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
+      N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
       N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',

@@ -1,0 +1,416 @@
+<div id="auraly-pos-quick-panel" aria-label="Propuesta de panel rápido para punto de venta">
+  <style>
+    #auraly-pos-quick-panel {
+      color-scheme: light dark;
+      --pos-bg: light-dark(#eef5f4, #071414);
+      --pos-surface: light-dark(#ffffff, #102222);
+      --pos-surface-strong: light-dark(#f7fbfa, #17302f);
+      --pos-ink: light-dark(#102827, #e8f5f3);
+      --pos-muted: light-dark(#647775, #9cb0ad);
+      --pos-line: light-dark(#d9e7e4, #2b4643);
+      --pos-accent: light-dark(#087f73, #42c8b6);
+      --pos-accent-ink: light-dark(#ffffff, #052a26);
+      --pos-warm: light-dark(#fff4d6, #3a3018);
+      --pos-shadow: light-dark(rgba(20, 70, 65, .18), rgba(0, 0, 0, .42));
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      width: 100%;
+    }
+
+    #auraly-pos-quick-panel * { box-sizing: border-box; }
+
+    #auraly-pos-quick-panel .pos-shell {
+      position: relative;
+      min-height: 620px;
+      overflow: hidden;
+      border: 1px solid var(--pos-line);
+      border-radius: 24px;
+      background: var(--pos-bg);
+      color: var(--pos-ink);
+      box-shadow: 0 24px 70px var(--pos-shadow);
+    }
+
+    #auraly-pos-quick-panel .pos-topbar {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--pos-line);
+      background: var(--pos-surface);
+    }
+
+    #auraly-pos-quick-panel .pos-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 500;
+    }
+
+    #auraly-pos-quick-panel .brand-mark {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: var(--pos-accent);
+      color: var(--pos-accent-ink);
+    }
+
+    #auraly-pos-quick-panel .pos-context {
+      margin-left: auto;
+      color: var(--pos-muted);
+    }
+
+    #auraly-pos-quick-panel .pos-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: var(--pos-surface-strong);
+      color: var(--pos-muted);
+    }
+
+    #auraly-pos-quick-panel .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--pos-accent);
+    }
+
+    #auraly-pos-quick-panel .pos-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(250px, .7fr);
+      gap: 16px;
+      padding: 16px;
+    }
+
+    #auraly-pos-quick-panel .sale-area,
+    #auraly-pos-quick-panel .summary-area {
+      min-width: 0;
+      border: 1px solid var(--pos-line);
+      border-radius: 20px;
+      background: var(--pos-surface);
+    }
+
+    #auraly-pos-quick-panel .sale-area { padding: 16px; }
+
+    #auraly-pos-quick-panel .scanner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px;
+      border: 1px solid var(--pos-line);
+      border-radius: 15px;
+      background: var(--pos-surface-strong);
+      color: var(--pos-muted);
+    }
+
+    #auraly-pos-quick-panel .line-head,
+    #auraly-pos-quick-panel .sale-line {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 70px 100px;
+      gap: 12px;
+      align-items: center;
+    }
+
+    #auraly-pos-quick-panel .line-head {
+      padding: 20px 12px 8px;
+      color: var(--pos-muted);
+    }
+
+    #auraly-pos-quick-panel .sale-line {
+      padding: 14px 12px;
+      border-top: 1px solid var(--pos-line);
+    }
+
+    #auraly-pos-quick-panel .sale-line strong,
+    #auraly-pos-quick-panel .sale-line span { display: block; }
+
+    #auraly-pos-quick-panel .sale-line small { color: var(--pos-muted); }
+    #auraly-pos-quick-panel .number { text-align: right; font-variant-numeric: tabular-nums; }
+
+    #auraly-pos-quick-panel .summary-area {
+      display: flex;
+      flex-direction: column;
+      padding: 18px;
+    }
+
+    #auraly-pos-quick-panel .customer-box {
+      padding: 14px;
+      border-radius: 15px;
+      background: var(--pos-surface-strong);
+    }
+
+    #auraly-pos-quick-panel .customer-box span,
+    #auraly-pos-quick-panel .total-label { color: var(--pos-muted); }
+
+    #auraly-pos-quick-panel .totals { margin-top: auto; }
+    #auraly-pos-quick-panel .total-label { display: block; }
+
+    #auraly-pos-quick-panel .total-value {
+      display: block;
+      margin: 6px 0 18px;
+      font-size: clamp(28px, 4vw, 46px);
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #auraly-pos-quick-panel .pay-button {
+      width: 100%;
+      min-height: 54px;
+      border: 0;
+      border-radius: 15px;
+      background: var(--pos-accent);
+      color: var(--pos-accent-ink);
+      font: inherit;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    #auraly-pos-quick-panel .quick-drawer {
+      position: absolute;
+      z-index: 5;
+      top: 88px;
+      bottom: 20px;
+      left: 0;
+      width: min(320px, calc(100% - 58px));
+      transform: translateX(-100%);
+      transition: transform 480ms cubic-bezier(.2, .9, .2, 1.08);
+    }
+
+    #auraly-pos-quick-panel .quick-drawer.open { transform: translateX(16px); }
+
+    #auraly-pos-quick-panel .drawer-panel {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 18px;
+      border: 1px solid var(--pos-line);
+      border-radius: 0 22px 22px 0;
+      background: var(--pos-surface);
+      box-shadow: 18px 18px 48px var(--pos-shadow);
+    }
+
+    #auraly-pos-quick-panel .drawer-tab {
+      position: absolute;
+      left: 100%;
+      top: 40%;
+      width: 38px;
+      height: 108px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--pos-line);
+      border-left: 0;
+      border-radius: 0 16px 16px 0;
+      background: var(--pos-surface);
+      color: var(--pos-accent);
+      box-shadow: 12px 8px 24px var(--pos-shadow);
+      cursor: pointer;
+      transition: width 180ms ease, background 180ms ease;
+    }
+
+    #auraly-pos-quick-panel .drawer-tab:hover { width: 44px; background: var(--pos-surface-strong); }
+    #auraly-pos-quick-panel .drawer-tab span { writing-mode: vertical-rl; transform: rotate(180deg); }
+
+    #auraly-pos-quick-panel .drawer-heading {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    #auraly-pos-quick-panel .drawer-heading h2 { margin: 0 0 4px; }
+    #auraly-pos-quick-panel .drawer-heading p { margin: 0; color: var(--pos-muted); }
+
+    #auraly-pos-quick-panel .close-drawer {
+      margin-left: auto;
+      border: 0;
+      background: transparent;
+      color: var(--pos-muted);
+      cursor: pointer;
+    }
+
+    #auraly-pos-quick-panel .quick-actions { display: grid; gap: 10px; }
+
+    #auraly-pos-quick-panel .quick-action {
+      width: 100%;
+      min-height: 62px;
+      display: grid;
+      grid-template-columns: 40px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 11px;
+      padding: 10px 12px;
+      border: 1px solid var(--pos-line);
+      border-radius: 15px;
+      background: var(--pos-surface-strong);
+      color: var(--pos-ink);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease;
+    }
+
+    #auraly-pos-quick-panel .quick-action:hover { transform: translateX(4px); border-color: var(--pos-accent); }
+
+    #auraly-pos-quick-panel .action-icon {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--pos-accent) 14%, transparent);
+      color: var(--pos-accent);
+    }
+
+    #auraly-pos-quick-panel .action-copy strong,
+    #auraly-pos-quick-panel .action-copy small { display: block; }
+    #auraly-pos-quick-panel .action-copy small { margin-top: 3px; color: var(--pos-muted); }
+
+    #auraly-pos-quick-panel kbd {
+      padding: 4px 7px;
+      border: 1px solid var(--pos-line);
+      border-radius: 7px;
+      background: var(--pos-surface);
+      color: var(--pos-muted);
+      font: inherit;
+      font-size: 12px;
+    }
+
+    #auraly-pos-quick-panel .drawer-tip {
+      margin-top: auto;
+      padding: 12px;
+      border-radius: 13px;
+      background: var(--pos-warm);
+      color: var(--pos-ink);
+    }
+
+    #auraly-pos-quick-panel .drawer-tip small { display: block; margin-top: 3px; color: var(--pos-muted); }
+
+    #auraly-pos-quick-panel .demo-hint {
+      display: flex;
+      justify-content: center;
+      margin-top: 12px;
+      color: var(--pos-muted);
+    }
+
+    #auraly-pos-quick-panel .right-side .quick-drawer { left: auto; right: 0; transform: translateX(100%); }
+    #auraly-pos-quick-panel .right-side .quick-drawer.open { transform: translateX(-16px); }
+    #auraly-pos-quick-panel .right-side .drawer-panel { border-radius: 22px 0 0 22px; }
+    #auraly-pos-quick-panel .right-side .drawer-tab { left: auto; right: 100%; border: 1px solid var(--pos-line); border-right: 0; border-radius: 16px 0 0 16px; }
+    #auraly-pos-quick-panel .right-side .drawer-tab span { transform: none; }
+    #auraly-pos-quick-panel .smooth-motion .quick-drawer { transition-timing-function: cubic-bezier(.22, .61, .36, 1); }
+
+    @media (max-width: 700px) {
+      #auraly-pos-quick-panel .pos-main { grid-template-columns: 1fr; }
+      #auraly-pos-quick-panel .summary-area { min-height: 210px; }
+      #auraly-pos-quick-panel .pos-context { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #auraly-pos-quick-panel .quick-drawer,
+      #auraly-pos-quick-panel .drawer-tab,
+      #auraly-pos-quick-panel .quick-action { transition-duration: 0ms; }
+    }
+  </style>
+
+  <section class="pos-shell" aria-label="Punto de venta Auraly">
+    <header class="pos-topbar">
+      <div class="pos-brand"><span class="brand-mark"><i data-lucide="sparkles" aria-hidden="true"></i></span>Auraly POS</div>
+      <span class="pos-context">Sede principal · Caja 01</span>
+      <span class="pos-status"><span class="status-dot"></span>En línea</span>
+    </header>
+
+    <main class="pos-main">
+      <section class="sale-area" aria-label="Venta actual">
+        <div class="scanner"><i data-lucide="scan-barcode" aria-hidden="true"></i>Escanea o busca un producto</div>
+        <div class="line-head"><span>Producto</span><span class="number">Cant.</span><span class="number">Total</span></div>
+        <div class="sale-line"><span><strong>Café premium 500 g</strong><small>CAF-500</small></span><span class="number">2</span><span class="number">$ 57.800</span></div>
+        <div class="sale-line"><span><strong>Chocolate artesanal</strong><small>CHO-110</small></span><span class="number">1</span><span class="number">$ 18.900</span></div>
+        <div class="sale-line"><span><strong>Bolsa reutilizable</strong><small>BOL-001</small></span><span class="number">1</span><span class="number">$ 4.500</span></div>
+      </section>
+
+      <aside class="summary-area" aria-label="Resumen de venta">
+        <div class="customer-box"><span>Cliente</span><strong>Consumidor final</strong></div>
+        <div class="totals"><span class="total-label">Total a pagar</span><strong class="total-value">$ 81.200</strong><button class="pay-button" type="button">Cobrar · F8</button></div>
+      </aside>
+    </main>
+
+    <aside class="quick-drawer open" aria-label="Panel rápido" aria-hidden="false">
+      <div class="drawer-panel">
+        <div class="drawer-heading">
+          <span class="action-icon"><i data-lucide="panels-top-left" aria-hidden="true"></i></span>
+          <div><h2>Panel rápido</h2><p>Acciones útiles sin llenar la caja.</p></div>
+          <button class="close-drawer" type="button" aria-label="Cerrar panel"><i data-lucide="x" aria-hidden="true"></i></button>
+        </div>
+        <div class="quick-actions">
+          <button class="quick-action" type="button" data-action="Cotizaciones">
+            <span class="action-icon"><i data-lucide="file-text" aria-hidden="true"></i></span>
+            <span class="action-copy"><strong>Cotizaciones</strong><small>Consultar y llevar al POS</small></span><kbd>Ctrl+Q</kbd>
+          </button>
+          <button class="quick-action" type="button" data-action="Abrir cajón">
+            <span class="action-icon"><i data-lucide="archive-restore" aria-hidden="true"></i></span>
+            <span class="action-copy"><strong>Abrir cajón</strong><small>Según permiso del operador</small></span><kbd>Ctrl+A</kbd>
+          </button>
+          <button class="quick-action" type="button" data-action="Sincronización">
+            <span class="action-icon"><i data-lucide="refresh-cw" aria-hidden="true"></i></span>
+            <span class="action-copy"><strong>Sincronización</strong><small>Estado y novedades del equipo</small></span><kbd>Ctrl+L</kbd>
+          </button>
+          <button class="quick-action" type="button" data-action="Ayuda de atajos">
+            <span class="action-icon"><i data-lucide="circle-help" aria-hidden="true"></i></span>
+            <span class="action-copy"><strong>Ayuda de atajos</strong><small>Ver todas las teclas disponibles</small></span><kbd>?</kbd>
+          </button>
+        </div>
+        <div class="drawer-tip"><strong>Solo aparece lo permitido</strong><small>Las acciones sin permiso se ocultan o solicitan autorización.</small></div>
+      </div>
+      <button class="drawer-tab" type="button" aria-label="Cerrar panel rápido" aria-expanded="true"><span>Atajos</span></button>
+    </aside>
+  </section>
+  <div class="demo-hint" aria-live="polite">Panel abierto · haz clic en “Atajos” para ver cómo queda cerrado</div>
+
+  <script>
+    (() => {
+      const root = document.getElementById('auraly-pos-quick-panel');
+      const shell = root.querySelector('.pos-shell');
+      const drawer = root.querySelector('.quick-drawer');
+      const tab = root.querySelector('.drawer-tab');
+      const close = root.querySelector('.close-drawer');
+      const hint = root.querySelector('.demo-hint');
+      const state = { side: 'left', motion: 'spring' };
+
+      function setOpen(open) {
+        drawer.classList.toggle('open', open);
+        drawer.setAttribute('aria-hidden', String(!open));
+        tab.setAttribute('aria-expanded', String(open));
+        tab.setAttribute('aria-label', open ? 'Cerrar panel rápido' : 'Abrir panel rápido');
+        hint.textContent = open ? 'Panel abierto · Ctrl+H o Escape para cerrar' : 'Haz clic en la pestaña “Atajos” o presiona Ctrl+H';
+        if (open) drawer.querySelector('.quick-action').focus();
+      }
+
+      function toggle() { setOpen(!drawer.classList.contains('open')); }
+      tab.addEventListener('click', toggle);
+      close.addEventListener('click', () => setOpen(false));
+      root.querySelectorAll('.quick-action').forEach(button => button.addEventListener('click', () => {
+        hint.textContent = `${button.dataset.action}: aquí abriría su vista o diálogo.`;
+      }));
+      window.addEventListener('keydown', event => {
+        const togglePanel = event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'h';
+        const openQuotes = event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'q';
+        if (togglePanel) { event.preventDefault(); toggle(); }
+        if (openQuotes) { event.preventDefault(); setOpen(true); hint.textContent = 'Cotizaciones: abriría el buscador del día actual.'; }
+        if (event.key === 'Escape' && drawer.classList.contains('open')) { event.preventDefault(); setOpen(false); tab.focus(); }
+      });
+
+      function renderOptions() {
+        shell.classList.toggle('right-side', state.side === 'right');
+        shell.classList.toggle('smooth-motion', state.motion === 'smooth');
+      }
+      renderOptions();
+      if (globalThis.Tweak) {
+        const tweak = new Tweak({ container: root, onChange: renderOptions });
+        tweak.addSelect(state, 'side', { label: 'Lado del panel', options: [{ label: 'Izquierdo', value: 'left' }, { label: 'Derecho', value: 'right' }], reference: 'panel.side' });
+        tweak.addSelect(state, 'motion', { label: 'Movimiento', options: [{ label: 'Elástico suave', value: 'spring' }, { label: 'Deslizamiento', value: 'smooth' }], reference: 'panel.motion' });
+      }
+    })();
+  </script>
+</div>

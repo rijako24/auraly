@@ -97,10 +97,14 @@ encontrar por identificación o nombre. Todos los resultados quedan limitados al
 - Pausar repetidamente con la misma clave no crea dos ventas activas.
 - No se puede recuperar una venta sobre otra venta activa con líneas.
 - La venta en espera se elimina sin afectar el nuevo borrador activo.
+- Eliminar una venta en espera exige `sales.drafts.paused.delete`; sin el permiso,
+  el flujo solicita autorización POS y consume la aprobación para esa venta y
+  operación exactas.
 - Idempotencia y concurrencia optimista evitan dobles efectos.
 - Cliente, lista, descuento, cantidad y eliminación recorren API y SQL Server.
 - Una bodega que bloquea negativos impide captura sin existencia.
-- Usuario sin permiso y contexto ajeno reciben `403`.
+- Usuario sin permiso recibe solicitud de autorización en acciones sensibles y un
+  contexto ajeno recibe `403`.
 
 ## Pendiente inmediato
 

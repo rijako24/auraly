@@ -2,6 +2,7 @@ using System.Data;
 using Auraly.Application.Pricing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Pricing;
+using Auraly.Domain.Pricing;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Pricing;
@@ -653,6 +654,122 @@ public sealed class SqlPricingStore(
                 reader.IsDBNull(9) ? null : reader.GetGuid(9),
                 reader.IsDBNull(10) ? null : reader.GetDateTimeOffset(10), reader.GetBoolean(11)));
         return items;
+    }
+
+    public async Task<PriceChannelReportSource?> GetChannelReportSourceAsync(
+        PricingUserIdentity user, Guid priceChannelId, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT PriceChannelId,Code,Name,Strategy,Value,IsActive
+            FROM dbo.PriceChannels
+            WHERE PriceChannelId=@PriceChannelId AND BusinessId=@BusinessId;
+
+            ;WITH CategoryAncestors AS
+            (
+              SELECT category.ProductCategoryId DescendantId,
+                     category.ProductCategoryId AncestorId,
+                     category.ParentProductCategoryId
+              FROM dbo.ProductCategories category
+              WHERE category.BusinessId=@BusinessId
+              UNION ALL
+              SELECT child.DescendantId,parent.ProductCategoryId,
+                     parent.ParentProductCategoryId
+              FROM CategoryAncestors child
+              JOIN dbo.ProductCategories parent
+                ON parent.ProductCategoryId=child.ParentProductCategoryId
+               AND parent.BusinessId=@BusinessId
+            )
+            SELECT product.ProductId,
+                   COALESCE(NULLIF(product.ProductCode,N''),NULLIF(product.Sku,N''),N''),
+                   product.Name,price.Amount,price.CurrencyCode,
+                   product.ProductCategoryId,product.ProductBrandId,
+                   COALESCE((SELECT STRING_AGG(CONVERT(nvarchar(max),ancestor.AncestorId),N',')
+                             FROM CategoryAncestors ancestor
+                             WHERE ancestor.DescendantId=product.ProductCategoryId),N''),
+                   COALESCE(averageCost.Amount,price.CostBasisAmount,0),
+                   COALESCE(latestCost.LatestUnitCost,price.CostBasisAmount,averageCost.Amount,0),
+                   COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)
+            FROM dbo.Products product
+            CROSS APPLY (
+              SELECT TOP(1) value.Amount,value.CurrencyCode,value.CostBasisAmount,
+                     value.TargetMarginPercent,value.EffectiveMarginPercent
+              FROM dbo.ProductPrices value
+              WHERE value.BusinessId=@BusinessId AND value.ProductId=product.ProductId
+                AND value.IsActive=1 AND value.ValidFrom<=SYSDATETIMEOFFSET()
+                AND (value.ValidUntil IS NULL OR value.ValidUntil>SYSDATETIMEOFFSET())
+              ORDER BY value.ValidFrom DESC,value.ProductPriceId
+            ) price
+            OUTER APPLY (
+              SELECT COALESCE(
+                SUM(CASE WHEN balance.QuantityOnHand>0 THEN balance.InventoryValue ELSE 0 END)
+                  / NULLIF(SUM(CASE WHEN balance.QuantityOnHand>0 THEN balance.QuantityOnHand ELSE 0 END),0),
+                MAX(NULLIF(balance.AverageUnitCost,0))) Amount
+              FROM dbo.InventoryBalances balance
+              WHERE balance.BusinessId=@BusinessId AND balance.ProductId=product.ProductId
+            ) averageCost
+            OUTER APPLY (
+              SELECT TOP(1) latest.LatestUnitCost
+              FROM dbo.SupplierProductLatestCosts latest
+              WHERE latest.BusinessId=@BusinessId AND latest.ProductId=product.ProductId
+              ORDER BY latest.ObservedAt DESC,latest.SupplierId
+            ) latestCost
+            WHERE product.TenantId=@TenantId AND product.IsActive=1
+            ORDER BY product.Name,product.ProductId;
+
+            SELECT item.PriceChannelId,item.ProductId,item.MinimumQuantity,
+                   item.Amount,item.CurrencyCode
+            FROM dbo.PriceChannelItems item
+            WHERE item.PriceChannelId=@PriceChannelId AND item.IsActive=1
+              AND item.ValidFrom<=SYSDATETIMEOFFSET()
+              AND (item.ValidUntil IS NULL OR item.ValidUntil>SYSDATETIMEOFFSET())
+            ORDER BY item.ProductId,item.MinimumQuantity;
+
+            SELECT exclusion.PriceChannelId,exclusion.ProductId,
+                   exclusion.ProductCategoryId,exclusion.ProductBrandId
+            FROM dbo.PriceChannelExclusions exclusion
+            WHERE exclusion.PriceChannelId=@PriceChannelId;
+            """, connection);
+        AddScope(command, user);
+        command.Parameters.AddWithValue("@PriceChannelId", priceChannelId);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        var channelId = reader.GetGuid(0);
+        var code = reader.GetString(1);
+        var name = reader.GetString(2);
+        var strategy = reader.GetString(3);
+        decimal? value = reader.IsDBNull(4) ? null : reader.GetDecimal(4);
+        var isActive = reader.GetBoolean(5);
+
+        var products = new List<PriceChannelReportProductSource>();
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            products.Add(new(
+                reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                reader.GetDecimal(3), reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6),
+                reader.GetString(7).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(Guid.Parse).ToArray(),
+                reader.GetDecimal(8), reader.GetDecimal(9),
+                reader.IsDBNull(10) ? null : reader.GetDecimal(10)));
+
+        var tiers = new List<PriceChannelTierRule>();
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            tiers.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2),
+                reader.GetDecimal(3), reader.GetString(4)));
+
+        var exclusions = new List<PriceChannelExclusionRule>();
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            exclusions.Add(new(reader.GetGuid(0),
+                reader.IsDBNull(1) ? null : reader.GetGuid(1),
+                reader.IsDBNull(2) ? null : reader.GetGuid(2),
+                reader.IsDBNull(3) ? null : reader.GetGuid(3)));
+        return new(channelId, code, name, strategy, value, isActive,
+            products, tiers, exclusions);
     }
 
     private static async Task ValidateProposalAsync(

@@ -120,7 +120,7 @@ public static class PriceChannelResolver
         return averageCost > 0 ? averageCost / (1 - adjustedMargin / 100) : null;
     }
 
-    private static bool IsExcluded(
+    public static bool IsExcluded(
         Guid channelId,
         PriceChannelProductContext product,
         IReadOnlyCollection<PriceChannelExclusionRule> exclusions) =>

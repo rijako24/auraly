@@ -63,7 +63,7 @@ public sealed class PermissionServiceTests
     }
 
     [Fact]
-    public async Task SeedPermissionsAsync_Leaves_agent_and_scheduling_features_opt_in_for_tenant_admin()
+    public async Task SeedPermissionsAsync_Grants_every_tenant_permission_to_tenant_admin()
     {
         var tenantPermission = Permission("dispatches.delivery.execute");
         var tenantManagement = Permission("tenants.read");
@@ -96,9 +96,13 @@ public sealed class PermissionServiceTests
         await service.SeedPermissionsAsync(CancellationToken.None);
 
         Assert.Equal(5, assignments.Count(item => item.RoleId == platformAdministrator.RoleId));
-        Assert.Single(assignments, item => item.RoleId == tenantAdministrator.RoleId);
+        Assert.Equal(3, assignments.Count(item => item.RoleId == tenantAdministrator.RoleId));
         Assert.Contains(assignments, item =>
             item.RoleId == tenantAdministrator.RoleId && item.PermissionId == tenantPermission.PermissionId);
+        Assert.Contains(assignments, item =>
+            item.RoleId == tenantAdministrator.RoleId && item.PermissionId == agentPermission.PermissionId);
+        Assert.Contains(assignments, item =>
+            item.RoleId == tenantAdministrator.RoleId && item.PermissionId == reservationPermission.PermissionId);
     }
 
     private static Permission Permission(string resource) => new()

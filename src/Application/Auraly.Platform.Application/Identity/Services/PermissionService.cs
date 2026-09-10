@@ -9,11 +9,6 @@ namespace Auraly.Platform.Application.Identity.Services;
 
 public class PermissionService : IPermissionService
 {
-    private static readonly string[] OptInFeaturePermissionPrefixes =
-    [
-        "agents.", "conversations.", "leads.", "campaigns.",
-        "reservations."
-    ];
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<PermissionService> _logger;
 
@@ -122,9 +117,7 @@ public class PermissionService : IPermissionService
             PlatformPermissions.PlatformTenantKey,
             StringComparison.OrdinalIgnoreCase)
         || !permission.Resource.StartsWith("tenants.", StringComparison.OrdinalIgnoreCase)
-          && !permission.Resource.StartsWith("platform.", StringComparison.OrdinalIgnoreCase)
-          && !OptInFeaturePermissionPrefixes.Any(prefix =>
-              permission.Resource.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+          && !permission.Resource.StartsWith("platform.", StringComparison.OrdinalIgnoreCase);
 
     private static PermissionDto MapToDto(Domain.Entities.Permission p) => new(
         p.PermissionId, p.Module, p.Action, p.Resource, p.Description);

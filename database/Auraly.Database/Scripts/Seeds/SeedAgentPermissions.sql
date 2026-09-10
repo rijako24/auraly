@@ -26,19 +26,22 @@ WHERE NOT EXISTS (SELECT 1 FROM [dbo].[Permissions] WHERE [Resource] = p.Resourc
 
 
 
--- Agente y atención son capacidades opt-in para empresas cliente. El administrador
--- de plataforma conserva el catálogo completo; en los demás tenants se asignan
--- explícitamente desde Roles cuando el producto contratado las requiera.
-DELETE assignment
-FROM dbo.RolePermissions assignment
-JOIN dbo.AppRoles roleValue ON roleValue.RoleId=assignment.RoleId
-JOIN dbo.Tenants tenantValue ON tenantValue.TenantId=roleValue.TenantId
-JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
-WHERE roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
-  AND tenantValue.TenantKey<>N'@auraly'
-  AND permissionValue.Resource IN(N'agents.read',N'agents.update');
+-- Regla canónica: todo administrador recibe los permisos disponibles dentro de
+-- su alcance. La contratación del módulo se controla por entitlement, no quitando
+-- permisos al rol Administrador.
+INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+SELECT NEWID(),roleValue.RoleId,permissionValue.PermissionId,SYSUTCDATETIME()
+FROM dbo.AppRoles roleValue
+CROSS JOIN dbo.Permissions permissionValue
+WHERE roleValue.IsActive=1
+  AND roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
+  AND permissionValue.Resource IN(N'agents.read',N'agents.update')
+  AND NOT EXISTS(
+      SELECT 1 FROM dbo.RolePermissions existing
+      WHERE existing.RoleId=roleValue.RoleId
+        AND existing.PermissionId=permissionValue.PermissionId);
 
-PRINT N'SeedAgentPermissions: catálogo opt-in de agentes listo.';
+PRINT N'SeedAgentPermissions: catálogo de agentes listo.';
 
 GO
 

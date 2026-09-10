@@ -270,6 +270,13 @@ public sealed partial class SqlWorkSessionStore(
                 throw new WorkSessionConflictException(
                     "The work session is not open and has no closure receipt.");
 
+            if (await HasPausedSalesAsync(
+                    connection, transaction, identity, workSessionId,
+                    lockRange: true, cancellationToken) &&
+                !identity.Permissions.Contains(WorkSessionPermissionCodes.CloseWithPausedSales))
+                throw new WorkSessionForbiddenException(
+                    $"Permission '{WorkSessionPermissionCodes.CloseWithPausedSales}' is required.");
+
             var expectedTotals = await ReadTotalsAsync(
                 connection, transaction, identity, workSessionId, cancellationToken);
             var metrics = await ReadSalesMetricsAsync(
@@ -427,6 +434,46 @@ public sealed partial class SqlWorkSessionStore(
             metrics.CreditSalesAmount,
             metrics.ReturnCount,
             metrics.CreditSales);
+    }
+
+    public async Task<bool> HasPausedSalesAsync(
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        return await HasPausedSalesAsync(
+            connection, null, identity, workSessionId,
+            lockRange: false, cancellationToken);
+    }
+
+    private static async Task<bool> HasPausedSalesAsync(
+        SqlConnection connection,
+        SqlTransaction? transaction,
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        bool lockRange,
+        CancellationToken cancellationToken)
+    {
+        var locking = lockRange ? " WITH (UPDLOCK,HOLDLOCK)" : string.Empty;
+        await using var command = new SqlCommand($"""
+            SELECT TOP(1) 1
+            FROM dbo.SalesDrafts draft{locking}
+            INNER JOIN dbo.WorkSessions session
+              ON session.WorkSessionId=draft.WorkSessionId
+            INNER JOIN dbo.Businesses businessValue
+              ON businessValue.BusinessId=session.BusinessId
+            WHERE draft.WorkSessionId=@WorkSessionId
+              AND draft.UserId=@UserId
+              AND draft.Status=N'Temporary'
+              AND session.TenantId=@TenantId
+              AND businessValue.TenantId=@TenantId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        command.Parameters.AddWithValue("@UserId", identity.UserId);
+        command.Parameters.AddWithValue("@TenantId", identity.TenantId);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
     }
 
     public async Task<WorkSessionClosureView?> GetClosureAsync(

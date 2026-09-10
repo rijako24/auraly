@@ -85,6 +85,16 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
             new { password = "Nueva-Clave-Segura-2026!" });
         Assert.Equal(HttpStatusCode.NoContent, allowedCrossTenantReset.StatusCode);
 
+        var customerOperatorRoleId = await CreateCustomerOperatorRoleAsync(customerTenantId);
+        var createdCustomerUser = await CreateUserAsync(
+            rootInCustomerTenant,
+            "cross-tenant-created",
+            customerOperatorRoleId);
+        Assert.Equal(customerTenantId, createdCustomerUser.TenantId);
+        Assert.Contains(
+            createdCustomerUser.Roles,
+            assignment => assignment.RoleId == customerOperatorRoleId);
+
         using var allowedDevices = await root.GetAsync($"/api/v1/tenants/{fixture.TenantId:D}/devices");
         Assert.Equal(HttpStatusCode.OK, allowedDevices.StatusCode);
         using var allowedCertificateAlerts = await root.GetAsync(
@@ -155,6 +165,26 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
         using var response = await client.GetAsync("/api/v1/permissions");
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<IReadOnlyList<PermissionDto>>() ?? throw new InvalidOperationException("Empty permission catalog.");
+    }
+
+    private async Task<Guid> CreateCustomerOperatorRoleAsync(Guid tenantId)
+    {
+        var roleId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT dbo.AppRoles(
+              RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+            VALUES(
+              @RoleId,@TenantId,N'Operador creado por soporte',@NormalizedName,
+              N'Rol ordinario del tenant seleccionado',1,0,SYSUTCDATETIME());
+            """;
+        command.Parameters.AddWithValue("@RoleId", roleId);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@NormalizedName", $"CROSS TENANT OPERATOR {roleId:N}".ToUpperInvariant());
+        await command.ExecuteNonQueryAsync();
+        return roleId;
     }
 
     private static IReadOnlyList<Guid> PermissionIds(IReadOnlyList<PermissionDto> catalog, IEnumerable<string> resources)

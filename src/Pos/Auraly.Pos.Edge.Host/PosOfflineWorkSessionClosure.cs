@@ -285,6 +285,7 @@ public sealed class PosOfflineWorkSessionClosureService(
         PosLocalUserSession session,
         CloseLocalWorkSessionRequest input,
         Guid authorizedByUserId,
+        bool authorizedToCloseWithPausedSales,
         CancellationToken cancellationToken)
     {
         var preview = await PreviewAsync(session, cancellationToken);
@@ -330,7 +331,8 @@ public sealed class PosOfflineWorkSessionClosureService(
                     countedCash,
                     input.Note,
                     authorizedByUserId,
-                    input.PaymentCounts)),
+                    input.PaymentCounts,
+                    authorizedToCloseWithPausedSales)),
             cancellationToken);
         return queued;
     }

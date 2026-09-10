@@ -45,7 +45,9 @@ public static class WorkSessionApi
             {
                 var identity = context.User.ToWorkSessionIdentity();
                 var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
-                if (identity.Permissions.Contains(WorkSessionPermissionCodes.Close))
+                var requiredPermission = await service.RequiredClosePermissionAsync(
+                    identity, workSessionId, cancellationToken);
+                if (identity.Permissions.Contains(requiredPermission))
                     return Results.Ok(await service.CloseAsync(
                         identity, workSessionId, idempotencyKey, request, cancellationToken));
 
@@ -65,7 +67,7 @@ public static class WorkSessionApi
                 var authorizedIdentity = identity with
                 {
                     Permissions = identity.Permissions
-                        .Append(WorkSessionPermissionCodes.Close)
+                        .Append(requiredPermission)
                         .ToHashSet(StringComparer.Ordinal)
                 };
                 var closure = await approvals.ExecuteSensitiveAsync(
@@ -74,7 +76,7 @@ public static class WorkSessionApi
                     approvalIdentity.BusinessId,
                     draftId,
                     null,
-                    WorkSessionPermissionCodes.Close,
+                    requiredPermission,
                     operationId,
                     () => service.CloseAsync(
                         authorizedIdentity, workSessionId, idempotencyKey, request,
@@ -106,7 +108,9 @@ public static class WorkSessionApi
             await Handle(async () =>
             {
                 var identity = context.User.ToWorkSessionIdentity();
-                if (!identity.Permissions.Contains(WorkSessionPermissionCodes.Close))
+                var requiredPermission = await service.RequiredClosePermissionAsync(
+                    identity, workSessionId, cancellationToken);
+                if (!identity.Permissions.Contains(requiredPermission))
                 {
                     if (!Guid.TryParse(
                             context.Request.Headers["X-Auraly-Draft-Id"].ToString(),
@@ -125,7 +129,7 @@ public static class WorkSessionApi
                         approvalIdentity.BusinessId,
                         draftId,
                         null,
-                        WorkSessionPermissionCodes.Close,
+                        requiredPermission,
                         cancellationToken);
                 }
                 return Results.Ok(await service.PreviewClosureAsync(
@@ -281,7 +285,10 @@ public static class WorkSessionApi
                         "The local supervisor and work session are required.");
                 var identity = context.User.ToDeviceWorkSessionIdentity() with
                 {
-                    UserId = request.UserId
+                    UserId = request.UserId,
+                    Permissions = request.AuthorizedToCloseWithPausedSales
+                        ? new HashSet<string>([WorkSessionPermissionCodes.CloseWithPausedSales], StringComparer.Ordinal)
+                        : new HashSet<string>(StringComparer.Ordinal)
                 };
                 return Results.Ok(await service.CloseFromDeviceAsync(
                     identity,
