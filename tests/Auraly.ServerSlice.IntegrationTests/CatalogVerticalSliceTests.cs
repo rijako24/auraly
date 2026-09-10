@@ -363,6 +363,20 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         await ExecuteAsync(
             "UPDATE dbo.InventoryBalances SET QuantityOnHand=5,AverageUnitCost=1000,InventoryValue=5000 WHERE BusinessId=@Business AND ProductId=@Child;",
             new SqlParameter("@Business", fixture.BusinessId), new SqlParameter("@Child", child.ProductId));
+        using var merchandisingEditResponse = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{root.ProductId:D}/merchandising", save with
+            {
+                ConversionMaximumLossPercent = 3m
+            });
+        Assert.True(merchandisingEditResponse.IsSuccessStatusCode,
+            await merchandisingEditResponse.Content.ReadAsStringAsync());
+        var merchandisingEdit = (await merchandisingEditResponse.Content
+            .ReadFromJsonAsync<ProductMerchandisingConfiguration>())!;
+        Assert.Equal(3m, merchandisingEdit.ConversionMaximumLossPercent);
+        Assert.Equal(0.5m, Assert.Single(merchandisingEdit.LinkedProducts).ConversionFactor);
+        Assert.Equal(5m, await ScalarAsync<decimal>(
+            "SELECT QuantityOnHand FROM dbo.InventoryBalances WHERE BusinessId=@Business AND ProductId=@Child;",
+            new SqlParameter("@Business", fixture.BusinessId), new SqlParameter("@Child", child.ProductId)));
         var completeEdit = rootRequest with
         {
             Name = rootRequest.Name + " editada",

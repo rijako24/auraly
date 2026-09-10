@@ -157,7 +157,7 @@ public sealed class SqlProductMerchandisingStore(
                 await ExecuteAsync(connection, transaction, """
                     IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ParentId AND TenantId=@TenantId AND IsActive=1)
                       THROW 51020,'The parent product is outside the business or inactive.',1;
-                    IF EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND QuantityOnHand<>0)
+                    IF @SharesInventory=1 AND EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND QuantityOnHand<>0)
                       THROW 51020,'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.',1;
                     IF @AllowsConversion=1 AND NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ParentId AND TenantId=@TenantId AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
                       THROW 51020,'The parent product must manage inventory and define a maximum conversion loss.',1;
@@ -189,7 +189,7 @@ public sealed class SqlProductMerchandisingStore(
                 await ExecuteAsync(connection, transaction, """
                     IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ChildId AND TenantId=@TenantId AND IsActive=1)
                       THROW 51020,'The linked product is outside the business or inactive.',1;
-                    IF EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ChildId AND QuantityOnHand<>0)
+                    IF @SharesInventory=1 AND EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ChildId AND QuantityOnHand<>0)
                       THROW 51020,'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.',1;
                     IF @AllowsConversion=1 AND NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=@TenantId AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
                       THROW 51020,'A convertible family must manage inventory and define a maximum conversion loss.',1;
