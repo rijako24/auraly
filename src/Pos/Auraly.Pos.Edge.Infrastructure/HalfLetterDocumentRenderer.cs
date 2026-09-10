@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using Auraly.Contracts.Sales;
+using Auraly.Pos.Printing;
 using QRCoder;
 
 namespace Auraly.Pos.Edge.Infrastructure;

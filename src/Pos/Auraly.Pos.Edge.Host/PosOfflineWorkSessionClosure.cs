@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Pos.Edge.Infrastructure;
+using Auraly.Pos.Printing;
 using Microsoft.Data.Sqlite;
 
 namespace Auraly.Pos.Edge.Host;
@@ -254,6 +255,13 @@ public sealed class PosOfflineWorkSessionClosureService(
             ? openedAt
             : localSales.Max(value => value.IssuedAt);
         var totals = PaymentTotals(localSales, otherCash, null);
+        var creditSales = localSales
+            .Where(value => value.CreditAmount > 0)
+            .Select(value => new WorkSessionCreditSale(
+                value.CustomerName,
+                value.DocumentNumber,
+                value.CreditAmount))
+            .ToArray();
         return new WorkSessionClosurePreviewView(
             session.WorkSessionId,
             runtime.BusinessId.Value,
@@ -273,7 +281,8 @@ public sealed class PosOfflineWorkSessionClosureService(
             localSales.Count,
             localSales.Count(value => value.CreditAmount > 0),
             localSales.Sum(value => value.CreditAmount),
-            0);
+            0,
+            creditSales);
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -315,7 +324,9 @@ public sealed class PosOfflineWorkSessionClosureService(
             preview.SalesCount,
             preview.CreditSalesCount,
             preview.CreditSalesAmount,
-            preview.ReturnCount);
+            preview.ReturnCount,
+            preview.CreditSales,
+            PosPrintTemplateCatalog.WorkSessionClosure.Version);
         var queued = await store.QueueAsync(
             new PosQueuedWorkSessionClosure(
                 input.OperationId,

@@ -95,9 +95,17 @@ y regresión sin agregar texto técnico a la tirilla.
 sede en el encabezado, separan al responsable como dato propio, usan reglas
 punteadas alrededor del valor y recuperan el espacio amplio de firma. Las
 versiones 1 y 2 permanecen disponibles e inmutables para reproducir los formatos
-publicados originalmente. Las plantillas de
-venta y cierre continúan en versión 1 porque no contienen una altura fija ni un
-espaciador equivalente que deba corregirse.
+publicados originalmente. Las plantillas de venta continúan en versión 1.
+`work-session-closure` tiene una versión 2 activa: presenta Actividad, Totales,
+Ventas a cartera y Detalle por medio de pago en ese orden; congela el cliente,
+documento y valor de cada venta a cartera; ordena tarjeta, transferencia y
+efectivo; y muestra el resultado de cada medio contado como `SOBRANTE`,
+`FALTANTE` o `CUADRA` dentro del mismo recuadro. La versión 1 permanece
+disponible para reimpresiones históricas.
+
+La definición HTML de cierre vive únicamente en `Auraly.Pos.Printing`.
+Servidor, navegador y POS Edge consumen esa misma plantilla; TypeScript solo
+solicita o transporta el HTML y no conserva una segunda implementación.
 
 Un ajuste compatible que corrija el transporte, la nitidez o el soporte de otra
 impresora sin alterar contenido ni composición conserva la versión. Todo cambio

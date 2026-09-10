@@ -70,7 +70,8 @@ public sealed record PosEdgeIssueCommand(
     Guid? SourceOrderId = null,
     string DocumentType = PosSaleDocumentTypes.Invoice,
     WithholdingCalculationSnapshot? Withholding = null,
-    PosSaleCreditContract? Credit = null);
+    PosSaleCreditContract? Credit = null,
+    string? CustomerName = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -138,7 +139,9 @@ public sealed record PosLocalWorkSessionSale(
     DateTimeOffset IssuedAt,
     decimal Total,
     IReadOnlyList<PosSalePaymentContract> Payments,
-    decimal CreditAmount);
+    decimal CreditAmount,
+    string CustomerName,
+    string DocumentNumber);
 
 public sealed record PosSaleOutboxStatus(
     int PendingCount,
@@ -652,7 +655,11 @@ public sealed class PosEdgeSaleStore
                 value.CommercialSnapshot.IssuedAt,
                 value.CommercialSnapshot.PayableAmount,
                 value.Payments,
-                value.Credit?.Amount ?? 0))
+                value.Credit?.Amount ?? 0,
+                value.CommercialSnapshot.CustomerName
+                    ?? value.UblSnapshot?.Customer.RegistrationName
+                    ?? value.CommercialSnapshot.CustomerIdentification,
+                value.DocumentNumber.FullNumber))
             .ToArray();
     }
 
@@ -1101,7 +1108,8 @@ public sealed class PosEdgeSaleStore
                 invoice.UntaxedAmount,
                 invoice.TaxAmount,
                 invoice.PayableAmount,
-                withholding),
+                withholding,
+                CustomerName: command.CustomerName),
             snapshot is null || fiscalNumber is null || fiscalAuthorizationId is null
                 ? null
                 : new PosSaleFiscalSnapshotContract(

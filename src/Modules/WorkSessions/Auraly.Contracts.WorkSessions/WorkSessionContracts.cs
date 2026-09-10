@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Auraly.BuildingBlocks.Domain.Documents;
 
 namespace Auraly.Contracts.WorkSessions;
@@ -44,7 +45,8 @@ public sealed record CloseWorkSessionRequest(
     decimal? CountedCash,
     string? Note,
     Guid? ClosedByUserId = null,
-    IReadOnlyList<WorkSessionPaymentCount>? PaymentCounts = null);
+    IReadOnlyList<WorkSessionPaymentCount>? PaymentCounts = null,
+    [property: JsonIgnore] int ReceiptTemplateVersion = 1);
 
 public sealed record WorkSessionPaymentCount(
     string PaymentMethodCode,
@@ -113,7 +115,15 @@ public sealed record WorkSessionClosureView(
     int CreditSalesCount = 0,
     decimal CreditSalesAmount = 0,
     long ReturnCount = 0,
-    IReadOnlyList<WorkSessionCreditSale>? CreditSales = null);
+    IReadOnlyList<WorkSessionCreditSale>? CreditSales = null,
+    int ReceiptTemplateVersion = 1);
+
+public sealed record WorkSessionClosureReceiptRequest(
+    string? CompanyName = null,
+    string? CompanyLogoSource = null,
+    int PaperWidthMillimeters = 80);
+
+public sealed record WorkSessionClosureReceiptView(string Html);
 
 public sealed record WorkSessionClosurePreviewView(
     Guid WorkSessionId,

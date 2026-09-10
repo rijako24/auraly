@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\Pos\Auraly.Pos.Printing\Auraly.Pos.Printing.csproj" />
     <PackageReference Include="Azure.Identity" Version="1.17.2" />
     <PackageReference Include="Azure.Communication.Email" Version="1.1.0" />
     <PackageReference Include="Lib.Net.Http.WebPush" Version="3.3.1" />

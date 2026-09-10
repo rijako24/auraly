@@ -67,7 +67,7 @@ import {
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
 import { referenceOptionsApi } from "@/services/api/reference-options";
-import { cashDenominationCountHtml, printCashDenominationCount, printWorkSessionClosure, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest } from "./pos-work-session-close";
+import { cashDenominationCountHtml, printCashDenominationCount, printWorkSessionClosure, workSessionCloseRequest, workSessionClosurePreviewRequest, workSessionClosureReceiptRequest } from "./pos-work-session-close";
 import { cashMovementTicketHtml, printCashMovementTicket } from "./pos-cash-movement-print";
 import { receiptBrandMarkup } from "./pos-receipt-brand";
 import { receiptLineMarkup } from "./pos-receipt-line-markup";
@@ -952,12 +952,16 @@ export class OnlinePosClient implements PosClient {
       try {
         await this.localEdge().printWorkSessionClosure(printableClosure);
       } catch {
-        await printWorkSessionClosure(workSessionClosureHtml(printableClosure))
-          .catch(() => undefined);
+        const receiptRequest = workSessionClosureReceiptRequest(
+          closure.workSessionId, printableClosure.companyName, printableClosure.logoUrl);
+        const receipt = await request<{ html: string }>(receiptRequest.path, receiptRequest.init);
+        await printWorkSessionClosure(receipt.html).catch(() => undefined);
       }
     } else {
-      await printWorkSessionClosure(workSessionClosureHtml(printableClosure))
-        .catch(() => undefined);
+      const receiptRequest = workSessionClosureReceiptRequest(
+        closure.workSessionId, printableClosure.companyName, printableClosure.logoUrl);
+      const receipt = await request<{ html: string }>(receiptRequest.path, receiptRequest.init);
+      await printWorkSessionClosure(receipt.html).catch(() => undefined);
     }
     return closure;
   }

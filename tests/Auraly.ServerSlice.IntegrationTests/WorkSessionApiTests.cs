@@ -296,6 +296,57 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Closure_freezes_credit_customers_and_renders_the_same_version_two_receipt()
+    {
+        var userId = await CreateUserAsync("work-session-credit-detail");
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close);
+        var opened = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, null));
+        var customerId = await CreateCustomerAsync(userId, "Cliente cartera exacta");
+        await InsertCreditSaleAsync(
+            opened.WorkSessionId, userId, customerId, "CVI-CARTERA-1", 25_000m);
+
+        var preview = await client.GetFromJsonAsync<WorkSessionClosurePreviewView>(
+            $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview");
+        Assert.NotNull(preview);
+        Assert.Equal(1, preview.CreditSalesCount);
+        Assert.Equal(25_000m, preview.CreditSalesAmount);
+        var previewCredit = Assert.Single(preview.CreditSales!);
+        Assert.Equal("Cliente cartera exacta", previewCredit.CustomerName);
+        Assert.Equal("CVI-CARTERA-1", previewCredit.DocumentNumber);
+        Assert.Equal(preview.CreditSalesAmount, preview.CreditSales!.Sum(item => item.Amount));
+
+        var closure = await CloseAsync(
+            client,
+            opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}",
+            new CloseWorkSessionRequest(0m, "Cierre con cartera", PaymentCounts:
+            [
+                new WorkSessionPaymentCount("Cash", 0m),
+                new WorkSessionPaymentCount("Card", 0m),
+                new WorkSessionPaymentCount("Transfer", 0m)
+            ]));
+        Assert.Equal(2, closure.ReceiptTemplateVersion);
+        Assert.Equal(closure.CreditSalesAmount, closure.CreditSales!.Sum(item => item.Amount));
+
+        using var receiptResponse = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-receipt",
+            new WorkSessionClosureReceiptRequest("Comercializadora Uno"));
+        receiptResponse.EnsureSuccessStatusCode();
+        var receipt = await receiptResponse.Content
+            .ReadFromJsonAsync<WorkSessionClosureReceiptView>();
+        Assert.NotNull(receipt);
+        Assert.Contains("data-auraly-report-version=\"2\"", receipt.Html);
+        Assert.Contains("Cliente cartera exacta", receipt.Html);
+        Assert.Contains("CVI-CARTERA-1", receipt.Html);
+        Assert.Contains("Total cartera", receipt.Html);
+    }
+
+    [Fact]
     public async Task Closure_uses_accepted_cash_documents_while_async_projections_are_pending()
     {
         var userId = await CreateUserAsync("work-session-accepted-cash");
@@ -740,6 +791,77 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@Email", $"{prefix}-{userId:N}@test.local");
         await command.ExecuteNonQueryAsync();
         return userId;
+    }
+
+    private async Task<Guid> CreateCustomerAsync(Guid userId, string name)
+    {
+        var partyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT dbo.Parties
+              (PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,
+               CreatedBy,CreatedAt)
+            VALUES(@PartyId,@TenantId,N'Organization',@Name,N'Incomplete',1,
+                   @UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers
+              (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,
+               CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@BusinessId,0,1,@UserId,SYSDATETIMEOFFSET());
+            """;
+        command.Parameters.AddWithValue("@PartyId", partyId);
+        command.Parameters.AddWithValue("@CustomerId", customerId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@Name", name);
+        Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        return customerId;
+    }
+
+    private async Task InsertCreditSaleAsync(
+        Guid workSessionId,
+        Guid userId,
+        Guid customerId,
+        string documentNumber,
+        decimal amount)
+    {
+        var documentId = Guid.NewGuid();
+        var consecutive = (long)BitConverter.ToUInt32(documentId.ToByteArray(), 0) + 1L;
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT dbo.SalesDocuments
+              (DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
+               DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
+               DocumentType,IdempotencyKey,PayloadHash,IssuedAt,
+               CustomerIdentification,CustomerId,UntaxedAmount,TaxAmount,PayableAmount,
+               CreditAmount,CreditDueDate,ProcessingStatus,ReceivedAt,SoldByUserId,
+               WorkSessionId)
+            VALUES
+              (@DocumentId,@BusinessId,@WarehouseId,N'Online',@DocumentSeriesId,
+               @DocumentNumber,N'CVI',N'00',@Consecutive,
+               N'SalesReceipt',@IdempotencyKey,@PayloadHash,SYSDATETIMEOFFSET(),
+               N'900123456',@CustomerId,@Amount,0,@Amount,
+               @Amount,DATEADD(day,30,SYSDATETIMEOFFSET()),N'Processed',
+               SYSDATETIMEOFFSET(),@UserId,@WorkSessionId);
+            """;
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@DocumentSeriesId", fixture.OnlineSalesReceiptSeriesId);
+        command.Parameters.AddWithValue("@DocumentNumber", documentNumber);
+        command.Parameters.AddWithValue("@Consecutive", consecutive);
+        command.Parameters.AddWithValue("@IdempotencyKey", $"credit-{documentId:N}");
+        command.Parameters.Add("@PayloadHash", System.Data.SqlDbType.Binary, 32).Value = new byte[32];
+        command.Parameters.AddWithValue("@CustomerId", customerId);
+        command.Parameters.AddWithValue("@Amount", amount);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
     }
 
     private async Task InsertMovementsAsync(Guid workSessionId, Guid userId)

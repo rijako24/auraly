@@ -1,6 +1,7 @@
 using Auraly.Application.DocumentProcessing;
 using Auraly.Domain.WorkSessions;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Pos.Printing;
 using Auraly.Commerce.Accounting.Application;
 
 namespace Auraly.Application.WorkSessions;
@@ -210,7 +211,11 @@ public sealed class WorkSessionService(
             identity,
             workSessionId,
             idempotencyKey.Trim(),
-            request with { Note = NullIfWhiteSpace(request.Note) },
+            request with
+            {
+                Note = NullIfWhiteSpace(request.Note),
+                ReceiptTemplateVersion = PosPrintTemplateCatalog.WorkSessionClosure.Version
+            },
             cancellationToken);
         if (closure.PaymentTotals.Any(value => value.Difference is not null and not 0))
             await accountingProcessing.RequestPostingAsync(

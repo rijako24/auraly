@@ -51,6 +51,14 @@ export const workSessionDifferencesApi = {
     },
     idempotencyKey,
   ),
+  closureReceipt: (
+    workSessionId: string,
+    companyName?: string | null,
+    companyLogoSource?: string | null,
+  ) => apiClient.post<{ html: string }>(
+    `/commerce/v1/work-sessions/${encodeURIComponent(workSessionId)}/closure-receipt`,
+    { companyName, companyLogoSource, paperWidthMillimeters: 80 },
+  ),
   list: (from: string, to: string) =>
     apiClient.get<WorkSessionCashDifference[]>(
       "/commerce/v1/work-sessions/cash-differences",

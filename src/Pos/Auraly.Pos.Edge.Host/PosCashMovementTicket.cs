@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using Auraly.Pos.Edge.Infrastructure;
+using Auraly.Pos.Printing;
 
 namespace Auraly.Pos.Edge.Host;
 

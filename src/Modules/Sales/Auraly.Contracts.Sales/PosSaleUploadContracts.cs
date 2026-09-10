@@ -98,7 +98,9 @@ public sealed record PosSaleCommercialSnapshotContract(
     decimal PayableAmount,
     WithholdingCalculationSnapshot? Withholding = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    decimal PayableRoundingAmount = 0m)
+    decimal PayableRoundingAmount = 0m,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? CustomerName = null)
 {
     public decimal NetPayableAmount =>
         Withholding?.NetAmount ?? PayableAmount;

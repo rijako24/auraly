@@ -7,7 +7,7 @@ import type {
 import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
 import type { TenantBranding } from "@/services/api/tenants";
-import { printWorkSessionClosure, workSessionClosureHtml } from "./pos-work-session-close";
+import { printWorkSessionClosure } from "./pos-work-session-close";
 import { announceSessionReplacement } from "@/lib/auth-session";
 import { buildLoginRedirect } from "@/lib/login-redirect";
 import { isCurrentEdgeUserSession } from "./pos-edge-session";
@@ -469,14 +469,16 @@ export type PosWorkSessionClosure = {
   salesCount: number;
   creditSalesCount: number;
   creditSalesAmount: number;
+  creditSales?: Array<{ customerName: string; documentNumber: string; amount: number }> | null;
   returnCount: number;
   note: string | null;
   paymentTotals: PosWorkSessionPaymentTotal[];
+  receiptTemplateVersion?: number;
 };
 
 export type PosWorkSessionClosurePreview = Omit<
   PosWorkSessionClosure,
-  "workSessionClosureId" | "closedAt" | "countedCash" | "cashDifference" | "note"
+  "workSessionClosureId" | "closedAt" | "countedCash" | "cashDifference" | "note" | "receiptTemplateVersion"
 > & { lastActivityAt: string };
 
 export type PosAuthorizedClosurePreview = {
@@ -847,6 +849,12 @@ export class PosEdgeClient implements PosClient {
     });
   }
 
+  renderWorkSessionClosure(closure: PosWorkSessionClosure) {
+    return this.request<{ html: string }>("/edge/v1/render/work-session-closure", {
+      method: "POST", body: JSON.stringify(closure),
+    });
+  }
+
   watchLocalState(onStateChanged: () => void): () => void {
     const controller = new AbortController();
     const listen = async () => {
@@ -905,9 +913,10 @@ export class PosEdgeClient implements PosClient {
     }>("/edge/v1/work-sessions/current/close", {
       method: "POST", body: JSON.stringify(input),
     });
-    if (!result.printedDirectly)
-      await printWorkSessionClosure(workSessionClosureHtml(result.closure))
-        .catch(() => undefined);
+    if (!result.printedDirectly) {
+      const rendered = await this.renderWorkSessionClosure(result.closure);
+      await printWorkSessionClosure(rendered.html).catch(() => undefined);
+    }
     return result.closure;
   }
 

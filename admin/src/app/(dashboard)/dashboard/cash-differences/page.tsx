@@ -19,7 +19,7 @@ import { referenceOptionsApi } from "@/services/api/reference-options";
 import { tenantsApi } from "@/services/api/tenants";
 import { PosCashClosureDialog } from "@/app/(pos)/pos/pos-cash-closure-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession, type PosAuthorizedClosurePreview, type PosWorkSessionPaymentCount } from "@/services/pos/pos-edge-client";
-import { cashDenominationCountHtml, formatWorkSessionCountInput, normalizeWorkSessionCountInput, printCashDenominationCount, printWorkSessionClosure, workSessionClosureHtml, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
+import { cashDenominationCountHtml, formatWorkSessionCountInput, normalizeWorkSessionCountInput, printCashDenominationCount, printWorkSessionClosure, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
 import { useAuthStore } from "@/stores/auth-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -111,9 +111,15 @@ function ActiveWorkSessionPanel({ lastClosedAt }: { lastClosedAt: string | null 
       if (edgeToken) {
         await new PosEdgeClient(edgeToken, readEdgeUserSession())
           .printWorkSessionClosure(printable)
-          .catch(() => printWorkSessionClosure(workSessionClosureHtml(printable)));
+          .catch(async () => {
+            const receipt = await workSessionDifferencesApi.closureReceipt(
+              closure.workSessionId, printable.companyName, printable.logoUrl);
+            await printWorkSessionClosure(receipt.html);
+          });
       } else {
-        await printWorkSessionClosure(workSessionClosureHtml(printable));
+        const receipt = await workSessionDifferencesApi.closureReceipt(
+          closure.workSessionId, printable.companyName, printable.logoUrl);
+        await printWorkSessionClosure(receipt.html);
       }
       setPreview(null);
       setSubmitted(false);

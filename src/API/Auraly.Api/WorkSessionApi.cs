@@ -4,6 +4,7 @@ using Auraly.Application.WorkSessions;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.WorkSessions;
 using Auraly.BuildingBlocks.Application.Synchronization;
+using Auraly.Pos.Printing;
 
 namespace Auraly.Api;
 
@@ -341,6 +342,30 @@ public static class WorkSessionApi
                     workSessionId,
                     cancellationToken);
                 return closure is null ? Results.NotFound() : Results.Ok(closure);
+            }));
+
+        group.MapPost("/{workSessionId:guid}/closure-receipt", async (
+            HttpContext context,
+            Guid workSessionId,
+            WorkSessionClosureReceiptRequest request,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () =>
+            {
+                if (request.PaperWidthMillimeters is not (58 or 80))
+                    throw new WorkSessionValidationException(
+                        "El ancho de la tirilla debe ser de 58 u 80 mm.");
+                var closure = await service.GetClosureAsync(
+                    context.User.ToWorkSessionIdentity(),
+                    workSessionId,
+                    cancellationToken);
+                if (closure is null) return Results.NotFound();
+                return Results.Ok(new WorkSessionClosureReceiptView(
+                    WorkSessionClosureReceiptRenderer.RenderHtml(
+                        closure,
+                        request.CompanyName,
+                        request.CompanyLogoSource,
+                        request.PaperWidthMillimeters)));
             }));
 
         return endpoints;

@@ -281,6 +281,10 @@ public sealed partial class SqlWorkSessionStore(
                 connection, transaction, identity, workSessionId, cancellationToken);
             var metrics = await ReadSalesMetricsAsync(
                 connection, transaction, identity, workSessionId, cancellationToken);
+            if (metrics.CreditSales.Count != metrics.CreditSalesCount ||
+                metrics.CreditSales.Sum(value => value.Amount) != metrics.CreditSalesAmount)
+                throw new InvalidDataException(
+                    "The work-session credit-sale detail does not reconcile with its frozen total.");
             var totals = ReconcileTotals(expectedTotals, request);
             var totalSales = totals.Sum(value => value.SalesAmount);
             var totalRefunds = totals.Sum(value => value.RefundAmount);
@@ -322,7 +326,8 @@ public sealed partial class SqlWorkSessionStore(
                 metrics.CreditSalesCount,
                 metrics.CreditSalesAmount,
                 metrics.ReturnCount,
-                metrics.CreditSales);
+                metrics.CreditSales,
+                request.ReceiptTemplateVersion);
             var snapshot = JsonSerializer.Serialize(closure, Json);
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot));
 

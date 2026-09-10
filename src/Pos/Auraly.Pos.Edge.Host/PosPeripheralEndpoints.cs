@@ -190,6 +190,12 @@ internal static class PosPeripheralModule
             }
         });
 
+        edge.MapPost("/render/work-session-closure", (
+            WorkSessionClosureView closure,
+            PosWorkSessionClosurePrinter printer) =>
+            Results.Ok(new WorkSessionClosureReceiptView(
+                printer.RenderHtml(closure))));
+
         edge.MapPost("/print/cash-denomination-count", async (
             PosCashDenominationCountTicket request,
             PosCashDenominationCountTicketPrinter printer,
