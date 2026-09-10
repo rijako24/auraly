@@ -131,11 +131,14 @@ public sealed class DianHabilitationTransport(
                 return Result(DianSubmissionDisposition.Pending, request.TrackId, "Pending",
                     "DIAN has not returned a document result yet.", null, documents, mayHaveReachedDian: true);
             var rejected = documents.FirstOrDefault(item =>
-                !item.IsValid && !IsAcceptedTestSet(item));
-            var response = rejected ?? documents[0];
-            var disposition = rejected is null
-                ? DianSubmissionDisposition.Accepted
-                : DianSubmissionDisposition.Rejected;
+                !item.IsValid && !IsAcceptedTestSet(item) && !IsPendingValidation(item));
+            var pending = documents.FirstOrDefault(IsPendingValidation);
+            var response = rejected ?? pending ?? documents[0];
+            var disposition = rejected is not null
+                ? DianSubmissionDisposition.Rejected
+                : pending is not null
+                    ? DianSubmissionDisposition.Pending
+                    : DianSubmissionDisposition.Accepted;
             var applicationResponse = response.XmlBytes is { Length: > 0 }
                 ? response.XmlBytes
                 : response.XmlBase64Bytes;
@@ -187,6 +190,13 @@ public sealed class DianHabilitationTransport(
         string.Equals(response.StatusCode, "2", StringComparison.Ordinal) &&
         response.StatusDescription?.Contains(
             "se encuentra Aceptado", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static bool IsPendingValidation(DianDocumentResponse response) =>
+        ContainsPendingValidation(response.StatusDescription) ||
+        ContainsPendingValidation(response.StatusMessage);
+
+    private static bool ContainsPendingValidation(string? value) =>
+        value?.Contains("batch en proceso de validaci", StringComparison.OrdinalIgnoreCase) == true;
 }
 
 [ServiceContract(Namespace = "http://wcf.dian.colombia")]

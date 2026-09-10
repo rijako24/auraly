@@ -104,6 +104,75 @@ public sealed class DianHabilitationTransportTests
     }
 
     [Fact]
+    public async Task Batch_still_in_validation_remains_pending_instead_of_becoming_rejected()
+    {
+        var client = new DeterministicClient
+        {
+            Status =
+            [
+                new DianDocumentResponse
+                {
+                    IsValid = false,
+                    StatusDescription = "Batch en proceso de validación."
+                }
+            ]
+        };
+
+        var result = await CreateTransport(client).GetStatusZipAsync(Request("track-001"));
+
+        Assert.Equal(DianSubmissionDisposition.Pending, result.Disposition);
+        Assert.Equal("Batch en proceso de validación.", result.StatusDescription);
+    }
+
+    [Fact]
+    public async Task Mixed_completed_and_pending_batch_does_not_become_accepted_early()
+    {
+        var client = new DeterministicClient
+        {
+            Status =
+            [
+                new DianDocumentResponse { IsValid = true, StatusCode = "00" },
+                new DianDocumentResponse
+                {
+                    IsValid = false,
+                    StatusMessage = "Batch en proceso de validacion."
+                }
+            ]
+        };
+
+        var result = await CreateTransport(client).GetStatusZipAsync(Request("track-001"));
+
+        Assert.Equal(DianSubmissionDisposition.Pending, result.Disposition);
+    }
+
+    [Fact]
+    public async Task Definitive_rejection_wins_over_another_pending_document()
+    {
+        var client = new DeterministicClient
+        {
+            Status =
+            [
+                new DianDocumentResponse
+                {
+                    IsValid = false,
+                    StatusDescription = "Batch en proceso de validación."
+                },
+                new DianDocumentResponse
+                {
+                    IsValid = false,
+                    StatusCode = "90",
+                    StatusDescription = "Documento rechazado."
+                }
+            ]
+        };
+
+        var result = await CreateTransport(client).GetStatusZipAsync(Request("track-001"));
+
+        Assert.Equal(DianSubmissionDisposition.Rejected, result.Disposition);
+        Assert.Equal("90", result.StatusCode);
+    }
+
+    [Fact]
     public async Task Accepted_test_set_status_is_not_misclassified_as_document_rejection()
     {
         var client = new DeterministicClient
