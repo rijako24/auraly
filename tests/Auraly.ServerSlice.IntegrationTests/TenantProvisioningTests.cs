@@ -213,6 +213,12 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             result.TenantId, "CASHIER", "inventory.read"));
         Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "fiscal.configuration.read"));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "ADMINISTRATOR", "fiscal.documents.read"));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "ADMINISTRATOR", "fiscal.retry"));
+        Assert.False(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "fiscal.documents.read"));
         foreach (var permission in new[]
                  {
                      "sales.drafts.paused.delete",
