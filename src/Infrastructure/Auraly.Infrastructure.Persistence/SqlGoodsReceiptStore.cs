@@ -31,6 +31,33 @@ public sealed class SqlGoodsReceiptStore(
         CancellationToken cancellationToken)
     {
         var requestHash = HashRequest(request, calculation, costCalculation, withholding, additionalWithholdings);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await AcceptAttemptAsync(
+                    user, idempotencyKey, request, calculation, costCalculation,
+                    withholding, additionalWithholdings, requestHash, cancellationToken);
+            }
+            catch (SqlException exception) when (exception.Number == 1205 && attempt < 4)
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(25 * attempt), timeProvider, cancellationToken);
+            }
+        }
+    }
+
+    private async Task<GoodsReceiptAcceptance> AcceptAttemptAsync(
+        PurchasingUserIdentity user,
+        string idempotencyKey,
+        ConfirmGoodsReceiptRequest request,
+        GoodsReceiptCalculation calculation,
+        GoodsReceiptCostCalculation costCalculation,
+        WithholdingCalculationSnapshot withholding,
+        IReadOnlyDictionary<Guid, WithholdingCalculationSnapshot> additionalWithholdings,
+        byte[] requestHash,
+        CancellationToken cancellationToken)
+    {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -138,6 +165,14 @@ public sealed class SqlGoodsReceiptStore(
         catch (PurchasingConflictException)
         {
             await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
             throw;
         }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
