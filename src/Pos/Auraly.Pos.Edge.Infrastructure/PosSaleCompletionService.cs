@@ -68,7 +68,13 @@ public sealed record CompletePosSaleCommand(
     int PaperWidthMillimeters = 80,
     PosSaleUblSnapshotContract? UblSnapshot = null,
     string DocumentType = PosSaleDocumentTypes.Invoice,
-    IReadOnlySet<string>? Permissions = null);
+    IReadOnlySet<string>? Permissions = null,
+    PosSaleCreditTerms? Credit = null);
+
+public sealed record PosSaleCreditTerms(
+    Guid CustomerId,
+    decimal Amount,
+    DateTimeOffset DueDate);
 
 public sealed record CompletePosSaleResult(
     PosEdgeIssueResult IssuedSale,
@@ -223,12 +229,20 @@ public sealed class PosSaleCompletionService(
             throw new UnauthorizedAccessException(
                 $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
         var withholding = await CalculateWithholdingAsync(draft, command.IssuedAt, ct);
-        if (command.Payments.Count == 0 ||
-            command.Payments.Sum(payment => payment.Amount) != withholding.NetAmount)
-            throw new InvalidOperationException("Payments must equal the payable amount.");
+        if ((command.Payments.Count == 0 && command.Credit is null) ||
+            command.Payments.Sum(payment => payment.Amount) +
+                (command.Credit?.Amount ?? 0m) != withholding.NetAmount)
+            throw new InvalidOperationException(
+                "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
         var customer = draft.CustomerId is null || catalog is null
             ? null
             : await catalog.GetCustomerAsync(draft.CustomerId.Value, ct);
+        if (command.Credit is not null &&
+            (draft.CustomerId != command.Credit.CustomerId ||
+             command.Credit.Amount <= 0 ||
+             command.Credit.DueDate < command.IssuedAt))
+            throw new InvalidOperationException(
+                "El cliente, valor o vencimiento del crédito no coincide con la venta activa.");
         if (command.DocumentType == PosSaleDocumentTypes.Receipt && draft.CustomerId is not null)
         {
             if (customer?.RequiresElectronicInvoice == true)
@@ -270,7 +284,11 @@ public sealed class PosSaleCompletionService(
                 draft.CustomerId,
                 draft.SourceOrderId,
                 command.DocumentType,
-                withholding),
+                withholding,
+                command.Credit is null ? null : new PosSaleCreditContract(
+                    command.Credit.CustomerId,
+                    command.Credit.Amount,
+                    command.Credit.DueDate)),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;
@@ -298,7 +316,11 @@ public sealed class PosSaleCompletionService(
                 payment.CardFranchiseCode,
                 payment.ApprovalNumber,
                 payment.BankAccountId,
-                payment.Notes)).ToArray(),
+                payment.Notes))
+                .Concat(immutable.Credit is null
+                    ? []
+                    : [new OfflineSalePayment("Credit", immutable.Credit.Amount)])
+                .ToArray(),
             immutable.CommercialSnapshot.UntaxedAmount,
             immutable.CommercialSnapshot.TaxAmount,
             immutable.CommercialSnapshot.PayableAmount,

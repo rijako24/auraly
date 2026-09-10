@@ -20,11 +20,16 @@ public sealed record CompletePaymentRequest(
     Guid? BankAccountId = null,
     string? Notes = null);
 
+public sealed record CompleteCreditRequest(
+    decimal Amount,
+    DateTimeOffset DueDate);
+
 public sealed record CompleteDraftRequest(
     string? CustomerIdentification,
     IReadOnlyCollection<CompletePaymentRequest> Payments,
     PosSaleUblSnapshotContract? UblSnapshot = null,
-    string DocumentType = PosSaleDocumentTypes.Invoice);
+    string DocumentType = PosSaleDocumentTypes.Invoice,
+    CompleteCreditRequest? Credit = null);
 
 internal sealed record PosFiscalHostSettings(
     string SupplierTaxId,
@@ -158,6 +163,8 @@ internal static class PosSaleHostModule
             PosFiscalRuntimeSettings fiscalRuntime,
             PosCashDrawer cashDrawer,
             PosSynchronizationSignal synchronization,
+            PosDraftStore drafts,
+            PosCreditServerClient creditServer,
             PosLocalSessionAccessor sessions,
             ILogger<PosSaleCompletionService> logger,
             CancellationToken ct) =>
@@ -175,6 +182,49 @@ internal static class PosSaleHostModule
                         payment.Notes))
                     .ToArray();
                 var session = sessions.Required();
+                PosSaleCreditTerms? credit = null;
+                var ublSnapshot = request.UblSnapshot;
+                var customerIdentification = string.IsNullOrWhiteSpace(
+                    request.CustomerIdentification)
+                    ? settings.DefaultCustomerIdentification
+                    : request.CustomerIdentification.Trim();
+                if (request.Credit is not null)
+                {
+                    var draft = await drafts.GetAsync(new DraftId(draftId), ct)
+                        ?? throw new InvalidOperationException(
+                            "La venta activa no existe.");
+                    var customerId = draft.CustomerId
+                        ?? throw new InvalidOperationException(
+                            "Debe seleccionar un cliente para vender a crédito.");
+                    var validation = await creditServer.ValidateAsync(
+                        customerId,
+                        request.Credit.Amount,
+                        request.Credit.DueDate,
+                        PosSaleDocumentTypes.IsFiscal(request.DocumentType)
+                            ? (int?)fiscalRuntime.Current?.Environment
+                            : null,
+                        ct);
+                    credit = new PosSaleCreditTerms(
+                        customerId,
+                        request.Credit.Amount,
+                        request.Credit.DueDate);
+                    if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
+                    {
+                        var fiscal = fiscalRuntime.Current
+                            ?? throw new InvalidOperationException(
+                                "La caja no tiene una resolución fiscal activa.");
+                        var material = validation.FiscalMaterial
+                            ?? throw new InvalidOperationException(
+                                "Auraly Server no devolvió los datos fiscales vigentes.");
+                        ublSnapshot = BuildConnectedCreditUblSnapshot(
+                            draft,
+                            payments,
+                            credit,
+                            fiscal,
+                            material);
+                        customerIdentification = material.Customer.Identification;
+                    }
+                }
                 var result = await completion.CompleteAsync(
                     new DraftId(draftId),
                     new CompletePosSaleCommand(
@@ -182,17 +232,16 @@ internal static class PosSaleHostModule
                         settings.ContextFor(session),
                         DateTimeOffset.Now,
                         fiscalRuntime.Current?.SupplierTaxId,
-                        string.IsNullOrWhiteSpace(request.CustomerIdentification)
-                            ? settings.DefaultCustomerIdentification
-                            : request.CustomerIdentification.Trim(),
+                        customerIdentification,
                         fiscalRuntime.Current?.TechnicalKey,
                         fiscalRuntime.Current?.Environment,
                         fiscalRuntime.Current?.QrValidationUrl,
                         payments,
                         settings.PaperWidthMillimeters,
-                        request.UblSnapshot,
+                        ublSnapshot,
                         request.DocumentType,
-                        session.Permissions.ToHashSet(StringComparer.Ordinal)),
+                        session.Permissions.ToHashSet(StringComparer.Ordinal),
+                        credit),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
                 if (!result.PrintedDirectly && !string.IsNullOrWhiteSpace(result.PrintError))
@@ -252,6 +301,53 @@ internal static class PosSaleHostModule
             }
         });
         return edge;
+    }
+
+    private static PosSaleUblSnapshotContract BuildConnectedCreditUblSnapshot(
+        PosDraft draft,
+        IReadOnlyCollection<OfflineSalePayment> payments,
+        PosSaleCreditTerms credit,
+        PosFiscalHostSettings fiscal,
+        PosCreditFiscalMaterial material)
+    {
+        var currency = draft.Lines.Select(line => line.CurrencyCode)
+            .Distinct(StringComparer.Ordinal)
+            .Single();
+        var validFrom = fiscal.Series.ValidFrom
+            ?? throw new InvalidOperationException(
+                "La resolución fiscal local no conserva su fecha inicial.");
+        var payment = payments.FirstOrDefault();
+        var paymentMeans = payment is null
+            ? "ZZZ"
+            : PosSaleFiscalMappings.PaymentMeansCode(payment.MethodCode)
+              ?? throw new InvalidOperationException(
+                  "El medio de pago no tiene equivalencia fiscal configurada.");
+        return new PosSaleUblSnapshotContract(
+            material.FiscalIssuerConfigurationId,
+            currency,
+            "01",
+            material.Supplier,
+            material.Customer,
+            new PosSaleUblAuthorizationContract(
+                fiscal.Series.AuthorizationNumber,
+                validFrom,
+                fiscal.Series.ValidUntil,
+                fiscal.Series.Prefix,
+                fiscal.Series.AuthorizationRangeStart ?? fiscal.Series.RangeStart,
+                fiscal.Series.AuthorizationRangeEnd ?? fiscal.Series.RangeEnd),
+            material.SoftwareIdentificationCode,
+            draft.Lines.Select((line, index) => new PosSaleUblLineContract(
+                index + 1,
+                line.ProductCode,
+                "999",
+                line.UnitCode,
+                PosSaleFiscalMappings.TaxName(line.TaxCode),
+                line.TaxRate)).ToArray(),
+            "2",
+            paymentMeans,
+            DateOnly.FromDateTime(credit.DueDate.Date),
+            payments.Select(value => value.Reference)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)));
     }
 
     private static PosFiscalHostSettings? ReadFiscalSettings(

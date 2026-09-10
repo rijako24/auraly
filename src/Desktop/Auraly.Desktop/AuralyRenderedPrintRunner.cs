@@ -112,7 +112,7 @@ internal sealed class AuralyRenderedPrintForm : Form
                     "No fue posible preparar el documento para impresión.");
             await Task.Delay(250);
             await browser.CoreWebView2.ExecuteScriptAsync(
-                """
+                $$"""
                 (() => {
                   const previewActions = document.querySelectorAll('.actions');
                   previewActions.forEach(element => element.remove());
@@ -148,7 +148,7 @@ internal sealed class AuralyRenderedPrintForm : Form
                   if (cufe) cufe.style.fontSize = '9px';
                   const qr = document.querySelector('.qr');
                   if (qr) {
-                    qr.style.width = '38mm';
+                    qr.style.width = '{{PosReceiptPrintGeometry.QrWidthMillimeters}}mm';
                     qr.style.marginTop = '6px';
                     qr.style.marginBottom = '4px';
                   }
@@ -214,25 +214,32 @@ internal sealed class AuralyRenderedPrintForm : Form
                     "Math.max(document.documentElement.scrollWidth, document.body.scrollWidth)");
                 var width = JsonSerializer.Deserialize<int>(widthJson);
                 var captureScale = thermalRasterWidth / (double)width;
-                await browser.CoreWebView2.ExecuteScriptAsync(
-                    $$"""
-                    (() => {
-                      const qr = document.querySelector('.qr');
-                      const svg = qr?.querySelector('svg');
-                      const modules = svg?.viewBox?.baseVal?.width;
-                      if (qr && modules)
-                        qr.style.width = `${modules * 4 / {{captureScale.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}px`;
-                    })()
-                    """);
-                var qrGeometryJson = await browser.CoreWebView2.ExecuteScriptAsync(
-                    "(() => { const qr=document.querySelector('.qr'); const svg=qr?.querySelector('svg'); if(!qr||!svg) return null; const r=qr.getBoundingClientRect(); return [r.left,r.top,svg.viewBox.baseVal.width]; })()");
-                var qrValues = JsonSerializer.Deserialize<double[]?>(qrGeometryJson);
-                if (qrValues is { Length: 3 })
-                    qrGeometry = new QrRasterGeometry(
-                        (int)Math.Round(qrValues[0] * captureScale),
-                        (int)Math.Round(qrValues[1] * captureScale),
-                        (int)Math.Round(qrValues[2]),
-                        4);
+                var qrSizingJson = await browser.CoreWebView2.ExecuteScriptAsync(
+                    "(() => { const qr=document.querySelector('.qr'); const svg=qr?.querySelector('svg'); if(!qr||!svg) return null; return [svg.viewBox.baseVal.width,qr.getBoundingClientRect().width]; })()");
+                var qrSizing = JsonSerializer.Deserialize<double[]?>(qrSizingJson);
+                if (qrSizing is { Length: 2 })
+                {
+                    var modules = (int)Math.Round(qrSizing[0]);
+                    var pixelsPerModule = PosReceiptPrintGeometry.NearestThermalPixelsPerModule(
+                        modules, qrSizing[1], captureScale);
+                    await browser.CoreWebView2.ExecuteScriptAsync(
+                        $$"""
+                        (() => {
+                          const qr = document.querySelector('.qr');
+                          if (qr)
+                            qr.style.width = '{{(modules * pixelsPerModule / captureScale).ToString(System.Globalization.CultureInfo.InvariantCulture)}}px';
+                        })()
+                        """);
+                    var qrPositionJson = await browser.CoreWebView2.ExecuteScriptAsync(
+                        "(() => { const qr=document.querySelector('.qr'); if(!qr) return null; const r=qr.getBoundingClientRect(); return [r.left,r.top]; })()");
+                    var qrPosition = JsonSerializer.Deserialize<double[]?>(qrPositionJson);
+                    if (qrPosition is { Length: 2 })
+                        qrGeometry = new QrRasterGeometry(
+                            (int)Math.Round(qrPosition[0] * captureScale),
+                            (int)Math.Round(qrPosition[1] * captureScale),
+                            modules,
+                            pixelsPerModule);
+                }
                 var heightJson = await browser.CoreWebView2.ExecuteScriptAsync(
                     "Math.min(16000, Math.max(1, Math.ceil(document.querySelector('.receipt')?.getBoundingClientRect().bottom ?? document.body.scrollHeight)))");
                 var height = JsonSerializer.Deserialize<int>(heightJson);

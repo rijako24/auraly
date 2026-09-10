@@ -11,6 +11,38 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PosSynchronizationEventLogTests
 {
     [Fact]
+    public void Outbox_ordering_is_local_to_each_work_session()
+    {
+        var firstSession = Guid.NewGuid();
+        var secondSession = Guid.NewGuid();
+
+        Assert.False(PosOutboxOrdering.Blocks(
+            PosOutboxStatus.Pending,
+            10,
+            PosOutboxMessageTypes.WorkSessionClosure,
+            firstSession,
+            11,
+            PosOutboxMessageTypes.CashMovement,
+            secondSession));
+        Assert.True(PosOutboxOrdering.Blocks(
+            PosOutboxStatus.Pending,
+            11,
+            PosOutboxMessageTypes.CashMovement,
+            firstSession,
+            10,
+            PosOutboxMessageTypes.WorkSessionClosure,
+            firstSession));
+        Assert.False(PosOutboxOrdering.Blocks(
+            PosOutboxStatus.Pending,
+            10,
+            PosOutboxMessageTypes.WorkSessionClosure,
+            firstSession,
+            11,
+            PosOutboxMessageTypes.CashMovement,
+            firstSession));
+    }
+
+    [Fact]
     public async Task Failed_upload_lane_does_not_block_catalog_download_lane()
     {
         var events = new PosSynchronizationEventLog(TimeProvider.System);
@@ -164,7 +196,7 @@ public sealed class PosSynchronizationEventLogTests
     }
 
     [Fact]
-    public async Task Unified_outbox_preserves_device_chronology_across_consecutive_sessions()
+    public async Task Unified_outbox_isolates_retry_barriers_between_sessions()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-unified-outbox-{Guid.NewGuid():N}.db");
         var connectionString = $"Data Source={path}";
@@ -185,10 +217,70 @@ public sealed class PosSynchronizationEventLogTests
             var dispatcher = new PosUnifiedOutboxDispatcher(
                 connectionString, new FixedTimeProvider(now));
 
-            Assert.Null(await dispatcher.NextAsync());
+            Assert.Equal(PosUnifiedOutboxRoute.CashMovement, await dispatcher.NextAsync());
             dispatcher = new PosUnifiedOutboxDispatcher(
                 connectionString, new FixedTimeProvider(now.AddMinutes(1)));
             Assert.Equal(PosUnifiedOutboxRoute.Sale, await dispatcher.NextAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Unified_outbox_recovers_a_same_session_document_queued_after_its_closure()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-unified-outbox-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path}";
+        var now = new DateTimeOffset(2026, 9, 10, 15, 0, 0, TimeSpan.Zero);
+        var closedSession = Guid.NewGuid();
+        var nextSession = Guid.NewGuid();
+        var closureId = Guid.NewGuid();
+        var movementId = Guid.NewGuid();
+        var nextOpeningId = Guid.NewGuid();
+        var nextMovementId = Guid.NewGuid();
+        try
+        {
+            await PosUnifiedOutboxSchema.EnsureCreatedAsync(connectionString);
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync();
+            await InsertAsync(connection, closureId, closedSession,
+                PosOutboxMessageTypes.WorkSessionClosure, "RetryScheduled", now,
+                now.AddMinutes(5));
+            await InsertAsync(connection, movementId, closedSession,
+                PosOutboxMessageTypes.CashMovement, "Pending", now.AddSeconds(1), null);
+            await InsertAsync(connection, nextOpeningId, nextSession,
+                PosOutboxMessageTypes.WorkSessionOpened, "Pending", now.AddSeconds(2), null);
+            await InsertAsync(connection, nextMovementId, nextSession,
+                PosOutboxMessageTypes.CashMovement, "Pending", now.AddSeconds(3), null);
+
+            var dispatcher = new PosUnifiedOutboxDispatcher(
+                connectionString, new FixedTimeProvider(now));
+
+            Assert.Equal(PosUnifiedOutboxRoute.CashMovement, await dispatcher.NextAsync());
+
+            var cashStore = new PosCashMovementStore(
+                connectionString, new FixedTimeProvider(now));
+            var claimed = await cashStore.ClaimAsync();
+            Assert.NotNull(claimed);
+            Assert.Equal(movementId, claimed.Value.DocumentId);
+
+            await SetStatusAsync(connection, movementId, PosOutboxStatus.Uploaded);
+            Assert.Equal(PosUnifiedOutboxRoute.WorkSessionOpened, await dispatcher.NextAsync());
+
+            await SetStatusAsync(connection, nextOpeningId, PosOutboxStatus.Uploaded);
+            Assert.Equal(PosUnifiedOutboxRoute.CashMovement, await dispatcher.NextAsync());
+
+            await SetStatusAsync(connection, nextMovementId, PosOutboxStatus.Uploaded);
+            Assert.Null(await dispatcher.NextAsync());
+
+            await SetNextAttemptAsync(connection, closureId, now);
+            Assert.Equal(PosUnifiedOutboxRoute.WorkSessionClosure, await dispatcher.NextAsync());
+
+            await SetStatusAsync(connection, closureId, PosOutboxStatus.Uploaded);
+            Assert.Null(await dispatcher.NextAsync());
         }
         finally
         {
@@ -273,6 +365,30 @@ public sealed class PosSynchronizationEventLogTests
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$created", createdAt.ToString("O"));
         command.Parameters.AddWithValue("$next", (object?)nextAttemptAt?.ToString("O") ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task SetStatusAsync(
+        SqliteConnection connection,
+        Guid documentId,
+        string status)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE Outbox SET Status=$status WHERE DocumentId=$id;";
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$id", documentId.ToString("D"));
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task SetNextAttemptAsync(
+        SqliteConnection connection,
+        Guid documentId,
+        DateTimeOffset nextAttemptAt)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE Outbox SET NextAttemptAt=$next WHERE DocumentId=$id;";
+        command.Parameters.AddWithValue("$next", nextAttemptAt.ToString("O"));
+        command.Parameters.AddWithValue("$id", documentId.ToString("D"));
         await command.ExecuteNonQueryAsync();
     }
 

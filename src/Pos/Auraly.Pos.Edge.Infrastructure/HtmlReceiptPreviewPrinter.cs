@@ -7,6 +7,26 @@ using QRCoder;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
+public static class PosReceiptPrintGeometry
+{
+    public const int QrWidthMillimeters = 42;
+
+    public static int NearestThermalPixelsPerModule(
+        int modules,
+        double targetCssWidth,
+        double captureScale)
+    {
+        if (modules <= 0) throw new ArgumentOutOfRangeException(nameof(modules));
+        if (!double.IsFinite(targetCssWidth) || targetCssWidth <= 0)
+            throw new ArgumentOutOfRangeException(nameof(targetCssWidth));
+        if (!double.IsFinite(captureScale) || captureScale <= 0)
+            throw new ArgumentOutOfRangeException(nameof(captureScale));
+        return Math.Max(1, (int)Math.Round(
+            targetCssWidth * captureScale / modules,
+            MidpointRounding.AwayFromZero));
+    }
+}
+
 public interface IReceiptPreviewLauncher
 {
     Task OpenAsync(string absolutePath, CancellationToken cancellationToken = default);
@@ -152,7 +172,7 @@ public sealed class HtmlReceiptPreviewRenderer
                 .tax-table td { padding: 3px 0; text-align: right; font-variant-numeric: tabular-nums; }
                 .total { margin-top: 5px; font-size: 16px; font-weight: 900; }
                 .cufe { overflow-wrap: anywhere; font-size: 9px; }
-                .qr { width: 38mm; max-width: 100%; margin: 6px auto 4px; }
+                .qr { width: {{PosReceiptPrintGeometry.QrWidthMillimeters}}mm; max-width: 100%; margin: 6px auto 4px; }
                 .qr svg { display: block; width: 100%; height: auto; }
                 .platform-footer { margin-top: 10px; text-align: center; font: 10px/1.4 system-ui, sans-serif; color: #49666a; }
                 .platform-footer strong { color: #065f5b; font-size: 12px; }

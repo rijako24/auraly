@@ -107,17 +107,15 @@ public sealed class PosCustomerOutboxStore(
         await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
         await using var read = connection.CreateCommand();
         read.Transaction = transaction;
-        read.CommandText = """
+        read.CommandText = $$"""
             SELECT DocumentId,Payload,AttemptCount FROM Outbox
-            WHERE Type=$type
-              AND ((Status IN ('Pending','RetryScheduled') AND
-                    (NextAttemptAt IS NULL OR NextAttemptAt<=$now))
-                   OR (Status='Uploading' AND LastAttemptAt<$stale))
-              AND NOT EXISTS (
-                  SELECT 1 FROM Outbox prior
-                  WHERE prior.Status<>'Uploaded'
-                    AND prior.LocalSequence<Outbox.LocalSequence)
-            ORDER BY LocalSequence LIMIT 1;
+            AS current
+            WHERE current.Type=$type
+              AND ((current.Status IN ('Pending','RetryScheduled') AND
+                    (current.NextAttemptAt IS NULL OR current.NextAttemptAt<=$now))
+                   OR (current.Status='Uploading' AND current.LastAttemptAt<$stale))
+              AND {{PosOutboxOrdering.NoBlockingPriorRowSql}}
+            ORDER BY current.LocalSequence LIMIT 1;
             """;
         read.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CustomerCreated);
         read.Parameters.AddWithValue("$now", now.ToString("O"));

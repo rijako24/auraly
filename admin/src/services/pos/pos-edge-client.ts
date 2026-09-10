@@ -1147,14 +1147,11 @@ export class PosEdgeClient implements PosClient {
     if (fiscalHabilitationOnly)
       return Promise.reject(new PosEdgeError(
         "La habilitación DIAN requiere conexión con Auraly Server.", 409));
-    if (credit)
-      return Promise.reject(new PosEdgeError(
-        "La venta a crédito requiere conexión para validar el cupo actual del cliente.", 409));
     return this.request<PosEdgeCompleteSaleResult>(
       `/edge/v1/drafts/${draftId}/complete`,
       {
         method: "POST",
-        body: JSON.stringify({ customerIdentification, payments, documentType }),
+        body: JSON.stringify({ customerIdentification, payments, documentType, credit }),
       },
     ).then((result) => ({
       ...result,

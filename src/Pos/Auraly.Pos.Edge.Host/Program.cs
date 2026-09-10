@@ -211,6 +211,7 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<PosOperationalScope>()));
         builder.Services.AddSingleton<PosCustomerOutboxUploader>();
         builder.Services.AddSingleton<PosProductAvailabilityServerClient>();
+        builder.Services.AddSingleton<PosCreditServerClient>();
         builder.Services.AddSingleton<PosRemoteApprovalClient>();
         builder.Services.AddSingleton<PosSensitiveActionAuthorizer>();
         builder.Services.AddSingleton<PosOrderServerClient>();

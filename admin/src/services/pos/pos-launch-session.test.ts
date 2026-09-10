@@ -5,6 +5,7 @@ import {
   installedPosLaunchDestination,
   shouldFallbackToLocalPos,
   usesEnrolledPosRuntime,
+  workspaceActivationMode,
 } from "./pos-launch-session";
 import { isCurrentEdgeUserSession } from "./pos-edge-session";
 import {
@@ -96,6 +97,20 @@ test("enrollment is the single owner of installed runtime selection", () => {
   assert.equal(
     usesEnrolledPosRuntime({ status: "EnrollmentRequired", identityReady: false }),
     false,
+  );
+});
+test("configuration never changes an enrolled installation to the online adapter", () => {
+  assert.equal(
+    workspaceActivationMode("edge", "business-a", "warehouse-a", "business-a", "warehouse-a"),
+    "keep-edge",
+  );
+  assert.equal(
+    workspaceActivationMode("edge", "business-a", "warehouse-a", "business-b", "warehouse-b"),
+    "reenrollment-required",
+  );
+  assert.equal(
+    workspaceActivationMode("online", "business-a", "warehouse-a", "business-b", "warehouse-b"),
+    "activate-online",
   );
 });
 test("order printing selects the installed transport without changing issuance ownership", () => {

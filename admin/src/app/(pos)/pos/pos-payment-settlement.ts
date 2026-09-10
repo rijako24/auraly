@@ -47,10 +47,8 @@ export function splitCreditCheckout(
   if (creditRows.length === 0) return { payments, credit: null };
   if (creditRows.length > 1) throw new Error("La venta admite una sola línea de crédito.");
   const creditRow = creditRows[0];
-  if (!customer?.isCreditEnabled)
-    throw new Error("El cliente no está habilitado para ventas a crédito.");
-  if (customer.availableCredit != null && creditRow.amount - customer.availableCredit > tolerance)
-    throw new Error("La venta supera el cupo disponible del cliente.");
+  if (!customer)
+    throw new Error("Debe seleccionar un cliente para vender a crédito.");
   const dueDate = new Date(now.getTime() + (customer.defaultCreditDueDays ?? 0) * 86_400_000);
   return {
     payments: payments.filter((payment) => payment.methodCode !== "Credit"),

@@ -744,104 +744,22 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid businessId,
         Guid? customerId,
         CheckoutConfiguration configuration,
-        CancellationToken ct)
-    {
-        if (customerId is null)
-            return FinalConsumer(configuration);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT p.PartyType,p.Identification,p.VerificationDigit,
-                   p.IdentificationTypeCode,
-                   COALESCE(p.LegalName,p.DisplayName,
-                     NULLIF(LTRIM(RTRIM(CONCAT(p.FirstName,N' ',p.LastName))),N'')),
-                   COALESCE(p.DisplayName,p.LegalName),
-                   country.Code,country.Name,division.Code,division.Name,
-                   city.Code,city.Name,site.AddressLine,
-                   email.Value,phone.Value
-            FROM dbo.Customers c
-            JOIN dbo.Parties p ON p.PartyId=c.PartyId
-            OUTER APPLY(
-              SELECT TOP(1) value.* FROM dbo.PartySites value
-              WHERE value.PartyId=p.PartyId AND value.IsActive=1
-              ORDER BY value.IsPrimary DESC,value.CreatedAt,value.PartySiteId) site
-            LEFT JOIN dbo.Countries country ON country.CountryId=site.CountryId
-            LEFT JOIN dbo.AdministrativeDivisions division
-              ON division.AdministrativeDivisionId=site.AdministrativeDivisionId
-            LEFT JOIN dbo.Cities city ON city.CityId=site.CityId
-            OUTER APPLY(
-              SELECT TOP(1) value.Value FROM dbo.PartyContacts value
-              WHERE value.PartyId=p.PartyId AND value.ContactType=N'Email'
-                AND value.IsActive=1 ORDER BY value.IsPrimary DESC,value.CreatedAt) email
-            OUTER APPLY(
-              SELECT TOP(1) value.Value FROM dbo.PartyContacts value
-              WHERE value.PartyId=p.PartyId AND value.ContactType=N'Phone'
-                AND value.IsActive=1 ORDER BY value.IsPrimary DESC,value.CreatedAt) phone
-            WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId
-              AND c.IsActive=1 AND p.IsActive=1;
-            """;
-        command.Parameters.AddRange([
-            P("@CustomerId", customerId),
-            P("@BusinessId", businessId)
-        ]);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct) || reader.IsDBNull(1))
-            return FinalConsumer(configuration);
-        var fallback = configuration.Supplier.Address;
-        return new PosSaleUblPartyContract(
-            reader.GetString(1),
-            reader.IsDBNull(2) ? "0" : reader.GetString(2),
-            reader.IsDBNull(3) ? "13" : reader.GetString(3),
-            reader.GetString(0) == "Organization" ? "1" : "2",
-            reader.IsDBNull(4) ? "Consumidor final" : reader.GetString(4),
-            reader.IsDBNull(5)
-                ? reader.IsDBNull(4) ? "Consumidor final" : reader.GetString(4)
-                : reader.GetString(5),
-            "R-99-PN",
-            "01",
-            "IVA",
-            new PosSaleUblAddressContract(
-                reader.IsDBNull(10) ? fallback.MunicipalityCode : reader.GetString(10),
-                reader.IsDBNull(11) ? fallback.CityName : reader.GetString(11),
-                reader.IsDBNull(9) ? fallback.DepartmentName : reader.GetString(9),
-                reader.IsDBNull(8) ? fallback.DepartmentCode : reader.GetString(8),
-                reader.IsDBNull(12) ? fallback.AddressLine : reader.GetString(12),
-                reader.IsDBNull(6) ? fallback.CountryCode : reader.GetString(6),
-                reader.IsDBNull(7) ? fallback.CountryName : reader.GetString(7)),
-            reader.IsDBNull(13) ? null : reader.GetString(13),
-            reader.IsDBNull(14) ? null : reader.GetString(14));
-    }
+        CancellationToken ct) =>
+        await SqlSaleUblPartyReader.ReadCustomerAsync(
+            connection,
+            transaction,
+            businessId,
+            customerId,
+            configuration.Supplier.Address,
+            ct);
 
-    private static PosSaleUblPartyContract FinalConsumer(
-        CheckoutConfiguration configuration) =>
-        new(
-            "222222222222",
-            "0",
-            "13",
-            "2",
-            "Consumidor final",
-            "Consumidor final",
-            "R-99-PN",
-            "01",
-            "IVA",
-            configuration.Supplier.Address);
+    private static string PaymentMeansCode(string methodCode) =>
+        PosSaleFiscalMappings.PaymentMeansCode(methodCode)
+        ?? throw new OnlineSalesDraftValidationException(
+            "El medio de pago no tiene equivalencia fiscal configurada.");
 
-    private static string PaymentMeansCode(string methodCode) => methodCode switch
-    {
-        "Cash" => "10",
-        "DebitCard" => "49",
-        "CreditCard" => "48",
-        "Transfer" => "42",
-        _ => throw new OnlineSalesDraftValidationException(
-            "El medio de pago no tiene equivalencia fiscal configurada.")
-    };
-
-    private static string TaxName(string taxCode) => taxCode switch
-    {
-        "01" => "IVA",
-        "04" => "INC",
-        _ => "Impuesto"
-    };
+    private static string TaxName(string taxCode) =>
+        PosSaleFiscalMappings.TaxName(taxCode);
 
     private static string CheckoutHash(
         Guid draftId,

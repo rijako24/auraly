@@ -69,7 +69,8 @@ public sealed record PosEdgeIssueCommand(
     Guid? CustomerId = null,
     Guid? SourceOrderId = null,
     string DocumentType = PosSaleDocumentTypes.Invoice,
-    WithholdingCalculationSnapshot? Withholding = null);
+    WithholdingCalculationSnapshot? Withholding = null,
+    PosSaleCreditContract? Credit = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -710,7 +711,14 @@ public sealed class PosEdgeSaleStore
                 (item.Status == PosOutboxStatus.Uploading &&
                  item.LeaseAcquiredAt != null &&
                  item.LeaseAcquiredAt <= staleBefore)) &&
-                !pending.Any(prior => IsEarlier(prior, item)))
+                !pending.Any(prior => PosOutboxOrdering.Blocks(
+                    prior.Status,
+                    prior.LocalSequence,
+                    prior.Type,
+                    prior.WorkSessionId,
+                    item.LocalSequence,
+                    item.Type,
+                    item.WorkSessionId)))
             .OrderBy(item => item.LocalSequence)
             .FirstOrDefault();
         if (row is null)
@@ -728,9 +736,6 @@ public sealed class PosEdgeSaleStore
         await transaction.CommitAsync(cancellationToken);
         return ToOutboxItem.Compile().Invoke(row);
     }
-
-    private static bool IsEarlier(PosOutboxRow prior, PosOutboxRow current) =>
-        prior.LocalSequence < current.LocalSequence;
 
     public async Task<PosEdgeOutboxItem?> GetOutboxAsync(
         DocumentId documentId,
@@ -1037,16 +1042,24 @@ public sealed class PosEdgeSaleStore
                     payment.BankAccountId,
                     payment.Notes))
                 .ToArray()
-            : [new PosSalePaymentContract(1, "Cash", command.Withholding?.NetAmount ?? invoice.PayableAmount, null)];
+            : command.Credit is not null
+                ? []
+                : [new PosSalePaymentContract(
+                    1,
+                    "Cash",
+                    command.Withholding?.NetAmount ?? invoice.PayableAmount,
+                    null)];
         var withholding = command.Withholding ??
             new WithholdingCalculationSnapshot(invoice.PayableAmount, 0m, invoice.PayableAmount, []);
         if (withholding.GrossAmount != invoice.PayableAmount ||
             withholding.WithholdingTotal != withholding.Lines.Sum(line => line.Amount) ||
             withholding.NetAmount + withholding.WithholdingTotal != invoice.PayableAmount)
             throw new InvalidOperationException("The withholding snapshot does not reconcile with the sale.");
-        if (payments.Sum(payment => payment.Amount) != withholding.NetAmount)
+        if (payments.Sum(payment => payment.Amount) +
+                (command.Credit?.Amount ?? 0m) != withholding.NetAmount)
         {
-            throw new InvalidOperationException("Payments must equal the payable amount.");
+            throw new InvalidOperationException(
+                "Actual payments plus financed balance must equal the payable amount.");
         }
         if (payments.Any(payment =>
                 (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
@@ -1114,7 +1127,8 @@ public sealed class PosEdgeSaleStore
             payments,
             snapshot is null ? null : command.UblSnapshot,
             command.CustomerId,
-            SourceOrderId: command.SourceOrderId);
+            SourceOrderId: command.SourceOrderId,
+            Credit: command.Credit);
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>

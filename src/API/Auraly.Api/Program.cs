@@ -446,6 +446,8 @@ builder.Services.AddScoped<IPayrollReportingStore, SqlPayrollReportingStore>();
 builder.Services.AddScoped<PayrollReportingService>();
 builder.Services.AddScoped<IReceivablesStore, SqlReceivablesStore>();
 builder.Services.AddScoped<ReceivablesService>();
+builder.Services.AddScoped<SqlCustomerCreditValidator>();
+builder.Services.AddScoped<SqlPosCreditFiscalMaterialReader>();
 builder.Services.AddScoped<IPricingStore, SqlPricingStore>();
 builder.Services.AddScoped<PricingService>();
 builder.Services.AddScoped<SqlInventoryOperationStore>();
@@ -697,6 +699,47 @@ app.MapPriceSegmentsApi();
 app.MapAccountingApi();
 app.MapSalesReportingApi();
 app.MapTaxationApi();
+app.MapPost(
+        "/api/pos/v1/sales/credit-validation",
+        async (
+            HttpContext httpContext,
+            PosCreditValidationRequest request,
+            SqlCustomerCreditValidator validator,
+            SqlPosCreditFiscalMaterialReader fiscalMaterial,
+            CancellationToken cancellationToken) =>
+        {
+            if (request.BusinessId == Guid.Empty || request.CustomerId == Guid.Empty ||
+                request.Amount <= 0 || request.DueDate == default)
+                return Results.Problem(
+                    "El cliente, valor y vencimiento de la venta a crédito no son válidos.",
+                    statusCode: StatusCodes.Status400BadRequest);
+            var identity = httpContext.User.ToPosDeviceIdentity();
+            var result = await validator.ValidateAsync(
+                identity.TenantId, identity.DeviceId, request, cancellationToken);
+            if (result.IsAllowed && request.FiscalEnvironment is not null)
+            {
+                if (request.FiscalEnvironment is not (1 or 2))
+                    return Results.Problem(
+                        "El ambiente fiscal de la caja no es válido.",
+                        statusCode: StatusCodes.Status400BadRequest);
+                result = result with
+                {
+                    FiscalMaterial = await fiscalMaterial.ReadAsync(
+                        identity.TenantId,
+                        identity.DeviceId,
+                        request.BusinessId,
+                        request.CustomerId,
+                        request.FiscalEnvironment.Value,
+                        cancellationToken)
+                };
+            }
+            return result.IsAllowed
+                ? Results.Ok(result)
+                : Results.Problem(
+                    result.RejectionReason,
+                    statusCode: StatusCodes.Status409Conflict);
+        })
+    .RequireAuthorization("pos.enrolled");
 app.MapPost(
         "/api/pos/v1/sales",
         async (

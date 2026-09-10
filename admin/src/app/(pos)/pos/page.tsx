@@ -114,7 +114,7 @@ import { capturePosFunctionShortcut, isPosCashDrawerShortcut, POS_ACTION_SHORTCU
 import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
-import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
+import { usesEnrolledPosRuntime, workspaceActivationMode } from "@/services/pos/pos-launch-session";
 import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -2324,6 +2324,25 @@ export default function PosPage() {
   async function activateOnline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
     setSetupError(null);
     const requestedWorkspace = salesWorkspaceKey(option.businessId, option.warehouseId);
+    const activation = workspaceActivationMode(
+      client?.mode ?? null,
+      workstation.businessId,
+      workstation.warehouseId,
+      option.businessId,
+      option.warehouseId,
+    );
+    if (activation === "reenrollment-required") {
+      throw new Error(
+        "Un equipo enrolado cambia de sede o bodega únicamente mediante un nuevo enrolamiento.",
+      );
+    }
+    if (activation === "keep-edge") {
+      setDocumentType(initialDocumentType);
+      window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
+      setWorkspaceChanging(false);
+      focusScanner();
+      return;
+    }
     if (
       workspaceChanging &&
       client?.mode === "online" &&

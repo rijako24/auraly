@@ -171,12 +171,6 @@ export function PosPaymentDialog({
 
   const addPayment = useCallback((requestedMethod?: string) => {
     if (busy) return;
-    if (requestedMethod === "Credit" && !customer?.isCreditEnabled) {
-      setCreditError(customer
-        ? "Este cliente no está habilitado para ventas a crédito. Actívalo en su ficha antes de facturar."
-        : "Selecciona un cliente habilitado para crédito antes de usar este medio.");
-      return;
-    }
     setCreditError(null);
     const active = activePaymentId
       ? payments.find((payment) => payment.id === activePaymentId)
@@ -222,7 +216,7 @@ export function PosPaymentDialog({
     if (requiresCardCapture(nextMethod.code)) openCardCapture(id);
     else if (nextMethod.code === "Transfer") openTransferCapture(id);
     else setPendingFocusId(id);
-  }, [activePaymentId, busy, customer, focusAmount, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, settlement.missing]);
+  }, [activePaymentId, busy, focusAmount, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, settlement.missing]);
 
   useEffect(() => {
     if (!pendingFocusId) return;

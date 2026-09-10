@@ -56,6 +56,8 @@
     "src/services/pos/pos-work-session-close.ts",
     "src/services/pos/pos-work-session-close.test.ts",
     "src/services/pos/pos-receipt-brand.test.ts",
+    "src/services/pos/pos-receipt-line-markup.ts",
+    "src/services/pos/pos-receipt-line-markup.test.ts",
     "src/services/pos/pos-receipt-print-routing.ts",
     "src/services/pos/pos-receipt-print-routing.test.ts",
     "src/services/pos/pos-order-print-routing.ts",

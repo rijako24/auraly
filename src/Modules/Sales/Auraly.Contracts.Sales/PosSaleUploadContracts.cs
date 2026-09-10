@@ -164,6 +164,46 @@ public sealed record PosSaleCreditContract(
     decimal Amount,
     DateTimeOffset DueDate);
 
+public sealed record PosCreditValidationRequest(
+    Guid BusinessId,
+    Guid CustomerId,
+    decimal Amount,
+    DateTimeOffset DueDate,
+    int? FiscalEnvironment = null);
+
+public sealed record PosCreditFiscalMaterial(
+    Guid FiscalIssuerConfigurationId,
+    string SoftwareIdentificationCode,
+    PosSaleUblPartyContract Supplier,
+    PosSaleUblPartyContract Customer);
+
+public sealed record PosCreditValidationResult(
+    Guid CustomerId,
+    decimal Amount,
+    decimal? AvailableCredit,
+    bool IsAllowed,
+    string? RejectionReason,
+    PosCreditFiscalMaterial? FiscalMaterial = null);
+
+public static class PosSaleFiscalMappings
+{
+    public static string? PaymentMeansCode(string methodCode) => methodCode switch
+    {
+        "Cash" => "10",
+        "DebitCard" => "49",
+        "CreditCard" => "48",
+        "Transfer" => "42",
+        _ => null
+    };
+
+    public static string TaxName(string taxCode) => taxCode switch
+    {
+        "01" => "IVA",
+        "04" => "INC",
+        _ => "Impuesto"
+    };
+}
+
 public sealed record PosSaleUploadRequest(
     Guid TenantId,
     Guid BusinessId,

@@ -33,8 +33,11 @@ Las tablas pertenecen al `BusinessId`; el `TenantId` se valida mediante la relac
 
 ## Flujo conectado
 
-1. La venta online recibe pagos reales y, opcionalmente, términos de crédito.
-2. La captura valida cliente, vencimiento, perfil y cupo.
+1. La venta online o Edge conectado recibe pagos reales y, opcionalmente,
+   términos de crédito.
+2. Un único validador SQL de cartera valida cliente, perfil, obligaciones abiertas
+   y crédito pendiente de procesar. El checkout web lo usa en su transacción; Edge
+   lo invoca por el servidor antes de emitir y el ingreso durable lo revalida.
 3. El motor operacional procesa inventario/costo y publica una señal contable exactamente una vez.
 4. El motor financiero-contable crea en su transacción la obligación y el movimiento inicial; agrega el asiento únicamente si contabilidad estaba activa al aceptar la fuente.
 5. La API permite consultar cartera paginada y registrar un recaudo con llave de idempotencia.
@@ -53,6 +56,9 @@ Las tablas pertenecen al `BusinessId`; el `TenantId` se valida mediante la relac
 - La aceptación usa aislamiento `Serializable`, bloqueos de actualización y reintento acotado de deadlock.
 - Dos abonos concurrentes que excedan el saldo no pueden ser aceptados ambos.
 - La configuración de cupo se actualiza en una transacción serializable.
+- La UI y el catálogo local no son autoridad para autorizar cupo. Un snapshot
+  descargado puede orientar la captura, pero la decisión usa el saldo actual del
+  servidor.
 
 ## Contabilidad
 
@@ -66,4 +72,8 @@ Las tablas pertenecen al `BusinessId`; el `TenantId` se valida mediante la relac
 
 ## Límites deliberados de esta rebanada
 
-Esta entrega cubre crédito y recaudo online. El crédito offline no se habilita hasta sincronizar perfil, cupo y una política explícita a POS Edge. Tampoco incluye intereses, cuotas, cheques posfechados, castigos, retenciones, conciliación bancaria ni una pantalla de configuración del perfil dentro del editor de clientes.
+Esta entrega cubre crédito y recaudo online y crédito desde POS Edge mientras
+exista conexión efectiva con Auraly Server. El crédito sin servidor permanece
+bloqueado; no se habilita a partir del cupo sincronizado. Tampoco incluye
+intereses, cuotas, cheques posfechados, castigos, retenciones ni conciliación
+bancaria.

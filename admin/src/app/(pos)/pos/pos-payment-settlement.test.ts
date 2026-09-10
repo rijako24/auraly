@@ -67,9 +67,18 @@ describe("splitCreditCheckout", () => {
     assert.deepEqual(value.credit, { amount: 60, dueDate: "2026-09-22T12:00:00.000Z" });
   });
 
-  it("blocks disabled credit and insufficient available credit", () => {
-    assert.throws(() => splitCreditCheckout([{ methodCode: "Credit", amount: 60, reference: null }], { ...customer, isCreditEnabled: false }), /no está habilitado/);
-    assert.throws(() => splitCreditCheckout([{ methodCode: "Credit", amount: 600, reference: null }], customer), /supera el cupo/);
+  it("leaves credit authorization to the current server balance", () => {
+    assert.doesNotThrow(() => splitCreditCheckout(
+      [{ methodCode: "Credit", amount: 600, reference: null }],
+      { ...customer, isCreditEnabled: false, availableCredit: 0 },
+    ));
+    assert.throws(
+      () => splitCreditCheckout(
+        [{ methodCode: "Credit", amount: 60, reference: null }],
+        null,
+      ),
+      /seleccionar un cliente/,
+    );
   });
 });
 

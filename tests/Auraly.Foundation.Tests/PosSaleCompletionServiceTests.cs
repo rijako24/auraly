@@ -141,6 +141,38 @@ public sealed class PosSaleCompletionServiceTests
         });
     }
 
+    [Fact]
+    public async Task Server_authorized_credit_is_persisted_as_financing_not_received_money()
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            var customerId = Guid.NewGuid();
+            var draft = await fixture.AddLineAsync();
+            draft = await fixture.Drafts.AssignPartiesAsync(
+                draft.DraftId,
+                customerId,
+                sellerId: null);
+
+            var result = await fixture.CompleteAsync(
+                draft.DraftId,
+                payments: [],
+                credit: new PosSaleCreditTerms(
+                    customerId,
+                    10_000m,
+                    fixture.IssuedAt.AddDays(30)));
+
+            var pending = Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
+            var upload = PosSaleContractSerializer.Deserialize(pending.Payload);
+            Assert.Empty(upload.Payments);
+            Assert.NotNull(upload.Credit);
+            Assert.Equal(customerId, upload.Credit.CustomerId);
+            Assert.Equal(10_000m, upload.Credit.Amount);
+            var receiptCredit = Assert.Single(result.Receipt.Payments);
+            Assert.Equal("Credit", receiptCredit.MethodCode);
+            Assert.Equal(10_000m, receiptCredit.Amount);
+        });
+    }
+
     private static async Task WithFixtureAsync(Func<Fixture, Task> test)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-completion-{Guid.NewGuid():N}.db");
@@ -259,7 +291,8 @@ public sealed class PosSaleCompletionServiceTests
 
         public Task<CompletePosSaleResult> CompleteAsync(
             DraftId draftId,
-            IReadOnlyCollection<OfflineSalePayment>? payments = null) =>
+            IReadOnlyCollection<OfflineSalePayment>? payments = null,
+            PosSaleCreditTerms? credit = null) =>
             new PosSaleCompletionService(Drafts, Issuance, Sales, Printer).CompleteAsync(
                 draftId,
                 new CompletePosSaleCommand(
@@ -272,7 +305,8 @@ public sealed class PosSaleCompletionServiceTests
                     FiscalEnvironment.Test,
                     "https://catalogo-vpfe.dian.gov.co/document/searchqr",
                     payments ?? [new OfflineSalePayment("Cash", 10_000m)],
-                    80));
+                    80,
+                    Credit: credit));
     }
 
     private sealed class RecordingPrinter : IPosReceiptPrinter

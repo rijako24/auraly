@@ -197,6 +197,54 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Enrolled_device_credit_validation_uses_the_current_server_balance()
+    {
+        var (customerId, userId) = await ConfigureAsync();
+        using (var user = fixture.CreateUserClient(
+                   userId,
+                   ReceivablesPermissionCodes.ManageCredit))
+        using (var profile = await user.PutAsJsonAsync(
+                   $"/api/commerce/v1/customers/{customerId:D}/credit",
+                   new UpdateCustomerCreditProfileRequest(
+                       fixture.BusinessId, 500_000m, 30, true)))
+            profile.EnsureSuccessStatusCode();
+
+        using var device = fixture.CreateClient();
+        device.DefaultRequestHeaders.Add(
+            "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        device.DefaultRequestHeaders.Add(
+            "X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        var dueDate = DateTimeOffset.UtcNow.AddDays(30);
+        using (var allowed = await device.PostAsJsonAsync(
+                   "/api/pos/v1/sales/credit-validation",
+                   new PosCreditValidationRequest(
+                       fixture.BusinessId, customerId, 100_000m, dueDate,
+                       FiscalEnvironment: 2)))
+        {
+            allowed.EnsureSuccessStatusCode();
+            var result = await allowed.Content.ReadFromJsonAsync<PosCreditValidationResult>();
+            Assert.NotNull(result);
+            Assert.True(result.IsAllowed);
+            Assert.Equal(500_000m, result.AvailableCredit);
+            Assert.NotNull(result.FiscalMaterial);
+            Assert.Equal(
+                ServerSliceFixture.SupplierTaxId,
+                result.FiscalMaterial.Supplier.Identification);
+            Assert.Equal(customerId, result.CustomerId);
+        }
+
+        using var rejected = await device.PostAsJsonAsync(
+            "/api/pos/v1/sales/credit-validation",
+            new PosCreditValidationRequest(
+                fixture.BusinessId, customerId, 600_000m, dueDate));
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Contains(
+            "supera el cupo disponible",
+            await rejected.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Credit_sale_and_customer_payment_are_scoped_idempotent_and_accounted_once()
     {
         var (customerId, userId) = await ConfigureAsync();

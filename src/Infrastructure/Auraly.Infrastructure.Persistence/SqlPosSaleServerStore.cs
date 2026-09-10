@@ -201,6 +201,9 @@ public sealed class SqlPosSaleServerStore(
                 return existing;
             }
 
+            await ValidateCreditAsync(
+                connection, transaction, request, cancellationToken);
+
             var isFiscal = request.FiscalSnapshot is not null;
             var hasDianQuota = !isFiscal || !command.Verification.IsVerified ||
                 await SqlDianDocumentQuota.TryReserveAsync(connection, transaction,
@@ -278,6 +281,30 @@ public sealed class SqlPosSaleServerStore(
 
         return await FindAsync(request.BusinessId, request.DocumentId, command.IdempotencyKey, cancellationToken)
             ?? throw new InvalidOperationException("The idempotent sale transaction completed without a persisted document.");
+    }
+
+    private static async Task ValidateCreditAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Credit is null) return;
+        var enrolledDeviceId = request.DeviceId == Guid.Empty
+            ? (Guid?)null
+            : request.DeviceId;
+        var validation = await SqlCustomerCreditValidator.ValidateWithinTransactionAsync(
+            connection,
+            transaction,
+            enrolledDeviceId is null ? null : request.TenantId,
+            enrolledDeviceId,
+            request.BusinessId,
+            request.Credit.CustomerId,
+            request.Credit.Amount,
+            cancellationToken);
+        if (!validation.IsAllowed)
+            throw new PosSaleInvalidException(
+                validation.RejectionReason ?? "No fue posible validar el cupo del cliente.");
     }
 
     private static async Task InsertFiscalDocumentAsync(

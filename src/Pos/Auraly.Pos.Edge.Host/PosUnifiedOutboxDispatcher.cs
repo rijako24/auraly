@@ -23,18 +23,13 @@ public sealed class PosUnifiedOutboxDispatcher(
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $$"""
             SELECT current.Type
             FROM Outbox current
             WHERE ((current.Status IN ('Pending','RetryScheduled')
                     AND (current.NextAttemptAt IS NULL OR current.NextAttemptAt<=$now))
                    OR (current.Status='Uploading' AND current.LastAttemptAt<$stale))
-              AND NOT EXISTS
-              (
-                SELECT 1 FROM Outbox prior
-                WHERE prior.Status<>'Uploaded'
-                  AND prior.LocalSequence<current.LocalSequence
-              )
+              AND {{PosOutboxOrdering.NoBlockingPriorRowSql}}
             ORDER BY current.LocalSequence
             LIMIT 1;
             """;

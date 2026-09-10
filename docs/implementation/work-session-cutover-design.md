@@ -99,6 +99,9 @@ DacFx completa el modelo sin desactivar la protección.
   en las tablas comerciales migradas.
 - El POS Edge no accede directamente a SQL Server.
 - Usuario, sede, bodega del documento y dispositivo se vuelven a validar en backend.
-- La cola Edge preserva orden global por dispositivo entre apertura, movimientos,
-  cierre y la apertura siguiente.
+- La cola Edge preserva orden por `WorkSession`: su apertura precede sus documentos
+  y el cierre espera todos los documentos de esa misma sesión. Una sesión en reintento
+  no bloquea aperturas ni documentos de otra sesión; cada flujo avanza contra sus
+  propias dependencias. Si una instalación anterior dejó un documento físicamente
+  después de su cierre, el ordenador restablece el orden semántico documento-cierre.
 - Online y offline comparten el flujo comercial, fiscal y de procesamiento documental.

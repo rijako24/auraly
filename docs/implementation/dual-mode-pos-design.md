@@ -80,6 +80,12 @@ y permisos en cada operación.
 El usuario puede cambiar de caja en modo web. Un equipo enrolado cambia su caja
 offline únicamente mediante un nuevo enrolamiento controlado.
 
+La pantalla de preparación fiscal no cambia el adaptador. Si el equipo ya está
+enrolado, `Continuar a ventas` conserva `PosEdgeClient` para la sede y bodega del
+enrolamiento; intentar seleccionar otro alcance exige reenrolar. Por tanto, entrar
+directamente a Facturación o regresar desde Administración produce el mismo modo
+operativo y las mismas reglas.
+
 ## Habilitación del respaldo offline
 
 “Habilitar operación sin conexión” es una acción administrativa, no un interruptor
@@ -170,6 +176,12 @@ producción. No se puede afirmar paridad online si el estado vive solo en React.
 - Auraly POS instalado sin enrolar: vende online y usa periféricos locales.
 - Aplicación enrolada con Internet: opera mediante Edge y sincroniza de inmediato.
 - Aplicación enrolada sin Internet: Edge continúa con los recursos provisionados.
+- La cartera siempre consulta el validador canónico de SQL Server: desde navegador
+  se invoca dentro del checkout y desde Edge conectado mediante el endpoint
+  autenticado del dispositivo. Sin servidor, Edge rechaza el crédito antes de
+  emitir; nunca autoriza con el cupo potencialmente obsoleto del catálogo local.
+- La disponibilidad de inventario conserva su política propia: con servidor
+  valida existencia actual y sin servidor aplica la regla offline provisionada.
 - Un borrador iniciado en un adaptador termina en ese adaptador.
 - Habilitar offline requiere enrolamiento; no migra silenciosamente borradores.
 - Deshabilitar o reenrolar exige outbox vacía o intervención explícita.

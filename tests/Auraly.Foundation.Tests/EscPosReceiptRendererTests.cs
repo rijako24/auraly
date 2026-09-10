@@ -152,6 +152,7 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("CUFE", html);
         Assert.Contains("abc123", html);
         Assert.Contains("<svg", html);
+        Assert.Contains($".qr {{ width: {PosReceiptPrintGeometry.QrWidthMillimeters}mm;", html);
         Assert.Contains("Efectivo", html);
         Assert.Contains("N.º de ticket: <strong>FE42</strong>", html);
         Assert.Contains("Impuestos por tarifa", html);
@@ -162,6 +163,21 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("www.auralyapp.co", html);
         Assert.DoesNotContain("body { text-transform: uppercase", html);
         Assert.Contains("text-align: center", html);
+    }
+
+    [Theory]
+    [InlineData(105, 158.74, 1.9, 3)]
+    [InlineData(73, 158.74, 1.9, 4)]
+    public void Thermal_qr_uses_the_integer_module_size_nearest_to_the_web_width(
+        int modules,
+        double cssWidth,
+        double captureScale,
+        int expectedPixelsPerModule)
+    {
+        Assert.Equal(
+            expectedPixelsPerModule,
+            PosReceiptPrintGeometry.NearestThermalPixelsPerModule(
+                modules, cssWidth, captureScale));
     }
 
     [Fact]
