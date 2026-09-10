@@ -143,6 +143,12 @@ public sealed class DatabaseUpgradeMigrationTests
             migration, StringComparison.Ordinal);
         Assert.Contains("COL_LENGTH(N'dbo.PromotionBenefits', N'CategoryName') IS NOT NULL",
             migration, StringComparison.Ordinal);
+        Assert.Contains("@LegacyConditionCategoryRows > 0", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("@LegacyBenefitCategoryRows > 0", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("NULLIF(LTRIM(RTRIM(CategoryName))", migration,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("DROP TABLE dbo.Promotions", migration,
             StringComparison.OrdinalIgnoreCase);
     }

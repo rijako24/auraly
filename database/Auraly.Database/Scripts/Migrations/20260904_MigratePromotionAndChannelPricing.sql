@@ -190,7 +190,17 @@ END;
 IF OBJECT_ID(N'dbo.PromotionConditions', N'U') IS NOT NULL
    AND COL_LENGTH(N'dbo.PromotionConditions', N'CategoryName') IS NOT NULL
 BEGIN
-    IF COL_LENGTH(N'dbo.PromotionConditions', N'BusinessId') IS NULL
+    DECLARE @LegacyConditionCategoryRows BIGINT;
+    EXEC sys.sp_executesql
+        N'SELECT @Count=COUNT_BIG(*)
+          FROM dbo.PromotionConditions
+          WHERE ItemType IN(3,4)
+            AND NULLIF(LTRIM(RTRIM(CategoryName)),N'''') IS NOT NULL;',
+        N'@Count BIGINT OUTPUT',
+        @Count=@LegacyConditionCategoryRows OUTPUT;
+
+    IF @LegacyConditionCategoryRows > 0
+       AND COL_LENGTH(N'dbo.PromotionConditions', N'BusinessId') IS NULL
         THROW 51715, 'Promotion condition category names cannot be resolved without their legacy business scope.', 1;
 
     IF COL_LENGTH(N'dbo.PromotionConditions', N'ProductCategoryId') IS NULL
@@ -198,7 +208,9 @@ BEGIN
     IF COL_LENGTH(N'dbo.PromotionConditions', N'ServiceCategoryId') IS NULL
         ALTER TABLE dbo.PromotionConditions ADD ServiceCategoryId UNIQUEIDENTIFIER NULL;
 
-    EXEC sys.sp_executesql N'
+    IF COL_LENGTH(N'dbo.PromotionConditions', N'BusinessId') IS NOT NULL
+    BEGIN
+        EXEC sys.sp_executesql N'
         IF EXISTS(
             SELECT 1
             FROM dbo.PromotionConditions conditionValue
@@ -234,6 +246,7 @@ BEGIN
             ON category.BusinessId=conditionValue.BusinessId
            AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(conditionValue.CategoryName))
         WHERE conditionValue.ItemType=4;';
+    END;
 
     ALTER TABLE dbo.PromotionConditions DROP COLUMN CategoryName;
 END;
@@ -241,7 +254,17 @@ END;
 IF OBJECT_ID(N'dbo.PromotionBenefits', N'U') IS NOT NULL
    AND COL_LENGTH(N'dbo.PromotionBenefits', N'CategoryName') IS NOT NULL
 BEGIN
-    IF COL_LENGTH(N'dbo.PromotionBenefits', N'BusinessId') IS NULL
+    DECLARE @LegacyBenefitCategoryRows BIGINT;
+    EXEC sys.sp_executesql
+        N'SELECT @Count=COUNT_BIG(*)
+          FROM dbo.PromotionBenefits
+          WHERE TargetItemType IN(3,4)
+            AND NULLIF(LTRIM(RTRIM(CategoryName)),N'''') IS NOT NULL;',
+        N'@Count BIGINT OUTPUT',
+        @Count=@LegacyBenefitCategoryRows OUTPUT;
+
+    IF @LegacyBenefitCategoryRows > 0
+       AND COL_LENGTH(N'dbo.PromotionBenefits', N'BusinessId') IS NULL
         THROW 51718, 'Promotion benefit category names cannot be resolved without their legacy business scope.', 1;
 
     IF COL_LENGTH(N'dbo.PromotionBenefits', N'ProductCategoryId') IS NULL
@@ -249,7 +272,9 @@ BEGIN
     IF COL_LENGTH(N'dbo.PromotionBenefits', N'ServiceCategoryId') IS NULL
         ALTER TABLE dbo.PromotionBenefits ADD ServiceCategoryId UNIQUEIDENTIFIER NULL;
 
-    EXEC sys.sp_executesql N'
+    IF COL_LENGTH(N'dbo.PromotionBenefits', N'BusinessId') IS NOT NULL
+    BEGIN
+        EXEC sys.sp_executesql N'
         IF EXISTS(
             SELECT 1
             FROM dbo.PromotionBenefits benefit
@@ -285,6 +310,7 @@ BEGIN
             ON category.BusinessId=benefit.BusinessId
            AND LTRIM(RTRIM(category.Name))=LTRIM(RTRIM(benefit.CategoryName))
         WHERE benefit.TargetItemType=4;';
+    END;
 
     ALTER TABLE dbo.PromotionBenefits DROP COLUMN CategoryName;
 END;
