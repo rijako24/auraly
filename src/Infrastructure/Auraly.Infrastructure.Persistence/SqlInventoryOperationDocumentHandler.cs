@@ -68,7 +68,8 @@ public sealed class SqlInventoryOperationProcessor(
         if ((operation.DocumentType is InventoryDocumentTypes.StockCount or
                 InventoryDocumentTypes.Adjustment or InventoryDocumentTypes.Damage or
                 InventoryDocumentTypes.Conversion) &&
-            await HasRecognizedAccountingValueAsync(session, operation.DocumentId, cancellationToken))
+            await HasRecognizedAccountingEffectAsync(
+                session, operation.DocumentId, operation.DocumentType, cancellationToken))
             await SqlAccountingPostingJobWriter.InsertAsync(
                 session, document, operation.OccurredAt, ids, timeProvider, cancellationToken);
         if (operation.DocumentType == InventoryDocumentTypes.StockCount)
@@ -456,20 +457,28 @@ public sealed class SqlInventoryOperationProcessor(
         await using var command=new SqlCommand(sql,session.Connection,session.Transaction);command.Parameters.AddWithValue("@Id",operation.DocumentId);command.Parameters.AddWithValue("@BusinessId",operation.BusinessId);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());AddDecimal(command,"@Total",total,19,4);if(await command.ExecuteNonQueryAsync(cancellationToken)!=1)throw new DBConcurrencyException("The inventory operation could not be marked as processed.");
     }
 
-    private static async Task<bool> HasRecognizedAccountingValueAsync(
+    private static async Task<bool> HasRecognizedAccountingEffectAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         Guid documentId,
+        string documentType,
         CancellationToken cancellationToken)
     {
         const string sql = """
             SELECT CAST(CASE WHEN EXISTS
             (
               SELECT 1 FROM dbo.InventoryOperationLines
-              WHERE InventoryOperationId=@DocumentId AND ProcessedValue<>0
+              WHERE InventoryOperationId=@DocumentId
+              GROUP BY InventoryOperationId
+              HAVING
+                (@DocumentType=N'ProductConversion' AND SUM(ProcessedValue)<>0)
+                OR
+                (@DocumentType<>N'ProductConversion' AND
+                 SUM(CASE WHEN ProcessedValue<>0 THEN 1 ELSE 0 END)>0)
             ) THEN 1 ELSE 0 END AS bit);
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@DocumentType", documentType);
         return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken));
     }
 

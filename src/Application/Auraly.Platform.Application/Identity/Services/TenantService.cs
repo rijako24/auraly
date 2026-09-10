@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Application.Common.Exceptions;
@@ -14,10 +13,9 @@ namespace Auraly.Platform.Application.Identity.Services;
 
 public sealed class TenantService(
     IUnitOfWork unitOfWork,
-    ITenantProvisioningStore provisioning,
+    ITenantProvisioner provisioner,
     IBlobStorageService blobStorage,
     IMediaUrlResolver mediaUrlResolver,
-    ILogger<TenantService> logger,
     IPosPricingSynchronizationWriter pricingSynchronization,
     IPosSynchronizationOutboxDispatcher synchronization) : ITenantService
 {
@@ -63,21 +61,9 @@ public sealed class TenantService(
             value.TenantId, value.TenantName, value.ValidTo, value.ValidTo <= now)).ToList();
     }
 
-    public async Task<ProvisionTenantResult> ProvisionAsync(ProvisionTenantRequest request, Guid? actorUserId,
+    public Task<ProvisionTenantResult> ProvisionAsync(ProvisionTenantRequest request, Guid? actorUserId,
         TenantQuoteDto commercialQuote, CancellationToken ct)
-    {
-        TenantProvisioningRequestValidator.Validate(request);
-        if (!await unitOfWork.Tenants.IsReferenceOptionActiveAsync("tenant-entity-type", request.EntityType, ct)
-            || !await unitOfWork.Tenants.IsReferenceOptionActiveAsync("tenant-identification-type", request.IdentificationTypeCode, ct))
-            throw new ArgumentException("Selecciona un tipo de persona y de identificación vigentes.");
-        ArgumentNullException.ThrowIfNull(commercialQuote);
-        if (request.MaximumUsers != checked(commercialQuote.FullUserLimit + commercialQuote.SellerUserLimit)
-            || request.MaximumEnrolledDevices != commercialQuote.PosDeviceLimit)
-            throw new ArgumentException("Los cupos del tenant no coinciden con la cotización aprobada.");
-        var result = await provisioning.ProvisionAsync(request, actorUserId, commercialQuote, ct);
-        logger.LogInformation("Tenant {TenantId} provisioned with business {BusinessId}", result.TenantId, result.BusinessId);
-        return result;
-    }
+        => provisioner.ProvisionAsync(request, actorUserId, commercialQuote, ct);
 
     public async Task<TenantDto> UpdateAsync(Guid tenantId, string? name, string? email,
         int? maximumUsers, int? maximumEnrolledDevices, string? legalName = null,

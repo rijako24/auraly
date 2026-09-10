@@ -26,8 +26,10 @@ public sealed class PromotionPricingService : IPromotionPricingService
         var resolved = PromotionPriceResolver.Resolve(
             items.Select(item => new PromotionPriceLineInput(
                 item.Key, item.ItemType, item.ProductId, item.ServiceId, item.Name,
-                item.CategoryName, item.UnitPrice, null, item.Quantity, string.Empty,
-                IncludeInTotal: item.IncludeInTotal)).ToArray(),
+                item.UnitPrice, null, item.Quantity, string.Empty,
+                IncludeInTotal: item.IncludeInTotal,
+                ProductCategoryId: item.ProductCategoryId,
+                ServiceCategoryId: item.ServiceCategoryId)).ToArray(),
             promotions.Select(ToRule).ToArray(),
             allowPromotionChannelCombination: false);
         var byKey = items.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
@@ -73,9 +75,11 @@ public sealed class PromotionPricingService : IPromotionPricingService
         promotion.CreatedAt,
         promotion.Conditions.Select(condition => new PromotionConditionRule(
             condition.ItemType, condition.ProductId, condition.ServiceId,
-            condition.CategoryName, condition.MinQuantity, condition.MinSubtotal)).ToArray(),
+            condition.MinQuantity, condition.MinSubtotal,
+            condition.ProductCategoryId, condition.ServiceCategoryId)).ToArray(),
         promotion.Benefits.Select(benefit => new PromotionBenefitRule(
             benefit.BenefitType, benefit.TargetItemType, benefit.ProductId,
-            benefit.ServiceId, benefit.CategoryName, benefit.DiscountPercentage,
-            benefit.DiscountAmount, benefit.FixedUnitPrice, benefit.AppliesToQuantity)).ToArray());
+            benefit.ServiceId, benefit.DiscountPercentage,
+            benefit.DiscountAmount, benefit.FixedUnitPrice, benefit.AppliesToQuantity,
+            benefit.ProductCategoryId, benefit.ServiceCategoryId)).ToArray());
 }

@@ -214,9 +214,9 @@ public sealed class PosCaptureServiceTests
             new PosPromotion(
                 Guid.NewGuid(), "Buy 2 get 1", 100, false, null, null, null,
                 DateTimeOffset.UnixEpoch,
-                [new((int)PromotionItemType.Product, productId, null, null, 3m, null)],
+                [new((int)PromotionItemType.Product, productId, null, 3m, null)],
                 [new((int)PromotionBenefitType.FreeItem, (int)PromotionItemType.Product,
-                    productId, null, null, null, null, null, 1m)])
+                    productId, null, null, null, null, 1m)])
         ]);
     }
 

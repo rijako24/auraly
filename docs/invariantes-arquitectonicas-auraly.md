@@ -103,6 +103,7 @@ La existencia de una lista quemada actual no la convierte en patron valido. No s
 - La API entrega como minimo codigo/ID estable, label, estado activo y orden; tambien scope de tenant/business y metadata cuando aplique.
 - El frontend no mantiene arrays paralelos `{ value, label }`, mapas de traduccion de estados ni switches para reconstruir el catalogo.
 - La validacion del backend usa el ID/codigo canonico y verifica existencia, vigencia, scope y autorizacion. No confia en el label enviado por UI.
+- Las reglas, relaciones y condiciones de negocio persisten y comparan exclusivamente IDs o codigos canonicos. `Name`, `Label` y otras descripciones se consultan desde el catalogo propietario para presentacion; no se copian a la regla ni participan en su elegibilidad.
 - Valores inactivos usados historicamente se pueden mostrar en registros existentes, pero no ofrecer para nuevas selecciones.
 - Catalogos grandes usan busqueda/paginacion; los pequenos pueden cachearse con una politica explicita de invalidacion y scope.
 - Cualquier selector de terceros usa `Parties` como identidad canonica y filtra el rol operativo requerido (`Customer`, `Supplier`, `Seller`, `Carrier`, `Employee` o `User`). Siempre busca y pagina en servidor; un endpoint de opciones no puede precargar en segundo plano la lista completa de terceros.

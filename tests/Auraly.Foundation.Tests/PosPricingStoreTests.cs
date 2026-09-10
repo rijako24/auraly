@@ -78,17 +78,19 @@ public sealed class PosPricingStoreTests
             await store.InitializeAsync();
             var hygieneId = Guid.NewGuid();
             var meatId = Guid.NewGuid();
+            var hygieneCategoryId = Guid.NewGuid();
+            var meatCategoryId = Guid.NewGuid();
             var sessionId = Guid.NewGuid();
             var items = new[]
             {
                 new PosCatalogItem(hygieneId, "A-1", null, "Soap", "EA", "01", 0m,
                     100m, "COP", IsActive: true, IsWeighable: false,
                     AllowsFractionalSale: false, Scale: null, Barcodes: [], Identifiers: [],
-                    CategoryName: "Hygiene"),
+                    CategoryName: "Hygiene", ProductCategoryId: hygieneCategoryId),
                 new PosCatalogItem(meatId, "M-1", null, "Meat", "EA", "01", 0m,
                     200m, "COP", IsActive: true, IsWeighable: false,
                     AllowsFractionalSale: false, Scale: null, Barcodes: [], Identifiers: [],
-                    CategoryName: "Meat")
+                    CategoryName: "Meat", ProductCategoryId: meatCategoryId)
             };
             var hash = Convert.ToHexString(
                 SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
@@ -101,15 +103,18 @@ public sealed class PosPricingStoreTests
 
             var channelId = Guid.NewGuid();
             var customerId = Guid.NewGuid();
-            PosPromotion CategoryPromotion(string name, string category, int priority) => new(
+            PosPromotion CategoryPromotion(
+                string name, Guid categoryId, int priority) => new(
                 Guid.NewGuid(), name, priority, false, null, now.AddDays(-1), now.AddDays(1), now,
-                [new((int)PromotionItemType.ProductCategory, null, null, category, 1m, null)],
+                [new((int)PromotionItemType.ProductCategory, null, null, 1m, null,
+                    categoryId)],
                 [new((int)PromotionBenefitType.PercentageDiscount,
-                    (int)PromotionItemType.ProductCategory, null, null, category, 10m, null, null, null)]);
+                    (int)PromotionItemType.ProductCategory, null, null, 10m, null, null,
+                    null, categoryId)]);
             var categories = new[]
             {
-                CategoryPromotion("Hygiene 10", "Hygiene", 20),
-                CategoryPromotion("Meat 10", "Meat", 10)
+                CategoryPromotion("Hygiene 10", hygieneCategoryId, 20),
+                CategoryPromotion("Meat 10", meatCategoryId, 10)
             };
             var tiers = new[]
             {
@@ -138,23 +143,37 @@ public sealed class PosPricingStoreTests
 
             var buyThree = new PosPromotion(
                 Guid.NewGuid(), "Buy 2 get 1", 100, false, null, now.AddDays(-1), now.AddDays(1), now,
-                [new((int)PromotionItemType.Product, hygieneId, null, null, 3m, null)],
+                [new((int)PromotionItemType.Product, hygieneId, null, 3m, null)],
                 [new((int)PromotionBenefitType.FreeItem, (int)PromotionItemType.Product,
-                    hygieneId, null, null, null, null, null, 1m)]);
+                    hygieneId, null, null, null, null, 1m)]);
             await store.ApplyPricingSnapshotAsync(new([], [], [], [], Promotions: [buyThree]));
             Assert.Equal(100m, (await store.ResolvePriceAsync(hygieneId, null, 2m)).Amount);
             Assert.Equal(200m / 3m, (await store.ResolvePriceAsync(hygieneId, null, 3m)).Amount);
 
             var threshold = new PosPromotion(
                 Guid.NewGuid(), "Order 10", 50, true, null, now.AddDays(-1), now.AddDays(1), now,
-                [new((int)PromotionItemType.Any, null, null, null, 0m, 300m)],
+                [new((int)PromotionItemType.Any, null, null, 0m, 300m)],
                 [new((int)PromotionBenefitType.PercentageDiscount, (int)PromotionItemType.AnyProduct,
-                    null, null, null, 10m, null, null, null)]);
+                    null, null, 10m, null, null, null)]);
             await store.ApplyPricingSnapshotAsync(new([], [], [], [], Promotions: [threshold]));
             var thresholdResult = await store.ResolvePricesAsync(
                 [new("h", hygieneId, 1m), new("m", meatId, 1m)], null);
             Assert.Equal(90m, thresholdResult["h"].Amount);
             Assert.Equal(180m, thresholdResult["m"].Amount);
+
+            var crossProduct = new PosPromotion(
+                Guid.NewGuid(), "Buy hygiene, meat 50", 100, false, null,
+                now.AddDays(-1), now.AddDays(1), now,
+                [new((int)PromotionItemType.Product, hygieneId, null, 1m, null)],
+                [new((int)PromotionBenefitType.PercentageDiscount,
+                    (int)PromotionItemType.Product, meatId, null, 50m, null, null, 1m)]);
+            await store.ApplyPricingSnapshotAsync(new([], [], [], [], Promotions: [crossProduct]));
+            var withoutTrigger = await store.ResolvePricesAsync([new("m", meatId, 2m)], null);
+            var withTrigger = await store.ResolvePricesAsync(
+                [new("h", hygieneId, 1m), new("m", meatId, 2m)], null);
+            Assert.Equal(200m, withoutTrigger["m"].Amount);
+            Assert.Equal(150m, withTrigger["m"].Amount);
+            Assert.Equal("Promotion", withTrigger["m"].Source);
 
             var searchPage = await store.ResolvePricesAsync(
                 [new("h", hygieneId, 1m), new("m", meatId, 1m)], null,

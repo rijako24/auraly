@@ -25,7 +25,9 @@ public sealed record OrderPageRequest(
     bool IncludeClaimedByOthers = true,
     Guid? WarehouseId = null,
     Guid? RouteId = null,
-    bool OnlyCreatedByActor = false);
+    bool OnlyCreatedByActor = false,
+    Guid? SellerId = null,
+    Guid? CustomerId = null);
 
 public sealed record OrderClaimSummary(
     Guid ClaimId,

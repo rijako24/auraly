@@ -135,7 +135,8 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             0m,
             product.Currency,
             null,
-            IntegrationConnectionId: product.IntegrationConnectionId)
+            IntegrationConnectionId: product.IntegrationConnectionId,
+            ProductCategoryId: product.ProductCategoryId)
         { IsActive = product.IsActive };
 
     private static bool MatchesSearchFilters(ProductReference product, ProductSearchRequest request) =>
@@ -813,9 +814,9 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                 i.ProductId,
                 null,
                 i.ProductNameSnapshot,
-                null,
                 i.UnitPrice,
-                i.Quantity)).ToList(),
+                i.Quantity,
+                ProductCategoryId: i.Product?.ProductCategoryId)).ToList(),
             ct: ct);
 
         foreach (var item in items)
@@ -849,9 +850,9 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                 p.ProductId,
                 null,
                 p.Name,
-                p.CategoryName,
                 p.UnitPrice,
-                1)).ToList(),
+                1,
+                ProductCategoryId: p.ProductCategoryId)).ToList(),
             ct: ct);
 
         var products = result.Products.Select((product, index) =>

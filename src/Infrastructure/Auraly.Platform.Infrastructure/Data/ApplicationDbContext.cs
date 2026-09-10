@@ -784,7 +784,6 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.PromotionConditionId);
             entity.Property(e => e.ItemType).HasConversion<int>();
-            entity.Property(e => e.CategoryName).HasMaxLength(150);
             entity.Property(e => e.MinQuantity).HasPrecision(18, 2);
             entity.Property(e => e.MinSubtotal).HasPrecision(18, 2);
             entity.HasOne(e => e.Promotion)
@@ -806,6 +805,16 @@ public class ApplicationDbContext : DbContext
                 .HasForeignKey(e => e.ServiceId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
+            entity.HasOne(e => e.ProductCategory)
+                .WithMany()
+                .HasForeignKey(e => e.ProductCategoryId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasOne(e => e.ServiceCategory)
+                .WithMany()
+                .HasForeignKey(e => e.ServiceCategoryId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.PromotionId);
         });
@@ -815,7 +824,6 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.PromotionBenefitId);
             entity.Property(e => e.BenefitType).HasConversion<int>();
             entity.Property(e => e.TargetItemType).HasConversion<int>();
-            entity.Property(e => e.CategoryName).HasMaxLength(150);
             entity.Property(e => e.DiscountPercentage).HasPrecision(5, 2);
             entity.Property(e => e.DiscountAmount).HasPrecision(18, 2);
             entity.Property(e => e.FixedUnitPrice).HasPrecision(18, 2);
@@ -837,6 +845,16 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Service)
                 .WithMany()
                 .HasForeignKey(e => e.ServiceId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasOne(e => e.ProductCategory)
+                .WithMany()
+                .HasForeignKey(e => e.ProductCategoryId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasOne(e => e.ServiceCategory)
+                .WithMany()
+                .HasForeignKey(e => e.ServiceCategoryId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
             entity.HasIndex(e => e.TenantId);

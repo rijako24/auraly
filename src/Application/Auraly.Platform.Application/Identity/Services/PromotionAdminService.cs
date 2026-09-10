@@ -56,6 +56,7 @@ public sealed class PromotionAdminService : IPromotionAdminService
         {
             await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
             Validate(request.Name, request.StartsAtUtc, request.EndsAtUtc, request.Conditions, request.Benefits);
+            await ValidateCategoryTargetsAsync(businessId, request.Conditions, request.Benefits, ct);
             var businessIds = await ValidateScopeAsync(
                 tenantId, businessId, request.AppliesToAllBusinesses,
                 request.ApplicableBusinessIds, ct);
@@ -117,6 +118,7 @@ public sealed class PromotionAdminService : IPromotionAdminService
             var finalConditions = request.Conditions ?? promotion.Conditions.Select(MapConditionDto).ToList();
             var finalBenefits = request.Benefits ?? promotion.Benefits.Select(MapBenefitDto).ToList();
             Validate(finalName, finalStarts, finalEnds, finalConditions, finalBenefits);
+            await ValidateCategoryTargetsAsync(businessId, finalConditions, finalBenefits, ct);
 
             if (request.Name is not null) promotion.Name = request.Name.Trim();
             if (request.Description is not null) promotion.Description = Normalize(request.Description);
@@ -205,7 +207,7 @@ public sealed class PromotionAdminService : IPromotionAdminService
         foreach (var condition in conditions ?? [])
         {
             ValidateTarget(condition.ItemType, condition.ProductId, condition.ServiceId,
-                condition.CategoryName, "Conditions");
+                condition.ProductCategoryId, condition.ServiceCategoryId, "Conditions");
             if (condition.MinQuantity <= 0)
                 throw new DomainValidationException("MinQuantity", "La cantidad mínima debe ser mayor a cero.");
             if (condition.MinSubtotal is < 0)
@@ -215,7 +217,7 @@ public sealed class PromotionAdminService : IPromotionAdminService
         foreach (var benefit in benefits)
         {
             ValidateTarget(benefit.TargetItemType, benefit.ProductId, benefit.ServiceId,
-                benefit.CategoryName, "Benefits");
+                benefit.ProductCategoryId, benefit.ServiceCategoryId, "Benefits");
             if (benefit.BenefitType == PromotionBenefitType.PercentageDiscount && (benefit.DiscountPercentage is null or <= 0 or > 100))
                 throw new DomainValidationException("DiscountPercentage", "El porcentaje de descuento debe estar entre 0 y 100.");
             if (benefit.BenefitType == PromotionBenefitType.AmountDiscount && (benefit.DiscountAmount is null or <= 0))
@@ -248,6 +250,47 @@ public sealed class PromotionAdminService : IPromotionAdminService
         return businessIds;
     }
 
+    private async Task ValidateCategoryTargetsAsync(
+        Guid businessId,
+        IReadOnlyList<PromotionConditionDto>? conditions,
+        IReadOnlyList<PromotionBenefitDto>? benefits,
+        CancellationToken ct)
+    {
+        var productCategoryIds = (conditions ?? [])
+            .Where(value => value.ItemType == PromotionItemType.ProductCategory)
+            .Select(value => value.ProductCategoryId)
+            .Concat((benefits ?? [])
+                .Where(value => value.TargetItemType == PromotionItemType.ProductCategory)
+                .Select(value => value.ProductCategoryId))
+            .OfType<Guid>()
+            .Where(value => value != Guid.Empty)
+            .Distinct();
+        foreach (var categoryId in productCategoryIds)
+        {
+            var category = await _unitOfWork.ProductCategories.GetByIdAsync(businessId, categoryId, ct);
+            if (category is null || !category.IsActive)
+                throw new DomainValidationException(
+                    "ProductCategoryId", "La categoría de producto no pertenece al negocio o está inactiva.");
+        }
+
+        var serviceCategoryIds = (conditions ?? [])
+            .Where(value => value.ItemType == PromotionItemType.ServiceCategory)
+            .Select(value => value.ServiceCategoryId)
+            .Concat((benefits ?? [])
+                .Where(value => value.TargetItemType == PromotionItemType.ServiceCategory)
+                .Select(value => value.ServiceCategoryId))
+            .OfType<Guid>()
+            .Where(value => value != Guid.Empty)
+            .Distinct();
+        foreach (var categoryId in serviceCategoryIds)
+        {
+            var category = await _unitOfWork.ServiceCategories.GetByIdAsync(categoryId);
+            if (category is null || category.BusinessId != businessId || !category.IsActive)
+                throw new DomainValidationException(
+                    "ServiceCategoryId", "La categoría de servicio no pertenece al negocio o está inactiva.");
+        }
+    }
+
     private async Task<Guid[]> ResolveAffectedBusinessIdsAsync(
         Guid tenantId,
         bool appliesToAllBusinesses,
@@ -272,14 +315,17 @@ public sealed class PromotionAdminService : IPromotionAdminService
     }
 
     private static void ValidateTarget(
-        PromotionItemType itemType, Guid? productId, Guid? serviceId, string? categoryName, string field)
+        PromotionItemType itemType, Guid? productId, Guid? serviceId,
+        Guid? productCategoryId, Guid? serviceCategoryId, string field)
     {
         var valid = itemType switch
         {
             PromotionItemType.Product => productId.HasValue && productId != Guid.Empty,
             PromotionItemType.Service => serviceId.HasValue && serviceId != Guid.Empty,
-            PromotionItemType.ProductCategory or PromotionItemType.ServiceCategory =>
-                !string.IsNullOrWhiteSpace(categoryName),
+            PromotionItemType.ProductCategory => productCategoryId.HasValue
+                && productCategoryId != Guid.Empty,
+            PromotionItemType.ServiceCategory => serviceCategoryId.HasValue
+                && serviceCategoryId != Guid.Empty,
             PromotionItemType.Any or PromotionItemType.AnyProduct or PromotionItemType.AnyService => true,
             _ => false
         };
@@ -296,7 +342,8 @@ public sealed class PromotionAdminService : IPromotionAdminService
         ItemType = dto.ItemType,
         ProductId = dto.ProductId,
         ServiceId = dto.ServiceId,
-        CategoryName = Normalize(dto.CategoryName),
+        ProductCategoryId = dto.ProductCategoryId,
+        ServiceCategoryId = dto.ServiceCategoryId,
         MinQuantity = dto.MinQuantity <= 0 ? 1 : dto.MinQuantity,
         MinSubtotal = dto.MinSubtotal,
         CreatedAt = DateTime.UtcNow
@@ -367,7 +414,8 @@ public sealed class PromotionAdminService : IPromotionAdminService
         condition.ItemType = dto.ItemType;
         condition.ProductId = dto.ProductId;
         condition.ServiceId = dto.ServiceId;
-        condition.CategoryName = Normalize(dto.CategoryName);
+        condition.ProductCategoryId = dto.ProductCategoryId;
+        condition.ServiceCategoryId = dto.ServiceCategoryId;
         condition.MinQuantity = dto.MinQuantity;
         condition.MinSubtotal = dto.MinSubtotal;
     }
@@ -381,7 +429,8 @@ public sealed class PromotionAdminService : IPromotionAdminService
         TargetItemType = dto.TargetItemType,
         ProductId = dto.ProductId,
         ServiceId = dto.ServiceId,
-        CategoryName = Normalize(dto.CategoryName),
+        ProductCategoryId = dto.ProductCategoryId,
+        ServiceCategoryId = dto.ServiceCategoryId,
         DiscountPercentage = dto.DiscountPercentage,
         DiscountAmount = dto.DiscountAmount,
         FixedUnitPrice = dto.FixedUnitPrice,
@@ -432,7 +481,8 @@ public sealed class PromotionAdminService : IPromotionAdminService
         benefit.TargetItemType = dto.TargetItemType;
         benefit.ProductId = dto.ProductId;
         benefit.ServiceId = dto.ServiceId;
-        benefit.CategoryName = Normalize(dto.CategoryName);
+        benefit.ProductCategoryId = dto.ProductCategoryId;
+        benefit.ServiceCategoryId = dto.ServiceCategoryId;
         benefit.DiscountPercentage = dto.DiscountPercentage;
         benefit.DiscountAmount = dto.DiscountAmount;
         benefit.FixedUnitPrice = dto.FixedUnitPrice;
@@ -477,9 +527,10 @@ public sealed class PromotionAdminService : IPromotionAdminService
         c.ItemType,
         c.ProductId,
         c.ServiceId,
-        c.CategoryName,
         c.MinQuantity,
-        c.MinSubtotal);
+        c.MinSubtotal,
+        c.ProductCategoryId,
+        c.ServiceCategoryId);
 
     private static PromotionBenefitDto MapBenefitDto(PromotionBenefit b) => new(
         b.PromotionBenefitId,
@@ -487,11 +538,12 @@ public sealed class PromotionAdminService : IPromotionAdminService
         b.TargetItemType,
         b.ProductId,
         b.ServiceId,
-        b.CategoryName,
         b.DiscountPercentage,
         b.DiscountAmount,
         b.FixedUnitPrice,
-        b.AppliesToQuantity);
+        b.AppliesToQuantity,
+        b.ProductCategoryId,
+        b.ServiceCategoryId);
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static string? NormalizeCoupon(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();

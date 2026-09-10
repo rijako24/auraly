@@ -383,7 +383,7 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<ITenantSubscriptionSettlementDispatcher, TenantSubscriptionSettlementDispatcher>();
         services.AddScoped<ITenantProvisioningCheckoutStore, SqlTenantProvisioningCheckoutStore>();
         services.AddScoped<ITenantProvisioningStore, SqlTenantProvisioningStore>();
-        services.AddScoped<ITenantService, TenantService>();
+        services.AddScoped<ITenantProvisioner, TenantProvisioner>();
 
         services.AddScoped<IPaidCheckoutFulfillmentHandler, ReservationPaidCheckoutFulfillmentHandler>();
 

@@ -163,6 +163,8 @@ builder.Services.AddScoped<IReferenceOptionStore, SqlReferenceOptionStore>();
 builder.Services.AddScoped<ReferenceOptionService>();
 builder.Services.AddScoped<IDocumentProcessingJobStore, SqlDocumentProcessingJobStore>();
 builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingWorkSource>();
+builder.Services.AddScoped<IDocumentProcessingCompletionObserver,
+    SqlDocumentProcessingCompletionObserver>();
 builder.Services.AddScoped<SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler>(services => services.GetRequiredService<SqlPosSaleDocumentHandler>());
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReceiptDocumentHandler>();

@@ -653,6 +653,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             var readiness = await activateInZero.Content.ReadFromJsonAsync<AccountingReadinessView>();
             Assert.True(readiness!.CanEditOpeningBalances);
         }
+        await MoveActivationAfterExistingTestDataAsync();
         var priorSourceId = Guid.NewGuid();
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
@@ -730,6 +731,9 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(AccountingOpeningBalanceStatuses.Approved,
                 (await approve.Content.ReadFromJsonAsync<AccountingOpeningBalanceView>())!.Status);
         }
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id", batchId));
+        await MoveActivationAfterExistingTestDataAsync();
         using (var activate = await accounting.PostAsJsonAsync(
                    "/api/commerce/v1/accounting/activate",
                    new ActivateAccountingRequest(effectiveOn, "COP", "ImportedAndApproved")))
@@ -2231,6 +2235,35 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             UPDATE dbo.AccountingTenantSettings
             SET Status=N'Disabled', EffectiveFrom=NULL, OpeningBalanceMode=NULL,
                 ActivatedAt=NULL, ActivatedByUserId=NULL, UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE TenantId=@TenantId;
+            """;
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task MoveActivationAfterExistingTestDataAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DECLARE @LatestExisting datetimeoffset(7)=(
+              SELECT MAX(RecordedAt)
+              FROM (
+                SELECT MAX(AcceptedAt) RecordedAt
+                FROM dbo.AccountingSourceDocuments
+                WHERE TenantId=@TenantId
+                UNION ALL
+                SELECT MAX(PostedAt)
+                FROM dbo.AccountingEntries
+                WHERE TenantId=@TenantId
+              ) existing);
+
+            UPDATE dbo.AccountingTenantSettings
+            SET ActivatedAt=DATEADD(second,1,
+                  CASE WHEN @LatestExisting>SYSDATETIMEOFFSET()
+                       THEN @LatestExisting ELSE SYSDATETIMEOFFSET() END),
+                UpdatedAt=SYSDATETIMEOFFSET()
             WHERE TenantId=@TenantId;
             """;
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);

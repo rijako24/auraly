@@ -1,259 +1,128 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { BadgePercent, Pencil, Plus, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { BadgePercent, Building2, MoreHorizontal, Pencil, Plus, PowerOff, ShoppingBasket } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Checkbox } from "@/components/ui/checkbox";
-import { ProductPicker } from "@/components/products/product-picker";
-import { PromotionEditDialog } from "@/components/promotions/promotion-edit-dialog";
-import { useBusinessContextStore } from "@/stores/business-context-store";
-import { useCreatePromotion, useDeletePromotion, usePromotions } from "@/hooks/use-promotions";
-import { useProductCategories } from "@/hooks/use-products";
-import { useBusinesses } from "@/hooks/use-businesses";
-import { PromotionBenefitType, PromotionBenefitTypeLabels, PromotionItemType, PromotionItemTypeLabels } from "@/types/enums";
-import type { Promotion } from "@/types/entities";
 
-const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+import { PromotionEditDialog } from "@/components/promotions/promotion-edit-dialog";
+import { DataTable } from "@/components/tables/data-table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { PageError } from "@/components/ui/page-error";
+import { useBusinesses } from "@/hooks/use-businesses";
+import { useProductCategories } from "@/hooks/use-products";
+import { useDeletePromotion, usePromotions } from "@/hooks/use-promotions";
+import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
+import type { Promotion } from "@/types/entities";
+import { PromotionBenefitType, PromotionBenefitTypeLabels, PromotionItemType } from "@/types/enums";
 
 export default function PromotionsPage() {
-  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
-  const { data, isLoading } = usePromotions({ page: 1, pageSize: 50 });
-  const createPromotion = useCreatePromotion();
-  const deletePromotion = useDeletePromotion();
-  const categories = useProductCategories();
-  const businesses = useBusinesses({ page: 1, pageSize: 200 });
-
-  const [name, setName] = useState("");
-  const [benefitType, setBenefitType] = useState(PromotionBenefitType.PercentageDiscount);
-  const [targetType, setTargetType] = useState(PromotionItemType.Any);
-  const [conditionType, setConditionType] = useState(PromotionItemType.Any);
-  const [value, setValue] = useState("10");
-  const [minQuantity, setMinQuantity] = useState("1");
-  const [minSubtotal, setMinSubtotal] = useState("");
-  const [priority, setPriority] = useState("0");
-  const [isCombinable, setIsCombinable] = useState(false);
-  const [appliesToAllBusinesses, setAppliesToAllBusinesses] = useState(false);
-  const [applicableBusinessIds, setApplicableBusinessIds] = useState<string[]>([]);
-  const [conditionProduct, setConditionProduct] = useState<{ id: string; name: string } | null>(null);
-  const [benefitProduct, setBenefitProduct] = useState<{ id: string; name: string } | null>(null);
-  const [conditionCategory, setConditionCategory] = useState("");
-  const [benefitCategory, setBenefitCategory] = useState("");
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const permissionValues = useAuthStore((state) => state.user?.permissions);
+  const permissions = useMemo(() => new Set(permissionValues ?? []), [permissionValues]);
+  const canCreate = permissions.has("promotions.create");
+  const canUpdate = permissions.has("promotions.update");
+  const canDelete = permissions.has("promotions.delete");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
   const [editingPromotion, setEditingPromotion] = useState<Promotion | null>(null);
-
-  const promotions = data?.items ?? [];
-
-  useEffect(() => {
-    setAppliesToAllBusinesses(false);
-    setApplicableBusinessIds(businessId ? [businessId] : []);
-  }, [businessId]);
-
-  async function handleCreate() {
-    if (!businessId) return;
-    if (!name.trim()) {
-      toast.error("El nombre es obligatorio");
-      return;
-    }
-    if (!appliesToAllBusinesses && applicableBusinessIds.length === 0) {
-      toast.error("Selecciona al menos una sede o habilita todas las sedes");
-      return;
-    }
-    if (conditionType === PromotionItemType.Product && !conditionProduct
-      || conditionType === PromotionItemType.ProductCategory && !conditionCategory
-      || targetType === PromotionItemType.Product && !benefitProduct
-      || targetType === PromotionItemType.ProductCategory && !benefitCategory) {
-      toast.error("Selecciona el producto o la categoría requeridos por la regla");
-      return;
-    }
-
-    const numericValue = Number(value || 0);
-    const benefit = {
-      benefitType,
-      targetItemType: targetType,
-      productId: targetType === PromotionItemType.Product ? benefitProduct?.id ?? null : null,
-      serviceId: null,
-      categoryName: targetType === PromotionItemType.ProductCategory ? benefitCategory || null : null,
-      discountPercentage: benefitType === PromotionBenefitType.PercentageDiscount ? numericValue : null,
-      discountAmount: benefitType === PromotionBenefitType.AmountDiscount ? numericValue : null,
-      fixedUnitPrice: benefitType === PromotionBenefitType.FixedUnitPrice ? numericValue : null,
-      appliesToQuantity: benefitType === PromotionBenefitType.FreeItem ? 1 : null,
-    };
-
-    try {
-      await createPromotion.mutateAsync({
-        name: name.trim(),
-        description: null,
-        isActive: true,
-        startsAtUtc: null,
-        endsAtUtc: null,
-        priority: Number(priority || 0),
-        isCombinable,
-        appliesToAllBusinesses,
-        applicableBusinessIds: appliesToAllBusinesses ? [] : applicableBusinessIds,
-        couponCode: null,
-        conditions: [{
-          itemType: conditionType,
-          productId: conditionType === PromotionItemType.Product ? conditionProduct?.id ?? null : null,
-          serviceId: null,
-          categoryName: conditionType === PromotionItemType.ProductCategory ? conditionCategory || null : null,
-          minQuantity: Math.max(1, Number(minQuantity || 1)),
-          minSubtotal: minSubtotal ? Number(minSubtotal) : null,
-        }],
-        benefits: [benefit],
-      });
-      setName("");
-      setConditionProduct(null);
-      setBenefitProduct(null);
-      toast.success("Promocion creada");
-    } catch {
-      toast.error("No se pudo crear la promocion");
-    }
-  }
-
-  async function handleDelete(promotion: Promotion) {
-    try {
-      await deletePromotion.mutateAsync(promotion.promotionId);
-      toast.success("Promocion desactivada");
-    } catch {
-      toast.error("No se pudo desactivar");
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Promociones</h1>
-          <p className="text-sm text-muted-foreground">Reglas de descuento para productos y servicios del negocio activo.</p>
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base"><BadgePercent className="h-4 w-4" /> Nueva promocion</CardTitle>
-          <CardDescription>Define una condicion y un beneficio inicial; luego puedes extenderla desde la API.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-6">
-            <div className="md:col-span-2 space-y-2">
-              <Label>Nombre</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Segunda unidad 50%" />
-            </div>
-            <div className="space-y-2">
-              <Label>Condicion</Label>
-              <Select value={String(conditionType)} onValueChange={(v) => setConditionType(Number(v) as PromotionItemType)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.values(PromotionItemType).filter((v) => typeof v === "number").map((v) => <SelectItem key={v} value={String(v)}>{PromotionItemTypeLabels[v as PromotionItemType]}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Cantidad min.</Label>
-              <Input type="number" min="1" value={minQuantity} onChange={(e) => setMinQuantity(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Subtotal min.</Label>
-              <FormattedNumberInput kind="currency" value={minSubtotal} onValueChange={(next) => setMinSubtotal(next?.toString() ?? "")} />
-            </div>
-            <div className="space-y-2">
-              <Label>Beneficio</Label>
-              <Select value={String(benefitType)} onValueChange={(v) => setBenefitType(Number(v) as PromotionBenefitType)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.values(PromotionBenefitType).filter((v) => typeof v === "number").map((v) => <SelectItem key={v} value={String(v)}>{PromotionBenefitTypeLabels[v as PromotionBenefitType]}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Valor</Label>
-              <FormattedNumberInput kind={benefitType === PromotionBenefitType.PercentageDiscount ? "percent" : "currency"} value={value} onValueChange={(next) => setValue(next?.toString() ?? "")} />
-            </div>
-            <div className="space-y-2">
-              <Label>Aplica a</Label>
-              <Select value={String(targetType)} onValueChange={(v) => setTargetType(Number(v) as PromotionItemType)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.values(PromotionItemType).filter((v) => typeof v === "number").map((v) => <SelectItem key={v} value={String(v)}>{PromotionItemTypeLabels[v as PromotionItemType]}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Prioridad</Label>
-              <Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
-            </div>
-            <label className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2 md:col-span-2">
-              <span><strong className="block text-sm">Combinable</strong><small className="text-muted-foreground">Permite acumularla con otra promoción sobre la misma línea.</small></span>
-              <Switch checked={isCombinable} onCheckedChange={setIsCombinable} />
-            </label>
-            <div className="space-y-3 rounded-xl border px-3 py-3 md:col-span-6">
-              <label className="flex items-center justify-between gap-3">
-                <span><strong className="block text-sm">Todas las sedes</strong><small className="text-muted-foreground">La promoción se sincroniza y aplica en cualquier sede de esta empresa.</small></span>
-                <Switch checked={appliesToAllBusinesses} onCheckedChange={setAppliesToAllBusinesses} />
-              </label>
-              {!appliesToAllBusinesses && <div className="grid gap-2 border-t pt-3 sm:grid-cols-2 lg:grid-cols-3">
-                {(businesses.data?.items ?? []).map((business) => {
-                  const checked = applicableBusinessIds.includes(business.businessId);
-                  return <label key={business.businessId} className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={checked} onCheckedChange={(next) => setApplicableBusinessIds((current) =>
-                      next === true ? [...new Set([...current, business.businessId])] : current.filter((id) => id !== business.businessId))} />
-                    <span>{business.name}</span>
-                  </label>;
-                })}
-              </div>}
-            </div>
-            {conditionType === PromotionItemType.Product && businessId && <div className="md:col-span-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(conditionProduct ? [conditionProduct.id] : [])} disabled={createPromotion.isPending} inputId="promotion-condition-product" label="Producto de la condición" showAddButton={false} onSelect={product => setConditionProduct({ id: product.productId, name: product.productName })} />{conditionProduct && <p className="mt-1 text-xs text-muted-foreground">Seleccionado: {conditionProduct.name}</p>}</div>}
-            {conditionType === PromotionItemType.ProductCategory && <div className="space-y-2 md:col-span-3"><Label>Categoría de la condición</Label><Select value={conditionCategory} onValueChange={setConditionCategory}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(categories.data ?? []).map(category => <SelectItem key={category.productCategoryId} value={category.name}>{category.path}</SelectItem>)}</SelectContent></Select></div>}
-            {targetType === PromotionItemType.Product && businessId && <div className="md:col-span-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(benefitProduct ? [benefitProduct.id] : [])} disabled={createPromotion.isPending} inputId="promotion-benefit-product" label="Producto beneficiado" showAddButton={false} onSelect={product => setBenefitProduct({ id: product.productId, name: product.productName })} />{benefitProduct && <p className="mt-1 text-xs text-muted-foreground">Seleccionado: {benefitProduct.name}</p>}</div>}
-            {targetType === PromotionItemType.ProductCategory && <div className="space-y-2 md:col-span-3"><Label>Categoría beneficiada</Label><Select value={benefitCategory} onValueChange={setBenefitCategory}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(categories.data ?? []).map(category => <SelectItem key={category.productCategoryId} value={category.name}>{category.path}</SelectItem>)}</SelectContent></Select></div>}
-            <div className="flex items-end">
-              <Button onClick={handleCreate} disabled={!businessId || createPromotion.isPending} className="w-full gap-2"><Plus className="h-4 w-4" /> Crear</Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Promociones activas e historicas</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nombre</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Beneficio</TableHead>
-                <TableHead>Combinable</TableHead>
-                <TableHead>Sedes</TableHead>
-                <TableHead className="text-right">Prioridad</TableHead>
-                <TableHead className="w-12" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {promotions.map((promotion) => {
-                const benefit = promotion.benefits[0];
-                const amount = benefit?.discountPercentage ?? benefit?.discountAmount ?? benefit?.fixedUnitPrice;
-                return (
-                  <TableRow key={promotion.promotionId}>
-                    <TableCell className="font-medium">{promotion.name}</TableCell>
-                    <TableCell><Badge variant={promotion.isActive ? "default" : "secondary"}>{promotion.isActive ? "Activa" : "Inactiva"}</Badge></TableCell>
-                    <TableCell>{benefit ? `${PromotionBenefitTypeLabels[benefit.benefitType]} ${amount ? benefit.benefitType === PromotionBenefitType.PercentageDiscount ? `${amount}%` : money.format(amount) : ""}` : "Sin beneficio"}</TableCell>
-                    <TableCell>{promotion.isCombinable ? "Sí" : "No"}</TableCell>
-                    <TableCell>{promotion.appliesToAllBusinesses ? "Todas" : `${promotion.applicableBusinessIds?.length ?? 1} seleccionada(s)`}</TableCell>
-                    <TableCell className="text-right">{promotion.priority}</TableCell>
-                    <TableCell><div className="flex"><Button variant="ghost" size="icon" aria-label={`Editar ${promotion.name}`} onClick={() => setEditingPromotion(promotion)}><Pencil className="h-4 w-4" /></Button><Button variant="ghost" size="icon" aria-label={`Desactivar ${promotion.name}`} onClick={() => handleDelete(promotion)} disabled={!promotion.isActive || deletePromotion.isPending}><Trash2 className="h-4 w-4" /></Button></div></TableCell>
-                  </TableRow>
-                );
-              })}
-              {!isLoading && promotions.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">Sin promociones configuradas</TableCell></TableRow>}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-      {editingPromotion && <PromotionEditDialog promotion={editingPromotion} businesses={businesses.data?.items ?? []} onClose={() => setEditingPromotion(null)} />}
-    </div>
+  const [creating, setCreating] = useState(false);
+  const [pendingDeactivation, setPendingDeactivation] = useState<Promotion | null>(null);
+  const promotionsQuery = usePromotions({ page, pageSize, search: search || undefined });
+  const businessesQuery = useBusinesses({ page: 1, pageSize: 200 });
+  const categoriesQuery = useProductCategories();
+  const deactivate = useDeletePromotion();
+  const promotions = promotionsQuery.data?.items ?? [];
+  const categoryNames = useMemo(
+    () => new Map((categoriesQuery.data ?? []).map((category) => [category.productCategoryId, category.name])),
+    [categoriesQuery.data],
   );
+
+  async function confirmDeactivation() {
+    if (!pendingDeactivation) return;
+    try {
+      await deactivate.mutateAsync(pendingDeactivation.promotionId);
+      toast.success("Promoción desactivada y sincronizada");
+      setPendingDeactivation(null);
+    } catch {
+      toast.error("No fue posible desactivar la promoción");
+    }
+  }
+
+  const columns: ColumnDef<Promotion>[] = useMemo(() => [
+    {
+      accessorKey: "name",
+      header: "Promoción",
+      cell: ({ row }) => <div><p className="font-medium">{row.original.name}</p><p className="mt-0.5 max-w-sm truncate text-xs text-muted-foreground">{describePromotion(row.original, categoryNames)}</p></div>,
+    },
+    { id: "discount", header: "Descuento", cell: ({ row }) => describeBenefit(row.original) },
+    { id: "condition", header: "Condición", cell: ({ row }) => describeCondition(row.original, categoryNames) },
+    { id: "scope", header: "Sedes", cell: ({ row }) => <span className="inline-flex items-center gap-1.5"><Building2 className="h-4 w-4 text-emerald-600" />{row.original.appliesToAllBusinesses ? "Todas" : `${row.original.applicableBusinessIds?.length ?? 0} seleccionada(s)`}</span> },
+    { accessorKey: "isActive", header: "Estado", cell: ({ row }) => <Badge className={row.original.isActive ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-100"}>{row.original.isActive ? "Activa" : "Inactiva"}</Badge> },
+    {
+      id: "actions",
+      cell: ({ row }) => !canUpdate && (!canDelete || !row.original.isActive) ? null : <DropdownMenu>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Acciones de ${row.original.name}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {canUpdate && <DropdownMenuItem onClick={() => setEditingPromotion(row.original)}><Pencil className="mr-2 h-4 w-4" />Editar configuración</DropdownMenuItem>}
+          {canDelete && row.original.isActive && <><DropdownMenuSeparator /><DropdownMenuItem className="text-destructive" onClick={() => setPendingDeactivation(row.original)}><PowerOff className="mr-2 h-4 w-4" />Desactivar</DropdownMenuItem></>}
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    },
+  ], [canDelete, canUpdate, categoryNames]);
+
+  if (promotionsQuery.isError) return <PageError onRetry={promotionsQuery.refetch} />;
+  if (!businessId) return <div className="p-10 text-center text-muted-foreground">Selecciona una sede para administrar promociones.</div>;
+
+  const allBusinesses = businessesQuery.data?.items ?? [];
+  return <div className="space-y-6 p-6">
+    <header className="flex flex-wrap items-start justify-between gap-4">
+      <div><p className="text-sm font-medium text-emerald-600">Precios y ventas</p><h1 className="text-3xl font-bold tracking-tight">Promociones</h1><p className="mt-1 text-muted-foreground">Crea descuentos directos o activa un descuento cuando el cliente compra otro producto.</p></div>
+      {canCreate && <Button className="rounded-xl" onClick={() => setCreating(true)}><Plus className="mr-2 h-4 w-4" />Nueva promoción</Button>}
+    </header>
+
+    <div className="grid gap-3 md:grid-cols-3">
+      <Metric icon={BadgePercent} label="Promociones registradas" value={promotionsQuery.data?.totalCount ?? 0} />
+      <Metric icon={ShoppingBasket} label="Configuración disponible" value="Producto o categoría" />
+      <Metric icon={Building2} label="Cobertura predeterminada" value="Todas las sedes" />
+    </div>
+
+    <Card className="rounded-2xl border-emerald-100 bg-emerald-50/30"><CardContent className="grid gap-3 pt-6 sm:grid-cols-3"><GuideStep number="1" title="Elige el beneficio" text="Producto, categoría o todo el catálogo." /><GuideStep number="2" title="Agrega la compra" text="Opcional: exige otro producto o categoría." /><GuideStep number="3" title="Confirma las sedes" text="Todas por defecto o una selección." /></CardContent></Card>
+
+    <Card className="rounded-2xl"><CardContent className="pt-6">
+      <DataTable
+        columns={columns}
+        data={promotions}
+        searchKey="name"
+        searchPlaceholder="Buscar promociones por nombre..."
+        isLoading={promotionsQuery.isLoading}
+        page={page}
+        pageSize={pageSize}
+        pageCount={promotionsQuery.data?.totalPages ?? 0}
+        totalItems={promotionsQuery.data?.totalCount ?? 0}
+        onSearch={(value) => { setSearch(value.trim()); setPage(1); }}
+        onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }}
+        enableRowSelection={false}
+      />
+    </CardContent></Card>
+
+    {creating && <PromotionEditDialog businessId={businessId} businesses={allBusinesses} onClose={() => setCreating(false)} />}
+    {editingPromotion && <PromotionEditDialog promotion={editingPromotion} businessId={businessId} businesses={allBusinesses} onClose={() => setEditingPromotion(null)} />}
+
+    <Dialog open={Boolean(pendingDeactivation)} onOpenChange={(open) => !open && setPendingDeactivation(null)}>
+      <DialogContent><DialogHeader><DialogTitle>Desactivar promoción</DialogTitle><DialogDescription>“{pendingDeactivation?.name}” dejará de aplicarse y el cambio se enviará a las cajas de las sedes incluidas.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setPendingDeactivation(null)}>Cancelar</Button><Button variant="destructive" onClick={() => void confirmDeactivation()} disabled={deactivate.isPending}>{deactivate.isPending ? "Desactivando..." : "Desactivar"}</Button></DialogFooter></DialogContent>
+    </Dialog>
+  </div>;
 }
+
+function Metric({ icon: Icon, label, value }: { icon: typeof BadgePercent; label: string; value: string | number }) { return <Card><CardContent className="flex items-center gap-3 pt-6"><span className="rounded-xl bg-emerald-50 p-3 text-emerald-700"><Icon className="h-5 w-5" /></span><div><p className="text-sm text-muted-foreground">{label}</p><p className="text-xl font-bold">{value}</p></div></CardContent></Card>; }
+function GuideStep({ number, title, text }: { number: string; title: string; text: string }) { return <div className="flex gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white">{number}</span><div><p className="font-medium">{title}</p><p className="text-sm text-muted-foreground">{text}</p></div></div>; }
+function describeBenefit(promotion: Promotion) { const benefit = promotion.benefits[0]; if (!benefit) return "Sin beneficio"; if (benefit.benefitType === PromotionBenefitType.PercentageDiscount) return <span className="font-semibold text-emerald-700">{benefit.discountPercentage ?? 0}%</span>; return PromotionBenefitTypeLabels[benefit.benefitType]; }
+function describeCondition(promotion: Promotion, categoryNames: Map<string, string>) { const condition = promotion.conditions[0]; if (!condition) return "Sin compra previa"; if (condition.itemType === PromotionItemType.Product) return `Comprar ${condition.minQuantity} de un producto`; if (condition.itemType === PromotionItemType.ProductCategory) return `Comprar ${condition.minQuantity} de ${categoryNames.get(condition.productCategoryId ?? "") ?? "una categoría"}`; return condition.minSubtotal ? `Compra mínima configurada` : "Sin compra previa"; }
+function describePromotion(promotion: Promotion, categoryNames: Map<string, string>) { const benefit = promotion.benefits[0]; if (!benefit) return "Sin regla de descuento"; const target = benefit.targetItemType === PromotionItemType.Product ? "un producto" : benefit.targetItemType === PromotionItemType.ProductCategory ? categoryNames.get(benefit.productCategoryId ?? "") ?? "una categoría" : "todos los productos"; const units = benefit.appliesToQuantity ? `, hasta ${benefit.appliesToQuantity} unidad(es)` : ""; return `Descuento sobre ${target}${units}`; }

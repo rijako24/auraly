@@ -1,8 +1,5 @@
 using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
-using Auraly.Application.Fiscal;
-using Auraly.Application.Sales;
-using Auraly.Commerce.Accounting.Application;
 using Azure.Messaging.ServiceBus;
 
 namespace Auraly.Api;
@@ -57,9 +54,6 @@ public sealed class DocumentProcessingHostedService(
     ServiceBusSender sender,
     DocumentProcessingServiceBusOptions options,
     IServiceScopeFactory scopeFactory,
-    FiscalProcessingCoordinator fiscalProcessing,
-    AccountingProcessingCoordinator accountingProcessing,
-    SalesReportingProcessingCoordinator salesReporting,
     ILogger<DocumentProcessingHostedService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
@@ -151,23 +145,6 @@ public sealed class DocumentProcessingHostedService(
             await using var scope = scopeFactory.CreateAsyncScope();
             var worker = scope.ServiceProvider.GetRequiredService<DocumentProcessingWorker>();
             var result = await worker.ProcessOneAsync(signal, args.CancellationToken);
-            if (FiscalGenerationPolicy.Supports(signal.DocumentType))
-                await fiscalProcessing.RequestGenerationAsync(
-                    signal.BusinessId,
-                    signal.DocumentId,
-                    args.CancellationToken);
-            if (signal.EconomicEffectsEnabled && AccountingProcessingPolicy.Supports(signal.DocumentType))
-                await accountingProcessing.RequestPostingAsync(
-                    signal.BusinessId,
-                    signal.DocumentId,
-                    signal.DocumentType,
-                    args.CancellationToken);
-            if (signal.EconomicEffectsEnabled && SalesReportingProcessingPolicy.Supports(signal.DocumentType))
-                await salesReporting.RequestProjectionAsync(
-                    signal.BusinessId,
-                    signal.DocumentId,
-                    signal.DocumentType,
-                    args.CancellationToken);
             await args.CompleteMessageAsync(args.Message, args.CancellationToken);
             logger.LogInformation(
                 "Movement {MovementId} completed with {Result} for business {BusinessId}.",

@@ -20,6 +20,7 @@ public static class OrdersApi
             int? pageSize,
             string? orderNumber,
             string? customer,
+            Guid? customerId,
             string? product,
             string? status,
             int? source,
@@ -29,6 +30,7 @@ public static class OrdersApi
             bool? includeClaimedByOthers,
             Guid? warehouseId,
             Guid? routeId,
+            Guid? sellerId,
             bool? onlyMine,
             CancellationToken ct) =>
             await Handle(() => service.PageAsync(
@@ -47,7 +49,9 @@ public static class OrdersApi
                     includeClaimedByOthers ?? true,
                     WarehouseId: warehouseId,
                     RouteId: routeId,
-                    OnlyCreatedByActor: onlyMine ?? false),
+                    OnlyCreatedByActor: onlyMine ?? false,
+                    SellerId: sellerId,
+                    CustomerId: customerId),
                 ct)));
 
         group.MapGet("/{orderId:guid}", async (

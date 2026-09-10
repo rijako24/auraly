@@ -37,10 +37,10 @@ public sealed class ServiceCatalogPricingService : IServiceCatalogPricingService
                     null,
                     s.ServiceId,
                     s.ServiceName,
-                    s.ServiceCategory?.Name,
                     s.Price,
                     1,
-                    s.IncludeInCheckoutTotal)).ToList(),
+                    s.IncludeInCheckoutTotal,
+                    ServiceCategoryId: s.CategoryId)).ToList(),
                 ct: ct);
 
             priceByService = promotionPricing.Items.ToDictionary(

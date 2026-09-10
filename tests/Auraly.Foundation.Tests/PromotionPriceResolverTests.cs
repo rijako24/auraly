@@ -73,12 +73,78 @@ public sealed class PromotionPriceResolverTests
     {
         var rule = new PromotionRule(
             Guid.NewGuid(), "Compra mayor", 0, false, null, DateTime.UnixEpoch,
-            [new(PromotionItemType.AnyProduct, null, null, null, 1, 300)],
+            [new(PromotionItemType.AnyProduct, null, null, 1, 300)],
             [new(PromotionBenefitType.PercentageDiscount, PromotionItemType.AnyProduct,
-                null, null, null, 10, null, null, null)]);
+                null, null, 10, null, null, null)]);
         var result = Resolve([Line("one", Cleaning, 100), Line("two", Meat, 200)], [rule]);
         Assert.Equal(270, result.Total);
         Assert.Equal(30, result.DiscountTotal);
+    }
+
+    [Fact]
+    public void Buying_trigger_product_discounts_only_one_unit_of_the_other_product()
+    {
+        var triggerProductId = Guid.NewGuid();
+        var discountedProductId = Guid.NewGuid();
+        var rule = new PromotionRule(
+            Guid.NewGuid(), "Compra A y recibe B al 50%", 0, false, null, DateTime.UnixEpoch,
+            [new(PromotionItemType.Product, triggerProductId, null, 1, null)],
+            [new(PromotionBenefitType.PercentageDiscount, PromotionItemType.Product,
+                discountedProductId, null, 50, null, null, 1)]);
+
+        var withoutTrigger = Resolve([
+            Line("b", Cleaning, 100, quantity: 2, productId: discountedProductId)
+        ], [rule]);
+        var withTrigger = Resolve([
+            Line("a", Cleaning, 80, productId: triggerProductId),
+            Line("b", Cleaning, 100, quantity: 2, productId: discountedProductId)
+        ], [rule]);
+
+        Assert.Equal(200, withoutTrigger.Total);
+        Assert.Equal(0, withoutTrigger.DiscountTotal);
+        Assert.Equal(230, withTrigger.Total);
+        Assert.Equal(50, withTrigger.DiscountTotal);
+        AssertLine(withTrigger, "b", 75, "Promotion", 50);
+    }
+
+    [Fact]
+    public void Buying_from_one_category_discounts_one_unit_from_another_category_by_id()
+    {
+        var rule = new PromotionRule(
+            Guid.NewGuid(), "Compra aseo y recibe carnes al 50%", 0, false, null,
+            DateTime.UnixEpoch,
+            [new(PromotionItemType.ProductCategory, null, null, 1, null, Cleaning)],
+            [new(PromotionBenefitType.PercentageDiscount,
+                PromotionItemType.ProductCategory, null, null, 50, null, null, 1, Meat)]);
+
+        var result = Resolve([
+            Line("soap", Cleaning, 80),
+            Line("meat", Meat, 100, quantity: 2)
+        ], [rule]);
+
+        Assert.Equal(230, result.Total);
+        Assert.Equal(50, result.DiscountTotal);
+        AssertLine(result, "soap", 80, "Base", 0);
+        AssertLine(result, "meat", 75, "Promotion", 50);
+    }
+
+    [Fact]
+    public void Category_identifier_is_the_only_category_matching_key()
+    {
+        var expectedCategoryId = Guid.NewGuid();
+        var differentCategoryId = Guid.NewGuid();
+        var rule = new PromotionRule(
+            Guid.NewGuid(), "Categoría estable", 0, false, null, DateTime.UnixEpoch, [],
+            [new(PromotionBenefitType.PercentageDiscount, PromotionItemType.ProductCategory,
+                null, null, 20, null, null, null, expectedCategoryId)]);
+
+        var result = Resolve([
+            Line("expected", Cleaning, 100, productCategoryId: expectedCategoryId),
+            Line("different", Cleaning, 100, productCategoryId: differentCategoryId)
+        ], [rule]);
+
+        AssertLine(result, "expected", 80, "Promotion", 20);
+        AssertLine(result, "different", 100, "Base", 0);
     }
 
     [Fact]
@@ -87,9 +153,9 @@ public sealed class PromotionPriceResolverTests
         var productId = Guid.NewGuid();
         var rule = new PromotionRule(
             Guid.NewGuid(), "Tres por dos", 0, false, null, DateTime.UnixEpoch,
-            [new(PromotionItemType.Product, productId, null, null, 3, null)],
+            [new(PromotionItemType.Product, productId, null, 3, null)],
             [new(PromotionBenefitType.FreeItem, PromotionItemType.Product,
-                productId, null, null, null, null, null, 1)]);
+                productId, null, null, null, null, 1)]);
         var result = Resolve([Line("item", Cleaning, 50, quantity: 3, productId: productId)], [rule]);
         AssertLine(result, "item", 100m / 3m, "Promotion", 50);
         Assert.Equal(100, result.Total);
@@ -101,9 +167,9 @@ public sealed class PromotionPriceResolverTests
         var productId = Guid.NewGuid();
         var rule = new PromotionRule(
             Guid.NewGuid(), "Tres por dos", 0, false, null, DateTime.UnixEpoch,
-            [new(PromotionItemType.Product, productId, null, null, 3, null)],
+            [new(PromotionItemType.Product, productId, null, 3, null)],
             [new(PromotionBenefitType.FreeItem, PromotionItemType.Product,
-                productId, null, null, null, null, null, 1)]);
+                productId, null, null, null, null, 1)]);
         var result = Resolve(
             [
                 Line("one", Cleaning, 50, quantity: 1, productId: productId),
@@ -122,9 +188,9 @@ public sealed class PromotionPriceResolverTests
         var productId = Guid.NewGuid();
         var free = new PromotionRule(
             Guid.NewGuid(), "Tres por dos", 20, false, null, DateTime.UnixEpoch,
-            [new(PromotionItemType.Product, productId, null, null, 3, null)],
+            [new(PromotionItemType.Product, productId, null, 3, null)],
             [new(PromotionBenefitType.FreeItem, PromotionItemType.Product,
-                productId, null, null, null, null, null, 1)]);
+                productId, null, null, null, null, 1)]);
         var percentage = Percent("Diez por ciento", null, 10, priority: 10, combinable: true);
 
         var grouped = Resolve(
@@ -150,7 +216,7 @@ public sealed class PromotionPriceResolverTests
         var rule = new PromotionRule(
             Guid.NewGuid(), "Descuento compra", 0, true, null, DateTime.UnixEpoch, [],
             [new(PromotionBenefitType.AmountDiscount, PromotionItemType.AnyProduct,
-                null, null, null, null, 30, null, null)]);
+                null, null, null, 30, null, null)]);
         var result = Resolve(
             [Line("one", Cleaning, 100), Line("two", Meat, 100)], [rule]);
         Assert.Equal(30, result.DiscountTotal);
@@ -163,7 +229,7 @@ public sealed class PromotionPriceResolverTests
         var rule = new PromotionRule(
             Guid.NewGuid(), "Precio fijo", 0, false, null, DateTime.UnixEpoch, [],
             [new(PromotionBenefitType.FixedUnitPrice, PromotionItemType.AnyProduct,
-                null, null, null, null, null, 60, null)]);
+                null, null, null, null, 60, null)]);
         var line = Line("item", Cleaning, 100, channel: 80);
 
         AssertLine(Resolve([line], [rule], combineChannel: false), "item", 60, "Promotion", 40);
@@ -199,10 +265,10 @@ public sealed class PromotionPriceResolverTests
 
     private static PromotionPriceLineInput Line(
         string key, Guid categoryMarker, decimal price, decimal? channel = null,
-        decimal quantity = 1, Guid? productId = null) => new(
-        key, PromotionItemType.Product, productId ?? Guid.NewGuid(), null, key,
-        categoryMarker == Cleaning ? "Aseo" : "Carnes", price, channel, quantity,
-        "COP", channel is null ? null : Guid.NewGuid());
+        decimal quantity = 1, Guid? productId = null, Guid? productCategoryId = null) => new(
+        key, PromotionItemType.Product, productId ?? Guid.NewGuid(), null, key, price, channel, quantity,
+        "COP", channel is null ? null : Guid.NewGuid(),
+        ProductCategoryId: productCategoryId ?? categoryMarker);
 
     private static PromotionRule Percent(
         string name, string? category, decimal percent, int priority = 0, bool combinable = false) => new(
@@ -210,7 +276,8 @@ public sealed class PromotionPriceResolverTests
         [],
         [new(PromotionBenefitType.PercentageDiscount,
             category is null ? PromotionItemType.AnyProduct : PromotionItemType.ProductCategory,
-            null, null, category, percent, null, null, null)]);
+            null, null, percent, null, null, null,
+            category switch { "Aseo" => Cleaning, "Carnes" => Meat, _ => null })]);
 
     private static void AssertLine(
         PromotionPriceResult result, string key, decimal expectedUnitPrice,

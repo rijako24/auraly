@@ -294,6 +294,12 @@ con `PromotionBusinessScopes`. La definición, sus condiciones y sus beneficios
 no almacenan `BusinessId`. Las claves compuestas por `TenantId` impiden asociar
 una promoción con una sede de otra empresa.
 
+Las reglas dirigidas a categorías guardan `ProductCategoryId` o
+`ServiceCategoryId` como única identidad. No copian `CategoryName`: la interfaz
+consulta el nombre vigente en el catálogo propietario. El resolvedor compara
+exclusivamente el identificador y la administración valida que la categoría
+esté activa y pertenezca a la sede desde la que se configura la promoción.
+
 ---
 
 ## 8. POS y sincronización

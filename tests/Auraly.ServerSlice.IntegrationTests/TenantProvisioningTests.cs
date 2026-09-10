@@ -199,6 +199,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal("Configuring", await ReadAccountingStatusAsync(result.TenantId));
         Assert.Equal(6, state.Roles);
         Assert.Equal(3, state.OnlineSalesDocumentSeries);
+        Assert.Equal(14, await CountDefaultDocumentSeriesAsync(
+            result.TenantId, result.BusinessId));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SUPERVISOR", "pos.approvals.receive_notifications"));
         Assert.False(await RoleHasPermissionAsync(
@@ -626,6 +628,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(2, await CountDefaultWarehousesAsync(fixture.TenantId, business!.BusinessId));
         Assert.Equal(1, await CountDefaultCostCentersAsync(fixture.TenantId, business.BusinessId));
         Assert.Equal(3, await CountOnlineSalesDocumentSeriesAsync(fixture.TenantId, business.BusinessId));
+        Assert.Equal(14, await CountDefaultDocumentSeriesAsync(
+            fixture.TenantId, business.BusinessId));
     }
 
     private async Task<(Guid CountryId, Guid DivisionId, Guid CityId)> ReadGeographyAsync()
@@ -896,6 +900,33 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
               AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt',N'SalesDebitNote')
               AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountDefaultDocumentSeriesAsync(
+        Guid tenantId,
+        Guid businessId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.DocumentSeries series
+            INNER JOIN dbo.Businesses business
+              ON business.BusinessId=series.BusinessId
+            WHERE business.TenantId=@TenantId
+              AND series.BusinessId=@BusinessId
+              AND series.DeviceId IS NULL
+              AND series.SeriesCode=N'00'
+              AND series.IsActive=1
+              AND series.DocumentType IN(
+                N'SalesInvoice',N'SalesReceipt',N'SalesDebitNote',
+                N'GoodsReceipt',N'PurchaseOrder',N'SalesReturn',N'PurchaseReturn',
+                N'ReceivablePayment',N'PayablePayment',N'StockCount',
+                N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Damage');
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);

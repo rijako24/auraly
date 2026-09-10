@@ -37,6 +37,11 @@ public sealed class SqlOrderStore(
         AddContains(filters, parameters, request.Customer,
             "(o.CustomerNameSnapshot LIKE @Customer OR o.CustomerDocumentSnapshot LIKE @Customer OR o.CustomerPhoneSnapshot LIKE @Customer)",
             "@Customer");
+        if (request.CustomerId is not null)
+        {
+            filters.Add("o.CustomerId=@CustomerId");
+            parameters.Add(P("@CustomerId", request.CustomerId.Value));
+        }
         if (!string.IsNullOrWhiteSpace(request.Product))
         {
             filters.Add("""
@@ -79,6 +84,11 @@ public sealed class SqlOrderStore(
         {
             filters.Add("COALESCE(o.RouteId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.RouteId')))=@RouteId");
             parameters.Add(P("@RouteId", request.RouteId.Value));
+        }
+        if (request.SellerId is not null)
+        {
+            filters.Add("o.SellerId=@SellerId");
+            parameters.Add(P("@SellerId", request.SellerId.Value));
         }
         if (request.OnlyCreatedByActor)
         {

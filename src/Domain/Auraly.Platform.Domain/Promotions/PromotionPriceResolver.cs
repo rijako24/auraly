@@ -8,33 +8,36 @@ public sealed record PromotionPriceLineInput(
     Guid? ProductId,
     Guid? ServiceId,
     string Name,
-    string? CategoryName,
     decimal BaseUnitPrice,
     decimal? ChannelUnitPrice,
     decimal Quantity,
     string CurrencyCode,
     Guid? PriceChannelId = null,
     bool IncludeInTotal = true,
-    bool EligibleForPromotion = true);
+    bool EligibleForPromotion = true,
+    Guid? ProductCategoryId = null,
+    Guid? ServiceCategoryId = null);
 
 public sealed record PromotionConditionRule(
     PromotionItemType ItemType,
     Guid? ProductId,
     Guid? ServiceId,
-    string? CategoryName,
     decimal MinQuantity,
-    decimal? MinSubtotal);
+    decimal? MinSubtotal,
+    Guid? ProductCategoryId = null,
+    Guid? ServiceCategoryId = null);
 
 public sealed record PromotionBenefitRule(
     PromotionBenefitType BenefitType,
     PromotionItemType TargetItemType,
     Guid? ProductId,
     Guid? ServiceId,
-    string? CategoryName,
     decimal? DiscountPercentage,
     decimal? DiscountAmount,
     decimal? FixedUnitPrice,
-    decimal? AppliesToQuantity);
+    decimal? AppliesToQuantity,
+    Guid? ProductCategoryId = null,
+    Guid? ServiceCategoryId = null);
 
 public sealed record PromotionRule(
     Guid PromotionId,
@@ -101,7 +104,7 @@ public static class PromotionPriceResolver
             var targets = states.Values
                 .Where(value => value.Input.EligibleForPromotion && MatchesTarget(
                     benefit.TargetItemType, benefit.ProductId, benefit.ServiceId,
-                    benefit.CategoryName, value.Input))
+                    benefit.ProductCategoryId, benefit.ServiceCategoryId, value.Input))
                 .Where(state => !state.AppliedPromotionIds
                     .Where(id => id != promotion.PromotionId)
                     .Select(id => rulesById[id])
@@ -161,7 +164,8 @@ public static class PromotionPriceResolver
         IReadOnlyList<PromotionPriceLineInput> lines)
     {
         var matches = lines.Where(line => MatchesTarget(
-            condition.ItemType, condition.ProductId, condition.ServiceId, condition.CategoryName, line)).ToArray();
+            condition.ItemType, condition.ProductId, condition.ServiceId,
+            condition.ProductCategoryId, condition.ServiceCategoryId, line)).ToArray();
         return matches.Sum(line => line.Quantity) >= condition.MinQuantity
             && (condition.MinSubtotal is null
                 || matches.Sum(line => line.BaseUnitPrice * line.Quantity) >= condition.MinSubtotal.Value);
@@ -171,7 +175,8 @@ public static class PromotionPriceResolver
         PromotionItemType targetType,
         Guid? productId,
         Guid? serviceId,
-        string? categoryName,
+        Guid? productCategoryId,
+        Guid? serviceCategoryId,
         PromotionPriceLineInput line) => targetType switch
         {
             PromotionItemType.Any => true,
@@ -179,15 +184,14 @@ public static class PromotionPriceResolver
             PromotionItemType.AnyService => line.ItemType == PromotionItemType.Service,
             PromotionItemType.Product => line.ItemType == PromotionItemType.Product && productId == line.ProductId,
             PromotionItemType.Service => line.ItemType == PromotionItemType.Service && serviceId == line.ServiceId,
-            PromotionItemType.ProductCategory => line.ItemType == PromotionItemType.Product && Same(categoryName, line.CategoryName),
-            PromotionItemType.ServiceCategory => line.ItemType == PromotionItemType.Service && Same(categoryName, line.CategoryName),
+            PromotionItemType.ProductCategory => line.ItemType == PromotionItemType.Product
+                && productCategoryId.HasValue
+                && productCategoryId == line.ProductCategoryId,
+            PromotionItemType.ServiceCategory => line.ItemType == PromotionItemType.Service
+                && serviceCategoryId.HasValue
+                && serviceCategoryId == line.ServiceCategoryId,
             _ => false
         };
-
-    private static bool Same(string? left, string? right) =>
-        !string.IsNullOrWhiteSpace(left)
-        && !string.IsNullOrWhiteSpace(right)
-        && string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static decimal CalculateDiscount(
         PromotionBenefitRule benefit,

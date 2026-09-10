@@ -59,3 +59,11 @@ export function useCreateService() {
     },
   });
 }
+
+export function useDeleteService() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (serviceId: string) => servicesApi.delete(serviceId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: serviceKeys.all }),
+  });
+}

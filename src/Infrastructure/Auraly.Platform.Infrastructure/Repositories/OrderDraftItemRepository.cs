@@ -13,6 +13,8 @@ public sealed class OrderDraftItemRepository : IOrderDraftItemRepository
 
     public async Task<IReadOnlyList<OrderDraftItem>> GetByDraftIdAsync(Guid businessId, Guid orderDraftId, CancellationToken ct = default) =>
         await _context.OrderDraftItems
+            .Include(i => i.Product)
+            .ThenInclude(product => product!.ProductCategory)
             .Where(i => i.BusinessId == businessId && i.OrderDraftId == orderDraftId)
             .OrderBy(i => i.CreatedAt)
             .ToListAsync(ct);

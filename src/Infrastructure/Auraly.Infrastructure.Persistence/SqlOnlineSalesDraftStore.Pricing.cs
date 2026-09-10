@@ -71,9 +71,10 @@ public sealed partial class SqlOnlineSalesDraftStore
                 channelConfiguration.Exclusions);
             inputs.Add(new(
                 request.Key, PromotionItemType.Product, request.ProductId, null, product.Name,
-                product.CategoryName, product.UnitPrice,
+                product.UnitPrice,
                 channel.Amount,request.Quantity, product.CurrencyCode, channel.PriceChannelId,
-                EligibleForPromotion: request.EligibleForPromotion));
+                EligibleForPromotion: request.EligibleForPromotion,
+                ProductCategoryId: product.ProductCategoryId));
         }
 
         var configuration = await LoadPromotionConfigurationAsync(
@@ -150,14 +151,16 @@ public sealed partial class SqlOnlineSalesDraftStore
             SELECT promotion.PromotionId,promotion.Name,promotion.Priority,promotion.IsCombinable,
                    promotion.CouponCode,promotion.CreatedAt,
                    COALESCE((
-                     SELECT CONVERT(INT,c.ItemType) ItemType,c.ProductId,c.ServiceId,c.CategoryName,
+                     SELECT CONVERT(INT,c.ItemType) ItemType,c.ProductId,c.ServiceId,
+                            c.ProductCategoryId,c.ServiceCategoryId,
                             c.MinQuantity MinimumQuantity,c.MinSubtotal MinimumSubtotal
                      FROM dbo.PromotionConditions c
                      WHERE c.PromotionId=promotion.PromotionId
                      ORDER BY c.PromotionConditionId FOR JSON PATH),N'[]'),
                    COALESCE((
                      SELECT CONVERT(INT,b.BenefitType) BenefitType,CONVERT(INT,b.TargetItemType) TargetItemType,
-                            b.ProductId,b.ServiceId,b.CategoryName,b.DiscountPercentage,b.DiscountAmount,
+                            b.ProductId,b.ServiceId,b.ProductCategoryId,b.ServiceCategoryId,
+                            b.DiscountPercentage,b.DiscountAmount,
                             b.FixedUnitPrice,b.AppliesToQuantity
                      FROM dbo.PromotionBenefits b
                      WHERE b.PromotionId=promotion.PromotionId
@@ -189,11 +192,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                 reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetDateTime(5),
                 conditions.Select(value => new PromotionConditionRule(
                     (PromotionItemType)value.ItemType, value.ProductId, value.ServiceId,
-                    value.CategoryName, value.MinimumQuantity, value.MinimumSubtotal)).ToArray(),
+                    value.MinimumQuantity, value.MinimumSubtotal,
+                    value.ProductCategoryId, value.ServiceCategoryId)).ToArray(),
                 benefits.Select(value => new PromotionBenefitRule(
                     (PromotionBenefitType)value.BenefitType, (PromotionItemType)value.TargetItemType,
-                    value.ProductId, value.ServiceId, value.CategoryName, value.DiscountPercentage,
-                    value.DiscountAmount, value.FixedUnitPrice, value.AppliesToQuantity)).ToArray()));
+                    value.ProductId, value.ServiceId, value.DiscountPercentage,
+                    value.DiscountAmount, value.FixedUnitPrice, value.AppliesToQuantity,
+                    value.ProductCategoryId, value.ServiceCategoryId)).ToArray()));
         }
         return new(allowCombination, promotions);
     }

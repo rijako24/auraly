@@ -68,27 +68,8 @@ public sealed class OrderBatchService(
             actor.UserId,
             actor.TenantId,
             actor.Permissions);
-        var pendingOrders = new List<OrderDetail>(normalizedOrders.Length);
-        foreach (var orderId in normalizedOrders)
-        {
-            var order = await orders.GetAsync(actor, orderId, cancellationToken);
-            if (order.WarehouseId is null)
-                throw new OrderConflictException(
-                    "El pedido no tiene una bodega de venta asignada y no puede emitirse.");
-            if (order.WarehouseId != request.WarehouseId)
-                throw new OrderConflictException(
-                    "El pedido pertenece a otra bodega de venta. Ábrelo desde la bodega asignada.");
-            if (order.InvoiceDocumentId is null)
-                pendingOrders.Add(order);
-        }
-        foreach (var order in pendingOrders)
-            await checkout.PrepareSourceOrderInventoryAsync(
-                identity, actor.BusinessId, order.OrderId, request.WarehouseId, cancellationToken);
-
-        var results = new List<InvoiceOrderResult>(normalizedOrders.Length);
-        var completed = 0;
-        var failed = 0;
-
+        var preparedOrders = new Dictionary<Guid, OrderDetail>();
+        var preparationFailures = new Dictionary<Guid, string>();
         foreach (var orderId in normalizedOrders)
         {
             try
@@ -100,6 +81,41 @@ public sealed class OrderBatchService(
                 if (order.WarehouseId != request.WarehouseId)
                     throw new OrderConflictException(
                         "El pedido pertenece a otra bodega de venta. Ábrelo desde la bodega asignada.");
+                if (order.InvoiceDocumentId is null)
+                    await checkout.PrepareSourceOrderInventoryAsync(
+                        identity, actor.BusinessId, order.OrderId,
+                        request.WarehouseId, cancellationToken);
+                preparedOrders.Add(orderId, order);
+            }
+            catch (Exception exception) when (IsRecoverableOrderFailure(exception))
+            {
+                preparationFailures.Add(orderId, exception.Message);
+            }
+        }
+
+        var results = new List<InvoiceOrderResult>(normalizedOrders.Length);
+        var completed = 0;
+        var failed = 0;
+
+        foreach (var orderId in normalizedOrders)
+        {
+            if (preparationFailures.TryGetValue(orderId, out var preparationError))
+            {
+                results.Add(new(
+                    orderId,
+                    orderId.ToString("D"),
+                    "Failed",
+                    null,
+                    null,
+                    preparationError));
+                failed++;
+                await SaveProgressAsync(false);
+                continue;
+            }
+
+            try
+            {
+                var order = preparedOrders[orderId];
                 if (order.InvoiceDocumentId is not null)
                 {
                     results.Add(new(
@@ -197,12 +213,7 @@ public sealed class OrderBatchService(
                     issued.Receipt));
                 completed++;
             }
-            catch (Exception exception) when (
-                exception is OrderConflictException or
-                OrderValidationException or
-                OrderNotFoundException or
-                OnlineSalesDraftValidationException or
-                OnlineSalesDraftConcurrencyException)
+            catch (Exception exception) when (IsRecoverableOrderFailure(exception))
             {
                 results.Add(new(
                     orderId,
@@ -359,4 +370,11 @@ public sealed class OrderBatchService(
         Guid orderId,
         string suffix) =>
         $"ord:{operationId:N}:{orderId:N}:{suffix}";
+
+    private static bool IsRecoverableOrderFailure(Exception exception) =>
+        exception is OrderConflictException or
+            OrderValidationException or
+            OrderNotFoundException or
+            OnlineSalesDraftValidationException or
+            OnlineSalesDraftConcurrencyException;
 }

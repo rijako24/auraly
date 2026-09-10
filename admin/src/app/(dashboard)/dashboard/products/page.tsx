@@ -3,7 +3,7 @@
 import { KeyboardEvent, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BarChart3, ChevronDown, CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, SlidersHorizontal, Truck, X } from "lucide-react";
+import { ArrowLeft, BarChart3, ChevronDown, CircleDollarSign, Images, PackagePlus, Pencil, Power, SlidersHorizontal, Truck, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ProductLearningSection } from "@/components/products/product-learning-section";
@@ -95,7 +95,7 @@ export default function ProductsPage() {
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [includeInactive, setIncludeInactive] = useState(true);
+  const [includeInactive, setIncludeInactive] = useState(false);
   const [areaId, setAreaId] = useState<string>();
   const [lineId, setLineId] = useState<string>();
   const [groupId, setGroupId] = useState<string>();
@@ -125,8 +125,8 @@ export default function ProductsPage() {
   const lines = categories.filter(item => item.depth === 1 && (!areaId || item.parentProductCategoryId === areaId));
   const groups = categories.filter(item => item.depth === 2 && (!lineId || item.parentProductCategoryId === lineId));
   const subgroups = categories.filter(item => item.depth === 3 && (!groupId || item.parentProductCategoryId === groupId));
-  const activeFilterCount = [search.trim() || undefined, areaId, lineId, groupId, subgroupId, supplierId, brandId, managesInventory !== "all" ? managesInventory : undefined, allowsFractionalSale !== "all" ? allowsFractionalSale : undefined, isWeighable !== "all" ? isWeighable : undefined, includeInactive ? undefined : "active"].filter(Boolean).length;
-  const resetFilters = () => { setSearch(""); setAreaId(undefined); setLineId(undefined); setGroupId(undefined); setSubgroupId(undefined); setSupplierId(undefined); setBrandId(undefined); setManagesInventory("all"); setAllowsFractionalSale("all"); setIsWeighable("all"); setIncludeInactive(true); setPage(1); };
+  const activeFilterCount = [areaId, lineId, groupId, subgroupId, supplierId, brandId, managesInventory !== "all" ? managesInventory : undefined, allowsFractionalSale !== "all" ? allowsFractionalSale : undefined, isWeighable !== "all" ? isWeighable : undefined, includeInactive ? "including-inactive" : undefined].filter(Boolean).length;
+  const resetFilters = () => { setAreaId(undefined); setLineId(undefined); setGroupId(undefined); setSubgroupId(undefined); setSupplierId(undefined); setBrandId(undefined); setManagesInventory("all"); setAllowsFractionalSale("all"); setIsWeighable("all"); setIncludeInactive(false); setPage(1); };
   const configurationQuery = useProductConfiguration(selectedProduct?.productId);
   const rotationQuery = useQuery({
     queryKey: ["product-rotation", businessId, selectedProduct?.productId],
@@ -457,19 +457,6 @@ export default function ProductsPage() {
         </summary>
         <div className="space-y-5 border-t p-4">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="space-y-2 md:col-span-2 xl:col-span-4"><Label htmlFor="product-filter-search">Producto o SKU</Label><div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            id="product-filter-search"
-            className="pl-9"
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              setPage(1);
-            }}
-            placeholder="Buscar por nombre o SKU"
-          />
-            </div></div>
             {([['Área', areaId, areas, (value:string|undefined)=>{setAreaId(value);setLineId(undefined);setGroupId(undefined);setSubgroupId(undefined)}],['Línea', lineId, lines, (value:string|undefined)=>{setLineId(value);setGroupId(undefined);setSubgroupId(undefined)}],['Grupo', groupId, groups, (value:string|undefined)=>{setGroupId(value);setSubgroupId(undefined)}],['Subgrupo', subgroupId, subgroups, setSubgroupId]] as const).map(([label,value,options,onChange])=><div key={label} className="space-y-2"><Label>{label}</Label><Select value={value ?? "all"} onValueChange={next=>{onChange(next === "all" ? undefined : next);setPage(1)}}><SelectTrigger><SelectValue placeholder={`Todos los ${label.toLocaleLowerCase("es")}`}/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{options.map(option=><SelectItem key={option.productCategoryId} value={option.productCategoryId}>{option.name}</SelectItem>)}</SelectContent></Select></div>)}
             <div className="space-y-2"><Label>Proveedor</Label><PartyRoleSelect role="Supplier" value={supplierId ?? "all"} leadingOptions={[{value:"all",label:"Todos"}]} placeholder="Buscar proveedor" onChange={value=>{setSupplierId(value === "all" ? undefined : value);setPage(1)}}/></div>
             <div className="space-y-2"><Label>Marca</Label><Select value={brandId ?? "all"} onValueChange={value=>{setBrandId(value === "all" ? undefined : value);setPage(1)}}><SelectTrigger><SelectValue placeholder="Todas"/></SelectTrigger><SelectContent><SelectItem value="all">Todas</SelectItem>{brandsQuery.data?.map(item=><SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>)}</SelectContent></Select></div>
@@ -502,9 +489,10 @@ export default function ProductsPage() {
           pageCount={data?.totalPages}
           totalItems={data?.totalCount}
           onPaginationChange={(nextPage) => setPage(nextPage)}
+          onSearch={(value) => { setSearch(value); setPage(1); }}
           onRowClick={openDetails}
           searchKey="name"
-          searchPlaceholder="Buscar en esta página..."
+          searchPlaceholder="Buscar por nombre o SKU en todos los productos..."
           enableRowSelection={false}
           cardRenderer={renderProductCard}
         />

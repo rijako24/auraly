@@ -25,9 +25,25 @@ public sealed class SqlDocumentProcessingWorkSource(
               ON cursorState.BusinessId=j.BusinessId
             INNER JOIN dbo.DocumentProcessingPayloads p
               ON p.DocumentId=j.DocumentId AND p.DocumentType=j.DocumentType
-            WHERE j.Status IN(N'Pending',N'RetryScheduled')
-              AND j.AvailableAt<=SYSDATETIMEOFFSET()
-              AND j.ProcessingSequence=cursorState.LastCompletedSequence+1
+            WHERE
+              (
+                j.Status IN(N'Pending',N'RetryScheduled')
+                AND j.AvailableAt<=SYSDATETIMEOFFSET()
+                AND j.ProcessingSequence=cursorState.LastCompletedSequence+1
+              )
+              OR
+              (
+                j.Status=N'Completed'
+                AND EXISTS
+                (
+                  SELECT 1
+                  FROM dbo.ServerOutboxMessages message
+                  WHERE message.DocumentId=j.DocumentId
+                    AND message.DocumentType=j.DocumentType
+                    AND message.ProcessedAt IS NULL
+                    AND message.Type<>N'FiscalDocument.DianAccepted'
+                )
+              )
             ORDER BY j.CreatedAt,j.JobId;
             """;
         await using var connection = connections.Create();

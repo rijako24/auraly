@@ -6,7 +6,8 @@ CREATE TABLE [dbo].[PromotionBenefits] (
     [TargetItemType] INT NOT NULL DEFAULT 0,
     [ProductId] UNIQUEIDENTIFIER NULL,
     [ServiceId] UNIQUEIDENTIFIER NULL,
-    [CategoryName] NVARCHAR(150) NULL,
+    [ProductCategoryId] UNIQUEIDENTIFIER NULL,
+    [ServiceCategoryId] UNIQUEIDENTIFIER NULL,
     [DiscountPercentage] DECIMAL(5, 2) NULL,
     [DiscountAmount] DECIMAL(18, 2) NULL,
     [FixedUnitPrice] DECIMAL(18, 2) NULL,
@@ -24,6 +25,12 @@ CREATE TABLE [dbo].[PromotionBenefits] (
     CONSTRAINT [FK_PromotionBenefits_Services] FOREIGN KEY ([ServiceId])
         REFERENCES [dbo].[Services] ([ServiceId])
         ON DELETE NO ACTION,
+    CONSTRAINT [FK_PromotionBenefits_ProductCategories] FOREIGN KEY ([ProductCategoryId])
+        REFERENCES [dbo].[ProductCategories] ([ProductCategoryId])
+        ON DELETE NO ACTION,
+    CONSTRAINT [FK_PromotionBenefits_ServiceCategories] FOREIGN KEY ([ServiceCategoryId])
+        REFERENCES [dbo].[ServiceCategories] ([ServiceCategoryId])
+        ON DELETE NO ACTION,
     CONSTRAINT [CK_PromotionBenefits_BenefitType] CHECK ([BenefitType] IN (0, 1, 2, 3)),
     CONSTRAINT [CK_PromotionBenefits_TargetItemType] CHECK ([TargetItemType] IN (0, 1, 2, 3, 4, 5, 6))
 );
@@ -33,4 +40,8 @@ GO
 CREATE INDEX [IX_PromotionBenefits_TenantId] ON [dbo].[PromotionBenefits] ([TenantId]);
 GO
 CREATE INDEX [IX_PromotionBenefits_PromotionId] ON [dbo].[PromotionBenefits] ([PromotionId]);
+GO
+CREATE INDEX [IX_PromotionBenefits_ProductCategoryId] ON [dbo].[PromotionBenefits] ([ProductCategoryId]) WHERE [ProductCategoryId] IS NOT NULL;
+GO
+CREATE INDEX [IX_PromotionBenefits_ServiceCategoryId] ON [dbo].[PromotionBenefits] ([ServiceCategoryId]) WHERE [ServiceCategoryId] IS NOT NULL;
 GO

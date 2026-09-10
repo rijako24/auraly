@@ -25,9 +25,10 @@ public sealed record PromotionConditionDto(
     PromotionItemType ItemType,
     Guid? ProductId,
     Guid? ServiceId,
-    string? CategoryName,
     decimal MinQuantity,
-    decimal? MinSubtotal);
+    decimal? MinSubtotal,
+    Guid? ProductCategoryId = null,
+    Guid? ServiceCategoryId = null);
 
 public sealed record PromotionBenefitDto(
     Guid? PromotionBenefitId,
@@ -35,11 +36,12 @@ public sealed record PromotionBenefitDto(
     PromotionItemType TargetItemType,
     Guid? ProductId,
     Guid? ServiceId,
-    string? CategoryName,
     decimal? DiscountPercentage,
     decimal? DiscountAmount,
     decimal? FixedUnitPrice,
-    decimal? AppliesToQuantity);
+    decimal? AppliesToQuantity,
+    Guid? ProductCategoryId = null,
+    Guid? ServiceCategoryId = null);
 
 public sealed record CreatePromotionRequest(
     string Name,

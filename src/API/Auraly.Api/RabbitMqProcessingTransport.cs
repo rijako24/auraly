@@ -300,9 +300,6 @@ public sealed class RabbitMqDocumentProcessingHostedService(
     RabbitMqProcessingTransport transport,
     RabbitMqProcessingOptions options,
     IServiceScopeFactory scopeFactory,
-    FiscalProcessingCoordinator fiscalProcessing,
-    AccountingProcessingCoordinator accountingProcessing,
-    SalesReportingProcessingCoordinator salesReporting,
     ILogger<RabbitMqDocumentProcessingHostedService> logger) : BackgroundService
 {
     private const int MaximumAttempts = 5;
@@ -359,24 +356,6 @@ public sealed class RabbitMqDocumentProcessingHostedService(
                         .GetRequiredService<DocumentProcessingWorker>();
                     var result = await worker.ProcessOneAsync(
                         signal, args.CancellationToken);
-                    if (FiscalGenerationPolicy.Supports(signal.DocumentType))
-                        await fiscalProcessing.RequestGenerationAsync(
-                            signal.BusinessId,
-                            signal.DocumentId,
-                            args.CancellationToken);
-                    if (signal.EconomicEffectsEnabled && AccountingProcessingPolicy.Supports(signal.DocumentType))
-                        await accountingProcessing.RequestPostingAsync(
-                            signal.BusinessId,
-                            signal.DocumentId,
-                            signal.DocumentType,
-                            args.CancellationToken);
-                    if (signal.EconomicEffectsEnabled && SalesReportingProcessingPolicy.Supports(signal.DocumentType))
-                        await salesReporting.RequestProjectionAsync(
-                            signal.BusinessId,
-                            signal.DocumentId,
-                            signal.DocumentType,
-                            args.CancellationToken);
-
                     await channel.BasicAckAsync(
                         args.DeliveryTag, false, args.CancellationToken);
                     logger.LogInformation(

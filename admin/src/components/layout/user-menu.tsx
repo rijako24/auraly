@@ -139,7 +139,7 @@ export function UserMenu({ className }: UserMenuProps) {
 
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link href="/dashboard/profile" className="flex cursor-pointer items-center gap-2">
+          <Link href="/dashboard/settings/profile" className="flex cursor-pointer items-center gap-2">
             <User className="h-4 w-4" />
             <span>Perfil</span>
           </Link>

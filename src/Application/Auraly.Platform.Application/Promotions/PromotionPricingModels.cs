@@ -8,10 +8,11 @@ public sealed record PromotionPricingItem(
     Guid? ProductId,
     Guid? ServiceId,
     string Name,
-    string? CategoryName,
     decimal UnitPrice,
     decimal Quantity,
-    bool IncludeInTotal = true);
+    bool IncludeInTotal = true,
+    Guid? ProductCategoryId = null,
+    Guid? ServiceCategoryId = null);
 
 public sealed record PromotionAppliedAdjustment(
     Guid PromotionId,

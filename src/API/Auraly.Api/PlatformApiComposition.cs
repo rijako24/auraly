@@ -451,6 +451,7 @@ public static class PlatformApiComposition
         builder.Services.AddScoped<IAuditService, AuditService>();
 
         builder.Services.AddScoped<ITenantProvisioningStore, SqlTenantProvisioningStore>();
+        builder.Services.AddScoped<ITenantProvisioner, TenantProvisioner>();
         builder.Services.AddScoped<ITenantProvisioningCheckoutStore, SqlTenantProvisioningCheckoutStore>();
         builder.Services.AddScoped<TenantProvisioningCheckoutService>();
         builder.Services.AddScoped<Auraly.Contracts.TenantBilling.ITenantCommercialCatalogStore,

@@ -3,238 +3,105 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  MoreHorizontal,
-  Plus,
-  Eye,
-  Pencil,
-  Copy,
-  PowerOff,
-} from "lucide-react";
+import { Clock3, Eye, MoreHorizontal, Plus, PowerOff, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 import { DataTable } from "@/components/tables/data-table";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { PageLoading } from "@/components/ui/page-loading";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { PageError } from "@/components/ui/page-error";
-import {
-  ServiceTierLabels,
-  ServiceTierColors,
-  ServiceTypeLabels,
-  ServiceTypeColors,
-} from "@/types/enums";
+import { useDeleteService, useServices } from "@/hooks/use-services";
+import { formatCurrency } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth-store";
 import type { Service } from "@/types/entities";
-import { formatCurrency, cn } from "@/lib/utils";
-import { useServices } from "@/hooks/use-services";
+import { ServiceTierLabels, ServiceTypeLabels } from "@/types/enums";
 
 export default function ServicesPage() {
-  const [viewMode, setViewMode] = useState<"table" | "card" | "list">("table");
-  const { data, isLoading, isError, refetch } = useServices();
+  const permissionValues = useAuthStore((state) => state.user?.permissions);
+  const permissions = useMemo(() => new Set(permissionValues ?? []), [permissionValues]);
+  const canCreate = permissions.has("services.create");
+  const canDelete = permissions.has("services.delete");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
+  const [pendingDeactivation, setPendingDeactivation] = useState<Service | null>(null);
+  const query = useServices({ page, pageSize, search: search || undefined });
+  const deactivate = useDeleteService();
+  const services = query.data?.items ?? [];
 
-  const services = data?.items ?? [];
+  async function confirmDeactivation() {
+    if (!pendingDeactivation) return;
+    try {
+      await deactivate.mutateAsync(pendingDeactivation.serviceId);
+      toast.success("Servicio desactivado");
+      setPendingDeactivation(null);
+    } catch {
+      toast.error("No fue posible desactivar el servicio");
+    }
+  }
 
-  const columns: ColumnDef<Service>[] = useMemo(
-    () => [
-      {
-        accessorKey: "serviceName",
-        header: "Nombre",
-        cell: ({ row }) => (
-          <div className="font-medium">{row.original.serviceName}</div>
-        ),
-      },
-      {
-        accessorKey: "categoryName",
-        header: "Categoría",
-        cell: ({ row }) => row.original.categoryName ?? row.original.category?.name ?? "—",
-      },
-      {
-        accessorKey: "durationMinutes",
-        header: "Duración",
-        cell: ({ row }) => `${row.original.durationMinutes} min`,
-      },
-      {
-        accessorKey: "price",
-        header: "Precio",
-        cell: ({ row }) => (
-          <div className="flex flex-col">
-            <span>{formatCurrency(row.original.price)}</span>
-            {!row.original.includeInCheckoutTotal && (
-              <span className="text-xs text-muted-foreground">No suma al total</span>
-            )}
-          </div>
-        ),
-      },
-      {
-        accessorKey: "tier",
-        header: "Tier",
-        cell: ({ row }) => {
-          const tier = row.original.tier as keyof typeof ServiceTierLabels;
-          return (
-            <Badge variant="secondary" className={cn(ServiceTierColors[tier])}>
-              {ServiceTierLabels[tier] ?? "—"}
-            </Badge>
-          );
-        },
-      },
-      {
-        accessorKey: "serviceType",
-        header: "Tipo",
-        cell: ({ row }) => {
-          const type = row.original.serviceType as keyof typeof ServiceTypeLabels;
-          return (
-            <Badge variant="outline" className={cn(ServiceTypeColors[type])}>
-              {ServiceTypeLabels[type] ?? "—"}
-            </Badge>
-          );
-        },
-      },
-      {
-        accessorKey: "isActive",
-        header: "Estado",
-        cell: ({ row }) => (
-          <Badge variant={row.original.isActive ? "default" : "secondary"}>
-            {row.original.isActive ? "Activo" : "Inactivo"}
-          </Badge>
-        ),
-      },
-      {
-        id: "actions",
-        cell: ({ row }) => {
-          const svc = row.original;
-          return (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <Link href={`/dashboard/services/${svc.serviceId}`}>
-                    <Eye className="mr-2 h-4 w-4" />
-                    Ver
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href={`/dashboard/services/${svc.serviceId}/edit`}>
-                    <Pencil className="mr-2 h-4 w-4" />
-                    Editar
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Copy className="mr-2 h-4 w-4" />
-                  Duplicar
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive">
-                  <PowerOff className="mr-2 h-4 w-4" />
-                  Desactivar
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          );
-        },
-      },
-    ],
-    []
-  );
+  const columns: ColumnDef<Service>[] = useMemo(() => [
+    {
+      accessorKey: "serviceName",
+      header: "Servicio",
+      cell: ({ row }) => <div><p className="font-medium text-foreground">{row.original.serviceName}</p><p className="mt-0.5 max-w-md truncate text-xs text-muted-foreground">{row.original.description || "Sin descripción"}</p></div>,
+    },
+    { accessorKey: "categoryName", header: "Categoría", cell: ({ row }) => row.original.categoryName ?? row.original.category?.name ?? "Sin categoría" },
+    { accessorKey: "durationMinutes", header: "Duración", cell: ({ row }) => <span className="inline-flex items-center gap-1.5"><Clock3 className="h-4 w-4 text-emerald-600" />{row.original.durationMinutes} min</span> },
+    { accessorKey: "price", header: "Precio", cell: ({ row }) => <div><p className="font-semibold tabular-nums">{formatCurrency(row.original.price)}</p>{!row.original.includeInCheckoutTotal && <p className="text-xs text-muted-foreground">No suma al cobro</p>}</div> },
+    { accessorKey: "serviceType", header: "Tipo", cell: ({ row }) => <Badge variant="outline">{ServiceTypeLabels[row.original.serviceType] ?? "Sin tipo"}</Badge> },
+    { accessorKey: "tier", header: "Nivel", cell: ({ row }) => ServiceTierLabels[row.original.tier] ?? "—" },
+    { accessorKey: "isActive", header: "Estado", cell: ({ row }) => <Badge className={row.original.isActive ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-100"}>{row.original.isActive ? "Activo" : "Inactivo"}</Badge> },
+    {
+      id: "actions",
+      cell: ({ row }) => <DropdownMenu>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Acciones de ${row.original.serviceName}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem asChild><Link href={`/dashboard/services/${row.original.serviceId}`}><Eye className="mr-2 h-4 w-4" />Ver y editar</Link></DropdownMenuItem>
+          {canDelete && row.original.isActive && <><DropdownMenuSeparator /><DropdownMenuItem className="text-destructive" onClick={() => setPendingDeactivation(row.original)}><PowerOff className="mr-2 h-4 w-4" />Desactivar</DropdownMenuItem></>}
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    },
+  ], [canDelete]);
 
-  const facetedFilters = useMemo(
-    () => [
-      {
-        column: "tier",
-        title: "Tier",
-        options: Object.entries(ServiceTierLabels).map(([value, label]) => ({
-          label,
-          value,
-        })),
-      },
-      {
-        column: "serviceType",
-        title: "Tipo",
-        options: Object.entries(ServiceTypeLabels).map(([value, label]) => ({
-          label,
-          value,
-        })),
-      },
-    ],
-    []
-  );
+  if (query.isError) return <PageError onRetry={query.refetch} />;
 
-  const cardRenderer = (item: Service) => (
-    <Card key={item.serviceId} className="overflow-hidden">
-      <CardHeader className="pb-2">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <h3 className="font-semibold">{item.serviceName}</h3>
-            <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
-              {item.description}
-            </p>
-          </div>
-          <Badge className={cn("shrink-0", ServiceTierColors[item.tier as keyof typeof ServiceTierColors])}>
-            {ServiceTierLabels[item.tier as keyof typeof ServiceTierLabels] ?? "—"}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <div className="flex items-center justify-between text-sm">
-          <span className="font-medium text-primary">{formatCurrency(item.price)}</span>
-          <span className="text-muted-foreground">{item.durationMinutes} min</span>
-        </div>
-        <div className="mt-2 flex gap-1">
-          {!item.includeInCheckoutTotal && (
-            <Badge variant="secondary">No suma al total</Badge>
-          )}
-          <Badge variant="outline" className={cn("text-xs", ServiceTypeColors[item.serviceType as keyof typeof ServiceTypeColors])}>
-            {ServiceTypeLabels[item.serviceType as keyof typeof ServiceTypeLabels] ?? "—"}
-          </Badge>
-          <Badge variant={item.isActive ? "default" : "secondary"}>
-            {item.isActive ? "Activo" : "Inactivo"}
-          </Badge>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  return <div className="space-y-6 p-6">
+    <header className="flex flex-wrap items-start justify-between gap-4">
+      <div><p className="text-sm font-medium text-emerald-600">Catálogo comercial</p><h1 className="text-3xl font-bold tracking-tight">Servicios</h1><p className="mt-1 text-muted-foreground">Organiza lo que ofreces, su duración y el valor que verá el cliente.</p></div>
+      {canCreate && <Button asChild className="rounded-xl"><Link href="/dashboard/services/new"><Plus className="mr-2 h-4 w-4" />Nuevo servicio</Link></Button>}
+    </header>
 
-  if (isLoading) return <PageLoading cards={0} />;
-  if (isError) return <PageError onRetry={refetch} />;
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Card className="border-emerald-100"><CardContent className="flex items-center gap-3 pt-6"><span className="rounded-xl bg-emerald-50 p-3 text-emerald-700"><Sparkles className="h-5 w-5" /></span><div><p className="text-sm text-muted-foreground">Servicios registrados</p><p className="text-2xl font-bold">{query.data?.totalCount ?? 0}</p></div></CardContent></Card>
+      <Card><CardContent className="flex items-center gap-3 pt-6"><span className="rounded-xl bg-slate-100 p-3 text-slate-700"><Clock3 className="h-5 w-5" /></span><div><p className="text-sm text-muted-foreground">Visibles en esta página</p><p className="text-2xl font-bold">{services.length}</p></div></CardContent></Card>
+    </div>
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Servicios</h1>
-          <p className="text-muted-foreground">
-            Gestiona los servicios ofrecidos por el negocio seleccionado
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/dashboard/services/new">
-            <Plus className="mr-2 h-4 w-4" />
-            Nuevo Servicio
-          </Link>
-        </Button>
-      </div>
-
+    <Card className="rounded-2xl"><CardContent className="pt-6">
       <DataTable
         columns={columns}
         data={services}
         searchKey="serviceName"
-        searchPlaceholder="Buscar por nombre..."
-        facetedFilters={facetedFilters}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-        cardRenderer={cardRenderer}
+        searchPlaceholder="Buscar en todos los servicios..."
+        isLoading={query.isLoading}
+        page={page}
+        pageSize={pageSize}
+        pageCount={query.data?.totalPages ?? 0}
+        totalItems={query.data?.totalCount ?? 0}
+        onSearch={(value) => { setSearch(value.trim()); setPage(1); }}
+        onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }}
         enableRowSelection={false}
       />
-    </div>
-  );
+    </CardContent></Card>
+
+    <Dialog open={Boolean(pendingDeactivation)} onOpenChange={(open) => !open && setPendingDeactivation(null)}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Desactivar servicio</DialogTitle><DialogDescription>“{pendingDeactivation?.serviceName}” dejará de estar disponible para nuevas ventas y reservas.</DialogDescription></DialogHeader>
+        <DialogFooter><Button variant="outline" onClick={() => setPendingDeactivation(null)}>Cancelar</Button><Button variant="destructive" onClick={() => void confirmDeactivation()} disabled={deactivate.isPending}>{deactivate.isPending ? "Desactivando..." : "Desactivar"}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </div>;
 }

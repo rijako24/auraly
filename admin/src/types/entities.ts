@@ -95,7 +95,8 @@ export interface PromotionCondition {
   itemType: PromotionItemType;
   productId?: string | null;
   serviceId?: string | null;
-  categoryName?: string | null;
+  productCategoryId?: string | null;
+  serviceCategoryId?: string | null;
   minQuantity: number;
   minSubtotal?: number | null;
 }
@@ -106,7 +107,8 @@ export interface PromotionBenefit {
   targetItemType: PromotionItemType;
   productId?: string | null;
   serviceId?: string | null;
-  categoryName?: string | null;
+  productCategoryId?: string | null;
+  serviceCategoryId?: string | null;
   discountPercentage?: number | null;
   discountAmount?: number | null;
   fixedUnitPrice?: number | null;

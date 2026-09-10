@@ -43,18 +43,8 @@ public sealed class SqlBusinessDefaultsProvisioner(
               (@DamagedWarehouseId,@BusinessId,N'AVE',N'Bodega de averías',0,@CostBasis,1,0,0,0,1,@Now),
               (NEWID(),@BusinessId,N'TRA',N'Mercancía en tránsito',0,@CostBasis,1,0,0,0,1,@Now);
 
-            DECLARE @DocumentSeries TABLE(DocumentType nvarchar(64),Prefix nvarchar(8));
-            INSERT @DocumentSeries VALUES
-              (N'SalesInvoice',N'VTA'),(N'SalesReceipt',N'CVI'),(N'SalesDebitNote',N'NDB'),
-              (N'GoodsReceipt',N'EMC'),(N'StockCount',N'CTI'),
-              (N'InventoryAdjustment',N'AJI'),(N'WarehouseTransfer',N'TRB'),
-              (N'ProductConversion',N'CNV'),(N'Damage',N'AVE');
-            INSERT dbo.DocumentSeries
-              (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
-               Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-            SELECT NEWID(),@BusinessId,NULL,DocumentType,Prefix,N'00',
-                   8,1,99999999,0,1,@Now
-            FROM @DocumentSeries;
+            EXEC dbo.BusinessDocumentSeriesDefaultsProvision
+              @BusinessId=@BusinessId,@Now=@Now;
 
             INSERT dbo.BusinessReasons(
                 ReasonId,BusinessId,ReasonType,Code,Name,Direction,

@@ -72,7 +72,7 @@ public sealed class TenantProvisioningCheckoutServiceTests
         store.SetupSequence(value => value.GetForFulfillmentAsync(draftId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(fulfillment)
             .ReturnsAsync(fulfillment with { Status = "Provisioned" });
-        var tenants = new Mock<ITenantService>();
+        var tenants = new Mock<ITenantProvisioner>();
         tenants.Setup(value => value.ProvisionAsync(It.IsAny<ProvisionTenantRequest>(), null,
                 It.IsAny<TenantQuoteDto>(),
                 It.IsAny<CancellationToken>()))

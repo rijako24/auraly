@@ -19,6 +19,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
     {
         var promotionId = Guid.Empty;
         var productId = Guid.NewGuid();
+        var productCategoryId = Guid.NewGuid();
         var taxProfileId = Guid.NewGuid();
         var sqlitePath = Path.Combine(
             Path.GetTempPath(), $"auraly-promotion-sync-{Guid.NewGuid():N}.db");
@@ -29,11 +30,13 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             """
             INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
             VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto promoción offline',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,Name,IsActive,IsBrowsable,CreatedAt)
+            VALUES(@ProductCategoryId,@BusinessId,N'Categoría promoción offline',1,1,SYSDATETIMEOFFSET());
             INSERT dbo.Products(
-              ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,
+              ProductId,TenantId,BusinessId,ProductCategoryId,CategoryName,ProductCode,Reference,Sku,Name,
               BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
             VALUES(
-              @ProductId,@TenantId,@BusinessId,@ProductCode,@ProductCode,@ProductCode,
+              @ProductId,@TenantId,@BusinessId,@ProductCategoryId,N'Categoría promoción offline',@ProductCode,@ProductCode,@ProductCode,
               N'Producto promoción offline',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(
               ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
@@ -44,6 +47,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             """,
             new("@TenantId", fixture.TenantId),
             new("@BusinessId", fixture.BusinessId), new("@ProductId", productId),
+            new("@ProductCategoryId", productCategoryId),
             new("@ProductCode", $"PO-{productId:N}"),
             new("@TaxProfileId", taxProfileId), new("@TaxCode", $"T-{taxProfileId:N}"[..32]));
         try
@@ -56,11 +60,12 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
                     "Promoción descargable 10", null, true, null, null, 100, false, null,
                     [new PromotionConditionDto(
                         null, PromotionItemType.AnyProduct,
-                        null, null, null, 1m, null)],
+                        null, null, 1m, null)],
                     [new PromotionBenefitDto(
                         null, PromotionBenefitType.PercentageDiscount,
-                        PromotionItemType.Product, productId, null, null,
-                        10m, null, null, null)],
+                        PromotionItemType.ProductCategory, null, null,
+                        10m, null, null, null,
+                        productCategoryId)],
                     false, [fixture.BusinessId]));
             createdResponse.EnsureSuccessStatusCode();
             var createdPromotion = (await createdResponse.Content.ReadFromJsonAsync<PromotionDto>())!;

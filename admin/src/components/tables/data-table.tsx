@@ -206,11 +206,9 @@ export function DataTable<TData, TValue>({
     setSearchValue(value);
     onSearch?.(value);
     if (onPaginationChange) {
-      setPagination((old) => {
-        const next = { ...old, pageIndex: 0 };
-        onPaginationChange(1, next.pageSize);
-        return next;
-      });
+      const nextPageSize = pagination.pageSize;
+      setPagination((old) => old.pageIndex === 0 ? old : { ...old, pageIndex: 0 });
+      onPaginationChange(1, nextPageSize);
     }
     if (!onSearch && searchKey) {
       table.getColumn(searchKey)?.setFilterValue(value);

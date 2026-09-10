@@ -1,10 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -134,6 +136,48 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, await fixture.CountAsync("WorkSessionMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("InventoryMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("ServerOutboxMessages", request.DocumentId));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*) FROM dbo.ServerOutboxMessages
+                WHERE DocumentId=@DocumentId AND ProcessedAt IS NOT NULL
+                  AND AttemptCount>0 AND LastError IS NULL;
+                """;
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync()));
+
+            command.CommandText = """
+                UPDATE dbo.ServerOutboxMessages
+                SET ProcessedAt=NULL,AttemptCount=0,LastError=N'forced recovery'
+                WHERE DocumentId=@DocumentId
+                  AND Type<>N'FiscalDocument.DianAccepted';
+                """;
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        using (var scope = fixture.CreateScope())
+        {
+            var source = scope.ServiceProvider
+                .GetRequiredService<IDocumentProcessingWorkSource>();
+            var recovery = (await source.ListReadySignalsAsync(500, default))
+                .Single(signal => signal.DocumentId == request.DocumentId);
+            await fixture.DocumentSignals.PublishAsync(recovery);
+        }
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*) FROM dbo.ServerOutboxMessages
+                WHERE DocumentId=@DocumentId AND ProcessedAt IS NOT NULL
+                  AND AttemptCount=1 AND LastError IS NULL;
+                """;
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        }
         Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalDocumentProcesses", request.DocumentId));
         var responsibility = await fixture.GetSalesWorkResponsibilityAsync(request.DocumentId);

@@ -1,4 +1,5 @@
 using Auraly.Contracts.Inventory;
+using Auraly.Application.Inventory;
 using Auraly.Application.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -117,12 +118,23 @@ public sealed partial class SqlOnlineSalesDraftStore
                 InventoryPermissionCodes.DispatchTransfer,
                 "inventory.system-warehouses.use"
             });
-        await inventoryOperations.ConfirmSystemTransferAtomicallyAsync(identity,
-            $"seller-order-release:{orderId:N}",
-            new DispatchWarehouseTransferRequest(transferId, businessId, ordersWarehouseId,
-                destinationWarehouseId, time.GetUtcNow(), "WAREHOUSE_TRANSFER",
-                $"Salida completa del pedido {orderNumber} para facturación", lines),
-            connection, transaction, cancellationToken);
+        try
+        {
+            await inventoryOperations.ConfirmSystemTransferAtomicallyAsync(identity,
+                $"seller-order-release:{orderId:N}",
+                new DispatchWarehouseTransferRequest(transferId, businessId, ordersWarehouseId,
+                    destinationWarehouseId, time.GetUtcNow(), "WAREHOUSE_TRANSFER",
+                    $"Salida completa del pedido {orderNumber} para facturación", lines),
+                connection, transaction, cancellationToken);
+        }
+        catch (InventoryValidationException exception)
+        {
+            throw new OnlineSalesDraftValidationException(exception.Message);
+        }
+        catch (InventoryConflictException exception)
+        {
+            throw new OnlineSalesDraftConcurrencyException(exception.Message);
+        }
         await MarkOrderInventoryReleasedAsync(connection, transaction, orderId, businessId,
             transferId, cancellationToken);
     }

@@ -11,7 +11,8 @@ public class PromotionBenefit
     public PromotionItemType TargetItemType { get; set; } = PromotionItemType.Any;
     public Guid? ProductId { get; set; }
     public Guid? ServiceId { get; set; }
-    public string? CategoryName { get; set; }
+    public Guid? ProductCategoryId { get; set; }
+    public Guid? ServiceCategoryId { get; set; }
     public decimal? DiscountPercentage { get; set; }
     public decimal? DiscountAmount { get; set; }
     public decimal? FixedUnitPrice { get; set; }
@@ -22,4 +23,6 @@ public class PromotionBenefit
     public virtual Tenant Tenant { get; set; } = null!;
     public virtual Product? Product { get; set; }
     public virtual Service? Service { get; set; }
+    public virtual ProductCategory? ProductCategory { get; set; }
+    public virtual ServiceCategory? ServiceCategory { get; set; }
 }

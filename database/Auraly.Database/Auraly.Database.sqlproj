@@ -45,6 +45,7 @@
     <Build Include="StoredProcedures\InventoryMovementsSearch.sql" />
     <Build Include="StoredProcedures\InventoryOperationsSearch.sql" />
     <Build Include="StoredProcedures\AccountingDefaultsProvision.sql" />
+    <Build Include="StoredProcedures\BusinessDocumentSeriesDefaultsProvision.sql" />
     <Build Include="StoredProcedures\FiscalDeviceSeriesAssign.sql" />
     <Build Include="StoredProcedures\FiscalDeviceSeriesUnassign.sql" />
     <Build Include="StoredProcedures\FiscalResolutionAlertSettingsSave.sql" />

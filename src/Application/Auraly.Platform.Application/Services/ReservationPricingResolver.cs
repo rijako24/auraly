@@ -66,6 +66,7 @@ public class ReservationPricingResolver
                     entity.ServiceId,
                     entity.ServiceName,
                     entity.ServiceCategory?.Name,
+                    entity.CategoryId,
                     entity.Price,
                     entity.IncludeInCheckoutTotal));
                 resolvedForKey.Add(FormatItem(entity.ServiceName, entity.Price));
@@ -82,13 +83,13 @@ public class ReservationPricingResolver
             rawLineItems.Select(item => new PromotionPricingItem(
                 item.ServiceId.ToString("N"),
                 PromotionItemType.Service,
-                null,
-                item.ServiceId,
-                item.Name,
-                item.CategoryName,
-                item.Price,
+                  null,
+                  item.ServiceId,
+                  item.Name,
+                  item.Price,
                 1,
-                item.IncludeInCheckoutTotal)).ToList(),
+                item.IncludeInCheckoutTotal,
+                ServiceCategoryId: item.ServiceCategoryId)).ToList(),
             ct: ct);
 
         var lineItems = pricing.Items
@@ -126,6 +127,7 @@ public class ReservationPricingResolver
         Guid ServiceId,
         string Name,
         string? CategoryName,
+        Guid? ServiceCategoryId,
         decimal Price,
         bool IncludeInCheckoutTotal);
 }

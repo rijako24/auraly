@@ -162,7 +162,8 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     public async Task Unenrolled_workstation_can_enroll_again_with_a_new_active_identity()
     {
         const string installationId = "WORKSTATION-AFTER-UNENROLL";
-        using var client = fixture.CreateAdminClient(
+        using var client = fixture.CreateUserClient(
+            Guid.NewGuid(),
             CommercePermissionCodes.EnrolledDevicesEnroll);
 
         var first = await EnrollAsync(client, installationId);

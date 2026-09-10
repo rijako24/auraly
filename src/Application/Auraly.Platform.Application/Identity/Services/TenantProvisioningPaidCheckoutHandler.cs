@@ -9,7 +9,7 @@ namespace Auraly.Platform.Application.Identity.Services;
 
 public sealed class TenantProvisioningPaidCheckoutHandler(
     ITenantProvisioningCheckoutStore store,
-    ITenantService tenants,
+    ITenantProvisioner tenants,
     ILogger<TenantProvisioningPaidCheckoutHandler> logger)
     : INonConversationalPaidCheckoutHandler
 {

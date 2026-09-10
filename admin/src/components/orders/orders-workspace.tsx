@@ -2,8 +2,10 @@
 
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   ClipboardList,
   Expand,
   FileText,
@@ -14,6 +16,7 @@ import {
   Receipt,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   UserRound,
   X,
 } from "lucide-react";
@@ -26,6 +29,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import {
   Select,
   SelectContent,
@@ -60,6 +64,12 @@ const date = new Intl.DateTimeFormat("es-CO", {
 function localToday() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function endOfLocalDayExclusive(value: string) {
+  const nextDay = new Date(`${value}T00:00:00`);
+  nextDay.setDate(nextDay.getDate() + 1);
+  return nextDay.toISOString();
 }
 
 type OrdersWorkspaceProps = {
@@ -130,12 +140,14 @@ export function OrdersWorkspace({
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CommerceOrderPage | null>(null);
   const [query, setQuery] = useState("");
-  const [customer, setCustomer] = useState("");
+  const [customerId, setCustomerId] = useState("all");
   const [product, setProduct] = useState("");
   const [status, setStatus] = useState("Available");
   const [createdFrom, setCreatedFrom] = useState(localToday);
   const [createdTo, setCreatedTo] = useState(localToday);
   const [routeId, setRouteId] = useState("All");
+  const [sellerId, setSellerId] = useState("all");
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [selected, setSelected] = useState<Map<string, CommerceOrderListItem>>(new Map());
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
@@ -159,19 +171,20 @@ export function OrdersWorkspace({
 
   const orderFilters = useMemo<Omit<CommerceOrderFilters, "page" | "pageSize">>(() => ({
     orderNumber: query || undefined,
-    customer: customer || undefined,
+    customerId: customerId !== "all" ? customerId : undefined,
     product: product || undefined,
     status: status === "All" ? undefined : status,
     createdFrom: createdFrom
       ? new Date(`${createdFrom}T00:00:00`).toISOString()
       : undefined,
     createdTo: createdTo
-      ? new Date(`${createdTo}T23:59:59.999`).toISOString()
+      ? endOfLocalDayExclusive(createdTo)
       : undefined,
     routeId: routeId === "All" ? undefined : routeId,
+    sellerId: !onlyMine && sellerId !== "all" ? sellerId : undefined,
     onlyMine: onlyMine || undefined,
     source,
-  }), [createdFrom, createdTo, customer, onlyMine, product, query, routeId, source, status]);
+  }), [createdFrom, createdTo, customerId, onlyMine, product, query, routeId, sellerId, source, status]);
 
   const openTransfer = useCallback(async () => {
     if (!loadSettlementConfiguration) {
@@ -235,9 +248,9 @@ export function OrdersWorkspace({
   ]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), query ? 250 : 0);
+    const timer = window.setTimeout(() => void refresh(), query || product ? 250 : 0);
     return () => window.clearTimeout(timer);
-  }, [refresh, query]);
+  }, [product, query, refresh]);
 
   useEffect(() => {
     if (!connected) return;
@@ -259,6 +272,15 @@ export function OrdersWorkspace({
   }, [connected, refresh]);
 
   const selectedOrders = useMemo(() => [...selected.values()], [selected]);
+  const activeFilterCount = [
+    customerId !== "all" ? customerId : "",
+    product,
+    status !== "Available" ? status : "",
+    routeId !== "All" ? routeId : "",
+    !onlyMine && sellerId !== "all" ? sellerId : "",
+    createdFrom,
+    createdTo,
+  ].filter(Boolean).length;
 
   useEffect(() => {
     setSelected(new Map());
@@ -451,8 +473,8 @@ export function OrdersWorkspace({
         )}
       </div>}
 
-      <div className={`grid gap-2 ${compact ? "grid-cols-1" : "md:grid-cols-2 xl:grid-cols-6"}`}>
-        <label className={`relative ${compact ? "" : "xl:col-span-2"}`}>
+      <div className={`grid gap-2 ${compact ? "grid-cols-1" : "sm:grid-cols-[minmax(0,1fr)_auto]"}`}>
+        <label className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input
             value={query}
@@ -464,84 +486,35 @@ export function OrdersWorkspace({
             placeholder="Número de pedido"
           />
         </label>
-        {!compact && (
-          <>
-            <Input
-              value={customer}
-              onChange={(event) => {
-                setCustomer(event.target.value);
-                setPage(1);
-              }}
-              placeholder="Cliente, documento o teléfono"
-            />
-            <Input
-              value={product}
-              onChange={(event) => {
-                setProduct(event.target.value);
-                setPage(1);
-              }}
-              placeholder="Producto, código o referencia"
-            />
-          </>
-        )}
-        <Select
-          value={status}
-          onValueChange={(value) => {
-            setStatus(value);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="Available">Disponibles</SelectItem>
-            <SelectItem value="Invoiced">Facturados</SelectItem>
-            <SelectItem value="ProcessingEmission">Procesando emisión</SelectItem>
-            <SelectItem value="EmissionFailed">Con error de emisión</SelectItem>
-            <SelectItem value="Cancelled">Cancelados</SelectItem>
-            <SelectItem value="All">Todos</SelectItem>
-          </SelectContent>
-        </Select>
-        {!compact && routeOptions.length > 0 && (
-          <Select value={routeId} onValueChange={(next) => { setRouteId(next); setPage(1); }}>
-            <SelectTrigger><SelectValue placeholder="Todas las rutas" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="All">Todas las rutas</SelectItem>
-              {routeOptions.map((route) => <SelectItem key={route.routeId} value={route.routeId}>{route.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        )}
-        {!compact && onlyMine && (
-          <div className="flex items-center rounded-xl border bg-teal-50 px-3 text-sm font-semibold text-teal-800">
-            <UserRound className="mr-2 h-4 w-4" />Vendedor: mis pedidos
-          </div>
-        )}
-        {!compact && (
-          <div className="flex gap-2 xl:col-span-2">
-            <div className="flex-1">
-              <DatePicker
-                value={createdFrom}
-                onChange={(value) => {
-                  setCreatedFrom(value);
-                  setPage(1);
-                }}
-                placeholder="Pedidos desde"
-              />
-            </div>
-            <div className="flex-1">
-              <DatePicker
-                value={createdTo}
-                onChange={(value) => {
-                  setCreatedTo(value);
-                  setPage(1);
-                }}
-                placeholder="Pedidos hasta"
-              />
-            </div>
-          </div>
+        {compact ? <OrderStatusSelect value={status} onChange={(value) => { setStatus(value); setPage(1); }} /> : (
+          <Button type="button" variant="outline" onClick={() => setFiltersExpanded((value) => !value)} aria-expanded={filtersExpanded}>
+            <SlidersHorizontal className="mr-2 h-4 w-4" />Filtros
+            {activeFilterCount > 0 && <span className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-bold text-teal-800">{activeFilterCount}</span>}
+            {filtersExpanded ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" />}
+          </Button>
         )}
       </div>
+
+      {!compact && filtersExpanded && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+            <div><h3 className="font-semibold text-slate-950">Filtrar pedidos</h3><p className="text-sm text-slate-500">Combina cliente, vendedor, producto, estado y rango de fechas.</p></div>
+            <Button type="button" variant="ghost" size="sm" onClick={() => {
+              setCustomerId("all"); setProduct(""); setStatus("Available"); setRouteId("All"); setSellerId("all");
+              setCreatedFrom(localToday()); setCreatedTo(localToday()); setPage(1);
+            }}>Restablecer</Button>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <FilterField label="Cliente"><PartyRoleSelect role="Customer" value={customerId} leadingOptions={[{ value: "all", label: "Todos los clientes" }]} placeholder="Buscar cliente" onChange={(value) => { setCustomerId(value); setPage(1); }} /></FilterField>
+            {onlyMine ? <FilterField label="Vendedor"><div className="flex h-10 items-center rounded-xl border bg-teal-50 px-3 text-sm font-semibold text-teal-800"><UserRound className="mr-2 h-4 w-4" />Mis pedidos</div></FilterField> : <FilterField label="Vendedor"><PartyRoleSelect role="Seller" value={sellerId} leadingOptions={[{ value: "all", label: "Todos los vendedores" }]} placeholder="Buscar vendedor" onChange={(value) => { setSellerId(value); setPage(1); }} /></FilterField>}
+            <FilterField label="Producto"><Input value={product} onChange={(event) => { setProduct(event.target.value); setPage(1); }} placeholder="Nombre, código o referencia" /></FilterField>
+            <FilterField label="Estado"><OrderStatusSelect value={status} onChange={(value) => { setStatus(value); setPage(1); }} /></FilterField>
+            {routeOptions.length > 0 && <FilterField label="Ruta"><Select value={routeId} onValueChange={(next) => { setRouteId(next); setPage(1); }}><SelectTrigger><SelectValue placeholder="Todas las rutas" /></SelectTrigger><SelectContent><SelectItem value="All">Todas las rutas</SelectItem>{routeOptions.map((route) => <SelectItem key={route.routeId} value={route.routeId}>{route.name}</SelectItem>)}</SelectContent></Select></FilterField>}
+            <FilterField label="Desde"><DatePicker value={createdFrom} max={createdTo || undefined} onChange={(value) => { setCreatedFrom(value); setPage(1); }} placeholder="Fecha inicial" /></FilterField>
+            <FilterField label="Hasta"><DatePicker value={createdTo} min={createdFrom || undefined} onChange={(value) => { setCreatedTo(value); setPage(1); }} placeholder="Fecha final" /></FilterField>
+          </div>
+        </section>
+      )}
 
       {(error || notice) && (
         <div
@@ -590,7 +563,7 @@ export function OrdersWorkspace({
 
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
-          <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:px-4 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
+          <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:px-4 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-center">
             <label className="flex w-full shrink-0 items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
               <Checkbox
                 checked={allMatchingSelected ? true : selected.size > 0 ? "indeterminate" : false}
@@ -600,8 +573,8 @@ export function OrdersWorkspace({
               />
               {selectingAll ? "Seleccionando…" : "Seleccionar disponibles"}
             </label>
-            <div className="grid min-w-0 gap-3 2xl:grid-cols-[minmax(20rem,1fr)_auto] 2xl:items-center">
-              <div className="min-w-0">
+            <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
+              <div className="w-full min-w-0 sm:w-[22rem] xl:w-[20rem]">
                 <div
                   className="grid w-full min-w-0 grid-cols-1 rounded-xl border border-slate-200 bg-white p-1 sm:grid-cols-2"
                   aria-label="Tipo de documento para los pedidos seleccionados"
@@ -610,7 +583,7 @@ export function OrdersWorkspace({
                     type="button"
                     aria-pressed={documentType === "SalesInvoice"}
                     onClick={() => setDocumentType("SalesInvoice")}
-                    className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${
+                    className={`min-h-8 rounded-lg px-2.5 text-xs font-semibold transition ${
                       documentType === "SalesInvoice"
                         ? "bg-teal-700 text-white shadow-sm"
                         : "text-slate-600 hover:bg-slate-50"
@@ -622,7 +595,7 @@ export function OrdersWorkspace({
                     type="button"
                     aria-pressed={documentType === "SalesReceipt"}
                     onClick={() => setDocumentType("SalesReceipt")}
-                    className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${
+                    className={`min-h-8 rounded-lg px-2.5 text-xs font-semibold transition ${
                       documentType === "SalesReceipt"
                         ? "bg-teal-700 text-white shadow-sm"
                         : "text-slate-600 hover:bg-slate-50"
@@ -632,7 +605,7 @@ export function OrdersWorkspace({
                   </button>
                 </div>
               </div>
-              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:items-center 2xl:justify-end">
+              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:items-center xl:justify-end">
                 {onConfigurePrinting && (
                   <Button type="button" variant="outline" size="icon"
                     title="Configurar plantillas e impresoras"
@@ -994,4 +967,22 @@ function sourceLabel(source: number) {
   if (source === 1) return "Administración";
   if (source === 2) return "Integración";
   return "Otro origen";
+}
+
+function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="space-y-1.5"><Label>{label}</Label>{children}</div>;
+}
+
+function OrderStatusSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return <Select value={value} onValueChange={onChange}>
+    <SelectTrigger><SelectValue /></SelectTrigger>
+    <SelectContent>
+      <SelectItem value="Available">Disponibles</SelectItem>
+      <SelectItem value="Invoiced">Facturados</SelectItem>
+      <SelectItem value="ProcessingEmission">Procesando emisión</SelectItem>
+      <SelectItem value="EmissionFailed">Con error de emisión</SelectItem>
+      <SelectItem value="Cancelled">Cancelados</SelectItem>
+      <SelectItem value="All">Todos</SelectItem>
+    </SelectContent>
+  </Select>;
 }

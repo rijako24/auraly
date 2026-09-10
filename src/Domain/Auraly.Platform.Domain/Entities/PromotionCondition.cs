@@ -10,7 +10,8 @@ public class PromotionCondition
     public PromotionItemType ItemType { get; set; } = PromotionItemType.Any;
     public Guid? ProductId { get; set; }
     public Guid? ServiceId { get; set; }
-    public string? CategoryName { get; set; }
+    public Guid? ProductCategoryId { get; set; }
+    public Guid? ServiceCategoryId { get; set; }
     public decimal MinQuantity { get; set; } = 1;
     public decimal? MinSubtotal { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -19,4 +20,6 @@ public class PromotionCondition
     public virtual Tenant Tenant { get; set; } = null!;
     public virtual Product? Product { get; set; }
     public virtual Service? Service { get; set; }
+    public virtual ProductCategory? ProductCategory { get; set; }
+    public virtual ServiceCategory? ServiceCategory { get; set; }
 }

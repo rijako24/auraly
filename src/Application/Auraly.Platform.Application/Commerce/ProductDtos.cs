@@ -44,7 +44,8 @@ public sealed record ProductReference(
     string? SubcategoryName = null,
     string? ProductClassName = null,
     string? ExternalCategoryId = null,
-    Guid? IntegrationConnectionId = null)
+    Guid? IntegrationConnectionId = null,
+    Guid? ProductCategoryId = null)
 {
     public bool IsActive { get; init; } = true;
 }

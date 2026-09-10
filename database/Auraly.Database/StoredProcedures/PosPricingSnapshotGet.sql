@@ -96,7 +96,8 @@ BEGIN
            promotion.CouponCode,promotion.StartsAtUtc,promotion.EndsAtUtc,promotion.CreatedAt,
            COALESCE((
              SELECT CONVERT(INT,conditionValue.ItemType) ItemType,conditionValue.ProductId,
-                    conditionValue.ServiceId,conditionValue.CategoryName,
+                    conditionValue.ServiceId,
+                    conditionValue.ProductCategoryId,conditionValue.ServiceCategoryId,
                     conditionValue.MinQuantity MinimumQuantity,conditionValue.MinSubtotal MinimumSubtotal
              FROM dbo.PromotionConditions conditionValue
              WHERE conditionValue.PromotionId=promotion.PromotionId
@@ -105,7 +106,8 @@ BEGIN
            COALESCE((
              SELECT CONVERT(INT,benefit.BenefitType) BenefitType,
                     CONVERT(INT,benefit.TargetItemType) TargetItemType,benefit.ProductId,
-                    benefit.ServiceId,benefit.CategoryName,benefit.DiscountPercentage,
+                    benefit.ServiceId,benefit.ProductCategoryId,
+                    benefit.ServiceCategoryId,benefit.DiscountPercentage,
                     benefit.DiscountAmount,benefit.FixedUnitPrice,benefit.AppliesToQuantity
              FROM dbo.PromotionBenefits benefit
              WHERE benefit.PromotionId=promotion.PromotionId

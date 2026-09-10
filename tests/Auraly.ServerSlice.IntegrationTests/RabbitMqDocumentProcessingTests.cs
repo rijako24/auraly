@@ -39,23 +39,11 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
         await using var connection = new RabbitMqProcessingConnection(options);
         await using var transport = new RabbitMqProcessingTransport(
             connection, options, TimeProvider.System);
-        var fiscal = new FiscalProcessingCoordinator(
-            transport,
-            fixture.Services.GetRequiredService<IAuralyIdGenerator>());
-        var accounting = new AccountingProcessingCoordinator(
-            transport,
-            fixture.Services.GetRequiredService<IAuralyIdGenerator>());
-        var reporting = new SalesReportingProcessingCoordinator(
-            transport,
-            fixture.Services.GetRequiredService<IAuralyIdGenerator>());
         using var service = new RabbitMqDocumentProcessingHostedService(
             connection,
             transport,
             options,
             fixture.Services.GetRequiredService<IServiceScopeFactory>(),
-            fiscal,
-            accounting,
-            reporting,
             NullLogger<RabbitMqDocumentProcessingHostedService>.Instance);
 
         fixture.PauseDocumentProcessing();

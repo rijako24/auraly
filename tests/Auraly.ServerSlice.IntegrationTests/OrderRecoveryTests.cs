@@ -174,6 +174,22 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             OrderPermissionCodes.Recover,
             OrderPermissionCodes.Update,
             WorkSessionPermissionCodes.Open);
+        using (var filteredResponse = await client.GetAsync(
+                   $"/api/commerce/v1/orders?page=1&pageSize=20&sellerId={sellerId:D}&customerId={customerId:D}"))
+        {
+            filteredResponse.EnsureSuccessStatusCode();
+            var filteredPage = Assert.IsType<OrderPage>(
+                await filteredResponse.Content.ReadFromJsonAsync<OrderPage>());
+            Assert.Contains(filteredPage.Items, item => item.OrderId == orderId);
+        }
+        using (var otherSellerResponse = await client.GetAsync(
+                   $"/api/commerce/v1/orders?page=1&pageSize=20&sellerId={Guid.NewGuid():D}&customerId={customerId:D}"))
+        {
+            otherSellerResponse.EnsureSuccessStatusCode();
+            var filteredPage = Assert.IsType<OrderPage>(
+                await otherSellerResponse.Content.ReadFromJsonAsync<OrderPage>());
+            Assert.DoesNotContain(filteredPage.Items, item => item.OrderId == orderId);
+        }
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
         await RecoverAsync(client, userId, workSession.WorkSessionId, orderId, draft);

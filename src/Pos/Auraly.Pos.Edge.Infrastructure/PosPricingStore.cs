@@ -486,7 +486,6 @@ public sealed partial class PosCatalogStore
             if (!await reader.ReadAsync(ct))
                 throw new KeyNotFoundException("The product is not available in the local catalog.");
             var name = reader.GetString(0);
-            var category = reader.IsDBNull(1) ? null : reader.GetString(1);
             var baseAmount = Convert.ToDecimal(reader.GetValue(2), CultureInfo.InvariantCulture);
             var currency = reader.GetString(3);
             var productContext = new PriceChannelProductContext(
@@ -504,9 +503,10 @@ public sealed partial class PosCatalogStore
                 channelId,baseAmount,pricingQuantity,productContext,
                 channelRules,tierRules,exclusionRules);
             inputs.Add(new(request.Key, PromotionItemType.Product, request.ProductId, null,
-                name, category, baseAmount, channel.Amount, request.Quantity, currency,
+                name, baseAmount, channel.Amount, request.Quantity, currency,
                 channel.PriceChannelId,
-                EligibleForPromotion: request.EligibleForPromotion));
+                EligibleForPromotion: request.EligibleForPromotion,
+                ProductCategoryId: productContext.ProductCategoryId));
         }
         var now = Clock.GetUtcNow();
         var promotionRules = (snapshot.Promotions ?? [])
@@ -810,10 +810,12 @@ public sealed partial class PosCatalogStore
         promotion.CouponCode, promotion.CreatedAtUtc.UtcDateTime,
         promotion.Conditions.Select(condition => new PromotionConditionRule(
             (PromotionItemType)condition.ItemType, condition.ProductId, condition.ServiceId,
-            condition.CategoryName, condition.MinimumQuantity, condition.MinimumSubtotal)).ToArray(),
+            condition.MinimumQuantity, condition.MinimumSubtotal,
+            condition.ProductCategoryId, condition.ServiceCategoryId)).ToArray(),
         promotion.Benefits.Select(benefit => new PromotionBenefitRule(
             (PromotionBenefitType)benefit.BenefitType, (PromotionItemType)benefit.TargetItemType,
-            benefit.ProductId, benefit.ServiceId, benefit.CategoryName,
+            benefit.ProductId, benefit.ServiceId,
             benefit.DiscountPercentage, benefit.DiscountAmount, benefit.FixedUnitPrice,
-            benefit.AppliesToQuantity)).ToArray());
+            benefit.AppliesToQuantity, benefit.ProductCategoryId,
+            benefit.ServiceCategoryId)).ToArray());
 }

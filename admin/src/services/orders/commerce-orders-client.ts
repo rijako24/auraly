@@ -67,6 +67,7 @@ export type CommerceOrderFilters = {
   pageSize?: number;
   orderNumber?: string;
   customer?: string;
+  customerId?: string;
   product?: string;
   status?: string;
   createdFrom?: string;
@@ -75,6 +76,7 @@ export type CommerceOrderFilters = {
   source?: number;
   warehouseId?: string;
   routeId?: string;
+  sellerId?: string;
   onlyMine?: boolean;
 };
 

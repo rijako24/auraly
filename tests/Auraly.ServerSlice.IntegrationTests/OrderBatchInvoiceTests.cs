@@ -143,7 +143,11 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         {
             first = await InvoiceAsync(client, command, idempotencyKey);
             var queued = fixture.DrainDocumentSignals();
-            Assert.Equal(2, queued.Count);
+            Assert.True(
+                queued.Count == 2,
+                $"Expected two processing signals but found {queued.Count}. " +
+                string.Join(" | ", first.Results.Select(result =>
+                    $"{result.OrderNumber}:{result.Status}:{result.Error ?? "none"}")));
             fixture.ResumeDocumentProcessing();
             foreach (var signal in queued)
                 await fixture.DocumentSignals.PublishAsync(signal);
@@ -251,6 +255,9 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                 command,
                 $"sales-receipt-{Guid.NewGuid():N}");
             var result = Assert.Single(response.Results);
+            Assert.True(
+                result.Receipt is not null,
+                $"Order emission ended as {result.Status}: {result.Error ?? "no detail"}.");
             var receipt = Assert.IsType<Auraly.Contracts.Sales.OnlineSalesReceipt>(
                 result.Receipt);
 
@@ -291,10 +298,19 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                  AND orders.OrdersWarehouseId=balance.WarehouseId
                 WHERE orders.OrderId=@OrderId
                   AND balance.ProductId=@ProductId;
+
+                UPDATE dbo.InventoryBalances
+                SET QuantityOnHand=0,InventoryValue=0,
+                    UpdatedAt=SYSDATETIMEOFFSET()
+                WHERE BusinessId=@BusinessId
+                  AND WarehouseId=@WarehouseId
+                  AND ProductId=@ProductId;
                 """;
             exactReservation.Parameters.AddWithValue("@OrderId", orderId);
             exactReservation.Parameters.AddWithValue("@ProductId", fixture.ProductId);
-            Assert.Equal(1, await exactReservation.ExecuteNonQueryAsync());
+            exactReservation.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            exactReservation.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            Assert.InRange(await exactReservation.ExecuteNonQueryAsync(), 1, 2);
         }
 
         using var client = fixture.CreateUserClient(
@@ -374,7 +390,84 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
             fixture.ResumeDocumentProcessing();
             foreach (var signal in fixture.DrainDocumentSignals())
                 await fixture.DocumentSignals.PublishAsync(signal);
+            await using var restoreConnection = new SqlConnection(fixture.ConnectionString);
+            await restoreConnection.OpenAsync();
+            await using var restore = restoreConnection.CreateCommand();
+            restore.CommandText = """
+                UPDATE dbo.InventoryBalances
+                SET QuantityOnHand=100,AverageUnitCost=5000,InventoryValue=500000,
+                    UpdatedAt=SYSDATETIMEOFFSET()
+                WHERE BusinessId=@BusinessId
+                  AND WarehouseId=@WarehouseId
+                  AND ProductId=@ProductId;
+                """;
+            restore.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            restore.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            restore.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+            await restore.ExecuteNonQueryAsync();
         }
+    }
+
+    [Fact]
+    public async Task Invalid_order_in_a_batch_is_terminal_and_replays_without_a_stale_lease()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE dbo.Orders
+                SET CustomAttributesJson=CONCAT(
+                    N'{"WarehouseId":"',CONVERT(nvarchar(36),NEWID()),N'"}')
+                WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+                """;
+            command.Parameters.AddWithValue("@OrderId", orderId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var commandRequest = new InvoiceOrdersRequest(
+            workSessionId, fixture.WarehouseId, userId,
+            [orderId], "Cash", null);
+        var idempotencyKey = $"invalid-order-{Guid.NewGuid():N}";
+
+        var first = await InvoiceAsync(client, commandRequest, idempotencyKey);
+        var replay = await InvoiceAsync(client, commandRequest, idempotencyKey);
+
+        Assert.Equal("Failed", first.Status);
+        Assert.Equal(0, first.CompletedCount);
+        Assert.Equal(1, first.FailedCount);
+        Assert.False(first.IsReplay);
+        Assert.Equal("Failed", Assert.Single(first.Results).Status);
+        Assert.True(replay.IsReplay);
+        Assert.Equal(first.OperationId, replay.OperationId);
+
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT Status,CompletedAt
+            FROM dbo.OrderInvoiceBatchReceipts
+            WHERE OperationId=@OperationId AND BusinessId=@BusinessId;
+            """;
+        verify.Parameters.AddWithValue("@OperationId", first.OperationId);
+        verify.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("Failed", reader.GetString(0));
+        Assert.False(reader.IsDBNull(1));
     }
 
     [Theory]

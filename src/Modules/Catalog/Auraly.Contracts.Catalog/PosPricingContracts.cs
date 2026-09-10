@@ -31,13 +31,15 @@ public sealed record PosWithholdingRule(
     DateOnly? EffectiveTo, bool IsActive);
 
 public sealed record PosPromotionCondition(
-    int ItemType, Guid? ProductId, Guid? ServiceId, string? CategoryName,
-    decimal MinimumQuantity, decimal? MinimumSubtotal);
+    int ItemType, Guid? ProductId, Guid? ServiceId,
+    decimal MinimumQuantity, decimal? MinimumSubtotal,
+    Guid? ProductCategoryId = null, Guid? ServiceCategoryId = null);
 
 public sealed record PosPromotionBenefit(
     int BenefitType, int TargetItemType, Guid? ProductId, Guid? ServiceId,
-    string? CategoryName, decimal? DiscountPercentage, decimal? DiscountAmount,
-    decimal? FixedUnitPrice, decimal? AppliesToQuantity);
+    decimal? DiscountPercentage, decimal? DiscountAmount,
+    decimal? FixedUnitPrice, decimal? AppliesToQuantity,
+    Guid? ProductCategoryId = null, Guid? ServiceCategoryId = null);
 
 public sealed record PosPromotion(
     Guid PromotionId, string Name, int Priority, bool IsCombinable,
