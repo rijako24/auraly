@@ -2313,6 +2313,7 @@
           "Auraly.Infrastructure.Routes": "[1.0.0, )",
           "Auraly.Platform.Application": "[1.0.0, )",
           "Auraly.Platform.Infrastructure": "[1.0.0, )",
+          "Auraly.Pos.Printing": "[1.0.0, )",
           "Azure.Communication.Email": "[1.1.0, )",
           "Azure.Identity": "[1.17.2, )",
           "Azure.Messaging.ServiceBus": "[7.19.0, )",
@@ -2504,7 +2505,8 @@
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
-          "Auraly.Domain.WorkSessions": "[1.0.0, )"
+          "Auraly.Domain.WorkSessions": "[1.0.0, )",
+          "Auraly.Pos.Printing": "[1.0.0, )"
         }
       },
       "auraly.buildingblocks.application": {
@@ -2967,6 +2969,13 @@
           "Microsoft.Extensions.DependencyInjection": "[8.0.1, )",
           "Microsoft.Extensions.Http": "[8.0.0, )",
           "Microsoft.Extensions.Logging": "[8.0.1, )"
+        }
+      },
+      "auraly.pos.printing": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Contracts.Sales": "[1.0.0, )",
+          "Auraly.Contracts.WorkSessions": "[1.0.0, )"
         }
       }
     }

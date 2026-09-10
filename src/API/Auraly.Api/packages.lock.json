@@ -1042,7 +1042,8 @@
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
-          "Auraly.Domain.WorkSessions": "[1.0.0, )"
+          "Auraly.Domain.WorkSessions": "[1.0.0, )",
+          "Auraly.Pos.Printing": "[1.0.0, )"
         }
       },
       "auraly.buildingblocks.application": {
@@ -1479,6 +1480,13 @@
           "RabbitMQ.Client": "[7.2.1, )",
           "System.IdentityModel.Tokens.Jwt": "[8.2.1, )",
           "System.Text.Json": "[8.0.5, )"
+        }
+      },
+      "auraly.pos.printing": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Contracts.Sales": "[1.0.0, )",
+          "Auraly.Contracts.WorkSessions": "[1.0.0, )"
         }
       }
     }
