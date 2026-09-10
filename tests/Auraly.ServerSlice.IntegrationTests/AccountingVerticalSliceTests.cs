@@ -734,15 +734,22 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(0, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id", batchId));
         await MoveActivationAfterExistingTestDataAsync();
-        using (var activate = await accounting.PostAsJsonAsync(
-                   "/api/commerce/v1/accounting/activate",
-                   new ActivateAccountingRequest(effectiveOn, "COP", "ImportedAndApproved")))
+        var temporarilyDisabledBusinesses = await DisableOtherTestBusinessesAsync();
+        try
         {
-            activate.EnsureSuccessStatusCode();
+            using var activate = await accounting.PostAsJsonAsync(
+                "/api/commerce/v1/accounting/activate",
+                new ActivateAccountingRequest(effectiveOn, "COP", "ImportedAndApproved"));
+            Assert.True(activate.IsSuccessStatusCode,
+                await activate.Content.ReadAsStringAsync());
             var readiness = await activate.Content.ReadFromJsonAsync<AccountingReadinessView>();
             Assert.Equal(AccountingActivationStatuses.Ready, readiness!.Status);
             Assert.Empty(readiness.BlockingIssues);
             Assert.False(readiness.CanEditOpeningBalances);
+        }
+        finally
+        {
+            await RestoreTestBusinessesAsync(temporarilyDisabledBusinesses);
         }
         using var entryResponse = await accounting.GetAsync(
             $"/api/commerce/v1/accounting/entries/by-document/{batchId:D}");
@@ -2268,6 +2275,44 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             """;
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task<IReadOnlyList<Guid>> DisableOtherTestBusinessesAsync()
+    {
+        var businessIds = new List<Guid>();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.Businesses
+            SET IsActive=0
+            OUTPUT inserted.BusinessId
+            WHERE TenantId=@TenantId AND BusinessId<>@BusinessId AND IsActive=1;
+            """;
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) businessIds.Add(reader.GetGuid(0));
+        return businessIds;
+    }
+
+    private async Task RestoreTestBusinessesAsync(IReadOnlyList<Guid> businessIds)
+    {
+        if (businessIds.Count == 0) return;
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        foreach (var businessId in businessIds)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE dbo.Businesses
+                SET IsActive=1
+                WHERE TenantId=@TenantId AND BusinessId=@BusinessId;
+                """;
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
     }
 
     [Fact]
