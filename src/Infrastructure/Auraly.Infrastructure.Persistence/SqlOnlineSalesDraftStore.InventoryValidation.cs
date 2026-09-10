@@ -38,7 +38,11 @@ public sealed partial class SqlOnlineSalesDraftStore
         command.CommandText = """
             DECLARE @InventoryWarehouseId uniqueidentifier=@WarehouseId;
             IF @SourceOrderId IS NOT NULL
-              SELECT @InventoryWarehouseId=OrdersWarehouseId
+              SELECT @InventoryWarehouseId=CASE
+                       WHEN ExternalStatus=N'InventoryReleasedForInvoice'
+                         THEN @WarehouseId
+                       ELSE OrdersWarehouseId
+                     END
               FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK)
               WHERE OrderId=@SourceOrderId AND BusinessId=@BusinessId;
 

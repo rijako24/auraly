@@ -268,6 +268,115 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         }
     }
 
+    [Fact]
+    public async Task Sales_receipt_uses_sales_warehouse_after_releasing_exact_reserved_stock()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var exactReservation = connection.CreateCommand();
+            exactReservation.CommandText = """
+                UPDATE balance
+                SET QuantityOnHand=1,InventoryValue=AverageUnitCost,
+                    UpdatedAt=SYSDATETIMEOFFSET()
+                FROM dbo.InventoryBalances balance
+                JOIN dbo.Orders orders
+                  ON orders.BusinessId=balance.BusinessId
+                 AND orders.OrdersWarehouseId=balance.WarehouseId
+                WHERE orders.OrderId=@OrderId
+                  AND balance.ProductId=@ProductId;
+                """;
+            exactReservation.Parameters.AddWithValue("@OrderId", orderId);
+            exactReservation.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+            Assert.Equal(1, await exactReservation.ExecuteNonQueryAsync());
+        }
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var command = new InvoiceOrdersRequest(
+            workSessionId,
+            fixture.WarehouseId,
+            userId,
+            [orderId],
+            "Cash",
+            null,
+            DocumentType: "SalesReceipt");
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var response = await InvoiceAsync(
+                client,
+                command,
+                $"exact-reservation-{Guid.NewGuid():N}");
+            var result = Assert.Single(response.Results);
+
+            Assert.Equal("Completed", response.Status);
+            Assert.Equal(1, response.CompletedCount);
+            Assert.Equal(0, response.FailedCount);
+            Assert.Equal("Invoiced", result.Status);
+            Assert.NotNull(result.DocumentId);
+            Assert.Null(result.Error);
+
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+
+            await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+            await verifyConnection.OpenAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT
+                  orders.ExternalStatus,
+                  orders.ReleaseTransferId,
+                  ordersBalance.QuantityOnHand,
+                  salesBalance.QuantityOnHand,
+                  (SELECT COUNT(*) FROM dbo.OrderInvoiceLinks link
+                   WHERE link.OrderId=@OrderId),
+                  (SELECT COUNT(*) FROM dbo.InventoryMovements movement
+                   WHERE movement.DocumentId=orders.ReleaseTransferId
+                     AND movement.DocumentType=N'WarehouseTransfer')
+                FROM dbo.Orders orders
+                JOIN dbo.InventoryBalances ordersBalance
+                  ON ordersBalance.BusinessId=orders.BusinessId
+                 AND ordersBalance.WarehouseId=orders.OrdersWarehouseId
+                 AND ordersBalance.ProductId=@ProductId
+                JOIN dbo.InventoryBalances salesBalance
+                  ON salesBalance.BusinessId=orders.BusinessId
+                 AND salesBalance.WarehouseId=@WarehouseId
+                 AND salesBalance.ProductId=@ProductId
+                WHERE orders.OrderId=@OrderId;
+                """;
+            verify.Parameters.AddWithValue("@OrderId", orderId);
+            verify.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+            verify.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("InventoryConsumedByInvoice", reader.GetString(0));
+            Assert.False(reader.IsDBNull(1));
+            Assert.Equal(0m, reader.GetDecimal(2));
+            Assert.Equal(0m, reader.GetDecimal(3));
+            Assert.Equal(1, reader.GetInt32(4));
+            Assert.Equal(2, reader.GetInt32(5));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in fixture.DrainDocumentSignals())
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
