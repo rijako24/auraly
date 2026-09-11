@@ -101,9 +101,21 @@ BEGIN
     IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.WorkSessions') AND name=N'UX_WorkSessions_User_Open')
         DROP INDEX UX_WorkSessions_User_Open ON dbo.WorkSessions;
 
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.WorkSessions') AND name=N'UX_WorkSessions_Tenant_User_Open')
-        EXEC sys.sp_executesql N'CREATE UNIQUE INDEX UX_WorkSessions_Tenant_User_Open
-          ON dbo.WorkSessions(TenantId,UserId) WHERE Status=N''Open'';';
+    IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.WorkSessions') AND name=N'UX_WorkSessions_Tenant_User_Open')
+        DROP INDEX UX_WorkSessions_Tenant_User_Open ON dbo.WorkSessions;
+
+    IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.WorkSessions') AND name=N'UX_WorkSessions_Device_Open')
+        DROP INDEX UX_WorkSessions_Device_Open ON dbo.WorkSessions;
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.WorkSessions') AND name=N'UX_WorkSessions_Web_User_Open')
+        EXEC sys.sp_executesql N'CREATE UNIQUE INDEX UX_WorkSessions_Web_User_Open
+          ON dbo.WorkSessions(TenantId,BusinessId,UserId)
+          WHERE Status=N''Open'' AND DeviceId IS NULL;';
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.WorkSessions') AND name=N'UX_WorkSessions_Device_User_Open')
+        EXEC sys.sp_executesql N'CREATE UNIQUE INDEX UX_WorkSessions_Device_User_Open
+          ON dbo.WorkSessions(TenantId,BusinessId,DeviceId,UserId)
+          WHERE Status=N''Open'' AND DeviceId IS NOT NULL;';
 END;
 
 COMMIT TRANSACTION;

@@ -19,8 +19,11 @@ La apertura valida en SQL Server que usuario, negocio y bodega pertenezcan al
 tenant autenticado. Un dispositivo es opcional para operación online; cuando se
 informa, debe estar enrolado, activo y asociado al mismo negocio y bodega.
 
-La base impide más de una `WorkSession` abierta por usuario y más de una por
-dispositivo. El cierre consolida `WorkSessionMovements` por medio de pago,
+La base impide más de una `WorkSession` web abierta por
+`TenantId + BusinessId + UserId` y más de una sesión enrolada por
+`TenantId + BusinessId + DeviceId + UserId`. El mismo usuario puede mantener en
+paralelo su sesión web y una sesión independiente en cada equipo enrolado. El
+cierre consolida `WorkSessionMovements` por medio de pago,
 distingue ventas, devoluciones y otros movimientos, calcula el efectivo esperado
 y su diferencia contra el conteo. El comprobante completo se conserva como un
 snapshot JSON con SHA-256 y se verifica antes de cada lectura.

@@ -543,6 +543,12 @@ public sealed class DatabaseUpgradeMigrationTests
         var root = FindRepositoryRoot();
         var workSessions = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Tables", "WorkSessions.sql"));
+        var exclusiveSessionMigration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260831_EnforceExclusiveUserSessions.sql"));
+        var tenantScopeMigration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260902_ScopeWorkSessionsByTenant.sql"));
         var sales = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Tables", "SalesDocuments.sql"));
         var cash = File.ReadAllText(Path.Combine(
@@ -569,6 +575,22 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("UX_WorkSessions_Web_User_Open", workSessions,
             StringComparison.Ordinal);
         Assert.Contains("UX_WorkSessions_Device_User_Open", workSessions,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "business.TenantId,session.BusinessId,session.UserId,session.DeviceId",
+            exclusiveSessionMigration,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "GROUP BY business.TenantId,session.UserId",
+            exclusiveSessionMigration,
+            StringComparison.Ordinal);
+        Assert.Contains("UX_WorkSessions_Web_User_Open", tenantScopeMigration,
+            StringComparison.Ordinal);
+        Assert.Contains("UX_WorkSessions_Device_User_Open", tenantScopeMigration,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "CREATE UNIQUE INDEX UX_WorkSessions_Tenant_User_Open",
+            tenantScopeMigration,
             StringComparison.Ordinal);
         Assert.Contains("[WarehouseId] UNIQUEIDENTIFIER NULL", workSessions,
             StringComparison.Ordinal);
