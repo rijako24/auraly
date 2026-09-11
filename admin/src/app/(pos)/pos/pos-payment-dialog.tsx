@@ -24,6 +24,8 @@ import {
 } from "./pos-money-input";
 import { usePosReferenceOptions } from "./use-pos-reference-options";
 import { initialTransferBankAccountId } from "./pos-transfer-settlement";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
+import { isChangeDocumentShortcut, nextPaymentAmountIndex } from "./pos-payment-keyboard";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -43,6 +45,7 @@ export function PosPaymentDialog({
   documentTypeLocked,
   documentTypeReady,
   customer,
+  focusRequest,
   onChangeDocumentType,
   onCancel,
   onConfirm,
@@ -56,6 +59,7 @@ export function PosPaymentDialog({
   documentTypeLocked: boolean;
   documentTypeReady: boolean;
   customer: PosCustomer | null;
+  focusRequest: number;
   onChangeDocumentType: () => void;
   onCancel: () => void;
   onConfirm: (
@@ -86,10 +90,25 @@ export function PosPaymentDialog({
   const cardApprovalRef = useRef<HTMLInputElement>(null);
   const transferReferenceRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
+  const firstAmountRef = useRef<HTMLInputElement>(null);
+  const modal = useRef<HTMLFormElement>(null);
+  const handledFocusRequest = useRef(0);
   const settlement = useMemo(
     () => calculatePaymentSettlement(total, payments),
     [payments, total],
   );
+
+  usePosModalBehavior({
+    modalRef: modal,
+    initialFocusRef: firstAmountRef,
+    focusRequest,
+    escapeDisabled: busy,
+    onEscape: () => {
+      if (cardCapture) setCardCapture(null);
+      else if (transferCapture) setTransferCapture(null);
+      else onCancel();
+    },
+  });
 
   useEffect(() => {
     const defaultMethod = methods.find((method) => method.code === "Cash");
@@ -161,6 +180,12 @@ export function PosPaymentDialog({
     });
   }, []);
 
+  useEffect(() => {
+    if (!focusRequest || payments.length === 0 || handledFocusRequest.current === focusRequest) return;
+    handledFocusRequest.current = focusRequest;
+    focusAmount(payments[0].id);
+  }, [focusAmount, focusRequest, payments]);
+
   const requiresCardCapture = useCallback((methodCode: string) =>
     methodCode === "Card" || methodCode === "DebitCard" || methodCode === "CreditCard", []);
 
@@ -226,12 +251,11 @@ export function PosPaymentDialog({
 
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
-      if (cardCapture || transferCapture) {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          setCardCapture(null);
-          setTransferCapture(null);
-        }
+      if (cardCapture || transferCapture) return;
+      if (isChangeDocumentShortcut(event.key, documentTypeLocked)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        onChangeDocumentType();
         return;
       }
       const method = methods.find((value) => value.shortcut === event.key);
@@ -242,14 +266,11 @@ export function PosPaymentDialog({
           !(event.target instanceof HTMLElement && event.target.dataset.paymentReference === "true")) {
         event.preventDefault();
         removePayment(activePaymentId);
-      } else if (event.key === "Escape" && !busy) {
-        event.preventDefault();
-        onCancel();
       }
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [activePaymentId, addPayment, busy, cardCapture, transferCapture, methods, onCancel, payments.length, removePayment]);
+  }, [activePaymentId, addPayment, cardCapture, documentTypeLocked, methods, onChangeDocumentType, payments.length, removePayment, transferCapture]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -272,7 +293,15 @@ export function PosPaymentDialog({
     );
   }
 
-  function handleAmountEnter(event: KeyboardEvent<HTMLInputElement>) {
+  function handleAmountKeyDown(event: KeyboardEvent<HTMLInputElement>, paymentId: string) {
+    const current = payments.findIndex((payment) => payment.id === paymentId);
+    const next = nextPaymentAmountIndex(current, payments.length, event.key);
+    if (next !== null) {
+      event.preventDefault();
+      const target = payments[next]?.id;
+      if (target && target !== paymentId) focusAmount(target);
+      return;
+    }
     // Installed WebView versions do not consistently perform the same
     // implicit form action for Enter. Own the keyboard contract here: an
     // incomplete payment remains editable and only a complete payment submits
@@ -301,8 +330,10 @@ export function PosPaymentDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex h-[100dvh] items-end justify-center overflow-hidden bg-slate-950/60 sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-50 flex h-[100dvh] items-end justify-center overflow-hidden bg-slate-950/60 sm:items-center sm:p-4" data-pos-focus-surface="modal">
       <form
+        ref={modal}
+        tabIndex={-1}
         onSubmit={submit}
         className="flex max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
         aria-labelledby="pos-payment-title"
@@ -317,7 +348,7 @@ export function PosPaymentDialog({
               Finalizar venta
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Escribe el valor recibido. Enter confirma; F1-F5 seleccionan el medio.
+              Escribe el valor recibido. ↑/↓ recorre los valores; F1-F5 seleccionan el medio y F6 cambia el documento.
             </p>
           </div>
           <p className="text-right">
@@ -332,7 +363,7 @@ export function PosPaymentDialog({
         <section className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Documento de venta</p><p className="mt-1 flex items-center gap-2 font-semibold text-slate-950">{documentType==="SalesInvoice"?<FileText className="h-4 w-4 text-teal-700"/>:<Receipt className="h-4 w-4 text-teal-700"/>}{documentType==="SalesInvoice"?"Factura electrónica":"Comprobante de venta"}</p><p className="mt-1 text-xs text-slate-500">{documentTypeLocked?"Este cliente requiere factura electrónica; la selección está protegida.":"Puedes elegir el documento antes de confirmar el pago."}</p></div>
-            <button type="button" onClick={onChangeDocumentType} disabled={busy||(documentTypeLocked&&documentTypeReady)} className="h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:border-teal-500 disabled:cursor-not-allowed disabled:opacity-50">{documentTypeLocked?(documentTypeReady?"Factura obligatoria":"Configurar factura"):"Cambiar documento"}</button>
+            <button type="button" onClick={onChangeDocumentType} disabled={busy||(documentTypeLocked&&documentTypeReady)} className="h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:border-teal-500 disabled:cursor-not-allowed disabled:opacity-50">{documentTypeLocked?(documentTypeReady?"Factura obligatoria":"Configurar factura"):<>Cambiar documento <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs">F6</span></>}</button>
           </div>
           {!documentTypeReady&&<p className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">Completa la configuración de factura electrónica para poder emitir esta venta.</p>}
         </section>
@@ -397,6 +428,7 @@ export function PosPaymentDialog({
                 Valor recibido
                 <input
                   ref={(element) => {
+                    if (index === 0) firstAmountRef.current = element;
                     if (element) amountRefs.current.set(payment.id, element);
                     else amountRefs.current.delete(payment.id);
                   }}
@@ -406,7 +438,7 @@ export function PosPaymentDialog({
                   aria-label={`Valor recibido en ${methods.find((method) => method.code === payment.methodCode)?.label ?? payment.methodCode}`}
                   value={amountDrafts[payment.id] ?? formatMoneyValue(payment.amount)}
                   onFocus={(event) => event.currentTarget.select()}
-                  onKeyDown={handleAmountEnter}
+                  onKeyDown={(event) => handleAmountKeyDown(event, payment.id)}
                   onChange={(event) => {
                     const formatted = formatMoneyDraft(event.currentTarget.value);
                     setAmountDrafts((current) => ({

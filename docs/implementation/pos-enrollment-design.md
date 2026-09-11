@@ -52,10 +52,18 @@ enrolado.
 15. La venta permanece inhabilitada hasta que la proyección local completa queda
     `Ready`.
 
-Si una etapa de la preparación falla, Edge conserva el checkpoint y detiene esa
-ejecución. La interfaz muestra una causa segura y accionable; solo el usuario
-dispara **Reintentar preparación**. No existe un temporizador de reintento de la
-preparación inicial.
+Si una etapa de la preparación falla por DNS, timeout o una respuesta temporal
+del servidor, Edge conserva el checkpoint y agenda hasta tres reintentos con
+espera creciente (5, 10 y 20 segundos). Mientras espera, la interfaz informa el
+número de intento sin bloquear el cierre de la aplicación. Si los tres fallan,
+la preparación queda pausada y ofrece **Reintentar preparación**, **Repetir
+enrolamiento** y **Salir de Auraly**. Un reintento manual inicia una serie nueva
+de hasta tres intentos automáticos. Los fallos permanentes de identidad,
+compatibilidad o validación no se disfrazan como problemas transitorios.
+
+Los detalles técnicos completos permanecen en los logs locales. La salud y el
+historial consumidos por la interfaz nunca exponen `ServerUrl`, hostnames,
+puertos ni el texto crudo de excepciones de transporte.
 
 La URL predeterminada del host es `http://127.0.0.1:47831`. El host exige el
 token de sesión generado por el lanzador, valida el origen y solo permite HTTP
@@ -77,6 +85,12 @@ El paquete local contiene únicamente lo necesario para operar la caja:
 El secreto del dispositivo y la clave técnica no se almacenan en texto plano.
 La clave privada del certificado DIAN nunca llega al navegador ni al POS.
 
+La pantalla de fallo puede reiniciar el enrolamiento mediante `POST
+/edge/v1/enrollment/restart`. El endpoint exige loopback y el token opaco del
+lanzador, elimina únicamente el paquete protegido y reinicia el host en
+`EnrollmentRequired`; conserva SQLite, outbox, comprobantes, `DeviceId`, series
+y cursores locales. La interfaz confirma esta acción antes de ejecutarla.
+
 El enrolamiento no descarga inventario. La preparación local mantiene todos los
 productos, códigos, precios de venta, impuestos, promociones, canales, clientes,
 usuarios y parámetros operativos del negocio ya definidos por la rebanada de
@@ -92,9 +106,23 @@ La experiencia visual es la misma:
   servidor.
 - **Edge sin red:** usa catálogo, series, factura, impresión y outbox locales.
 
+Los modales personalizados del POS comparten una pila de foco: el control
+inicial gana el foco al abrir, `Escape` cierra solo la ventana superior y el
+foco vuelve a la anterior. En **Finalizar venta**, `↑` y `↓` recorren los campos
+**Valor recibido**, `F6` abre el selector de documento, `F1` marca factura y
+`F2` marca comprobante; `Enter` confirma y devuelve el foco al primer valor.
+
+La pantalla inicial obtiene del bootstrap de ventas únicamente los indicadores
+de preparación fiscal y cuota que necesita para cada sede. Un cajero con acceso
+al POS no consulta el endpoint administrativo `fiscal.configuration.read`, no
+recibe errores técnicos de permisos al elegir comprobante y tampoco recibe en
+esta proyección números de resolución, certificados ni secretos fiscales.
+
 Al arrancar, Edge ejecuta una puesta al día en segundo plano sobre el cursor
-durable. Si falla, conserva el cursor y espera un reintento manual. Después de
-completarla deja de consultar el catálogo. El disparo push para cambios ocurridos durante una
+durable. Si una conexión transitoria falla, conserva el cursor y ejecuta la
+política acotada de tres reintentos; un fallo permanente o el agotamiento de esa
+política espera intervención manual. Después de completar la puesta al día deja
+de consultar el catálogo. El disparo push para cambios ocurridos durante una
 sesión abierta sigue pendiente de conectar al transporte real; no se simula
 mediante polling continuo.
 

@@ -3,6 +3,7 @@ using Auraly.Application.Sales;
 using Auraly.Contracts.Catalog;
 using Auraly.Domain.Pricing;
 using Auraly.Platform.Domain.Enums;
+using Auraly.Platform.Domain.Pricing;
 using Auraly.Platform.Domain.Promotions;
 using Microsoft.Data.SqlClient;
 
@@ -53,37 +54,32 @@ public sealed partial class SqlOnlineSalesDraftStore
         var channelConfiguration = await LoadChannelConfigurationAsync(
             connection,transaction,businessId,customerId,
             requests.Select(value => value.ProductId).Distinct().ToArray(),ct);
-        var quantities = requests.GroupBy(value => value.ProductId)
-            .ToDictionary(group => group.Key,group => group.Sum(value => value.Quantity));
-        var inputs = new List<PromotionPriceLineInput>(requests.Count);
+        var inputs = new List<CommercePriceLineInput>(requests.Count);
         foreach (var request in requests)
         {
             var product = await ReadProductAsync(
                 connection, transaction, businessId, warehouseId, request.ProductId, ct);
-            var totalQuantity = quantities[request.ProductId];
-            var channel = PriceChannelResolver.Resolve(
-                channelConfiguration.PriceChannelId,product.UnitPrice,totalQuantity,
+            inputs.Add(new(
+                request.Key, product.Name, product.UnitPrice, request.Quantity,
                 new PriceChannelProductContext(
                     request.ProductId,product.ProductCategoryId,product.ProductBrandId,
                     product.ProductCategoryAncestorIds,product.CurrencyCode,product.UnitCost,product.LatestUnitCost,
                     product.TargetMarginPercent),
-                channelConfiguration.Channels,channelConfiguration.Tiers,
-                channelConfiguration.Exclusions);
-            inputs.Add(new(
-                request.Key, PromotionItemType.Product, request.ProductId, null, product.Name,
-                product.UnitPrice,
-                channel.Amount,request.Quantity, product.CurrencyCode, channel.PriceChannelId,
-                EligibleForPromotion: request.EligibleForPromotion,
-                ProductCategoryId: product.ProductCategoryId));
+                EligibleForPromotion: request.EligibleForPromotion));
         }
 
         var configuration = await LoadPromotionConfigurationAsync(
             connection, transaction, businessId, ct);
-        var resolvedLines = independentLines
-            ? inputs.SelectMany(input => PromotionPriceResolver.Resolve(
-                [input], configuration.Promotions, configuration.AllowChannelCombination).Lines).ToArray()
-            : PromotionPriceResolver.Resolve(
-                inputs, configuration.Promotions, configuration.AllowChannelCombination).Lines;
+        var resolvedLines = CommercePriceResolver.Resolve(
+            inputs,
+            new CommercePricePolicy(
+                channelConfiguration.PriceChannelId,
+                channelConfiguration.Channels,
+                channelConfiguration.Tiers,
+                channelConfiguration.Exclusions,
+                configuration.AllowChannelCombination,
+                configuration.Promotions),
+            independentLines).Lines;
         return resolvedLines.ToDictionary(line => line.Input.Key, StringComparer.OrdinalIgnoreCase);
     }
 

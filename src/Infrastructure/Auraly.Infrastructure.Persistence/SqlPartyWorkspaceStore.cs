@@ -27,12 +27,12 @@ public sealed partial class SqlPartyWorkspaceStore(
               AND (@Search IS NULL OR NOT EXISTS(
                    SELECT 1 FROM STRING_SPLIT(@Search,N' ') term
                    WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
-                     AND NOT (p.DisplayName LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
-                              OR p.Identification LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
-                              OR p.NormalizedIdentification LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                     AND NOT (COALESCE(p.DisplayName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(p.Identification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(p.NormalizedIdentification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
                               OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc
                                         WHERE pc.PartyId=p.PartyId AND pc.IsActive=1
-                                          AND pc.Value LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'))))
+                                          AND COALESCE(pc.Value,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'))))
               AND (@Role IS NULL
                    OR @Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
                    OR @Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
@@ -103,12 +103,12 @@ public sealed partial class SqlPartyWorkspaceStore(
               AND (@Search IS NULL OR NOT EXISTS(
                    SELECT 1 FROM STRING_SPLIT(@Search,N' ') term
                    WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
-                     AND NOT (p.DisplayName LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
-                              OR p.Identification LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
-                              OR p.NormalizedIdentification LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                     AND NOT (COALESCE(p.DisplayName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(p.Identification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(p.NormalizedIdentification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
                               OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc
                                         WHERE pc.PartyId=p.PartyId AND pc.IsActive=1
-                                          AND pc.Value LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'))))
+                                          AND COALESCE(pc.Value,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'))))
               AND (@Role IS NULL
                    OR @Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
                    OR @Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)

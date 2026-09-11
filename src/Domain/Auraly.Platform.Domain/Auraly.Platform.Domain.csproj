@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\Modules\Catalog\Auraly.Domain.Catalog\Auraly.Domain.Catalog.csproj" />
+    <ProjectReference Include="..\..\Modules\Pricing\Auraly.Domain.Pricing\Auraly.Domain.Pricing.csproj" />
   </ItemGroup>
 
 </Project>

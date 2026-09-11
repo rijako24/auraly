@@ -466,11 +466,24 @@ public static class PosEdgeHostApplication
             }
             catch (HttpRequestException exception)
             {
+                app.Logger.LogWarning(exception, "POS enrollment server is unavailable.");
                 return Results.Problem(
-                    exception.Message,
+                    "No fue posible conectar con Auraly para completar el enrolamiento. Comprueba la red y vuelve a intentarlo.",
                     statusCode: StatusCodes.Status502BadGateway,
                     title: "EnrollmentServerUnavailable");
             }
+        });
+        edge.MapPost("/enrollment/restart", (
+            PosEdgeEnrollmentStore enrollments,
+            IHostApplicationLifetime lifetime) =>
+        {
+            enrollments.Clear();
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1));
+                lifetime.StopApplication();
+            });
+            return Results.Accepted();
         });
         edge.MapGet("/events", async (
             HttpContext context,
@@ -718,11 +731,13 @@ public static class PosEdgeHostApplication
                 }
                 .Where(value => value is not null)
                 .Min();
-            var lastSynchronizationError = closureOutbox.LastError
+            var storedSynchronizationError = closureOutbox.LastError
                 ?? cashOutbox.LastError
                 ?? customerOutbox.LastError
                 ?? saleOutbox.LastError
                 ?? syncStatus.LastError;
+            var lastSynchronizationError = syncStatus.LastError
+                ?? PosSynchronizationFailurePresenter.StoredError(storedSynchronizationError);
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
             // The enrollment handoff may open the initial local session, but the
@@ -784,9 +799,10 @@ public static class PosEdgeHostApplication
                 synchronizationStages = syncStatus.ActiveStages,
                 failedSynchronizationStage = syncStatus.FailedStage,
                 synchronizationInProgress = syncStatus.IsSynchronizing,
+                automaticRetryScheduled = syncStatus.AutomaticRetryScheduled,
+                automaticRetryAttempt = syncStatus.AutomaticRetryAttempt,
                 lastSynchronizationAt = syncStatus.LastSuccessfulAt ?? catalogStatus.UpdatedAt,
-                lastSynchronizationFailed = syncStatus.LastAttemptFailed ||
-                    !string.IsNullOrWhiteSpace(lastSynchronizationError),
+                lastSynchronizationFailed = syncStatus.LastAttemptFailed,
                 pendingSynchronizationCount,
                 oldestPendingSynchronizationAt,
                 lastSynchronizationError
@@ -1335,8 +1351,9 @@ public static class PosEdgeHostApplication
             }
             catch (HttpRequestException exception)
             {
+                app.Logger.LogWarning(exception, "POS enrollment server is unavailable.");
                 return Results.Problem(
-                    exception.Message,
+                    "No fue posible conectar con Auraly para completar el enrolamiento. Comprueba la red y vuelve a intentarlo.",
                     statusCode: StatusCodes.Status502BadGateway,
                     title: "EnrollmentServerUnavailable");
             }
@@ -1380,6 +1397,7 @@ public static class PosEdgeHostApplication
         !path.Equals("/edge/v1/auth/login") &&
         !path.Equals("/edge/v1/auth/complete-enrollment") &&
         !path.Equals("/edge/v1/enrollment/redeem") &&
+        !path.Equals("/edge/v1/enrollment/restart") &&
         !path.StartsWithSegments("/edge/v1/configuration/printers") &&
         !path.StartsWithSegments("/edge/v1/print") &&
         !path.Equals("/edge/v1/cash-drawer/open") &&

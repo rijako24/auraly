@@ -1,7 +1,8 @@
 "use client";
 
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { FormEvent, useEffect } from "react";
+import { FormEvent, useRef } from "react";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 export function PosConfirmDialog({
   title,
@@ -20,16 +21,8 @@ export function PosConfirmDialog({
   onCancel: () => void;
   tone?: "danger" | "primary";
 }) {
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [busy, onCancel]);
+  const modal = useRef<HTMLFormElement>(null);
+  usePosModalBehavior({ modalRef: modal, escapeDisabled: busy, onEscape: onCancel });
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -37,8 +30,10 @@ export function PosConfirmDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/65 p-4">
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/65 p-4" data-pos-focus-surface="modal">
       <form
+        ref={modal}
+        tabIndex={-1}
         onSubmit={submit}
         role="alertdialog"
         aria-modal="true"

@@ -8,6 +8,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Net.Http.Json;
 using Auraly.Api;
+using Auraly.Application.Authorization;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
@@ -197,6 +198,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 services.AddSingleton<IPosSynchronizationPushGateway>(provider =>
                     provider.GetRequiredService<
                         TestPosSynchronizationPushGateway>());
+                services.RemoveAll<IPosApprovalCreatedNotifier>();
+                services.AddSingleton<TestPosApprovalCreatedNotifier>();
+                services.AddSingleton<IPosApprovalCreatedNotifier>(provider =>
+                    provider.GetRequiredService<TestPosApprovalCreatedNotifier>());
                 services.RemoveAll<IBlobStorageService>();
                 services.RemoveAll<IMediaUrlResolver>();
                 services.AddSingleton<IBlobStorageService, TestBlobStorageService>();
@@ -232,6 +237,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             "The API fixture is not initialized."))
         .Services.GetRequiredService<TestPosSynchronizationPushGateway>()
         .Drain();
+
+    public IReadOnlyCollection<PosApprovalRequestView> DrainApprovalNotifications() =>
+        Services.GetRequiredService<TestPosApprovalCreatedNotifier>().Drain();
 
     internal IReadOnlyCollection<PublishedFiscalSignal> DrainFiscalSignals() =>
         (_factory ?? throw new InvalidOperationException(

@@ -143,6 +143,8 @@ public sealed class PosArchitectureTests
             Path.Combine(posDirectory, "pos-payment-dialog.tsx"));
         var productSearchDialog = File.ReadAllText(
             Path.Combine(posDirectory, "pos-product-search-dialog.tsx"));
+        var modalBehavior = File.ReadAllText(
+            Path.Combine(posDirectory, "use-pos-modal-behavior.ts"));
         var functionShortcut = File.ReadAllText(
             Path.Combine(posDirectory, "pos-function-shortcut.ts"));
 
@@ -216,7 +218,8 @@ public sealed class PosArchitectureTests
             productSearchDialog,
             StringComparison.Ordinal);
         Assert.Contains("data-pos-focus-surface=\"modal\"", productSearchDialog, StringComparison.Ordinal);
-        Assert.Contains("input.current?.focus({ preventScroll: true })", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("initialFocusRef: input", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("(target ?? modal).focus({ preventScroll: true })", modalBehavior, StringComparison.Ordinal);
         Assert.Contains("(event.key === \"ArrowDown\" || event.key === \"ArrowUp\")", page, StringComparison.Ordinal);
         Assert.Contains("focusLastQuantity()", page, StringComparison.Ordinal);
         Assert.Contains("revealLine(quantityToFocus)", page, StringComparison.Ordinal);
@@ -254,6 +257,8 @@ public sealed class PosArchitectureTests
             "pos");
         var page = File.ReadAllText(Path.Combine(posDirectory, "page.tsx"));
         var dialog = File.ReadAllText(Path.Combine(posDirectory, "pos-confirm-dialog.tsx"));
+        var modalBehavior = File.ReadAllText(
+            Path.Combine(posDirectory, "use-pos-modal-behavior.ts"));
 
         Assert.Contains("shortcut === POS_ACTION_SHORTCUTS.removeLine", page, StringComparison.Ordinal);
         Assert.Contains("protectedActionHandlers.current.removeLine(selectedLineId)", page, StringComparison.Ordinal);
@@ -266,8 +271,52 @@ public sealed class PosArchitectureTests
         Assert.Contains("aria-modal=\"true\"", dialog, StringComparison.Ordinal);
         Assert.Contains("autoFocus", dialog, StringComparison.Ordinal);
         Assert.Contains("type=\"submit\"", dialog, StringComparison.Ordinal);
-        Assert.Contains("event.key === \"Escape\"", dialog, StringComparison.Ordinal);
+        Assert.Contains("usePosModalBehavior({", dialog, StringComparison.Ordinal);
+        Assert.Contains("onEscape: onCancel", dialog, StringComparison.Ordinal);
+        Assert.Contains("event.key !== \"Escape\"", modalBehavior, StringComparison.Ordinal);
         Assert.Contains("Enter acepta · Esc cancela", dialog, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Every_pos_dialog_uses_the_shared_escape_and_focus_boundary()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var posDirectory = Path.Combine(
+            repositoryRoot,
+            "admin",
+            "src",
+            "app",
+            "(pos)",
+            "pos");
+        var modalBehavior = File.ReadAllText(
+            Path.Combine(posDirectory, "use-pos-modal-behavior.ts"));
+        string[] dialogFiles =
+        [
+            "pos-cash-movement-dialog.tsx",
+            "pos-confirm-dialog.tsx",
+            "pos-customer-search-dialog.tsx",
+            "pos-document-type-dialog.tsx",
+            "pos-invoice-search-dialog.tsx",
+            "pos-line-editor-dialog.tsx",
+            "pos-payment-dialog.tsx",
+            "pos-printer-dialog.tsx",
+            "pos-product-search-dialog.tsx",
+            "pos-supervisor-approval-dialog.tsx"
+        ];
+
+        Assert.Contains("window.addEventListener(\"keydown\", handleEscape, true)", modalBehavior, StringComparison.Ordinal);
+        Assert.Contains("modalStack.at(-1)?.token", modalBehavior, StringComparison.Ordinal);
+        Assert.Contains("window.requestAnimationFrame(focusInside)", modalBehavior, StringComparison.Ordinal);
+        Assert.Contains("window.setTimeout(focusInside, 40)", modalBehavior, StringComparison.Ordinal);
+        foreach (var dialogFile in dialogFiles)
+        {
+            var dialog = File.ReadAllText(Path.Combine(posDirectory, dialogFile));
+            Assert.Contains("usePosModalBehavior({", dialog, StringComparison.Ordinal);
+        }
+
+        var page = File.ReadAllText(Path.Combine(posDirectory, "page.tsx"));
+        Assert.Contains("temporaryOpen &&", page, StringComparison.Ordinal);
+        Assert.Contains("if (event.key !== \"Escape\" || busy) return;", page, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -385,11 +434,35 @@ public sealed class PosArchitectureTests
         Assert.Contains("const string Configuration", streams, StringComparison.Ordinal);
         Assert.Contains("N'Configuration'", warehouseStore, StringComparison.Ordinal);
         Assert.Contains("AllowNegativeStockSales", pricingSnapshot, StringComparison.Ordinal);
+        Assert.DoesNotContain("promotion.StartsAtUtc<=SYSUTCDATETIME()", pricingSnapshot, StringComparison.Ordinal);
+        Assert.DoesNotContain("promotion.EndsAtUtc>=SYSUTCDATETIME()", pricingSnapshot, StringComparison.Ordinal);
         Assert.Contains("PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Configuration", edgeSynchronization, StringComparison.Ordinal);
         Assert.Contains("PosSynchronizationStreams.DeviceEnrollment", edgeSynchronization, StringComparison.Ordinal);
         Assert.Contains("TargetDeviceId", deviceAdministration, StringComparison.Ordinal);
         Assert.Contains("Equipo enrolado", setup, StringComparison.Ordinal);
         Assert.Contains("Preparar este equipo para trabajar sin conexión", setup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Online_edge_and_seller_orders_use_the_same_commerce_price_coordinator()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var online = File.ReadAllText(Path.Combine(repositoryRoot,
+            "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.Pricing.cs"));
+        var edge = File.ReadAllText(Path.Combine(repositoryRoot,
+            "src", "Pos", "Auraly.Pos.Edge.Infrastructure", "PosPricingStore.cs"));
+        var orders = File.ReadAllText(Path.Combine(repositoryRoot,
+            "src", "API", "Auraly.Api", "SellerOrdersApi.cs"));
+
+        Assert.Contains("CommercePriceResolver.Resolve(", online, StringComparison.Ordinal);
+        Assert.Contains("CommercePriceResolver.Resolve(", edge, StringComparison.Ordinal);
+        Assert.DoesNotContain("PriceChannelResolver.Resolve(", online, StringComparison.Ordinal);
+        Assert.DoesNotContain("PriceChannelResolver.Resolve(", edge, StringComparison.Ordinal);
+        Assert.DoesNotContain("PromotionPriceResolver.Resolve(", online, StringComparison.Ordinal);
+        Assert.DoesNotContain("PromotionPriceResolver.Resolve(", edge, StringComparison.Ordinal);
+        Assert.Contains("ResolveLinesAsync(", orders, StringComparison.Ordinal);
+        Assert.Contains("ResolveCommercePricesAsync(", orders, StringComparison.Ordinal);
     }
 
     [Fact]

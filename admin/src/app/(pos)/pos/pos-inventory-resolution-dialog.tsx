@@ -7,18 +7,19 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import type { PosInventoryValidation } from "@/services/pos/pos-edge-client";
 
-export function PosInventoryResolutionDialog({ value, busy, onChangeQuantity, onRemove, onRetry }: {
+export function PosInventoryResolutionDialog({ value, busy, onChangeQuantity, onRemove, onRetry, onCancel }: {
   value: PosInventoryValidation;
   busy: boolean;
   onChangeQuantity: (lineId: string, quantity: number) => Promise<void>;
   onRemove: (lineId: string, productName: string) => void;
   onRetry: () => Promise<void>;
+  onCancel: () => void;
 }) {
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   useEffect(() => setQuantities(Object.fromEntries(value.issues.map((issue) => [issue.lineId, String(issue.availableQuantity)]))), [value]);
 
-  return <Dialog open>
-    <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto p-0" onEscapeKeyDown={(event) => event.preventDefault()} onPointerDownOutside={(event) => event.preventDefault()}>
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onCancel(); }}>
+    <DialogContent data-pos-focus-surface="modal" className="max-h-[92vh] max-w-2xl overflow-y-auto p-0" onPointerDownOutside={(event) => event.preventDefault()}>
       <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 px-6 py-5 text-white">
         <span className="mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-amber-400/15 text-amber-300"><PackageCheck className="h-6 w-6" /></span>
         <DialogHeader><DialogTitle className="text-xl text-white">El inventario cambió mientras la venta estaba en espera</DialogTitle><DialogDescription className="text-slate-300">Ajusta las cantidades disponibles o elimina los productos sin saldo. La venta no podrá cobrarse hasta quedar válida.</DialogDescription></DialogHeader>

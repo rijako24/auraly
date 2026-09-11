@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
+using Auraly.Application.Fiscal;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -24,6 +26,15 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
             value => value.BusinessId == fixture.BusinessId &&
                      value.WarehouseId == fixture.WarehouseId);
         Assert.Equal("B01", option.WarehouseCode);
+        using (var scope = fixture.CreateScope())
+        {
+            var fiscal = await scope.ServiceProvider
+                .GetRequiredService<IFiscalConfigurationStore>()
+                .GetAsync(fixture.TenantId, fixture.BusinessId, CancellationToken.None);
+            Assert.Equal(fiscal.IsReadyForOnlineSales, option.FiscalReadyForOnlineSales);
+            Assert.Equal(fiscal.IsReadyForEnrollment, option.FiscalReadyForEnrollment);
+            Assert.Equal(fiscal.HasDianDocumentQuota, option.HasDianDocumentQuota);
+        }
 
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/workspace/select",
@@ -57,11 +68,12 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
         Assert.False(bootstrap.CanEnrollPosDevice);
         Assert.True(bootstrap.MaximumEnrolledDevices >= bootstrap.ActiveEnrolledDeviceCount);
         Assert.Contains("permiso", bootstrap.EnrollmentUnavailableReason, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(
+        var option = Assert.Single(
             bootstrap.Options,
             option =>
                 option.BusinessId == fixture.BusinessId &&
                 option.WarehouseId == fixture.WarehouseId);
+        Assert.Equal(fixture.BusinessId, option.BusinessId);
     }
 
     [Fact]

@@ -122,6 +122,30 @@ temporales, captura, cobro y emisión.
 El indicador visible expresa conectividad con Auraly Server. “POS Edge” permanece
 como detalle técnico y no se muestra al cajero.
 
+## Resolución de precios
+
+`CommercePriceResolver` es el coordinador canónico y puro en memoria para precios
+de producto. Recibe únicamente las líneas del documento que ya cargó el adaptador,
+agrupa cantidades del mismo producto y compone `PriceChannelResolver` con
+`PromotionPriceResolver`. SQL Server, SQLite y pedidos cargan sus datos, pero no
+repiten ni modifican la aritmética comercial.
+
+La búsqueda de catálogo resuelve cada candidato de forma independiente. Una venta
+o pedido resuelve sus líneas juntas porque los precios por cantidad, condiciones
+entre productos y mínimos del documento necesitan el contexto del documento. Esto
+no consulta el catálogo completo ni agrega viajes a base; en pedidos evita resolver
+la configuración una vez por producto.
+
+Recuperar una venta pausada o un pedido es una operación de hidratación: copia
+cantidad, precio, descuento y origen comercial tal como quedaron guardados, sin
+invocar el resolver. No existe una guarda posterior. La siguiente mutación normal
+—agregar o eliminar, cambiar cantidad o seleccionar otro cliente— vuelve a usar el
+resolver canónico sobre el borrador vigente, igual que cualquier venta nueva.
+
+La paridad offline significa mismo resultado con el mismo snapshot de catálogo,
+canales, promociones y hora efectiva. Sin conexión no puede incluir cambios del
+servidor que el equipo todavía no haya sincronizado.
+
 ## Durabilidad al cerrar Facturación
 
 Cerrar la ventana, recargar la PWA, navegar a otro módulo o reiniciar el proceso

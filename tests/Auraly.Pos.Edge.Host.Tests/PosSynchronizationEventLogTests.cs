@@ -54,7 +54,7 @@ public sealed class PosSynchronizationEventLogTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancellation = new CancellationTokenSource();
 
-        var succeeded = await executor.ExecuteAllAsync(
+        var result = await executor.ExecuteAllAsync(
             [
                 new PosSynchronizationLane(
                     PosSynchronizationTrigger.LocalOutbox,
@@ -62,7 +62,8 @@ public sealed class PosSynchronizationEventLogTests
                     async () =>
                     {
                         await catalogStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-                        throw new HttpRequestException("upload unavailable");
+                        throw new HttpRequestException(
+                            "Host desconocido. (api-auraly-dev-w5usmo6w.azurewebsites.net:443)");
                     }),
                 new PosSynchronizationLane(
                     PosSynchronizationTrigger.Catalog,
@@ -77,11 +78,61 @@ public sealed class PosSynchronizationEventLogTests
             cancellation.Token);
 
         cancellation.Cancel();
-        Assert.False(succeeded);
+        Assert.False(result.Succeeded);
+        Assert.True(result.HasRetryableFailure);
+        Assert.False(result.HasPermanentFailure);
+        Assert.Equal(PosSynchronizationTrigger.LocalOutbox, result.RetryableTriggers);
         Assert.True(catalogExecuted);
-        Assert.Contains(
-            events.Read(),
+        var failedEvent = Assert.Single(events.Read(),
             item => item.Title.Contains("subida", StringComparison.Ordinal));
+        Assert.DoesNotContain("azurewebsites", failedEvent.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(":443", failedEvent.Detail, StringComparison.Ordinal);
+        Assert.Contains("automáticamente", failedEvent.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Permanent_synchronization_failure_is_not_scheduled_as_a_retryable_failure()
+    {
+        var executor = new PosSynchronizationLaneExecutor(
+            new PosSynchronizationEventLog(TimeProvider.System),
+            NullLogger<PosSynchronizationLaneExecutor>.Instance);
+
+        var result = await executor.ExecuteAllAsync(
+            [
+                new PosSynchronizationLane(
+                    PosSynchronizationTrigger.Security,
+                    "usuarios",
+                    () => throw new HttpRequestException(
+                        "Forbidden at https://internal.example.test",
+                        null,
+                        System.Net.HttpStatusCode.Forbidden))
+            ],
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.False(result.HasRetryableFailure);
+        Assert.True(result.HasPermanentFailure);
+        Assert.Equal(PosSynchronizationTrigger.None, result.RetryableTriggers);
+    }
+
+    [Fact]
+    public void Stored_transport_error_is_never_exposed_to_the_cashier()
+    {
+        var detail = PosSynchronizationFailurePresenter.StoredError(
+            "Host desconocido. (api-auraly-dev-w5usmo6w.azurewebsites.net:443)");
+
+        Assert.NotNull(detail);
+        Assert.DoesNotContain("azurewebsites", detail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(":443", detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Transient_synchronization_retries_exactly_three_times()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(5), PosSynchronizationRetryPolicy.NextDelay(0));
+        Assert.Equal(TimeSpan.FromSeconds(10), PosSynchronizationRetryPolicy.NextDelay(1));
+        Assert.Equal(TimeSpan.FromSeconds(20), PosSynchronizationRetryPolicy.NextDelay(2));
+        Assert.Null(PosSynchronizationRetryPolicy.NextDelay(3));
     }
 
     [Fact]

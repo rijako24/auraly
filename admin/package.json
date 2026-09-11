@@ -12,6 +12,7 @@
     "test:pos-enrollment": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-enrollment.test.js\"",
     "test:pos-sync-monitor": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-synchronization-event-feed.test.js\"",
     "test:pos-preparation": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-preparation-progress.test.js\"",
+    "test:pos-keyboard": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-payment-keyboard.test.js\" \".pos-test-dist/app/(pos)/pos/pos-public-error.test.js\"",
     "test:pos-inventory-policy": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-inventory-policy.test.js\"",
     "test:pos-cash-movement-keyboard": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-cash-movement-keyboard.test.js\"",
     "test:pos-receipt-print-routing": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-receipt-print-routing.test.js\" \".pos-test-dist/services/pos/pos-receipt-line-markup.test.js\"",

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "./pos-money-input";
 import { lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, type GridDirection } from "./pos-line-editor-calculation";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 type EditableLine = {
   lineId: string;
@@ -43,21 +44,17 @@ export function PosLineEditorDialog({
   const [chargeOpen, setChargeOpen] = useState(false);
   const [additionalCharge, setAdditionalCharge] = useState("");
   const discountInputs = useRef<Array<HTMLInputElement | null>>([]);
+  const modal = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     focusEditorControl(discountInputs.current[0]);
   }, []);
 
-  useEffect(() => {
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [busy, onCancel]);
+  usePosModalBehavior({
+    modalRef: modal,
+    escapeDisabled: busy,
+    onEscape: () => chargeOpen ? setChargeOpen(false) : onCancel(),
+  });
 
   const parsed = useMemo(() => drafts.map((line) => ({
     lineId: line.lineId,
@@ -158,7 +155,7 @@ export function PosLineEditorDialog({
   };
 
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/70 sm:items-center sm:p-4">
-    <form role="dialog" aria-modal="true" aria-labelledby="pos-line-editor-title" aria-keyshortcuts="Enter Escape" data-pos-focus-surface="modal" onSubmit={submit} onKeyDown={(event)=>{
+    <form ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="pos-line-editor-title" aria-keyshortcuts="Enter Escape" data-pos-focus-surface="modal" onSubmit={submit} onKeyDown={(event)=>{
       if (moveInGrid(event)) return;
       if (event.key === "Tab") {
         event.preventDefault();

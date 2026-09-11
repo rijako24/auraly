@@ -425,7 +425,7 @@ public sealed class PosCashMovementServerClient(
                 item.Value.DocumentId, item.Value.AttemptCount,
                 exception.Message, cancellationToken);
             events.Record("Warning", "CashMovement", "Movimiento de caja pendiente",
-                $"{item.Value.DocumentId:D} · {exception.Message}");
+                $"{item.Value.DocumentId:D} · La conexión se interrumpió; se reintentará automáticamente.");
         }
         return true;
     }

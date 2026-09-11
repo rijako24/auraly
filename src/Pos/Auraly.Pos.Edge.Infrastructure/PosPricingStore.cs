@@ -4,6 +4,7 @@ using Auraly.Contracts.Catalog;
 using Auraly.Domain.Pricing;
 using Auraly.Commerce.Taxation.Domain;
 using Auraly.Platform.Domain.Enums;
+using Auraly.Platform.Domain.Pricing;
 using Auraly.Platform.Domain.Promotions;
 using Microsoft.Data.Sqlite;
 
@@ -470,9 +471,7 @@ public sealed partial class PosCatalogStore
         var exclusionRules = snapshot.PriceChannelExclusions.Select(value =>
             new PriceChannelExclusionRule(value.PriceChannelId,value.ProductId,
                 value.ProductCategoryId,value.ProductBrandId)).ToArray();
-        var quantities = requests.GroupBy(value => value.ProductId)
-            .ToDictionary(group => group.Key,group => group.Sum(value => value.Quantity));
-        var inputs = new List<PromotionPriceLineInput>(requests.Count);
+        var inputs = new List<CommercePriceLineInput>(requests.Count);
         foreach (var request in requests)
         {
             await using var command = connection.CreateCommand();
@@ -498,26 +497,25 @@ public sealed partial class PosCatalogStore
                 Convert.ToDecimal(reader.GetValue(8),CultureInfo.InvariantCulture),
                 reader.IsDBNull(9) ? null : Convert.ToDecimal(reader.GetValue(9),CultureInfo.InvariantCulture));
             await reader.DisposeAsync();
-            var pricingQuantity = quantities[request.ProductId];
-            var channel = PriceChannelResolver.Resolve(
-                channelId,baseAmount,pricingQuantity,productContext,
-                channelRules,tierRules,exclusionRules);
-            inputs.Add(new(request.Key, PromotionItemType.Product, request.ProductId, null,
-                name, baseAmount, channel.Amount, request.Quantity, currency,
-                channel.PriceChannelId,
-                EligibleForPromotion: request.EligibleForPromotion,
-                ProductCategoryId: productContext.ProductCategoryId));
+            inputs.Add(new(
+                request.Key, name, baseAmount, request.Quantity, productContext,
+                EligibleForPromotion: request.EligibleForPromotion));
         }
         var now = Clock.GetUtcNow();
         var promotionRules = (snapshot.Promotions ?? [])
             .Where(promotion => promotion.StartsAtUtc is null || promotion.StartsAtUtc <= now)
             .Where(promotion => promotion.EndsAtUtc is null || promotion.EndsAtUtc >= now)
             .Select(ToRule).ToArray();
-        var resolvedLines = independentLines
-            ? inputs.SelectMany(input => PromotionPriceResolver.Resolve(
-                [input], promotionRules, snapshot.AllowPromotionChannelCombination).Lines).ToArray()
-            : PromotionPriceResolver.Resolve(
-                inputs, promotionRules, snapshot.AllowPromotionChannelCombination).Lines;
+        var resolvedLines = CommercePriceResolver.Resolve(
+            inputs,
+            new CommercePricePolicy(
+                channelId,
+                channelRules,
+                tierRules,
+                exclusionRules,
+                snapshot.AllowPromotionChannelCombination,
+                promotionRules),
+            independentLines).Lines;
         return resolvedLines.ToDictionary(line => line.Input.Key, line => new PosResolvedPrice(
             line.Input.ProductId!.Value, line.Input.BaseUnitPrice, line.EffectiveUnitPrice,
             line.Input.CurrencyCode, line.PriceSource, line.PriceChannelId,

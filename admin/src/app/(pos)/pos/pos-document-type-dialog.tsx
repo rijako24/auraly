@@ -2,7 +2,7 @@
 
 import { Check, FileText, Loader2, Receipt, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   fiscalConfigurationApi,
@@ -11,6 +11,8 @@ import {
 import type { PosClient, PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePosReferenceOptions } from "./use-pos-reference-options";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
+import { documentTypeForShortcut } from "./pos-payment-keyboard";
 
 const documentVisuals: Record<PosSaleDocumentType, { icon: typeof FileText }> = {
   SalesInvoice: { icon: FileText },
@@ -55,18 +57,24 @@ export function PosDocumentTypeDialog({
   const [configuringInvoice, setConfiguringInvoice] = useState(false);
   const [checkingFiscal, setCheckingFiscal] = useState(false);
   const [fiscalError, setFiscalError] = useState<string | null>(null);
+  const [pendingValue, setPendingValue] = useState<PosSaleDocumentType>(value);
+  const modal = useRef<HTMLElement>(null);
+  const optionButtons = useRef(new Map<PosSaleDocumentType, HTMLButtonElement>());
+
+  usePosModalBehavior({ modalRef: modal, escapeDisabled: busy, onEscape: onCancel });
 
   useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        event.preventDefault();
-        onCancel();
-      }
+    const handleShortcut = (event: KeyboardEvent) => {
+      const next = documentTypeForShortcut(event.key);
+      if (!next || busy || (invoiceRequired && next !== "SalesInvoice")) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setPendingValue(next);
+      window.requestAnimationFrame(() => optionButtons.current.get(next)?.focus());
     };
-
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [busy, onCancel]);
+    window.addEventListener("keydown", handleShortcut, true);
+    return () => window.removeEventListener("keydown", handleShortcut, true);
+  }, [busy, invoiceRequired]);
 
   async function loadFiscalState() {
     const nextConfiguration = await fiscalConfigurationApi.get(businessId);
@@ -91,12 +99,13 @@ export function PosDocumentTypeDialog({
         else onFiscalEnrollmentRequired();
         return;
       }
-      const state = await loadFiscalState();
-      if (!state.isReadyForOnlineSales) {
+      const health = await client.health();
+      if (!health.fiscalReady) {
         if (!canManageFiscal) {
           setFiscalError("La factura electrónica no está lista en esta sede. Solicita a un usuario con permiso de configuración fiscal que complete la resolución; esta venta permanecerá guardada.");
           return;
         }
+        await loadFiscalState();
         setConfiguringInvoice(true);
         return;
       }
@@ -118,11 +127,14 @@ export function PosDocumentTypeDialog({
   return (
     <div
       className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/65 p-4"
+      data-pos-focus-surface="modal"
       onMouseDown={(event) => {
         if (event.currentTarget === event.target && !busy) onCancel();
       }}
     >
       <section
+        ref={modal}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="pos-document-type-title"
@@ -156,11 +168,16 @@ export function PosDocumentTypeDialog({
 
         <div className="grid gap-3 p-6 sm:grid-cols-2">
           {options.filter(option => !invoiceRequired || option.value === "SalesInvoice").map((option) => {
-            const selected = option.value === value;
+            const selected = option.value === pendingValue;
+            const shortcut = option.value === "SalesInvoice" ? "F1" : "F2";
             const Icon = option.icon;
             return (
               <button
                 key={option.value}
+                ref={(element) => {
+                  if (element) optionButtons.current.set(option.value, element);
+                  else optionButtons.current.delete(option.value);
+                }}
                 autoFocus={selected}
                 type="button"
                 disabled={busy || checkingFiscal}
@@ -183,6 +200,7 @@ export function PosDocumentTypeDialog({
                   )}
                 </span>
                 <span className="mt-4 block font-bold text-slate-950">{option.title}</span>
+                <span className="mt-2 inline-flex rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{shortcut} · Enter</span>
                 <span className="mt-1 block text-sm leading-5 text-slate-600">
                   {option.description}
                 </span>

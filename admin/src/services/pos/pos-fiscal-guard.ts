@@ -7,6 +7,7 @@ export const dianQuotaExhaustedMessage =
 
 type FiscalReadiness = {
   isReadyForOnlineSales: boolean;
+  hasDianDocumentQuota?: boolean;
 };
 
 export function fiscalLaunchReadinessError(
@@ -14,9 +15,10 @@ export function fiscalLaunchReadinessError(
   readiness: FiscalReadiness,
 ): string | null {
   if (mode === "enroll") return null;
-  return readiness.isReadyForOnlineSales
-    ? null
-    : fiscalConfigurationRequiredMessage;
+  if (!readiness.isReadyForOnlineSales) return fiscalConfigurationRequiredMessage;
+  return readiness.hasDianDocumentQuota === false
+    ? dianQuotaExhaustedMessage
+    : null;
 }
 
 export function canIssuePosDocument(

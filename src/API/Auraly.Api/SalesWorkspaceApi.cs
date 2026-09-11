@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Auraly.Application.Organization;
+using Auraly.Application.Fiscal;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
 using Auraly.BuildingBlocks.Application.Synchronization;
@@ -15,13 +16,15 @@ public static class SalesWorkspaceApi
             .RequireAuthorization("pos.user");
 
         group.MapGet("/bootstrap", async (
-            HttpContext context, SalesWorkspaceService service, CancellationToken ct) =>
+            HttpContext context, SalesWorkspaceService service,
+            FiscalConfigurationService fiscal, CancellationToken ct) =>
             await Handle(async () =>
             {
                 context.Response.Headers.CacheControl =
                     "no-store, no-cache, must-revalidate";
                 context.Response.Headers.Pragma = "no-cache";
                 var identity = context.User.ToSalesWorkspaceUserIdentity();
+                var options = await PrepareOptionsAsync(identity, service, fiscal, ct);
                 var hasPermission = context.User.FindAll("permission").Any(claim =>
                     StringComparer.Ordinal.Equals(
                         claim.Value, CommercePermissionCodes.EnrolledDevicesEnroll));
@@ -32,7 +35,7 @@ public static class SalesWorkspaceApi
                     await service.TenantNameAsync(identity, ct),
                     identity.UserId,
                     context.User.PosUserDisplayName(),
-                    await service.ListAsync(identity, ct),
+                    options,
                     canEnroll,
                     capacity.ActiveEnrolledDeviceCount,
                     capacity.MaximumEnrolledDevices,
@@ -44,9 +47,10 @@ public static class SalesWorkspaceApi
             }));
 
         group.MapGet("/options", async (
-            HttpContext context, SalesWorkspaceService service, CancellationToken ct) =>
-            await Handle(async () => Results.Ok(await service.ListAsync(
-                context.User.ToSalesWorkspaceUserIdentity(), ct))));
+            HttpContext context, SalesWorkspaceService service,
+            FiscalConfigurationService fiscal, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await PrepareOptionsAsync(
+                context.User.ToSalesWorkspaceUserIdentity(), service, fiscal, ct))));
 
         group.MapPost("/synchronization/negotiate", async (
             HttpContext context, Guid businessId, SalesWorkspaceService service,
@@ -78,6 +82,37 @@ public static class SalesWorkspaceApi
                 context.User.ToSalesWorkspaceUserIdentity(), selection, ct))));
 
         return endpoints;
+    }
+
+    private static async Task<IReadOnlyList<SalesWorkspaceOption>> PrepareOptionsAsync(
+        SalesWorkspaceUserIdentity identity,
+        SalesWorkspaceService service,
+        FiscalConfigurationService fiscal,
+        CancellationToken cancellationToken)
+    {
+        var options = await service.ListAsync(identity, cancellationToken);
+        var fiscalUser = new FiscalConfigurationUser(
+            identity.UserId, identity.TenantId, identity.Permissions);
+        var configurations = await Task.WhenAll(options
+            .Select(option => option.BusinessId)
+            .Distinct()
+            .Select(async businessId => (
+                BusinessId: businessId,
+                Configuration: await fiscal.GetForPointOfSaleAsync(
+                    fiscalUser, businessId, cancellationToken))));
+        var byBusiness = configurations.ToDictionary(
+            item => item.BusinessId, item => item.Configuration);
+        return options.Select(option =>
+        {
+            var configuration = byBusiness[option.BusinessId];
+            return option with
+            {
+                FiscalReadyForOnlineSales = configuration.IsReadyForOnlineSales,
+                FiscalReadyForEnrollment = configuration.IsReadyForEnrollment,
+                HasDianDocumentQuota = configuration.HasDianDocumentQuota,
+                FiscalWarningMessages = configuration.WarningMessages ?? []
+            };
+        }).ToArray();
     }
 
     private static async Task<IResult> Handle(Func<Task<IResult>> action)

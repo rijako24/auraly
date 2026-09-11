@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("buscador abre para agregar, alinea promociones y muestra existencias sin scroll interno", async ({ page, baseURL }) => {
+test("buscador abre para agregar, alinea promociones y mantiene accesibles las existencias", async ({ page, baseURL }) => {
   const tenantId="11111111-1111-1111-1111-111111111111",businessId="22222222-2222-2222-2222-222222222222",warehouseId="33333333-3333-3333-3333-333333333333";
   const user={userId:"44444444-4444-4444-4444-444444444444",tenantId,tenantKey:"TEST",username:"cajero",firstName:"Cajero",lastName:"Prueba",roles:["ADMIN"],permissions:["pos.sales.create","pos.inventory.availability.read"]};
   const workspace={businessId,warehouseId,businessName:"Sede prueba",warehouseName:"Principal",warehouseCode:"B01",warehouseAllowsNegativeStockSales:true,hasActiveEdgeEnrollment:false};
@@ -49,7 +49,7 @@ test("buscador abre para agregar, alinea promociones y muestra existencias sin s
   const stocks=page.getByRole("region",{name:"Existencias por sede y bodega"});
   await expect(stocks).toContainText("No hay bodegas operativas");
   const stockTable=stocks.locator(":scope > div").last();
-  expect(await stockTable.evaluate(node=>node.scrollHeight<=node.clientHeight)).toBe(true);
+  expect(await stockTable.evaluate(node=>node.scrollHeight-node.clientHeight)).toBeLessThanOrEqual(1);
   await dialog.screenshot({path:"test-results/pos-product-search.png"});
   await page.keyboard.press("F1");
   await expect(page.getByRole("dialog",{name:"Verificador de precios"})).toBeVisible();
@@ -62,7 +62,7 @@ test("buscador abre para agregar, alinea promociones y muestra existencias sin s
   await page.getByRole("button",{name:"Buscar F1",exact:true}).click();
   await expect(dialog).toBeVisible();
   await expect(stocks).toContainText("Bodega 12");
-  expect(await stockTable.evaluate(node=>node.scrollHeight<=node.clientHeight)).toBe(true);
+  expect(await stockTable.evaluate(node=>node.scrollHeight>node.clientHeight)).toBe(true);
   await stocks.getByText("Bodega 12",{exact:false}).scrollIntoViewIfNeeded();
   await expect(stocks.getByText("Bodega 12",{exact:false})).toBeVisible();
   await page.keyboard.press("Escape");

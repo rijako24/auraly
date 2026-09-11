@@ -1,3 +1,5 @@
+import { posPublicError } from "./pos-public-error";
+
 export type PosPreparationHealth = {
   serverConnected: boolean;
   identityReady: boolean;
@@ -12,6 +14,8 @@ export type PosPreparationHealth = {
   synchronizationStages?: string[];
   lastSynchronizationFailed?: boolean;
   lastSynchronizationError?: string | null;
+  automaticRetryScheduled?: boolean;
+  automaticRetryAttempt?: number;
 };
 
 export type PosPreparationView = {
@@ -48,16 +52,33 @@ export function posPreparationView(
     : null;
   const activeStages = (health.synchronizationStages ?? []).join(", ");
 
+  if (health.automaticRetryScheduled) {
+    const attempt = Math.min(3, Math.max(1, health.automaticRetryAttempt ?? 1));
+    return {
+      title: "Recuperando la conexión",
+      detail: `La conexión se interrumpió. Auraly ejecutará el reintento automático ${attempt} de 3.`,
+      currentResource: activeStages || "Preparación pendiente",
+      resourceProgress: health.catalogProgressPercent ?? null,
+      overallProgress,
+      processedLabel: "No necesitas intervenir; el avance local está guardado",
+      connectionLabel: health.serverConnected ? "Conexión recuperada" : "Esperando conexión con Auraly",
+      resumeLabel: `Reintento automático ${attempt} de 3`,
+    };
+  }
+
   if (health.lastSynchronizationFailed) {
     return {
       title: "La preparación se detuvo",
-      detail: health.lastSynchronizationError ?? "No fue posible terminar la preparación de esta caja.",
+      detail: posPublicError(
+        health.lastSynchronizationError,
+        "No fue posible terminar la preparación de esta caja.",
+      ) ?? "No fue posible terminar la preparación de esta caja.",
       currentResource: activeStages || "Preparación pendiente",
       resourceProgress: health.catalogProgressPercent ?? null,
       overallProgress,
       processedLabel: "Corrige la causa y reintenta cuando estés listo",
       connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Sin conexión con Auraly",
-      resumeLabel: "El reintento es manual",
+      resumeLabel: "Los 3 reintentos automáticos terminaron",
     };
   }
 

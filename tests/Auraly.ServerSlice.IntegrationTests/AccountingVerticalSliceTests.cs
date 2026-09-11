@@ -2701,13 +2701,17 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
               (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,
                CreatedBy,CreatedAt)
             VALUES(@CustomerId,@PartyId,@BusinessId,0,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.CustomerCreditProfiles
+              (CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,
+               UpdatedByUserId,UpdatedAt)
+            VALUES(@CustomerId,@BusinessId,NULL,30,1,@UserId,SYSDATETIMEOFFSET());
             """, connection);
         command.Parameters.AddWithValue("@PartyId", partyId);
         command.Parameters.AddWithValue("@CustomerId", customerId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
-        Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        Assert.Equal(3, await command.ExecuteNonQueryAsync());
         return customerId;
     }
 

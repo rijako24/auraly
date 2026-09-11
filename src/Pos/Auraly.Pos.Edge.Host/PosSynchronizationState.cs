@@ -7,13 +7,15 @@ public sealed record PosSynchronizationStatus(
     bool LastAttemptFailed,
     IReadOnlyList<string> ActiveStages,
     string? FailedStage,
-    string? LastError);
+    string? LastError,
+    bool AutomaticRetryScheduled,
+    int AutomaticRetryAttempt);
 
 public sealed class PosSynchronizationState
 {
     private readonly object gate = new();
     private PosSynchronizationStatus status = new(
-        false, null, null, false, [], null, null);
+        false, null, null, false, [], null, null, false, 0);
 
     public PosSynchronizationStatus Current
     {
@@ -30,7 +32,8 @@ public sealed class PosSynchronizationState
                 ActiveStages = [],
                 LastAttemptFailed = preserveFailure && status.LastAttemptFailed,
                 FailedStage = preserveFailure ? status.FailedStage : null,
-                LastError = preserveFailure ? status.LastError : null
+                LastError = preserveFailure ? status.LastError : null,
+                AutomaticRetryScheduled = false
             };
     }
 
@@ -80,9 +83,38 @@ public sealed class PosSynchronizationState
                 ActiveStages = [],
                 LastAttemptFailed = preserveFailure && status.LastAttemptFailed,
                 FailedStage = preserveFailure ? status.FailedStage : null,
-                LastError = preserveFailure ? status.LastError : null
+                LastError = preserveFailure ? status.LastError : null,
+                AutomaticRetryScheduled = false,
+                AutomaticRetryAttempt = preserveFailure ? status.AutomaticRetryAttempt : 0
             };
     }
 
     public void Failed() { lock (gate) status = status with { IsSynchronizing = false, LastAttemptFailed = true }; }
+
+    public void RetryScheduled(int attempt)
+    {
+        lock (gate)
+            status = status with
+            {
+                IsSynchronizing = false,
+                LastAttemptFailed = false,
+                FailedStage = null,
+                LastError = null,
+                AutomaticRetryScheduled = true,
+                AutomaticRetryAttempt = attempt
+            };
+    }
+
+    public void AutomaticRetriesExhausted()
+    {
+        lock (gate)
+            status = status with
+            {
+                IsSynchronizing = false,
+                LastAttemptFailed = true,
+                AutomaticRetryScheduled = false,
+                AutomaticRetryAttempt = 3,
+                LastError = "La preparación no pudo conectarse con Auraly después de tres reintentos. Reintenta ahora o repite el enrolamiento."
+            };
+    }
 }

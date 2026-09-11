@@ -110,9 +110,17 @@ public sealed class PosApprovalException(string code, string message) : Exceptio
     public string Code { get; } = code;
 }
 
+public interface IPosApprovalCreatedNotifier
+{
+    Task NotifyAsync(
+        PosApprovalRequestView request,
+        CancellationToken cancellationToken);
+}
+
 public sealed class PosApprovalService(
     IPosApprovalStore store,
     IPosSynchronizationOutboxDispatcher synchronization,
+    IPosApprovalCreatedNotifier notifications,
     TimeProvider timeProvider)
 {
     private const int Iterations = 210_000;
@@ -136,6 +144,10 @@ public sealed class PosApprovalService(
             user, request, timeProvider.GetUtcNow().Add(Lifetime), cancellationToken);
         await synchronization.DispatchPendingAsync(
             user.TenantId, user.BusinessId, CancellationToken.None);
+        // The approval is already durable. Delivery must not be abandoned when
+        // an intermediary (notably the local enrolled Edge host) closes its
+        // request cancellation token after receiving the response.
+        await notifications.NotifyAsync(approval, CancellationToken.None);
         return approval;
     }
 

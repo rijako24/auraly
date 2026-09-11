@@ -2,6 +2,14 @@
 
 Fecha de cierre: 2026-07-29
 
+## Extensión gastronómica diseñada
+
+Las salidas virtual/física y receptor de comandas se especifican en el
+[diseño de restaurante](restaurant-pos-design.md#8-estaciones-comandas-push-e-impresión).
+Reutilizan perfiles, plantillas y adaptadores de este documento. No cambian el
+enrolamiento, preparación o envío de facturas de la caja local. Esta extensión
+está diseñada, no conectada por esta entrega documental.
+
 ## Referencia funcional revisada en Xion
 
 Se revisaron `FrmConfigurarImpresora`, `SConfiguracionImpresora`,

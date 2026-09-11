@@ -189,6 +189,53 @@ public sealed class PosPricingStoreTests
     }
 
     [Fact]
+    public async Task Downloaded_promotion_activates_and_expires_by_local_clock_without_another_sync()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-timed-promotion-{Guid.NewGuid():N}.db");
+        try
+        {
+            var now = new DateTimeOffset(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
+            var clock = new MutableTimeProvider(now);
+            var store = new PosCatalogStore($"Data Source={path}", clock);
+            await store.InitializeAsync();
+            var productId = Guid.NewGuid();
+            var items = new[]
+            {
+                new PosCatalogItem(productId, "TIME-1", null, "Timed", "EA", "01", 0m,
+                    100m, "COP", true, false, false, null, [], [])
+            };
+            var sessionId = Guid.NewGuid();
+            var hash = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
+                .ToLowerInvariant();
+            await store.BeginBootstrapAsync(
+                new CatalogSyncSessionResponse(sessionId, 0, 1, now.AddHours(1)));
+            await store.ApplyBootstrapPageAsync(
+                new CatalogBootstrapPage(sessionId, 0, null, false, hash, items));
+            await store.PromoteBootstrapAsync();
+
+            var promotion = new PosPromotion(
+                Guid.NewGuid(), "Timed 10", 1, false, null,
+                now.AddMinutes(5), now.AddMinutes(10), now,
+                [],
+                [new((int)PromotionBenefitType.PercentageDiscount,
+                    (int)PromotionItemType.AnyProduct, null, null, 10m, null, null, null)]);
+            await store.ApplyPricingSnapshotAsync(new([], [], [], [], Promotions: [promotion]));
+
+            Assert.Equal(100m, (await store.ResolvePriceAsync(productId, null, 1m)).Amount);
+            clock.UtcNow = now.AddMinutes(6);
+            Assert.Equal(90m, (await store.ResolvePriceAsync(productId, null, 1m)).Amount);
+            clock.UtcNow = now.AddMinutes(11);
+            Assert.Equal(100m, (await store.ResolvePriceAsync(productId, null, 1m)).Amount);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Customer_delta_changes_only_the_target_and_configuration_refresh_preserves_the_directory()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-customer-delta-{Guid.NewGuid():N}.db");
@@ -235,6 +282,12 @@ public sealed class PosPricingStoreTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset UtcNow { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => UtcNow;
     }
 
 }

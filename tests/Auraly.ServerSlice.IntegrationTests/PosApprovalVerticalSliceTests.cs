@@ -19,6 +19,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         var supervisorId = Guid.NewGuid();
         await SeedSupervisorAsync(supervisorId);
         fixture.DrainSynchronizationMessages();
+        fixture.DrainApprovalNotifications();
         using var requester = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
         using var supervisor = fixture.CreateUserClient(
             supervisorId,
@@ -58,6 +59,9 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         var created = await createdResponse.Content.ReadFromJsonAsync<PosApprovalRequestView>();
         Assert.NotNull(created);
         Assert.Equal(PosApprovalStatus.Pending, created.Status);
+        var pushedApproval = Assert.Single(fixture.DrainApprovalNotifications());
+        Assert.Equal(created.ApprovalRequestId, pushedApproval.ApprovalRequestId);
+        Assert.Equal(fixture.DeviceId, pushedApproval.DeviceId);
 
         using var deviceStatusRequest = new HttpRequestMessage(
             HttpMethod.Get,

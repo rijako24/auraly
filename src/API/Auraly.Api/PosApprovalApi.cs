@@ -18,14 +18,9 @@ public static class PosApprovalApi
             ClaimsPrincipal principal,
             CreatePosApprovalRequest request,
             PosApprovalService service,
-            PosApprovalWebPushService push,
             CancellationToken cancellationToken) =>
-            await Handle(async () =>
-            {
-                var created = await service.CreateAsync(principal.ToPosApprovalIdentity(), request, cancellationToken);
-                await push.NotifyAsync(created, cancellationToken);
-                return created;
-            }));
+            await Handle(() => service.CreateAsync(
+                principal.ToPosApprovalIdentity(), request, cancellationToken)));
 
         group.MapGet("/push/public-key", (PosApprovalWebPushService push) =>
             HandleSync(() => Results.Ok(new { publicKey = push.PublicKey() })));
@@ -147,24 +142,18 @@ public static class PosApprovalApi
             CreatePosApprovalRequest request,
             HttpContext context,
             PosApprovalService service,
-            PosApprovalWebPushService push,
             CancellationToken cancellationToken) =>
         {
             if (!Guid.TryParse(context.Request.Headers["X-Auraly-User-Id"], out var userId) ||
                 !Guid.TryParse(context.Request.Headers["X-Auraly-Work-Session-Id"], out var workSessionId))
                 return Results.Problem("El dispositivo no identificó el usuario y su sesión.", statusCode: 400, title: "InvalidScope");
-            return await Handle(async () =>
-            {
-                var created = await service.CreateForDeviceAsync(
+            return await Handle(() => service.CreateForDeviceAsync(
                     RequiredDeviceGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
                     RequiredDeviceGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
                     userId,
                     workSessionId,
                     request,
-                    cancellationToken);
-                await push.NotifyAsync(created, cancellationToken);
-                return created;
-            });
+                    cancellationToken));
         });
 
         device.MapGet("/{approvalRequestId:guid}", async (

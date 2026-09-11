@@ -7,6 +7,7 @@ import type {
   PosIssuedSaleSearchPage,
   PosIssuedSaleSummary,
 } from "@/services/pos/pos-edge-client";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -39,6 +40,14 @@ export function PosInvoiceSearchDialog({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
+  const modal = useRef<HTMLElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  usePosModalBehavior({
+    modalRef: modal,
+    initialFocusRef: input,
+    escapeDisabled: busy,
+    onEscape: onCancel,
+  });
 
   useEffect(() => {
     const version = ++requestVersion.current;
@@ -67,17 +76,6 @@ export function PosInvoiceSearchDialog({
     return () => window.clearTimeout(timer);
   }, [onSearch, term]);
 
-  useEffect(() => {
-    const handleKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [busy, onCancel]);
-
   const loadMore = useCallback(async () => {
     if (busy || loading || loadingMore || !hasMore || nextOffset === null) return;
     setLoadingMore(true);
@@ -97,8 +95,8 @@ export function PosInvoiceSearchDialog({
   }, [busy, hasMore, loading, loadingMore, nextOffset, onSearch, term]);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4">
-      <section className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" data-pos-focus-surface="modal">
+      <section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         aria-labelledby="invoice-search-title">
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
           <div>
@@ -120,7 +118,7 @@ export function PosInvoiceSearchDialog({
         <div className="p-5 pb-3">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-            <input autoFocus value={term} onChange={(event) => setTerm(event.target.value)}
+            <input ref={input} autoFocus value={term} onChange={(event) => setTerm(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && results[selected]) {
                   event.preventDefault();

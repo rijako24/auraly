@@ -430,12 +430,20 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/sellers", sellerRequest with { OperationId = Guid.NewGuid() });
         Assert.Equal(HttpStatusCode.Conflict, duplicateSeller.StatusCode);
 
-        var page = await admin.GetFromJsonAsync<PartyWorkspacePage>(
+        using var pageResponse = await admin.GetAsync(
             "/api/commerce/v1/parties?page=1&pageSize=10&search=9017773331");
+        pageResponse.EnsureSuccessStatusCode();
+        var page = await pageResponse.Content.ReadFromJsonAsync<PartyWorkspacePage>();
         Assert.NotNull(page);
         Assert.Equal(1, page.Page);
         Assert.Equal(10, page.PageSize);
-        var item = Assert.Single(page.Items.Where(value => value.PartyId == customer.PartyId));
+        Assert.Equal(1, page.TotalCount);
+        var matches = page.Items.Where(value => value.PartyId == customer.PartyId).ToArray();
+        Assert.True(matches.Length == 1,
+            $"Expected party {customer.PartyId:D} once after normalized-identification search; " +
+            $"uri={pageResponse.RequestMessage?.RequestUri}, total={page.TotalCount}, " +
+            $"returned=[{string.Join(", ", page.Items.Select(value => $"{value.PartyId:D}:{value.Identification}"))}].");
+        var item = matches[0];
         Assert.Equal(new[] { "Carrier", "Customer", "Seller", "Supplier" }, item.Roles.OrderBy(value => value).ToArray());
         Assert.Equal("4", item.VerificationDigit);
         Assert.Equal(customer.CustomerId, item.CustomerId);

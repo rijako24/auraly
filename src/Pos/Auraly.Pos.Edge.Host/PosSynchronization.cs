@@ -18,6 +18,7 @@ public enum PosSynchronizationTrigger
     FiscalProvisioning = 32,
     Customers = 64,
     Configuration = 128,
+    AutomaticRetry = 256,
     All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning | Customers | Configuration
 }
 
@@ -87,7 +88,7 @@ internal sealed class PosSynchronizationWork(
     PosSynchronizationLaneExecutor lanes,
     PosCatalogStore catalogStore)
 {
-    public async Task ExecuteAsync(
+    public async Task<PosSynchronizationExecutionResult> ExecuteAsync(
         PosSynchronizationTrigger trigger,
         CancellationToken cancellationToken,
         bool preservePreparationFailure = false)
@@ -179,13 +180,16 @@ internal sealed class PosSynchronizationWork(
                     PosSynchronizationTrigger.FiscalProvisioning,
                     "configuración fiscal",
                     () => fiscalProvisioning.SynchronizeAsync(cancellationToken)));
-            if (!await lanes.ExecuteAllAsync(pending, cancellationToken))
+            var result = await lanes.ExecuteAllAsync(pending, cancellationToken);
+            if (!result.Succeeded)
             {
                 state.Failed();
                 events.Record(
                     "Warning",
                     "Synchronization",
-                    "Sincronización parcial; se requiere reintento manual",
+                    result.HasRetryableFailure
+                        ? "Sincronización parcial; Auraly volverá a intentarlo automáticamente"
+                        : "Sincronización parcial; revisa el enrolamiento o la configuración",
                     trigger.ToString());
             }
             else
@@ -197,6 +201,7 @@ internal sealed class PosSynchronizationWork(
                     "Sincronización completada",
                     trigger.ToString());
             }
+            return result;
         }
         finally { uiState.Publish(); }
     }
@@ -207,22 +212,41 @@ internal sealed record PosSynchronizationLane(
     string Label,
     Func<Task> Execute);
 
+internal sealed record PosSynchronizationExecutionResult(
+    bool Succeeded,
+    bool HasRetryableFailure,
+    bool HasPermanentFailure,
+    PosSynchronizationTrigger RetryableTriggers);
+
+internal sealed record PosSynchronizationLaneResult(
+    bool Succeeded,
+    bool Retryable,
+    PosSynchronizationTrigger Trigger);
+
 internal sealed class PosSynchronizationLaneExecutor(
     PosSynchronizationEventLog events,
     ILogger<PosSynchronizationLaneExecutor> logger,
     PosSynchronizationState? state = null,
     PosUiStateSignal? uiState = null)
 {
-    public async Task<bool> ExecuteAllAsync(
+    public async Task<PosSynchronizationExecutionResult> ExecuteAllAsync(
         IReadOnlyCollection<PosSynchronizationLane> lanes,
         CancellationToken cancellationToken)
     {
         var results = await Task.WhenAll(lanes.Select(
             lane => ExecuteAsync(lane, cancellationToken)));
-        return results.All(value => value);
+        return new PosSynchronizationExecutionResult(
+            results.All(value => value.Succeeded),
+            results.Any(value => !value.Succeeded && value.Retryable),
+            results.Any(value => !value.Succeeded && !value.Retryable),
+            results
+                .Where(value => !value.Succeeded && value.Retryable)
+                .Aggregate(
+                    PosSynchronizationTrigger.None,
+                    (combined, value) => combined | value.Trigger));
     }
 
-    private async Task<bool> ExecuteAsync(
+    private async Task<PosSynchronizationLaneResult> ExecuteAsync(
         PosSynchronizationLane lane,
         CancellationToken cancellationToken)
     {
@@ -232,7 +256,7 @@ internal sealed class PosSynchronizationLaneExecutor(
         {
             await lane.Execute();
             state?.StageSucceeded(lane.Label);
-            return true;
+            return new PosSynchronizationLaneResult(true, false, lane.Trigger);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -250,8 +274,11 @@ internal sealed class PosSynchronizationLaneExecutor(
                 "Warning",
                 "Synchronization",
                 $"Pendiente de sincronizar: {lane.Label}",
-                exception.Message);
-            return false;
+                PosSynchronizationFailurePresenter.EventDetail(exception));
+            return new PosSynchronizationLaneResult(
+                false,
+                PosSynchronizationFailurePresenter.IsRetryable(exception),
+                lane.Trigger);
         }
         finally
         {
@@ -261,23 +288,52 @@ internal sealed class PosSynchronizationLaneExecutor(
 
     private static string DescribeFailure(string lane, Exception exception)
     {
-        var detail = SafeDetail(exception.Message);
         if (exception is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound })
-            return $"No fue posible preparar {lane}: el servidor no ofrece una operación requerida por esta versión de Auraly. {detail} Pulsa Reintentar.";
+            return $"No fue posible preparar {lane}: el servidor no ofrece una operación requerida por esta versión de Auraly. Revisa la versión instalada o repite el enrolamiento.";
         if (exception is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden })
-            return $"No fue posible preparar {lane}: el servidor rechazó la identidad de esta caja. {detail} Revisa el enrolamiento y pulsa Reintentar.";
-        if (exception is HttpRequestException)
-            return $"No fue posible preparar {lane}: no hay una conexión válida con Auraly Server. {detail} Comprueba la red y pulsa Reintentar.";
+            return $"No fue posible preparar {lane}: el servidor rechazó la identidad de esta caja. Repite el enrolamiento o solicita ayuda al supervisor.";
+        if (PosSynchronizationFailurePresenter.IsRetryable(exception))
+            return $"No fue posible preparar {lane}: la conexión con Auraly se interrumpió. Se reintentará automáticamente; también puedes reintentar ahora.";
         if (exception is InvalidDataException)
-            return $"No fue posible preparar {lane}: los datos descargados no pasaron la validación. {detail} Pulsa Reintentar; si se repite, informa al supervisor.";
-        return $"No fue posible preparar {lane}: {detail} Pulsa Reintentar; si se repite, informa al supervisor.";
+            return $"No fue posible preparar {lane}: los datos descargados no pasaron la validación. Reintenta; si se repite, informa al supervisor.";
+        return $"No fue posible preparar {lane}. Reintenta; si se repite, informa al supervisor.";
     }
+}
 
-    private static string SafeDetail(string value)
+internal static class PosSynchronizationFailurePresenter
+{
+    public static bool IsRetryable(Exception exception) => exception switch
     {
-        var normalized = string.Join(' ', value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Trim();
-        return normalized.Length <= 240 ? normalized : normalized[..240] + "…";
-    }
+        TaskCanceledException => true,
+        HttpRequestException { StatusCode: null } => true,
+        HttpRequestException { StatusCode: var status } =>
+            status is System.Net.HttpStatusCode.RequestTimeout or
+                System.Net.HttpStatusCode.TooManyRequests ||
+            (int)status! >= 500,
+        _ => false
+    };
+
+    public static string EventDetail(Exception exception) => IsRetryable(exception)
+        ? "La conexión con Auraly se interrumpió. El sistema volverá a intentarlo automáticamente."
+        : exception is HttpRequestException
+            ? "Auraly rechazó la solicitud de sincronización. Revisa el enrolamiento o la versión instalada."
+            : "La etapa no pudo completarse. Reintenta y solicita ayuda si el problema continúa.";
+
+    public static string? StoredError(string? value) => string.IsNullOrWhiteSpace(value)
+        ? null
+        : "Hay información pendiente de sincronizar. Auraly volverá a intentarlo automáticamente.";
+}
+
+internal static class PosSynchronizationRetryPolicy
+{
+    public static TimeSpan? NextDelay(int completedAutomaticRetries) =>
+        completedAutomaticRetries switch
+        {
+            0 => TimeSpan.FromSeconds(5),
+            1 => TimeSpan.FromSeconds(10),
+            2 => TimeSpan.FromSeconds(20),
+            _ => null
+        };
 }
 
 public sealed record PosSynchronizationNegotiation(
@@ -491,6 +547,7 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
     PosSynchronizationState state,
     PosUiStateSignal uiState,
     PosCatalogStore catalog,
+    PosSynchronizationEventLog events,
     ILogger<PosEventDrivenSynchronizationHostedService> logger)
     : BackgroundService
 {
@@ -500,10 +557,13 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
         // A temporary Web PubSub outage must not leave the POS login empty.
         _ = ConnectAsync(stoppingToken);
         signal.Signal(PosSynchronizationTrigger.All);
+        var automaticRetryAttempts = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             var trigger = await signal.ReadAsync(stoppingToken);
             var isManual = trigger.HasFlag(PosSynchronizationTrigger.Manual);
+            trigger &= ~PosSynchronizationTrigger.AutomaticRetry;
+            if (isManual) automaticRetryAttempts = 0;
             var preservePreparationFailure = false;
             if (!isManual && await catalog.IsPreparationPausedAsync(stoppingToken))
             {
@@ -520,17 +580,53 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
             }
             try
             {
-                await work.ExecuteAsync(
+                var result = await work.ExecuteAsync(
                     trigger, stoppingToken, preservePreparationFailure);
                 var masterDataRequested = (trigger & (
                     PosSynchronizationTrigger.Catalog |
                     PosSynchronizationTrigger.Customers |
                     PosSynchronizationTrigger.Configuration |
                     PosSynchronizationTrigger.Security)) != PosSynchronizationTrigger.None;
-                if (masterDataRequested && state.Current.LastAttemptFailed)
-                    await catalog.SetPreparationPausedAsync(true, stoppingToken);
-                else if (isManual && !state.Current.LastAttemptFailed)
+                if (result.Succeeded)
+                {
+                    automaticRetryAttempts = 0;
                     await catalog.SetPreparationPausedAsync(false, stoppingToken);
+                }
+                else if (result.HasRetryableFailure && !result.HasPermanentFailure)
+                {
+                    var delay = PosSynchronizationRetryPolicy.NextDelay(automaticRetryAttempts);
+                    if (delay is not null)
+                    {
+                        await catalog.SetPreparationPausedAsync(false, stoppingToken);
+                        automaticRetryAttempts++;
+                        state.RetryScheduled(automaticRetryAttempts);
+                        uiState.Publish();
+                        signal.Schedule(
+                            result.RetryableTriggers | PosSynchronizationTrigger.AutomaticRetry,
+                            delay.Value,
+                            stoppingToken);
+                        logger.LogInformation(
+                            "POS synchronization retry {Attempt} of 3 scheduled in {Delay}.",
+                            automaticRetryAttempts,
+                            delay.Value);
+                    }
+                    else
+                    {
+                        state.AutomaticRetriesExhausted();
+                        if (masterDataRequested)
+                            await catalog.SetPreparationPausedAsync(true, stoppingToken);
+                        events.Record(
+                            "Warning",
+                            "Synchronization",
+                            "No fue posible sincronizar después de tres reintentos",
+                            "Usa Reintentar ahora o repite el enrolamiento.");
+                        uiState.Publish();
+                    }
+                }
+                else if (masterDataRequested)
+                {
+                    await catalog.SetPreparationPausedAsync(true, stoppingToken);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

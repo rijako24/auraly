@@ -547,6 +547,8 @@ export interface PosClient {
     identityReady: boolean;
     catalogStatus: string;
     synchronizationInProgress: boolean;
+    automaticRetryScheduled?: boolean;
+    automaticRetryAttempt?: number;
     lastSynchronizationAt: string | null;
     lastSynchronizationFailed: boolean;
     pendingSynchronizationCount: number;
@@ -771,6 +773,8 @@ export class PosEdgeClient implements PosClient {
       identityReady: boolean;
       catalogStatus: string;
       synchronizationInProgress: boolean;
+      automaticRetryScheduled?: boolean;
+      automaticRetryAttempt?: number;
       lastSynchronizationAt: string | null;
       lastSynchronizationFailed: boolean;
       pendingSynchronizationCount: number;
@@ -792,6 +796,10 @@ export class PosEdgeClient implements PosClient {
 
   synchronizeNow() {
     return this.requestVoid("/edge/v1/synchronization/refresh", { method: "POST" });
+  }
+
+  restartEnrollment() {
+    return this.requestVoid("/edge/v1/enrollment/restart", { method: "POST" });
   }
 
   printerConfiguration() {

@@ -11,6 +11,125 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Seller_order_creation_resolves_cross_product_promotion_as_one_document()
+    {
+        var userId = Guid.NewGuid();
+        var partyId = Guid.NewGuid();
+        var sellerPartyId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var firstProductId = Guid.NewGuid();
+        var secondProductId = Guid.NewGuid();
+        var taxProfileId = Guid.NewGuid();
+        var promotionId = Guid.NewGuid();
+        await EnsureOrdersWarehouseAsync();
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(
+              UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+              FirstName,LastName,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,@Username,UPPER(@Username),
+              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),
+              N'Precio',N'Pedido',1,SYSDATETIMEOFFSET());
+            INSERT dbo.Parties(
+              PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES
+              (@PartyId,@TenantId,N'Organization',N'Cliente precios pedido',
+               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
+              (@SellerPartyId,@TenantId,N'NaturalPerson',N'Vendedor precios pedido',
+               N'Complete',1,@UserId,SYSDATETIMEOFFSET());
+            UPDATE dbo.AppUsers SET PartyId=@SellerPartyId WHERE UserId=@UserId;
+            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(
+              SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@BusinessId,@SellerPartyId,@SellerCode,
+              N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto pedido',0,1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.Products(
+              ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,
+              ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            VALUES
+              (@FirstProductId,@TenantId,@BusinessId,@FirstCode,@FirstCode,N'Producto disparador',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@SecondProductId,@TenantId,@BusinessId,@SecondCode,@SecondCode,N'Producto beneficiado',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
+            INSERT dbo.ProductPrices(
+              ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
+              RoundingIncrement,RoundingMode,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@FirstProductId,100,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET()),
+              (NEWID(),@BusinessId,@SecondProductId,200,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.Promotions(
+              PromotionId,TenantId,Name,IsActive,Priority,IsCombinable,CreatedAt)
+            VALUES(@PromotionId,@TenantId,N'Pedido compra A y B al 50',1,100,0,SYSUTCDATETIME());
+            INSERT pricing.PromotionBusinessScopes(PromotionId,BusinessId,TenantId)
+            VALUES(@PromotionId,@BusinessId,@TenantId);
+            INSERT dbo.PromotionConditions(
+              PromotionConditionId,PromotionId,TenantId,ItemType,ProductId,MinQuantity,CreatedAt)
+            VALUES(NEWID(),@PromotionId,@TenantId,1,@FirstProductId,1,SYSUTCDATETIME());
+            INSERT dbo.PromotionBenefits(
+              PromotionBenefitId,PromotionId,TenantId,BenefitType,TargetItemType,ProductId,
+              DiscountPercentage,AppliesToQuantity,CreatedAt)
+            VALUES(NEWID(),@PromotionId,@TenantId,0,1,@SecondProductId,50,1,SYSUTCDATETIME());
+            """,
+            new("@UserId", userId), new("@TenantId", fixture.TenantId),
+            new("@Username", $"seller-price-{userId:N}"), new("@PartyId", partyId),
+            new("@SellerPartyId", sellerPartyId), new("@SellerId", sellerId),
+            new("@SellerCode", $"SP-{sellerId:N}"[..20]),
+            new("@CustomerId", customerId), new("@BusinessId", fixture.BusinessId),
+            new("@FirstProductId", firstProductId), new("@SecondProductId", secondProductId),
+            new("@FirstCode", $"SP-A-{firstProductId:N}"[..24]),
+            new("@SecondCode", $"SP-B-{secondProductId:N}"[..24]),
+            new("@TaxProfileId", taxProfileId), new("@TaxCode", $"SO-{taxProfileId:N}"[..32]),
+            new("@PromotionId", promotionId));
+
+        using var client = fixture.CreateUserClient(userId, "orders.create");
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/seller-orders",
+            new
+            {
+                businessId = fixture.BusinessId,
+                warehouseId = fixture.WarehouseId,
+                customerId,
+                partySiteId = (Guid?)null,
+                routeId = (Guid?)null,
+                routeStopId = (Guid?)null,
+                capturedOffline = false,
+                notes = "Prueba de paridad documental",
+                idempotencyKey = Guid.NewGuid().ToString("N"),
+                lines = new[]
+                {
+                    new { productId = firstProductId, quantity = 1m },
+                    new { productId = secondProductId, quantity = 1m }
+                }
+            });
+        Assert.True(response.IsSuccessStatusCode,
+            $"El pedido respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.Equal(200m, body.GetProperty("total").GetDecimal());
+        var orderId = body.GetProperty("orderId").GetGuid();
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT ProductId,UnitPrice
+            FROM dbo.OrderItems
+            WHERE OrderId=@OrderId
+            ORDER BY ProductId;
+            """;
+        command.Parameters.AddWithValue("@OrderId", orderId);
+        await using var reader = await command.ExecuteReaderAsync();
+        var prices = new Dictionary<Guid, decimal>();
+        while (await reader.ReadAsync()) prices.Add(reader.GetGuid(0), reader.GetDecimal(1));
+        Assert.Equal(100m, prices[firstProductId]);
+        Assert.Equal(100m, prices[secondProductId]);
+    }
+
+    [Fact]
     public async Task Seller_route_can_list_todays_orders_and_open_detail_with_legacy_non_json_attributes()
     {
         var orderId = Guid.NewGuid();
@@ -300,7 +419,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             VALUES(
               @OrderId,@BusinessId,0,0,2,@WarehouseId,
               N'Cliente pedido',N'123456789',N'COP',
-              20000,1000,19000,1,N'PED-PRUEBA-01',DATEADD(day,-4,SYSUTCDATETIME()));
+              15554,777,14777,1,N'PED-PRUEBA-01',DATEADD(day,-4,SYSUTCDATETIME()));
 
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
@@ -308,8 +427,8 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
               DiscountAmount,LineTotal,CreatedAt)
             VALUES(
               @ItemId,@OrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-              N'Producto del pedido',N'EA',2,10000,
-              1000,19000,DATEADD(day,-4,SYSUTCDATETIME()));
+              N'Producto del pedido',N'EA',2,7777,
+              777,14777,DATEADD(day,-4,SYSUTCDATETIME()));
 
             INSERT dbo.TaxProfiles(
               TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
@@ -356,11 +475,28 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             var recovered = await OpenDraftAsync(client, workSession.WorkSessionId);
             var line = Assert.Single(recovered.Lines);
             Assert.Equal(2m, line.Quantity);
-            Assert.Equal(10_000m, line.UnitPrice);
-            Assert.Equal(1_000m, line.Discount);
+            Assert.Equal(7_777m, line.UnitPrice);
+            Assert.Equal(777m, line.Discount);
+            Assert.Equal("Order", line.PriceSource);
             Assert.Equal(5m, line.TaxRate);
-            Assert.Equal(950m, line.Tax);
-            Assert.Equal(19_950m, recovered.PayableAmount);
+            Assert.Equal(738.85m, line.Tax);
+            Assert.Equal(15_515.85m, recovered.PayableAmount);
+
+            using var quantityRequest = new HttpRequestMessage(
+                HttpMethod.Put,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/lines/{line.LineId:D}/quantity")
+            {
+                Content = JsonContent.Create(new ChangeOnlineSalesDraftQuantityRequest(3m, recovered.Version))
+            };
+            quantityRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using (var quantityResponse = await client.SendAsync(quantityRequest))
+                Assert.True(quantityResponse.IsSuccessStatusCode,
+                    $"El cambio de cantidad respondió {(int)quantityResponse.StatusCode}: {await quantityResponse.Content.ReadAsStringAsync()}");
+            var repriced = await OpenDraftAsync(client, workSession.WorkSessionId);
+            var repricedLine = Assert.Single(repriced.Lines);
+            Assert.Equal(3m, repricedLine.Quantity);
+            Assert.NotEqual(7_777m, repricedLine.UnitPrice);
+            Assert.Equal("Base", repricedLine.PriceSource);
 
             var page = await client.GetFromJsonAsync<OrderPage>(
                 $"/api/commerce/v1/orders?orderNumber={orderId:D}");

@@ -10,6 +10,7 @@ import type {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatMoneyDraft, parseMoneyDraft } from "./pos-money-input";
 import { cashMovementKeyboardAction } from "./pos-cash-movement-keyboard";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 export function PosCashMovementDialog({
   client,
@@ -40,6 +41,12 @@ export function PosCashMovementDialog({
     () => reasons.find((candidate) => candidate.reasonId === reasonId),
     [reasons, reasonId],
   );
+  usePosModalBehavior({
+    modalRef: formRef,
+    initialFocusRef: reasonTriggerRef,
+    escapeDisabled: saving,
+    onEscape: onClose,
+  });
 
   useEffect(() => {
     let active = true;
@@ -131,8 +138,9 @@ export function PosCashMovementDialog({
     target?.focus();
   }
 
-  return <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4">
+  return <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4" data-pos-focus-surface="modal">
     <form ref={formRef} onSubmit={(event) => { event.preventDefault(); void confirm(); }}
+      tabIndex={-1} role="dialog" aria-modal="true"
       className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
       <header className="flex items-start justify-between border-b px-6 py-5">
         <div>

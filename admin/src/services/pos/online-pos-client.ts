@@ -9,7 +9,6 @@ import {
   type InvoiceOrdersResponse,
 } from "@/services/orders/commerce-orders-client";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
-import { fiscalConfigurationApi } from "@/services/api/fiscal-configuration";
 import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 
 import {
@@ -82,12 +81,24 @@ export type SalesWorkspaceOption = {
   warehouseName: string;
   warehouseAllowsNegativeStockSales: boolean;
   hasActiveEdgeEnrollment: boolean;
+  fiscalReadyForOnlineSales?: boolean;
+  fiscalReadyForEnrollment?: boolean;
+  hasDianDocumentQuota?: boolean;
+  fiscalWarningMessages?: string[];
 };
 
 export type SalesWorkspaceContext = Omit<
   SalesWorkspaceOption,
-  "hasActiveEdgeEnrollment"
-> & { workSessionId: string };
+  "hasActiveEdgeEnrollment" | "fiscalReadyForOnlineSales" |
+  "fiscalReadyForEnrollment" | "hasDianDocumentQuota" |
+  "fiscalWarningMessages"
+> & {
+  fiscalReadyForOnlineSales: boolean;
+  fiscalReadyForEnrollment: boolean;
+  hasDianDocumentQuota: boolean;
+  fiscalWarningMessages: string[];
+  workSessionId: string;
+};
 
 type ReceiptRenderContext = Pick<
   SalesWorkspaceContext,
@@ -245,7 +256,11 @@ export async function selectSalesWorkspace(
   option: SalesWorkspaceOption,
   change = false,
 ): Promise<SalesWorkspaceContext> {
-  const selected = await request<Omit<SalesWorkspaceContext, "workSessionId">>(
+  const selected = await request<Omit<
+    SalesWorkspaceContext,
+    "workSessionId" | "fiscalReadyForOnlineSales" | "fiscalReadyForEnrollment" |
+    "hasDianDocumentQuota" | "fiscalWarningMessages"
+  >>(
     change ? "/api/commerce/v1/pos/workspace/change" : "/api/commerce/v1/pos/workspace/select",
     {
       method: "POST",
@@ -273,7 +288,14 @@ export async function selectSalesWorkspace(
       storageKey,
       salesWorkspaceKey(selected.businessId, selected.warehouseId),
     );
-  return { ...selected, workSessionId: session.workSessionId };
+  return {
+    ...selected,
+    fiscalReadyForOnlineSales: option.fiscalReadyForOnlineSales === true,
+    fiscalReadyForEnrollment: option.fiscalReadyForEnrollment === true,
+    hasDianDocumentQuota: option.hasDianDocumentQuota === true,
+    fiscalWarningMessages: option.fiscalWarningMessages ?? [],
+    workSessionId: session.workSessionId,
+  };
 }
 export function rememberSalesWorkspace(option: Pick<SalesWorkspaceOption,"businessId"|"warehouseId">): void {
   try {
@@ -404,12 +426,11 @@ export class OnlinePosClient implements PosClient {
 
   async health() {
     await request<{ status: string }>("/api/health");
-    const [local, fiscal] = await Promise.all([
+    const local = await (
       this.edgeSessionToken
         ? this.localEdge().health().catch(() => null)
-        : Promise.resolve(null),
-      fiscalConfigurationApi.get(this.context.businessId).catch(() => null),
-    ]);
+        : Promise.resolve(null)
+    );
     return {
       status: "ok",
       serverConnected: true,
@@ -424,9 +445,9 @@ export class OnlinePosClient implements PosClient {
       userId: this.userId,
       workSessionId: this.context.workSessionId,
       deviceId: local?.deviceId ?? null,
-      fiscalReady: fiscal?.isReadyForOnlineSales === true,
-      fiscalWarnings: fiscal?.warningMessages ?? [],
-      dianQuotaAvailable: fiscal?.hasDianDocumentQuota ?? false,
+      fiscalReady: this.context.fiscalReadyForOnlineSales,
+      fiscalWarnings: this.context.fiscalWarningMessages,
+      dianQuotaAvailable: this.context.hasDianDocumentQuota,
       identityReady: true,
       catalogStatus: "Ready",
       synchronizationInProgress: false,

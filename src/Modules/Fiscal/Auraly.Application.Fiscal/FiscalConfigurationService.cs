@@ -1,4 +1,5 @@
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Authorization;
 
 namespace Auraly.Application.Fiscal;
 
@@ -130,12 +131,30 @@ public sealed class FiscalConfigurationForbiddenException(string message) : Exce
 
 public sealed class FiscalConfigurationService(IFiscalConfigurationStore store)
 {
+    private const string SellerOrderCreatePermission = "orders.create";
+
     public Task<FiscalResolutionConfiguration> GetAsync(
         FiscalConfigurationUser user,
         Guid businessId,
         CancellationToken cancellationToken = default)
     {
         Demand(user, FiscalPermissionCodes.ConfigurationRead);
+        if (businessId == Guid.Empty)
+            throw new FiscalConfigurationValidationException("La sede es obligatoria.");
+        return store.GetAsync(user.TenantId, businessId, cancellationToken);
+    }
+
+    public Task<FiscalResolutionConfiguration> GetForPointOfSaleAsync(
+        FiscalConfigurationUser user,
+        Guid businessId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate) &&
+            !user.Permissions.Contains(SellerOrderCreatePermission) &&
+            !user.Permissions.Contains(FiscalPermissionCodes.ConfigurationRead))
+            throw new FiscalConfigurationForbiddenException(
+                "El usuario no tiene acceso al punto de venta.");
         if (businessId == Guid.Empty)
             throw new FiscalConfigurationValidationException("La sede es obligatoria.");
         return store.GetAsync(user.TenantId, businessId, cancellationToken);

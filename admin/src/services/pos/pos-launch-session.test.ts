@@ -10,6 +10,7 @@ import {
 import { isCurrentEdgeUserSession } from "./pos-edge-session";
 import {
   canIssuePosDocument,
+  dianQuotaExhaustedMessage,
   fiscalConfigurationRequiredMessage,
   fiscalLaunchReadinessError,
 } from "./pos-fiscal-guard";
@@ -97,6 +98,16 @@ test("enrollment is the single owner of installed runtime selection", () => {
   assert.equal(
     usesEnrolledPosRuntime({ status: "EnrollmentRequired", identityReady: false }),
     false,
+  );
+});
+
+test("online invoices report an exhausted DIAN quota without a technical error", () => {
+  assert.equal(
+    fiscalLaunchReadinessError("online", {
+      isReadyForOnlineSales: true,
+      hasDianDocumentQuota: false,
+    }),
+    dianQuotaExhaustedMessage,
   );
 });
 test("configuration never changes an enrolled installation to the online adapter", () => {

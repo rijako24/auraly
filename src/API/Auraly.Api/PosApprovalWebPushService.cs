@@ -16,7 +16,7 @@ public sealed class PosApprovalWebPushService(
     IPosApprovalPushSubscriptionStore subscriptions,
     PushServiceClient pushClient,
     IConfiguration configuration,
-    ILogger<PosApprovalWebPushService> logger)
+    ILogger<PosApprovalWebPushService> logger) : IPosApprovalCreatedNotifier
 {
     private readonly string? publicKey = configuration["Notifications:WebPush:PublicKey"];
     private readonly string? privateKey = configuration["Notifications:WebPush:PrivateKey"];

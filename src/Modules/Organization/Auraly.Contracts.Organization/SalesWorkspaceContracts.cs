@@ -10,7 +10,11 @@ public sealed record SalesWorkspaceOption(
     string WarehouseCode,
     string WarehouseName,
     bool WarehouseAllowsNegativeStockSales,
-    bool HasActiveEdgeEnrollment);
+    bool HasActiveEdgeEnrollment,
+    bool FiscalReadyForOnlineSales = false,
+    bool FiscalReadyForEnrollment = false,
+    bool HasDianDocumentQuota = false,
+    IReadOnlyList<string>? FiscalWarningMessages = null);
 
 public sealed record SalesWorkspaceBootstrap(
     Guid TenantId,

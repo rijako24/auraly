@@ -90,6 +90,30 @@ export async function waitForRedeemedPosEdge(
   throw new Error("El equipo quedó enrolado, pero el servicio local no volvió a iniciar. Cierra y abre Auraly.");
 }
 
+export async function waitForUnenrolledPosEdge(
+  edgeSessionToken: string,
+  timeoutMilliseconds = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${EDGE_BASE_URL}/edge/v1/health`, {
+        cache: "no-store",
+        headers: { "X-Auraly-Edge-Session": edgeSessionToken },
+      });
+      if (response.ok) {
+        const health = await response.json() as { status?: string };
+        if (health.status === "EnrollmentRequired") return;
+      }
+    } catch {
+      // The local service stops briefly while discarding only its enrollment package.
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  throw new Error("Auraly conservó los datos locales, pero no pudo abrir de nuevo el enrolamiento. Cierra y abre la aplicación.");
+}
+
 declare global {
   interface Navigator {
     userAgentData?: { platform?: string };

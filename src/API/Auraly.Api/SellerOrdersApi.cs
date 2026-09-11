@@ -83,7 +83,8 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         {
             var context=await LoadContextAsync(connection,transaction,actor,actor.BusinessId,customerId,null,token);
             if(context.OrdersWarehouseId!=ordersWarehouseId)throw new SellerOrderConflictException("El cliente seleccionado no comparte la bodega de pedidos configurada para este pedido.");
-            foreach(var input in requested){var line=await ResolveLineAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,input,token);if(line is null)throw new SellerOrderValidationException($"El producto {input.ProductId:D} no está activo o no tiene precio publicado.");var unitPrice=input.UnitPrice??line.UnitPrice;var gross=decimal.Round(unitPrice*input.Quantity,2,MidpointRounding.AwayFromZero);if(input.DiscountAmount>gross)throw new SellerOrderValidationException($"El descuento de {line.Code} supera el valor bruto de la línea.");var alreadyReserved=editable.Status==2&&editable.ReservedQuantities.TryGetValue(input.ProductId,out var prior)?prior:0;var additional=Math.Max(0,input.Quantity-alreadyReserved);if(line.ManageStock&&line.Available<additional)throw new SellerOrderConflictException($"{line.Code}: adicionales {additional:N3}, disponibles {line.Available:N3}.");lines.Add(line with{UnitPrice=unitPrice,DiscountAmount=input.DiscountAmount,Position=++position});}
+            var resolvedLines=await ResolveLinesAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,requested,token);
+            foreach(var input in requested){var line=resolvedLines[input.ProductId];var unitPrice=input.UnitPrice??line.UnitPrice;var gross=decimal.Round(unitPrice*input.Quantity,2,MidpointRounding.AwayFromZero);if(input.DiscountAmount>gross)throw new SellerOrderValidationException($"El descuento de {line.Code} supera el valor bruto de la línea.");var alreadyReserved=editable.Status==2&&editable.ReservedQuantities.TryGetValue(input.ProductId,out var prior)?prior:0;var additional=Math.Max(0,input.Quantity-alreadyReserved);if(line.ManageStock&&line.Available<additional)throw new SellerOrderConflictException($"{line.Code}: adicionales {additional:N3}, disponibles {line.Available:N3}.");lines.Add(line with{UnitPrice=unitPrice,DiscountAmount=input.DiscountAmount,Position=++position});}
             var total=lines.Sum(line=>line.LineTotal);
             var desired=lines.Where(line=>line.ManageStock).ToDictionary(line=>line.ProductId,line=>line.Quantity);
             var previous=editable.Status==2?editable.ReservedQuantities:new Dictionary<Guid,decimal>();
@@ -161,10 +162,10 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var context=await LoadContextAsync(connection,transaction,actor,request,token);
             var requested=request.Lines.GroupBy(line=>line.ProductId).Select(group=>new SellerOrdersApi.SellerOrderLineInput(group.Key,group.Sum(line=>line.Quantity))).ToArray();
             var lines=new List<OrderLine>();var warnings=new List<string>();var position=0;
+            var resolvedLines=await ResolveLinesAsync(connection,transaction,request.BusinessId,request.WarehouseId,request.CustomerId,requested,token);
             foreach(var input in requested)
             {
-                var line=await ResolveLineAsync(connection,transaction,request.BusinessId,request.WarehouseId,request.CustomerId,input,token);
-                if(line is null)throw new SellerOrderValidationException($"El producto {input.ProductId:D} no está activo o no tiene precio publicado.");
+                var line=resolvedLines[input.ProductId];
                 if(line.ManageStock&&line.Available<input.Quantity)warnings.Add($"{line.Code}: solicitadas {input.Quantity:N3}, disponibles {line.Available:N3}.");
                 lines.Add(line with{Position=++position});
             }
@@ -209,24 +210,35 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     private static async Task<CustomerContext> LoadContextAsync(SqlConnection connection,SqlTransaction transaction,SellerOrderActor actor,Guid businessId,Guid customerId,Guid? partySiteId,CancellationToken token)
     {await using var command=Procedure("dbo.SellerOrderContextGet",connection,transaction);command.Parameters.AddRange([P("@SiteId",partySiteId),P("@BusinessId",businessId),P("@TenantId",actor.TenantId),P("@CustomerId",customerId)]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))throw new SellerOrderValidationException("El cliente, su sede o la bodega de pedidos no están disponibles.");return new(reader.GetString(0),reader.IsDBNull(1)?null:reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),reader.GetGuid(5));}
 
-    private static async Task<OrderLine?> ResolveLineAsync(SqlConnection connection,SqlTransaction transaction,Guid businessId,Guid warehouseId,Guid customerId,SellerOrdersApi.SellerOrderLineInput input,CancellationToken token)
+    private static async Task<IReadOnlyDictionary<Guid,OrderLine>> ResolveLinesAsync(
+        SqlConnection connection,SqlTransaction transaction,Guid businessId,Guid warehouseId,
+        Guid customerId,IReadOnlyCollection<SellerOrdersApi.SellerOrderLineInput> inputs,
+        CancellationToken token)
     {
-        await using var command=Procedure("dbo.SellerOrderProductResolve",connection,transaction);
-        command.Parameters.AddRange([P("@BusinessId",businessId),P("@WarehouseId",warehouseId),P("@CustomerId",customerId),P("@ProductId",input.ProductId),Quantity("@Quantity",input.Quantity)]);
-        string code;string name;string unitCode;decimal available;bool manageStock;decimal taxRate;
-        await using(var reader=await command.ExecuteReaderAsync(token))
+        var lines=new Dictionary<Guid,OrderLine>();
+        foreach(var input in inputs)
         {
-            if(!await reader.ReadAsync(token))return null;
-            code=reader.GetString(0);name=reader.GetString(1);unitCode=reader.GetString(2);
-            available=reader.GetDecimal(3);manageStock=reader.GetBoolean(4);taxRate=reader.GetDecimal(5);
+            await using var command=Procedure("dbo.SellerOrderProductResolve",connection,transaction);
+            command.Parameters.AddRange([P("@BusinessId",businessId),P("@WarehouseId",warehouseId),P("@CustomerId",customerId),P("@ProductId",input.ProductId),Quantity("@Quantity",input.Quantity)]);
+            await using var reader=await command.ExecuteReaderAsync(token);
+            if(!await reader.ReadAsync(token))
+                throw new SellerOrderValidationException($"El producto {input.ProductId:D} no está activo o no tiene precio publicado.");
+            lines.Add(input.ProductId,new(
+                input.ProductId,reader.GetString(0),reader.GetString(1),reader.GetString(2),input.Quantity,0,
+                "Base",reader.GetDecimal(3),reader.GetBoolean(4),reader.GetDecimal(5),0));
         }
-        var key=input.ProductId.ToString("D");
+
         var prices=await SqlOnlineSalesDraftStore.ResolveCommercePricesAsync(
             connection,transaction,businessId,warehouseId,customerId,
-            [new CommercePriceRequest(key,input.ProductId,input.Quantity)],token);
-        var price=prices[key];
-        return new(input.ProductId,code,name,unitCode,input.Quantity,price.UnitPrice,
-            price.PriceSource,available,manageStock,taxRate,0);
+            inputs.Select(input=>new CommercePriceRequest(
+                input.ProductId.ToString("D"),input.ProductId,input.Quantity)).ToArray(),token);
+        return lines.ToDictionary(
+            pair=>pair.Key,
+            pair=>pair.Value with
+            {
+                UnitPrice=prices[pair.Key.ToString("D")].UnitPrice,
+                PriceSource=prices[pair.Key.ToString("D")].PriceSource
+            });
     }
     private static SellerOrdersApi.SellerOrderLineInput[] NormalizeUpdateLines(IReadOnlyCollection<SellerOrdersApi.SellerOrderLineInput> lines)
     {

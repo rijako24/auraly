@@ -4,6 +4,15 @@ Fecha: 2026-08-09
 
 Actualizado: 2026-08-25
 
+## Extensión gastronómica diseñada
+
+El [diseño de restaurante](restaurant-pos-design.md#9-cancelación-pérdida-y-contabilidad)
+define la futura disposición de destrucción/consumo irreversible bajo Damage
+y el tratamiento de cancelaciones preparadas antes/después de factura. No está
+conectada en esta entrega: el alcance implementado descrito abajo conserva su
+modalidad AVE. Implementar esa extensión exige modificar el contrato/processor
+canónicos, no simular un retorno de ingredientes ni agregar otro writer.
+
 ## Alcance conectado
 
 Esta rebanada extiende el modelo canónico existente; no crea un segundo inventario. `InventoryBalances`, `InventoryMovements`, `InventoryOperations` y el motor ordenado continúan siendo las únicas fuentes operativas.

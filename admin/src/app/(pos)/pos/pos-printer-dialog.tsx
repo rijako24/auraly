@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, Loader2, Printer, Save, Scale, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   PosEdgeClient,
@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { loadPosInstaller, type PosInstaller } from "@/services/pos/pos-installer";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 type PrinterConfigurationClient = Pick<PosEdgeClient,
   "printerConfiguration" | "savePrinterConfiguration" | "readScaleWeight">;
@@ -34,6 +35,8 @@ export function PosPrinterDialog({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [installer, setInstaller] = useState<PosInstaller | null>(null);
   const [installerError, setInstallerError] = useState<string | null>(null);
+  const modal = useRef<HTMLElement>(null);
+  usePosModalBehavior({ modalRef: modal, escapeDisabled: busy, onEscape: onClose });
 
   useEffect(() => {
     let active = true;
@@ -99,8 +102,8 @@ export function PosPrinterDialog({
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div data-testid="peripherals-dialog-backdrop" className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4">
-      <section role="dialog" aria-modal="true" aria-labelledby="peripherals-dialog-title" className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+    <div data-testid="peripherals-dialog-backdrop" data-pos-focus-surface="modal" className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4">
+      <section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="peripherals-dialog-title" className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <header className="flex shrink-0 items-start justify-between border-b px-6 py-5">
           <div>
             <p className="text-xs font-bold uppercase tracking-[.16em] text-teal-700">

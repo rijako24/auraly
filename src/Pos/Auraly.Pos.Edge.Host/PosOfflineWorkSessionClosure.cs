@@ -482,7 +482,7 @@ public sealed class PosWorkSessionClosureUploader(
                 exception.Message,
                 cancellationToken);
             events.Record("Warning", "WorkSessionClosure", "Cierre de caja pendiente",
-                $"{item.Value.Value.Closure.WorkSessionId:D} · {exception.Message}");
+                $"{item.Value.Value.Closure.WorkSessionId:D} · No fue posible sincronizarlo; se reintentará automáticamente.");
             return false;
         }
         return true;

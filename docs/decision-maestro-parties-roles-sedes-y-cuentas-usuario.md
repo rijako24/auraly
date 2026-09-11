@@ -25,6 +25,13 @@ La fila especializada es la fuente de verdad del rol. No se crearán booleanos `
 
 Una misma Party puede combinar roles, pero un rol no concede otro automáticamente: un cliente puede ser proveedor; un empleado puede ser vendedor y usuario; un proveedor no obtiene acceso; un usuario puede no ser empleado.
 
+### Extensión gastronómica diseñada
+
+El rol especializado Mesero y su configuración se incorporarán conforme al
+[diseño de restaurante](implementation/restaurant-pos-design.md#5-meseros-autorización-y-equipos).
+Mantiene esta composición de Party y roles independientes. Su alcance y vínculo
+manual de Usuario se definen allí; esta nota no declara implementado el rol.
+
 ## 2. Conocimiento absorbido de Xion
 
 Se conserva el principio útil de Xion: `Persona` concentra información común y cada capacidad posee tabla específica.

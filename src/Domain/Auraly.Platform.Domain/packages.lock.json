@@ -10,6 +10,9 @@
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
+      },
+      "auraly.domain.pricing": {
+        "type": "Project"
       }
     }
   }

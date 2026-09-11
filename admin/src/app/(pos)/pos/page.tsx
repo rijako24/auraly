@@ -72,6 +72,7 @@ import {
   authorizePosEnrollment,
   redeemPosEnrollment,
   waitForRedeemedPosEdge,
+  waitForUnenrolledPosEdge,
 } from "@/services/pos/pos-enrollment";
 import { shouldCompletePosEnrollment } from "@/services/pos/pos-enrollment-transition";
 import {
@@ -121,6 +122,8 @@ import {
   posPreparationView,
   type PosPreparationHealth,
 } from "./pos-preparation-progress";
+import { exitPosApplication } from "./pos-desktop-update-protocol";
+import { posPublicError } from "./pos-public-error";
 
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -248,6 +251,8 @@ export default function PosPage() {
   }>({ phase: "idle", value: "" });
   const [quantityShortage, setQuantityShortage] = useState<PosQuantityShortage | null>(null);
   const [productSearchFocusRequest, setProductSearchFocusRequest] = useState(0);
+  const [paymentFocusRequest, setPaymentFocusRequest] = useState(0);
+  const [preparationReenrollmentOpen, setPreparationReenrollmentOpen] = useState(false);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [edgeReady, setEdgeReady] = useState(false);
@@ -255,6 +260,8 @@ export default function PosPage() {
   const [pushConnected, setPushConnected] = useState(false);
   const [synchronization, setSynchronization] = useState({
     inProgress: false,
+    automaticRetryScheduled: false,
+    automaticRetryAttempt: 0,
     lastAt: null as string | null,
     failed: false,
     pendingCount: 0,
@@ -519,11 +526,13 @@ export default function PosPage() {
               setEdgePermissions(health.permissions ?? []);
               setSynchronization({
                 inProgress: health.synchronizationInProgress,
+                automaticRetryScheduled: health.automaticRetryScheduled ?? false,
+                automaticRetryAttempt: health.automaticRetryAttempt ?? 0,
                 lastAt: health.lastSynchronizationAt,
                 failed: health.lastSynchronizationFailed,
                 pendingCount: health.pendingSynchronizationCount,
                 oldestPendingAt: health.oldestPendingSynchronizationAt,
-                error: health.lastSynchronizationError,
+                error: posPublicError(health.lastSynchronizationError),
               });
               setServerConnected(health.serverConnected);
               setPushConnected(health.pushConnected);
@@ -627,11 +636,13 @@ export default function PosPage() {
           if (client.mode === "edge") setEdgePermissions(health.permissions ?? []);
           setSynchronization({
             inProgress: health.synchronizationInProgress,
+            automaticRetryScheduled: health.automaticRetryScheduled ?? false,
+            automaticRetryAttempt: health.automaticRetryAttempt ?? 0,
             lastAt: health.lastSynchronizationAt,
             failed: health.lastSynchronizationFailed,
             pendingCount: health.pendingSynchronizationCount,
             oldestPendingAt: health.oldestPendingSynchronizationAt,
-            error: health.lastSynchronizationError,
+            error: posPublicError(health.lastSynchronizationError),
           });
           setServerConnected(health.serverConnected);
           setPushConnected(health.pushConnected);
@@ -1941,12 +1952,14 @@ export default function PosPage() {
       setDocumentTypeOpen(false);
       setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
         ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
-      focusScanner();
+      if (paymentOpen) setPaymentFocusRequest((current) => current + 1);
+      else focusScanner();
       return;
     }
     if (value === documentType) {
       setDocumentTypeOpen(false);
-      focusScanner();
+      if (paymentOpen) setPaymentFocusRequest((current) => current + 1);
+      else focusScanner();
       return;
     }
 
@@ -1966,7 +1979,8 @@ export default function PosPage() {
       showError(caught);
     } finally {
       setBusy(false);
-      focusScanner();
+      if (paymentOpen) setPaymentFocusRequest((current) => current + 1);
+      else focusScanner();
     }
   }
 
@@ -2142,7 +2156,7 @@ export default function PosPage() {
   }
 
   async function synchronizeNow() {
-    if (!client || client.mode !== "edge" || synchronization.inProgress) return;
+    if (!client || client.mode !== "edge") return;
     setSynchronization((current) => ({ ...current, inProgress: true, failed: false, error: null }));
     try {
       await client.synchronizeNow();
@@ -2150,6 +2164,25 @@ export default function PosPage() {
     } catch {
       setSynchronization((current) => ({ ...current, inProgress: false, failed: true }));
       setMessage("No fue posible iniciar la actualización. Puedes seguir facturando con los datos locales.");
+    }
+  }
+
+  async function restartPreparationEnrollment() {
+    if (!(client instanceof PosEdgeClient) || !edgeEnrollmentToken || busy) return;
+    setBusy(true);
+    setEdgeLoginError(null);
+    try {
+      await client.restartEnrollment();
+      window.localStorage.removeItem("auraly.pos.user-session");
+      await waitForUnenrolledPosEdge(edgeEnrollmentToken);
+      window.location.replace("/login");
+    } catch (caught) {
+      setPreparationReenrollmentOpen(false);
+      setEdgeLoginError(caught instanceof Error
+        ? caught.message
+        : "No fue posible reiniciar el enrolamiento.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -2496,6 +2529,14 @@ export default function PosPage() {
           aria-live="polite"
           className="relative w-full max-w-xl rounded-[2rem] border border-white/10 bg-white/[0.06] p-6 shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-8"
         >
+          <button
+            type="button"
+            onClick={exitPosApplication}
+            aria-label="Salir de Auraly"
+            className="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full border border-white/15 text-slate-300 transition hover:bg-white/10 hover:text-white"
+          >
+            <X className="h-5 w-5" />
+          </button>
           <div className="flex items-start gap-4">
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-teal-200/20 bg-teal-300/10">
               <Package className="h-6 w-6 text-teal-200" />
@@ -2563,19 +2604,41 @@ export default function PosPage() {
             </p>
           )}
           {synchronization.failed && (
-            <button
-              type="button"
-              onClick={() => void synchronizeNow()}
-              disabled={synchronization.inProgress}
-              className="mt-4 h-11 w-full rounded-xl bg-teal-300 px-4 font-bold text-[#071a1d] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {synchronization.inProgress ? "Reintentando…" : "Reintentar preparación"}
-            </button>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => void synchronizeNow()}
+                disabled={synchronization.inProgress || busy}
+                className="h-11 rounded-xl bg-teal-300 px-4 font-bold text-[#071a1d] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {synchronization.inProgress ? "Reintentando…" : "Reintentar preparación"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreparationReenrollmentOpen(true)}
+                disabled={busy}
+                className="h-11 rounded-xl border border-white/20 px-4 font-bold text-white transition hover:bg-white/10 disabled:opacity-40"
+              >
+                Repetir enrolamiento
+              </button>
+            </div>
           )}
           <p className="mt-6 text-center text-xs text-slate-400">
-            Puedes cerrar Auraly: el progreso queda guardado. Si falla, el reintento debe iniciarse manualmente.
+            El progreso queda guardado. Ante una interrupción de red, Auraly reintenta hasta 3 veces antes de pedir intervención.
           </p>
+          <button type="button" onClick={exitPosApplication} className="mx-auto mt-3 block text-sm font-semibold text-slate-300 underline decoration-slate-500 underline-offset-4 hover:text-white">Salir de Auraly</button>
         </section>
+        {preparationReenrollmentOpen && (
+          <PosConfirmDialog
+            title="¿Repetir el enrolamiento de esta caja?"
+            description="Se quitará únicamente la autorización protegida del equipo. Los comprobantes, consecutivos y datos locales se conservan."
+            confirmLabel="Sí, repetir enrolamiento"
+            tone="primary"
+            busy={busy}
+            onConfirm={restartPreparationEnrollment}
+            onCancel={() => setPreparationReenrollmentOpen(false)}
+          />
+        )}
       </main>
     );
   }
@@ -3447,10 +3510,14 @@ export default function PosPage() {
           client={client}
           initialDirection={cashMovementDirection}
           responsibleName={workstation.userDisplayName}
-          onClose={() => setCashMovementDirection(null)}
+          onClose={() => {
+            setCashMovementDirection(null);
+            focusScanner();
+          }}
           onCompleted={(text) => {
             setMessage(text);
             setCashMovementDirection(null);
+            focusScanner();
           }}
         />
       )}
@@ -3479,6 +3546,10 @@ export default function PosPage() {
           onChangeQuantity={(lineId, quantity) => changeQuantity(lineId, quantity, false)}
           onRemove={(lineId) => { void requestRemoveLine(lineId); }}
           onRetry={() => validateRecoveredInventory(draft.draftId.value).then(() => undefined)}
+          onCancel={() => {
+            setInventoryResolution(null);
+            focusScanner();
+          }}
         />
       )}
 
@@ -3497,6 +3568,7 @@ export default function PosPage() {
             workstation.dianQuotaAvailable !== false,
           )}
           customer={selectedCustomer}
+          focusRequest={paymentFocusRequest}
           onChangeDocumentType={() => setDocumentTypeOpen(true)}
           onCancel={() => {
             setPaymentOpen(false);
@@ -3509,7 +3581,10 @@ export default function PosPage() {
 
       {printerOpen && client && (
         <PosPrinterDialog client={client instanceof PosEdgeClient || (client instanceof OnlinePosClient && edgeEnrollmentToken) ? client : null}
-          onClose={() => setPrinterOpen(false)} />
+          onClose={() => {
+            setPrinterOpen(false);
+            focusScanner();
+          }} />
       )}
 
       {invoiceSearchOpen && client && (
@@ -3538,7 +3613,8 @@ export default function PosPage() {
           onSelect={changeDocumentType}
           onCancel={() => {
             setDocumentTypeOpen(false);
-            focusScanner();
+            if (paymentOpen) setPaymentFocusRequest((current) => current + 1);
+            else focusScanner();
           }}
         />
       )}
@@ -3643,9 +3719,17 @@ export default function PosPage() {
       />}
 
       {temporaryOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4" data-pos-focus-surface="modal">
           <form
             onSubmit={saveTemporary}
+            role="dialog"
+            aria-modal="true"
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || busy) return;
+              event.preventDefault();
+              setTemporaryOpen(false);
+              focusScanner();
+            }}
             className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
           >
             <h2 className="text-lg font-semibold">Pausar venta</h2>

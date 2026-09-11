@@ -25,6 +25,7 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Renovación mensual y mora | `TimedProcessScheduler` reclama `ScheduledAutomationJobs` (`TenantSubscriptionLifecycle`) → orden de renovación → pago existente → factura de servicio en motor documental/fiscal + `SqlAccountingPostingProcessor` | fecha paralela en la orden, tabla/timer nuevo, auto-renovar sin cobro, CxC paralela o desactivar `Tenant.IsActive` por mora |
 | Facturar productos y servicios | `SalesDocuments` es el encabezado común; `Products` → `SalesDocumentLines` conserva venta física y `BillableServices` → `SalesDocumentServiceLines` funciona online; ambos usan extensiones tipadas de contabilidad, fiscal y reporting existentes | ampliar POS/inventario para servicios, crear otro encabezado, writer, cartera, generador UBL, cola o worker DIAN |
 | Entregar factura aceptada | transición `DianAccepted` → outbox de entrega → contenedor `AttachedDocument`/respuesta DIAN + representación PDF del almacén fiscal | enviar antes de aceptación, regenerar XML en la plantilla o reenviar DIAN desde correo |
+| Resolver precio comercial de productos | `CommercePriceResolver` compone los calculadores canónicos de canal y promoción con las líneas del documento ya cargadas | recalcular en SQL, SQLite, pedido, endpoint o UI |
 
 ## Documento e inventario
 
@@ -38,6 +39,19 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 - POS sale, recepción, devolución de venta y devolución de compra usan el mismo writer con la política de valoración correspondiente.
 
 Para agregar un efecto: extender el contrato/handler correcto, elegir una política de valoración existente o modelar una nueva allí, agregar prueba de idempotencia/concurrencia y no tocar las tablas desde otro componente.
+
+## Precios comerciales
+
+Líneas del documento → `CommercePriceResolver` → `PriceChannelResolver` por
+cantidad acumulada del producto → `PromotionPriceResolver` sobre el documento →
+precio efectivo, origen, canal y descuento promocional.
+
+- SQL Server y SQLite son adaptadores de carga; no poseen aritmética de precios.
+- POS online, POS Edge y creación de pedidos llaman al mismo coordinador.
+- La búsqueda de catálogo usa `independentLines`; ventas y pedidos usan el contexto
+  documental completo.
+- Recuperar un pedido o venta pausada hidrata su snapshot sin resolver. La siguiente
+  mutación comercial usa nuevamente el coordinador común.
 
 ## Fiscal/DIAN
 
@@ -113,6 +127,16 @@ Los códigos son estables; label, descripción, activación y orden pertenecen a
 Catálogos iniciales: medios de pago, tipos de documento de venta, presentaciones de compra, tipos de operación de inventario y tipos de bot. Al tocar otro selector heredado, se agrega su slice completo en esta ruta; no se crea otro endpoint genérico ni otra lista local.
 
 Los terceros no pasan por `reference.Options`: su propietario es el workspace de `Parties`. Los combos de clientes, proveedores, vendedores, transportadores, empleados, usuarios o cualquier tercero consumen `GET /api/commerce/v1/parties/role-options`, una proyección paginada mínima y aislada por tenant/business. Para un rol específico, la consulta une `Parties` únicamente con la tabla de ese rol; `Any` deduplica los identificadores de las tablas de roles activas. La respuesta retorna `PartyId`, ID del rol, nombre e identificación; proveedor agrega sólo política de soporte y plazo de pago porque sus formularios los necesitan. La página y el detalle administrativo continúan usando el read model completo de `Parties`, que no debe reutilizarse para dropdowns.
+
+## Diseño gastronómico
+
+La extensión de restaurante, todavía no implementada, se rige por
+[POS para restaurantes y bares](implementation/restaurant-pos-design.md).
+Ese documento concentra captura gastronómica independiente bajo Sales, rol
+Mesero bajo Parties, recetas/menú público bajo Catalog y pérdidas mediante
+Inventory/Accounting. Conserva la caja local y el emisor existente; comandas
+sin efecto físico usan Sales y sincronización, no el motor de inventario.
+No duplicar sus reglas en este mapa.
 
 ## Fronteras y persistencia
 

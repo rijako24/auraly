@@ -8,6 +8,7 @@ import type {
   PosCatalogSearchPage,
   PosProductWarehouseAvailability,
 } from "@/services/pos/pos-edge-client";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -45,6 +46,7 @@ export function PosProductSearchDialog({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const modal = useRef<HTMLElement>(null);
   const requestVersion = useRef(0);
   const availabilityVersion = useRef(0);
   const resultElements = useRef(new Map<number, HTMLButtonElement>());
@@ -53,12 +55,13 @@ export function PosProductSearchDialog({
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() =>
-      input.current?.focus({ preventScroll: true }),
-    );
-    return () => window.cancelAnimationFrame(frame);
-  }, [focusRequest]);
+  usePosModalBehavior({
+    modalRef: modal,
+    initialFocusRef: input,
+    escapeDisabled: busy,
+    focusRequest,
+    onEscape: onCancel,
+  });
 
   useEffect(() => {
     const version = ++requestVersion.current;
@@ -127,16 +130,6 @@ export function PosProductSearchDialog({
   const selectedProduct = results[selected];
   const availabilityPending = Boolean(selectedProduct) &&
     (availabilityProductId !== selectedProduct.productId || availabilityLoading);
-
-  useEffect(() => {
-    const close = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || busy) return;
-      event.preventDefault();
-      onCancel();
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [busy, onCancel]);
 
   const loadMore = useCallback(async () => {
     if (busy || loading || loadingMore || !hasMore || nextOffset === null) return;
@@ -211,6 +204,8 @@ export function PosProductSearchDialog({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4">
       <section
+        ref={modal}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         data-pos-focus-surface="modal"

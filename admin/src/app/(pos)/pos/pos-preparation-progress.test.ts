@@ -23,7 +23,7 @@ test("shows real catalog counts and percentage", () => {
   assert.match(view.resumeLabel, /Reintentar/);
 });
 
-test("shows the reason and requires a manual retry after preparation fails", () => {
+test("shows the reason and offers a manual retry after automatic retries fail", () => {
   const view = posPreparationView({
     serverConnected: false,
     identityReady: true,
@@ -36,7 +36,22 @@ test("shows the reason and requires a manual retry after preparation fails", () 
 
   assert.equal(view.title, "La preparación se detuvo");
   assert.match(view.detail, /No hay conexión válida/);
-  assert.equal(view.resumeLabel, "El reintento es manual");
+  assert.equal(view.resumeLabel, "Los 3 reintentos automáticos terminaron");
+});
+
+test("shows which automatic recovery attempt is pending", () => {
+  const view = posPreparationView({
+    serverConnected: false,
+    identityReady: false,
+    catalogStatus: "Empty",
+    automaticRetryScheduled: true,
+    automaticRetryAttempt: 2,
+    preparationCompletedSteps: 0,
+    preparationTotalSteps: 2,
+  });
+
+  assert.equal(view.title, "Recuperando la conexión");
+  assert.match(view.resumeLabel, /2 de 3/);
 });
 
 test("does not invent a percentage while identity totals are unknown", () => {

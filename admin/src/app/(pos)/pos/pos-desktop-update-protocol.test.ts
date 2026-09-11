@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { desktopUpdateAction, isDesktopUpdateStatus } from "./pos-desktop-update-protocol";
+import { desktopExitAction, desktopUpdateAction, isDesktopUpdateStatus } from "./pos-desktop-update-protocol";
 
 test("accepts only desktop update status messages", () => {
   assert.equal(isDesktopUpdateStatus({
@@ -24,4 +24,8 @@ test("maps user decisions to the native desktop protocol", () => {
   assert.equal(desktopUpdateAction("download"), "auraly-pos-update-download");
   assert.equal(desktopUpdateAction("restart"), "auraly-pos-update-restart");
   assert.equal(desktopUpdateAction("later"), "auraly-pos-update-later");
+});
+
+test("maps exit to the native desktop protocol", () => {
+  assert.equal(desktopExitAction(), "auraly-pos-exit");
 });

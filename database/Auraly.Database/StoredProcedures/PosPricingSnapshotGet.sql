@@ -119,8 +119,6 @@ BEGIN
            OR EXISTS(SELECT 1 FROM pricing.PromotionBusinessScopes scope
                      WHERE scope.PromotionId=promotion.PromotionId AND scope.BusinessId=@BusinessId))
       AND promotion.IsActive=1
-      AND (promotion.StartsAtUtc IS NULL OR promotion.StartsAtUtc<=SYSUTCDATETIME())
-      AND (promotion.EndsAtUtc IS NULL OR promotion.EndsAtUtc>=SYSUTCDATETIME())
     ORDER BY promotion.Priority DESC,promotion.CreatedAt,promotion.PromotionId;
 
     SELECT ISNULL(MAX(AvailableThroughCursor),0)

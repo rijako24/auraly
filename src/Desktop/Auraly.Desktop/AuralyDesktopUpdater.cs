@@ -29,6 +29,7 @@ internal sealed partial class AuralyDesktopUpdater(
     private const string DownloadMessageType = "auraly-pos-update-download";
     private const string RestartMessageType = "auraly-pos-update-restart";
     private const string LaterMessageType = "auraly-pos-update-later";
+    private const string ExitMessageType = "auraly-pos-exit";
     private const string StatusMessageType = "auraly-pos-update-status";
     private const string InstallerDownloadPath = "/api/commerce/v1/pos/installer/download";
     private int downloading;
@@ -78,6 +79,9 @@ internal sealed partial class AuralyDesktopUpdater(
                 if (pendingUpdate is not null)
                     PostStatus("deferred", pendingUpdate.Version, null,
                         "La actualización se aplicará la próxima vez que abras Auraly.");
+                break;
+            case ExitMessageType:
+                browser.FindForm()?.BeginInvoke(browser.FindForm()!.Close);
                 break;
         }
     }

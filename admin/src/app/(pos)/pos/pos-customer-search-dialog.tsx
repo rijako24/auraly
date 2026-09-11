@@ -15,6 +15,7 @@ import type {
   PosCustomer,
   PosCustomerSearchPage,
 } from "@/services/pos/pos-edge-client";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 export function PosCustomerSearchDialog({
   busy,
@@ -48,6 +49,7 @@ export function PosCustomerSearchDialog({
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
+  const modal = useRef<HTMLElement>(null);
   const resultButtons = useRef(new Map<number, HTMLButtonElement>());
 
   const focusResult = (index: number) => {
@@ -88,16 +90,12 @@ export function PosCustomerSearchDialog({
     return () => window.clearTimeout(timer);
   }, [creating, onSearch, term]);
 
-  useEffect(() => {
-    const close = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || busy) return;
-      event.preventDefault();
-      if (creating) setCreating(false);
-      else onCancel();
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [busy, creating, onCancel]);
+  usePosModalBehavior({
+    modalRef: modal,
+    initialFocusRef: searchInput,
+    escapeDisabled: busy,
+    onEscape: () => creating ? setCreating(false) : onCancel(),
+  });
 
   const loadMore = useCallback(async () => {
     if (busy || loading || loadingMore || !hasMore || nextOffset === null) return;
@@ -118,8 +116,8 @@ export function PosCustomerSearchDialog({
   }, [busy, hasMore, loading, loadingMore, nextOffset, onSearch, term]);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4">
-      <section className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" data-pos-focus-surface="modal">
+      <section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <header className="flex items-start justify-between border-b border-slate-200 p-5">
           <div>
             <h2 className="flex items-center gap-2 text-xl font-semibold">

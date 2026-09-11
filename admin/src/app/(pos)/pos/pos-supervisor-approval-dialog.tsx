@@ -3,6 +3,7 @@
 import { CheckCircle2, KeyRound, RefreshCw, ShieldCheck, Smartphone } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { PosApprovalRequest } from "@/services/pos/pos-approval-client";
+import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 export function PosSupervisorApprovalDialog({
   approval,
@@ -30,6 +31,14 @@ export function PosSupervisorApprovalDialog({
   const [secret, setSecret] = useState("");
   const [channelError, setChannelError] = useState<string | null>(null);
   const [expired, setExpired] = useState(false);
+  const modal = useRef<HTMLElement>(null);
+  const secretInput = useRef<HTMLInputElement>(null);
+  usePosModalBehavior({
+    modalRef: modal,
+    initialFocusRef: secretInput,
+    escapeDisabled: busy,
+    onEscape: onCancel,
+  });
   const onRemoteApprovedRef = useRef(onRemoteApproved);
   useEffect(() => { onRemoteApprovedRef.current = onRemoteApproved; }, [onRemoteApproved]);
 
@@ -84,8 +93,8 @@ export function PosSupervisorApprovalDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/70 p-4">
-      <section role="dialog" aria-modal="true" className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/70 p-4" data-pos-focus-surface="modal">
+      <section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
         <header className="bg-gradient-to-r from-slate-950 to-teal-950 p-6 text-white">
           <div className="flex items-center gap-3">
             <span className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-400/15 text-teal-200">
@@ -112,7 +121,7 @@ export function PosSupervisorApprovalDialog({
               </div>
               <label className="mt-5 block text-sm font-bold text-slate-800">
                 Credencial del supervisor
-                <input autoFocus type="password" autoComplete="off" value={secret}
+                <input ref={secretInput} autoFocus type="password" autoComplete="off" value={secret}
                   onChange={(event) => setSecret(event.target.value)}
                   className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-lg tracking-widest outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/15" />
               </label>

@@ -916,6 +916,7 @@
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
@@ -1448,7 +1449,8 @@
       "auraly.platform.domain": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Domain.Catalog": "[1.0.0, )"
+          "Auraly.Domain.Catalog": "[1.0.0, )",
+          "Auraly.Domain.Pricing": "[1.0.0, )"
         }
       },
       "auraly.platform.infrastructure": {

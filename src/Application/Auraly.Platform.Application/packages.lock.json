@@ -93,10 +93,14 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "auraly.domain.pricing": {
+        "type": "Project"
+      },
       "auraly.platform.domain": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Domain.Catalog": "[1.0.0, )"
+          "Auraly.Domain.Catalog": "[1.0.0, )",
+          "Auraly.Domain.Pricing": "[1.0.0, )"
         }
       }
     }
