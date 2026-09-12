@@ -1,5 +1,6 @@
 using System.Data;
 using Auraly.Application.Sales;
+using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -64,6 +65,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         await DemandOrderAsync(
             connection,
             transaction,
+            user,
             state.BusinessId,
             request.SourceOrderId,
             cancellationToken);
@@ -184,6 +186,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
     private static async Task DemandOrderAsync(
         SqlConnection connection,
         SqlTransaction transaction,
+        OnlineSalesUserIdentity user,
         Guid businessId,
         Guid orderId,
         CancellationToken ct)
@@ -202,10 +205,14 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         if (!await reader.ReadAsync(ct))
             throw new OnlineSalesDraftValidationException(
                 "El pedido no pertenece a esta sede.");
+        var status = reader.GetInt32(0);
+        var canEditReview = status == 5 &&
+            (user.Permissions.Contains(OrderPermissionCodes.Update) ||
+             user.Permissions.Contains(OrderPermissionCodes.Review));
         if (!reader.GetBoolean(1) ||
-            reader.GetInt32(0) is not (2 or 4) ||
+            (status is not (2 or 4) && !canEditReview) ||
             !reader.IsDBNull(2))
             throw new OnlineSalesDraftValidationException(
-                "El pedido ya no está disponible para facturar.");
+                "El pedido ya no está disponible para facturar o corregir.");
     }
 }

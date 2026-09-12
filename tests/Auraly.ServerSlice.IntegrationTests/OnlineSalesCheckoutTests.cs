@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Commerce.Accounting.Contracts;
@@ -23,14 +24,42 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         client.Timeout = TimeSpan.FromSeconds(60);
 
         var captured = await CaptureAsync(client, await OpenAsync(client));
-        var completed = await CompleteAsync(
-            client,
-            captured.DraftId,
-            new CompleteOnlineSalesDraftRequest(
-                captured.Version,
-                [new OnlineSalesPayment("Cash", captured.PayableAmount, null)],
-                FiscalHabilitationOnly: true),
-            $"habilitation-{Guid.NewGuid():N}");
+        await SetHabilitationRegressionSeriesStateAsync(useFixtureSeries: false);
+        CompleteOnlineSalesDraftResponse completed;
+        try
+        {
+            using (var productionRequest = Mutation(
+                       captured.DraftId,
+                       new CompleteOnlineSalesDraftRequest(
+                           captured.Version,
+                           [new OnlineSalesPayment("Cash", captured.PayableAmount, null)]),
+                       $"production-without-resolution-{Guid.NewGuid():N}"))
+            using (var productionResponse = await client.SendAsync(productionRequest))
+            {
+                Assert.Equal(HttpStatusCode.BadRequest, productionResponse.StatusCode);
+                Assert.Contains(
+                    "resolución fiscal activa",
+                    await productionResponse.Content.ReadAsStringAsync(),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            completed = await CompleteAsync(
+                client,
+                captured.DraftId,
+                new CompleteOnlineSalesDraftRequest(
+                    captured.Version,
+                    [new OnlineSalesPayment("Cash", captured.PayableAmount, null)],
+                    FiscalHabilitationOnly: true),
+                $"habilitation-{Guid.NewGuid():N}");
+
+            Assert.StartsWith(
+                DianFiscalDefaults.HabilitationPrefix,
+                completed.Receipt.FiscalNumber);
+        }
+        finally
+        {
+            await SetHabilitationRegressionSeriesStateAsync(useFixtureSeries: true);
+        }
 
         var persisted = await ReadPersistenceAsync(completed.Receipt.DocumentId);
         Assert.Equal(1, persisted.DocumentCount);
@@ -1033,6 +1062,31 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         command.CommandText = sql;
         command.Parameters.AddRange(parameters);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task SetHabilitationRegressionSeriesStateAsync(
+        bool useFixtureSeries)
+    {
+        await ExecuteAsync(
+            """
+            UPDATE series SET IsActive=CASE WHEN auth.AuthorizationNumber=@FixtureAuthorization THEN @FixtureActive ELSE 0 END
+            FROM dbo.FiscalSeries series
+            JOIN dbo.FiscalAuthorizations auth
+              ON auth.FiscalAuthorizationId=series.FiscalAuthorizationId
+            WHERE series.BusinessId=@BusinessId
+              AND series.DeviceId IS NULL AND series.EmitterKind=N'Server'
+              AND series.DocumentType=N'SalesInvoice'
+              AND auth.AuthorizationNumber IN(@FixtureAuthorization,@HabilitationAuthorization);
+
+            UPDATE dbo.FiscalAuthorizations
+            SET IsActive=CASE WHEN AuthorizationNumber=@FixtureAuthorization THEN @FixtureActive ELSE 0 END
+            WHERE BusinessId=@BusinessId
+              AND AuthorizationNumber IN(@FixtureAuthorization,@HabilitationAuthorization);
+            """,
+            new("@BusinessId", fixture.BusinessId),
+            new("@FixtureAuthorization", ServerSliceFixture.AuthorizationNumber),
+            new("@HabilitationAuthorization", DianFiscalDefaults.HabilitationAuthorizationNumber),
+            new("@FixtureActive", useFixtureSeries));
     }
 
     private sealed record PersistenceEvidence(

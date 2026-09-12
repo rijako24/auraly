@@ -365,11 +365,14 @@ No todas deben entrar al primer incremento, pero estado, auditoría, sincronizac
 ### Ciclo de vida
 
 - confirmar;
-- al crear, reservar en una sola operación las líneas con existencia suficiente; una línea insuficiente no mueve inventario y deja el pedido `InReview`, sin deshacer las demás reservas válidas;
-- persistir por línea la cantidad ya reservada para que toda edición mueva únicamente la diferencia entre la cantidad deseada y la reservada;
+- al crear, reservar en una sola operación todas las líneas: si la bodega de venta permite negativos, la transferencia `VEN -> PED` puede dejarla negativa y el pedido queda disponible; si los bloquea, una línea insuficiente no mueve inventario y deja el pedido `InReview`, sin deshacer las demás reservas válidas;
+- persistir por línea la cantidad ya reservada; al recuperar el pedido en POS se devuelve únicamente esa reserva de `PED` a `VEN` y las líneas pendientes no generan movimientos;
+- al volver a guardar un pedido recuperado se conserva su encabezado y se reemplaza completamente el detalle: se libera cualquier reserva anterior dentro de la misma transacción y se vuelve a reservar sólo el detalle actual, de modo que líneas eliminadas o cantidades antiguas no sobrevivan;
 - en `InReview`, permitir con `orders.review` reducir o eliminar sólo las líneas pendientes; conservar sus valores comerciales y bloquear las líneas ya reservadas;
 - permitir con `orders.update` la edición completa antes de facturar: agregar, aumentar, reducir o eliminar productos, reservando aumentos y devolviendo reducciones de `PED` a la bodega de venta en la misma transacción;
-- asignar `orders.create`, `orders.update` y `orders.review` a las plantillas Administrador, Vendedor y Cajero; la autorización depende del permiso efectivo y no de que el usuario tenga un registro de vendedor comercial;
+- asignar `orders.create`, `orders.update`, `orders.review` y `orders.recover` a las plantillas Administrador, Administrativo, Vendedor y Cajero; la autorización depende del permiso efectivo y no de que el usuario tenga un registro de vendedor comercial;
+- en la vista web de Pedidos, `orders.read` permite listar y filtrar todos los pedidos del negocio sin restringirlos por creador;
+- separar `Mis rutas` como vista operativa propia gobernada por `routes.read`, limitada en servidor al vendedor autenticado; `Rutas comerciales` usa `routes.read-all` para consultar vendedores distintos y ambas capacidades quedan disponibles para Administrador y Administrativo;
 - confirmar el pedido y habilitarlo para facturación sólo cuando todas las líneas restantes que controlan inventario estén reservadas;
 - resolver productos, precios e inventario mediante consultas por lote para todo el documento; queda prohibido consultar la base de datos o servicios externos una vez por línea;
 - agrupar los deltas de inventario de cada edición en, como máximo, una transferencia de reserva `VEN -> PED` y una devolución `PED -> VEN`, ambas dentro de la transacción del pedido; el costo de I/O no debe crecer como una consulta o transferencia adicional por producto;

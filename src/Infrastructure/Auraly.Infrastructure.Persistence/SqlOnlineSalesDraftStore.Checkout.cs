@@ -41,8 +41,12 @@ public sealed partial class SqlOnlineSalesDraftStore
     public async Task<OnlineSalesFiscalKeyContext> ResolveFiscalKeyContextAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
+        bool fiscalHabilitationOnly,
         CancellationToken cancellationToken)
     {
+        if (fiscalHabilitationOnly)
+            await EnsureHabilitationFiscalSeriesAsync(user, draftId, cancellationToken);
+
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -66,6 +70,7 @@ public sealed partial class SqlOnlineSalesDraftStore
               AND d.Status IN (N'Active',N'Issuing',N'Consumed')
               AND b.TenantId=@TenantId AND b.IsActive=1
               AND CONVERT(date,@Now) BETWEEN a.ValidFrom AND a.ValidUntil
+              AND (@Environment IS NULL OR a.Environment=@Environment)
             ORDER BY s.SeriesId;
             """;
         command.Parameters.AddRange([
@@ -73,7 +78,10 @@ public sealed partial class SqlOnlineSalesDraftStore
             P("@UserId", user.UserId),
             P("@TenantId", user.TenantId),
             P("@DocumentType", PosSaleDocumentTypes.Invoice),
-            P("@Now", time.GetUtcNow())
+            P("@Now", time.GetUtcNow()),
+            P("@Environment", fiscalHabilitationOnly
+                ? (object)(int)FiscalEnvironment.Test
+                : DBNull.Value)
         ]);
         var rows = new List<OnlineSalesFiscalKeyContext>(2);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -111,6 +119,111 @@ public sealed partial class SqlOnlineSalesDraftStore
         {
             Reference = rows[0].Reference with { BusinessId = businessId }
         };
+    }
+
+    private async Task EnsureHabilitationFiscalSeriesAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SET XACT_ABORT ON;
+            DECLARE @BusinessId uniqueidentifier,@SupplierTaxId nvarchar(32),
+                    @AuthorizationId uniqueidentifier,@SeriesId uniqueidentifier;
+            SELECT @BusinessId=d.BusinessId
+            FROM dbo.SalesDrafts d WITH(UPDLOCK,HOLDLOCK)
+            JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
+            WHERE d.SalesDraftId=@DraftId AND d.UserId=@UserId
+              AND d.Status IN(N'Active',N'Issuing',N'Consumed')
+              AND b.TenantId=@TenantId AND b.IsActive=1;
+            IF @BusinessId IS NULL
+                THROW 51022,'El borrador no pertenece al usuario autenticado.',1;
+
+            SELECT TOP(1) @SupplierTaxId=issuer.SupplierTaxId
+            FROM dbo.FiscalIssuerConfigurations issuer WITH(UPDLOCK,HOLDLOCK)
+            WHERE issuer.BusinessId=@BusinessId AND issuer.Environment=2
+              AND issuer.IsActive=1 AND issuer.TestSetId IS NOT NULL
+              AND issuer.ValidFrom<=@Now
+              AND (issuer.ValidTo IS NULL OR issuer.ValidTo>@Now)
+            ORDER BY issuer.Version DESC,issuer.CreatedAt DESC;
+            IF @SupplierTaxId IS NULL
+                THROW 51022,'La configuración DIAN de habilitación no está completa o vigente.',1;
+
+            SELECT @AuthorizationId=FiscalAuthorizationId
+            FROM dbo.FiscalAuthorizations WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND AuthorizationNumber=@AuthorizationNumber;
+            IF @AuthorizationId IS NULL
+            BEGIN
+                SET @AuthorizationId=@NewAuthorizationId;
+                INSERT dbo.FiscalAuthorizations(
+                    FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
+                    Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
+                    AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
+                VALUES(
+                    @AuthorizationId,@BusinessId,@AuthorizationNumber,@SupplierTaxId,
+                    2,@QrUrl,@TechnicalKeyVersion,@ValidFrom,@ValidUntil,
+                    @RangeStart,@RangeEnd,1,@Now);
+            END
+            ELSE IF NOT EXISTS(
+                SELECT 1 FROM dbo.FiscalAuthorizations
+                WHERE FiscalAuthorizationId=@AuthorizationId AND Environment=2
+                  AND SupplierTaxId=@SupplierTaxId
+                  AND TechnicalKeyVersion=@TechnicalKeyVersion
+                  AND AuthorizedRangeStart=@RangeStart AND AuthorizedRangeEnd=@RangeEnd)
+                THROW 51022,'La numeración técnica de habilitación existente es incompatible.',1;
+            ELSE
+                UPDATE dbo.FiscalAuthorizations SET IsActive=1
+                WHERE FiscalAuthorizationId=@AuthorizationId;
+
+            SELECT @SeriesId=SeriesId
+            FROM dbo.FiscalSeries WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND DeviceId IS NULL
+              AND EmitterKind=N'Server' AND FiscalAuthorizationId=@AuthorizationId
+              AND DocumentType=@DocumentType AND Prefix=@Prefix;
+            IF @SeriesId IS NULL
+            BEGIN
+                SET @SeriesId=@NewSeriesId;
+                INSERT dbo.FiscalSeries(
+                    SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
+                    DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+                VALUES(
+                    @SeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,
+                    @DocumentType,@Prefix,@RangeStart,@RangeEnd,1,@Now);
+            END
+            ELSE
+                UPDATE dbo.FiscalSeries SET IsActive=1
+                WHERE SeriesId=@SeriesId;
+
+            IF NOT EXISTS(SELECT 1 FROM dbo.FiscalSeriesCursors WITH(UPDLOCK,HOLDLOCK)
+                          WHERE SeriesId=@SeriesId)
+                INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt)
+                VALUES(@SeriesId,@RangeStart,@Now);
+            """;
+        command.Parameters.AddRange([
+            P("@DraftId", draftId),
+            P("@UserId", user.UserId),
+            P("@TenantId", user.TenantId),
+            P("@NewAuthorizationId", ids.NewId()),
+            P("@NewSeriesId", ids.NewId()),
+            P("@AuthorizationNumber", DianFiscalDefaults.HabilitationAuthorizationNumber),
+            P("@Prefix", DianFiscalDefaults.HabilitationPrefix),
+            P("@RangeStart", DianFiscalDefaults.HabilitationRangeStart),
+            P("@RangeEnd", DianFiscalDefaults.HabilitationRangeEnd),
+            P("@TechnicalKeyVersion", DianFiscalDefaults.HabilitationTechnicalKeyVersion),
+            P("@QrUrl", DianFiscalDefaults.HabilitationQrValidationUrl),
+            P("@ValidFrom", new DateOnly(2019, 1, 19)),
+            P("@ValidUntil", new DateOnly(2030, 1, 19)),
+            P("@DocumentType", PosSaleDocumentTypes.Invoice),
+            P("@Now", time.GetUtcNow())
+        ]);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task<PreparedOnlineSalesCheckout> PrepareInvoiceAsync(
@@ -209,7 +322,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         var configuration = await ReadCheckoutConfigurationAsync(
             connection, transaction, state.BusinessId,
             PosSaleDocumentTypes.Invoice, PosSaleDocumentTypes.Invoice,
-            now, cancellationToken);
+            now, cancellationToken,
+            request.FiscalHabilitationOnly ? FiscalEnvironment.Test : null);
         if (configuration.SupplierTaxId != fiscalMaterial.SupplierTaxId ||
             configuration.Environment != fiscalMaterial.Environment)
             throw new OnlineSalesDraftValidationException(
@@ -567,7 +681,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         string documentType,
         string fiscalSeriesDocumentType,
         DateTimeOffset now,
-        CancellationToken ct)
+        CancellationToken ct,
+        FiscalEnvironment? requiredEnvironment = null)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -602,13 +717,17 @@ public sealed partial class SqlOnlineSalesDraftStore
               AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00'
               AND ds.IsOfflineCapable=0 AND ds.DocumentType=@DocumentType
               AND ds.IsActive=1 AND CONVERT(date,@Now) BETWEEN a.ValidFrom AND a.ValidUntil
+              AND (@Environment IS NULL OR a.Environment=@Environment)
             ORDER BY ds.DocumentSeriesId,fs.SeriesId;
             """;
         command.Parameters.AddRange([
             P("@BusinessId", businessId),
             P("@DocumentType", documentType),
             P("@FiscalSeriesDocumentType", fiscalSeriesDocumentType),
-            P("@Now", now)
+            P("@Now", now),
+            P("@Environment", requiredEnvironment is null
+                ? DBNull.Value
+                : (object)(int)requiredEnvironment.Value)
         ]);
         var rows = new List<CheckoutConfiguration>(2);
         await using var reader = await command.ExecuteReaderAsync(ct);

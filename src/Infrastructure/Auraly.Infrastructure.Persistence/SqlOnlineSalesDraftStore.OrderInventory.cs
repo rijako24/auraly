@@ -71,8 +71,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
                 throw new OnlineSalesDraftValidationException("El pedido de origen no existe en este negocio.");
-            if (reader.IsDBNull(0))
-                throw new OnlineSalesDraftValidationException("El pedido no tiene una bodega de pedidos asociada.");
+            // Legacy/imported orders may not own a PED reservation. They remain
+            // recoverable, but there is no inventory movement to release.
+            if (reader.IsDBNull(0)) return;
             ordersWarehouseId = reader.GetGuid(0);
             existingTransferId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
             externalStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
@@ -83,13 +84,24 @@ public sealed partial class SqlOnlineSalesDraftStore
             throw new OnlineSalesDraftConcurrencyException("El traslado de salida del pedido quedó en un estado inconsistente.");
 
         const string productsSql = """
-            SELECT item.ProductId,SUM(item.Quantity)
+            SELECT item.ProductId,SUM(COALESCE(
+                     TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
+                       CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                       '$.ReservedQuantity')),
+                     CASE WHEN orders.Status=2 THEN item.Quantity ELSE 0 END))
             FROM dbo.OrderItems item WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.Orders orders WITH(UPDLOCK,HOLDLOCK)
+              ON orders.OrderId=item.OrderId AND orders.BusinessId=item.BusinessId
             INNER JOIN dbo.Products product WITH(UPDLOCK,HOLDLOCK)
               ON product.ProductId=item.ProductId
              AND product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=item.BusinessId)
             WHERE item.OrderId=@OrderId AND item.BusinessId=@BusinessId AND product.ManageStock=1
             GROUP BY item.ProductId
+            HAVING SUM(COALESCE(
+                     TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
+                       CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                       '$.ReservedQuantity')),
+                     CASE WHEN orders.Status=2 THEN item.Quantity ELSE 0 END))>0
             ORDER BY item.ProductId;
             """;
         var inventoryLines = new List<(Guid ProductId, decimal Quantity)>();

@@ -49,6 +49,7 @@ public interface IOnlineSalesCheckoutStore
     Task<OnlineSalesFiscalKeyContext> ResolveFiscalKeyContextAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
+        bool fiscalHabilitationOnly,
         CancellationToken cancellationToken);
 
     Task<PreparedOnlineSalesCheckout> PrepareAsync(
@@ -116,11 +117,13 @@ public sealed class OnlineSalesCheckoutService(
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
         {
             var keyContext = await checkouts.ResolveFiscalKeyContextAsync(
-            user, draftId, cancellationToken);
-        material = await technicalKeys.ResolveAsync(
-            keyContext.Reference, cancellationToken)
-            ?? throw new OnlineSalesDraftValidationException(
-                "La clave técnica de la resolución fiscal activa no está disponible.");
+                user, draftId, request.FiscalHabilitationOnly, cancellationToken);
+            material = await technicalKeys.ResolveAsync(
+                keyContext.Reference, cancellationToken)
+                ?? throw new OnlineSalesDraftValidationException(
+                    request.FiscalHabilitationOnly
+                        ? "No fue posible preparar la numeración técnica de habilitación DIAN."
+                        : "La clave técnica de la resolución fiscal activa no está disponible.");
         }
         var prepared = await checkouts.PrepareAsync(
             user, draftId, request, idempotencyKey.Trim(),

@@ -301,8 +301,15 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             new("@FirstCode", $"RV-A-{firstProductId:N}"[..24]),
             new("@SecondCode", $"RV-B-{secondProductId:N}"[..24]));
 
+        await ExecuteAsync(
+            "UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;",
+            new SqlParameter("@WarehouseId", fixture.WarehouseId));
+        try
+        {
         using var client = fixture.CreateUserClient(userId,
-            OrderPermissionCodes.Read, OrderPermissionCodes.Create, OrderPermissionCodes.Update);
+            OrderPermissionCodes.Read, OrderPermissionCodes.Create, OrderPermissionCodes.Update,
+            OrderPermissionCodes.Recover, CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
         using var create = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
         {
             businessId = fixture.BusinessId,
@@ -316,7 +323,8 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 new { productId = secondProductId, quantity = 10m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
             },
         });
-        create.EnsureSuccessStatusCode();
+        Assert.True(create.IsSuccessStatusCode,
+            $"El pedido respondió {(int)create.StatusCode}: {await create.Content.ReadAsStringAsync()}");
         var created = await create.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
         Assert.True(created.GetProperty("requiresReview").GetBoolean());
         Assert.Equal("InReview", created.GetProperty("status").GetString());
@@ -338,6 +346,61 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         var insufficientLine = Assert.Single(detail.Lines, line => line.ProductId == secondProductId);
         Assert.Equal(2m, insufficientLine.QuantityOnHand);
         Assert.Equal(0m, insufficientLine.ReservedQuantity);
+
+        var workSession = await fixture.OpenWorkSessionAsync(client);
+        var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
+        await RecoverAsync(client, userId, workSession.WorkSessionId, orderId, draft);
+        Assert.Equal((7m, 2m, 0m, 0m),
+            await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        var recoveredDraft = await OpenDraftAsync(client, workSession.WorkSessionId);
+        Assert.Equal(orderId, recoveredDraft.SourceOrderId);
+        Assert.Equal(2, recoveredDraft.Lines.Count);
+
+        using (var stillInReview = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
+        {
+            customerId,
+            notes = "Continúa pendiente después de recuperar",
+            workSessionId = workSession.WorkSessionId,
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 5m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+                new { productId = secondProductId, quantity = 10m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
+            },
+        }))
+        {
+            Assert.True(stillInReview.IsSuccessStatusCode,
+                $"La revisión respondió {(int)stillInReview.StatusCode}: {await stillInReview.Content.ReadAsStringAsync()}");
+            var result = await stillInReview.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            Assert.True(result.GetProperty("requiresReview").GetBoolean());
+            Assert.Equal("InReview", result.GetProperty("status").GetString());
+        }
+        Assert.Equal((2m, 2m, 5m, 0m),
+            await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+
+        await ExecuteAsync(
+            "UPDATE dbo.Orders SET CapturedByUserId=@OtherUserId WHERE OrderId=@OrderId;",
+            new("@OtherUserId", fixture.UserId), new("@OrderId", orderId));
+        try
+        {
+            using var cleanupRequest = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{recoveredDraft.DraftId:D}/complete-order")
+            {
+                Content = JsonContent.Create(
+                    new CompleteOnlineSalesOrderDraftRequest(orderId, recoveredDraft.Version)),
+            };
+            cleanupRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("D"));
+            using var cleanup = await client.SendAsync(cleanupRequest);
+            Assert.True(cleanup.IsSuccessStatusCode,
+                $"La limpieza respondió {(int)cleanup.StatusCode}: {await cleanup.Content.ReadAsStringAsync()}");
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "UPDATE dbo.Orders SET CapturedByUserId=@UserId WHERE OrderId=@OrderId;",
+                new("@UserId", userId), new("@OrderId", orderId));
+        }
 
         using var readOnly = fixture.CreateUserClient(userId, OrderPermissionCodes.Read);
         using (var forbiddenReview = await readOnly.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
@@ -452,6 +515,41 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         Assert.Equal(firstProductId, preservedLine.ProductId);
         Assert.Equal(1111m, preservedLine.UnitPrice);
 
+        await ExecuteAsync(
+            "UPDATE dbo.Warehouses SET AllowNegativeStockSales=1 WHERE WarehouseId=@WarehouseId;",
+            new SqlParameter("@WarehouseId", fixture.WarehouseId));
+        try
+        {
+            using var negativeCreate = await client.PostAsJsonAsync(
+                "/api/commerce/v1/seller-orders", new
+                {
+                    businessId = fixture.BusinessId,
+                    warehouseId = fixture.WarehouseId,
+                    customerId,
+                    capturedOffline = false,
+                    idempotencyKey = Guid.NewGuid().ToString("N"),
+                    lines = new[]
+                    {
+                        new { productId = secondProductId, quantity = 10m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Captured" },
+                    },
+                });
+            negativeCreate.EnsureSuccessStatusCode();
+            var negativeOrder = await negativeCreate.Content
+                .ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            Assert.False(negativeOrder.GetProperty("requiresReview").GetBoolean());
+            Assert.Equal("Confirmed", negativeOrder.GetProperty("status").GetString());
+            var balances = await ReadBalancesAsync(
+                firstProductId, secondProductId, ordersWarehouseId);
+            Assert.Equal(-8m, balances.SecondSource);
+            Assert.Equal(10m, balances.SecondReserved);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;",
+                new SqlParameter("@WarehouseId", fixture.WarehouseId));
+        }
+
         async Task<(decimal FirstSource, decimal SecondSource, decimal FirstReserved, decimal SecondReserved)> ReadBalancesAsync(
             Guid first, Guid second, Guid reservedWarehouse)
         {
@@ -473,6 +571,13 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             await using var reader = await command.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
             return (reader.GetDecimal(0), reader.GetDecimal(1), reader.GetDecimal(2), reader.GetDecimal(3));
+        }
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "UPDATE dbo.Warehouses SET AllowNegativeStockSales=1 WHERE WarehouseId=@WarehouseId;",
+                new SqlParameter("@WarehouseId", fixture.WarehouseId));
         }
     }
 
@@ -527,6 +632,11 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             new("@ParentCode", $"IF-P-{parentProductId:N}"[..16]),
             new("@ChildCode", $"IF-C-{childProductId:N}"[..16]));
 
+        await ExecuteAsync(
+            "UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;",
+            new SqlParameter("@WarehouseId", fixture.WarehouseId));
+        try
+        {
         using var client = fixture.CreateUserClient(userId,
             OrderPermissionCodes.Read, OrderPermissionCodes.Create, OrderPermissionCodes.Review);
         using var create = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
@@ -588,6 +698,13 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             await using var reader = await command.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
             return (reader.GetDecimal(0), reader.GetDecimal(1));
+        }
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "UPDATE dbo.Warehouses SET AllowNegativeStockSales=1 WHERE WarehouseId=@WarehouseId;",
+                new SqlParameter("@WarehouseId", fixture.WarehouseId));
         }
     }
 

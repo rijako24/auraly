@@ -93,7 +93,7 @@ function LoginForm() {
             window.localStorage.setItem("selected_tenant_id", auth.user.tenantId);
             window.localStorage.setItem("selected_business_id", preparation.businessId);
             rememberSalesWorkspace(preparation);
-            window.location.replace("/dashboard/orders?view=today-route");
+            window.location.replace("/dashboard/my-routes");
             return;
           }
         }

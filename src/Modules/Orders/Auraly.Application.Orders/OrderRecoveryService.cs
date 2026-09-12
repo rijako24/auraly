@@ -6,7 +6,8 @@ namespace Auraly.Application.Orders;
 
 public sealed class OrderRecoveryService(
     OrderService orders,
-    OnlineSalesOrderImportService sales)
+    OnlineSalesOrderImportService sales,
+    OnlineSalesCheckoutService checkout)
 {
     public async Task<RecoveredOrderSale> RecoverAsync(
         OrderActor actor,
@@ -20,9 +21,12 @@ public sealed class OrderRecoveryService(
                 "La venta activa y su versión son obligatorias.");
 
         var order = await orders.GetAsync(actor, orderId, cancellationToken);
-        if (!order.CanInvoice)
+        var canEditReview = order.Status == "InReview" &&
+            (actor.Permissions.Contains(OrderPermissionCodes.Update) ||
+             actor.Permissions.Contains(OrderPermissionCodes.Review));
+        if (!order.CanInvoice && !canEditReview)
             throw new OrderConflictException(
-                "El pedido no está disponible para facturar.");
+                "El pedido no está disponible para facturar o corregir.");
         if (order.WarehouseId is null)
             throw new OrderConflictException(
                 "El pedido no tiene una bodega de venta asignada y no puede recuperarse.");
@@ -40,6 +44,18 @@ public sealed class OrderRecoveryService(
         var importCompleted = false;
         try
         {
+            if (order.Source == 1)
+            {
+                await checkout.PrepareSourceOrderInventoryAsync(
+                    new OnlineSalesUserIdentity(
+                        actor.UserId,
+                        actor.TenantId,
+                        actor.Permissions),
+                    order.BusinessId,
+                    order.OrderId,
+                    order.WarehouseId.Value,
+                    cancellationToken);
+            }
             var draft = await sales.ImportAsync(
                 new OnlineSalesUserIdentity(
                     actor.UserId,

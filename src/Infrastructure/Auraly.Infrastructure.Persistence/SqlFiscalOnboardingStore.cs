@@ -497,6 +497,17 @@ public sealed class SqlFiscalOnboardingStore(
             UPDATE dbo.FiscalIssuerConfigurations
             SET IsActive=0
             WHERE BusinessId=@BusinessId AND Environment=2 AND IsActive=1;
+            UPDATE series
+            SET IsActive=0
+            FROM dbo.FiscalSeries series
+            JOIN dbo.FiscalAuthorizations fiscalAuthorization
+              ON fiscalAuthorization.FiscalAuthorizationId=series.FiscalAuthorizationId
+            WHERE series.BusinessId=@BusinessId
+              AND fiscalAuthorization.Environment=2
+              AND series.IsActive=1;
+            UPDATE dbo.FiscalAuthorizations
+            SET IsActive=0
+            WHERE BusinessId=@BusinessId AND Environment=2 AND IsActive=1;
 
             DECLARE @Cursor bigint;
             SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1

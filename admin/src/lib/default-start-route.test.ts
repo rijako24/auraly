@@ -3,14 +3,13 @@ import test from "node:test";
 import {
   canOpenPosAdministrativeMenu,
   defaultStartRoute,
-  ordersLandingView,
   requiresCloudWorkspace,
   shouldRestoreOperationalStart,
 } from "./default-start-route";
 
 test("seller-only users start in today's route", () => {
-  assert.equal(defaultStartRoute(["Vendedor"], ["orders.read"]), "/dashboard/orders?view=today-route");
-  assert.equal(defaultStartRoute(["seller"], ["orders.read"]), "/dashboard/orders?view=today-route");
+  assert.equal(defaultStartRoute(["Vendedor"], ["routes.read"]), "/dashboard/my-routes");
+  assert.equal(defaultStartRoute(["seller"], ["routes.read"]), "/dashboard/my-routes");
 });
 
 test("transporter-only users start in assigned dispatches", () => {
@@ -49,20 +48,12 @@ test("POS menu requires both a cloud session and another authorized module", () 
 
 test("the dashboard root remains available after the initial login redirect", () => {
   assert.equal(shouldRestoreOperationalStart("/dashboard", "/pos"), false);
-  assert.equal(shouldRestoreOperationalStart("/dashboard/", "/dashboard/orders?view=today-route"), false);
+  assert.equal(shouldRestoreOperationalStart("/dashboard/", "/dashboard/my-routes"), false);
 });
 
 test("exclusive operational profiles recover from a route restored for another user", () => {
-  assert.equal(shouldRestoreOperationalStart("/dashboard/orders?view=today-route", "/dashboard/deliveries"), true);
-  assert.equal(shouldRestoreOperationalStart("/dashboard/deliveries", "/dashboard/orders?view=today-route"), true);
+  assert.equal(shouldRestoreOperationalStart("/dashboard/my-routes", "/dashboard/deliveries"), true);
+  assert.equal(shouldRestoreOperationalStart("/dashboard/deliveries", "/dashboard/my-routes"), true);
   assert.equal(shouldRestoreOperationalStart("/dashboard/orders", "/dashboard"), false);
   assert.equal(shouldRestoreOperationalStart("/dashboard/deliveries", "/dashboard"), false);
-});
-
-
-test("seller order navigation always opens the operational route unless all orders was requested explicitly", () => {
-  assert.equal(ordersLandingView("", ["Vendedor"], ["orders.read"]), "today-route");
-  assert.equal(ordersLandingView("?view=today-route", ["Vendedor"], ["orders.read"]), "today-route");
-  assert.equal(ordersLandingView("?view=all", ["Vendedor"], ["orders.read"]), "all");
-  assert.equal(ordersLandingView("", ["Administrador"], ["orders.read"]), "all");
 });

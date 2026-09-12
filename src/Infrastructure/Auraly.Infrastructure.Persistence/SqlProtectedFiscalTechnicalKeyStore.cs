@@ -19,12 +19,15 @@ public sealed class SqlProtectedFiscalTechnicalKeyStore(
     {
         const string sql = """
             SELECT TOP(1) s.ProtectedValue,a.SupplierTaxId,a.QrValidationUrl
-            FROM dbo.FiscalTechnicalKeySecrets s
-            JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
-            JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
-            WHERE b.TenantId=@TenantId AND s.BusinessId=@BusinessId
+            FROM dbo.FiscalAuthorizations a
+            JOIN dbo.Businesses b ON b.BusinessId=a.BusinessId
+            LEFT JOIN dbo.FiscalTechnicalKeySecrets s
+              ON s.FiscalAuthorizationId=a.FiscalAuthorizationId
+             AND s.BusinessId=a.BusinessId
+             AND s.TechnicalKeyVersion=@Version AND s.Environment=@Environment
+            WHERE b.TenantId=@TenantId AND a.BusinessId=@BusinessId
               AND a.AuthorizationNumber=@AuthorizationNumber
-              AND s.TechnicalKeyVersion=@Version AND s.Environment=@Environment
+              AND a.TechnicalKeyVersion=@Version AND a.Environment=@Environment
               AND a.IsActive=1;
             """;
         await using var connection = connections.Create();
@@ -37,7 +40,27 @@ public sealed class SqlProtectedFiscalTechnicalKeyStore(
         Add(command, "@Environment", (int)reference.Environment);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
-        var value = Unprotect((byte[])reader[0]);
+        string value;
+        if (!reader.IsDBNull(0))
+        {
+            value = Unprotect((byte[])reader[0]);
+        }
+        else if (reference.Environment == FiscalEnvironment.Test &&
+                 string.Equals(reference.AuthorizationNumber,
+                     DianFiscalDefaults.HabilitationAuthorizationNumber,
+                     StringComparison.Ordinal) &&
+                 string.Equals(reference.TechnicalKeyVersion,
+                     DianFiscalDefaults.HabilitationTechnicalKeyVersion,
+                     StringComparison.Ordinal))
+        {
+            // DIAN publishes one common technical key for the standard SETP
+            // habilitation range. It is public test material, not a tenant secret.
+            value = DianFiscalDefaults.HabilitationTechnicalKey;
+        }
+        else
+        {
+            return null;
+        }
         return new FiscalVerificationMaterial(
             new FiscalTechnicalKey(value, reference.TechnicalKeyVersion),
             reader.GetString(1), reference.Environment, reader.GetString(2));

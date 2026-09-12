@@ -39,6 +39,10 @@ public sealed record RemoveOnlineSalesDraftLineRequest(long ExpectedVersion);
 
 public sealed record ResetOnlineSalesDraftRequest(long ExpectedVersion);
 
+public sealed record CompleteOnlineSalesOrderDraftRequest(
+    Guid OrderId,
+    long ExpectedVersion);
+
 public sealed record PauseOnlineSalesDraftRequest(
     string Name,
     string? Reference,

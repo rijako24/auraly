@@ -2,6 +2,16 @@ namespace Auraly.Contracts.Fiscal;
 
 public static class DianFiscalDefaults
 {
+    public const string HabilitationAuthorizationNumber = "18760000001";
+    public const string HabilitationPrefix = "SETP";
+    public const long HabilitationRangeStart = 990000000;
+    public const long HabilitationRangeEnd = 995000000;
+    public const string HabilitationTechnicalKey =
+        "fc8eac422eba16e22ffd8c6f94b3f40a6e38162c";
+    public const string HabilitationTechnicalKeyVersion =
+        "dian-habilitation-standard-v1";
+    public const string HabilitationQrValidationUrl =
+        "https://catalogo-vpfe-hab.dian.gov.co/document/searchqr";
     public const string ProductionQrValidationUrl =
         "https://catalogo-vpfe.dian.gov.co/document/searchqr";
     public const string NumberingRangeTechnicalKeyVersion = "dian-get-numbering-range";

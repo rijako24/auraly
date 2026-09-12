@@ -3,9 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { DailyRouteApp } from "@/components/orders/daily-route-app";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
-import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
 import {
   loadCommerceOrder,
@@ -23,7 +21,6 @@ import {
 } from "@/services/pos/online-pos-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
-import { isSellerOperationalProfile, ordersLandingView } from "@/lib/default-start-route";
 import { routesApi, type SalesRouteListItem } from "@/services/api/routes";
 import { PosPrinterDialog } from "@/app/(pos)/pos/pos-printer-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
@@ -44,20 +41,6 @@ export default function OrdersPage() {
     const token = readEdgeTokenFromLaunch();
     return token ? new PosEdgeClient(token, readEdgeUserSession()) : null;
   });
-  const [routeMode, setRouteMode] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("view") === "today-route",
-  );
-
-  useEffect(() => {
-    if (!user || typeof window === "undefined") return;
-    const view = ordersLandingView(window.location.search, user.roles ?? [], user.permissions ?? []);
-    setRouteMode(view === "today-route");
-    if (view === "today-route" && new URLSearchParams(window.location.search).get("view") !== "today-route")
-      router.replace("/dashboard/orders?view=today-route");
-  }, [router, user]);
-
   useEffect(() => {
     let active = true;
     void loadSalesWorkspaceOptions()
@@ -99,17 +82,6 @@ export default function OrdersPage() {
   if (!businessId)
     return <PageError message="Selecciona una sede para consultar sus pedidos." />;
 
-  if (routeMode)
-    return (
-      <DailyRouteApp
-        businessId={businessId}
-        onAdministrative={() => {
-          setRouteMode(false);
-          router.replace("/dashboard/orders?view=all");
-        }}
-      />
-    );
-
   return (
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
@@ -119,14 +91,6 @@ export default function OrdersPage() {
             Los mismos pedidos creados por el bot, listos para recuperar o facturar.
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setRouteMode(true);
-            router.replace("/dashboard/orders?view=today-route");
-          }}
-        >
-          Abrir ruta de hoy
-        </Button>
       </header>
       {workspaceError && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -137,8 +101,6 @@ export default function OrdersPage() {
         key={ordersRevision}
         showHeader={false}
         routeOptions={routeOptions.map((route) => ({ routeId: route.routeId, name: route.name }))}
-        onlyMine={!!user && isSellerOperationalProfile(user.roles ?? [], user.permissions ?? [])}
-        source={user && isSellerOperationalProfile(user.roles ?? [], user.permissions ?? []) ? 1 : undefined}
         loadPage={loadCommerceOrders}
         loadDetail={loadCommerceOrder}
         onRetryEmission={async (orderId) => {

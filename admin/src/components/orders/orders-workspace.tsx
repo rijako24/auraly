@@ -97,7 +97,6 @@ type OrdersWorkspaceProps = {
   onConfigurePrinting?: () => void;
   onCountChange?: (count: number) => void;
   routeOptions?: Array<{ routeId: string; name: string }>;
-  onlyMine?: boolean;
   source?: number;
   activeOrderId?: string | null;
 };
@@ -134,7 +133,6 @@ export function OrdersWorkspace({
   onConfigurePrinting,
   onCountChange,
   routeOptions = [],
-  onlyMine = false,
   source,
   activeOrderId,
 }: OrdersWorkspaceProps) {
@@ -176,10 +174,9 @@ export function OrdersWorkspace({
       ? endOfLocalDayExclusive(createdTo)
       : undefined,
     routeId: routeId === "All" ? undefined : routeId,
-    sellerId: !onlyMine && sellerId !== "all" ? sellerId : undefined,
-    onlyMine: onlyMine || undefined,
+    sellerId: sellerId !== "all" ? sellerId : undefined,
     source,
-  }), [createdFrom, createdTo, customerId, onlyMine, product, query, routeId, sellerId, source, status]);
+  }), [createdFrom, createdTo, customerId, product, query, routeId, sellerId, source, status]);
 
   const refresh = useCallback(async (silent = false) => {
     if (!connected) {
@@ -249,7 +246,7 @@ export function OrdersWorkspace({
     product,
     status !== "Available" ? status : "",
     routeId !== "All" ? routeId : "",
-    !onlyMine && sellerId !== "all" ? sellerId : "",
+    sellerId !== "all" ? sellerId : "",
     createdFrom,
     createdTo,
   ].filter(Boolean).length;
@@ -459,7 +456,7 @@ export function OrdersWorkspace({
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <FilterField label="Cliente"><PartyRoleSelect role="Customer" value={customerId} leadingOptions={[{ value: "all", label: "Todos los clientes" }]} placeholder="Buscar cliente" onChange={(value) => { setCustomerId(value); setPage(1); }} /></FilterField>
-            {onlyMine ? <FilterField label="Vendedor"><div className="flex h-10 items-center rounded-xl border bg-teal-50 px-3 text-sm font-semibold text-teal-800"><UserRound className="mr-2 h-4 w-4" />Mis pedidos</div></FilterField> : <FilterField label="Vendedor"><PartyRoleSelect role="Seller" value={sellerId} leadingOptions={[{ value: "all", label: "Todos los vendedores" }]} placeholder="Buscar vendedor" onChange={(value) => { setSellerId(value); setPage(1); }} /></FilterField>}
+            <FilterField label="Vendedor"><PartyRoleSelect role="Seller" value={sellerId} leadingOptions={[{ value: "all", label: "Todos los vendedores" }]} placeholder="Buscar vendedor" onChange={(value) => { setSellerId(value); setPage(1); }} /></FilterField>
             <FilterField label="Producto"><Input value={product} onChange={(event) => { setProduct(event.target.value); setPage(1); }} placeholder="Nombre, código o referencia" /></FilterField>
             <FilterField label="Estado"><OrderStatusSelect value={status} onChange={(value) => { setStatus(value); setPage(1); }} /></FilterField>
             {routeOptions.length > 0 && <FilterField label="Ruta"><Select value={routeId} onValueChange={(next) => { setRouteId(next); setPage(1); }}><SelectTrigger><SelectValue placeholder="Todas las rutas" /></SelectTrigger><SelectContent><SelectItem value="All">Todas las rutas</SelectItem>{routeOptions.map((route) => <SelectItem key={route.routeId} value={route.routeId}>{route.name}</SelectItem>)}</SelectContent></Select></FilterField>}

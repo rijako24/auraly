@@ -1312,7 +1312,16 @@ export class PosEdgeClient implements PosClient {
       `pos-order-${draft.draftId.value}`,
     );
     try {
-      return { order, nextDraft: await this.cancelDraft(draft.draftId.value) };
+      return {
+        order,
+        nextDraft: await this.request<PosDraft>(
+          `/edge/v1/drafts/${draft.draftId.value}/complete-order`,
+          {
+            method: "POST",
+            body: JSON.stringify({ orderId: order.orderId }),
+          },
+        ),
+      };
     } catch (cleanupError) {
       if (draft.sourceOrderId)
         await this.releaseRecoveredOrder(draft.sourceOrderId).catch(() => undefined);

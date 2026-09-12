@@ -96,6 +96,9 @@ public static class SellerOrderReviewPersistence
         string? notes,
         decimal total,
         Guid reservationTransferId,
+        int status,
+        string externalStatus,
+        bool requiresStockReview,
         IReadOnlyCollection<SellerOrderReplacementLine> lines,
         CancellationToken cancellationToken)
     {
@@ -111,6 +114,9 @@ public static class SellerOrderReviewPersistence
                 Parameter("@CustomerAddress", customerAddress),
                 Money("@Total", total),
                 Parameter("@ReservationTransferId", reservationTransferId),
+                Parameter("@Status", status),
+                Parameter("@ExternalStatus", externalStatus),
+                Parameter("@RequiresStockReview", requiresStockReview),
                 Parameter("@OrderId", orderId),
                 Parameter("@BusinessId", businessId),
                 Parameter("@LinesJson", System.Text.Json.JsonSerializer.Serialize(lines.Select(line => new

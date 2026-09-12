@@ -1033,7 +1033,16 @@ export class OnlinePosClient implements PosClient {
     const order = await savePosDraftAsOrder(this.context, draft, idempotencyKey);
 
     try {
-      return { order, nextDraft: await this.cancelDraft(draft.draftId.value) };
+      const nextDraft = this.mapDraft(
+        await request<OnlineDraft>(
+          `/api/commerce/v1/pos/drafts/${draft.draftId.value}/complete-order`,
+          this.mutation(
+            { orderId: order.orderId, expectedVersion: this.version(draft.draftId.value) },
+            "POST",
+          ),
+        ),
+      );
+      return { order, nextDraft };
     } catch (cleanupError) {
       if (draft.sourceOrderId)
         await this.releaseRecoveredOrder(draft.sourceOrderId).catch(() => undefined);

@@ -182,13 +182,13 @@ public sealed class SqlTenantProvisioningStore(
                 SELECT NEWID(),@SellerRoleId,PermissionId,@Now
                 FROM dbo.Permissions
                 WHERE Resource IN(
-                  N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'routes.read',N'routes.visits.record',
+                  N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'routes.read',N'routes.visits.record',
                   N'customers.read',N'parties.read');
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@CashierRoleId,PermissionId,@Now
                 FROM dbo.Permissions
                 WHERE Resource IN(
-                  N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.create',N'orders.update',N'orders.review',
+                  N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',
                   N'pos.synchronization.events.read',N'pos.inventory.availability.read');
 
                 INSERT dbo.TenantUserInvitations

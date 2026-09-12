@@ -10,6 +10,9 @@ CREATE PROCEDURE [dbo].[SellerOrderReplace]
     @Notes NVARCHAR(MAX) = NULL,
     @Total DECIMAL(19,4),
     @ReservationTransferId UNIQUEIDENTIFIER,
+    @Status INT,
+    @ExternalStatus NVARCHAR(80),
+    @RequiresStockReview BIT,
     @LinesJson NVARCHAR(MAX)
 AS
 BEGIN
@@ -27,8 +30,10 @@ BEGIN
         CustomerDocumentSnapshot=@CustomerIdentification,CustomerEmailSnapshot=@CustomerEmail,
         CustomerPhoneSnapshot=@CustomerPhone,DeliveryAddressSnapshot=@CustomerAddress,
         Notes=@Notes,Subtotal=@Subtotal,DiscountTotal=@DiscountTotal,Total=@Total,
-        Status=2,ExternalStatus=N'InventoryTransferAccepted',
-        ReservationTransferId=@ReservationTransferId,RequiresStockReview=0,
+        Status=@Status,ExternalStatus=@ExternalStatus,
+        ReservationTransferId=@ReservationTransferId,
+        ReleaseTransferId=NULL,
+        RequiresStockReview=@RequiresStockReview,
         UpdatedAt=SYSUTCDATETIME()
     WHERE OrderId=@OrderId AND BusinessId=@BusinessId AND Status IN(2,5)
       AND NOT EXISTS(SELECT 1 FROM dbo.OrderInvoiceLinks link WHERE link.OrderId=@OrderId);

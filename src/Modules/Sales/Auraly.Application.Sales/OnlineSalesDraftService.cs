@@ -113,6 +113,14 @@ public interface IOnlineSalesDraftStore
         long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken);
+
+    Task<OnlineSalesDraft> ResetAfterOrderAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid orderId,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
 }
 
 public sealed class OnlineSalesDraftForbiddenException(string message) : Exception(message);
@@ -350,6 +358,23 @@ public sealed class OnlineSalesDraftService(
         ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
         return await drafts.ResetAsync(
             user, draftId, request.ExpectedVersion,
+            idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> ResetAfterOrderAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CompleteOnlineSalesOrderDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (request.OrderId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "El pedido guardado es obligatorio para limpiar la venta.");
+        return await drafts.ResetAfterOrderAsync(
+            user, draftId, request.OrderId, request.ExpectedVersion,
             idempotencyKey, cancellationToken);
     }
 

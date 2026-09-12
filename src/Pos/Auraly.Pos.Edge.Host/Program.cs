@@ -1162,6 +1162,48 @@ public static class PosEdgeHostApplication
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);
         });
+        edge.MapPost("/drafts/{draftId:guid}/complete-order", async (
+            Guid draftId,
+            CompleteOnlineSalesOrderDraftRequest request,
+            PosDraftStore drafts,
+            PosOrderServerClient orderServer,
+            PosEdgeRuntimeContext context,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            var user = sessions.Required();
+            var draft = await drafts.GetAsync(new DraftId(draftId), ct)
+                ?? throw new KeyNotFoundException("La venta activa no existe.");
+            var order = await orderServer.GetAsync(user, request.OrderId, ct);
+            var expectedLines = draft.Lines
+                .GroupBy(line => line.ProductId.Value)
+                .OrderBy(group => group.Key)
+                .Select(group => (
+                    ProductId: group.Key,
+                    Quantity: group.Sum(line => line.Quantity),
+                    UnitPrice: group.First().UnitPrice,
+                    Discount: group.Sum(line => line.Discount)))
+                .ToArray();
+            var actualLines = order.Lines
+                .Where(line => line.ProductId.HasValue)
+                .OrderBy(line => line.ProductId!.Value)
+                .Select(line => (
+                    ProductId: line.ProductId!.Value,
+                    line.Quantity,
+                    line.UnitPrice,
+                    Discount: line.DiscountAmount))
+                .ToArray();
+            if (order.BusinessId != context.BusinessId.Value ||
+                order.CustomerId != draft.CustomerId ||
+                !expectedLines.SequenceEqual(actualLines) ||
+                (draft.SourceOrderId.HasValue && draft.SourceOrderId != order.OrderId))
+                throw new InvalidOperationException(
+                    "La venta solo se puede limpiar automáticamente después de guardar su pedido.");
+            await drafts.CancelAsync(new DraftId(draftId), ct);
+            if (draft.SourceOrderId.HasValue)
+                await orderServer.ReleaseAsync(user, draft.SourceOrderId.Value, ct);
+            return Results.Ok(await drafts.GetOrCreateActiveAsync(context.ScopeFor(user), ct));
+        });
         edge.MapPost("/drafts/{draftId:guid}/temporary", async (
             Guid draftId,
             SaveTemporaryRequest request,

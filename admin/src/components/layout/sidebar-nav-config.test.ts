@@ -61,3 +61,18 @@ test("cashier inventory availability does not expose the inventory workspace", (
     ["Punto de venta", "Pedidos"],
   );
 });
+
+test("orders and personal routes are independent navigation capabilities", () => {
+  assert.deepEqual(
+    authorizedNavigationItems(["orders.read"]).map((item) => item.name),
+    ["Pedidos"],
+  );
+  assert.deepEqual(
+    authorizedNavigationItems(["routes.read"]).map((item) => item.name),
+    ["Mis rutas"],
+  );
+  assert.deepEqual(
+    authorizedNavigationItems(["routes.read", "routes.read-all"]).map((item) => item.name),
+    ["Mis rutas", "Rutas comerciales"],
+  );
+});

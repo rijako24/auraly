@@ -31,8 +31,8 @@ async function prepareAppShell(paths: string[]) {
 export function prepareSellerAppShell() {
   return prepareAppShell([
     "/dashboard",
-    "/dashboard/orders?view=today-route",
-    "/dashboard/orders?view=all",
+    "/dashboard/my-routes",
+    "/dashboard/orders",
   ]);
 }
 

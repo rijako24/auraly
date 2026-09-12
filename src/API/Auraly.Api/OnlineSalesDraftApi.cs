@@ -318,6 +318,16 @@ group.MapPost("/{draftId:guid}/items", async (
                     draftId, request, IdempotencyKey(context), ct),
                 ct)));
 
+        group.MapPost("/{draftId:guid}/complete-order", async (
+            HttpContext context,
+            Guid draftId,
+            CompleteOnlineSalesOrderDraftRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.ResetAfterOrderAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, request, IdempotencyKey(context), ct)));
+
         return endpoints;
     }
 

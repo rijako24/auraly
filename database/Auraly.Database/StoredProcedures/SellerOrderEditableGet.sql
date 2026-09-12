@@ -15,11 +15,11 @@ BEGIN
 
     SELECT item.ProductId,
            SUM(item.Quantity),
-           SUM(COALESCE(
+           SUM(CASE WHEN orders.ExternalStatus=N'InventoryReleasedForInvoice' THEN 0 ELSE COALESCE(
              TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
                CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
                '$.ReservedQuantity')),
-             CASE WHEN orders.Status=2 THEN item.Quantity ELSE 0 END)),
+             CASE WHEN orders.Status=2 THEN item.Quantity ELSE 0 END) END),
            MAX(item.UnitPrice),SUM(item.DiscountAmount),
            COALESCE(NULLIF(MAX(JSON_VALUE(
              CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,

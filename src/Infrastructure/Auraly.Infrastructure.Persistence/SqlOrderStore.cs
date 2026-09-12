@@ -703,10 +703,14 @@ public sealed class SqlOrderStore(
         if (!await reader.ReadAsync(ct))
             throw new OrderNotFoundException(
                 "El pedido o la sesión no pertenecen a esta sede.");
+        var status = reader.GetInt32(0);
+        var canEditReview = status == 5 &&
+            (actor.Permissions.Contains(OrderPermissionCodes.Update) ||
+             actor.Permissions.Contains(OrderPermissionCodes.Review));
         if (!OrderRules.CanInvoice(
-                reader.GetInt32(0), reader.GetBoolean(1), reader.GetBoolean(2)))
+                status, reader.GetBoolean(1), reader.GetBoolean(2)) && !canEditReview)
             throw new OrderConflictException(
-                "El pedido no está disponible para facturar.");
+                "El pedido no está disponible para facturar o corregir.");
     }
 
     private static void AddStatusFilter(

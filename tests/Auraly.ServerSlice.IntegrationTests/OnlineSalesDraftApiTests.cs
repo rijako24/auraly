@@ -10,6 +10,103 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Saved_order_clears_its_draft_without_restart_permission()
+    {
+        Guid customerId;
+        await using (var customerConnection = new SqlConnection(fixture.ConnectionString))
+        {
+            await customerConnection.OpenAsync();
+            await using var findCustomer = new SqlCommand(
+                "SELECT TOP(1) CustomerId FROM dbo.Customers WHERE BusinessId=@BusinessId AND IsActive=1;",
+                customerConnection);
+            findCustomer.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            customerId = (Guid)(await findCustomer.ExecuteScalarAsync()
+                ?? throw new InvalidOperationException("The fixture customer is missing."));
+        }
+        using var client = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        var draft = await OpenAsync(client, new(
+            fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));
+        Assert.Empty(draft.Lines);
+
+        using (var add = Mutation(
+                   HttpMethod.Post,
+                   $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                   new AddOnlineSalesDraftItemRequest(
+                       fixture.ProductId.ToString("D"), 1m, draft.Version),
+                   Guid.NewGuid().ToString("D")))
+        using (var response = await client.SendAsync(add))
+        {
+            response.EnsureSuccessStatusCode();
+            draft = await response.Content.ReadFromJsonAsync<OnlineSalesDraft>()
+                ?? throw new InvalidOperationException("The captured draft was empty.");
+        }
+
+        using (var customer = Mutation(
+                   HttpMethod.Put,
+                   $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer",
+                   new SelectOnlineSalesDraftCustomerRequest(
+                       customerId, draft.Version),
+                   Guid.NewGuid().ToString("D")))
+        using (var response = await client.SendAsync(customer))
+        {
+            response.EnsureSuccessStatusCode();
+            var selection = await response.Content
+                .ReadFromJsonAsync<OnlineSalesCustomerSelection>();
+            draft = selection?.Draft
+                ?? throw new InvalidOperationException("The customer selection was empty.");
+        }
+
+        var orderId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = new SqlCommand(
+                """
+                INSERT dbo.Orders(
+                    OrderId,BusinessId,CustomerId,WarehouseId,CapturedByUserId,
+                    Source,Status,CustomerNameSnapshot,Total,IdempotencyKey)
+                VALUES(
+                    @OrderId,@BusinessId,@CustomerId,@WarehouseId,@UserId,
+                    1,3,N'Cliente de prueba',0,@IdempotencyKey);
+                """, connection);
+            seed.Parameters.AddWithValue("@OrderId", orderId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@CustomerId", customerId);
+            seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            seed.Parameters.AddWithValue("@UserId", fixture.UserId);
+            seed.Parameters.AddWithValue(
+                "@IdempotencyKey", $"pos-order-{draft.DraftId:D}-{draft.Version}");
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            using var complete = Mutation(
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/complete-order",
+                new CompleteOnlineSalesOrderDraftRequest(orderId, draft.Version),
+                Guid.NewGuid().ToString("D"));
+            using var response = await client.SendAsync(complete);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK,
+                $"Expected workflow cleanup without restart permission, got {response.StatusCode}: {body}");
+            var next = await response.Content.ReadFromJsonAsync<OnlineSalesDraft>();
+            Assert.NotNull(next);
+            Assert.NotEqual(draft.DraftId, next.DraftId);
+            Assert.Empty(next.Lines);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var cleanup = new SqlCommand(
+                "DELETE dbo.Orders WHERE OrderId=@OrderId;", connection);
+            cleanup.Parameters.AddWithValue("@OrderId", orderId);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task Generic_product_accepts_document_only_name_cost_price_and_discount()
     {
         var productId = Guid.NewGuid();

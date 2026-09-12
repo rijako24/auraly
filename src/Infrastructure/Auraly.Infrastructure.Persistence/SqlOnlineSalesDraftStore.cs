@@ -445,9 +445,32 @@ public sealed partial class SqlOnlineSalesDraftStore(
         long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken)
+        => await ResetCoreAsync(
+            user, draftId, expectedVersion, idempotencyKey,
+            completedOrderId: null, cancellationToken);
+
+    public async Task<OnlineSalesDraft> ResetAfterOrderAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid orderId,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+        => await ResetCoreAsync(
+            user, draftId, expectedVersion, idempotencyKey,
+            orderId, cancellationToken);
+
+    private async Task<OnlineSalesDraft> ResetCoreAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        long expectedVersion,
+        string idempotencyKey,
+        Guid? completedOrderId,
+        CancellationToken cancellationToken)
     {
-        const string operation = "Reset";
-        var hash = Hash($"{operation}|{draftId:D}|{expectedVersion}");
+        var operation = completedOrderId.HasValue ? "ResetAfterOrder" : "Reset";
+        var hash = Hash(
+            $"{operation}|{draftId:D}|{expectedVersion}|{completedOrderId:D}");
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction =
@@ -465,6 +488,35 @@ public sealed partial class SqlOnlineSalesDraftStore(
         }
 
         DemandActiveVersion(state, expectedVersion);
+        if (completedOrderId.HasValue)
+        {
+            await using var proof = connection.CreateCommand();
+            proof.Transaction = transaction;
+            proof.CommandText = """
+                SELECT COUNT_BIG(*)
+                FROM dbo.Orders completedOrder
+                JOIN dbo.SalesDrafts draft ON draft.SalesDraftId=@DraftId
+                WHERE completedOrder.OrderId=@OrderId
+                  AND completedOrder.BusinessId=draft.BusinessId
+                  AND completedOrder.CustomerId=draft.CustomerId
+                  AND (
+                    draft.SourceOrderId=completedOrder.OrderId
+                    OR (
+                      draft.SourceOrderId IS NULL
+                      AND completedOrder.CapturedByUserId=@UserId
+                      AND LOWER(completedOrder.IdempotencyKey)=LOWER(
+                        CONCAT(N'pos-order-',CONVERT(nvarchar(36),@DraftId),N'-',@ExpectedVersion))
+                    )
+                  );
+                """;
+            proof.Parameters.AddRange([
+                P("@DraftId", draftId), P("@OrderId", completedOrderId.Value),
+                P("@UserId", user.UserId), P("@ExpectedVersion", expectedVersion)
+            ]);
+            if (Convert.ToInt64(await proof.ExecuteScalarAsync(cancellationToken)) != 1)
+                throw new OnlineSalesDraftValidationException(
+                    "La venta solo se puede limpiar automáticamente después de guardar su pedido.");
+        }
         var now = time.GetUtcNow();
         await ExecuteAsync(connection, transaction, """
             UPDATE claim
