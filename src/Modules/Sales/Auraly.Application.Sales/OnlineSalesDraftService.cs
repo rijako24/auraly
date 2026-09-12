@@ -111,6 +111,7 @@ public interface IOnlineSalesDraftStore
         OnlineSalesUserIdentity user,
         Guid draftId,
         long expectedVersion,
+        bool cancelSourceOrder,
         string idempotencyKey,
         CancellationToken cancellationToken);
 
@@ -357,7 +358,21 @@ public sealed class OnlineSalesDraftService(
         DemandPermission(user);
         ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
         return await drafts.ResetAsync(
-            user, draftId, request.ExpectedVersion,
+            user, draftId, request.ExpectedVersion, cancelSourceOrder: true,
+            idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> ResetAfterFailedOrderAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        ResetOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        return await drafts.ResetAsync(
+            user, draftId, request.ExpectedVersion, cancelSourceOrder: false,
             idempotencyKey, cancellationToken);
     }
 

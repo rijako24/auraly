@@ -107,6 +107,7 @@ export const navigation: NavEntry[] = [
   { name: "Gastos", href: "/dashboard/expenses", icon: ReceiptText, permission: "expenses.read" },
   { name: "Nómina", href: "/dashboard/payroll", icon: Users, permission: "payroll.read" },
   { type: "separator", label: "Administración" },
+  { name: "Empresa", href: "/dashboard/company", icon: Building2, permission: "tenant.profile.read" },
   { name: "Empresas", href: "/dashboard/tenants", icon: Building2, permission: "tenants.read" },
   { name: "Sedes", href: "/dashboard/businesses", icon: Store, permission: "businesses.read" },
   { name: "Roles", href: "/dashboard/roles", icon: Shield, permission: "roles.read" },

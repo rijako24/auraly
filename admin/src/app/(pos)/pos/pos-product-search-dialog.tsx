@@ -163,7 +163,7 @@ export function PosProductSearchDialog({
       element?.focus();
       element?.scrollIntoView({ block: "nearest" });
     });
-    if (direction > 0 && target >= results.length - 2)
+    if (direction > 0 && target === results.length - 1)
       void loadMore();
   }
 

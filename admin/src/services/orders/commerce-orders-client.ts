@@ -244,6 +244,19 @@ export function retryCommerceOrderEmission(orderId: string) {
   });
 }
 
+export function cancelCommerceOrder(orderId: string) {
+  return orderRequest<{
+    orderId: string;
+    orderNumber: string;
+    status: "Cancelled";
+    isReplay: boolean;
+  }>(`/api/commerce/v1/orders/${orderId}/cancel`, {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({ reason: "Eliminado desde la vista de pedidos." }),
+  });
+}
+
 async function orderRequest<T>(
   path: string,
   init: RequestInit = {},

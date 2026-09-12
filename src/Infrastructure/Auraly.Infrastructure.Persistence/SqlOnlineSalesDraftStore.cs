@@ -2,11 +2,14 @@ using System.Data;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Auraly.Application.Sales;
 using Auraly.Application.Inventory;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.Authorization;
+using Auraly.Application.Orders;
+using Auraly.Contracts.Orders;
 using Auraly.Domain.Inventory;
 using Microsoft.Data.SqlClient;
 
@@ -16,8 +19,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider time,
-    SqlInventoryOperationStore inventoryOperations) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
-    IOnlineSalesHistoryStore
+    SqlInventoryOperationStore inventoryOperations,
+    SqlSellerOrderReportingJobWriter orderReportingJobs,
+    SalesReportingProcessingCoordinator salesReporting) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
+    IOnlineSalesHistoryStore, IOrderCancellationStore
 {
     public async Task<OnlineSalesDraft> GetOrCreateActiveAsync(
         OnlineSalesUserIdentity user,
@@ -289,48 +294,66 @@ public sealed partial class SqlOnlineSalesDraftStore(
             activeLines.Any(current => lines.All(line => line.LineId != current.LineId)))
             throw new OnlineSalesDraftValidationException(
                 "Debes enviar exactamente todas las líneas de la venta activa.");
+        var currentDraftLines = currentDraft.Lines.ToDictionary(line => line.LineId);
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesChangeDescription) &&
             lines.Any(line => !string.Equals(
                 line.Description.Trim(),
-                currentDraft.Lines.Single(current => current.LineId == line.LineId).Description,
+                currentDraftLines[line.LineId].Description,
                 StringComparison.Ordinal)))
             throw new OnlineSalesDraftForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesChangeDescription}' is required.");
 
-        foreach (var line in lines)
+        var activeByLine = activeLines.ToDictionary(line => line.LineId);
+        var products = await ReadProductsAsync(
+            connection,
+            transaction,
+            state.BusinessId,
+            state.WarehouseId,
+            activeLines.Select(line => line.ProductId).Distinct().ToArray(),
+            cancellationToken);
+        var updates = lines.Select(line =>
         {
-            var current = activeLines.Single(value => value.LineId == line.LineId);
-            var managesStock = await ProductManagesStockAsync(
-                connection, transaction, state.BusinessId, current.ProductId, cancellationToken);
-            if (!managesStock && line.DocumentUnitCost < 0)
+            var current = activeByLine[line.LineId];
+            if (!products.TryGetValue(current.ProductId, out var product))
+                throw new OnlineSalesDraftValidationException(
+                    "El producto no está disponible para este negocio.");
+            if (!product.ManagesStock && line.DocumentUnitCost < 0)
                 throw new OnlineSalesDraftValidationException("El costo de la línea no puede ser negativo.");
-            var documentUnitCost = managesStock
+            var documentUnitCost = product.ManagesStock
                 ? current.DocumentUnitCost
                 : line.DocumentUnitCost;
             if (line.Discount > current.Quantity * line.UnitPrice)
                 throw new OnlineSalesDraftValidationException(
                     "El descuento no puede superar el valor de la línea.");
-            var affected = await ExecuteAsync(connection, transaction, """
-                UPDATE dbo.SalesDraftLines
-                SET Description=@Description,UnitPrice=@UnitPrice,DocumentUnitCost=@DocumentUnitCost,
-                    DiscountAmount=@Discount,
-                    PriceSource=CASE WHEN UnitPrice<>@UnitPrice THEN N'Manual' ELSE PriceSource END,
-                    PriceChannelId=CASE WHEN UnitPrice<>@UnitPrice THEN NULL ELSE PriceChannelId END,
-                    PromotionDiscountAmount=CASE WHEN UnitPrice<>@UnitPrice THEN 0 ELSE PromotionDiscountAmount END
-                WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
-                """,
-                [
-                    P("@Description", line.Description.Trim()),
-                    P("@UnitPrice", line.UnitPrice),
-                    P("@DocumentUnitCost", documentUnitCost),
-                    P("@Discount", line.Discount),
-                    P("@DraftId", draftId),
-                    P("@LineId", line.LineId)
-                ], cancellationToken);
-            if (affected != 1)
-                throw new OnlineSalesDraftValidationException(
-                    "Una línea ya no pertenece a la venta activa.");
-        }
+            return new
+            {
+                line.LineId,
+                Description = line.Description.Trim(),
+                line.UnitPrice,
+                DocumentUnitCost = documentUnitCost,
+                Discount = line.Discount
+            };
+        }).ToArray();
+        var affected = await ExecuteAsync(connection, transaction, """
+            UPDATE target
+            SET Description=input.Description,UnitPrice=input.UnitPrice,
+                DocumentUnitCost=input.DocumentUnitCost,DiscountAmount=input.Discount,
+                PriceSource=CASE WHEN target.UnitPrice<>input.UnitPrice THEN N'Manual' ELSE target.PriceSource END,
+                PriceChannelId=CASE WHEN target.UnitPrice<>input.UnitPrice THEN NULL ELSE target.PriceChannelId END,
+                PromotionDiscountAmount=CASE WHEN target.UnitPrice<>input.UnitPrice THEN 0 ELSE target.PromotionDiscountAmount END
+            FROM dbo.SalesDraftLines target
+            JOIN OPENJSON(@UpdatesJson) WITH(
+              LineId uniqueidentifier '$.LineId',Description nvarchar(500) '$.Description',
+              UnitPrice decimal(19,4) '$.UnitPrice',DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',
+              Discount decimal(19,4) '$.Discount') input
+              ON input.LineId=target.SalesDraftLineId
+            WHERE target.SalesDraftId=@DraftId;
+            """,
+            [P("@UpdatesJson", JsonSerializer.Serialize(updates)), P("@DraftId", draftId)],
+            cancellationToken);
+        if (affected != lines.Count)
+            throw new OnlineSalesDraftValidationException(
+                "Una línea ya no pertenece a la venta activa.");
 
         var version = await AdvanceVersionAsync(
             connection, transaction, draftId, expectedVersion, cancellationToken);
@@ -443,11 +466,12 @@ public sealed partial class SqlOnlineSalesDraftStore(
         OnlineSalesUserIdentity user,
         Guid draftId,
         long expectedVersion,
+        bool cancelSourceOrder,
         string idempotencyKey,
         CancellationToken cancellationToken)
         => await ResetCoreAsync(
             user, draftId, expectedVersion, idempotencyKey,
-            completedOrderId: null, cancellationToken);
+            completedOrderId: null, cancelSourceOrder, cancellationToken);
 
     public async Task<OnlineSalesDraft> ResetAfterOrderAsync(
         OnlineSalesUserIdentity user,
@@ -458,7 +482,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         CancellationToken cancellationToken)
         => await ResetCoreAsync(
             user, draftId, expectedVersion, idempotencyKey,
-            orderId, cancellationToken);
+            orderId, cancelSourceOrder: false, cancellationToken);
 
     private async Task<OnlineSalesDraft> ResetCoreAsync(
         OnlineSalesUserIdentity user,
@@ -466,9 +490,14 @@ public sealed partial class SqlOnlineSalesDraftStore(
         long expectedVersion,
         string idempotencyKey,
         Guid? completedOrderId,
+        bool cancelSourceOrder,
         CancellationToken cancellationToken)
     {
-        var operation = completedOrderId.HasValue ? "ResetAfterOrder" : "Reset";
+        var operation = completedOrderId.HasValue
+            ? "ResetAfterOrder"
+            : cancelSourceOrder
+                ? "ResetAndCancelOrder"
+                : "ResetAfterFailedOrder";
         var hash = Hash(
             $"{operation}|{draftId:D}|{expectedVersion}|{completedOrderId:D}");
         await using var connection = connections.Create();
@@ -483,11 +512,60 @@ public sealed partial class SqlOnlineSalesDraftStore(
             operation, hash, cancellationToken);
         if (replay is not null)
         {
+            var replayCancellation = cancelSourceOrder && state.SourceOrderId is Guid replaySourceOrderId
+                ? await CancelOrderCoreAsync(
+                    connection,
+                    transaction,
+                    new OrderActor(
+                        user.UserId,
+                        user.TenantId,
+                        state.BusinessId,
+                        state.WorkSessionId,
+                        null,
+                        user.Permissions),
+                    replaySourceOrderId,
+                    state.WorkSessionId,
+                    "Venta reiniciada desde el punto de venta.",
+                    idempotencyKey,
+                    cancellationToken)
+                : null;
             await transaction.CommitAsync(cancellationToken);
+            if (replayCancellation is not null)
+                await salesReporting.RequestProjectionAsync(
+                    state.BusinessId,
+                    replayCancellation.OrderId,
+                    "SellerOrder",
+                    cancellationToken,
+                    replayCancellation.ReportingVersion);
             return replay;
         }
 
         DemandActiveVersion(state, expectedVersion);
+        StoredOrderCancellation? cancellation = null;
+        if (state.SourceOrderId is Guid sourceOrderId && !completedOrderId.HasValue)
+        {
+            if (cancelSourceOrder)
+            {
+                if (!user.Permissions.Contains(OrderPermissionCodes.Cancel))
+                    throw new OnlineSalesDraftForbiddenException(
+                        $"Permission '{OrderPermissionCodes.Cancel}' is required.");
+                cancellation = await CancelOrderCoreAsync(
+                    connection,
+                    transaction,
+                    new OrderActor(
+                        user.UserId,
+                        user.TenantId,
+                        state.BusinessId,
+                        state.WorkSessionId,
+                        null,
+                        user.Permissions),
+                    sourceOrderId,
+                    state.WorkSessionId,
+                    "Venta reiniciada desde el punto de venta.",
+                    idempotencyKey,
+                    cancellationToken);
+            }
+        }
         if (completedOrderId.HasValue)
         {
             await using var proof = connection.CreateCommand();
@@ -526,10 +604,13 @@ public sealed partial class SqlOnlineSalesDraftStore(
             WHERE draft.SalesDraftId=@DraftId AND claim.ReleasedAt IS NULL;
 
             UPDATE dbo.SalesDrafts
-            SET Status=N'Deleted',SourceOrderId=NULL,DeletedAt=@Now,UpdatedAt=@Now,Version=Version+1
+            SET Status=N'Deleted',
+                SourceOrderId=CASE WHEN @PreserveSourceOrder=1 THEN SourceOrderId ELSE NULL END,
+                DeletedAt=@Now,UpdatedAt=@Now,Version=Version+1
             WHERE SalesDraftId=@DraftId AND Version=@ExpectedVersion;
             """,
-            [P("@Now", now), P("@DraftId", draftId), P("@ExpectedVersion", expectedVersion)],
+            [P("@Now", now), P("@DraftId", draftId), P("@ExpectedVersion", expectedVersion),
+             P("@PreserveSourceOrder", cancelSourceOrder)],
             cancellationToken);
         var nextId = ids.NewId();
         await ExecuteAsync(connection, transaction, """
@@ -552,6 +633,13 @@ public sealed partial class SqlOnlineSalesDraftStore(
         var result = await ReadDraftAsync(
             connection, transaction, nextId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (cancellation is not null)
+            await salesReporting.RequestProjectionAsync(
+                state.BusinessId,
+                cancellation.OrderId,
+                "SellerOrder",
+                cancellationToken,
+                cancellation.ReportingVersion);
         return result;
     }
 
@@ -688,34 +776,69 @@ public sealed partial class SqlOnlineSalesDraftStore(
         Guid productId,
         CancellationToken ct)
     {
+        var products = await ReadProductsAsync(
+            connection, transaction, businessId, warehouseId, [productId], ct);
+        return products.TryGetValue(productId, out var product)
+            ? product
+            : throw new OnlineSalesDraftValidationException(
+                "El producto no está disponible para este negocio.");
+    }
+
+    private static async Task<IReadOnlyDictionary<Guid, ProductSnapshot>> ReadProductsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        Guid warehouseId,
+        IReadOnlyCollection<Guid> productIds,
+        CancellationToken ct)
+    {
+        var requested = productIds.Where(value => value != Guid.Empty).Distinct().ToArray();
+        if (requested.Length == 0)
+            return new Dictionary<Guid, ProductSnapshot>();
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            ;WITH ProductCategoryAncestors AS
+            ;WITH RequestedProducts AS
             (
-              SELECT category.ProductCategoryId,category.ParentProductCategoryId
+              SELECT TRY_CONVERT(uniqueidentifier,[value]) ProductId
+              FROM OPENJSON(@ProductIdsJson)
+              WHERE TRY_CONVERT(uniqueidentifier,[value]) IS NOT NULL
+            ),
+            ProductCategoryAncestors AS
+            (
+              SELECT scopedProduct.ProductId RootProductId,
+                     category.ProductCategoryId,category.ParentProductCategoryId
               FROM dbo.Products scopedProduct
+              JOIN RequestedProducts requested ON requested.ProductId=scopedProduct.ProductId
               JOIN dbo.ProductCategories category ON category.ProductCategoryId=scopedProduct.ProductCategoryId
-              WHERE scopedProduct.ProductId=@ProductId AND category.BusinessId=@BusinessId
+              WHERE category.BusinessId=@BusinessId
               UNION ALL
-              SELECT parent.ProductCategoryId,parent.ParentProductCategoryId
+              SELECT child.RootProductId,parent.ProductCategoryId,parent.ParentProductCategoryId
               FROM dbo.ProductCategories parent
               JOIN ProductCategoryAncestors child ON child.ParentProductCategoryId=parent.ProductCategoryId
               WHERE parent.BusinessId=@BusinessId
             )
-            SELECT COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
+            SELECT p.ProductId,
+                   COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
                    p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
-                   COALESCE(t.Code,N'01'),COALESCE(t.Rate,0),
+                   COALESCE(t.DianTaxCode,N'01'),COALESCE(t.Rate,0),
                    price.Amount,
                    price.CurrencyCode,p.AllowsFractionalSale,
                     COALESCE(NULLIF(balance.AverageUnitCost,0),price.CostBasisAmount,0),
-                    CAST(CASE WHEN p.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit),
+                    CAST(CASE WHEN p.ManageStock=1 OR EXISTS(
+                      SELECT 1 FROM dbo.ProductLinks inventoryLink
+                      WHERE inventoryLink.BusinessId=@BusinessId
+                        AND inventoryLink.ChildProductId=p.ProductId
+                        AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1)
+                      THEN 1 ELSE 0 END AS bit),
                     p.CategoryName,p.ProductCategoryId,p.ProductBrandId,
                     COALESCE((SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),ancestor.ProductCategoryId),N',')
-                              FROM ProductCategoryAncestors ancestor),N''),
+                              FROM ProductCategoryAncestors ancestor
+                              WHERE ancestor.RootProductId=p.ProductId),N''),
                     latestCost.Amount,
                     COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)
             FROM dbo.Products p
+            JOIN RequestedProducts requested ON requested.ProductId=p.ProductId
             LEFT JOIN dbo.TaxProfiles t
               ON t.TaxProfileId=p.TaxProfileId AND t.IsActive=1
             CROSS APPLY (
@@ -729,10 +852,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
             ) price
             LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId
               AND balance.ProductId=p.ProductId AND balance.WarehouseId=@WarehouseId
-            LEFT JOIN dbo.ProductLinks inventoryLink
-              ON inventoryLink.BusinessId=@BusinessId
-             AND inventoryLink.ChildProductId=p.ProductId
-             AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
             OUTER APPLY
             (
               SELECT COALESCE(
@@ -742,27 +861,28 @@ public sealed partial class SqlOnlineSalesDraftStore(
                  ORDER BY latest.ObservedAt DESC,latest.SupplierId),
                 price.CostBasisAmount,NULLIF(balance.AverageUnitCost,0),0) Amount
             ) latestCost
-            WHERE p.ProductId=@ProductId AND p.IsActive=1
+            WHERE p.IsActive=1
               AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
                    OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
             """;
         command.Parameters.AddRange([
-            P("@BusinessId", businessId), P("@WarehouseId", warehouseId), P("@ProductId", productId)
+            P("@BusinessId", businessId), P("@WarehouseId", warehouseId),
+            P("@ProductIdsJson", System.Text.Json.JsonSerializer.Serialize(requested))
         ]);
+        var products = new Dictionary<Guid, ProductSnapshot>();
         await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct))
-            throw new OnlineSalesDraftValidationException(
-                "El producto no está disponible para este negocio.");
-        return new(
-            reader.GetString(0), reader.GetString(1), reader.GetString(2),
-            reader.GetString(3), reader.GetDecimal(4),
-            reader.GetDecimal(5), reader.GetString(6), reader.GetBoolean(7),
-            reader.GetDecimal(8), reader.GetBoolean(9),
-            reader.IsDBNull(10) ? null : reader.GetString(10),
-            reader.IsDBNull(11) ? null : reader.GetGuid(11),
-            reader.IsDBNull(12) ? null : reader.GetGuid(12),
-            reader.GetString(13).Split(',',StringSplitOptions.RemoveEmptyEntries).Select(Guid.Parse).ToArray(),
-            reader.GetDecimal(14),reader.IsDBNull(15) ? null : reader.GetDecimal(15));
+        while (await reader.ReadAsync(ct))
+            products.Add(reader.GetGuid(0), new(
+                reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetDecimal(5),
+                reader.GetDecimal(6), reader.GetString(7), reader.GetBoolean(8),
+                reader.GetDecimal(9), reader.GetBoolean(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetGuid(12),
+                reader.IsDBNull(13) ? null : reader.GetGuid(13),
+                reader.GetString(14).Split(',',StringSplitOptions.RemoveEmptyEntries).Select(Guid.Parse).ToArray(),
+                reader.GetDecimal(15),reader.IsDBNull(16) ? null : reader.GetDecimal(16)));
+        return products;
     }
 
     private static async Task<ResolvedSalesExecutionContext> ResolveOnlineContextAsync(
@@ -1109,71 +1229,100 @@ public sealed partial class SqlOnlineSalesDraftStore(
         Guid draftId,
         CancellationToken ct)
     {
-        await using var header = connection.CreateCommand();
-        header.Transaction = transaction;
-        header.CommandText = """
-            SELECT SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,
-                   CustomerId,SellerId,Status,Name,Reference,Observation,Version,UpdatedAt,
-                   SourceOrderId
-            FROM dbo.SalesDrafts WHERE SalesDraftId=@DraftId;
-            """;
-        header.Parameters.Add(P("@DraftId", draftId));
-        await using var reader = await header.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct))
+        var drafts = await ReadDraftsAsync(connection, transaction, [draftId], ct);
+        if (!drafts.TryGetValue(draftId, out var draft))
             throw new OnlineSalesDraftValidationException("El borrador no existe.");
-        var values = new object[14];
-        reader.GetValues(values);
-        await reader.DisposeAsync();
+        return draft;
+    }
 
-        await using var details = connection.CreateCommand();
-        details.Transaction = transaction;
-        details.CommandText = """
-            SELECT line.SalesDraftLineId,line.ProductId,line.ProductCode,line.Description,line.UnitCode,
+    private static async Task<IReadOnlyDictionary<Guid, OnlineSalesDraft>> ReadDraftsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        IReadOnlyCollection<Guid> draftIds,
+        CancellationToken ct)
+    {
+        if (draftIds.Count == 0)
+            return new Dictionary<Guid, OnlineSalesDraft>();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT draft.SalesDraftId,draft.BusinessId,draft.WarehouseId,draft.WorkSessionId,draft.UserId,
+                   draft.CustomerId,draft.SellerId,draft.Status,draft.Name,draft.Reference,draft.Observation,
+                   draft.Version,draft.UpdatedAt,draft.SourceOrderId
+            FROM dbo.SalesDrafts draft
+            JOIN OPENJSON(@DraftIdsJson) WITH(DraftId uniqueidentifier '$') input
+              ON input.DraftId=draft.SalesDraftId;
+
+            SELECT line.SalesDraftId,line.SalesDraftLineId,line.ProductId,line.ProductCode,line.Description,line.UnitCode,
                    line.TaxCode,line.TaxRate,line.Quantity,line.BaseUnitPrice,line.UnitPrice,line.CurrencyCode,
                    line.PriceSource,line.DiscountAmount,line.DocumentUnitCost,
                    CAST(CASE WHEN product.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit),
                    product.AllowsFractionalSale,
                    line.PromotionDiscountAmount
             FROM dbo.SalesDraftLines line
+            JOIN OPENJSON(@DraftIdsJson) WITH(DraftId uniqueidentifier '$') input
+              ON input.DraftId=line.SalesDraftId
+            JOIN dbo.SalesDrafts draft ON draft.SalesDraftId=line.SalesDraftId
             JOIN dbo.Products product ON product.ProductId=line.ProductId
             LEFT JOIN dbo.ProductLinks inventoryLink
-              ON inventoryLink.BusinessId=(SELECT BusinessId FROM dbo.SalesDrafts WHERE SalesDraftId=@DraftId)
+              ON inventoryLink.BusinessId=draft.BusinessId
              AND inventoryLink.ChildProductId=line.ProductId
              AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
-            WHERE line.SalesDraftId=@DraftId ORDER BY line.Position,line.SalesDraftLineId;
+            ORDER BY line.SalesDraftId,line.Position,line.SalesDraftLineId;
             """;
-        details.Parameters.Add(P("@DraftId", draftId));
-        var lines = new List<OnlineSalesDraftLine>();
-        await using var lineReader = await details.ExecuteReaderAsync(ct);
-        while (await lineReader.ReadAsync(ct))
+        command.Parameters.Add(P("@DraftIdsJson", JsonSerializer.Serialize(draftIds)));
+        var headers = new Dictionary<Guid, DraftSnapshotHeader>();
+        var lines = new Dictionary<Guid, List<OnlineSalesDraftLine>>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
         {
-            var quantity = lineReader.GetDecimal(7);
-            var price = lineReader.GetDecimal(9);
-            var discount = lineReader.GetDecimal(12);
-            var promotionDiscount = lineReader.GetDecimal(16);
-            var net = decimal.Round(quantity * price - discount - promotionDiscount, 2, MidpointRounding.AwayFromZero);
-            var tax = decimal.Round(net * lineReader.GetDecimal(6) / 100m, 2, MidpointRounding.AwayFromZero);
-            lines.Add(new(
-                lineReader.GetGuid(0), lineReader.GetGuid(1), lineReader.GetString(2),
-                lineReader.GetString(3), lineReader.GetString(4), lineReader.GetString(5),
-                lineReader.GetDecimal(6), quantity, lineReader.GetDecimal(8), price,
-                lineReader.GetString(10), lineReader.GetString(11), discount,
-                lineReader.GetDecimal(13), !lineReader.GetBoolean(14), lineReader.GetBoolean(15),
+            var draftId = reader.GetGuid(0);
+            headers[draftId] = new(
+                draftId, reader.GetGuid(1), reader.GetGuid(2), reader.GetGuid(3), reader.GetGuid(4),
+                reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetInt64(11),
+                reader.GetFieldValue<DateTimeOffset>(12),
+                reader.IsDBNull(13) ? null : reader.GetGuid(13));
+            lines[draftId] = [];
+        }
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var draftId = reader.GetGuid(0);
+            if (!lines.TryGetValue(draftId, out var draftLines)) continue;
+            var quantity = reader.GetDecimal(8);
+            var price = reader.GetDecimal(10);
+            var discount = reader.GetDecimal(13);
+            var promotionDiscount = reader.GetDecimal(17);
+            var net = decimal.Round(
+                quantity * price - discount - promotionDiscount, 2,
+                MidpointRounding.AwayFromZero);
+            var tax = decimal.Round(
+                net * reader.GetDecimal(7) / 100m, 2,
+                MidpointRounding.AwayFromZero);
+            draftLines.Add(new(
+                reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3),
+                reader.GetString(4), reader.GetString(5), reader.GetString(6),
+                reader.GetDecimal(7), quantity, reader.GetDecimal(9), price,
+                reader.GetString(11), reader.GetString(12), discount,
+                reader.GetDecimal(14), !reader.GetBoolean(15), reader.GetBoolean(16),
                 net, tax, net + tax, promotionDiscount));
         }
-        return new(
-            (Guid)values[0], (Guid)values[1], (Guid)values[2], (Guid)values[3],
-            (Guid)values[4],
-            values[5] is DBNull ? null : (Guid)values[5],
-            values[6] is DBNull ? null : (Guid)values[6],
-            (string)values[7],
-            values[8] is DBNull ? null : (string)values[8],
-            values[9] is DBNull ? null : (string)values[9],
-            values[10] is DBNull ? null : (string)values[10],
-            (long)values[11], (DateTimeOffset)values[12],
-            lines, lines.Sum(line => line.Net), lines.Sum(line => line.Tax),
-            lines.Sum(line => line.Total),
-            values[13] is DBNull ? null : (Guid)values[13]);
+        return headers.ToDictionary(pair => pair.Key, pair =>
+        {
+            var header = pair.Value;
+            var draftLines = lines[pair.Key];
+            return new OnlineSalesDraft(
+                header.DraftId, header.BusinessId, header.WarehouseId, header.WorkSessionId,
+                header.UserId, header.CustomerId, header.SellerId, header.Status,
+                header.Name, header.Reference, header.Observation, header.Version,
+                header.UpdatedAt, draftLines, draftLines.Sum(line => line.Net),
+                draftLines.Sum(line => line.Tax), draftLines.Sum(line => line.Total),
+                header.SourceOrderId);
+        });
     }
 
     private static async Task<int> ExecuteAsync(
@@ -1236,28 +1385,21 @@ public sealed partial class SqlOnlineSalesDraftStore(
         IReadOnlyCollection<Guid> ProductCategoryAncestorIds,
         decimal LatestUnitCost,
         decimal? TargetMarginPercent);
-
-    private static async Task<bool> ProductManagesStockAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid productId,
-        CancellationToken ct)
-    {
-        await using var command = new SqlCommand(
-            """
-            SELECT CAST(CASE WHEN product.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit)
-            FROM dbo.Products product
-            LEFT JOIN dbo.ProductLinks inventoryLink
-              ON inventoryLink.BusinessId=@BusinessId
-             AND inventoryLink.ChildProductId=product.ProductId
-             AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
-            WHERE product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-              AND product.ProductId=@ProductId AND product.IsActive=1;
-            """,
-            connection, transaction);
-        command.Parameters.AddRange([P("@BusinessId", businessId), P("@ProductId", productId)]);
-        return await command.ExecuteScalarAsync(ct) is bool value
-            ? value
-            : throw new OnlineSalesDraftValidationException("El producto ya no está disponible.");
-    }
+    private sealed record DraftSnapshotHeader(
+        Guid DraftId,
+        Guid BusinessId,
+        Guid WarehouseId,
+        Guid WorkSessionId,
+        Guid UserId,
+        Guid? CustomerId,
+        Guid? SellerId,
+        string Status,
+        string? Name,
+        string? Reference,
+        string? Observation,
+        long Version,
+        DateTimeOffset UpdatedAt,
+        Guid? SourceOrderId);
 
     private static void DemandAllowedQuantity(bool allowsFractionalSale, decimal quantity)
     {

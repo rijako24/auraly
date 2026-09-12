@@ -1,4 +1,5 @@
 using System.Net;
+using System.Globalization;
 using System.Text;
 using System.Xml;
 using System.Xml.Schema;
@@ -16,6 +17,12 @@ public sealed class DianSchemaValidator
         "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2";
     private static readonly XNamespace Sts =
         "dian:gov:co:facturaelectronica:Structures-2-1";
+    private static readonly XNamespace Ext =
+        "urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2";
+    private static readonly XNamespace Ds =
+        "http://www.w3.org/2000/09/xmldsig#";
+    private static readonly XNamespace Xades =
+        "http://uri.etsi.org/01903/v1.3.2#";
     private readonly XmlSchemaSet schemas;
 
     public DianSchemaValidator(string? schemaRoot = null)
@@ -86,7 +93,157 @@ public sealed class DianSchemaValidator
         ValidateProvider(document, Sts + "AuthorizationProviderID", "800197268", "4", errors);
         ValidateNitIdentifications(document, errors);
         ValidateFinalConsumer(document, errors);
+        ValidateCountryLanguage(document, errors);
+        ValidateTaxResponsibilityListNames(document, errors);
+        ValidateColombiaTime(document, errors);
+        ValidateTaxTotals(document, errors);
     }
+
+    private static void ValidateTaxResponsibilityListNames(
+        XDocument document,
+        List<string> errors)
+    {
+        ValidatePartyTaxResponsibilityListName(
+            document, "AccountingSupplierParty", "04", errors);
+        ValidatePartyTaxResponsibilityListName(
+            document, "AccountingCustomerParty", "05", errors);
+    }
+
+    private static void ValidatePartyTaxResponsibilityListName(
+        XDocument document,
+        string partyElement,
+        string expected,
+        List<string> errors)
+    {
+        foreach (var taxLevel in document.Descendants(Cac + partyElement)
+                     .Descendants(Cbc + "TaxLevelCode"))
+            if (!string.Equals(
+                    taxLevel.Attribute("listName")?.Value,
+                    expected,
+                    StringComparison.Ordinal))
+                errors.Add(
+                    $"Error: FAJ27 {partyElement}/TaxLevelCode/@listName debe ser '{expected}'.");
+    }
+
+    private static void ValidateCountryLanguage(XDocument document, List<string> errors)
+    {
+        foreach (var countryName in document.Descendants(Cac + "Country")
+                     .Elements(Cbc + "Name"))
+        {
+            if (countryName.Attribute(XNamespace.Xml + "lang") is not null)
+                errors.Add("Error: ZB01 cbc:Country/cbc:Name no permite el atributo xml:lang.");
+            if (!string.Equals(
+                    countryName.Attribute("languageID")?.Value,
+                    "es",
+                    StringComparison.Ordinal))
+                errors.Add("Error: FAJ18 cbc:Country/cbc:Name/@languageID debe ser 'es'.");
+        }
+    }
+
+    private static void ValidateColombiaTime(XDocument document, List<string> errors)
+    {
+        var issueTime = document.Root?.Element(Cbc + "IssueTime")?.Value;
+        if (!string.IsNullOrWhiteSpace(issueTime) &&
+            (!DateTimeOffset.TryParseExact(
+                 $"2000-01-01T{issueTime}",
+                 "yyyy-MM-dd'T'HH:mm:sszzz",
+                 CultureInfo.InvariantCulture,
+                 DateTimeStyles.None,
+                 out var parsed) ||
+             parsed.Offset != TimeSpan.FromHours(-5)))
+            errors.Add("Error: FAD10 cbc:IssueTime debe usar la zona horaria oficial de Colombia (-05:00).");
+
+        foreach (var signingTime in document.Descendants(Xades + "SigningTime"))
+        {
+            if (!DateTimeOffset.TryParse(
+                    signingTime.Value,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var signedAt) ||
+                signedAt.Offset != TimeSpan.FromHours(-5))
+                errors.Add("Error: la hora de firma XAdES debe usar la zona horaria oficial de Colombia (-05:00).");
+        }
+    }
+
+    private static void ValidateTaxTotals(XDocument document, List<string> errors)
+    {
+        var root = document.Root;
+        if (root is null) return;
+
+        var headerTotals = root.Elements(Cac + "TaxTotal").ToArray();
+        var duplicateHeaderCodes = headerTotals
+            .SelectMany(TaxSubtotals)
+            .GroupBy(value => value.Code, StringComparer.Ordinal)
+            .Where(group => group.Select(value => value.Owner).Distinct().Count() > 1)
+            .Select(group => group.Key)
+            .ToArray();
+        if (duplicateHeaderCodes.Length > 0)
+            errors.Add(
+                $"Error: FAS01 cada tributo debe tener un único TaxTotal de encabezado. Duplicados: {string.Join(", ", duplicateHeaderCodes)}.");
+
+        var lineSubtotals = root.Descendants()
+            .Where(element => element.Name.LocalName is
+                "InvoiceLine" or "CreditNoteLine" or "DebitNoteLine")
+            .SelectMany(line => line.Elements(Cac + "TaxTotal"))
+            .SelectMany(TaxSubtotals)
+            .GroupBy(value => new { value.Code, value.Name, value.Percent })
+            .ToDictionary(
+                group => (group.Key.Code, group.Key.Name, group.Key.Percent),
+                group => (Taxable: group.Sum(value => value.Taxable),
+                    Amount: group.Sum(value => value.Amount)));
+        var headerSubtotals = headerTotals.SelectMany(TaxSubtotals)
+            .GroupBy(value => new { value.Code, value.Name, value.Percent })
+            .ToDictionary(
+                group => (group.Key.Code, group.Key.Name, group.Key.Percent),
+                group => (Taxable: group.Sum(value => value.Taxable),
+                    Amount: group.Sum(value => value.Amount)));
+
+        if (lineSubtotals.Count != headerSubtotals.Count ||
+            lineSubtotals.Any(value =>
+                !headerSubtotals.TryGetValue(value.Key, out var header) ||
+                header != value.Value))
+            errors.Add(
+                "Error: FAS01a/FAS01b los tributos de encabezado no coinciden con código, nombre, porcentaje, base y valor informados en las líneas.");
+
+        foreach (var total in headerTotals)
+        {
+            if (!TryDecimal(total.Element(Cbc + "TaxAmount")?.Value, out var declared) ||
+                declared != TaxSubtotals(total).Sum(value => value.Amount))
+                errors.Add("Error: el TaxAmount de encabezado no coincide con sus TaxSubtotal.");
+        }
+    }
+
+    private static IEnumerable<TaxSubtotalValue> TaxSubtotals(XElement total)
+    {
+        foreach (var subtotal in total.Elements(Cac + "TaxSubtotal"))
+        {
+            var category = subtotal.Element(Cac + "TaxCategory");
+            var scheme = category?.Element(Cac + "TaxScheme");
+            if (scheme is null ||
+                !TryDecimal(subtotal.Element(Cbc + "TaxableAmount")?.Value, out var taxable) ||
+                !TryDecimal(subtotal.Element(Cbc + "TaxAmount")?.Value, out var amount) ||
+                !TryDecimal(category?.Element(Cbc + "Percent")?.Value, out var percent))
+                continue;
+            yield return new TaxSubtotalValue(
+                total,
+                scheme.Element(Cbc + "ID")?.Value.Trim() ?? string.Empty,
+                scheme.Element(Cbc + "Name")?.Value.Trim() ?? string.Empty,
+                percent,
+                taxable,
+                amount);
+        }
+    }
+
+    private static bool TryDecimal(string? value, out decimal result) =>
+        decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+
+    private sealed record TaxSubtotalValue(
+        XElement Owner,
+        string Code,
+        string Name,
+        decimal Percent,
+        decimal Taxable,
+        decimal Amount);
 
     private static void ValidateNitIdentifications(XDocument document, List<string> errors)
     {
@@ -214,6 +371,16 @@ public sealed class DianSchemaValidator
         // require the opposite: schemeID is the NIT check digit and schemeName is "31".
         // Validate that real contract above, then normalize only a clone used by the XSD.
         var normalized = new XDocument(original);
+        // The .NET XSD validator narrows xs:integer to decimal and rejects valid
+        // X.509 serial numbers longer than 29 digits. XMLDSIG defines that value
+        // as an unbounded integer. Signature structure is checked above and its
+        // cryptographic integrity is verified by DianXadesSigner, so remove only
+        // the signature from the clone used for UBL XSD validation.
+        normalized.Descendants(Ds + "Signature")
+            .Select(signature => signature.Ancestors(Ext + "UBLExtension").FirstOrDefault())
+            .OfType<XElement>()
+            .Distinct()
+            .Remove();
         foreach (var element in normalized.Descendants()
                      .Where(value => value.Name == Sts + "ProviderID" ||
                                      value.Name == Sts + "AuthorizationProviderID"))

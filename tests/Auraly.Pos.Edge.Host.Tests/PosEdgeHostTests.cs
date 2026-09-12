@@ -6,6 +6,7 @@ using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Orders;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
@@ -442,6 +443,58 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         command.CommandText = "SELECT Status FROM PosDrafts WHERE DraftId=$id;";
         command.Parameters.AddWithValue("$id", captured.Draft.DraftId.Value.ToString("D"));
         Assert.Equal(PosDraftStatus.Deleted, (string)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Restarting_a_recovered_order_cancels_it_on_the_server_before_deleting_the_local_sale()
+    {
+        var orderId = Guid.NewGuid();
+        var productId = await LocalProductIdAsync();
+        var handler = new RecoveredOrderHandler(orderId, productId, cancelSucceeds: true);
+        using var factory = _factory!.WithWebHostBuilder(webHost =>
+            webHost.ConfigureServices(services =>
+            {
+                services.RemoveAll<HttpClient>();
+                services.AddSingleton(new HttpClient(handler)
+                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
+            }));
+        using var client = AuthenticatedClient(factory);
+
+        using var recover = await client.PostAsync($"/edge/v1/orders/{orderId:D}/recover", null);
+        recover.EnsureSuccessStatusCode();
+        var recovered = Assert.IsType<PosDraft>(await recover.Content.ReadFromJsonAsync<PosDraft>());
+        Assert.Equal(orderId, recovered.SourceOrderId);
+
+        using var restarted = await client.DeleteAsync($"/edge/v1/drafts/{recovered.DraftId.Value:D}");
+        restarted.EnsureSuccessStatusCode();
+
+        Assert.Equal(1, handler.CancelCalls);
+        Assert.Equal(PosDraftStatus.Deleted, await DraftStatusAsync(recovered.DraftId.Value));
+    }
+
+    [Fact]
+    public async Task Failed_server_cancellation_keeps_the_recovered_local_sale_intact()
+    {
+        var orderId = Guid.NewGuid();
+        var productId = await LocalProductIdAsync();
+        var handler = new RecoveredOrderHandler(orderId, productId, cancelSucceeds: false);
+        using var factory = _factory!.WithWebHostBuilder(webHost =>
+            webHost.ConfigureServices(services =>
+            {
+                services.RemoveAll<HttpClient>();
+                services.AddSingleton(new HttpClient(handler)
+                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
+            }));
+        using var client = AuthenticatedClient(factory);
+
+        using var recover = await client.PostAsync($"/edge/v1/orders/{orderId:D}/recover", null);
+        recover.EnsureSuccessStatusCode();
+        var recovered = Assert.IsType<PosDraft>(await recover.Content.ReadFromJsonAsync<PosDraft>());
+
+        using var restarted = await client.DeleteAsync($"/edge/v1/drafts/{recovered.DraftId.Value:D}");
+        Assert.False(restarted.IsSuccessStatusCode);
+        Assert.Equal(1, handler.CancelCalls);
+        Assert.Equal(PosDraftStatus.Active, await DraftStatusAsync(recovered.DraftId.Value));
     }
 
     [Fact]
@@ -1318,6 +1371,37 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ]));
     }
 
+    private HttpClient AuthenticatedClient(WebApplicationFactory<Program> factory)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+        client.DefaultRequestHeaders.Add("X-Auraly-User-Session", _userSessionToken);
+        return client;
+    }
+
+    private async Task<Guid> LocalProductIdAsync()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            $"Data Source={_path}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ProductId FROM PosCatalogProducts WHERE ProductCode='P-1';";
+        return Guid.Parse((string)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("The local test product does not exist.")));
+    }
+
+    private async Task<string> DraftStatusAsync(Guid draftId)
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            $"Data Source={_path}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT Status FROM PosDrafts WHERE DraftId=$id;";
+        command.Parameters.AddWithValue("$id", draftId.ToString("D"));
+        return (string)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("The local draft does not exist."));
+    }
+
     public async Task DisposeAsync()
     {
         _client?.Dispose();
@@ -1391,6 +1475,51 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             CancellationToken cancellationToken) =>
             Task.FromException<HttpResponseMessage>(
                 new HttpRequestException("Auraly Server is offline."));
+    }
+
+    private sealed class RecoveredOrderHandler(
+        Guid orderId,
+        Guid productId,
+        bool cancelSucceeds) : HttpMessageHandler
+    {
+        public int CancelCalls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post &&
+                path.EndsWith($"/orders/{orderId:D}/claim", StringComparison.Ordinal))
+                return Task.FromResult(Json(HttpStatusCode.OK, new OrderClaimSummary(
+                    Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                    DateTimeOffset.UtcNow.AddMinutes(10), true)));
+            if (request.Method == HttpMethod.Get &&
+                path.EndsWith($"/orders/{orderId:D}", StringComparison.Ordinal))
+                return Task.FromResult(Json(HttpStatusCode.OK, new OrderDetail(
+                    orderId, Guid.NewGuid(), "PED-EDGE-1", "Available", 1,
+                    null, "Cliente local", null, null, null, null, null, "COP",
+                    100m, 0m, 100m, null, null, DateTimeOffset.UtcNow, true, null, null,
+                    [new OrderLine(Guid.NewGuid(), productId, "P-1", "P-1", "Product",
+                        "EA", 1m, 100m, 0m, 100m)], Guid.NewGuid())));
+            if (request.Method == HttpMethod.Post &&
+                path.EndsWith($"/orders/{orderId:D}/cancel", StringComparison.Ordinal))
+            {
+                CancelCalls++;
+                return Task.FromResult(cancelSucceeds
+                    ? Json(HttpStatusCode.OK,
+                        new CancelOrderResponse(orderId, "PED-EDGE-1", "Cancelled", false))
+                    : Json(HttpStatusCode.ServiceUnavailable,
+                        new { detail = "No fue posible cancelar el pedido." }));
+            }
+            return Task.FromResult(Json(HttpStatusCode.NotFound,
+                new { detail = $"Unexpected test request: {request.Method} {path}" }));
+        }
+
+        private static HttpResponseMessage Json<T>(HttpStatusCode status, T body) => new(status)
+        {
+            Content = JsonContent.Create(body)
+        };
     }
 
     private sealed class EnrollmentConflictHandler : HttpMessageHandler

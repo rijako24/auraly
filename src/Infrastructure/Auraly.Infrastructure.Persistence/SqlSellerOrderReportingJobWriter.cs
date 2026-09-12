@@ -31,7 +31,7 @@ public sealed class SqlSellerOrderReportingJobWriter(IAuralyIdGenerator ids,Time
          var status=reader.GetInt32(12);DateTimeOffset? changed=reader.IsDBNull(21)?null:new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(21),DateTimeKind.Utc));
          source=new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),DateOnly.FromDateTime(reader.GetDateTime(3)),new DateTimeOffset(created),reader.GetString(5),reader.IsDBNull(6)?null:reader.GetGuid(6),reader.IsDBNull(7)?null:reader.GetString(7),reader.GetGuid(8),reader.GetString(9),reader.IsDBNull(10)?null:reader.GetGuid(10),reader.GetDecimal(11),status,reader.GetBoolean(13),
             reader.IsDBNull(14)?null:reader.GetGuid(14),reader.IsDBNull(15)?null:reader.GetGuid(15),reader.IsDBNull(16)?null:reader.GetGuid(16),reader.IsDBNull(17)?null:reader.GetString(17),reader.IsDBNull(18)?null:reader.GetString(18),
-            reader.GetInt32(20)==0?"Conversational":reader.GetInt32(20)==1?"PointOfSale":"SellerOrder",reader.GetBoolean(19),status is 2 or 3 or 4?changed:null,status==91?changed:null);}
+            reader.GetInt32(20)==0?"Conversational":reader.GetInt32(20)==1?"PointOfSale":"SellerOrder",reader.GetBoolean(19),status is 2 or 3 or 4?changed:null,status==6?changed:null);}
         var payload=JsonSerializer.Serialize(source,new JsonSerializerOptions(JsonSerializerDefaults.Web));var hash=SHA256.HashData(Encoding.UTF8.GetBytes(payload));
         await using var job=new SqlCommand("""
           DECLARE @PriorVersion bigint,@PriorHash binary(32);

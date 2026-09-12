@@ -52,6 +52,63 @@ public sealed class DianInvoiceUblTests
         Assert.Null(customerIdentification.Attribute("schemeID"));
         var taxLevel = customer.Descendants(DianUblNamespaces.Cbc + "TaxLevelCode").Single();
         Assert.Equal("R-99-PN", taxLevel.Value);
+
+        var countryNames = document.Descendants(DianUblNamespaces.Cac + "Country")
+            .Elements(DianUblNamespaces.Cbc + "Name").ToArray();
+        Assert.NotEmpty(countryNames);
+        Assert.All(countryNames, countryName =>
+        {
+            Assert.Equal("es", countryName.Attribute("languageID")?.Value);
+            Assert.Null(countryName.Attribute(XNamespace.Xml + "lang"));
+        });
+    }
+
+    [Fact]
+    public void Invoice_normalizes_issue_time_to_colombia_offset()
+    {
+        var built = new DianInvoiceUblBuilder().Build(CreateInvoice() with
+        {
+            IssuedAt = new DateTimeOffset(2026, 7, 28, 15, 15, 30, TimeSpan.Zero)
+        });
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+
+        Assert.Equal("10:15:30-05:00",
+            document.Root?.Element(DianUblNamespaces.Cbc + "IssueTime")?.Value);
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+    }
+
+    [Fact]
+    public void Header_emits_one_tax_total_per_code_with_one_subtotal_per_rate()
+    {
+        var firstTax = new DianTax("01", "IVA", 10_000m, 1_900m, 19m);
+        var secondTax = new DianTax("01", "IVA", 20_000m, 1_000m, 5m);
+        var invoice = CreateInvoice() with
+        {
+            Lines =
+            [
+                new DianInvoiceLine(1, "P1", "999", "Producto 19", "EA",
+                    1m, 10_000m, 0m, 10_000m, [firstTax]),
+                new DianInvoiceLine(2, "P2", "999", "Producto 5", "EA",
+                    1m, 20_000m, 0m, 20_000m, [secondTax])
+            ],
+            Taxes = [firstTax, secondTax],
+            LineExtensionAmount = 30_000m,
+            TaxExclusiveAmount = 30_000m,
+            TaxInclusiveAmount = 32_900m,
+            PayableAmount = 32_900m
+        };
+
+        var built = new DianInvoiceUblBuilder().Build(invoice);
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var headerTotals = document.Root!.Elements(DianUblNamespaces.Cac + "TaxTotal")
+            .ToArray();
+
+        var header = Assert.Single(headerTotals);
+        Assert.Equal("2900.00", header.Element(DianUblNamespaces.Cbc + "TaxAmount")?.Value);
+        Assert.Equal(2, header.Elements(DianUblNamespaces.Cac + "TaxSubtotal").Count());
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
     }
 
     [Fact]

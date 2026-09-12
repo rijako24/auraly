@@ -6,6 +6,7 @@ using System.Text;
 using System.Xml;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
+using Auraly.Fiscal.Core;
 using Auraly.Fiscal.Ubl;
 
 namespace Auraly.Infrastructure.Fiscal;
@@ -28,6 +29,7 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
         "https://facturaelectronica.dian.gov.co/politicadefirma/v2/politicadefirmav2.pdf";
     public const string PolicySha256Base64 =
         "dMoMvtcG5aIzgYo0tIsSQeVJBDnUnfSOfBpxXrmor0Y=";
+    private const string Sha256Url = "http://www.w3.org/2001/04/xmlenc#sha256";
 
     public async Task<FiscalSigningResult> SignAsync(
         FiscalSigningRequest request,
@@ -52,60 +54,13 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
         }
 
         var extensionContent = AppendSignatureExtension(document);
-        var signatureId = $"xmldsig-{Guid.NewGuid():D}";
-        var keyInfoId = $"{signatureId}-keyinfo";
-        var signedPropertiesId = $"{signatureId}-signedprops";
-        var signedXml = new IdAwareSignedXml(document)
-        {
-            SigningKey = rsa
-        };
-        signedXml.Signature.Id = signatureId;
-        signedXml.SignedInfo!.CanonicalizationMethod = SignedXml.XmlDsigC14NTransformUrl;
-        signedXml.SignedInfo.SignatureMethod = SignedXml.XmlDsigRSASHA256Url;
-
-        var documentReference = new Reference(string.Empty)
-        {
-            Id = $"{signatureId}-ref0",
-            DigestMethod = SignedXml.XmlDsigSHA256Url
-        };
-        documentReference.AddTransform(new XmlDsigEnvelopedSignatureTransform());
-        signedXml.AddReference(documentReference);
-
-        var keyInfo = new KeyInfo { Id = keyInfoId };
-        var x509Data = new KeyInfoX509Data(material.Certificate);
-        foreach (var certificate in material.Chain)
-        {
-            if (!string.Equals(certificate.Thumbprint, material.Certificate.Thumbprint, StringComparison.OrdinalIgnoreCase))
-                x509Data.AddCertificate(certificate);
-        }
-        keyInfo.AddClause(x509Data);
-        signedXml.KeyInfo = keyInfo;
-
-        var qualifyingProperties = BuildQualifyingProperties(
-            material,
-            signatureId,
-            signedPropertiesId,
-            request.SigningTime);
-        var objectDocument = new XmlDocument { PreserveWhitespace = true };
-        var objectRoot = objectDocument.CreateElement("xades-object");
-        objectRoot.SetAttribute("xmlns", SignedXml.XmlDsigNamespaceUrl);
-        objectDocument.AppendChild(objectRoot);
-        objectRoot.AppendChild(objectDocument.ImportNode(qualifyingProperties, deep: true));
-        var dataObject = new DataObject { Data = objectRoot.ChildNodes };
-        signedXml.AddObject(dataObject);
-        var signedProperties = objectRoot.SelectSingleNode("xades:QualifyingProperties/xades:SignedProperties", CreateXadesNamespaceManager(objectDocument)) as XmlElement
-            ?? throw new CryptographicException("The XAdES SignedProperties element is missing.");
-        signedXml.RegisterId(signedPropertiesId, signedProperties);
-        var signedPropertiesReference = new Reference($"#{signedPropertiesId}")
-        {
-            Type = "http://uri.etsi.org/01903#SignedProperties",
-            DigestMethod = SignedXml.XmlDsigSHA256Url
-        };
-        signedPropertiesReference.AddTransform(new XmlDsigExcC14NTransform());
-        signedXml.AddReference(signedPropertiesReference);
-        signedXml.ComputeSignature();
-        var signature = document.ImportNode(signedXml.GetXml(), deep: true);
+        var signature = BuildSignature(
+            document,
+            material.Certificate,
+            rsa,
+            DianFiscalDateTime.InColombia(request.SigningTime));
         extensionContent.AppendChild(signature);
+        PopulateReferenceDigestsAndSignature(document, signature, rsa);
         var signedBytes = Serialize(document);
         VerifySignature(signedBytes, material.Certificate);
         return new FiscalSigningResult(
@@ -158,12 +113,6 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
             throw new CryptographicException("The fiscal certificate is not enabled for digital signatures.");
     }
 
-    private static XmlNamespaceManager CreateXadesNamespaceManager(XmlDocument document)
-    {
-        var manager = new XmlNamespaceManager(document.NameTable);
-        manager.AddNamespace("xades", DianUblNamespaces.Xades.NamespaceName);
-        return manager;
-    }
     private static XmlElement AppendSignatureExtension(XmlDocument document)
     {
         var manager = new XmlNamespaceManager(document.NameTable);
@@ -184,35 +133,237 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
         return content;
     }
 
-    private static XmlElement BuildQualifyingProperties(
-        FiscalCertificateMaterial material,
-        string signatureId,
-        string signedPropertiesId,
+    private static XmlElement BuildSignature(
+        XmlDocument document,
+        X509Certificate2 certificate,
+        RSA rsa,
         DateTimeOffset signingTime)
     {
-        var document = new XmlDocument { PreserveWhitespace = true };
+        var id = Guid.NewGuid().ToString("D");
+        var signatureId = $"Signature-{id}";
+        var signatureValueId = $"SignatureValue-{id}";
+        var documentReferenceId = $"Reference-{Guid.NewGuid():D}";
+        var keyInfoId = $"{signatureId}-KeyInfo";
+        var signedPropertiesId = $"xmldsig-{signatureId}-signedprops";
+
+        var signature = Ds(document, "Signature");
+        signature.SetAttribute("xmlns:ds", SignedXml.XmlDsigNamespaceUrl);
+        signature.SetAttribute("Id", signatureId);
+
+        var signedInfo = Ds(document, "SignedInfo");
+        signature.AppendChild(signedInfo);
+        signedInfo.AppendChild(Algorithm(document, "CanonicalizationMethod", SignedXml.XmlDsigC14NTransformUrl));
+        signedInfo.AppendChild(Algorithm(document, "SignatureMethod", SignedXml.XmlDsigRSASHA256Url));
+
+        var documentReference = Reference(document, documentReferenceId, string.Empty);
+        var transforms = Ds(document, "Transforms");
+        transforms.AppendChild(Algorithm(document, "Transform", SignedXml.XmlDsigEnvelopedSignatureTransformUrl));
+        documentReference.AppendChild(transforms);
+        AppendDigest(document, documentReference);
+        signedInfo.AppendChild(documentReference);
+
+        var keyInfoReference = Reference(document, "ReferenceKeyInfo", $"#{keyInfoId}");
+        AppendDigest(document, keyInfoReference);
+        signedInfo.AppendChild(keyInfoReference);
+
+        var signedPropertiesReference = Reference(document, null, $"#{signedPropertiesId}");
+        signedPropertiesReference.SetAttribute("Type", "http://uri.etsi.org/01903#SignedProperties");
+        AppendDigest(document, signedPropertiesReference);
+        signedInfo.AppendChild(signedPropertiesReference);
+
+        var signatureValue = Ds(document, "SignatureValue");
+        signatureValue.SetAttribute("Id", signatureValueId);
+        signature.AppendChild(signatureValue);
+
+        var keyInfo = BuildKeyInfo(document, certificate, rsa, keyInfoId);
+        signature.AppendChild(keyInfo);
+        signature.AppendChild(BuildXadesObject(
+            document,
+            certificate,
+            signatureId,
+            signedPropertiesId,
+            documentReferenceId,
+            signingTime));
+        return signature;
+    }
+
+    private static XmlElement BuildKeyInfo(
+        XmlDocument document,
+        X509Certificate2 certificate,
+        RSA rsa,
+        string keyInfoId)
+    {
+        var keyInfo = Ds(document, "KeyInfo");
+        keyInfo.SetAttribute("Id", keyInfoId);
+        var x509Data = Ds(document, "X509Data");
+        AddText(document, x509Data, "ds", "X509Certificate", SignedXml.XmlDsigNamespaceUrl,
+            Convert.ToBase64String(certificate.RawData));
+        keyInfo.AppendChild(x509Data);
+
+        var parameters = rsa.ExportParameters(includePrivateParameters: false);
+        var keyValue = Ds(document, "KeyValue");
+        var rsaKeyValue = Ds(document, "RSAKeyValue");
+        AddText(document, rsaKeyValue, "ds", "Modulus", SignedXml.XmlDsigNamespaceUrl,
+            Convert.ToBase64String(parameters.Modulus!));
+        AddText(document, rsaKeyValue, "ds", "Exponent", SignedXml.XmlDsigNamespaceUrl,
+            Convert.ToBase64String(parameters.Exponent!));
+        keyValue.AppendChild(rsaKeyValue);
+        keyInfo.AppendChild(keyValue);
+        return keyInfo;
+    }
+
+    private static XmlElement BuildXadesObject(
+        XmlDocument document,
+        X509Certificate2 certificate,
+        string signatureId,
+        string signedPropertiesId,
+        string documentReferenceId,
+        DateTimeOffset signingTime)
+    {
+        var dataObject = Ds(document, "Object");
+        dataObject.SetAttribute("Id", $"XadesObjectId-{Guid.NewGuid():D}");
         var qualifying = document.CreateElement("xades", "QualifyingProperties", DianUblNamespaces.Xades.NamespaceName);
+        qualifying.SetAttribute("xmlns:xades", DianUblNamespaces.Xades.NamespaceName);
+        qualifying.SetAttribute("Id", $"QualifyingProperties-{Guid.NewGuid():D}");
         qualifying.SetAttribute("Target", $"#{signatureId}");
+        dataObject.AppendChild(qualifying);
+
         var signedProperties = document.CreateElement("xades", "SignedProperties", DianUblNamespaces.Xades.NamespaceName);
         signedProperties.SetAttribute("Id", signedPropertiesId);
-        var signedSignatureProperties = document.CreateElement("xades", "SignedSignatureProperties", DianUblNamespaces.Xades.NamespaceName);
+        qualifying.AppendChild(signedProperties);
+        var signedSignatureProperties = document.CreateElement(
+            "xades", "SignedSignatureProperties", DianUblNamespaces.Xades.NamespaceName);
+        signedProperties.AppendChild(signedSignatureProperties);
         AddText(document, signedSignatureProperties, "xades", "SigningTime", DianUblNamespaces.Xades.NamespaceName,
-            signingTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture));
-        var signingCertificate = document.CreateElement("xades", "SigningCertificate", DianUblNamespaces.Xades.NamespaceName);
-        foreach (var certificate in new[] { material.Certificate }.Concat(material.Chain)
-                     .DistinctBy(item => item.Thumbprint, StringComparer.OrdinalIgnoreCase))
-            signingCertificate.AppendChild(BuildCertificate(document, certificate));
+            signingTime.ToString("yyyy-MM-ddTHH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture));
+
+        var signingCertificate = document.CreateElement(
+            "xades", "SigningCertificate", DianUblNamespaces.Xades.NamespaceName);
+        signingCertificate.AppendChild(BuildCertificate(document, certificate));
         signedSignatureProperties.AppendChild(signingCertificate);
         signedSignatureProperties.AppendChild(BuildPolicy(document));
+
         var role = document.CreateElement("xades", "SignerRole", DianUblNamespaces.Xades.NamespaceName);
         var claimedRoles = document.CreateElement("xades", "ClaimedRoles", DianUblNamespaces.Xades.NamespaceName);
         AddText(document, claimedRoles, "xades", "ClaimedRole", DianUblNamespaces.Xades.NamespaceName, "supplier");
         role.AppendChild(claimedRoles);
         signedSignatureProperties.AppendChild(role);
-        signedProperties.AppendChild(signedSignatureProperties);
-        qualifying.AppendChild(signedProperties);
-        document.AppendChild(qualifying);
-        return qualifying;
+
+        var signedDataObjectProperties = document.CreateElement(
+            "xades", "SignedDataObjectProperties", DianUblNamespaces.Xades.NamespaceName);
+        var dataObjectFormat = document.CreateElement(
+            "xades", "DataObjectFormat", DianUblNamespaces.Xades.NamespaceName);
+        dataObjectFormat.SetAttribute("ObjectReference", $"#{documentReferenceId}");
+        AddText(document, dataObjectFormat, "xades", "MimeType", DianUblNamespaces.Xades.NamespaceName, "text/xml");
+        AddText(document, dataObjectFormat, "xades", "Encoding", DianUblNamespaces.Xades.NamespaceName, "UTF-8");
+        signedDataObjectProperties.AppendChild(dataObjectFormat);
+        signedProperties.AppendChild(signedDataObjectProperties);
+        return dataObject;
+    }
+
+    private static XmlElement Reference(XmlDocument document, string? id, string uri)
+    {
+        var reference = Ds(document, "Reference");
+        if (!string.IsNullOrWhiteSpace(id)) reference.SetAttribute("Id", id);
+        reference.SetAttribute("URI", uri);
+        return reference;
+    }
+
+    private static void AppendDigest(XmlDocument document, XmlElement reference)
+    {
+        reference.AppendChild(Algorithm(document, "DigestMethod", Sha256Url));
+        reference.AppendChild(Ds(document, "DigestValue"));
+    }
+
+    private static XmlElement Algorithm(XmlDocument document, string name, string value)
+    {
+        var element = Ds(document, name);
+        element.SetAttribute("Algorithm", value);
+        return element;
+    }
+
+    private static XmlElement Ds(XmlDocument document, string name) =>
+        document.CreateElement("ds", name, SignedXml.XmlDsigNamespaceUrl);
+
+    private static void PopulateReferenceDigestsAndSignature(
+        XmlDocument document,
+        XmlElement signature,
+        RSA rsa)
+    {
+        var manager = new XmlNamespaceManager(document.NameTable);
+        manager.AddNamespace("ds", SignedXml.XmlDsigNamespaceUrl);
+        manager.AddNamespace("xades", DianUblNamespaces.Xades.NamespaceName);
+
+        var references = signature.SelectNodes("ds:SignedInfo/ds:Reference", manager)
+            ?.OfType<XmlElement>().ToArray()
+            ?? throw new CryptographicException("The XML signature references are missing.");
+        if (references.Length != 3)
+            throw new CryptographicException("The DIAN XAdES signature must contain exactly three references.");
+
+        var unsignedDocument = (XmlDocument)document.CloneNode(deep: true);
+        var unsignedSignature = unsignedDocument.GetElementsByTagName("Signature", SignedXml.XmlDsigNamespaceUrl)
+            .OfType<XmlElement>().Single();
+        unsignedSignature.ParentNode!.RemoveChild(unsignedSignature);
+        SetDigest(references[0], SHA256.HashData(Canonicalize(unsignedDocument)), manager);
+
+        var keyInfo = signature.SelectSingleNode("ds:KeyInfo", manager) as XmlElement
+            ?? throw new CryptographicException("The XML signature KeyInfo is missing.");
+        SetDigest(references[1], SHA256.HashData(Canonicalize(keyInfo)), manager);
+
+        var signedProperties = signature.SelectSingleNode(
+            "ds:Object/xades:QualifyingProperties/xades:SignedProperties", manager) as XmlElement
+            ?? throw new CryptographicException("The XAdES SignedProperties element is missing.");
+        SetDigest(references[2], SHA256.HashData(Canonicalize(signedProperties)), manager);
+
+        var signedInfo = signature.SelectSingleNode("ds:SignedInfo", manager) as XmlElement
+            ?? throw new CryptographicException("The XML SignedInfo element is missing.");
+        var signedInfoHash = SHA256.HashData(Canonicalize(signedInfo));
+        var signatureValue = signature.SelectSingleNode("ds:SignatureValue", manager) as XmlElement
+            ?? throw new CryptographicException("The XML SignatureValue element is missing.");
+        signatureValue.InnerText = Convert.ToBase64String(
+            rsa.SignHash(signedInfoHash, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
+    }
+
+    private static void SetDigest(
+        XmlElement reference,
+        byte[] digest,
+        XmlNamespaceManager manager)
+    {
+        var digestValue = reference.SelectSingleNode("ds:DigestValue", manager) as XmlElement
+            ?? throw new CryptographicException("The XML reference digest element is missing.");
+        digestValue.InnerText = Convert.ToBase64String(digest);
+    }
+
+    private static byte[] Canonicalize(XmlNode node)
+    {
+        var clone = new XmlDocument { PreserveWhitespace = true, XmlResolver = null };
+        clone.LoadXml(node.OuterXml);
+        if (node is not XmlDocument)
+            AddInheritedNamespaces(node, clone.DocumentElement!);
+        var transform = new XmlDsigC14NTransform();
+        transform.LoadInput(clone);
+        using var canonical = (Stream)transform.GetOutput(typeof(Stream));
+        using var output = new MemoryStream();
+        canonical.CopyTo(output);
+        return output.ToArray();
+    }
+
+    private static void AddInheritedNamespaces(XmlNode source, XmlElement target)
+    {
+        for (var current = source; current is XmlElement element; current = current.ParentNode)
+        {
+            foreach (var attribute in element.Attributes.OfType<XmlAttribute>()
+                         .Where(attribute => attribute.Prefix == "xmlns" || attribute.Name == "xmlns"))
+            {
+                if (target.HasAttribute(attribute.Name)) continue;
+                var inherited = target.OwnerDocument!.CreateAttribute(
+                    attribute.Prefix,
+                    attribute.LocalName,
+                    attribute.NamespaceURI);
+                inherited.Value = attribute.Value;
+                target.Attributes.Append(inherited);
+            }
+        }
     }
 
     private static XmlElement BuildCertificate(XmlDocument document, X509Certificate2 certificate)
@@ -220,13 +371,19 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
         var cert = document.CreateElement("xades", "Cert", DianUblNamespaces.Xades.NamespaceName);
         var digest = document.CreateElement("xades", "CertDigest", DianUblNamespaces.Xades.NamespaceName);
         var method = document.CreateElement("ds", "DigestMethod", SignedXml.XmlDsigNamespaceUrl);
-        method.SetAttribute("Algorithm", SignedXml.XmlDsigSHA256Url);
+        method.SetAttribute("Algorithm", Sha256Url);
         digest.AppendChild(method);
         AddText(document, digest, "ds", "DigestValue", SignedXml.XmlDsigNamespaceUrl,
             Convert.ToBase64String(SHA256.HashData(certificate.RawData)));
         cert.AppendChild(digest);
         var serial = document.CreateElement("xades", "IssuerSerial", DianUblNamespaces.Xades.NamespaceName);
-        AddText(document, serial, "ds", "X509IssuerName", SignedXml.XmlDsigNamespaceUrl, certificate.Issuer);
+        AddText(
+            document,
+            serial,
+            "ds",
+            "X509IssuerName",
+            SignedXml.XmlDsigNamespaceUrl,
+            certificate.IssuerName.Name ?? certificate.Issuer);
         AddText(document, serial, "ds", "X509SerialNumber", SignedXml.XmlDsigNamespaceUrl,
             new BigInteger(certificate.GetSerialNumber(), isUnsigned: true, isBigEndian: false).ToString());
         cert.AppendChild(serial);
@@ -239,12 +396,11 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
         var policyId = document.CreateElement("xades", "SignaturePolicyId", DianUblNamespaces.Xades.NamespaceName);
         var sigPolicyId = document.CreateElement("xades", "SigPolicyId", DianUblNamespaces.Xades.NamespaceName);
         AddText(document, sigPolicyId, "xades", "Identifier", DianUblNamespaces.Xades.NamespaceName, PolicyUrl);
-        AddText(document, sigPolicyId, "xades", "Description", DianUblNamespaces.Xades.NamespaceName,
-            "Política de firma para facturas electrónicas de la República de Colombia.");
+        AddText(document, sigPolicyId, "xades", "Description", DianUblNamespaces.Xades.NamespaceName, string.Empty);
         policyId.AppendChild(sigPolicyId);
         var policyHash = document.CreateElement("xades", "SigPolicyHash", DianUblNamespaces.Xades.NamespaceName);
         var method = document.CreateElement("ds", "DigestMethod", SignedXml.XmlDsigNamespaceUrl);
-        method.SetAttribute("Algorithm", SignedXml.XmlDsigSHA256Url);
+        method.SetAttribute("Algorithm", Sha256Url);
         policyHash.AppendChild(method);
         AddText(document, policyHash, "ds", "DigestValue", SignedXml.XmlDsigNamespaceUrl, PolicySha256Base64);
         policyId.AppendChild(policyHash);

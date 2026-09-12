@@ -281,6 +281,98 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void Online_product_search_uses_one_sql_command_and_the_canonical_price_resolver()
+    {
+        var path = Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.Temporaries.cs");
+        var source = File.ReadAllText(path);
+        var start = source.IndexOf(
+            "public async Task<OnlineSalesProductPage> SearchProductsAsync(",
+            StringComparison.Ordinal);
+        var end = source.IndexOf(
+            "public async Task<OnlineSalesCustomerPage> SearchCustomersAsync(",
+            start,
+            StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var search = source[start..end];
+
+        Assert.Contains("dbo.OnlineSalesProductSearch", search, StringComparison.Ordinal);
+        Assert.Contains("CommandType.StoredProcedure", search, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(search, @"ExecuteReaderAsync\s*\("));
+        Assert.Contains("CommercePriceResolver.Resolve(", search, StringComparison.Ordinal);
+        Assert.Contains("independentLines: true", search, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadProductAsync(", search, StringComparison.Ordinal);
+        Assert.DoesNotContain("ResolveCommercePricesAsync(", search, StringComparison.Ordinal);
+        Assert.DoesNotContain("BeginTransactionAsync(", search, StringComparison.Ordinal);
+
+        var draftStore = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.cs"));
+        var updateStart = draftStore.IndexOf(
+            "public async Task<OnlineSalesDraft> UpdateLinesAsync(",
+            StringComparison.Ordinal);
+        var updateEnd = draftStore.IndexOf(
+            "public async Task<OnlineSalesDraft> RemoveLineAsync(",
+            updateStart,
+            StringComparison.Ordinal);
+        var update = draftStore[updateStart..updateEnd];
+        Assert.Contains("ReadProductsAsync(", update, StringComparison.Ordinal);
+        Assert.Contains("OPENJSON(@UpdatesJson)", update, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach", update, StringComparison.Ordinal);
+
+        var temporaryStart = source.IndexOf(
+            "public async Task<IReadOnlyList<OnlineSalesDraft>> ListTemporariesAsync(",
+            StringComparison.Ordinal);
+        var temporaryEnd = source.IndexOf(
+            "public async Task<OnlineSalesDraft> PauseAsync(",
+            temporaryStart,
+            StringComparison.Ordinal);
+        var temporaries = source[temporaryStart..temporaryEnd];
+        Assert.Contains("ReadDraftsAsync(", temporaries, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach", temporaries, StringComparison.Ordinal);
+
+        var edgeRecovery = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "PosOrderEndpoints.cs"));
+        var recoveryStart = edgeRecovery.IndexOf(
+            "public async Task<PosDraft> RecoverAsync(",
+            StringComparison.Ordinal);
+        var recoveryEnd = edgeRecovery.IndexOf(
+            "public static class PosOrderEndpoints",
+            recoveryStart,
+            StringComparison.Ordinal);
+        var recovery = edgeRecovery[recoveryStart..recoveryEnd];
+        Assert.Contains("GetByProductIdsAsync(", recovery, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetByProductIdAsync(", recovery, StringComparison.Ordinal);
+
+        var catalogStore = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Infrastructure", "PosCatalogStore.cs"));
+        var catalogBatchStart = catalogStore.IndexOf(
+            "public async Task<IReadOnlyDictionary<Guid, PosCatalogItem>> GetByProductIdsAsync(",
+            StringComparison.Ordinal);
+        var catalogBatchEnd = catalogStore.IndexOf(
+            "public async Task<IReadOnlyDictionary<Guid, decimal>> InventoryFamilyAsync(",
+            catalogBatchStart,
+            StringComparison.Ordinal);
+        var catalogBatch = catalogStore[catalogBatchStart..catalogBatchEnd];
+        Assert.Single(Regex.Matches(catalogBatch, @"ExecuteReaderAsync\s*\("));
+        Assert.Contains("json_each(@ProductIdsJson)", catalogBatch, StringComparison.Ordinal);
+
+        var posDraftStore = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Infrastructure", "PosDraftStore.cs"));
+        var importStart = posDraftStore.IndexOf(
+            "public async Task<PosDraft> ImportOrderAsync(",
+            StringComparison.Ordinal);
+        var importEnd = posDraftStore.IndexOf(
+            "public async Task<PosDraft> GetOrCreateActiveAsync(",
+            importStart,
+            StringComparison.Ordinal);
+        var import = posDraftStore[importStart..importEnd];
+        Assert.Contains("json_each(@LinesJson)", import, StringComparison.Ordinal);
+        Assert.DoesNotContain("InsertLineAsync(", import, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CommerceEngines_DoNotPollForCompletion()
     {
         var paths = new[] { Path.Combine("src", "API", "Auraly.Api", "DispatchSettlementHostedService.cs") };

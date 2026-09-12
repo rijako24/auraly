@@ -238,7 +238,7 @@ public sealed class OrderBatchService(
                                 request.WorkSessionId)),
                         CancellationToken.None);
                     if (active.SourceOrderId == orderId)
-                        await drafts.ResetAsync(
+                        await drafts.ResetAfterFailedOrderAsync(
                             identity,
                             active.DraftId,
                             new ResetOnlineSalesDraftRequest(active.Version),

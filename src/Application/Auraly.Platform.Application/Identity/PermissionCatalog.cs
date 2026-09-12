@@ -16,6 +16,8 @@ public static class PermissionCatalog
         ("Roles", "Delete", "roles.delete", "Desactivar roles"),
         ("Roles", "AssignPermissions", "roles.assign_permissions", "Asignar permisos a roles"),
         ("Permissions", "Read", "permissions.read", "Ver permisos del sistema"),
+        ("TenantProfile", "Read", "tenant.profile.read", "Ver la información y el plan de la empresa propia"),
+        ("TenantProfile", "Update", "tenant.profile.update", "Actualizar la identidad de la empresa propia"),
         ("Tenants", "Read", "tenants.read", "Ver empresas"),
         ("Tenants", "Create", "tenants.create", "Crear empresas"),
         ("Tenants", "WaiveProvisioningPayment", "tenants.provisioning.payment.waive", "Omitir el pago inicial al aprovisionar una empresa"),

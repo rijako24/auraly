@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.Xml;
 using System.Text;
 using System.Xml;
 using Auraly.Contracts.Fiscal;
@@ -26,6 +27,51 @@ public sealed class DianXadesSignerTests : IDisposable
         Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
         Assert.Contains("SignedProperties", Encoding.UTF8.GetString(result.SignedXml), StringComparison.Ordinal);
         Assert.Contains(DianXadesSigner.PolicySha256Base64, Encoding.UTF8.GetString(result.SignedXml), StringComparison.Ordinal);
+
+        var document = new XmlDocument { PreserveWhitespace = true };
+        document.LoadXml(Encoding.UTF8.GetString(result.SignedXml));
+        var manager = new XmlNamespaceManager(document.NameTable);
+        manager.AddNamespace("ds", SignedXml.XmlDsigNamespaceUrl);
+        manager.AddNamespace("xades", DianUblNamespaces.Xades.NamespaceName);
+        var references = document.SelectNodes("//ds:Signature/ds:SignedInfo/ds:Reference", manager)!;
+        Assert.Equal(3, references.Count);
+        var keyInfoId = document.SelectSingleNode("//ds:Signature/ds:KeyInfo/@Id", manager)!.Value;
+        var signedPropertiesId = document.SelectSingleNode(
+            "//ds:Signature/ds:Object/xades:QualifyingProperties/xades:SignedProperties/@Id",
+            manager)!.Value;
+        Assert.NotNull(document.SelectSingleNode(
+            $"//ds:Reference[@URI='#{keyInfoId}']", manager));
+        Assert.NotNull(document.SelectSingleNode(
+            $"//ds:Reference[@URI='#{signedPropertiesId}' and @Type='http://uri.etsi.org/01903#SignedProperties']",
+            manager));
+        Assert.All(
+            references.OfType<XmlElement>(),
+            reference => Assert.Equal(
+                "http://www.w3.org/2001/04/xmlenc#sha256",
+                reference.SelectSingleNode("ds:DigestMethod/@Algorithm", manager)!.Value));
+        Assert.Equal(
+            SignedXml.XmlDsigRSASHA256Url,
+            document.SelectSingleNode("//ds:SignatureMethod/@Algorithm", manager)!.Value);
+        Assert.NotNull(document.SelectSingleNode("//ds:KeyInfo/ds:X509Data/ds:X509Certificate", manager));
+        Assert.NotNull(document.SelectSingleNode("//ds:KeyInfo/ds:KeyValue/ds:RSAKeyValue", manager));
+        Assert.Single(document.SelectNodes(
+            "//xades:SigningCertificate/xades:Cert", manager)!.OfType<XmlElement>());
+        Assert.Equal("supplier", document.SelectSingleNode(
+            "//xades:SignerRole/xades:ClaimedRoles/xades:ClaimedRole", manager)!.InnerText);
+        var dataObjectFormat = document.SelectSingleNode(
+            "//xades:SignedDataObjectProperties/xades:DataObjectFormat", manager)!;
+        Assert.Equal(
+            "#" + references[0]!.Attributes!["Id"]!.Value,
+            dataObjectFormat.Attributes!["ObjectReference"]!.Value);
+        Assert.Equal("text/xml", dataObjectFormat.SelectSingleNode(
+            "xades:MimeType", manager)!.InnerText);
+        Assert.Equal("UTF-8", dataObjectFormat.SelectSingleNode(
+            "xades:Encoding", manager)!.InnerText);
+        Assert.Equal(
+            "http://www.w3.org/2001/04/xmlenc#sha256",
+            document.SelectSingleNode("//xades:SigPolicyHash/ds:DigestMethod/@Algorithm", manager)!.Value);
+        Assert.EndsWith("-05:00", document.SelectSingleNode(
+            "//xades:SigningTime", manager)!.InnerText, StringComparison.Ordinal);
     }
 
     [Fact]

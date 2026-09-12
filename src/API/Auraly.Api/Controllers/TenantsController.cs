@@ -39,8 +39,11 @@ public sealed class TenantsController(
             User.GetTenantId(), ct));
 
     [HttpGet("{tenantId:guid}")]
-    [PermissionAuthorize("tenants.read")]
-    public async Task<ActionResult<TenantDto>> GetById(Guid tenantId, CancellationToken ct) => Ok(await tenantService.GetByIdAsync(tenantId, ct));
+    public async Task<ActionResult<TenantDto>> GetById(Guid tenantId, CancellationToken ct)
+    {
+        EnsureTenantProfileAccess(tenantId, "tenant.profile.read", "tenants.read");
+        return Ok(await tenantService.GetByIdAsync(tenantId, ct));
+    }
 
     [HttpGet("branding")]
     public async Task<ActionResult<TenantBrandingDto>> GetBranding(CancellationToken ct) =>
@@ -66,12 +69,27 @@ public sealed class TenantsController(
     [HttpPut("{tenantId:guid}")]
     public async Task<ActionResult<TenantDto>> Update(Guid tenantId, [FromBody] UpdateTenantRequest request, CancellationToken ct)
     {
-        if (request.Name is not null || request.Email is not null || request.LegalName is not null
-            || request.Nit is not null || request.VerificationDigit is not null
-            || request.EntityType is not null || request.IdentificationTypeCode is not null
-            || request.InventoryCostBasis is not null || request.AllowPromotionChannelCombination is not null)
+        var changesProfile = request.Name is not null || request.Email is not null
+            || request.LegalName is not null || request.Nit is not null
+            || request.VerificationDigit is not null || request.EntityType is not null
+            || request.IdentificationTypeCode is not null;
+        var changesPolicy = request.InventoryCostBasis is not null
+            || request.AllowPromotionChannelCombination.HasValue;
+        var changesCapacity = request.MaximumUsers.HasValue
+            || request.MaximumEnrolledDevices.HasValue;
+        if (!changesProfile && !changesPolicy && !changesCapacity)
+            EnsureTenantProfileAccess(tenantId, "tenant.profile.update", "tenants.update");
+        var isOwnProfileUpdate = tenantId == User.GetTenantId()
+            && User.HasPermission("tenant.profile.update")
+            && !User.HasPermission("tenants.update");
+        if (isOwnProfileUpdate && (request.MaximumUsers.HasValue || request.MaximumEnrolledDevices.HasValue
+            || request.InventoryCostBasis is not null || request.AllowPromotionChannelCombination.HasValue))
+            throw new ForbiddenException("El administrador de la empresa solo puede actualizar su identidad empresarial.");
+        if (changesProfile)
+            EnsureTenantProfileAccess(tenantId, "tenant.profile.update", "tenants.update");
+        if (changesPolicy)
             EnsurePermission("tenants.update");
-        if (request.MaximumUsers.HasValue || request.MaximumEnrolledDevices.HasValue) EnsurePermission("tenants.capacity.update");
+        if (changesCapacity) EnsurePermission("tenants.capacity.update");
         return Ok(await tenantService.UpdateAsync(tenantId, request.Name, request.Email,
             request.MaximumUsers, request.MaximumEnrolledDevices, request.LegalName, request.Nit,
             request.VerificationDigit, request.EntityType, request.IdentificationTypeCode,
@@ -79,11 +97,11 @@ public sealed class TenantsController(
     }
 
     [HttpPost("{tenantId:guid}/logo")]
-    [PermissionAuthorize("tenants.update")]
     [RequestSizeLimit(MaxLogoRequestBytes)]
     public async Task<ActionResult<TenantDto>> UploadLogo(Guid tenantId, IFormFile file,
         CancellationToken ct)
     {
+        EnsureTenantProfileAccess(tenantId, "tenant.profile.update", "tenants.update");
         if (file.Length is <= 0 or > MaxLogoBytes
             || !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { error = "El logo debe ser una imagen JPG, PNG o WEBP de máximo 4 MB." });
@@ -117,6 +135,7 @@ public sealed class TenantsController(
         Guid tenantId,
         CancellationToken ct)
     {
+        EnsureTenantProfileAccess(tenantId, "tenant.profile.update", "tenants.update");
         if (tenantId != User.GetTenantId())
             throw new ForbiddenException(
                 "Selecciona la organización antes de reenviar esta invitación.");
@@ -156,10 +175,12 @@ public sealed class TenantsController(
         Ok(await billingPolicy.UpdateAsync(User.GetTenantId(), User.GetUserId(), request, ct));
 
     [HttpGet("{tenantId:guid}/subscription")]
-    [PermissionAuthorize("tenants.read")]
     public async Task<ActionResult<TenantCommercialSubscriptionDto?>> GetSubscription(
-        Guid tenantId, CancellationToken ct) =>
-        Ok(await commercialSubscriptions.GetAsync(tenantId, ct));
+        Guid tenantId, CancellationToken ct)
+    {
+        EnsureTenantProfileAccess(tenantId, "tenant.profile.read", "tenants.read");
+        return Ok(await commercialSubscriptions.GetAsync(tenantId, ct));
+    }
 
     [HttpGet("subscriptions")]
     [PermissionAuthorize("tenants.read")]
@@ -191,5 +212,11 @@ public sealed class TenantsController(
     private void EnsurePermission(string permission)
     {
         if (!User.HasPermission(permission)) throw new ForbiddenException($"Falta el permiso '{permission}'.");
+    }
+
+    private void EnsureTenantProfileAccess(Guid tenantId, string ownPermission, string platformPermission)
+    {
+        if (tenantId == User.GetTenantId() && User.HasPermission(ownPermission)) return;
+        EnsurePermission(platformPermission);
     }
 }

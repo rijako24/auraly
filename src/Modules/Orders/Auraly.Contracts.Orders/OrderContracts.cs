@@ -132,3 +132,13 @@ public sealed record ClaimOrderRequest(
 public sealed record ReleaseOrderClaimRequest(
     Guid WorkSessionId,
     Guid UserId);
+
+public sealed record CancelOrderRequest(
+    string Reason,
+    Guid? WorkSessionId = null);
+
+public sealed record CancelOrderResponse(
+    Guid OrderId,
+    string OrderNumber,
+    string Status,
+    bool IsReplay);

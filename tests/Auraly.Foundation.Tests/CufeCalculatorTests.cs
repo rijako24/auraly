@@ -33,6 +33,27 @@ public sealed class CufeCalculatorTests
     }
 
     [Fact]
+    public void Same_instant_uses_colombia_offset_regardless_of_runtime_offset()
+    {
+        var colombia = CreateInput("FV01123", 100_000m, 119_000m);
+        var utc = new CufeInput(
+            colombia.InvoiceNumber,
+            colombia.IssuedAt.ToUniversalTime(),
+            colombia.UntaxedAmount,
+            colombia.PayableAmount,
+            colombia.SupplierTaxId,
+            colombia.CustomerIdentification,
+            colombia.TechnicalKey,
+            colombia.Environment,
+            colombia.Taxes);
+
+        Assert.Equal(colombia.IssuedAt, utc.IssuedAt);
+        Assert.Equal(
+            CufeCalculator.BuildCanonicalValue(colombia),
+            CufeCalculator.BuildCanonicalValue(utc));
+    }
+
+    [Fact]
     public void Official_dian_invoice_vector_produces_expected_cufe()
     {
         var input = new CufeInput(
@@ -112,6 +133,19 @@ public sealed class CufeCalculatorTests
             result.Cuds);
         Assert.Contains($"CUDS: {result.Cuds}", result.QrPayload, StringComparison.Ordinal);
         Assert.EndsWith($"?documentkey={result.Cuds}", result.QrPayload, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Support_document_normalizes_the_same_instant_to_colombia_time()
+    {
+        var colombia = new DateTimeOffset(2026, 8, 25, 10, 20, 30, TimeSpan.FromHours(-5));
+        CudsInput Input(DateTimeOffset issuedAt) => new(
+            "DS123", issuedAt, 100_000m, 19_000m, 119_000m,
+            "222", "900", "PIN", FiscalEnvironment.Test);
+
+        Assert.Equal(
+            CudsCalculator.Calculate(Input(colombia), "https://example.test"),
+            CudsCalculator.Calculate(Input(colombia.ToUniversalTime()), "https://example.test"));
     }
 
     private static CufeInput CreateInput(string number, decimal untaxed, decimal payable) =>

@@ -1134,7 +1134,6 @@ public static class PosEdgeHostApplication
             PosEdgeRuntimeContext context,
             PosSensitiveActionAuthorizer authorizer,
             PosLocalSessionAccessor sessions,
-            ILogger<PosOrderRecoveryService> logger,
             CancellationToken ct) =>
         {
             var user = sessions.Required();
@@ -1144,20 +1143,19 @@ public static class PosEdgeHostApplication
                 http.Request.Headers["X-Auraly-Operation-Id"],
                 http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
             var sourceOrderId = (await drafts.GetAsync(new DraftId(draftId), ct))?.SourceOrderId;
-            await drafts.CancelAsync(new DraftId(draftId), ct);
             if (sourceOrderId.HasValue)
             {
-                try
-                {
-                    await orderServer.ReleaseAsync(user, sourceOrderId.Value, ct);
-                }
-                catch (Exception error) when (error is HttpRequestException or PosOrderServerException)
-                {
-                    logger.LogWarning(error,
-                        "Order {OrderId} claim could not be released immediately; its server lease will expire.",
-                        sourceOrderId.Value);
-                }
+                var operationId = authorization.OperationId != Guid.Empty
+                    ? authorization.OperationId.ToString("N")
+                    : draftId.ToString("N");
+                await orderServer.CancelAsync(
+                    user,
+                    sourceOrderId.Value,
+                    "Venta reiniciada desde el punto de venta.",
+                    $"pos-order-cancel:{operationId}",
+                    ct);
             }
+            await drafts.CancelAsync(new DraftId(draftId), ct);
             var result = await drafts.GetOrCreateActiveAsync(context.ScopeFor(user), ct);
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);

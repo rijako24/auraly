@@ -122,6 +122,41 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
         using var forbiddenCustomerCrossTenantUsers = await customerCrossTenant.GetAsync(
             $"/api/v1/users?tenantId={AuralyTenantId:D}&page=1&pageSize=10");
         Assert.Equal(HttpStatusCode.Forbidden, forbiddenCustomerCrossTenantUsers.StatusCode);
+
+        using var customerProfile = fixture.CreateTenantUserClient(
+            customerTenantId, customerUserId, "tenant.profile.read", "tenant.profile.update");
+        using var ownProfile = await customerProfile.GetAsync(
+            $"/api/v1/tenants/{customerTenantId:D}");
+        Assert.Equal(HttpStatusCode.OK, ownProfile.StatusCode);
+        using var ownSubscription = await customerProfile.GetAsync(
+            $"/api/v1/tenants/{customerTenantId:D}/subscription");
+        Assert.Equal(HttpStatusCode.NoContent, ownSubscription.StatusCode);
+        using var foreignProfile = await customerProfile.GetAsync(
+            $"/api/v1/tenants/{fixture.TenantId:D}");
+        Assert.Equal(HttpStatusCode.Forbidden, foreignProfile.StatusCode);
+        using var ownIdentityUpdate = await customerProfile.PutAsJsonAsync(
+            $"/api/v1/tenants/{customerTenantId:D}",
+            new { name = "Empresa cliente actualizada", email = "empresa-actualizada@customer.test" });
+        Assert.Equal(HttpStatusCode.OK, ownIdentityUpdate.StatusCode);
+        using var forbiddenOwnCapacityUpdate = await customerProfile.PutAsJsonAsync(
+            $"/api/v1/tenants/{customerTenantId:D}", new { maximumUsers = 25 });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenOwnCapacityUpdate.StatusCode);
+        using var forbiddenOwnPricingPolicyUpdate = await customerProfile.PutAsJsonAsync(
+            $"/api/v1/tenants/{customerTenantId:D}",
+            new { inventoryCostBasis = "WeightedAverageCost" });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenOwnPricingPolicyUpdate.StatusCode);
+        using var forbiddenForeignIdentityUpdate = await customerProfile.PutAsJsonAsync(
+            $"/api/v1/tenants/{fixture.TenantId:D}", new { name = "No autorizado" });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenForeignIdentityUpdate.StatusCode);
+        using var forbiddenForeignLogoUpdate = await UploadLogoAsync(
+            customerProfile, fixture.TenantId);
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenForeignLogoUpdate.StatusCode);
+        using var customerWithoutProfilePermission = fixture.CreateTenantUserClient(
+            customerTenantId, customerUserId);
+        using var forbiddenOwnLogoUpdate = await UploadLogoAsync(
+            customerWithoutProfilePermission, customerTenantId);
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenOwnLogoUpdate.StatusCode);
+
         await AssignPermissionsAsync(
             customer,
             customerRoleId,
@@ -200,6 +235,15 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
         using var response = await client.PostAsJsonAsync("/api/v1/roles", new { tenantId = AuralyTenantId, name = $"{name} {Guid.NewGuid():N}", description = "Regresión multitenant" });
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<RoleDto>() ?? throw new InvalidOperationException("Empty role response.");
+    }
+
+    private static async Task<HttpResponseMessage> UploadLogoAsync(HttpClient client, Guid tenantId)
+    {
+        using var content = new MultipartFormDataContent();
+        var image = new ByteArrayContent([0x89, 0x50, 0x4e, 0x47]);
+        image.Headers.ContentType = new("image/png");
+        content.Add(image, "file", "logo.png");
+        return await client.PostAsync($"/api/v1/tenants/{tenantId:D}/logo", content);
     }
 
     private static async Task<UserDto> CreateUserAsync(HttpClient client, string prefix, Guid? roleId = null)

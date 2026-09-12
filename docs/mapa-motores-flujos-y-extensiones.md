@@ -27,6 +27,7 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Entregar factura aceptada | transición `DianAccepted` → outbox de entrega → contenedor `AttachedDocument`/respuesta DIAN + representación PDF del almacén fiscal | enviar antes de aceptación, regenerar XML en la plantilla o reenviar DIAN desde correo |
 | Resolver precio comercial de productos | `CommercePriceResolver` compone los calculadores canónicos de canal y promoción con las líneas del documento ya cargadas | recalcular en SQL, SQLite, pedido, endpoint o UI |
 | Imprimir pedidos | `OrderService` autoriza y solicita el snapshot capturado; `SqlOrderStore` lo carga en lote; `PosPrintTemplateCatalog.Order` y el pipeline de impresión existente lo representan | consultar cada pedido/línea por separado, convertirlo en venta o crear otro renderer/servicio de impresión |
+| Consultar o editar la empresa propia | `tenant.profile.read/update` → `TenantsController` limita el recurso a `User.TenantId` → `TenantService`; el plan se proyecta en solo lectura desde la suscripción canónica | conceder `tenants.*` al administrador cliente, confiar en el `tenantId` del navegador o duplicar el perfil empresarial |
 
 ## Documento e inventario
 
@@ -52,6 +53,11 @@ precio efectivo, origen, canal y descuento promocional.
 - POS online, POS Edge y creación de pedidos llaman al mismo coordinador.
 - La búsqueda de catálogo usa `independentLines`; ventas y pedidos usan el contexto
   documental completo.
+- La búsqueda online del POS pagina de 50 en 50: cada página ejecuta una sola vez
+  `OnlineSalesProductSearch`, carga productos y política comercial en resultsets del
+  mismo comando e invoca una vez `CommercePriceResolver`. El cliente recibe nombre,
+  precio efectivo, origen y descuento promocional ya resueltos; no consulta ni
+  recalcula por producto.
 - Recuperar un pedido o venta pausada hidrata su snapshot sin resolver. La siguiente
   mutación comercial usa nuevamente el coordinador común.
 

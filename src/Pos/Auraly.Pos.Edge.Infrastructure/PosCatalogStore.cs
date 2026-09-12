@@ -294,14 +294,41 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         CancellationToken cancellationToken = default)
     {
         if (productId == Guid.Empty) return null;
+        var products = await GetByProductIdsAsync([productId], cancellationToken);
+        return products.GetValueOrDefault(productId);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, PosCatalogItem>> GetByProductIdsAsync(
+        IReadOnlyCollection<Guid> productIds,
+        CancellationToken cancellationToken = default)
+    {
+        var distinct = productIds
+            .Where(productId => productId != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        if (distinct.Length == 0)
+            return new Dictionary<Guid, PosCatalogItem>();
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT * FROM PosCatalogProducts WHERE ProductId=@ProductId AND IsActive=1;";
-        command.Parameters.Add(P("@ProductId", productId.ToString("D")));
+        command.CommandText = """
+            SELECT product.*
+            FROM PosCatalogProducts product
+            INNER JOIN json_each(@ProductIdsJson) requested
+              ON requested.value=product.ProductId
+            WHERE product.IsActive=1;
+            """;
+        command.Parameters.Add(P(
+            "@ProductIdsJson",
+            JsonSerializer.Serialize(distinct.Select(productId => productId.ToString("D")))));
+        var products = new Dictionary<Guid, PosCatalogItem>(distinct.Length);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? ReadProduct(reader) : null;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var product = ReadProduct(reader);
+            products.Add(product.ProductId, product);
+        }
+        return products;
     }
 
     public async Task<IReadOnlyDictionary<Guid, decimal>> InventoryFamilyAsync(

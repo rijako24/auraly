@@ -72,6 +72,11 @@ CREATE INDEX [IX_Products_BusinessId_CategoryName] ON [dbo].[Products] ([Busines
 GO
 CREATE INDEX [IX_Products_BusinessId_Sku] ON [dbo].[Products] ([BusinessId], [Sku]);
 GO
+CREATE INDEX [IX_Products_BusinessId_Active_Name]
+    ON [dbo].[Products] ([BusinessId], [IsActive], [Name], [ProductId])
+    INCLUDE ([TenantId], [ProductCode], [Sku], [Reference], [BaseUnitCode],
+             [TaxProfileId], [IsWeighable], [AllowsFractionalSale]);
+GO
 CREATE UNIQUE INDEX [IX_Products_BusinessId_Connection_ExternalProductId]
     ON [dbo].[Products] ([BusinessId], [IntegrationConnectionId], [ExternalProductId])
     WHERE [IntegrationConnectionId] IS NOT NULL AND [ExternalProductId] IS NOT NULL;

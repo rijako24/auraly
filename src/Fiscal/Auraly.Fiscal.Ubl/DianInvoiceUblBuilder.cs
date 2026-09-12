@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
+using Auraly.Fiscal.Core;
 
 namespace Auraly.Fiscal.Ubl;
 
@@ -23,6 +24,7 @@ public sealed class DianInvoiceUblBuilder
     {
         ArgumentNullException.ThrowIfNull(invoice);
         invoice.Validate();
+        var issuedAt = DianFiscalDateTime.InColombia(invoice.IssuedAt);
         var root = new XElement(
             Inv + "Invoice",
             new XAttribute(XNamespace.Xmlns + "cac", Cac),
@@ -44,8 +46,8 @@ public sealed class DianInvoiceUblBuilder
                 new XAttribute("schemeID", invoice.Environment),
                 new XAttribute("schemeName", invoice.UniqueCodeScheme),
                 invoice.Cufe),
-            E(Cbc, "IssueDate", invoice.IssuedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
-            E(Cbc, "IssueTime", invoice.IssuedAt.ToString("HH:mm:sszzz", CultureInfo.InvariantCulture)),
+            E(Cbc, "IssueDate", issuedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+            E(Cbc, "IssueTime", issuedAt.ToString("HH:mm:sszzz", CultureInfo.InvariantCulture)),
             E(Cbc, "DueDate", invoice.Payment.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
             E(Cbc, "InvoiceTypeCode", invoice.InvoiceTypeCode),
             new XElement(Cbc + "DocumentCurrencyCode",
@@ -61,7 +63,7 @@ public sealed class DianInvoiceUblBuilder
                 invoice.BuyerGenerated ? invoice.Authorization.Prefix : null,
                 invoice.BuyerGenerated ? invoice.Authorization.Number : null),
             Payment(invoice.Payment),
-            invoice.Taxes.Select(tax => TaxTotal(tax, invoice.CurrencyCode)),
+            DianTaxTotalXml.Header(invoice.Taxes, invoice.CurrencyCode),
             LegalMonetaryTotal(invoice),
             invoice.Lines.Select(line => InvoiceLine(line, invoice.CurrencyCode)));
 
@@ -120,7 +122,9 @@ public sealed class DianInvoiceUblBuilder
                 new XElement(Cac + "PartyTaxScheme",
                     E(Cbc, "RegistrationName", party.RegistrationName),
                     Identification(Cbc + "CompanyID", party.Identification, party.CheckDigit, party.IdentificationTypeCode),
-                    new XElement(Cbc + "TaxLevelCode", new XAttribute("listName", "48"), party.TaxResponsibilityCode),
+                    new XElement(Cbc + "TaxLevelCode",
+                        new XAttribute("listName", name == "AccountingSupplierParty" ? "04" : "05"),
+                        party.TaxResponsibilityCode),
                     Address(party.Address, "RegistrationAddress"),
                     TaxScheme(party.TaxSchemeId, party.TaxSchemeName)),
                 new XElement(Cac + "PartyLegalEntity",
@@ -143,7 +147,7 @@ public sealed class DianInvoiceUblBuilder
             new XElement(Cac + "AddressLine", E(Cbc, "Line", address.AddressLine)),
             new XElement(Cac + "Country",
                 E(Cbc, "IdentificationCode", address.CountryCode),
-                new XElement(Cbc + "Name", new XAttribute(XNamespace.Xml + "lang", "es"), address.CountryName)));
+                new XElement(Cbc + "Name", new XAttribute("languageID", "es"), address.CountryName)));
 
     private static XElement Payment(DianPayment payment) =>
         new(Cac + "PaymentMeans",
@@ -151,16 +155,6 @@ public sealed class DianInvoiceUblBuilder
             E(Cbc, "PaymentMeansCode", payment.PaymentMeansCode),
             E(Cbc, "PaymentDueDate", Date(payment.DueDate)),
             string.IsNullOrWhiteSpace(payment.Reference) ? null : E(Cbc, "PaymentID", payment.Reference));
-
-    private static XElement TaxTotal(DianTax tax, string currency) =>
-        new(Cac + "TaxTotal",
-            MoneyElement("TaxAmount", tax.Amount, currency),
-            new XElement(Cac + "TaxSubtotal",
-                MoneyElement("TaxableAmount", tax.TaxableAmount, currency),
-                MoneyElement("TaxAmount", tax.Amount, currency),
-                new XElement(Cac + "TaxCategory",
-                    E(Cbc, "Percent", Number(tax.Percent)),
-                    TaxScheme(tax.Code, tax.Name))));
 
     private static XElement LegalMonetaryTotal(DianInvoice invoice) =>
         new(Cac + "LegalMonetaryTotal",
@@ -185,7 +179,7 @@ public sealed class DianInvoiceUblBuilder
                 E(Cbc, "AllowanceChargeReason", "Descuento"),
                 MoneyElement("Amount", line.DiscountAmount, currency),
                 MoneyElement("BaseAmount", line.Quantity * line.UnitPrice, currency)),
-            line.Taxes.Select(tax => TaxTotal(tax, currency)),
+            DianTaxTotalXml.Line(line.Taxes, currency),
             new XElement(Cac + "Item",
                 E(Cbc, "Description", line.Description),
                 new XElement(Cac + "StandardItemIdentification",

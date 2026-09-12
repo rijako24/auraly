@@ -124,7 +124,7 @@ public sealed class PosDraftStoreTests
                 BaseUnitPrice = 8_000m,
                 UnitPrice = 8_000m,
                 Discount = 1_000m,
-                PriceSource = "Order"
+                PriceSource = "Promotion"
             };
 
             var imported = await store.ImportOrderAsync(
@@ -135,6 +135,7 @@ public sealed class PosDraftStoreTests
 
             Assert.Equal(orderId, imported.SourceOrderId);
             Assert.Equal(customerId, imported.CustomerId);
+            Assert.Equal("Promotion", imported.Lines.Single().PriceSource);
             Assert.Equal(14_285.71m, imported.UntaxedAmount);
             Assert.Equal(714.29m, imported.TaxAmount);
             Assert.Equal(15_000m, imported.PayableAmount);

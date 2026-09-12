@@ -710,20 +710,26 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
                 new AddOnlineSalesDraftItemRequest("P-E2E", 1m, draft.Version));
             var line = Assert.Single(captured.Lines);
+            var negativeAllowed = await MutateAsync<OnlineSalesDraft>(
+                client,
+                HttpMethod.Put,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/lines/{line.LineId:D}/quantity",
+                new ChangeOnlineSalesDraftQuantityRequest(999_999m, captured.Version));
+            Assert.Equal(999_999m, Assert.Single(negativeAllowed.Lines).Quantity);
             await ExecuteAsync(
                 "UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;",
                 new SqlParameter("@WarehouseId", fixture.WarehouseId));
             using var request = Mutation(
                 HttpMethod.Put,
                 $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/lines/{line.LineId:D}/quantity",
-                new ChangeOnlineSalesDraftQuantityRequest(999_999m, captured.Version));
+                new ChangeOnlineSalesDraftQuantityRequest(1_000_000m, negativeAllowed.Version));
             using var response = await client.SendAsync(request);
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             var problem = await response.Content.ReadAsStringAsync();
             Assert.Contains("Inventario insuficiente", problem, StringComparison.Ordinal);
             Assert.Contains("Disponible:", problem, StringComparison.Ordinal);
             var unchanged = await OpenAsync(client, workSession.WorkSessionId);
-            Assert.Equal(1m, Assert.Single(unchanged.Lines).Quantity);
+            Assert.Equal(999_999m, Assert.Single(unchanged.Lines).Quantity);
         }
         finally
         {
@@ -861,6 +867,62 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
                 """,
                 new("@ProductId", fixture.ProductId),
                 new("@WarehouseId", fixture.WarehouseId));
+        }
+    }
+
+    [Fact]
+    public async Task Online_capture_persists_the_DIAN_tax_code_instead_of_the_internal_profile_code()
+    {
+        var userId = Guid.NewGuid();
+        var taxProfileId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(
+              UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,
+              IsActive,CreatedAt)
+            VALUES(
+              @UserId,@TenantId,@Username,UPPER(@Username),
+              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),
+              N'Código',N'DIAN',1,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(
+              TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+            VALUES(
+              @TaxProfileId,@BusinessId,N'IVA-0',N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
+            UPDATE dbo.Products
+            SET TaxProfileId=@TaxProfileId
+            WHERE ProductId=@ProductId;
+            """,
+            new("@UserId", userId),
+            new("@TenantId", fixture.TenantId),
+            new("@Username", $"dian-tax-{userId:N}"),
+            new("@TaxProfileId", taxProfileId),
+            new("@BusinessId", fixture.BusinessId),
+            new("@ProductId", fixture.ProductId));
+        try
+        {
+            using var client = fixture.CreateUserClient(
+                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+            var workSession = await fixture.OpenWorkSessionAsync(client);
+            var draft = await OpenAsync(client, workSession.WorkSessionId);
+            var captured = await MutateAsync<OnlineSalesDraft>(
+                client,
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest("P-E2E", 1m, draft.Version));
+
+            var line = Assert.Single(captured.Lines);
+            Assert.Equal("01", line.TaxCode);
+            Assert.Equal(0m, line.TaxRate);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                """
+                UPDATE dbo.Products SET TaxProfileId=NULL WHERE ProductId=@ProductId;
+                DELETE dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId;
+                """,
+                new("@ProductId", fixture.ProductId),
+                new("@TaxProfileId", taxProfileId));
         }
     }
 

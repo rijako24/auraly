@@ -19,7 +19,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         var payload = string.Join(
             "|",
             request.Lines.Select(line =>
-                $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.UnitPrice)}:{Invariant(line.DiscountAmount)}"));
+                $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.UnitPrice)}:{Invariant(line.DiscountAmount)}:{NormalizePriceSource(line.PriceSource)}"));
         var requestHash = Hash(
             $"{operation}|{draftId:D}|{request.SourceOrderId:D}|{request.CustomerId:D}|{request.ExpectedVersion}|{payload}");
 
@@ -79,49 +79,61 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                 cancellationToken);
         }
 
-        var position = 0;
-        foreach (var line in request.Lines)
+        var products = await ReadProductsAsync(
+            connection,
+            transaction,
+            state.BusinessId,
+            state.WarehouseId,
+            request.Lines.Select(line => line.ProductId).Distinct().ToArray(),
+            cancellationToken);
+        var importedLines = request.Lines.Select((line, index) =>
         {
-            var product = await ReadProductAsync(
-                connection,
-                transaction,
-                state.BusinessId,
-                state.WarehouseId,
+            if (!products.TryGetValue(line.ProductId, out var product))
+                throw new OnlineSalesDraftValidationException(
+                    "El producto no está disponible para este negocio.");
+            return new
+            {
+                LineId = ids.NewId(),
                 line.ProductId,
-                cancellationToken);
-            // A confirmed order already owns this quantity in the system
-            // warehouse "Pedidos". Recovery edits the commercial draft; it
-            // must not demand the same stock again from the sales warehouse.
-            position++;
-            await ExecuteAsync(connection, transaction, """
-                INSERT dbo.SalesDraftLines(
-                  SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
-                  UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,DocumentUnitCost,
-                  CurrencyCode,PriceSource,DiscountAmount,Position)
-                VALUES(
-                  @LineId,@DraftId,@ProductId,@ProductCode,@Description,
-                  @UnitCode,@TaxCode,@TaxRate,@Quantity,@BaseUnitPrice,@UnitPrice,@DocumentUnitCost,
-                  @CurrencyCode,N'Order',@Discount,@Position);
-                """,
-                [
-                    P("@LineId", ids.NewId()),
-                    P("@DraftId", draftId),
-                    P("@ProductId", line.ProductId),
-                    P("@ProductCode", product.Code),
-                    P("@Description", product.Name),
-                    P("@UnitCode", product.UnitCode),
-                    P("@TaxCode", product.TaxCode),
-                    P("@TaxRate", product.TaxRate),
-                    P("@Quantity", line.Quantity),
-                    P("@BaseUnitPrice", product.UnitPrice),
-                    P("@UnitPrice", line.UnitPrice),
-                    P("@DocumentUnitCost", product.UnitCost),
-                    P("@CurrencyCode", product.CurrencyCode),
-                    P("@Discount", line.DiscountAmount),
-                    P("@Position", position)
-                ],
-                cancellationToken);
-        }
+                ProductCode = product.Code,
+                Description = product.Name,
+                product.UnitCode,
+                product.TaxCode,
+                product.TaxRate,
+                line.Quantity,
+                BaseUnitPrice = product.UnitPrice,
+                line.UnitPrice,
+                DocumentUnitCost = product.UnitCost,
+                product.CurrencyCode,
+                PriceSource = NormalizePriceSource(line.PriceSource),
+                Discount = line.DiscountAmount,
+                Position = index + 1
+            };
+        }).ToArray();
+        // A confirmed order already owns these quantities in the system
+        // warehouse "Pedidos". Recovery imports the complete snapshot in one
+        // statement and must not demand the same stock again from sales.
+        await ExecuteAsync(connection, transaction, """
+            INSERT dbo.SalesDraftLines(
+              SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
+              UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,DocumentUnitCost,
+              CurrencyCode,PriceSource,DiscountAmount,Position)
+            SELECT input.LineId,@DraftId,input.ProductId,input.ProductCode,input.Description,
+                   input.UnitCode,input.TaxCode,input.TaxRate,input.Quantity,input.BaseUnitPrice,
+                   input.UnitPrice,input.DocumentUnitCost,input.CurrencyCode,input.PriceSource,
+                   input.Discount,input.Position
+            FROM OPENJSON(@LinesJson) WITH(
+              LineId uniqueidentifier '$.LineId',ProductId uniqueidentifier '$.ProductId',
+              ProductCode nvarchar(64) '$.ProductCode',Description nvarchar(250) '$.Description',
+              UnitCode nvarchar(24) '$.UnitCode',TaxCode nvarchar(16) '$.TaxCode',
+              TaxRate decimal(9,4) '$.TaxRate',Quantity decimal(18,4) '$.Quantity',
+              BaseUnitPrice decimal(18,2) '$.BaseUnitPrice',UnitPrice decimal(18,2) '$.UnitPrice',
+              DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',CurrencyCode nvarchar(3) '$.CurrencyCode',
+              PriceSource nvarchar(64) '$.PriceSource',Discount decimal(18,2) '$.Discount',
+              Position int '$.Position') input;
+            """,
+            [P("@DraftId", draftId), P("@LinesJson", System.Text.Json.JsonSerializer.Serialize(importedLines))],
+            cancellationToken);
 
         await ExecuteAsync(connection, transaction, """
             UPDATE staleDraft
@@ -182,6 +194,9 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         command.Parameters.Add(P("@DraftId", draftId));
         return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
     }
+
+    private static string NormalizePriceSource(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "Order" : value.Trim();
 
     private static async Task DemandOrderAsync(
         SqlConnection connection,

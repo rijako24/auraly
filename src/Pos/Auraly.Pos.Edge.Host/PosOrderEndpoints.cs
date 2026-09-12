@@ -19,15 +19,17 @@ public sealed class PosOrderRecoveryService(
         try
         {
             var order = await server.GetAsync(session, orderId, cancellationToken);
+            var productIds = order.Lines
+                .Select(line => line.ProductId ?? throw new InvalidOperationException(
+                    $"El producto '{line.ProductName}' del pedido no está vinculado al catálogo."))
+                .Distinct()
+                .ToArray();
+            var products = await catalog.GetByProductIdsAsync(productIds, cancellationToken);
             var lines = new List<PosDraftLineInput>(order.Lines.Count);
             foreach (var orderLine in order.Lines)
             {
-                if (orderLine.ProductId is null)
+                if (!products.TryGetValue(orderLine.ProductId!.Value, out var product))
                     throw new InvalidOperationException(
-                        $"El producto '{orderLine.ProductName}' del pedido no está vinculado al catálogo.");
-                var product = await catalog.GetByProductIdAsync(
-                    orderLine.ProductId.Value, cancellationToken)
-                    ?? throw new InvalidOperationException(
                         $"El producto '{orderLine.ProductName}' no está disponible en el catálogo local.");
                 lines.Add(new PosDraftLineInput(
                     new ProductId(product.ProductId),
@@ -40,7 +42,9 @@ public sealed class PosOrderRecoveryService(
                     orderLine.UnitPrice,
                     orderLine.UnitPrice,
                     order.Currency,
-                    "Order",
+                    string.IsNullOrWhiteSpace(orderLine.PriceSource)
+                        ? "Order"
+                        : orderLine.PriceSource,
                     Discount: orderLine.DiscountAmount,
                     Note: $"Pedido {order.OrderNumber}",
                     AllowsFractionalSale: product.AllowsFractionalSale,

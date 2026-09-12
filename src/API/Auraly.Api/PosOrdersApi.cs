@@ -107,6 +107,25 @@ public static class PosOrdersApi
                 return new { released = true };
             }));
 
+        group.MapPost("/{orderId:guid}/cancel", async (
+            HttpContext context,
+            Guid orderId,
+            PosCancelOrderRequest request,
+            OrderCancellationService service,
+            IPosOrderActorResolver actors,
+            CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var actor = await actors.ResolveAsync(
+                    context.User.ToPosDeviceIdentity(), request.ToExecutionContext(), ct);
+                return await service.CancelAsync(
+                    actor,
+                    orderId,
+                    new CancelOrderRequest(request.Reason, request.WorkSessionId),
+                    context.Request.Headers["Idempotency-Key"].ToString(),
+                    ct);
+            }));
+
         group.MapPost("/invoice", async (
             HttpContext context,
             PosInvoiceOrdersRequest request,
@@ -180,6 +199,21 @@ public static class PosOrdersApi
             return Results.Problem(
                 error.Message, statusCode: StatusCodes.Status409Conflict, title: "OrderConflict");
         }
+        catch (OnlineSalesDraftForbiddenException error)
+        {
+            return Results.Problem(error.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (OnlineSalesDraftValidationException error)
+        {
+            return Results.Problem(error.Message, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (OnlineSalesDraftConcurrencyException error)
+        {
+            return Results.Problem(
+                error.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "OrderInventoryConflict");
+        }
     }
 }
 
@@ -205,6 +239,17 @@ public sealed record PosInvoiceOrdersRequest(
     string DocumentType = "SalesInvoice",
     Guid? BankAccountId = null,
     string? PaymentNotes = null)
+{
+    public PosOrderExecutionContext ToExecutionContext() =>
+        new(UserId, BusinessId, WarehouseId, WorkSessionId);
+}
+
+public sealed record PosCancelOrderRequest(
+    Guid UserId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    Guid WorkSessionId,
+    string Reason)
 {
     public PosOrderExecutionContext ToExecutionContext() =>
         new(UserId, BusinessId, WarehouseId, WorkSessionId);

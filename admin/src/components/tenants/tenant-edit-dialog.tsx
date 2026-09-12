@@ -16,7 +16,7 @@ import { tenantsApi } from "@/services/api/tenants";
 import type { Tenant } from "@/types/entities";
 import { calculateTenantVerificationDigit, sanitizeTenantIdentification, supportsTenantVerificationDigit, validateTenantIdentification } from "@/lib/tenant-legal-identity";
 
-type Props = { tenant: Tenant; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<unknown> };
+type Props = { tenant: Tenant; profileOnly?: boolean; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<unknown> };
 type TenantEditForm = {
   name: string; email: string; legalName: string; identification: string; verificationDigit: string;
   entityType: "NaturalPerson" | "Organization"; identificationTypeCode: NonNullable<Tenant["identificationTypeCode"]>;
@@ -24,7 +24,7 @@ type TenantEditForm = {
   allowPromotionChannelCombination: boolean;
 };
 
-export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props) {
+export function TenantEditDialog({ tenant, profileOnly = false, open, onOpenChange, onSaved }: Props) {
   const entityTypes = useReferenceOptions("tenant-entity-type", open);
   const identificationTypes = useReferenceOptions("tenant-identification-type", open);
   const [form, setForm] = useState(() => initial(tenant));
@@ -56,8 +56,10 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
         name: form.name.trim(), email: form.email.trim(), legalName: form.legalName.trim(),
         nit: form.identification.trim(), verificationDigit: form.identificationTypeCode === "NIT" && calculatedVerificationDigit !== null ? String(calculatedVerificationDigit) : null,
         entityType: form.entityType, identificationTypeCode: form.identificationTypeCode,
-        inventoryCostBasis: form.inventoryCostBasis as Tenant["inventoryCostBasis"],
-        allowPromotionChannelCombination: form.allowPromotionChannelCombination,
+        ...(profileOnly ? {} : {
+          inventoryCostBasis: form.inventoryCostBasis as Tenant["inventoryCostBasis"],
+          allowPromotionChannelCombination: form.allowPromotionChannelCombination,
+        }),
       });
       profileSaved = true;
       if (logo) await tenantsApi.uploadLogo(tenant.tenantId, logo);
@@ -88,11 +90,11 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
           <Field label="Número de identificación"><Input inputMode={form.identificationTypeCode === "PA" || form.identificationTypeCode === "DE" ? "text" : "numeric"} maxLength={32} value={form.identification} onChange={event => set("identification", sanitizeTenantIdentification(form.identificationTypeCode, event.target.value))} />{identityError && form.identificationTypeCode !== "NIT" && <p className="text-xs text-destructive">{identityError}</p>}</Field>
           {supportsTenantVerificationDigit(form.identificationTypeCode) && <Field label="Dígito de verificación (calculado)"><Input aria-readonly="true" readOnly value={calculatedVerificationDigit ?? ""} className="bg-muted" />{identityError && <p className="text-xs text-destructive">{identityError}</p>}<p className="text-xs text-muted-foreground">Se calcula automáticamente y no se puede modificar.</p></Field>}
           <Field label="Correo empresarial" className="sm:col-span-2"><Input type="email" value={form.email} onChange={event => set("email", event.target.value)} /></Field>
-          <Field label="Base para formar costos" className="sm:col-span-2"><Select value={form.inventoryCostBasis} onValueChange={value => set("inventoryCostBasis", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="LatestReceiptCost">Último costo total de la recepción</SelectItem><SelectItem value="WeightedAverageCost">Costo promedio ponderado</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Define la base que usa el tenant al preparar precios. El costo promedio queda disponible como referencia y consolida las sedes que comparten precios.</p></Field>
-          <label className="flex items-center justify-between gap-4 rounded-xl border p-4 sm:col-span-2">
+          {!profileOnly && <Field label="Base para formar costos" className="sm:col-span-2"><Select value={form.inventoryCostBasis} onValueChange={value => set("inventoryCostBasis", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="LatestReceiptCost">Último costo total de la recepción</SelectItem><SelectItem value="WeightedAverageCost">Costo promedio ponderado</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Define la base que usa el tenant al preparar precios. El costo promedio queda disponible como referencia y consolida las sedes que comparten precios.</p></Field>}
+          {!profileOnly && <label className="flex items-center justify-between gap-4 rounded-xl border p-4 sm:col-span-2">
             <span><strong className="block text-sm">Combinar promociones con canal de precios</strong><small className="text-muted-foreground">Al activarlo, el descuento promocional se calcula sobre el precio del canal. Si está apagado, una promoción aplicable usa el precio público y reemplaza el canal.</small></span>
             <Switch checked={form.allowPromotionChannelCombination} onCheckedChange={value => set("allowPromotionChannelCombination", value)} />
-          </label>
+          </label>}
         </section>
       </div>
       <DialogFooter><Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>Cancelar</Button><Button disabled={saving || !valid || entityTypes.isLoading || identificationTypes.isLoading} onClick={() => void save()}>{saving ? "Guardando…" : "Guardar cambios"}</Button></DialogFooter>

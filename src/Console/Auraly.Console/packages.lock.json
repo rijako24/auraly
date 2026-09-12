@@ -851,7 +851,10 @@
         "type": "Project"
       },
       "auraly.fiscal.ubl": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Fiscal.Core": "[1.0.0, )"
+        }
       },
       "auraly.platform.application": {
         "type": "Project",

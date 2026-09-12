@@ -76,3 +76,14 @@ test("orders and personal routes are independent navigation capabilities", () =>
     ["Mis rutas", "Rutas comerciales"],
   );
 });
+
+test("the own company view is independent from platform tenant administration", () => {
+  assert.deepEqual(
+    authorizedNavigationItems(["tenant.profile.read"]).map(({ name, href }) => ({ name, href })),
+    [{ name: "Empresa", href: "/dashboard/company" }],
+  );
+  assert.deepEqual(
+    authorizedNavigationItems(["tenants.read"]).map(({ name, href }) => ({ name, href })),
+    [{ name: "Empresas", href: "/dashboard/tenants" }],
+  );
+});

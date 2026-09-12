@@ -21,10 +21,15 @@ import { useAuthStore } from "@/stores/auth-store";
 export default function TenantDetailPage() {
   const id = useParams().id as string;
   const provisioned = useSearchParams().get("provisioned") === "1";
+  const profileScope = useSearchParams().get("scope") === "profile";
   const { data: tenant, isLoading, isError, refetch } = useTenant(id);
   const [loginUrl, setLoginUrl] = useState("");
   const [editing, setEditing] = useState(false);
-  const canEdit = useAuthStore(state => state.user?.permissions.includes("tenants.update") ?? false);
+  const authUser = useAuthStore(state => state.user);
+  const isOwnProfile = authUser?.tenantId === id
+    && (profileScope || !authUser.permissions.includes("tenants.read"));
+  const canEdit = authUser?.permissions.includes("tenants.update")
+    || Boolean(isOwnProfile && authUser?.permissions.includes("tenant.profile.update"));
 
   useEffect(() => {
     if (tenant?.tenantKey) setLoginUrl(`${window.location.origin}/login?tenant=${encodeURIComponent(tenant.tenantKey)}`);
@@ -40,7 +45,7 @@ export default function TenantDetailPage() {
 
   return <div className="space-y-6">
     <header className="flex flex-col gap-4 sm:flex-row sm:items-center">
-      <Button variant="ghost" size="icon" asChild><Link href="/dashboard/tenants" aria-label="Volver a tenants"><ArrowLeft className="h-4 w-4" /></Link></Button>
+      <Button variant="ghost" size="icon" asChild><Link href={isOwnProfile ? "/dashboard" : "/dashboard/tenants"} aria-label="Volver"><ArrowLeft className="h-4 w-4" /></Link></Button>
       <TenantBrand className="min-w-0 flex-1" imageClassName="h-16 w-24" displayName={tenant.name} logoUrl={tenant.logoUrl} />
       {canEdit && <Button type="button" variant="outline" onClick={() => setEditing(true)}><Pencil className="mr-2 h-4 w-4" />Editar información</Button>}
       <Badge variant={tenant.isActive ? "default" : "secondary"}>{tenant.isActive ? "Activo" : "Inactivo"}</Badge>
@@ -71,9 +76,9 @@ export default function TenantDetailPage() {
       </section>
     </div>
 
-    <TenantGovernancePanel tenant={tenant} />
-    <PlatformTenantSubscriptionCard tenantId={tenant.tenantId} />
-    <TenantEditDialog tenant={tenant} open={editing} onOpenChange={setEditing} onSaved={refetch} />
+    {!isOwnProfile && <TenantGovernancePanel tenant={tenant} />}
+    <PlatformTenantSubscriptionCard tenantId={tenant.tenantId} readOnly={isOwnProfile} />
+    <TenantEditDialog tenant={tenant} profileOnly={isOwnProfile} open={editing} onOpenChange={setEditing} onSaved={refetch} />
   </div>;
 }
 

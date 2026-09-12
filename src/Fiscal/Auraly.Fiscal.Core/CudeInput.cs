@@ -26,7 +26,7 @@ public sealed class CudeInput
         if (!Enum.IsDefined(environment)) throw new ArgumentOutOfRangeException(nameof(environment));
 
         CreditNoteNumber = creditNoteNumber.Trim();
-        IssuedAt = issuedAt;
+        IssuedAt = DianFiscalDateTime.InColombia(issuedAt);
         LineExtensionAmount = lineExtensionAmount;
         PayableAmount = payableAmount;
         SupplierTaxId = supplierTaxId.Trim();

@@ -10,6 +10,7 @@ using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Application.Identity.Services;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -283,6 +284,9 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         var subscriptionId = Guid.NewGuid();
         var usageId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
+        var customerIdentification = $"90{Random.Shared.Next(10000000, 99999999)}";
+        var customerVerificationDigit = TenantProvisioningRequestValidator
+            .CalculateNitVerificationDigit(customerIdentification).ToString();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
@@ -294,7 +298,7 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
                Identification,NormalizedIdentification,VerificationDigit,DisplayName,LegalName,
                CompletionStatus,IsActive,CreatedBy,CreatedAt)
             SELECT @CustomerPartyId,@TenantId,N'Organization',country.CountryId,N'31',
-               @Identification,@Identification,N'1',N'Cliente servicio',N'Cliente servicio SAS',
+               @Identification,@Identification,@VerificationDigit,N'Cliente servicio',N'Cliente servicio SAS',
                N'Complete',1,@UserId,@Now
             FROM dbo.Countries country WHERE country.Code='CO';
             INSERT dbo.Customers
@@ -350,7 +354,8 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@Code", $"SVC-{serviceId:N}");
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
-        command.Parameters.AddWithValue("@Identification", $"90{Random.Shared.Next(10000000, 99999999)}");
+        command.Parameters.AddWithValue("@Identification", customerIdentification);
+        command.Parameters.AddWithValue("@VerificationDigit", customerVerificationDigit);
         command.Parameters.AddWithValue("@Email", $"service-{customerId:N}@auraly.test");
         command.Parameters.AddWithValue("@SubscriptionId", subscriptionId);
         command.Parameters.AddWithValue("@UsageId", usageId);

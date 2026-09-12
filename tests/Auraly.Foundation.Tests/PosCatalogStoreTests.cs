@@ -126,6 +126,44 @@ public sealed class PosCatalogStoreTests
     }
 
     [Fact]
+    public async Task Product_ids_are_loaded_as_one_batch_and_missing_products_are_omitted()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-catalog-batch-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new PosCatalogStore($"Data Source={path}");
+            await store.InitializeAsync();
+            var session = new CatalogSyncSessionResponse(Guid.NewGuid(), 2, 1, DateTimeOffset.UtcNow.AddHours(1));
+            var first = Product();
+            var second = Product() with
+            {
+                ProductId = Guid.NewGuid(),
+                ProductCode = "P-002",
+                Reference = "REF-002",
+                Name = "Coffee 250 g",
+                Barcodes = ["7701234567891"]
+            };
+            await store.BeginBootstrapAsync(session);
+            await store.ApplyBootstrapPageAsync(Page(session, [first, second], false, null));
+            await store.PromoteBootstrapAsync();
+
+            var missingId = Guid.NewGuid();
+            var products = await store.GetByProductIdsAsync(
+                [first.ProductId, second.ProductId, first.ProductId, missingId]);
+
+            Assert.Equal(2, products.Count);
+            Assert.Equal(first.Name, products[first.ProductId].Name);
+            Assert.Equal(second.Name, products[second.ProductId].Name);
+            Assert.False(products.ContainsKey(missingId));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Large_bootstrap_resumes_from_durable_checkpoint_without_duplicates()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-large-catalog-{Guid.NewGuid():N}.db");

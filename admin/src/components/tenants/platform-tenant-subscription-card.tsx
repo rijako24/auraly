@@ -16,7 +16,7 @@ import { useAuthStore } from "@/stores/auth-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-export function PlatformTenantSubscriptionCard({ tenantId }: { tenantId: string }) {
+export function PlatformTenantSubscriptionCard({ tenantId, readOnly = false }: { tenantId: string; readOnly?: boolean }) {
   const canRecord = useAuthStore(state => state.user?.permissions.includes("tenants.billing.payment.confirm_manual") ?? false);
   const [subscription, setSubscription] = useState<TenantCommercialSubscription | null>(null);
   const [order, setOrder] = useState<TenantRenewalOrder | null>(null);
@@ -33,14 +33,14 @@ export function PlatformTenantSubscriptionCard({ tenantId }: { tenantId: string 
     setLoading(true);
     try {
       const [subscriptionValue, orderValue] = await Promise.all([
-        tenantsApi.subscription(tenantId), tenantsApi.renewalOrder(tenantId),
+        tenantsApi.subscription(tenantId), readOnly ? Promise.resolve(null) : tenantsApi.renewalOrder(tenantId),
       ]);
       setSubscription(subscriptionValue);
       setOrder(orderValue);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No fue posible consultar la suscripción.");
     } finally { setLoading(false); }
-  }, [tenantId]);
+  }, [readOnly, tenantId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -78,7 +78,7 @@ export function PlatformTenantSubscriptionCard({ tenantId }: { tenantId: string 
     <section className="rounded-2xl border bg-card p-6 shadow-sm">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
         <div><p className="text-xs font-semibold uppercase tracking-wide text-primary">Suscripción</p><h2 className="mt-1 text-xl font-semibold">{subscription.planName}</h2><p className="mt-1 text-sm text-muted-foreground">{subscription.billingPeriod === "Annual" ? "Cobro anual" : "Cobro mensual"} · vence {new Date(subscription.currentPeriodEnd).toLocaleDateString("es-CO")}</p></div>
-        <div className="flex items-center gap-2"><Badge variant={subscription.status === "Active" ? "default" : "destructive"}>{subscription.status}</Badge>{canRecord && payable && <Button onClick={() => setOpen(true)}><CreditCard className="mr-2 h-4 w-4" />Registrar recaudo</Button>}</div>
+        <div className="flex items-center gap-2"><Badge variant={subscription.status === "Active" ? "default" : "destructive"}>{subscription.status}</Badge>{!readOnly && canRecord && payable && <Button onClick={() => setOpen(true)}><CreditCard className="mr-2 h-4 w-4" />Registrar recaudo</Button>}</div>
       </div>
       {order && <div className="mt-5 grid gap-3 rounded-xl bg-muted/50 p-4 sm:grid-cols-3"><Value label="Orden vigente" value={`Rev. ${order.revision} · ${order.status}`} /><Value label="Periodo" value={`${new Date(order.targetPeriodStart).toLocaleDateString("es-CO")} – ${new Date(order.targetPeriodEnd).toLocaleDateString("es-CO")}`} /><Value label="Total exacto" value={money.format(order.quote.payableAmountCop)} /></div>}
       {receipt && <div className="mt-4 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"><FileCheck2 className="h-5 w-5" /><div><strong>Factura {receipt.documentNumber}</strong><p>{receipt.paymentMethod} · {receipt.paymentReference} · {money.format(receipt.totalAmount)}</p></div></div>}

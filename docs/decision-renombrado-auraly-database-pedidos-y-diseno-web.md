@@ -365,9 +365,11 @@ No todas deben entrar al primer incremento, pero estado, auditoría, sincronizac
 ### Ciclo de vida
 
 - confirmar;
+- durante la captura web o PWA, limitar cada producto al saldo conocido cuando la bodega de venta no permite negativos; una edición `InReview` puede reenviar sin cambios una insuficiencia ya registrada, pero no aumentarla. La validación serializable del servidor sigue siendo la autoridad: una concurrencia posterior a la captura deja el pedido `InReview`;
 - al crear, reservar en una sola operación todas las líneas: si la bodega de venta permite negativos, la transferencia `VEN -> PED` puede dejarla negativa y el pedido queda disponible; si los bloquea, una línea insuficiente no mueve inventario y deja el pedido `InReview`, sin deshacer las demás reservas válidas;
 - persistir por línea la cantidad ya reservada; al recuperar el pedido en POS se devuelve únicamente esa reserva de `PED` a `VEN` y las líneas pendientes no generan movimientos;
 - al volver a guardar un pedido recuperado se conserva su encabezado y se reemplaza completamente el detalle: se libera cualquier reserva anterior dentro de la misma transacción y se vuelve a reservar sólo el detalle actual, de modo que líneas eliminadas o cantidades antiguas no sobrevivan;
+- editar desde la bandeja monta inmediatamente el snapshot del pedido y consulta nuevas búsquedas sólo en línea; esa pantalla no prepara, descarga ni mezcla el catálogo offline;
 - en `InReview`, permitir con `orders.review` reducir o eliminar sólo las líneas pendientes; conservar sus valores comerciales y bloquear las líneas ya reservadas;
 - permitir con `orders.update` la edición completa antes de facturar: agregar, aumentar, reducir o eliminar productos, reservando aumentos y devolviendo reducciones de `PED` a la bodega de venta en la misma transacción;
 - asignar `orders.create`, `orders.update`, `orders.review` y `orders.recover` a las plantillas Administrador, Administrativo, Vendedor y Cajero; la autorización depende del permiso efectivo y no de que el usuario tenga un registro de vendedor comercial;
@@ -376,7 +378,8 @@ No todas deben entrar al primer incremento, pero estado, auditoría, sincronizac
 - confirmar el pedido y habilitarlo para facturación sólo cuando todas las líneas restantes que controlan inventario estén reservadas;
 - resolver productos, precios e inventario mediante consultas por lote para todo el documento; queda prohibido consultar la base de datos o servicios externos una vez por línea;
 - agrupar los deltas de inventario de cada edición en, como máximo, una transferencia de reserva `VEN -> PED` y una devolución `PED -> VEN`, ambas dentro de la transacción del pedido; el costo de I/O no debe crecer como una consulta o transferencia adicional por producto;
-- cancelar con motivo;
+- cancelar lógicamente con `orders.cancel`, motivo, idempotencia y auditoría; la cancelación libera en un solo lote únicamente la reserva vigente de `PED -> VEN`, deja el pedido en `Cancelled` y nunca borra su trazabilidad;
+- al reiniciar en el POS una venta originada en un pedido recuperado, cancelar ese pedido en servidor antes de limpiar el borrador local; como la recuperación ya devolvió la reserva, la cancelación reconoce ese estado y no repite el movimiento de inventario;
 - reabrir si el estado y permiso lo admiten;
 - historial de cambios;
 - convertir en factura;
@@ -399,12 +402,13 @@ Para vendedores móviles o cajas:
 - resolución explícita de conflicto de precio, cliente o producto;
 - nunca duplicar el pedido por reintento.
 
-El inventario no se descarga. Si una política exige disponibilidad y no existe conexión, se aplica la política offline configurada.
+La preparación móvil conserva únicamente el saldo conocido de los productos de su catálogo para aplicar el límite de captura; no replica el kardex ni convierte ese saldo en autoridad. Al sincronizar, el servidor vuelve a validar bajo transacción y puede enviar el pedido a `InReview` si el inventario cambió.
 
 ### Consulta
 
 - listado paginado;
 - filtros por fechas, estado, cliente, vendedor, ruta, bodega y origen;
+- el filtro de estado inicia siempre en `Todos`; una preferencia previa no puede ocultar pedidos al volver a la vista;
 - búsqueda por número interno o externo;
 - resumen de valor y cantidades;
 - detalle completo;

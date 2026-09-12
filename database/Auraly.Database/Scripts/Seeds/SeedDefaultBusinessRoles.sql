@@ -9,6 +9,8 @@ VALUES(N'agents.'),(N'conversations.'),(N'leads.'),(N'campaigns.'),(N'reservatio
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
 SELECT NEWID(),source.Module,source.Action,source.Resource,source.Description,SYSUTCDATETIME()
 FROM (VALUES
+  (N'TenantProfile',N'Read',N'tenant.profile.read',N'Ver la información y el plan de la empresa propia'),
+  (N'TenantProfile',N'Update',N'tenant.profile.update',N'Actualizar la identidad de la empresa propia'),
   (N'POS',N'CreateCustomer',N'pos.customer.create',N'Crear y seleccionar clientes desde el punto de venta'),
   (N'POS',N'Orders',N'pos.orders',N'Consultar y recuperar pedidos desde el punto de venta'),
   (N'POS',N'ReadInventoryAvailability',N'pos.inventory.availability.read',N'Consultar existencias desde el punto de venta'),
@@ -81,6 +83,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND (
       permissionValue.Resource NOT LIKE N'tenants.%'
+      AND permissionValue.Resource NOT LIKE N'tenant.profile.%'
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
@@ -89,7 +92,8 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
                      WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
       OR permissionValue.Resource IN(
         N'users.read',N'users.create',N'users.update',N'users.delete',N'users.assign_role',N'users.remove_role',
-        N'roles.read',N'security.users.link-party'))
+        N'roles.read',N'roles.create',N'roles.update',N'roles.delete',N'roles.assign_permissions',
+        N'security.users.link-party'))
     OR roleValue.NormalizedName=N'ACCOUNTANT' AND (
       permissionValue.Resource LIKE N'accounting.%'
       OR permissionValue.Resource LIKE N'payroll.%'
@@ -134,6 +138,7 @@ WHERE roleValue.IsActive=1
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND (
       permissionValue.Resource NOT LIKE N'tenants.%'
+      AND permissionValue.Resource NOT LIKE N'tenant.profile.%'
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
@@ -142,7 +147,8 @@ WHERE roleValue.IsActive=1
                      WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
       OR permissionValue.Resource IN(
         N'users.read',N'users.create',N'users.update',N'users.delete',N'users.assign_role',N'users.remove_role',
-        N'roles.read',N'security.users.link-party'))
+        N'roles.read',N'roles.create',N'roles.update',N'roles.delete',N'roles.assign_permissions',
+        N'security.users.link-party'))
     OR roleValue.NormalizedName=N'ACCOUNTANT' AND (
       permissionValue.Resource LIKE N'accounting.%'
       OR permissionValue.Resource LIKE N'payroll.%'

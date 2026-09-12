@@ -30,6 +30,24 @@ public sealed class PosOrderServerClientTests
     }
 
     [Fact]
+    public async Task Recovered_order_cancel_uses_the_device_endpoint_and_stable_idempotency_key()
+    {
+        var orderId = Guid.NewGuid();
+        var handler = new CancelOrderHandler(orderId);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test") };
+        var client = Client(http, Guid.NewGuid());
+
+        var result = await client.CancelAsync(
+            Session(), orderId, "Venta reiniciada.", "cancel-operation", default);
+
+        Assert.Equal("Cancelled", result.Status);
+        Assert.Equal(HttpMethod.Post, handler.Method);
+        Assert.Equal($"/api/pos/v1/orders/{orderId:D}/cancel", handler.Path);
+        Assert.Equal("cancel-operation", handler.IdempotencyKey);
+        Assert.Equal("Venta reiniciada.", handler.Reason);
+    }
+
+    [Fact]
     public async Task Order_server_problem_detail_is_preserved_without_exposing_unstructured_content()
     {
         using var detailedHttp = new HttpClient(new RejectionHandler(
@@ -109,5 +127,30 @@ public sealed class PosOrderServerClientTests
             });
     }
 
+    private sealed class CancelOrderHandler(Guid orderId) : HttpMessageHandler
+    {
+        public HttpMethod? Method { get; private set; }
+        public string? Path { get; private set; }
+        public string? IdempotencyKey { get; private set; }
+        public string? Reason { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Method = request.Method;
+            Path = request.RequestUri!.AbsolutePath;
+            IdempotencyKey = request.Headers.GetValues("Idempotency-Key").Single();
+            var payload = await request.Content!.ReadFromJsonAsync<CancelPayload>(cancellationToken);
+            Reason = payload!.Reason;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new CancelOrderResponse(
+                    orderId, "PED-1", "Cancelled", false))
+            };
+        }
+    }
+
     private sealed record PrintPayload(Guid[] OrderIds);
+    private sealed record CancelPayload(string Reason);
 }

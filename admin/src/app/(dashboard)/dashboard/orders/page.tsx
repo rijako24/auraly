@@ -8,6 +8,7 @@ import { PageError } from "@/components/ui/page-error";
 import {
   loadCommerceOrder,
   loadCommerceOrders,
+  cancelCommerceOrder,
   retryCommerceOrderEmission,
   type CommerceOrderDetail,
 } from "@/services/orders/commerce-orders-client";
@@ -78,6 +79,12 @@ export default function OrdersPage() {
       ) ?? workspaces[0] ?? null
     );
   }, [workspaces]);
+  const editingWorkspace = useMemo(
+    () => editingOrder?.warehouseId
+      ? workspaces.find((option) => option.warehouseId === editingOrder.warehouseId) ?? workspace
+      : workspace,
+    [editingOrder?.warehouseId, workspace, workspaces],
+  );
 
   if (!businessId)
     return <PageError message="Selecciona una sede para consultar sus pedidos." />;
@@ -106,6 +113,9 @@ export default function OrdersPage() {
         onRetryEmission={async (orderId) => {
           await retryCommerceOrderEmission(orderId);
         }}
+        onCancelOrder={user?.permissions?.includes("orders.cancel") ? async (order) => {
+          await cancelCommerceOrder(order.orderId);
+        } : undefined}
         onConfirmReview={user?.permissions?.includes("orders.review") ? async (order, lines) => {
           if (!order.customerId) throw new Error("El pedido no tiene un cliente válido.");
           await sellerOrdersApi.update(order.orderId, {
@@ -130,7 +140,7 @@ export default function OrdersPage() {
             : undefined
         }
         onRecover={
-          workspace && user
+          workspace && user?.permissions?.includes("orders.recover")
             ? async (order) => {
                 await selectSalesWorkspace(workspace);
                 router.push(`/pos?recoverOrder=${encodeURIComponent(order.orderId)}`);
@@ -166,10 +176,10 @@ export default function OrdersPage() {
       {printerOpen && (
         <PosPrinterDialog client={printerClient} onClose={() => setPrinterOpen(false)} />
       )}
-      {editingOrder?.customerId && (editingOrder.warehouseId || workspace?.warehouseId) && (
+      {editingOrder?.customerId && (editingOrder.warehouseId || editingWorkspace?.warehouseId) && (
         <SellerOrderCaptureDialog
           businessId={editingOrder.businessId}
-          warehouseId={editingOrder.warehouseId ?? workspace!.warehouseId}
+          warehouseId={editingOrder.warehouseId ?? editingWorkspace!.warehouseId}
           route={null}
           stop={{
             routeStopId: `order-${editingOrder.orderId}`,
@@ -191,6 +201,7 @@ export default function OrdersPage() {
             rowVersion: "",
           }}
           editing={editingOrder}
+          allowsNegativeStockSales={editingWorkspace?.warehouseAllowsNegativeStockSales ?? false}
           onClose={() => setEditingOrder(null)}
           onCreated={async () => { setEditingOrder(null); setOrdersRevision((value) => value + 1); }}
         />

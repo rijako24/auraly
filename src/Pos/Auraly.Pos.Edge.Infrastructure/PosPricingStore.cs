@@ -471,34 +471,54 @@ public sealed partial class PosCatalogStore
         var exclusionRules = snapshot.PriceChannelExclusions.Select(value =>
             new PriceChannelExclusionRule(value.PriceChannelId,value.ProductId,
                 value.ProductCategoryId,value.ProductBrandId)).ToArray();
+        var distinctProductIds = requests.Select(value => value.ProductId).Distinct().ToArray();
+        await using var productsCommand = connection.CreateCommand();
+        var productParameters = distinctProductIds.Select((productId, index) =>
+        {
+            var name = $"@ResolvedProduct{index}";
+            productsCommand.Parameters.Add(Q(name, productId));
+            return name;
+        }).ToArray();
+        productsCommand.CommandText = $"""
+            SELECT ProductId,Name,UnitPrice,CurrencyCode,ProductCategoryId,ProductBrandId,
+                   ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent
+            FROM PosCatalogProducts
+            WHERE IsActive=1 AND ProductId IN ({string.Join(',', productParameters)});
+            """;
+        var products = new Dictionary<Guid, LocalPriceProduct>();
+        await using (var reader = await productsCommand.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                var productId = Guid.Parse(reader.GetString(0));
+                products.Add(productId, new(
+                    reader.GetString(1),
+                    Convert.ToDecimal(reader.GetValue(2), CultureInfo.InvariantCulture),
+                    reader.GetString(3),
+                    reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4)),
+                    reader.IsDBNull(5) ? null : Guid.Parse(reader.GetString(5)),
+                    reader.IsDBNull(6) ? [] : JsonSerializer.Deserialize<Guid[]>(reader.GetString(6)) ?? [],
+                    Convert.ToDecimal(reader.GetValue(7),CultureInfo.InvariantCulture),
+                    Convert.ToDecimal(reader.GetValue(8),CultureInfo.InvariantCulture),
+                    reader.IsDBNull(9) ? null : Convert.ToDecimal(reader.GetValue(9),CultureInfo.InvariantCulture)));
+            }
+        }
         var inputs = new List<CommercePriceLineInput>(requests.Count);
         foreach (var request in requests)
         {
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT Name,CategoryName,UnitPrice,CurrencyCode,ProductCategoryId,ProductBrandId,
-                       ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent
-                FROM PosCatalogProducts WHERE ProductId=@ProductId AND IsActive=1;
-                """;
-            command.Parameters.Add(Q("@ProductId", request.ProductId));
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct))
+            if (!products.TryGetValue(request.ProductId, out var product))
                 throw new KeyNotFoundException("The product is not available in the local catalog.");
-            var name = reader.GetString(0);
-            var baseAmount = Convert.ToDecimal(reader.GetValue(2), CultureInfo.InvariantCulture);
-            var currency = reader.GetString(3);
             var productContext = new PriceChannelProductContext(
                 request.ProductId,
-                reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4)),
-                reader.IsDBNull(5) ? null : Guid.Parse(reader.GetString(5)),
-                reader.IsDBNull(6) ? [] : JsonSerializer.Deserialize<Guid[]>(reader.GetString(6)) ?? [],
-                currency,
-                Convert.ToDecimal(reader.GetValue(7),CultureInfo.InvariantCulture),
-                Convert.ToDecimal(reader.GetValue(8),CultureInfo.InvariantCulture),
-                reader.IsDBNull(9) ? null : Convert.ToDecimal(reader.GetValue(9),CultureInfo.InvariantCulture));
-            await reader.DisposeAsync();
+                product.ProductCategoryId,
+                product.ProductBrandId,
+                product.ProductCategoryAncestorIds,
+                product.CurrencyCode,
+                product.AverageUnitCost,
+                product.LatestUnitCost,
+                product.TargetMarginPercent);
             inputs.Add(new(
-                request.Key, name, baseAmount, request.Quantity, productContext,
+                request.Key, product.Name, product.UnitPrice, request.Quantity, productContext,
                 EligibleForPromotion: request.EligibleForPromotion));
         }
         var now = Clock.GetUtcNow();
@@ -523,6 +543,17 @@ public sealed partial class PosCatalogStore
             line.ReferenceUnitPrice),
             StringComparer.OrdinalIgnoreCase);
     }
+
+    private sealed record LocalPriceProduct(
+        string Name,
+        decimal UnitPrice,
+        string CurrencyCode,
+        Guid? ProductCategoryId,
+        Guid? ProductBrandId,
+        IReadOnlyCollection<Guid> ProductCategoryAncestorIds,
+        decimal AverageUnitCost,
+        decimal LatestUnitCost,
+        decimal? TargetMarginPercent);
 
     private static async Task<PosPricingSnapshot> ReadPriceResolutionConfigurationAsync(
         SqliteConnection connection,

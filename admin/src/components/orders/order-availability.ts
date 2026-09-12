@@ -7,6 +7,7 @@ type OrderAvailabilityInput = Pick<
 
 export type OrderAvailability = {
   canUseInCurrentSession: boolean;
+  canRecover: boolean;
   label: string;
   actionLabel: string;
   tone: "available" | "owned" | "claimed" | "invoiced" | "cancelled" | "neutral";
@@ -19,6 +20,7 @@ export function getOrderAvailability(
   if (activeOrderId === order.orderId) {
     return {
       canUseInCurrentSession: false,
+      canRecover: false,
       label: "Ocupado",
       actionLabel: "Ocupado",
       tone: "owned",
@@ -29,12 +31,14 @@ export function getOrderAvailability(
     return order.claim.isOwnedByCurrentActor
       ? {
           canUseInCurrentSession: false,
+          canRecover: false,
           label: "Ocupado",
           actionLabel: "Ocupado",
           tone: "owned",
         }
       : {
           canUseInCurrentSession: false,
+          canRecover: false,
           label: "En proceso",
           actionLabel: "En proceso",
           tone: "claimed",
@@ -44,28 +48,30 @@ export function getOrderAvailability(
   if (order.status === "Available") {
     return {
       canUseInCurrentSession: order.canInvoice,
+      canRecover: order.canInvoice,
       label: "Disponible",
       actionLabel: "Recuperar",
       tone: "available",
     };
   }
   if (order.status === "Invoiced") {
-    return { canUseInCurrentSession: false, label: "Facturado", actionLabel: "Facturado", tone: "invoiced" };
+    return { canUseInCurrentSession: false, canRecover: false, label: "Facturado", actionLabel: "Facturado", tone: "invoiced" };
   }
   if (order.status === "InReview") {
-    return { canUseInCurrentSession: false, label: "Requiere revisión", actionLabel: "Revisar", tone: "claimed" };
+    return { canUseInCurrentSession: false, canRecover: true, label: "Requiere revisión", actionLabel: "Recuperar", tone: "claimed" };
   }
   if (order.status === "ProcessingEmission") {
-    return { canUseInCurrentSession: false, label: "Procesando emisión", actionLabel: "Procesando emisión", tone: "claimed" };
+    return { canUseInCurrentSession: false, canRecover: false, label: "Procesando emisión", actionLabel: "Procesando emisión", tone: "claimed" };
   }
   if (order.status === "EmissionFailed") {
-    return { canUseInCurrentSession: false, label: "Error de emisión", actionLabel: "Error de emisión", tone: "cancelled" };
+    return { canUseInCurrentSession: false, canRecover: false, label: "Error de emisión", actionLabel: "Error de emisión", tone: "cancelled" };
   }
   if (order.status === "Cancelled") {
-    return { canUseInCurrentSession: false, label: "Cancelado", actionLabel: "Cancelado", tone: "cancelled" };
+    return { canUseInCurrentSession: false, canRecover: false, label: "Cancelado", actionLabel: "Cancelado", tone: "cancelled" };
   }
   return {
     canUseInCurrentSession: false,
+    canRecover: false,
     label: order.status,
     actionLabel: order.status,
     tone: "neutral",

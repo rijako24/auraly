@@ -28,7 +28,7 @@ public sealed class CufeInput
         if (string.IsNullOrWhiteSpace(customerIdentification)) throw new ArgumentException("A customer identification is required.", nameof(customerIdentification));
 
         InvoiceNumber = invoiceNumber.Trim();
-        IssuedAt = issuedAt;
+        IssuedAt = DianFiscalDateTime.InColombia(issuedAt);
         UntaxedAmount = untaxedAmount;
         PayableAmount = payableAmount;
         SupplierTaxId = supplierTaxId.Trim();

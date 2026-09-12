@@ -54,11 +54,19 @@ public sealed partial class SqlOnlineSalesDraftStore
         var channelConfiguration = await LoadChannelConfigurationAsync(
             connection,transaction,businessId,customerId,
             requests.Select(value => value.ProductId).Distinct().ToArray(),ct);
+        var products = await ReadProductsAsync(
+            connection,
+            transaction,
+            businessId,
+            warehouseId,
+            requests.Select(value => value.ProductId).Distinct().ToArray(),
+            ct);
         var inputs = new List<CommercePriceLineInput>(requests.Count);
         foreach (var request in requests)
         {
-            var product = await ReadProductAsync(
-                connection, transaction, businessId, warehouseId, request.ProductId, ct);
+            if (!products.TryGetValue(request.ProductId, out var product))
+                throw new OnlineSalesDraftValidationException(
+                    "El producto no está disponible para este negocio.");
             inputs.Add(new(
                 request.Key, product.Name, product.UnitPrice, request.Quantity,
                 new PriceChannelProductContext(
@@ -98,36 +106,51 @@ public sealed partial class SqlOnlineSalesDraftStore
             lines.Select(line => new SalePriceRequest(
                 line.LineId.ToString("D"), line.ProductId, line.Quantity,
                 !string.Equals(line.PriceSource, "Manual", StringComparison.Ordinal))).ToArray(), ct);
-        foreach (var line in lines)
-        {
-            var price = prices[line.LineId.ToString("D")];
-            if (string.Equals(line.PriceSource, "Manual", StringComparison.Ordinal))
-                continue;
-            var unitPrice = decimal.Round(
-                TaxExclusive(price.ReferenceUnitPrice, line.TaxRate), 2,
-                MidpointRounding.AwayFromZero);
-            var targetNet = decimal.Round(
-                TaxExclusive(price.LineTotal, line.TaxRate), 2,
-                MidpointRounding.AwayFromZero);
-            var promotionDiscount = decimal.Round(
-                Math.Max(0, line.Quantity * unitPrice - targetNet), 2,
-                MidpointRounding.AwayFromZero);
-            await ExecuteAsync(connection, transaction, """
-                UPDATE dbo.SalesDraftLines
-                SET BaseUnitPrice=@BaseUnitPrice,UnitPrice=@UnitPrice,CurrencyCode=@CurrencyCode,
-                    PriceSource=@PriceSource,PriceChannelId=@PriceChannelId,
-                    PromotionDiscountAmount=@PromotionDiscount
-                WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
-                """,
-                [
-                    P("@BaseUnitPrice", price.Input.BaseUnitPrice),
-                    P("@UnitPrice", unitPrice),
-                    P("@CurrencyCode", price.Input.CurrencyCode),
-                    P("@PriceSource", price.PriceSource), P("@PriceChannelId", price.PriceChannelId),
-                    P("@PromotionDiscount", promotionDiscount),
-                    P("@DraftId", draftId), P("@LineId", line.LineId)
-                ], ct);
-        }
+        var updates = lines
+            .Where(line => !string.Equals(line.PriceSource, "Manual", StringComparison.Ordinal))
+            .Select(line =>
+            {
+                var price = prices[line.LineId.ToString("D")];
+                var unitPrice = decimal.Round(
+                    TaxExclusive(price.ReferenceUnitPrice, line.TaxRate), 2,
+                    MidpointRounding.AwayFromZero);
+                var targetNet = decimal.Round(
+                    TaxExclusive(price.LineTotal, line.TaxRate), 2,
+                    MidpointRounding.AwayFromZero);
+                return new
+                {
+                    line.LineId,
+                    BaseUnitPrice = price.Input.BaseUnitPrice,
+                    UnitPrice = unitPrice,
+                    price.Input.CurrencyCode,
+                    price.PriceSource,
+                    price.PriceChannelId,
+                    PromotionDiscount = decimal.Round(
+                        Math.Max(0, line.Quantity * unitPrice - targetNet), 2,
+                        MidpointRounding.AwayFromZero)
+                };
+            })
+            .ToArray();
+        if (updates.Length == 0) return;
+        await ExecuteAsync(connection, transaction, """
+            UPDATE line
+            SET BaseUnitPrice=input.BaseUnitPrice,UnitPrice=input.UnitPrice,
+                CurrencyCode=input.CurrencyCode,PriceSource=input.PriceSource,
+                PriceChannelId=input.PriceChannelId,
+                PromotionDiscountAmount=input.PromotionDiscount
+            FROM dbo.SalesDraftLines line
+            INNER JOIN OPENJSON(@UpdatesJson) WITH(
+              LineId uniqueidentifier '$.LineId',
+              BaseUnitPrice decimal(18,2) '$.BaseUnitPrice',
+              UnitPrice decimal(18,2) '$.UnitPrice',
+              CurrencyCode nvarchar(3) '$.CurrencyCode',
+              PriceSource nvarchar(24) '$.PriceSource',
+              PriceChannelId uniqueidentifier '$.PriceChannelId',
+              PromotionDiscount decimal(18,2) '$.PromotionDiscount') input
+              ON input.LineId=line.SalesDraftLineId
+            WHERE line.SalesDraftId=@DraftId;
+            """,
+            [P("@UpdatesJson", JsonSerializer.Serialize(updates)), P("@DraftId", draftId)], ct);
     }
 
     private static async Task<PromotionConfiguration> LoadPromotionConfigurationAsync(

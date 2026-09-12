@@ -190,15 +190,19 @@ public sealed class FiscalGenerationWorker(
                 line.UntaxedAmount, [new DianTax(line.TaxCode, item.TaxName,
                     line.UntaxedAmount, line.TaxAmount, item.TaxPercent)]);
         }).ToArray();
-        var taxes = sale.FiscalSnapshot.Taxes.Select(tax =>
-        {
-            var matching = lines.SelectMany(line => line.Taxes)
-                .Where(item => item.Code == tax.Code).ToArray();
-            if (matching.Length == 0)
-                throw new FiscalSnapshotDataException($"Tax metadata is missing for code '{tax.Code}'.");
-            return new DianTax(tax.Code, matching[0].Name,
-                matching.Sum(item => item.TaxableAmount), tax.Amount, matching[0].Percent);
-        }).ToArray();
+        var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
+        var frozenTaxes = sale.FiscalSnapshot.Taxes
+            .GroupBy(tax => tax.Code, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Sum(tax => tax.Amount),
+                StringComparer.Ordinal);
+        var generatedTaxes = taxes
+            .GroupBy(tax => tax.Code, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Sum(tax => tax.Amount),
+                StringComparer.Ordinal);
+        if (frozenTaxes.Count != generatedTaxes.Count ||
+            frozenTaxes.Any(tax => generatedTaxes.GetValueOrDefault(tax.Key) != tax.Value))
+            throw new FiscalSnapshotDataException(
+                "The immutable tax summary differs from its invoice lines.");
 
         return new DianInvoice(sale.FiscalSnapshot.FiscalNumber, sale.FiscalSnapshot.Cufe,
             sale.FiscalSnapshot.IssuedAt, ubl.CurrencyCode, ubl.InvoiceTypeCode,
@@ -278,12 +282,7 @@ public sealed class FiscalGenerationWorker(
                 [new DianTax(line.TaxCode, line.TaxName, line.UntaxedAmount,
                     line.TaxAmount, line.TaxRate)]);
         }).ToArray();
-        var taxes = lines.SelectMany(line => line.Taxes)
-            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
-            .OrderBy(group => group.Key.Code, StringComparer.Ordinal)
-            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
-                group.Sum(tax => tax.TaxableAmount), group.Sum(tax => tax.Amount),
-                group.Key.Percent)).ToArray();
+        var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
 
         return new DianInvoice(snapshot.FiscalNumber, snapshot.Cufe, snapshot.IssuedAt,
             ubl.CurrencyCode, ubl.InvoiceTypeCode, snapshot.Environment,
@@ -357,13 +356,7 @@ public sealed class FiscalGenerationWorker(
                 [new DianTax(line.TaxCode, item.TaxName, line.UntaxedAmount,
                     line.TaxAmount, line.TaxRate)]);
         }).ToArray();
-        var taxes = lines.SelectMany(line => line.Taxes)
-            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
-            .OrderBy(group => group.Key.Code, StringComparer.Ordinal)
-            .ThenBy(group => group.Key.Percent)
-            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
-                group.Sum(tax => tax.TaxableAmount), group.Sum(tax => tax.Amount),
-                group.Key.Percent)).ToArray();
+        var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
         var cude = CudeCalculator.Calculate(new CudeInput(
             snapshot.FiscalNumber, snapshot.Return.ReturnedAt,
             snapshot.Return.UntaxedAmount, snapshot.Return.TotalAmount,
@@ -470,13 +463,7 @@ public sealed class FiscalGenerationWorker(
                 [new DianTax(line.TaxCode, TaxName(line.TaxCode), line.UntaxedAmount,
                     line.TaxAmount, line.TaxRate)]))
             .ToArray();
-        var taxes = lines.SelectMany(line => line.Taxes)
-            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
-            .OrderBy(group => group.Key.Code, StringComparer.Ordinal)
-            .ThenBy(group => group.Key.Percent)
-            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
-                group.Sum(tax => tax.TaxableAmount), group.Sum(tax => tax.Amount),
-                group.Key.Percent)).ToArray();
+        var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
         var cude = CudeCalculator.Calculate(new CudeInput(
             snapshot.FiscalNumber, value.IssuedAt, value.UntaxedAmount,
             value.TotalAmount, work.Issuer.SupplierTaxId, value.CustomerIdentification,
@@ -579,11 +566,7 @@ public sealed class FiscalGenerationWorker(
             discountAmount = 0;
             createsPayable = true;
         }
-        var taxes = lines.SelectMany(line => line.Taxes)
-            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
-            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
-                group.Sum(x => x.TaxableAmount), group.Sum(x => x.Amount), group.Key.Percent))
-            .ToArray();
+        var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
         var cuds = CudsCalculator.Calculate(new CudsInput(snapshot.FiscalNumber,
             issuedAt, untaxedAmount,
             taxes.Where(x => x.Code == "01").Sum(x => x.Amount), totalAmount,
@@ -639,13 +622,7 @@ public sealed class FiscalGenerationWorker(
                 [new DianTax(line.TaxCode, item.TaxName, line.NetAmount,
                     line.TaxAmount, line.TaxRate)]);
         }).ToArray();
-        var taxes = lines.SelectMany(line => line.Taxes)
-            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
-            .OrderBy(group => group.Key.Code, StringComparer.Ordinal)
-            .ThenBy(group => group.Key.Percent)
-            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
-                group.Sum(tax => tax.TaxableAmount), group.Sum(tax => tax.Amount),
-                group.Key.Percent)).ToArray();
+        var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
         var cuds = CudsCalculator.Calculate(new CudsInput(snapshot.FiscalNumber,
             adjustment.ReturnedAt, adjustment.NetAmount,
             taxes.Where(tax => tax.Code == "01").Sum(tax => tax.Amount),
@@ -680,6 +657,19 @@ public sealed class FiscalGenerationWorker(
         "22" => "INC Bolsas",
         _ => "Impuesto"
     };
+
+    private static DianTax[] SummarizeTaxes(IEnumerable<DianTax> lineTaxes) =>
+        lineTaxes
+            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
+            .OrderBy(group => group.Key.Code, StringComparer.Ordinal)
+            .ThenBy(group => group.Key.Percent)
+            .Select(group => new DianTax(
+                group.Key.Code,
+                group.Key.Name,
+                group.Sum(tax => tax.TaxableAmount),
+                group.Sum(tax => tax.Amount),
+                group.Key.Percent))
+            .ToArray();
 
     private static DianParty IssuerParty(FiscalIssuerWorkConfiguration issuer) => new(
         issuer.SupplierTaxId, issuer.SupplierCheckDigit, issuer.IdentificationTypeCode,

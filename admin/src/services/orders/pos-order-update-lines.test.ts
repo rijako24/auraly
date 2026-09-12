@@ -24,3 +24,40 @@ test("preserves the recovered order price and discount when building update line
     },
   ]);
 });
+
+test("builds the complete replacement from only the lines that remain in the recovered sale", () => {
+  const lines = buildPosOrderUpdateLines([
+    {
+      productId: { value: "kept-product" },
+      quantity: 7,
+      unitPrice: 8_000,
+      discount: 1_000,
+      priceSource: "Promotion",
+    },
+    {
+      productId: { value: "new-product" },
+      quantity: 2,
+      unitPrice: 4_500,
+      discount: 0,
+      priceSource: "Base",
+    },
+  ]);
+
+  assert.deepEqual(lines, [
+    {
+      productId: "kept-product",
+      quantity: 7,
+      unitPrice: 8_000,
+      discountAmount: 1_000,
+      priceSource: "Promotion",
+    },
+    {
+      productId: "new-product",
+      quantity: 2,
+      unitPrice: 4_500,
+      discountAmount: 0,
+      priceSource: "Base",
+    },
+  ]);
+  assert.equal(lines.some((line) => line.productId === "removed-product"), false);
+});

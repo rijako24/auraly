@@ -17,6 +17,7 @@ test("un pedido reclamado deja de mostrarse y operar como disponible", () => {
     getOrderAvailability({ orderId: "order-1", canInvoice: true, status: "Available", claim }),
     {
       canUseInCurrentSession: false,
+      canRecover: false,
       label: "En proceso",
       actionLabel: "En proceso",
       tone: "claimed",
@@ -34,6 +35,7 @@ test("la misma sesión distingue el pedido que ya tiene en venta", () => {
     }),
     {
       canUseInCurrentSession: false,
+      canRecover: false,
       label: "Ocupado",
       actionLabel: "Ocupado",
       tone: "owned",
@@ -46,6 +48,7 @@ test("un pedido sin reclamo conserva el estado disponible", () => {
     getOrderAvailability({ orderId: "order-1", canInvoice: true, status: "Available", claim: null }),
     {
       canUseInCurrentSession: true,
+      canRecover: true,
       label: "Disponible",
       actionLabel: "Recuperar",
       tone: "available",
@@ -53,15 +56,22 @@ test("un pedido sin reclamo conserva el estado disponible", () => {
   );
 });
 
-test("un pedido con inventario insuficiente se presenta como revisión", () => {
-  const availability = getOrderAvailability({
-    orderId: "order-review",
-    canInvoice: false,
-    status: "InReview",
-    claim: null,
-  });
-  assert.equal(availability.label, "Requiere revisión");
-  assert.equal(availability.actionLabel, "Revisar");
+test("un pedido en revisión se puede recuperar para corregirlo en el POS", () => {
+  assert.deepEqual(
+    getOrderAvailability({
+      orderId: "order-review",
+      canInvoice: false,
+      status: "InReview",
+      claim: null,
+    }),
+    {
+      canUseInCurrentSession: false,
+      canRecover: true,
+      label: "Requiere revisión",
+      actionLabel: "Recuperar",
+      tone: "claimed",
+    },
+  );
 });
 
 test("el pedido cargado queda ocupado aunque el listado todavía no refleje el reclamo", () => {
@@ -72,6 +82,7 @@ test("el pedido cargado queda ocupado aunque el listado todavía no refleje el r
     ),
     {
       canUseInCurrentSession: false,
+      canRecover: false,
       label: "Ocupado",
       actionLabel: "Ocupado",
       tone: "owned",

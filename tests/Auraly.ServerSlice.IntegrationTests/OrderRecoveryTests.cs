@@ -308,7 +308,8 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         {
         using var client = fixture.CreateUserClient(userId,
             OrderPermissionCodes.Read, OrderPermissionCodes.Create, OrderPermissionCodes.Update,
-            OrderPermissionCodes.Recover, CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Recover, OrderPermissionCodes.Cancel,
+            CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesRestartDraft,
             WorkSessionPermissionCodes.Open);
         using var create = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
         {
@@ -463,18 +464,23 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             reduceAndRemove.EnsureSuccessStatusCode();
         Assert.Equal((4m, 2m, 3m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
 
-        using (var increase = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
+        using (var increaseAndAdd = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
         {
             customerId,
-            notes = "Edición completa con reserva incremental",
+            notes = "Edición completa con reserva incremental y producto agregado",
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
             {
                 new { productId = firstProductId, quantity = 6m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+                new { productId = secondProductId, quantity = 1m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
             },
         }))
-            increase.EnsureSuccessStatusCode();
-        Assert.Equal((1m, 2m, 6m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+            increaseAndAdd.EnsureSuccessStatusCode();
+        Assert.Equal((1m, 1m, 6m, 1m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        var expandedDetail = Assert.IsType<OrderDetail>(
+            await client.GetFromJsonAsync<OrderDetail>($"/api/commerce/v1/orders/{orderId:D}"));
+        Assert.Equal(2, expandedDetail.Lines.Count);
+        Assert.Contains(expandedDetail.Lines, line => line.ProductId == secondProductId && line.Quantity == 1m);
 
         using var createForRemoval = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
         {
@@ -493,7 +499,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         var removalReview = await createForRemoval.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
         Assert.Equal("InReview", removalReview.GetProperty("status").GetString());
         var removalOrderId = removalReview.GetProperty("orderId").GetGuid();
-        Assert.Equal((0m, 2m, 7m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        Assert.Equal((0m, 1m, 7m, 1m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
 
         using (var removePendingLine = await reviewer.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{removalOrderId:D}", new
         {
@@ -506,7 +512,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             },
         }))
             removePendingLine.EnsureSuccessStatusCode();
-        Assert.Equal((0m, 2m, 7m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        Assert.Equal((0m, 1m, 7m, 1m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
 
         using var removedDetailResponse = await client.GetAsync($"/api/commerce/v1/orders/{removalOrderId:D}");
         removedDetailResponse.EnsureSuccessStatusCode();
@@ -540,8 +546,8 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             Assert.Equal("Confirmed", negativeOrder.GetProperty("status").GetString());
             var balances = await ReadBalancesAsync(
                 firstProductId, secondProductId, ordersWarehouseId);
-            Assert.Equal(-8m, balances.SecondSource);
-            Assert.Equal(10m, balances.SecondReserved);
+            Assert.Equal(-9m, balances.SecondSource);
+            Assert.Equal(11m, balances.SecondReserved);
         }
         finally
         {
@@ -549,6 +555,125 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 "UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;",
                 new SqlParameter("@WarehouseId", fixture.WarehouseId));
         }
+
+        using (var forbiddenCancel = await readOnly.PostAsJsonAsync(
+            $"/api/commerce/v1/orders/{orderId:D}/cancel",
+            new CancelOrderRequest("Sin permiso")))
+            Assert.Equal(System.Net.HttpStatusCode.Forbidden, forbiddenCancel.StatusCode);
+
+        var cancelKey = Guid.NewGuid().ToString("N");
+        using (var cancelRequest = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/commerce/v1/orders/{orderId:D}/cancel")
+        {
+            Content = JsonContent.Create(new CancelOrderRequest("Pedido eliminado desde la bandeja.")),
+        })
+        {
+            cancelRequest.Headers.Add("Idempotency-Key", cancelKey);
+            using var cancelled = await client.SendAsync(cancelRequest);
+            Assert.True(
+                cancelled.IsSuccessStatusCode,
+                $"La cancelación respondió {(int)cancelled.StatusCode}: {await cancelled.Content.ReadAsStringAsync()}");
+            var result = await cancelled.Content.ReadFromJsonAsync<CancelOrderResponse>();
+            Assert.Equal("Cancelled", result!.Status);
+            Assert.False(result.IsReplay);
+        }
+        Assert.Equal((6m, -8m, 1m, 10m),
+            await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        using (var replayRequest = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/commerce/v1/orders/{orderId:D}/cancel")
+        {
+            Content = JsonContent.Create(new CancelOrderRequest("Pedido eliminado desde la bandeja.")),
+        })
+        {
+            replayRequest.Headers.Add("Idempotency-Key", cancelKey);
+            using var replay = await client.SendAsync(replayRequest);
+            replay.EnsureSuccessStatusCode();
+            Assert.True((await replay.Content.ReadFromJsonAsync<CancelOrderResponse>())!.IsReplay);
+        }
+        Assert.Equal((6m, -8m, 1m, 10m),
+            await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+
+        var activeForRemoval = await OpenDraftAsync(client, workSession.WorkSessionId);
+        await RecoverAsync(
+            client, userId, workSession.WorkSessionId, removalOrderId, activeForRemoval);
+        var recoveredForRemoval = await OpenDraftAsync(client, workSession.WorkSessionId);
+        Assert.Equal((7m, -8m, 0m, 10m),
+            await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        using (var resetRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{recoveredForRemoval.DraftId:D}/reset")
+        {
+            Content = JsonContent.Create(
+                new ResetOnlineSalesDraftRequest(recoveredForRemoval.Version)),
+        })
+        {
+            resetRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var reset = await client.SendAsync(resetRequest);
+            Assert.True(reset.IsSuccessStatusCode,
+                $"El reinicio respondió {(int)reset.StatusCode}: {await reset.Content.ReadAsStringAsync()}");
+        }
+        Assert.Equal((7m, -8m, 0m, 10m),
+            await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        var cancelledRecovered = Assert.IsType<OrderDetail>(
+            await client.GetFromJsonAsync<OrderDetail>(
+                $"/api/commerce/v1/orders/{removalOrderId:D}"));
+        Assert.Equal("Cancelled", cancelledRecovered.Status);
+        await using (var reportingConnection = new SqlConnection(fixture.ConnectionString))
+        {
+            await reportingConnection.OpenAsync();
+            await using var reporting = reportingConnection.CreateCommand();
+            reporting.CommandText = """
+                SELECT Status,CancelledAt
+                FROM reporting.CommercialReportOrderFacts
+                WHERE OrderId=@OrderId;
+                """;
+            reporting.Parameters.AddWithValue("@OrderId", removalOrderId);
+            await using var reportingReader = await reporting.ExecuteReaderAsync();
+            Assert.True(await reportingReader.ReadAsync());
+            Assert.Equal(6, reportingReader.GetInt32(0));
+            Assert.False(reportingReader.IsDBNull(1));
+        }
+
+        using var createForInvoice = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
+        {
+            businessId = fixture.BusinessId,
+            warehouseId = fixture.WarehouseId,
+            customerId,
+            capturedOffline = false,
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 1m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+            },
+        });
+        createForInvoice.EnsureSuccessStatusCode();
+        var invoiceOrder = await createForInvoice.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.Equal("Confirmed", invoiceOrder.GetProperty("status").GetString());
+        var invoiceOrderId = invoiceOrder.GetProperty("orderId").GetGuid();
+        var cleanDraft = await OpenDraftAsync(client, workSession.WorkSessionId);
+        await RecoverAsync(client, userId, workSession.WorkSessionId, invoiceOrderId, cleanDraft);
+        var recoveredForInvoice = await OpenDraftAsync(client, workSession.WorkSessionId);
+        Assert.Equal(invoiceOrderId, recoveredForInvoice.SourceOrderId);
+        using (var invoiceRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{recoveredForInvoice.DraftId:D}/complete")
+        {
+            Content = JsonContent.Create(new CompleteOnlineSalesDraftRequest(
+                recoveredForInvoice.Version,
+                [new OnlineSalesPayment("Cash", recoveredForInvoice.PayableAmount, null)])),
+        })
+        {
+            invoiceRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var invoiced = await client.SendAsync(invoiceRequest);
+            Assert.True(invoiced.IsSuccessStatusCode,
+                $"La facturación respondió {(int)invoiced.StatusCode}: {await invoiced.Content.ReadAsStringAsync()}");
+        }
+        var invoicedDetail = Assert.IsType<OrderDetail>(
+            await client.GetFromJsonAsync<OrderDetail>($"/api/commerce/v1/orders/{invoiceOrderId:D}"));
+        Assert.Equal("Invoiced", invoicedDetail.Status);
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.OrderInvoiceLinks WHERE OrderId=@OrderId;",
+            new SqlParameter("@OrderId", invoiceOrderId)));
 
         async Task<(decimal FirstSource, decimal SecondSource, decimal FirstReserved, decimal SecondReserved)> ReadBalancesAsync(
             Guid first, Guid second, Guid reservedWarehouse)
@@ -1003,11 +1128,11 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
               ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-              DiscountAmount,LineTotal,CreatedAt)
+              DiscountAmount,LineTotal,RawPayloadJson,CreatedAt)
             VALUES(
               @ItemId,@OrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
               N'Producto del pedido',N'EA',2,7777,
-              777,14777,DATEADD(day,-4,SYSUTCDATETIME()));
+              777,14777,N'{"PriceSource":"Promotion"}',DATEADD(day,-4,SYSUTCDATETIME()));
 
             INSERT dbo.TaxProfiles(
               TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
@@ -1056,7 +1181,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             Assert.Equal(2m, line.Quantity);
             Assert.Equal(7_777m, line.UnitPrice);
             Assert.Equal(777m, line.Discount);
-            Assert.Equal("Order", line.PriceSource);
+            Assert.Equal("Promotion", line.PriceSource);
             Assert.Equal(5m, line.TaxRate);
             Assert.Equal(738.85m, line.Tax);
             Assert.Equal(15_515.85m, recovered.PayableAmount);
@@ -1353,5 +1478,20 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         command.CommandText = sql;
         command.Parameters.AddRange(parameters);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<T> ScalarAsync<T>(
+        string sql,
+        params SqlParameter[] parameters)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddRange(parameters);
+        return (T)Convert.ChangeType(
+            await command.ExecuteScalarAsync()
+                ?? throw new InvalidOperationException("The scalar query returned no value."),
+            typeof(T));
     }
 }

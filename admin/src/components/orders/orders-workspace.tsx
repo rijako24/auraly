@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Search,
   SlidersHorizontal,
+  Trash2,
   UserRound,
   X,
 } from "lucide-react";
@@ -82,6 +83,7 @@ type OrdersWorkspaceProps = {
   loadDetail: (orderId: string) => Promise<CommerceOrderDetail>;
   onRecover?: (order: CommerceOrderListItem) => Promise<void>;
   onRetryEmission?: (orderId: string) => Promise<void>;
+  onCancelOrder?: (order: CommerceOrderListItem) => Promise<void>;
   onConfirmReview?: (order: CommerceOrderDetail, lines: ReviewOrderLineInput[]) => Promise<void>;
   onEditOrder?: (order: CommerceOrderDetail) => void;
   onPrintSelected?: (orders: CommerceOrderListItem[]) => Promise<{ printedCount: number }>;
@@ -125,6 +127,7 @@ export function OrdersWorkspace({
   loadDetail,
   onRecover,
   onRetryEmission,
+  onCancelOrder,
   onConfirmReview,
   onEditOrder,
   onPrintSelected,
@@ -141,7 +144,7 @@ export function OrdersWorkspace({
   const [query, setQuery] = useState("");
   const [customerId, setCustomerId] = useState("all");
   const [product, setProduct] = useState("");
-  const [status, setStatus] = useState("Available");
+  const [status, setStatus] = useState("All");
   const [createdFrom, setCreatedFrom] = useState(localToday);
   const [createdTo, setCreatedTo] = useState(localToday);
   const [routeId, setRouteId] = useState("All");
@@ -152,6 +155,7 @@ export function OrdersWorkspace({
   const [selectingAll, setSelectingAll] = useState(false);
   const [detail, setDetail] = useState<CommerceOrderDetail | null>(null);
   const [reviewing, setReviewing] = useState<CommerceOrderDetail | null>(null);
+  const [cancelling, setCancelling] = useState<CommerceOrderListItem | null>(null);
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -244,7 +248,7 @@ export function OrdersWorkspace({
   const activeFilterCount = [
     customerId !== "all" ? customerId : "",
     product,
-    status !== "Available" ? status : "",
+    status !== "All" ? status : "",
     routeId !== "All" ? routeId : "",
     sellerId !== "all" ? sellerId : "",
     createdFrom,
@@ -321,33 +325,24 @@ export function OrdersWorkspace({
     setWorking(true);
     setError(null);
     setNotice(null);
-    let completed = 0;
-    let failed = 0;
-    let printError: string | null = null;
     setInvoiceProgress({ total: available.length, processed: 0, completed: 0, failed: 0, current: "Preparando lote", events: [] });
     try {
-      for (const [index, order] of available.entries()) {
-        const activeEvent = { id: `${order.orderId}-active`, text: `Validando y emitiendo ${order.orderNumber}`, tone: "active" as const };
-        setInvoiceProgress((current) => current && ({ ...current, current: order.orderNumber, events: [...current.events.slice(-3), activeEvent] }));
-        const result = await onInvoiceSelected(
-          [order],
-          documentType,
-        );
-        completed += result.completedCount;
-        failed += result.failedCount;
-        printError ||= result.printError ?? null;
-        const tone = result.failedCount ? "error" as const : "success" as const;
-        const text = result.failedCount ? `${order.orderNumber} requiere revisión` : `${order.orderNumber} emitido`;
-        setInvoiceProgress((current) => current && ({
-          ...current,
-          processed: index + 1,
-          completed,
-          failed,
-          current: text,
-          events: [...current.events.filter((event) => event.id !== activeEvent.id).slice(-3), { id: `${order.orderId}-${tone}`, text, tone }],
-        }));
-        if (result.failedCount) break;
-      }
+      const result = await onInvoiceSelected(available, documentType);
+      const completed = result.completedCount;
+      const failed = result.failedCount;
+      const printError = result.printError ?? null;
+      setInvoiceProgress((current) => current && ({
+        ...current,
+        processed: completed + failed,
+        completed,
+        failed,
+        current: failed ? "El lote requiere revisión" : "Lote emitido",
+        events: [{
+          id: "batch-result",
+          text: failed ? `${failed} pedidos requieren revisión` : `${completed} pedidos emitidos`,
+          tone: failed ? "error" : "success",
+        }],
+      }));
       setNotice(
         printError
           ? `${completed} emitidos. ${printError}`
@@ -363,6 +358,23 @@ export function OrdersWorkspace({
     } finally {
       setWorking(false);
       window.setTimeout(() => setInvoiceProgress(null), 2200);
+    }
+  }
+
+  async function cancelOrder() {
+    if (!onCancelOrder || !cancelling) return;
+    setWorking(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await onCancelOrder(cancelling);
+      setNotice(`Pedido ${cancelling.orderNumber} eliminado; su inventario fue devuelto a ventas.`);
+      setCancelling(null);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible eliminar el pedido.");
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -450,7 +462,7 @@ export function OrdersWorkspace({
           <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
             <div><h3 className="font-semibold text-slate-950">Filtrar pedidos</h3><p className="text-sm text-slate-500">Combina cliente, vendedor, producto, estado y rango de fechas.</p></div>
             <Button type="button" variant="ghost" size="sm" onClick={() => {
-              setCustomerId("all"); setProduct(""); setStatus("Available"); setRouteId("All"); setSellerId("all");
+              setCustomerId("all"); setProduct(""); setStatus("All"); setRouteId("All"); setSellerId("all");
               setCreatedFrom(localToday()); setCreatedTo(localToday()); setPage(1);
             }}>Restablecer</Button>
           </div>
@@ -618,7 +630,6 @@ export function OrdersWorkspace({
               {data.items.map((order) => {
                 const checked = selected.has(order.orderId);
                 const availability = getOrderAvailability(order, activeOrderId);
-                const reviewable = order.status === "InReview" && Boolean(onConfirmReview);
                 return (
                   <article
                     key={order.orderId}
@@ -686,15 +697,29 @@ export function OrdersWorkspace({
                         Detalle
                       </button>
                     )}
-                    <button
-                      type="button"
-                      disabled={reviewable ? working : !availability.canUseInCurrentSession || !onRecover || working}
-                      onClick={() => reviewable ? void showDetail(order.orderId) : void recover(order)}
-                      className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 px-3 text-sm font-bold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {reviewable ? <Pencil className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
-                      {availability.actionLabel}
-                    </button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        disabled={!availability.canRecover || !onRecover || working}
+                        onClick={() => void recover(order)}
+                        className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 px-3 text-sm font-bold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        {availability.actionLabel}
+                      </button>
+                      {onCancelOrder && ["Available", "InReview"].includes(order.status) && (
+                        <button
+                          type="button"
+                          disabled={working}
+                          onClick={() => setCancelling(order)}
+                          className="grid h-9 w-9 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-700 transition hover:bg-red-100 disabled:opacity-40"
+                          title={`Eliminar ${order.orderNumber}`}
+                          aria-label={`Eliminar ${order.orderNumber}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                     {compact && (
                       <p className="col-span-2 -mt-2 text-right text-sm font-bold tabular-nums">
                         {money.format(order.total)}
@@ -855,6 +880,31 @@ export function OrdersWorkspace({
                   </Button>
                 )}
               </aside>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {cancelling && (
+        <div className="fixed inset-0 z-[95] grid place-items-center bg-slate-950/55 p-4 backdrop-blur-sm">
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={`Eliminar ${cancelling.orderNumber}`}
+            className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+          >
+            <h3 className="text-lg font-black text-slate-950">¿Eliminar este pedido?</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              {cancelling.orderNumber} quedará cancelado de forma lógica y toda su reserva de inventario volverá a la bodega de ventas.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button type="button" variant="outline" disabled={working} onClick={() => setCancelling(null)}>
+                Volver
+              </Button>
+              <Button type="button" disabled={working} onClick={() => void cancelOrder()} className="bg-red-700 text-white hover:bg-red-800">
+                {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                Sí, eliminar
+              </Button>
             </div>
           </section>
         </div>

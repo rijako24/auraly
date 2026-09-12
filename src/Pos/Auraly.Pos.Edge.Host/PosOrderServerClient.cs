@@ -73,6 +73,26 @@ public sealed class PosOrderServerClient(
             null,
             cancellationToken);
 
+    public Task<CancelOrderResponse> CancelAsync(
+        PosLocalUserSession session,
+        Guid orderId,
+        string reason,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        SendAsync<CancelOrderResponse>(
+            HttpMethod.Post,
+            $"/api/pos/v1/orders/{orderId:D}/cancel",
+            JsonContent.Create(new
+            {
+                userId = session.UserId,
+                businessId = runtime.BusinessId.Value,
+                warehouseId = runtime.WarehouseId.Value,
+                workSessionId = session.WorkSessionId,
+                reason
+            }),
+            idempotencyKey,
+            cancellationToken);
+
     public Task<InvoiceOrdersResponse> InvoiceAsync(
         PosLocalUserSession session,
         IReadOnlyCollection<Guid> orderIds,

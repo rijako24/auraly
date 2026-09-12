@@ -2,8 +2,14 @@ using System.Data;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Auraly.Application.Sales;
+using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Sales;
+using Auraly.Domain.Pricing;
+using Auraly.Platform.Domain.Enums;
+using Auraly.Platform.Domain.Pricing;
+using Auraly.Platform.Domain.Promotions;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -17,98 +23,127 @@ public sealed partial class SqlOnlineSalesDraftStore
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
-            IsolationLevel.ReadCommitted, cancellationToken);
-        var scope = await ResolveOnlineContextAsync(
-            connection, transaction, user, request.Context, cancellationToken);
         await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT p.ProductId,
-                   COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
-                   p.Reference,p.Name,
-                   COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
-                   COALESCE(t.Code,N'01'),COALESCE(t.Rate,0),
-                   price.Amount,
-                   price.CurrencyCode,
-                   p.IsActive,
-                   p.IsWeighable,
-                   p.AllowsFractionalSale,
-                   N'Base'
-            FROM dbo.Products p
-            LEFT JOIN dbo.TaxProfiles t
-              ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=@BusinessId AND t.IsActive=1
-            CROSS APPLY (
-              SELECT TOP(1) pp.Amount,pp.CurrencyCode
-              FROM dbo.ProductPrices pp
-              WHERE pp.BusinessId=@BusinessId AND pp.ProductId=p.ProductId
-                AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET()
-                AND (pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
-              ORDER BY pp.ValidFrom DESC,pp.ProductPriceId
-            ) price
-            WHERE p.TenantId=@TenantId AND p.IsActive=1
-              AND (@Search=N'' OR p.Name LIKE @Contains
-                   OR p.ProductCode LIKE @Prefix OR p.Sku LIKE @Prefix
-                   OR p.Reference LIKE @Prefix
-                   OR EXISTS(
-                     SELECT 1 FROM dbo.ProductBarcodes b
-                     WHERE b.ProductId=p.ProductId AND b.BusinessId=@BusinessId
-                       AND b.IsActive=1 AND b.Barcode LIKE @Prefix)
-                   OR EXISTS(
-                     SELECT 1 FROM dbo.ProductIdentifiers i
-                     WHERE i.ProductId=p.ProductId AND i.BusinessId=@BusinessId
-                       AND i.IsActive=1 AND i.Value LIKE @Prefix))
-            ORDER BY CASE
-                       WHEN p.ProductCode=@Search OR p.Sku=@Search OR p.Reference=@Search THEN 0
-                       WHEN EXISTS(
-                         SELECT 1 FROM dbo.ProductBarcodes b
-                         WHERE b.ProductId=p.ProductId AND b.IsActive=1
-                           AND b.Barcode=@Search) THEN 0
-                       ELSE 1
-                     END,
-                     p.Name,p.ProductId
-            OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
-            """;
+        command.CommandText = "dbo.OnlineSalesProductSearch";
+        command.CommandType = CommandType.StoredProcedure;
         var search = request.Search?.Trim() ?? string.Empty;
         command.Parameters.AddRange([
-            P("@TenantId", user.TenantId), P("@BusinessId", scope.BusinessId), P("@WarehouseId", scope.WarehouseId),
+            P("@TenantId", user.TenantId), P("@BusinessId", request.Context.BusinessId),
+            P("@WarehouseId", request.Context.WarehouseId),
+            P("@WorkSessionId", request.Context.WorkSessionId), P("@UserId", user.UserId),
             P("@CustomerId", request.CustomerId), P("@Search", search),
             P("@Contains", $"%{search}%"), P("@Prefix", $"{search}%"),
             P("@Skip", request.Skip), P("@Take", request.Take + 1)
         ]);
-        var items = new List<OnlineSalesProduct>();
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-            while (await reader.ReadAsync(cancellationToken))
-                items.Add(new(
-                    reader.GetGuid(0), reader.GetString(1),
-                    reader.IsDBNull(2) ? null : reader.GetString(2),
-                    reader.GetString(3), reader.GetString(4), reader.GetString(5),
-                    reader.GetDecimal(6), reader.GetDecimal(7), reader.GetString(8),
-                    reader.GetBoolean(9), reader.GetBoolean(10), reader.GetBoolean(11), reader.GetString(12)));
-        var hasMore = items.Count > request.Take;
-        if (hasMore) items.RemoveAt(items.Count - 1);
-        if (items.Count > 0)
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new OnlineSalesDraftForbiddenException(
+                "La sesión de trabajo no pertenece al usuario y negocio autenticados.");
+
+        await reader.NextResultAsync(cancellationToken);
+        var candidates = new List<SearchProductCandidate>();
+        while (await reader.ReadAsync(cancellationToken))
         {
-            var prices = await ResolveProductPricesAsync(
-                connection, transaction, scope.BusinessId, scope.WarehouseId, request.CustomerId,
-                items.Select(item => new SalePriceRequest(
-                    item.ProductId.ToString("D"), item.ProductId, 1)).ToArray(), cancellationToken,
-                independentLines: true);
-            items = items.Select(item =>
-            {
-                var resolved = prices[item.ProductId.ToString("D")];
-                return item with
-                {
-                    UnitPrice = resolved.EffectiveUnitPrice,
-                    CurrencyCode = resolved.Input.CurrencyCode,
-                    PriceSource = resolved.PriceSource,
-                    PromotionDiscount = resolved.DiscountAmount
-                };
-            }).ToList();
+            var productId = reader.GetGuid(1);
+            var ancestors = reader.GetString(19)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(Guid.Parse)
+                .ToArray();
+            var product = new OnlineSalesProduct(
+                productId, reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4),
+                reader.GetString(5), reader.GetString(6), reader.GetDecimal(7),
+                reader.GetDecimal(8), reader.GetString(9), reader.GetBoolean(10),
+                reader.GetBoolean(11), reader.GetBoolean(12), "Base");
+            candidates.Add(new(product, new(
+                product.ProductCode, product.Name, product.BaseUnitCode, product.TaxCode,
+                product.TaxRate, product.UnitPrice, product.CurrencyCode,
+                product.AllowsFractionalSale, reader.GetDecimal(16),
+                false, reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetGuid(14),
+                reader.IsDBNull(15) ? null : reader.GetGuid(15), ancestors,
+                reader.GetDecimal(17), reader.IsDBNull(18) ? null : reader.GetDecimal(18))));
         }
-        await transaction.CommitAsync(cancellationToken);
-        return new(items, hasMore, hasMore ? request.Skip + items.Count : null);
+
+        await reader.NextResultAsync(cancellationToken);
+        Guid? channelId = await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0)
+            ? reader.GetGuid(0)
+            : null;
+        await reader.NextResultAsync(cancellationToken);
+        var channels = new List<PriceChannelRule>();
+        while (await reader.ReadAsync(cancellationToken))
+            channels.Add(new(reader.GetGuid(0), reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetDecimal(2)));
+        await reader.NextResultAsync(cancellationToken);
+        var tiers = new List<PriceChannelTierRule>();
+        while (await reader.ReadAsync(cancellationToken))
+            tiers.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2),
+                reader.GetDecimal(3), reader.GetString(4)));
+        await reader.NextResultAsync(cancellationToken);
+        var exclusions = new List<PriceChannelExclusionRule>();
+        while (await reader.ReadAsync(cancellationToken))
+            exclusions.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1),
+                reader.IsDBNull(2) ? null : reader.GetGuid(2),
+                reader.IsDBNull(3) ? null : reader.GetGuid(3)));
+        await reader.NextResultAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new OnlineSalesDraftValidationException(
+                "El negocio no tiene una configuración de precios válida.");
+        var allowCombination = reader.GetBoolean(0);
+        await reader.NextResultAsync(cancellationToken);
+        var promotions = new List<PromotionRule>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var conditions = JsonSerializer.Deserialize<PosPromotionCondition[]>(reader.GetString(6)) ?? [];
+            var benefits = JsonSerializer.Deserialize<PosPromotionBenefit[]>(reader.GetString(7)) ?? [];
+            promotions.Add(new(
+                reader.GetGuid(0), reader.GetString(1), reader.GetInt32(2), reader.GetBoolean(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetDateTime(5),
+                conditions.Select(value => new PromotionConditionRule(
+                    (PromotionItemType)value.ItemType, value.ProductId, value.ServiceId,
+                    value.MinimumQuantity, value.MinimumSubtotal,
+                    value.ProductCategoryId, value.ServiceCategoryId)).ToArray(),
+                benefits.Select(value => new PromotionBenefitRule(
+                    (PromotionBenefitType)value.BenefitType, (PromotionItemType)value.TargetItemType,
+                    value.ProductId, value.ServiceId, value.DiscountPercentage,
+                    value.DiscountAmount, value.FixedUnitPrice, value.AppliesToQuantity,
+                    value.ProductCategoryId, value.ServiceCategoryId)).ToArray()));
+        }
+
+        var hasMore = candidates.Count > request.Take;
+        if (hasMore) candidates.RemoveAt(candidates.Count - 1);
+        var priceInputs = candidates.Select(candidate => new CommercePriceLineInput(
+            candidate.Product.ProductId.ToString("D"), candidate.Snapshot.Name,
+            candidate.Snapshot.UnitPrice, 1m,
+            new PriceChannelProductContext(
+                candidate.Product.ProductId, candidate.Snapshot.ProductCategoryId,
+                candidate.Snapshot.ProductBrandId, candidate.Snapshot.ProductCategoryAncestorIds,
+                candidate.Snapshot.CurrencyCode, candidate.Snapshot.UnitCost,
+                candidate.Snapshot.LatestUnitCost, candidate.Snapshot.TargetMarginPercent),
+            EligibleForPromotion: true)).ToArray();
+        var resolved = CommercePriceResolver.Resolve(
+            priceInputs,
+            new CommercePricePolicy(
+                channelId, channels, tiers, exclusions, allowCombination, promotions),
+            independentLines: true).Lines.ToDictionary(
+                line => line.Input.ProductId!.Value);
+        var items = candidates.Select(candidate =>
+        {
+            var price = resolved[candidate.Product.ProductId];
+            return candidate.Product with
+            {
+                UnitPrice = price.EffectiveUnitPrice,
+                CurrencyCode = price.Input.CurrencyCode,
+                PriceSource = price.PriceSource,
+                PromotionDiscount = price.DiscountAmount
+            };
+        }).ToArray();
+        return new(items, hasMore, hasMore ? request.Skip + items.Length : null);
     }
+
+    private sealed record SearchProductCandidate(
+        OnlineSalesProduct Product,
+        ProductSnapshot Snapshot);
 
     public async Task<OnlineSalesCustomerPage> SearchCustomersAsync(
         OnlineSalesUserIdentity user,
@@ -203,9 +238,9 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             while (await reader.ReadAsync(cancellationToken))
                 idsToRead.Add(reader.GetGuid(0));
-        var result = new List<OnlineSalesDraft>(idsToRead.Count);
-        foreach (var id in idsToRead)
-            result.Add(await ReadDraftAsync(connection, transaction, id, cancellationToken));
+        var drafts = await ReadDraftsAsync(
+            connection, transaction, idsToRead, cancellationToken);
+        var result = idsToRead.Select(id => drafts[id]).ToArray();
         await transaction.CommitAsync(cancellationToken);
         return result;
     }

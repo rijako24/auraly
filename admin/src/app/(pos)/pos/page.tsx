@@ -398,7 +398,7 @@ export default function PosPage() {
   const [confirmation, setConfirmation] = useState<
     | { kind: "line"; lineId: string; productName: string }
     | { kind: "temporary"; draftId: string; name: string }
-    | { kind: "sale" }
+    | { kind: "sale"; sourceOrderNumber: string | null }
     | { kind: "order-save"; orderNumber: string }
     | null
   >(null);
@@ -898,7 +898,10 @@ export default function PosPage() {
         { action: "OpenRestartSale", lineCount: draft.lines.length, total: draft.payableAmount },
         async (authorization) => {
           restartAuthorization.current = authorization;
-          setConfirmation({ kind: "sale" });
+          setConfirmation({
+            kind: "sale",
+            sourceOrderNumber: draft.sourceOrderId ? draft.reference || "el pedido recuperado" : null,
+          });
         },
       );
     } catch (caught) {
@@ -1788,7 +1791,9 @@ export default function PosPage() {
           setSelectedLineId(null);
           setSelectedCustomer(null);
           setScan("");
-          setMessage("Venta reiniciada. Nueva venta lista.");
+          setMessage(draft.sourceOrderId
+            ? "Pedido eliminado y venta reiniciada. Nueva venta lista."
+            : "Venta reiniciada. Nueva venta lista.");
         },
       );
     } catch (caught) {
@@ -3635,7 +3640,9 @@ export default function PosPage() {
                 ? "¿Eliminar esta venta en espera?"
                 : confirmation.kind === "order-save"
                   ? "¿Actualizar el pedido recuperado?"
-              : "¿Reiniciar toda la venta?"
+              : confirmation.sourceOrderNumber
+                ? "¿Eliminar el pedido y reiniciar la venta?"
+                : "¿Reiniciar toda la venta?"
           }
           description={
             confirmation.kind === "line"
@@ -3644,11 +3651,13 @@ export default function PosPage() {
                 ? `${confirmation.name} se eliminará definitivamente de este dispositivo.`
                 : confirmation.kind === "order-save"
                   ? `${confirmation.orderNumber} actualizará su cliente, productos, cantidades, precios y descuentos con los valores de esta venta. La reserva de inventario se ajustará automáticamente.`
-              : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
+              : confirmation.sourceOrderNumber
+                ? `${confirmation.sourceOrderNumber} quedará cancelado, su inventario volverá a ventas y se abrirá una venta limpia.`
+                : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
           }
           confirmLabel={
             confirmation.kind === "sale"
-              ? "Sí, reiniciar"
+              ? confirmation.sourceOrderNumber ? "Sí, eliminar y reiniciar" : "Sí, reiniciar"
               : confirmation.kind === "order-save"
                 ? "Sí, actualizar"
                 : "Sí, eliminar"

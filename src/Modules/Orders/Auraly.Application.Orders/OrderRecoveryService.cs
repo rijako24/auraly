@@ -70,7 +70,8 @@ public sealed class OrderRecoveryService(
                         line.ProductId!.Value,
                         line.Quantity,
                         line.UnitPrice,
-                        line.DiscountAmount)).ToArray(),
+                        line.DiscountAmount,
+                        line.PriceSource)).ToArray(),
                     request.ExpectedDraftVersion),
                 idempotencyKey,
                 cancellationToken);

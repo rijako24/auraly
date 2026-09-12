@@ -223,6 +223,15 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             result.TenantId, "SELLER", OrderPermissionCodes.Review));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SELLER", OrderPermissionCodes.Update));
+        foreach (var permission in new[] { "tenant.profile.read", "tenant.profile.update" })
+        {
+            Assert.True(await RoleHasPermissionAsync(
+                result.TenantId, "ADMINISTRATOR", permission));
+            foreach (var role in new[] { "ADMINISTRATIVE", "CASHIER", "SELLER", "ACCOUNTANT" })
+                Assert.False(await RoleHasPermissionAsync(
+                    result.TenantId, role, permission),
+                    $"The provisioned {role} role must not receive '{permission}' by default.");
+        }
         foreach (var role in new[] { "ADMINISTRATOR", "ADMINISTRATIVE" })
         {
             Assert.True(await RoleHasPermissionAsync(
@@ -268,19 +277,12 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                  {
                      "users.read", "users.create", "users.update", "users.delete",
                      "users.assign_role", "users.remove_role", "roles.read",
+                     "roles.create", "roles.update", "roles.delete", "roles.assign_permissions",
                      "security.users.link-party"
                  })
             Assert.True(await RoleHasPermissionAsync(
                 result.TenantId, "ADMINISTRATIVE", permission),
                 $"The provisioned administrative role is missing '{permission}'.");
-        foreach (var permission in new[]
-                 {
-                     "roles.create", "roles.update", "roles.delete",
-                     "roles.assign_permissions"
-                 })
-            Assert.False(await RoleHasPermissionAsync(
-                result.TenantId, "ADMINISTRATIVE", permission),
-                $"The provisioned administrative role must not receive '{permission}'.");
         foreach (var permission in new[]
                  {
                      "accounting.configure", "accounting.manual.create",

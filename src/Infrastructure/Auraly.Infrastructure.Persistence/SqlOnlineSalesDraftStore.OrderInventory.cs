@@ -1,12 +1,175 @@
 using Auraly.Contracts.Inventory;
 using Auraly.Application.Inventory;
 using Auraly.Application.Sales;
+using Auraly.Application.Orders;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlOnlineSalesDraftStore
 {
+    public async Task<StoredOrderCancellation> CancelAsync(
+        OrderActor actor,
+        Guid orderId,
+        Guid? workSessionId,
+        string reason,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            var result = await CancelOrderCoreAsync(
+                connection,
+                transaction,
+                actor,
+                orderId,
+                workSessionId,
+                reason,
+                idempotencyKey,
+                cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch
+        {
+            if (transaction.Connection is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    private async Task<StoredOrderCancellation> CancelOrderCoreAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        OrderActor actor,
+        Guid orderId,
+        Guid? workSessionId,
+        string reason,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        const string orderSql = """
+            SELECT o.Status,o.WarehouseId,
+                   COALESCE(NULLIF(o.ExternalDocumentNumber,N''),
+                            CONCAT(N'PED-',LEFT(CONVERT(nvarchar(36),o.OrderId),8))),
+                   CASE WHEN link.OrderId IS NULL THEN 0 ELSE 1 END,
+                   claim.WorkSessionId,claim.UserId
+            FROM dbo.Orders o WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.Businesses business
+              ON business.BusinessId=o.BusinessId AND business.TenantId=@TenantId
+            LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
+            OUTER APPLY (
+              SELECT TOP(1) active.WorkSessionId,active.UserId
+              FROM dbo.OrderClaims active WITH(UPDLOCK,HOLDLOCK)
+              WHERE active.OrderId=o.OrderId
+                AND active.ReleasedAt IS NULL
+                AND active.ExpiresAt>@Now
+              ORDER BY active.ClaimedAt DESC
+            ) claim
+            WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId;
+            """;
+        int status;
+        Guid? warehouseId;
+        string orderNumber;
+        bool hasInvoice;
+        Guid? claimedWorkSessionId;
+        Guid? claimedUserId;
+        await using (var command = new SqlCommand(orderSql, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@TenantId", actor.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", actor.BusinessId);
+            command.Parameters.AddWithValue("@OrderId", orderId);
+            command.Parameters.AddWithValue("@Now", time.GetUtcNow());
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new OrderNotFoundException("El pedido no existe en esta sede.");
+            status = reader.GetInt32(0);
+            warehouseId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+            orderNumber = reader.GetString(2);
+            hasInvoice = reader.GetInt32(3) == 1;
+            claimedWorkSessionId = reader.IsDBNull(4) ? null : reader.GetGuid(4);
+            claimedUserId = reader.IsDBNull(5) ? null : reader.GetGuid(5);
+        }
+
+        if (status == 6)
+        {
+            var replayVersion = await orderReportingJobs.EnsureAsync(
+                connection,
+                transaction,
+                actor.TenantId,
+                actor.BusinessId,
+                orderId,
+                cancellationToken);
+            return new(orderId, orderNumber, replayVersion, true);
+        }
+        if (status is not (2 or 4 or 5) || hasInvoice)
+            throw new OrderConflictException(
+                "Solo se puede eliminar un pedido disponible o en revisión que todavía no haya sido facturado.");
+        if (warehouseId is null)
+            throw new OrderConflictException(
+                "El pedido no tiene una bodega de venta asignada.");
+        if (claimedWorkSessionId is not null &&
+            (workSessionId != claimedWorkSessionId || claimedUserId != actor.UserId))
+            throw new OrderConflictException(
+                "El pedido está siendo usado en otra venta y no se puede eliminar.");
+
+        await ReleaseOrderInventoryCoreAsync(
+            connection,
+            transaction,
+            new OnlineSalesUserIdentity(actor.UserId, actor.TenantId, actor.Permissions),
+            orderId,
+            actor.BusinessId,
+            warehouseId.Value,
+            cancellationToken);
+
+        var now = time.GetUtcNow();
+        await using (var command = new SqlCommand("""
+            UPDATE dbo.Orders
+            SET Status=6,RequiresStockReview=0,ExternalStatus=N'Cancelled',UpdatedAt=@Now
+            WHERE OrderId=@OrderId AND BusinessId=@BusinessId AND Status IN(2,4,5);
+            IF @@ROWCOUNT<>1 THROW 51241,'The order could not be cancelled.',1;
+
+            UPDATE dbo.OrderClaims
+            SET ReleasedAt=COALESCE(ReleasedAt,@Now)
+            WHERE OrderId=@OrderId AND ReleasedAt IS NULL;
+
+            INSERT dbo.AuditLogs(
+              AuditLogId,UserId,TenantId,BusinessId,Action,EntityType,EntityId,
+              OldValues,NewValues,CorrelationId,Timestamp)
+            VALUES(
+              @AuditLogId,@UserId,@TenantId,@BusinessId,N'Order.Cancelled',N'Order',
+              CONVERT(nvarchar(36),@OrderId),
+              CONCAT(N'{"status":',@OldStatus,N'}'),
+              CONCAT(N'{"status":6,"reason":"',STRING_ESCAPE(@Reason,'json'),N'"}'),
+              @CorrelationId,@Now);
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@AuditLogId", ids.NewId());
+            command.Parameters.AddWithValue("@UserId", actor.UserId);
+            command.Parameters.AddWithValue("@TenantId", actor.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", actor.BusinessId);
+            command.Parameters.AddWithValue("@OrderId", orderId);
+            command.Parameters.AddWithValue("@OldStatus", status);
+            command.Parameters.AddWithValue("@Reason", reason);
+            command.Parameters.AddWithValue("@CorrelationId", $"order-cancel:{idempotencyKey}");
+            command.Parameters.AddWithValue("@Now", now);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var reportingVersion = await orderReportingJobs.EnsureAsync(
+            connection,
+            transaction,
+            actor.TenantId,
+            actor.BusinessId,
+            orderId,
+            cancellationToken);
+        return new(orderId, orderNumber, reportingVersion, false);
+    }
+
     public async Task PrepareSourceOrderInventoryAsync(
         OnlineSalesUserIdentity user,
         Guid businessId,
@@ -57,13 +220,14 @@ public sealed partial class SqlOnlineSalesDraftStore
     {
 
         const string orderSql = """
-            SELECT OrdersWarehouseId,ReleaseTransferId,ExternalStatus,
+            SELECT OrdersWarehouseId,ReleaseTransferId,ReservationTransferId,ExternalStatus,
                    COALESCE(NULLIF(ExternalDocumentNumber,N''),
                             CONCAT(N'PED-',LEFT(CONVERT(nvarchar(36),OrderId),8)))
             FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK)
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
             """;
-        Guid ordersWarehouseId; Guid? existingTransferId; string? externalStatus; string orderNumber;
+        Guid ordersWarehouseId; Guid? existingTransferId; Guid? reservationTransferId;
+        string? externalStatus; string orderNumber;
         await using (var command = new SqlCommand(orderSql, connection, transaction))
         {
             command.Parameters.AddWithValue("@OrderId", orderId);
@@ -76,8 +240,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             if (reader.IsDBNull(0)) return;
             ordersWarehouseId = reader.GetGuid(0);
             existingTransferId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
-            externalStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
-            orderNumber = reader.GetString(3);
+            reservationTransferId = reader.IsDBNull(2) ? null : reader.GetGuid(2);
+            externalStatus = reader.IsDBNull(3) ? null : reader.GetString(3);
+            orderNumber = reader.GetString(4);
         }
         if (externalStatus == "InventoryReleasedForInvoice") return;
         if (existingTransferId is not null)
@@ -132,8 +297,10 @@ public sealed partial class SqlOnlineSalesDraftStore
             });
         try
         {
+            var releaseKey = $"seller-order-release:{orderId:N}:" +
+                (reservationTransferId?.ToString("N") ?? "legacy");
             await inventoryOperations.ConfirmSystemTransferAtomicallyAsync(identity,
-                $"seller-order-release:{orderId:N}",
+                releaseKey,
                 new DispatchWarehouseTransferRequest(transferId, businessId, ordersWarehouseId,
                     destinationWarehouseId, time.GetUtcNow(), "WAREHOUSE_TRANSFER",
                     $"Salida completa del pedido {orderNumber} para facturación", lines),

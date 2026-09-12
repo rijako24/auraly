@@ -24,10 +24,11 @@ public static class CudsCalculator
         ArgumentNullException.ThrowIfNull(input);
         if (string.IsNullOrWhiteSpace(qrBaseUrl))
             throw new ArgumentException("A QR validation URL is required.", nameof(qrBaseUrl));
+        var issuedAt = DianFiscalDateTime.InColombia(input.IssuedAt);
         var canonical = string.Concat(
             input.DocumentNumber,
-            input.IssuedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            input.IssuedAt.ToString("HH:mm:sszzz", CultureInfo.InvariantCulture),
+            issuedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            issuedAt.ToString("HH:mm:sszzz", CultureInfo.InvariantCulture),
             Money(input.UntaxedAmount), "01", Money(input.VatAmount),
             Money(input.PayableAmount), input.SellerIdentification,
             input.BuyerTaxId, input.SoftwarePin,
@@ -36,8 +37,8 @@ public static class CudsCalculator
             SHA384.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
         var qr = string.Join("\n",
             $"NumDS: {input.DocumentNumber}",
-            $"FecDS: {input.IssuedAt:yyyy-MM-dd}",
-            $"HorDS: {input.IssuedAt:HH:mm:sszzz}",
+            $"FecDS: {issuedAt:yyyy-MM-dd}",
+            $"HorDS: {issuedAt:HH:mm:sszzz}",
             $"NumSNO: {input.SellerIdentification}",
             $"DocAdq: {input.BuyerTaxId}",
             $"ValDS: {Money(input.UntaxedAmount)}",

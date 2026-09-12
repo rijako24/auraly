@@ -1,3 +1,5 @@
+using System.Data;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
@@ -10,6 +12,90 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Product_search_returns_a_resolved_page_of_fifty_in_under_one_second()
+    {
+        var prefix = $"PERF-{Guid.NewGuid():N}";
+        var products = Enumerable.Range(1, 60).Select(index => new
+        {
+            ProductId = Guid.NewGuid(),
+            Code = $"{prefix}-{index:D3}",
+            Name = $"Producto rendimiento {prefix} {index:D3}",
+            Price = 10_000m + index
+        }).ToArray();
+        var productsJson = System.Text.Json.JsonSerializer.Serialize(products);
+        var jsonParameter = new SqlParameter("@ProductsJson", SqlDbType.NVarChar, -1)
+        {
+            Value = productsJson
+        };
+        await ExecuteAsync(
+            """
+            INSERT dbo.Products(
+              ProductId,TenantId,BusinessId,Sku,
+              Name,Currency,ManageStock,IsActive,CreatedAt)
+            SELECT input.ProductId,@TenantId,@BusinessId,input.Code,
+                   input.Name,N'COP',0,1,SYSUTCDATETIME()
+            FROM OPENJSON(@ProductsJson) WITH(
+              ProductId uniqueidentifier '$.ProductId',Code nvarchar(64) '$.Code',
+              Name nvarchar(250) '$.Name',Price decimal(19,4) '$.Price') input;
+            INSERT dbo.ProductPrices(
+              ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
+              ValidFrom,IsActive,CreatedAt)
+            SELECT NEWID(),@BusinessId,input.ProductId,input.Price,input.Price,N'COP',
+                   DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET()
+            FROM OPENJSON(@ProductsJson) WITH(
+              ProductId uniqueidentifier '$.ProductId',Price decimal(19,4) '$.Price') input;
+            """,
+            new("@TenantId", fixture.TenantId),
+            new("@BusinessId", fixture.BusinessId),
+            jsonParameter);
+
+        try
+        {
+            using var client = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+            var context = new OnlineSalesDraftContext(
+                fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId);
+            var stopwatch = Stopwatch.StartNew();
+            using var response = await client.PostAsJsonAsync(
+                "/api/commerce/v1/pos/drafts/products/search",
+                new SearchOnlineSalesRequest(context, prefix, 0, 50));
+            response.EnsureSuccessStatusCode();
+            var page = await response.Content.ReadFromJsonAsync<OnlineSalesProductPage>();
+            stopwatch.Stop();
+
+            Assert.NotNull(page);
+            Assert.Equal(50, page.Items.Count);
+            Assert.True(page.HasMore);
+            Assert.Equal(50, page.NextOffset);
+            Assert.All(page.Items, item =>
+            {
+                Assert.StartsWith(prefix, item.ProductCode, StringComparison.Ordinal);
+                Assert.StartsWith($"Producto rendimiento {prefix}", item.Name, StringComparison.Ordinal);
+                Assert.True(item.UnitPrice > 0);
+                Assert.False(string.IsNullOrWhiteSpace(item.PriceSource));
+            });
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+                $"La primera página resuelta tardó {stopwatch.Elapsed.TotalMilliseconds:N0} ms.");
+        }
+        finally
+        {
+            await ExecuteAsync(
+                """
+                DELETE price FROM dbo.ProductPrices price
+                JOIN OPENJSON(@ProductsJson) WITH(ProductId uniqueidentifier '$.ProductId') input
+                  ON input.ProductId=price.ProductId;
+                DELETE product FROM dbo.Products product
+                JOIN OPENJSON(@ProductsJson) WITH(ProductId uniqueidentifier '$.ProductId') input
+                  ON input.ProductId=product.ProductId;
+                """,
+                new SqlParameter("@ProductsJson", SqlDbType.NVarChar, -1)
+                {
+                    Value = productsJson
+                });
+        }
+    }
+
     [Fact]
     public async Task Search_pause_restart_recover_and_remove_are_durable()
     {

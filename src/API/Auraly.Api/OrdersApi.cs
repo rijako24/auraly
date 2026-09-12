@@ -120,6 +120,19 @@ public static class OrdersApi
                     ct);
             }));
 
+        group.MapPost("/{orderId:guid}/cancel", async (
+            HttpContext context,
+            Guid orderId,
+            CancelOrderRequest request,
+            OrderCancellationService service,
+            CancellationToken ct) =>
+            await Handle(() => service.CancelAsync(
+                context.User.ToOrderUserActor(request.WorkSessionId),
+                orderId,
+                request,
+                context.Request.Headers["Idempotency-Key"].ToString(),
+                ct)));
+
         group.MapPost("/{orderId:guid}/emission/retry", async (
             HttpContext context,
             Guid orderId,
@@ -169,6 +182,13 @@ public static class OrdersApi
         {
             return Results.Problem(
                 exception.Message, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (OnlineSalesDraftConcurrencyException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "OrderInventoryConflict");
         }
     }
 }

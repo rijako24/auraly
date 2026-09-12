@@ -1,5 +1,6 @@
 using System.Data;
 using System.Globalization;
+using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Microsoft.Data.Sqlite;
 
@@ -238,18 +239,54 @@ public sealed class PosDraftStore
                 P("@Now", Now()), P("@DraftId", draftId.Value.Value)
             ],
             cancellationToken);
-        var position = 1;
-        foreach (var line in lines)
+        var importedLines = lines.Select((line, index) => new
         {
-            await InsertLineAsync(
-                connection,
-                transaction,
-                draftId.Value,
-                _idGenerator.NewId(),
-                line,
-                position++,
-                cancellationToken);
-        }
+            LineId = _idGenerator.NewId().ToString("D"),
+            ProductId = line.ProductId.Value.ToString("D"),
+            ProductCode = line.ProductCode.Trim(),
+            Description = line.Description.Trim(),
+            UnitCode = line.UnitCode.Trim(),
+            TaxCode = line.TaxCode.Trim(),
+            TaxRate = line.TaxRate.ToString(CultureInfo.InvariantCulture),
+            Quantity = line.Quantity.ToString(CultureInfo.InvariantCulture),
+            BaseUnitPrice = line.BaseUnitPrice.ToString(CultureInfo.InvariantCulture),
+            UnitPrice = line.UnitPrice.ToString(CultureInfo.InvariantCulture),
+            CurrencyCode = line.CurrencyCode.Trim().ToUpperInvariant(),
+            line.PriceSource,
+            PriceChannelId = line.PriceChannelId?.ToString("D"),
+            Discount = line.Discount.ToString(CultureInfo.InvariantCulture),
+            Note = Normalize(line.Note),
+            AllowsFractionalSale = line.AllowsFractionalSale ? 1 : 0,
+            DocumentUnitCost = line.DocumentUnitCost.ToString(CultureInfo.InvariantCulture),
+            AllowsDocumentCostOverride = line.AllowsDocumentCostOverride ? 1 : 0,
+            Position = index + 1,
+            PromotionDiscount = line.PromotionDiscount.ToString(CultureInfo.InvariantCulture)
+        }).ToArray();
+        await ExecuteAsync(connection, transaction, """
+            INSERT INTO PosDraftLines(
+              LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,
+              Quantity,BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,
+              PriceChannelId,Discount,Note,AllowsFractionalSale,DocumentUnitCost,
+              AllowsDocumentCostOverride,Position,PromotionDiscount)
+            SELECT
+              json_extract(value,'$.LineId'),@DraftId,json_extract(value,'$.ProductId'),
+              json_extract(value,'$.ProductCode'),json_extract(value,'$.Description'),
+              json_extract(value,'$.UnitCode'),json_extract(value,'$.TaxCode'),
+              json_extract(value,'$.TaxRate'),json_extract(value,'$.Quantity'),
+              json_extract(value,'$.BaseUnitPrice'),json_extract(value,'$.UnitPrice'),
+              json_extract(value,'$.CurrencyCode'),json_extract(value,'$.PriceSource'),
+              json_extract(value,'$.PriceChannelId'),json_extract(value,'$.Discount'),
+              json_extract(value,'$.Note'),json_extract(value,'$.AllowsFractionalSale'),
+              json_extract(value,'$.DocumentUnitCost'),
+              json_extract(value,'$.AllowsDocumentCostOverride'),
+              json_extract(value,'$.Position'),json_extract(value,'$.PromotionDiscount')
+            FROM json_each(@LinesJson);
+            """,
+            [
+                P("@DraftId", draftId.Value.Value),
+                P("@LinesJson", JsonSerializer.Serialize(importedLines))
+            ],
+            cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return await GetRequiredAsync(draftId.Value, cancellationToken);
     }
