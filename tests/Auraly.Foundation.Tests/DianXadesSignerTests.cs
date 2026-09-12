@@ -110,9 +110,9 @@ public sealed class DianXadesSignerTests : IDisposable
     private static DianInvoice CreateInvoice()
     {
         var address = new DianAddress("11001", "Bogotá", "Bogotá D.C.", "11", "Carrera 8 # 6C-38");
-        var supplier = new DianParty("900123456", "7", "31", "1", "Auraly Comercio SAS", "Auraly",
+        var supplier = new DianParty("900123456", "8", "31", "1", "Auraly Comercio SAS", "Auraly",
             "O-48", "01", "IVA", address, "facturacion@auraly.test", "6015550000");
-        var customer = new DianParty("222222222", "0", "13", "2", "Consumidor final", "Consumidor final",
+        var customer = new DianParty("222222222222", "0", "13", "2", "Consumidor final", "Consumidor final",
             "R-99-PN", "ZZ", "No aplica", address);
         var tax = new DianTax("01", "IVA", 10_000m, 1_900m, 19m);
         var line = new DianInvoiceLine(1, "7701234567890", "010", "Producto de prueba", "EA",
@@ -122,7 +122,7 @@ public sealed class DianXadesSignerTests : IDisposable
             new DateTimeOffset(2026, 7, 28, 10, 15, 30, TimeSpan.FromHours(-5)),
             "COP", "01", 2,
             new DianAuthorization("18760000001", new DateOnly(2026, 1, 1), new DateOnly(2027, 1, 1), "SETP", 990000000, 995000000),
-            new DianSoftware("900123456", "7", "56f2ae4e-9812-4fad-9255-08fcfcd5ccb0", "20191"),
+            new DianSoftware("900123456", "8", "56f2ae4e-9812-4fad-9255-08fcfcd5ccb0", "20191"),
             supplier, customer, [line], [tax],
             new DianPayment("1", "10", new DateOnly(2026, 7, 28), null),
             10_000m, 10_000m, 11_900m, 0m, 11_900m,

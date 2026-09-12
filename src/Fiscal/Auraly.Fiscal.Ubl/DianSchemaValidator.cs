@@ -1,6 +1,8 @@
 using System.Net;
+using System.Text;
 using System.Xml;
 using System.Xml.Schema;
+using System.Xml.Linq;
 
 namespace Auraly.Fiscal.Ubl;
 
@@ -8,6 +10,12 @@ public sealed record DianSchemaValidationResult(bool IsValid, IReadOnlyList<stri
 
 public sealed class DianSchemaValidator
 {
+    private static readonly XNamespace Cac =
+        "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2";
+    private static readonly XNamespace Cbc =
+        "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2";
+    private static readonly XNamespace Sts =
+        "dian:gov:co:facturaelectronica:Structures-2-1";
     private readonly XmlSchemaSet schemas;
 
     public DianSchemaValidator(string? schemaRoot = null)
@@ -38,6 +46,25 @@ public sealed class DianSchemaValidator
     public DianSchemaValidationResult Validate(ReadOnlyMemory<byte> xml)
     {
         var errors = new List<string>();
+        XDocument document;
+        try
+        {
+            using var source = new MemoryStream(xml.ToArray(), writable: false);
+            using var sourceReader = XmlReader.Create(source, new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null
+            });
+            document = XDocument.Load(sourceReader, LoadOptions.PreserveWhitespace);
+        }
+        catch (XmlException exception)
+        {
+            errors.Add($"Error: XML inválido: {exception.Message}");
+            return new DianSchemaValidationResult(false, errors);
+        }
+
+        ValidateDianMandatoryRules(document, errors);
+        var schemaInput = NormalizePublishedSchemaConflict(document);
         var settings = new XmlReaderSettings
         {
             DtdProcessing = DtdProcessing.Prohibit,
@@ -47,10 +74,164 @@ public sealed class DianSchemaValidator
         };
         settings.ValidationFlags |= XmlSchemaValidationFlags.ReportValidationWarnings;
         settings.ValidationEventHandler += (_, args) => errors.Add($"{args.Severity}: {args.Message}");
-        using var stream = new MemoryStream(xml.ToArray(), writable: false);
+        using var stream = new MemoryStream(schemaInput, writable: false);
         using var reader = XmlReader.Create(stream, settings);
         while (reader.Read()) { }
         return new DianSchemaValidationResult(errors.Count == 0, errors);
+    }
+
+    private static void ValidateDianMandatoryRules(XDocument document, List<string> errors)
+    {
+        ValidateProvider(document, Sts + "ProviderID", null, null, errors);
+        ValidateProvider(document, Sts + "AuthorizationProviderID", "800197268", "4", errors);
+        ValidateNitIdentifications(document, errors);
+        ValidateFinalConsumer(document, errors);
+    }
+
+    private static void ValidateNitIdentifications(XDocument document, List<string> errors)
+    {
+        foreach (var companyId in document.Descendants(Cbc + "CompanyID")
+                     .Where(value => string.Equals(
+                         value.Attribute("schemeName")?.Value, "31", StringComparison.Ordinal)))
+        {
+            var expected = CalculateColombianNitCheckDigit(companyId.Value.Trim());
+            if (expected is null || !string.Equals(
+                    companyId.Attribute("schemeID")?.Value, expected, StringComparison.Ordinal))
+                errors.Add("Error: CompanyID identificado como NIT no contiene el dígito verificador correcto en @schemeID.");
+        }
+    }
+
+    private static void ValidateProvider(
+        XDocument document,
+        XName elementName,
+        string? expectedTaxId,
+        string? expectedCheckDigit,
+        List<string> errors)
+    {
+        var elements = document.Descendants(elementName).Take(2).ToArray();
+        if (elements.Length == 0) return;
+        if (elements.Length > 1)
+        {
+            errors.Add($"Error: {elementName.LocalName} debe aparecer exactamente una vez.");
+            return;
+        }
+
+        var element = elements[0];
+
+        var label = elementName.LocalName;
+        var taxId = element.Value.Trim();
+        var schemeId = element.Attribute("schemeID")?.Value;
+        var schemeName = element.Attribute("schemeName")?.Value;
+        if (!string.Equals(schemeName, "31", StringComparison.Ordinal))
+            errors.Add($"Error: {label}/@schemeName debe ser '31'.");
+        if (expectedTaxId is not null && !string.Equals(taxId, expectedTaxId, StringComparison.Ordinal))
+            errors.Add($"Error: {label} no corresponde al NIT autorizado.");
+
+        var calculatedCheckDigit = CalculateColombianNitCheckDigit(taxId);
+        var requiredCheckDigit = expectedCheckDigit ?? calculatedCheckDigit;
+        if (requiredCheckDigit is null ||
+            !string.Equals(schemeId, requiredCheckDigit, StringComparison.Ordinal))
+            errors.Add($"Error: {label}/@schemeID no contiene el dígito verificador correcto.");
+    }
+
+    private static void ValidateFinalConsumer(XDocument document, List<string> errors)
+    {
+        var customers = document.Descendants(Cac + "AccountingCustomerParty").Take(2).ToArray();
+        if (customers.Length > 1)
+        {
+            errors.Add("Error: AccountingCustomerParty debe aparecer exactamente una vez.");
+            return;
+        }
+
+        var customer = customers.FirstOrDefault();
+        var party = customer?.Element(Cac + "Party");
+        var taxParty = party?.Element(Cac + "PartyTaxScheme");
+        var companyId = taxParty?.Element(Cbc + "CompanyID");
+        var registrationName = taxParty?.Element(Cbc + "RegistrationName")?.Value.Trim();
+        var isFinalConsumer = string.Equals(companyId?.Value.Trim(), "222222222222", StringComparison.Ordinal) ||
+                              string.Equals(registrationName, "Consumidor final", StringComparison.OrdinalIgnoreCase);
+        if (!isFinalConsumer) return;
+
+        RequireValue(companyId, "222222222222", "FAK21 CompanyID", errors);
+        RequireAttribute(companyId, "schemeName", "13", "FAK25 CompanyID", errors);
+        RequireNoAttribute(companyId, "schemeID", "FAK24 CompanyID", errors);
+
+        var partyIdentification = party?.Element(Cac + "PartyIdentification")?.Element(Cbc + "ID");
+        RequireValue(partyIdentification, "222222222222", "FAK61/FAK62 PartyIdentification", errors);
+        RequireAttribute(partyIdentification, "schemeName", "13", "FAK63 PartyIdentification", errors);
+        RequireNoAttribute(partyIdentification, "schemeID", "FAK64 PartyIdentification", errors);
+
+        RequireValue(taxParty?.Element(Cbc + "TaxLevelCode"), "R-99-PN", "FAK26 TaxLevelCode", errors);
+        var taxScheme = taxParty?.Element(Cac + "TaxScheme");
+        RequireValue(taxScheme?.Element(Cbc + "ID"), "ZZ", "FAK40 TaxScheme/ID", errors);
+        RequireValue(taxScheme?.Element(Cbc + "Name"), "No aplica", "FAK41 TaxScheme/Name", errors);
+    }
+
+    private static void RequireValue(XElement? element, string expected, string field, List<string> errors)
+    {
+        if (element is null || !string.Equals(element.Value.Trim(), expected, StringComparison.OrdinalIgnoreCase))
+            errors.Add($"Error: {field} debe ser '{expected}'.");
+    }
+
+    private static void RequireAttribute(
+        XElement? element,
+        string attribute,
+        string expected,
+        string field,
+        List<string> errors)
+    {
+        if (!string.Equals(element?.Attribute(attribute)?.Value, expected, StringComparison.Ordinal))
+            errors.Add($"Error: {field}/@{attribute} debe ser '{expected}'.");
+    }
+
+    private static void RequireNoAttribute(
+        XElement? element,
+        string attribute,
+        string field,
+        List<string> errors)
+    {
+        if (element?.Attribute(attribute) is not null)
+            errors.Add($"Error: {field}/@{attribute} solo aplica a identificaciones NIT.");
+    }
+
+    private static string? CalculateColombianNitCheckDigit(string taxId)
+    {
+        ReadOnlySpan<int> weights = [3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71];
+        if (taxId.Length is < 1 or > 15 || taxId.Any(character => !char.IsAsciiDigit(character)))
+            return null;
+
+        var sum = 0;
+        for (var index = 0; index < taxId.Length; index++)
+            sum += (taxId[taxId.Length - index - 1] - '0') * weights[index];
+        var remainder = sum % 11;
+        return (remainder > 1 ? 11 - remainder : remainder).ToString();
+    }
+
+    private static byte[] NormalizePublishedSchemaConflict(XDocument original)
+    {
+        // Toolbox FE 1.9 v2026 still declares coID2Type/@schemeID as the document type.
+        // Annex 1.9 rules FAB22/FAB23 and FAB34/FAB35, its Schematron and its examples
+        // require the opposite: schemeID is the NIT check digit and schemeName is "31".
+        // Validate that real contract above, then normalize only a clone used by the XSD.
+        var normalized = new XDocument(original);
+        foreach (var element in normalized.Descendants()
+                     .Where(value => value.Name == Sts + "ProviderID" ||
+                                     value.Name == Sts + "AuthorizationProviderID"))
+        {
+            var schemeId = element.Attribute("schemeID");
+            var schemeName = element.Attribute("schemeName");
+            if (schemeId is null || schemeName is null) continue;
+            (schemeId.Value, schemeName.Value) = (schemeName.Value, schemeId.Value);
+        }
+
+        using var stream = new MemoryStream();
+        using (var writer = XmlWriter.Create(stream, new XmlWriterSettings
+               {
+                   Encoding = new UTF8Encoding(false),
+                   OmitXmlDeclaration = false
+               }))
+            normalized.Save(writer);
+        return stream.ToArray();
     }
 
     private sealed class LocalSchemaResolver : XmlResolver

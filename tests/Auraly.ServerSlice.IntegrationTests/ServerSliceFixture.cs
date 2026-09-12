@@ -939,7 +939,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
              TechnicalAnnexVersion,GeneratorVersion,ValidFrom,IsActive,CreatedAt)
             VALUES
-            (@FiscalIssuerConfigurationId,@BusinessId,1,@SupplierTaxId,N'7',
+            (@FiscalIssuerConfigurationId,@BusinessId,1,@SupplierTaxId,N'0',
              N'EMISOR MAESTRO',N'EMISOR MAESTRO',N'R-99-PN',N'01',N'IVA',N'31',
              N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá D.C.',N'CO',N'Colombia',
              N'auraly-test-software',N'env://AURALY_TEST_SOFTWARE_PIN',2,

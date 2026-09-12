@@ -28,6 +28,19 @@ public sealed class DianCreditNoteUblTests
             .Elements(DianUblNamespaces.Cbc + "UUID").Single();
         Assert.Equal("2", originalCufe.Attribute("schemeID")?.Value);
         Assert.Equal("CUFE-SHA384", originalCufe.Attribute("schemeName")?.Value);
+        var provider = xml.Descendants(DianUblNamespaces.Sts + "ProviderID").Single();
+        Assert.Equal(note.Software.ProviderCheckDigit, provider.Attribute("schemeID")?.Value);
+        Assert.Equal("31", provider.Attribute("schemeName")?.Value);
+        var authorizationProvider = xml
+            .Descendants(DianUblNamespaces.Sts + "AuthorizationProviderID").Single();
+        Assert.Equal("4", authorizationProvider.Attribute("schemeID")?.Value);
+        Assert.Equal("31", authorizationProvider.Attribute("schemeName")?.Value);
+        var customerIdentification = xml
+            .Descendants(DianUblNamespaces.Cac + "AccountingCustomerParty").Single()
+            .Descendants(DianUblNamespaces.Cac + "PartyTaxScheme")
+            .Elements(DianUblNamespaces.Cbc + "CompanyID").Single();
+        Assert.Equal("13", customerIdentification.Attribute("schemeName")?.Value);
+        Assert.Null(customerIdentification.Attribute("schemeID"));
     }
 
     [Fact]
@@ -84,7 +97,7 @@ public sealed class DianCreditNoteUblTests
     private static DianCreditNote CreateNote()
     {
         var address = new DianAddress("11001", "Bogota", "Bogota D.C.", "11", "Calle 1");
-        var supplier = new DianParty("900373076", "1", "31", "1", "Auraly SAS", "Auraly",
+        var supplier = new DianParty("900373076", "4", "31", "1", "Auraly SAS", "Auraly",
             "R-99-PN", "01", "IVA", address, "fiscal@auraly.co", "6010000000");
         var customer = new DianParty("8355990", "0", "13", "2", "Cliente", "Cliente",
             "R-99-PN", "ZZ", "No aplica", address);
@@ -94,7 +107,7 @@ public sealed class DianCreditNoteUblTests
             new DateTimeOffset(2026, 8, 1, 10, 0, 0, TimeSpan.FromHours(-5)),
             "COP", DianCreditNoteCodes.ReferencesInvoiceOperation,
             DianCreditNoteCodes.PartialReturn, "Devolucion parcial de bienes", 2,
-            new DianSoftware("900373076", "1", "software-id", "12301"),
+            new DianSoftware("900373076", "4", "software-id", "12301"),
             supplier, customer,
             new DianInvoiceReference("SETP1", new string('b', 96), new DateOnly(2026, 7, 31)),
             [new DianCreditNoteLine(1, "770123", "999", "Producto", "EA", 1m,

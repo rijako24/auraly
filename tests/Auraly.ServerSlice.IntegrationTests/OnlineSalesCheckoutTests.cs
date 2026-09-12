@@ -1,12 +1,17 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
+using System.Xml.Linq;
+using Auraly.Application.Fiscal;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Taxation.Contracts;
+using Auraly.Fiscal.Ubl;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -69,6 +74,45 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal(0, persisted.WorkSessionMovementCount);
         Assert.Equal(0, persisted.ServerOutboxCount);
         Assert.Equal(1, persisted.ProcessingJobCount);
+
+        using (var scope = fixture.CreateScope())
+        {
+            var worker = scope.ServiceProvider.GetRequiredService<FiscalGenerationWorker>();
+            Assert.True(await worker.ProcessAsync(
+                fixture.BusinessId,
+                completed.Receipt.DocumentId,
+                $"habilitation-regression-{Guid.NewGuid():N}"));
+        }
+
+        var unsigned = await ReadFiscalArtifactAsync(
+            completed.Receipt.DocumentId,
+            FiscalArtifactTypeCodes.UnsignedXml);
+        var signed = await ReadFiscalArtifactAsync(
+            completed.Receipt.DocumentId,
+            FiscalArtifactTypeCodes.SignedXml);
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(unsigned));
+        var provider = xml.Descendants(DianUblNamespaces.Sts + "ProviderID").Single();
+        Assert.Equal("0", provider.Attribute("schemeID")?.Value);
+        Assert.Equal("31", provider.Attribute("schemeName")?.Value);
+        var finalConsumer = xml
+            .Descendants(DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
+        var finalConsumerId = finalConsumer
+            .Descendants(DianUblNamespaces.Cac + "PartyIdentification")
+            .Elements(DianUblNamespaces.Cbc + "ID").Single();
+        Assert.Equal("222222222222", finalConsumerId.Value);
+        Assert.Equal("13", finalConsumerId.Attribute("schemeName")?.Value);
+        Assert.Null(finalConsumerId.Attribute("schemeID"));
+        Assert.Equal("R-99-PN", finalConsumer
+            .Descendants(DianUblNamespaces.Cbc + "TaxLevelCode").Single().Value);
+        var finalConsumerTaxScheme = finalConsumer
+            .Descendants(DianUblNamespaces.Cac + "TaxScheme").Single();
+        Assert.Equal("ZZ", finalConsumerTaxScheme
+            .Element(DianUblNamespaces.Cbc + "ID")?.Value);
+        Assert.Equal("No aplica", finalConsumerTaxScheme
+            .Element(DianUblNamespaces.Cbc + "Name")?.Value);
+        var signedValidation = new DianSchemaValidator().Validate(signed);
+        Assert.True(signedValidation.IsValid,
+            string.Join(Environment.NewLine, signedValidation.Errors));
 
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
@@ -1062,6 +1106,21 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         command.CommandText = sql;
         command.Parameters.AddRange(parameters);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<byte[]> ReadFiscalArtifactAsync(Guid documentId, string artifactType)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Content
+            FROM dbo.FiscalArtifacts
+            WHERE DocumentId=@DocumentId AND ArtifactType=@ArtifactType;
+            """;
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@ArtifactType", artifactType);
+        return (byte[])(await command.ExecuteScalarAsync())!;
     }
 
     private async Task SetHabilitationRegressionSeriesStateAsync(

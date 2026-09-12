@@ -97,13 +97,12 @@ public sealed class DianInvoiceUblBuilder
                                 "CO")),
                         new XElement(Sts + "SoftwareProvider",
                             ProviderIdentification(Sts + "ProviderID", invoice.Software.ProviderTaxId,
-                                invoice.BuyerGenerated ? invoice.Customer.IdentificationTypeCode : invoice.Supplier.IdentificationTypeCode,
-                                invoice.Software.ProviderCheckDigit),
+                                invoice.Software.ProviderCheckDigit, "31"),
                             new XElement(Sts + "SoftwareID",
                                 AgencyAttributes(), invoice.Software.SoftwareId)),
                         new XElement(Sts + "SoftwareSecurityCode", AgencyAttributes(), securityCode),
                         new XElement(Sts + "AuthorizationProvider",
-                            ProviderIdentification(Sts + "AuthorizationProviderID", "800197268", "31", "4")),
+                            ProviderIdentification(Sts + "AuthorizationProviderID", "800197268", "4", "31")),
                         E(Sts, "QRCode", invoice.QrPayload)))));
     }
 
@@ -111,6 +110,11 @@ public sealed class DianInvoiceUblBuilder
         new(Cac + name,
             E(Cbc, "AdditionalAccountID", party.OrganizationTypeCode),
             new XElement(Cac + "Party",
+                IsFinalConsumer(party)
+                    ? new XElement(Cac + "PartyIdentification",
+                        Identification(Cbc + "ID", party.Identification, party.CheckDigit,
+                            party.IdentificationTypeCode))
+                    : null,
                 new XElement(Cac + "PartyName", E(Cbc, "Name", party.TradeName)),
                 new XElement(Cac + "PhysicalLocation", Address(party.Address)),
                 new XElement(Cac + "PartyTaxScheme",
@@ -194,9 +198,18 @@ public sealed class DianInvoiceUblBuilder
         new(Cac + "TaxScheme", E(Cbc, "ID", id), E(Cbc, "Name", name));
 
     private static XElement Identification(XName name, string value, string checkDigit, string typeCode) =>
-        new(name, AgencyAttributes(), new XAttribute("schemeID", checkDigit), new XAttribute("schemeName", typeCode), value);
-    private static XElement ProviderIdentification(XName name, string value, string typeCode, string checkDigit) =>
-        new(name, AgencyAttributes(), new XAttribute("schemeID", typeCode), new XAttribute("schemeName", checkDigit), value);
+        new(name, AgencyAttributes(),
+            typeCode == "31" ? new XAttribute("schemeID", checkDigit) : null,
+            new XAttribute("schemeName", typeCode), value);
+    private static bool IsFinalConsumer(DianParty party) =>
+        party.Identification == "222222222222" && party.IdentificationTypeCode == "13";
+    private static XElement ProviderIdentification(
+        XName name,
+        string value,
+        string checkDigit,
+        string identificationTypeCode) =>
+        new(name, AgencyAttributes(), new XAttribute("schemeID", checkDigit),
+            new XAttribute("schemeName", identificationTypeCode), value);
 
     private static object[] AgencyAttributes() =>
     [

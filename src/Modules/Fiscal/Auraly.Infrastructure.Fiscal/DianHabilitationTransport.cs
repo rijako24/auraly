@@ -143,7 +143,7 @@ public sealed class DianHabilitationTransport(
                 ? response.XmlBytes
                 : response.XmlBase64Bytes;
             return Result(disposition, request.TrackId, response.StatusCode,
-                response.StatusDescription ?? response.StatusMessage,
+                DianResponseMessageFormatter.Format(response),
                 applicationResponse, documents, mayHaveReachedDian: true);
         }
         catch (TimeoutException exception)
@@ -197,6 +197,28 @@ public sealed class DianHabilitationTransport(
 
     private static bool ContainsPendingValidation(string? value) =>
         value?.Contains("batch en proceso de validaci", StringComparison.OrdinalIgnoreCase) == true;
+}
+
+internal static class DianResponseMessageFormatter
+{
+    private const int MaximumPersistedLength = 1800;
+
+    public static string? Format(DianDocumentResponse response)
+    {
+        var messages = (response.ErrorMessage ?? [])
+            .Append(response.StatusDescription)
+            .Append(response.StatusMessage)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (messages.Length == 0)
+            return null;
+        var combined = string.Join(" | ", messages);
+        return combined.Length <= MaximumPersistedLength
+            ? combined
+            : combined[..MaximumPersistedLength];
+    }
 }
 
 [ServiceContract(Namespace = "http://wcf.dian.colombia")]

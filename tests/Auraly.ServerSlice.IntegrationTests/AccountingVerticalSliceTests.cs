@@ -2767,7 +2767,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
     {
         var address = new PosSaleUblAddressContract("11001", "Bogota", "Bogota D.C.", "11", "CL 1 2 3");
-        var supplier = new PosSaleUblPartyContract(ServerSliceFixture.SupplierTaxId, "7", "31", "1", "EMISOR HISTORICO", "EMISOR HISTORICO", "R-99-PN", "01", "IVA", address);
+        var supplier = new PosSaleUblPartyContract(ServerSliceFixture.SupplierTaxId, "0", "31", "1", "EMISOR HISTORICO", "EMISOR HISTORICO", "R-99-PN", "01", "IVA", address);
         var customer = new PosSaleUblPartyContract("222222222", "0", "13", "2", "CLIENTE HISTORICO", "CLIENTE HISTORICO", "R-99-PN", "ZZ", "No aplica", address);
         return request with
         {

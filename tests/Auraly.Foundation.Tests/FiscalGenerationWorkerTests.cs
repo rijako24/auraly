@@ -76,7 +76,7 @@ public sealed class FiscalGenerationWorkerTests
         var documentId = Guid.NewGuid();
         var issued = new DateTimeOffset(2026, 7, 29, 8, 30, 0, TimeSpan.FromHours(-5));
         var address = new PosSaleUblAddressContract("11001", "Bogotá", "Bogotá D.C.", "11", "CL 1 2 3");
-        var supplier = new PosSaleUblPartyContract("900123456", "7", "31", "1",
+        var supplier = new PosSaleUblPartyContract("900123456", "8", "31", "1",
             "EMISOR CONGELADO", "EMISOR CONGELADO", "R-99-PN", "01", "IVA", address);
         var customer = new PosSaleUblPartyContract("222222222", "0", "13", "2",
             "CLIENTE CONGELADO", "CLIENTE CONGELADO", "R-99-PN", "ZZ", "No aplica", address,
@@ -101,7 +101,7 @@ public sealed class FiscalGenerationWorkerTests
                     new DateOnly(2027, 1, 1), "SETP", 1, 1000),
                 "software-id", [new PosSaleUblLineContract(1, "SKU-1", "999", "EA", "IVA", 19m)],
                 "1", "10", DateOnly.FromDateTime(issued.Date), null));
-        var issuer = new FiscalIssuerWorkConfiguration(configId, businessId, "900123456", "7",
+        var issuer = new FiscalIssuerWorkConfiguration(configId, businessId, "900123456", "8",
             "MAESTRO MODIFICADO", "MAESTRO MODIFICADO", "R-99-PN", "01", "IVA", "31",
             address, "software-id", "env://TEST_PIN", 2, "test", "test", string.Empty,
             "1.9", "test-generator");

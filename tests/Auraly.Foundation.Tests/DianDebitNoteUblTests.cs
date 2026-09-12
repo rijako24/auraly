@@ -9,7 +9,7 @@ public sealed class DianDebitNoteUblTests
     public void Builder_is_deterministic_references_invoice_and_passes_official_xsd()
     {
         var address = new DianAddress("11001", "Bogota", "Bogota D.C.", "11", "Calle 1");
-        var supplier = new DianParty("900373076", "1", "31", "1", "Auraly SAS", "Auraly",
+        var supplier = new DianParty("900373076", "4", "31", "1", "Auraly SAS", "Auraly",
             "R-99-PN", "01", "IVA", address, "fiscal@auraly.co", "6010000000");
         var customer = new DianParty("8355990", "0", "13", "2", "Cliente", "Cliente",
             "R-99-PN", "ZZ", "No aplica", address);
@@ -18,7 +18,7 @@ public sealed class DianDebitNoteUblTests
             "NDB00-00000001", new string('a', 96),
             new DateTimeOffset(2026, 8, 23, 10, 0, 0, TimeSpan.FromHours(-5)),
             "COP", DianDebitNoteCodes.ReferencesInvoiceOperation, "3", "Cambio del valor", 2,
-            new DianSoftware("900373076", "1", "software-id", "12301"), supplier, customer,
+            new DianSoftware("900373076", "4", "software-id", "12301"), supplier, customer,
             new DianInvoiceReference("SETP1", new string('b', 96), new DateOnly(2026, 8, 22)),
             [new DianDebitNoteLine(1, "Ajuste de precio", "EA", 1m, 5000m, 5000m, [tax])],
             [tax], 5000m, 5950m,
@@ -34,6 +34,19 @@ public sealed class DianDebitNoteUblTests
         Assert.Equal("3", xml.Descendants(DianUblNamespaces.Cbc + "ResponseCode").Single().Value);
         Assert.Equal("SETP1", xml.Descendants(DianUblNamespaces.Cac + "InvoiceDocumentReference")
             .Elements(DianUblNamespaces.Cbc + "ID").Single().Value);
+        var provider = xml.Descendants(DianUblNamespaces.Sts + "ProviderID").Single();
+        Assert.Equal(note.Software.ProviderCheckDigit, provider.Attribute("schemeID")?.Value);
+        Assert.Equal("31", provider.Attribute("schemeName")?.Value);
+        var authorizationProvider = xml
+            .Descendants(DianUblNamespaces.Sts + "AuthorizationProviderID").Single();
+        Assert.Equal("4", authorizationProvider.Attribute("schemeID")?.Value);
+        Assert.Equal("31", authorizationProvider.Attribute("schemeName")?.Value);
+        var customerIdentification = xml
+            .Descendants(DianUblNamespaces.Cac + "AccountingCustomerParty").Single()
+            .Descendants(DianUblNamespaces.Cac + "PartyTaxScheme")
+            .Elements(DianUblNamespaces.Cbc + "CompanyID").Single();
+        Assert.Equal("13", customerIdentification.Attribute("schemeName")?.Value);
+        Assert.Null(customerIdentification.Attribute("schemeID"));
         var validation = new DianSchemaValidator().Validate(first.Xml);
         Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
     }

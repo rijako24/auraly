@@ -312,7 +312,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         var address = new PosSaleUblAddressContract(
             "11001", "Bogotá", "Bogotá D.C.", "11", "CL 1 2 3");
         var supplier = new PosSaleUblPartyContract(
-            ServerSliceFixture.SupplierTaxId, "7", "31", "1",
+            ServerSliceFixture.SupplierTaxId, "0", "31", "1",
             "EMISOR HISTORICO", "EMISOR HISTORICO", "R-99-PN", "01", "IVA", address);
         var customer = new PosSaleUblPartyContract(
             "222222222", "0", "13", "2", "CLIENTE HISTORICO", "CLIENTE HISTORICO",

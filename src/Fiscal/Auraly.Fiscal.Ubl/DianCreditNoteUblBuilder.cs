@@ -81,12 +81,11 @@ public sealed class DianCreditNoteUblBuilder
                                 new XAttribute("listSchemeURI", "urn:oasis:names:specification:ubl:codelist:gc:CountryIdentificationCode-2.1"), "CO")),
                         new XElement(Sts + "SoftwareProvider",
                             ProviderId(Sts + "ProviderID", note.Software.ProviderTaxId,
-                                note.BuyerGenerated ? note.Customer.IdentificationTypeCode : note.Supplier.IdentificationTypeCode,
-                                note.Software.ProviderCheckDigit),
+                                note.Software.ProviderCheckDigit, "31"),
                             new XElement(Sts + "SoftwareID", Agency(), note.Software.SoftwareId)),
                         new XElement(Sts + "SoftwareSecurityCode", Agency(), security),
                         new XElement(Sts + "AuthorizationProvider",
-                            ProviderId(Sts + "AuthorizationProviderID", "800197268", "31", "4")),
+                            ProviderId(Sts + "AuthorizationProviderID", "800197268", "4", "31")),
                         E(Sts, "QRCode", note.QrPayload)))));
     }
 
@@ -94,14 +93,18 @@ public sealed class DianCreditNoteUblBuilder
         new(Cac + element,
             E(Cbc, "AdditionalAccountID", party.OrganizationTypeCode),
             new XElement(Cac + "Party",
+                IsFinalConsumer(party)
+                    ? new XElement(Cac + "PartyIdentification",
+                        Identification(Cbc + "ID", party.Identification,
+                            party.CheckDigit, party.IdentificationTypeCode))
+                    : null,
                 new XElement(Cac + "PartyName", E(Cbc, "Name", party.TradeName)),
                 new XElement(Cac + "PhysicalLocation", Address(party.Address)),
                 new XElement(Cac + "PartyTaxScheme",
                     E(Cbc, "RegistrationName", party.RegistrationName),
                     Identification(Cbc + "CompanyID", party.Identification,
                         party.CheckDigit, party.IdentificationTypeCode),
-                    new XElement(Cbc + "TaxLevelCode", new XAttribute("listName", "48"),
-                        party.TaxResponsibilityCode),
+                    new XElement(Cbc + "TaxLevelCode", new XAttribute("listName", "48"), party.TaxResponsibilityCode),
                     Address(party.Address, "RegistrationAddress"),
                     TaxScheme(party.TaxSchemeId, party.TaxSchemeName)),
                 new XElement(Cac + "PartyLegalEntity",
@@ -165,9 +168,17 @@ public sealed class DianCreditNoteUblBuilder
     private static XElement TaxScheme(string id, string name) =>
         new(Cac + "TaxScheme", E(Cbc, "ID", id), E(Cbc, "Name", name));
     private static XElement Identification(XName name, string value, string check, string type) =>
-        new(name, Agency(), new XAttribute("schemeID", check), new XAttribute("schemeName", type), value);
-    private static XElement ProviderId(XName name, string value, string type, string check) =>
-        new(name, Agency(), new XAttribute("schemeID", type), new XAttribute("schemeName", check), value);
+        new(name, Agency(), type == "31" ? new XAttribute("schemeID", check) : null,
+            new XAttribute("schemeName", type), value);
+    private static bool IsFinalConsumer(DianParty party) =>
+        party.Identification == "222222222222" && party.IdentificationTypeCode == "13";
+    private static XElement ProviderId(
+        XName name,
+        string value,
+        string checkDigit,
+        string identificationTypeCode) =>
+        new(name, Agency(), new XAttribute("schemeID", checkDigit),
+            new XAttribute("schemeName", identificationTypeCode), value);
     private static object[] Agency() =>
     [
         new XAttribute("schemeAgencyID", "195"),

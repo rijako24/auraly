@@ -33,7 +33,7 @@ public sealed class DianProductionTransport(
                 disposition,
                 response.XmlDocumentKey,
                 response.StatusCode,
-                response.StatusDescription ?? response.StatusMessage,
+                DianResponseMessageFormatter.Format(response),
                 applicationResponse,
                 JsonSerializer.SerializeToUtf8Bytes(response),
                 MayHaveReachedDian: true);
@@ -69,7 +69,7 @@ public sealed class DianProductionTransport(
                 : response.XmlBase64Bytes;
             return new DianSubmissionResult(
                 disposition, response.XmlDocumentKey, response.StatusCode,
-                response.StatusDescription ?? response.StatusMessage,
+                DianResponseMessageFormatter.Format(response),
                 applicationResponse, JsonSerializer.SerializeToUtf8Bytes(response),
                 MayHaveReachedDian: true);
         }

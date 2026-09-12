@@ -1,6 +1,6 @@
 # Evidencia de implementación DIAN
 
-Fecha de actualización: 2026-07-29.
+Fecha de actualización: 2026-09-12.
 
 ## Capacidades verificadas
 
@@ -20,6 +20,9 @@ Fecha de actualización: 2026-07-29.
 - Estado local inicial `LocallyIssuedPendingSync`; aceptación/rechazo/conflicto reemplaza ese estado cuando llega del servidor.
 - Reimpresión controlada desde el snapshot original: mismo número Auraly, número DIAN, CUFE, QR y totales, con auditoría SQLite.
 - Actualización del esquema SQLite anterior sin borrar facturas, series ni outbox.
+- Reglas mandatorias FAB22/FAB23 y FAB34/FAB35 verificadas antes de firmar: el proveedor informa DV en `schemeID` y tipo `31` en `schemeName`.
+- Consumidor final certificado de extremo a extremo con `PartyIdentification`, documento `222222222222`, tipo `13`, responsabilidad `R-99-PN` y tributo `ZZ` / `No aplica`.
+- Los arreglos `ErrorMessage` devueltos por DIAN se conservan en la trazabilidad, acotados y sin duplicados, en vez de reducir el rechazo a un mensaje genérico.
 
 ## Ejecuciones aprobadas
 
@@ -42,10 +45,19 @@ La prueba SQL principal verifica generación, firma simulable, envío/consulta d
 
 ## No aprobado todavía
 
-- Conectividad real con habilitación DIAN: no se suministraron certificado válido, software, PIN, `TestSetId` ni configuración del ambiente.
-- Servidor SOAP local completo con envelopes y WS-Security: las pruebas actuales sustituyen el cliente WCF en el límite del transporte; no prueban interoperabilidad byte a byte.
+- Aceptación terminal del set de pruebas con el artefacto corregido: requiere desplegar exactamente el artefacto certificado y recibir código DIAN `00` o `2`.
 - Proveedor Azure Key Vault para SaaS.
-- Nota crédito/débito y devolución fiscal completa.
 - Textos definitivos de tirilla para cada resultado/contingencia, sujetos a validación normativa y habilitación.
 
-La implementación es durable y ejecutable hasta el límite de transporte, pero no se declara legalmente habilitada ni conectividad DIAN real aprobada.
+La implementación tiene conectividad real y conserva la respuesta SOAP de la DIAN, pero no se declara legalmente habilitada hasta obtener una aceptación terminal del set con el artefacto corregido.
+
+## Regresión del incidente Megafruver
+
+Ejecutada el 2026-09-12 antes del despliegue:
+
+- Construcción, XSD, reglas mandatorias, firma y transporte DIAN: 36/36.
+- Flujo real de aplicación `POS de habilitación -> checkout técnico -> snapshot -> generación -> firma real -> validación del XML firmado`: 1/1.
+- Regresión SQL de generación, factura, nota crédito, nota débito y devolución: 10/10.
+- Suite Foundation completa: 461/461.
+
+La aceptación remota del set de pruebas debe registrarse después del despliegue del mismo artefacto y de una respuesta terminal `00` o `2` de la DIAN; hasta entonces no se declara habilitación aceptada.

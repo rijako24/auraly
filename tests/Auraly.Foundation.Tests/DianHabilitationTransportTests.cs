@@ -95,6 +95,35 @@ public sealed class DianHabilitationTransportTests
     }
 
     [Fact]
+    public async Task Status_query_preserves_the_specific_DIAN_validation_errors()
+    {
+        var client = new DeterministicClient
+        {
+            Status =
+            [
+                new DianDocumentResponse
+                {
+                    IsValid = false,
+                    StatusCode = "99",
+                    StatusDescription = "Validación contiene errores en campos mandatorios.",
+                    ErrorMessage =
+                    [
+                        "Regla: AAB22b, Rechazo: DV del NIT no está correctamente calculado.",
+                        "Regla: AAB23, Rechazo: El tipo de documento debe ser 31."
+                    ]
+                }
+            ]
+        };
+
+        var result = await CreateTransport(client).GetStatusZipAsync(Request("track-001"));
+
+        Assert.Equal(DianSubmissionDisposition.Rejected, result.Disposition);
+        Assert.Contains("AAB22b", result.StatusDescription, StringComparison.Ordinal);
+        Assert.Contains("AAB23", result.StatusDescription, StringComparison.Ordinal);
+        Assert.Contains("campos mandatorios", result.StatusDescription, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Empty_status_response_remains_pending()
     {
         var result = await CreateTransport(new DeterministicClient())

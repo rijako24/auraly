@@ -230,7 +230,7 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,TestSetId,
                 CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
                 TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,IsActive,CreatedAt)
-            VALUES(@ConfigurationId,@BusinessId,1,N'900123456',N'7',N'DIAN E2E SAS',N'R-99-PN',
+            VALUES(@ConfigurationId,@BusinessId,1,N'900123456',N'8',N'DIAN E2E SAS',N'R-99-PN',
                 N'01',N'IVA',N'31',N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá',N'CO',N'Colombia',
                 CONVERT(nvarchar(64),NEWID()),N'fiscal://pin',2,NEWID(),N'ProtectedDatabase',
                 N'fiscal://certificate',N'ABCDEF1234567890',N'https://vpfe-hab.dian.gov.co',
@@ -295,7 +295,7 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,
                 CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
                 TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,1,@SupplierTaxId,N'7',N'DIAN E2E SAS',N'R-99-PN',
+            VALUES(NEWID(),@BusinessId,1,@SupplierTaxId,N'0',N'DIAN E2E SAS',N'R-99-PN',
                 N'01',N'IVA',N'31',N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá',N'CO',N'Colombia',
                 CONVERT(nvarchar(64),NEWID()),N'env://AURALY_TEST_SOFTWARE_PIN',1,
                 N'Test',N'Test',N'TEST',N'https://vpfe.dian.gov.co',N'1.9',N'Auraly.Tests',

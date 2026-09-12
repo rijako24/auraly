@@ -117,7 +117,7 @@ public sealed class SalesDebitNoteProcessingTests(ServerSliceFixture fixture)
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
     {
         var address = new PosSaleUblAddressContract("11001", "Bogotá", "Bogotá D.C.", "11", "CL 1 2 3");
-        var supplier = new PosSaleUblPartyContract(ServerSliceFixture.SupplierTaxId, "7", "31", "1",
+        var supplier = new PosSaleUblPartyContract(ServerSliceFixture.SupplierTaxId, "0", "31", "1",
             "EMISOR HISTORICO", "EMISOR HISTORICO", "R-99-PN", "01", "IVA", address);
         var customer = new PosSaleUblPartyContract("222222222", "0", "31", "1",
             "CLIENTE NOTA DEBITO", "CLIENTE NOTA DEBITO", "R-99-PN", "01", "IVA", address);

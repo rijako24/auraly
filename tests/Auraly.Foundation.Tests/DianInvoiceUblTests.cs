@@ -33,6 +33,25 @@ public sealed class DianInvoiceUblTests
         Assert.Equal(invoice.Cufe, root.Element(DianUblNamespaces.Cbc + "UUID")?.Value);
         Assert.Equal("2", root.Element(DianUblNamespaces.Cbc + "ProfileExecutionID")?.Value);
         Assert.Equal("SETP990000001", root.Element(DianUblNamespaces.Cbc + "ID")?.Value);
+
+        var provider = document.Descendants(DianUblNamespaces.Sts + "ProviderID").Single();
+        Assert.Equal(invoice.Software.ProviderCheckDigit, provider.Attribute("schemeID")?.Value);
+        Assert.Equal("31", provider.Attribute("schemeName")?.Value);
+        var authorizationProvider = document
+            .Descendants(DianUblNamespaces.Sts + "AuthorizationProviderID").Single();
+        Assert.Equal("4", authorizationProvider.Attribute("schemeID")?.Value);
+        Assert.Equal("31", authorizationProvider.Attribute("schemeName")?.Value);
+
+        var customer = document.Descendants(
+            DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
+        var customerIdentification = customer
+            .Descendants(DianUblNamespaces.Cac + "PartyIdentification")
+            .Elements(DianUblNamespaces.Cbc + "ID").Single();
+        Assert.Equal("222222222222", customerIdentification.Value);
+        Assert.Equal("13", customerIdentification.Attribute("schemeName")?.Value);
+        Assert.Null(customerIdentification.Attribute("schemeID"));
+        var taxLevel = customer.Descendants(DianUblNamespaces.Cbc + "TaxLevelCode").Single();
+        Assert.Equal("R-99-PN", taxLevel.Value);
     }
 
     [Fact]
@@ -42,6 +61,52 @@ public sealed class DianInvoiceUblTests
         var result = new DianSchemaValidator().Validate(built.Xml);
 
         Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
+    }
+
+    [Fact]
+    public void Validator_rejects_the_legacy_reversed_provider_identification_attributes()
+    {
+        var built = new DianInvoiceUblBuilder().Build(CreateInvoice());
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var provider = document.Descendants(DianUblNamespaces.Sts + "ProviderID").Single();
+        provider.SetAttributeValue("schemeID", "31");
+        provider.SetAttributeValue("schemeName", "7");
+
+        var result = new DianSchemaValidator().Validate(
+            Encoding.UTF8.GetBytes(document.ToString(SaveOptions.DisableFormatting)));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains(
+            "ProviderID/@schemeName debe ser '31'", StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains(
+            "ProviderID/@schemeID no contiene el dígito verificador correcto", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validator_rejects_incomplete_final_consumer_mandatory_fields()
+    {
+        var built = new DianInvoiceUblBuilder().Build(CreateInvoice());
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var customerParty = document
+            .Descendants(DianUblNamespaces.Cac + "AccountingCustomerParty").Single()
+            .Element(DianUblNamespaces.Cac + "Party")!;
+        customerParty.Element(DianUblNamespaces.Cac + "PartyIdentification")!.Remove();
+        var taxScheme = customerParty
+            .Element(DianUblNamespaces.Cac + "PartyTaxScheme")!
+            .Element(DianUblNamespaces.Cac + "TaxScheme")!;
+        taxScheme.Element(DianUblNamespaces.Cbc + "ID")!.Value = "01";
+        taxScheme.Element(DianUblNamespaces.Cbc + "Name")!.Value = "IVA";
+
+        var result = new DianSchemaValidator().Validate(
+            Encoding.UTF8.GetBytes(document.ToString(SaveOptions.DisableFormatting)));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains(
+            "FAK61/FAK62 PartyIdentification", StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains(
+            "FAK40 TaxScheme/ID", StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains(
+            "FAK41 TaxScheme/Name", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -116,16 +181,21 @@ public sealed class DianInvoiceUblTests
             support.Authorization.Prefix,
             customer.Descendants(DianUblNamespaces.Cac + "CorporateRegistrationScheme")
                 .Single().Element(DianUblNamespaces.Cbc + "ID")?.Value);
+        var provider = document.Descendants(DianUblNamespaces.Sts + "ProviderID").Single();
+        Assert.Equal(support.Software.ProviderCheckDigit, provider.Attribute("schemeID")?.Value);
+        Assert.Equal("31", provider.Attribute("schemeName")?.Value);
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
     }
 
     private static DianInvoice CreateInvoice()
     {
         var address = new DianAddress("11001", "Bogotá", "Bogotá D.C.", "11", "Carrera 8 # 6C-38");
         var supplier = new DianParty(
-            "900123456", "7", "31", "1", "Auraly Comercio SAS", "Auraly",
+            "900123456", "8", "31", "1", "Auraly Comercio SAS", "Auraly",
             "O-48", "01", "IVA", address, "facturacion@auraly.test", "6015550000");
         var customer = new DianParty(
-            "222222222", "0", "13", "2", "Consumidor final", "Consumidor final",
+            "222222222222", "0", "13", "2", "Consumidor final", "Consumidor final",
             "R-99-PN", "ZZ", "No aplica", address);
         var tax = new DianTax("01", "IVA", 10_000m, 1_900m, 19m);
         var line = new DianInvoiceLine(
@@ -139,7 +209,7 @@ public sealed class DianInvoiceUblTests
             "01",
             2,
             new DianAuthorization("18760000001", new DateOnly(2026, 1, 1), new DateOnly(2027, 1, 1), "SETP", 990000000, 995000000),
-            new DianSoftware("900123456", "7", "56f2ae4e-9812-4fad-9255-08fcfcd5ccb0", "20191"),
+            new DianSoftware("900123456", "8", "56f2ae4e-9812-4fad-9255-08fcfcd5ccb0", "20191"),
             supplier,
             customer,
             [line],

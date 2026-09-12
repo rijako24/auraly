@@ -85,8 +85,8 @@ internal static class SqlSaleUblPartyReader
             "Consumidor final",
             "Consumidor final",
             "R-99-PN",
-            "01",
-            "IVA",
+            "ZZ",
+            "No aplica",
             fallback);
 }
 
