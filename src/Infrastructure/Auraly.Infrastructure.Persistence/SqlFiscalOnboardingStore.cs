@@ -486,7 +486,7 @@ public sealed class SqlFiscalOnboardingStore(
                    CountryCode,CountryName,SoftwareIdentificationCode,SoftwarePinSecretReference,
                    1,NULL,CertificateProvider,CertificateKeyReference,CertificateThumbprint,
                    @ProductionEndpoint,TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,
-                   1,@Now,@UserId
+                   0,@Now,@UserId
             FROM dbo.FiscalIssuerConfigurations configuration
             JOIN dbo.Businesses configuredBusiness ON configuredBusiness.BusinessId=configuration.BusinessId
             WHERE configuredBusiness.TenantId=@TenantId AND configuration.Environment=2
@@ -497,6 +497,9 @@ public sealed class SqlFiscalOnboardingStore(
             UPDATE dbo.FiscalIssuerConfigurations
             SET IsActive=0
             WHERE BusinessId=@BusinessId AND Environment=2 AND IsActive=1;
+            UPDATE dbo.FiscalIssuerConfigurations
+            SET IsActive=1
+            WHERE FiscalIssuerConfigurationId=@NewIssuerId;
             UPDATE series
             SET IsActive=0
             FROM dbo.FiscalSeries series

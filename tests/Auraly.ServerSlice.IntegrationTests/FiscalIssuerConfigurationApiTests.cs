@@ -11,6 +11,53 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Production_activation_switches_the_active_issuer_without_violating_the_unique_index()
+    {
+        var businessId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var configurationId = Guid.NewGuid();
+        var legalScope = await InsertBusinessAsync(businessId);
+        try
+        {
+            await InsertAcceptedAttemptAsync(businessId, documentId, configurationId);
+            using var client = fixture.CreateUserClient(
+                fixture.UserId,
+                FiscalPermissionCodes.ConfigurationRead,
+                FiscalPermissionCodes.ConfigurationManage);
+
+            using var response = await client.PostAsync(
+                $"/api/commerce/v1/fiscal/configuration/onboarding/activate-production?businessId={businessId:D}",
+                content: null);
+            var body = await response.Content.ReadAsStringAsync();
+
+            Assert.True(response.StatusCode == HttpStatusCode.OK,
+                $"Expected production activation, got {response.StatusCode}: {body}");
+            var value = await response.Content
+                .ReadFromJsonAsync<FiscalOnboardingConfiguration>();
+            Assert.NotNull(value);
+            Assert.True(value.ProductionActive);
+            Assert.Equal(FiscalOnboardingStages.ProductionActive, value.Stage);
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalIssuerConfigurations
+                WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1;
+                """, businessId));
+            Assert.Equal(0, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalIssuerConfigurations
+                WHERE BusinessId=@BusinessId AND Environment=2 AND IsActive=1;
+                """, businessId));
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalIssuerConfigurations
+                WHERE BusinessId=@BusinessId AND IsActive=1;
+                """, businessId));
+        }
+        finally
+        {
+            await DeleteAcceptedAttemptAsync(businessId, documentId);
+            await DeleteBusinessAsync(businessId, legalScope);
+        }
+    }
+
+    [Fact]
     public async Task Support_document_uses_an_independent_current_resolution_and_cursor()
     {
         var businessId = Guid.NewGuid();
@@ -254,6 +301,70 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@ConfigurationId", configurationId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task InsertAcceptedAttemptAsync(
+        Guid businessId,
+        Guid documentId,
+        Guid configurationId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            """
+            INSERT dbo.FiscalIssuerConfigurations(
+                FiscalIssuerConfigurationId,BusinessId,Version,SupplierTaxId,SupplierCheckDigit,
+                LegalName,TaxLevelCode,TaxSchemeId,TaxSchemeName,IdentificationTypeCode,
+                AddressLine,CityCode,CityName,DepartmentCode,DepartmentName,CountryCode,CountryName,
+                SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,TestSetId,
+                CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
+                TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,IsActive,CreatedAt)
+            VALUES(@ConfigurationId,@BusinessId,1,N'900123456',N'8',N'DIAN E2E SAS',N'R-99-PN',
+                N'01',N'IVA',N'31',N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá',N'CO',N'Colombia',
+                CONVERT(nvarchar(64),NEWID()),N'fiscal://pin',2,NEWID(),N'ProtectedDatabase',
+                N'fiscal://certificate',N'ABCDEF1234567890',N'https://vpfe-hab.dian.gov.co',
+                N'1.9',N'Auraly.Commerce',DATEADD(day,-1,SYSDATETIMEOFFSET()),
+                DATEADD(day,30,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.FiscalDocuments(
+                DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,AuralyDocumentNumber,
+                FiscalNumber,UniqueCodeType,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
+            VALUES(@DocumentId,@BusinessId,N'PosSale',N'Invoice',N'TEST-ACCEPTED',N'SETP990000001',N'CUFE',
+                SYSDATETIMEOFFSET(),N'DianAccepted',SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+
+            INSERT dbo.FiscalDocumentProcesses(
+                DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,AttemptCount,
+                LastStatusCode,LastStatusDescription,CompletedAt,CreatedAt,UpdatedAt)
+            VALUES(@DocumentId,@BusinessId,@ConfigurationId,N'DianAccepted',1,N'2',
+                N'Set de pruebas aceptado.',SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+
+            INSERT dbo.FiscalTransmissionAttempts(
+                FiscalTransmissionAttemptId,DocumentId,AttemptNumber,Operation,CorrelationId,
+                TrackId,StartedAt,CompletedAt,Disposition,StatusCode,StatusDescription,MayHaveReachedDian)
+            VALUES(NEWID(),@DocumentId,1,N'GetStatusZip',CONVERT(nvarchar(128),NEWID()),
+                CONVERT(nvarchar(128),NEWID()),SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),
+                N'Accepted',N'2',N'Set de pruebas aceptado.',1);
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@ConfigurationId", configurationId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task DeleteAcceptedAttemptAsync(Guid businessId, Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            """
+            DELETE dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId;
+            DELETE dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId;
+            DELETE dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId;
+            DELETE dbo.FiscalDocuments WHERE DocumentId=@DocumentId;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
         await command.ExecuteNonQueryAsync();
     }
 
