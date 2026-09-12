@@ -4,6 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Auraly.Foundation.Tests;
 
+[Collection(PerformanceTestCollection.Name)]
 public sealed class PosCatalogStoreTests
 {
     [Fact]
