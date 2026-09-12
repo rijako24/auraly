@@ -276,7 +276,7 @@ public sealed class DatabaseUpgradeMigrationTests
             roles,
             StringComparison.Ordinal);
         Assert.Contains(
-            "N'roles.read',N'security.users.link-party'",
+            "N'roles.read',N'roles.create',N'roles.update',N'roles.delete',N'roles.assign_permissions'",
             roles,
             StringComparison.Ordinal);
         Assert.Contains("N'OCASIONAL'", accounting, StringComparison.Ordinal);
