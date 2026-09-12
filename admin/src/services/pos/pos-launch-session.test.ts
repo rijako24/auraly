@@ -4,6 +4,7 @@ import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import {
   installedPosLaunchDestination,
   shouldFallbackToLocalPos,
+  shouldUseEnrolledPosRuntime,
   usesEnrolledPosRuntime,
   workspaceActivationMode,
 } from "./pos-launch-session";
@@ -99,6 +100,24 @@ test("enrollment is the single owner of installed runtime selection", () => {
     usesEnrolledPosRuntime({ status: "EnrollmentRequired", identityReady: false }),
     false,
   );
+});
+
+test("a DIAN habilitation invoice bypasses only the production readiness guard", () => {
+  assert.equal(canIssuePosDocument("SalesInvoice", false, false, true), true);
+  assert.equal(
+    fiscalLaunchReadinessError("online", {
+      isReadyForOnlineSales: false,
+      hasDianDocumentQuota: false,
+    }, true),
+    null,
+  );
+  assert.equal(canIssuePosDocument("SalesInvoice", false, false), false);
+});
+
+test("DIAN habilitation always uses the online test circuit even on an enrolled computer", () => {
+  const enrolled = { status: "Ready", identityReady: true };
+  assert.equal(shouldUseEnrolledPosRuntime(enrolled, false, false), true);
+  assert.equal(shouldUseEnrolledPosRuntime(enrolled, false, true), false);
 });
 
 test("online invoices report an exhausted DIAN quota without a technical error", () => {

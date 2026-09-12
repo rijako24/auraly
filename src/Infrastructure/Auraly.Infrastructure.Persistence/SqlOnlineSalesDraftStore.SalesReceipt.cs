@@ -90,10 +90,15 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != withholding.NetAmount)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
-        await ValidateCreditAsync(
-            connection, transaction, state.BusinessId, state.CustomerId, request.Credit, ct);
-
         var now = settlement.Context.OccurredAt;
+        var creditDueDate = await ResolveCreditDueDateAsync(
+            connection,
+            transaction,
+            state.BusinessId,
+            state.CustomerId,
+            request.Credit,
+            now,
+            ct);
         var series = await ReadSalesReceiptSeriesAsync(
             connection, transaction, state.BusinessId, ct);
         var consecutive = await ConsumeSalesReceiptNumberAsync(
@@ -138,7 +143,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             draft.SourceOrderId,
             request.Credit is null || state.CustomerId is null ? null :
                 new PosSaleCreditContract(
-                    state.CustomerId.Value, request.Credit.Amount, request.Credit.DueDate));
+                    state.CustomerId.Value,
+                    request.Credit.Amount,
+                    creditDueDate!.Value));
 
         await ReleaseOrderInventoryAsync(connection, transaction, user, state, ct);
 

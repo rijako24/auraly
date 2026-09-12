@@ -251,7 +251,7 @@ public sealed class PosDraftStoreTests
         var path = Path.Combine(Path.GetTempPath(), $"auraly-draft-upgrade-{Guid.NewGuid():N}.db");
         try
         {
-            await using (var connection = new SqliteConnection($"Data Source={path}"))
+            await using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
             {
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
@@ -270,7 +270,7 @@ public sealed class PosDraftStoreTests
             await store.InitializeAsync();
             await store.InitializeAsync();
 
-            await using var verification = new SqliteConnection($"Data Source={path}");
+            await using var verification = new SqliteConnection($"Data Source={path};Pooling=False");
             await verification.OpenAsync();
             foreach (var table in new[] { "IssuedSales", "Outbox", "PosCatalogProducts" })
             {
@@ -314,7 +314,7 @@ public sealed class PosDraftStoreTests
 
     private static PosDraftStore Store(string path, IAuralyIdGenerator? ids = null) =>
         new(
-            $"Data Source={path}",
+            $"Data Source={path};Pooling=False",
             ids ?? new SequentialUuid7Generator(),
             TimeProvider.System);
 

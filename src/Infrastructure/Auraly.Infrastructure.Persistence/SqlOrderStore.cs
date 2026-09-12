@@ -4,6 +4,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Orders;
 using Auraly.Domain.Orders;
 using Microsoft.Data.SqlClient;
+using System.Text.Json;
 
 namespace Auraly.Infrastructure.Persistence;
 
@@ -263,16 +264,29 @@ public sealed class SqlOrderStore(
         await header.CloseAsync();
 
         const string lineSql = """
-            SELECT OrderItemId,ProductId,ProductCodeSnapshot,Sku,
-                   ProductNameSnapshot,COALESCE(NULLIF(UnitCodeSnapshot,N''),N'EA'),
-                   Quantity,UnitPrice,DiscountAmount,LineTotal
-            FROM dbo.OrderItems
-            WHERE OrderId=@OrderId AND BusinessId=@BusinessId
-            ORDER BY CreatedAt,OrderItemId;
+            SELECT item.OrderItemId,item.ProductId,item.ProductCodeSnapshot,item.Sku,
+                   item.ProductNameSnapshot,COALESCE(NULLIF(item.UnitCodeSnapshot,N''),N'EA'),
+                   item.Quantity,item.UnitPrice,item.DiscountAmount,item.LineTotal,
+                   COALESCE(balance.QuantityOnHand,0),CAST(COALESCE(product.ManageStock,0) AS bit),
+                   COALESCE(NULLIF(JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.PriceSource'),N''),N'Captured'),
+                   COALESCE(TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
+                     CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                     '$.ReservedQuantity')),
+                     CASE WHEN @StoredStatus=2 THEN item.Quantity ELSE 0 END)
+            FROM dbo.OrderItems item
+            LEFT JOIN dbo.Products product
+              ON product.ProductId=item.ProductId AND product.TenantId=@TenantId
+            LEFT JOIN dbo.InventoryBalances balance
+              ON balance.BusinessId=item.BusinessId AND balance.WarehouseId=@WarehouseId
+             AND balance.ProductId=item.ProductId
+            WHERE item.OrderId=@OrderId AND item.BusinessId=@BusinessId
+            ORDER BY item.CreatedAt,item.OrderItemId;
             """;
         await using var lineCommand = new SqlCommand(lineSql, connection);
         lineCommand.Parameters.AddRange([
-            P("@OrderId", orderId), P("@BusinessId", actor.BusinessId)
+            P("@OrderId", orderId), P("@BusinessId", actor.BusinessId),
+            P("@TenantId", actor.TenantId), P("@WarehouseId", values.WarehouseId),
+            P("@StoredStatus", storedStatus)
         ]);
         await using var lineReader = await lineCommand.ExecuteReaderAsync(cancellationToken);
         var lines = new List<OrderLine>();
@@ -288,7 +302,11 @@ public sealed class SqlOrderStore(
                 lineReader.GetDecimal(6),
                 lineReader.GetDecimal(7),
                 lineReader.GetDecimal(8),
-                lineReader.GetDecimal(9)));
+                lineReader.GetDecimal(9),
+                lineReader.GetDecimal(10),
+                lineReader.GetBoolean(11),
+                lineReader.GetString(12),
+                lineReader.GetDecimal(13)));
         }
 
         return new OrderDetail(
@@ -300,6 +318,98 @@ public sealed class SqlOrderStore(
             values.PaymentStatus, values.CreatedAt,
             OrderRules.CanInvoice(storedStatus, values.Confirmed, hasInvoice),
             values.DocumentId, claim, lines, values.WarehouseId);
+    }
+
+    public async Task<IReadOnlyList<OrderPrintDocument>> GetPrintBatchAsync(
+        OrderActor actor,
+        IReadOnlyCollection<Guid> orderIds,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        const string sql = """
+            DECLARE @Selected TABLE(
+              Sequence int NOT NULL,
+              OrderId uniqueidentifier NOT NULL PRIMARY KEY);
+
+            INSERT @Selected(Sequence,OrderId)
+            SELECT CONVERT(int,[key]),TRY_CONVERT(uniqueidentifier,[value])
+            FROM OPENJSON(@OrderIds)
+            WHERE TRY_CONVERT(uniqueidentifier,[value]) IS NOT NULL;
+
+            SELECT selected.Sequence,o.OrderId,o.BusinessId,
+                   COALESCE(NULLIF(o.ExternalDocumentNumber,N''),CONCAT(N'PED-',LEFT(CONVERT(nvarchar(36),o.OrderId),8))),
+                   o.CreatedAt,o.CustomerNameSnapshot,o.CustomerDocumentSnapshot,o.Currency,o.Total
+            FROM @Selected selected
+            INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
+            INNER JOIN dbo.Businesses business
+              ON business.BusinessId=o.BusinessId AND business.TenantId=@TenantId
+            WHERE o.BusinessId=@BusinessId
+            ORDER BY selected.Sequence;
+
+            SELECT selected.Sequence,item.OrderId,item.ProductCodeSnapshot,
+                   item.ProductNameSnapshot,item.Quantity,item.UnitPrice,
+                   item.DiscountAmount,item.LineTotal
+            FROM @Selected selected
+            INNER JOIN dbo.OrderItems item ON item.OrderId=selected.OrderId
+            INNER JOIN dbo.Orders o
+              ON o.OrderId=item.OrderId AND o.BusinessId=item.BusinessId
+            INNER JOIN dbo.Businesses business
+              ON business.BusinessId=o.BusinessId AND business.TenantId=@TenantId
+            WHERE o.BusinessId=@BusinessId
+            ORDER BY selected.Sequence,item.CreatedAt,item.OrderItemId;
+            """;
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddRange([
+            P("@OrderIds", JsonSerializer.Serialize(orderIds)),
+            P("@BusinessId", actor.BusinessId),
+            P("@TenantId", actor.TenantId)
+        ]);
+
+        var headers = new Dictionary<Guid, OrderPrintHeader>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var orderId = reader.GetGuid(1);
+            headers.Add(orderId, new OrderPrintHeader(
+                reader.GetInt32(0),
+                orderId,
+                reader.GetGuid(2),
+                reader.GetString(3),
+                DateTime.SpecifyKind(reader.GetDateTime(4), DateTimeKind.Utc),
+                NullableString(reader, 5),
+                NullableString(reader, 6),
+                reader.GetString(7),
+                reader.GetDecimal(8),
+                []));
+        }
+
+        await reader.NextResultAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (!headers.TryGetValue(reader.GetGuid(1), out var header)) continue;
+            header.Lines.Add(new OrderPrintLine(
+                NullableString(reader, 2),
+                reader.GetString(3),
+                reader.GetDecimal(4),
+                reader.GetDecimal(5),
+                reader.GetDecimal(6),
+                reader.GetDecimal(7)));
+        }
+
+        return headers.Values
+            .OrderBy(header => header.Sequence)
+            .Select(header => new OrderPrintDocument(
+                header.OrderId,
+                header.BusinessId,
+                header.OrderNumber,
+                header.CreatedAt,
+                header.CustomerName,
+                header.CustomerIdentification,
+                header.Currency,
+                header.Total,
+                header.Lines))
+            .ToArray();
     }
 
     public async Task<OrderClaimSummary> ClaimAsync(
@@ -621,6 +731,9 @@ public sealed class SqlOrderStore(
             case "AVAILABLE":
                 filters.Add("link.OrderId IS NULL AND o.CustomerConfirmed=1 AND o.Status IN(2,4)");
                 break;
+            case "INREVIEW":
+                filters.Add("link.OrderId IS NULL AND o.Status=5");
+                break;
             case "CANCELLED":
                 filters.Add("link.OrderId IS NULL AND o.Status=6");
                 break;
@@ -631,7 +744,7 @@ public sealed class SqlOrderStore(
                 filters.Add("link.OrderId IS NULL AND o.Status=91");
                 break;
             case "PENDING":
-                filters.Add("link.OrderId IS NULL AND o.Status NOT IN(2,4,6,7,91)");
+                filters.Add("link.OrderId IS NULL AND o.Status NOT IN(2,4,5,6,7,91)");
                 break;
             default:
                 filters.Add("1=0");
@@ -683,6 +796,18 @@ public sealed class SqlOrderStore(
 
     private static string? NullableString(SqlDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+
+    private sealed record OrderPrintHeader(
+        int Sequence,
+        Guid OrderId,
+        Guid BusinessId,
+        string OrderNumber,
+        DateTimeOffset CreatedAt,
+        string? CustomerName,
+        string? CustomerIdentification,
+        string Currency,
+        decimal Total,
+        List<OrderPrintLine> Lines);
 
     private static async Task<int> ExecuteAsync(
         SqlConnection connection,

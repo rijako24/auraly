@@ -172,7 +172,7 @@ public sealed class SqlProductMerchandisingStore(
                     """, [P("@Id", ids.NewId()), P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@ParentId", link.ParentProductId), P("@SharesInventory", link.SharesInventory), P("@InventoryFactor", link.SharesInventory ? link.InventoryFactor : null), P("@SharesPrice", link.SharesPrice), P("@PriceFactor", link.SharesPrice ? link.PriceFactor : null), P("@AllowsConversion", link.AllowsConversion), P("@ConversionFactor", link.AllowsConversion ? link.ConversionFactor : null), P("@Now", now)], ct);
                 if (link.SharesPrice)
                     await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
-                        link.ParentProductId, productId, link.PriceFactor!.Value, ct);
+                        link.ParentProductId, productId, link.PriceFactor!.Value, user.UserId, now, ct);
             }
 
             await ExecuteAsync(connection, transaction, """
@@ -217,7 +217,7 @@ public sealed class SqlProductMerchandisingStore(
                     P("@Now", now)], ct);
                 if (child.SharesPrice)
                     await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
-                        productId, child.ChildProductId, child.PriceFactor!.Value, ct);
+                        productId, child.ChildProductId, child.PriceFactor!.Value, user.UserId, now, ct);
             }
 
             await ExecuteAsync(connection, transaction, """

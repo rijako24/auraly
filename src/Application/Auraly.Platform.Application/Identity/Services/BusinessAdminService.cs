@@ -87,6 +87,7 @@ public class BusinessAdminService : IBusinessAdminService
             await _defaultsProvisioner.ProvisionWarehousesAsync(
                 tenantId,
                 business.BusinessId,
+                request.PriceSourceBusinessId,
                 await ReadTenantCostBasisAsync(tenantId, ct),
                 ct);
         }, ct);

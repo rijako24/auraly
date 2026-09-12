@@ -216,10 +216,9 @@ public sealed class OnlineSalesCheckoutService(
         if (request.Payments.Count(payment => payment.MethodCode == "Cash") > 1)
             throw new OnlineSalesDraftValidationException(
                 "La venta admite una sola línea de efectivo.");
-        if (request.Credit is not null &&
-            (request.Credit.Amount <= 0 || request.Credit.DueDate == default))
+        if (request.Credit is not null && request.Credit.Amount <= 0)
             throw new OnlineSalesDraftValidationException(
-                "El valor y vencimiento del crédito no son válidos.");
+                "El valor del crédito no es válido.");
 
     }
 }

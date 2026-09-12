@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using Auraly.Contracts.Catalog;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
@@ -249,9 +246,7 @@ public sealed class PosCatalogStoreTests
         bool hasMore,
         string? next)
     {
-        var hash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
-            .ToLowerInvariant();
+        var hash = CatalogBootstrapIntegrity.Compute(items);
         return new CatalogBootstrapPage(
             session.SessionId,
             session.HighWaterMark,

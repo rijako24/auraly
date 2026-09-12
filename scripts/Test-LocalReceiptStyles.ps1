@@ -162,5 +162,5 @@ Send-PrintJob "Comprobante" "/edge/v1/print/receipt?workflow=pos" $salesReceipt 
 Send-PrintJob "Entrada" "/edge/v1/print/cash-movement" $entry $session
 Send-PrintJob "Salida" "/edge/v1/print/cash-movement" $exit $session
 Send-PrintJob "Cierre" "/edge/v1/print/work-session-closure" $closure $session
-Send-PrintJob "Pedido factura" "/edge/v1/print/receipt?workflow=orders" $sale $session
-Send-PrintJob "Pedido comprobante" "/edge/v1/print/receipt?workflow=orders" $salesReceipt $session
+Send-PrintJob "Factura desde pedido" "/edge/v1/print/receipt?workflow=pos" $sale $session
+Send-PrintJob "Comprobante desde pedido" "/edge/v1/print/receipt?workflow=pos" $salesReceipt $session

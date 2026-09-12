@@ -301,6 +301,7 @@ public sealed class SqlPosSaleServerStore(
             request.BusinessId,
             request.Credit.CustomerId,
             request.Credit.Amount,
+            request.CommercialSnapshot.IssuedAt,
             cancellationToken);
         if (!validation.IsAllowed)
             throw new PosSaleInvalidException(

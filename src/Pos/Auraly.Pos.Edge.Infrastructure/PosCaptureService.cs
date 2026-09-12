@@ -1,6 +1,7 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Sales;
+using Auraly.Domain.Inventory;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
@@ -44,19 +45,33 @@ public sealed class PosCaptureService(
         if (warehouseAllowsNegativeStock)
             return new OnlineSalesInventoryValidation(true, true, []);
 
-        var issues = new List<OnlineSalesInventoryIssue>();
-        foreach (var group in draft.Lines.GroupBy(line => line.ProductId))
+        var descriptors = await catalog.InventoryDescriptorsAsync(
+            draft.Lines.Select(line => line.ProductId.Value).Distinct().ToArray(),
+            cancellationToken);
+        if (descriptors.Count != draft.Lines.Select(line => line.ProductId.Value).Distinct().Count())
+            throw new KeyNotFoundException("A product does not exist in the local catalog.");
+        var facts = draft.Lines.Select(line =>
         {
-            var product = await catalog.GetByProductIdAsync(group.Key.Value, cancellationToken)
-                ?? throw new KeyNotFoundException("The product does not exist in the local catalog.");
-            if (!product.ManagesStock) continue;
+            var descriptor = descriptors[line.ProductId.Value];
+            return new InventoryDemandLine(
+                line.LineId, line.ProductId.Value, descriptor.InventoryProductId,
+                descriptor.InventoryFactor, line.Quantity,
+                descriptor.ManagesStock || descriptor.InventoryProductId != line.ProductId.Value);
+        }).ToArray();
+        var lineById = draft.Lines.ToDictionary(line => line.LineId);
+        var issues = new List<OnlineSalesInventoryIssue>();
+        foreach (var demand in InventoryDemandResolver.Resolve(facts))
+        {
+            var representative = demand.Lines[0];
             InventoryAvailabilityResponse availabilityResult;
             try
             {
                 availabilityResult = await availability.CheckAvailabilityAsync(
                     new InventoryAvailabilityRequest(
-                        group.Key.Value, draft.Scope.WarehouseId.Value,
-                        group.Sum(line => line.Quantity), operationId),
+                        representative.ProductId, draft.Scope.WarehouseId.Value,
+                        InventoryDemandResolver.InProductUnits(
+                            demand.RequiredInventoryQuantity,
+                            representative.InventoryFactor), operationId),
                     cancellationToken);
             }
             catch (HttpRequestException)
@@ -68,14 +83,22 @@ public sealed class PosCaptureService(
                 return new OnlineSalesInventoryValidation(true, false, []);
             }
 
-            var remaining = availabilityResult.AvailableQuantity;
-            foreach (var line in group.OrderBy(line => line.Position))
+            var allocations = InventoryDemandResolver.AllocateWholeLines(
+                demand.Lines,
+                new Dictionary<Guid, decimal>
+                {
+                    [demand.InventoryProductId] =
+                        availabilityResult.AvailableQuantity * representative.InventoryFactor
+                });
+            foreach (var allocation in allocations.Where(value => !value.CanReserve))
             {
-                if (line.Quantity > remaining)
-                    issues.Add(new OnlineSalesInventoryIssue(
-                        line.LineId, line.ProductId.Value, line.ProductCode,
-                        line.Description, line.Quantity, Math.Max(0, remaining)));
-                remaining = Math.Max(0, remaining - line.Quantity);
+                var line = lineById[allocation.Line.LineId];
+                issues.Add(new OnlineSalesInventoryIssue(
+                    line.LineId, line.ProductId.Value, line.ProductCode,
+                    line.Description, line.Quantity,
+                    Math.Max(0, InventoryDemandResolver.InProductUnits(
+                        allocation.AvailableInventoryQuantity,
+                        allocation.Line.InventoryFactor))));
             }
         }
         return new OnlineSalesInventoryValidation(issues.Count == 0, true, issues);
@@ -97,11 +120,13 @@ public sealed class PosCaptureService(
         var totalQuantity = active.Lines
             .Where(line => line.ProductId.Value == captured.Product.ProductId)
             .Sum(line => line.Quantity) + captured.Quantity;
+        var inventoryDemand = await InventoryDemandAsync(
+            active, captured.Product, captured.Quantity, null, cancellationToken);
         var inventory = await ValidateAsync(
             captured.Product.ProductId,
             scope.WarehouseId.Value,
-            totalQuantity,
-            captured.Product.ManagesStock,
+            inventoryDemand.QuantityInSelectedUnits,
+            inventoryDemand.ValidationRequired,
             warehouseAllowsNegativeStock,
             operationId,
             cancellationToken);
@@ -153,14 +178,13 @@ public sealed class PosCaptureService(
             ?? throw new KeyNotFoundException("The product does not exist in the local catalog.");
         if (!product.AllowsFractionalSale && quantity != decimal.Truncate(quantity))
             throw new InvalidOperationException("Este producto solo se vende en unidades completas.");
-        var totalQuantity = current.Lines
-            .Where(value => value.ProductId == line.ProductId && value.LineId != lineId)
-            .Sum(value => value.Quantity) + quantity;
+        var inventoryDemand = await InventoryDemandAsync(
+            current, product, quantity, lineId, cancellationToken);
         var inventory = await ValidateAsync(
             line.ProductId.Value,
             current.Scope.WarehouseId.Value,
-            totalQuantity,
-            product.ManagesStock,
+            inventoryDemand.QuantityInSelectedUnits,
+            inventoryDemand.ValidationRequired,
             warehouseAllowsNegativeStock,
             operationId,
             cancellationToken);
@@ -173,6 +197,35 @@ public sealed class PosCaptureService(
             cancellationToken);
         updated = await pricing.RepriceAsync(updated.DraftId, updated.CustomerId, cancellationToken);
         return new PosCaptureResult(PosCaptureStatus.Added, updated, null, inventory.Response);
+    }
+
+    private async Task<(decimal QuantityInSelectedUnits, bool ValidationRequired)> InventoryDemandAsync(
+        PosDraft draft,
+        PosCatalogItem selectedProduct,
+        decimal selectedQuantity,
+        Guid? excludedLineId,
+        CancellationToken cancellationToken)
+    {
+        var inventoryProductId = selectedProduct.InventoryProductId ?? selectedProduct.ProductId;
+        var selectedFactor = selectedProduct.InventoryFactor;
+        if (selectedFactor <= 0)
+            throw new InvalidDataException("The selected product inventory factor must be positive.");
+        var family = await catalog.InventoryFamilyAsync(inventoryProductId, cancellationToken);
+        var validationRequired = selectedProduct.ManagesStock ||
+            inventoryProductId != selectedProduct.ProductId || family.Count > 1;
+        var demandLines = draft.Lines
+            .Where(line => line.LineId != excludedLineId && family.ContainsKey(line.ProductId.Value))
+            .Select(line => new InventoryDemandLine(
+                line.LineId, line.ProductId.Value, inventoryProductId,
+                family[line.ProductId.Value], line.Quantity, validationRequired))
+            .Append(new InventoryDemandLine(
+                Guid.Empty, selectedProduct.ProductId, inventoryProductId,
+                selectedFactor, selectedQuantity, validationRequired));
+        var demand = InventoryDemandResolver.Resolve(demandLines).SingleOrDefault();
+        return (
+            demand is null ? selectedQuantity : InventoryDemandResolver.InProductUnits(
+                demand.RequiredInventoryQuantity, selectedFactor),
+            validationRequired);
     }
 
     private async Task<(string Status, InventoryAvailabilityResponse? Response)> ValidateAsync(

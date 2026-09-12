@@ -186,12 +186,29 @@ public sealed class PosEnrollmentSessionCompleter(
             var session = await identities.LoginFromEnrollmentAsync(
                 access.User.UserId,
                 cancellationToken);
+            return session;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task AcknowledgeAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var package = enrollments.Load();
+            if (package?.InitialOfflineAccess is not { } access) return;
+            if (access.User.UserId != userId) return;
             enrollments.Save(package with
             {
                 InitialOfflineAccess = null,
                 InitialIdentitySnapshot = null
             });
-            return session;
         }
         finally
         {

@@ -121,12 +121,49 @@ public static class PosOrderEndpoints
             return Results.Ok(new { released = true });
         });
 
+        edge.MapPost("/orders/print", async (
+            PrintPosOrdersRequest request,
+            PosOrderServerClient server,
+            ConfigurablePosReceiptPrinter printer,
+            PosPrinterConfigurationStore printerSettings,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            var documents = await server.PrintBatchAsync(
+                sessions.Required(), request.OrderIds, ct);
+            var width = printerSettings.Load().OrderReceiptPaperWidthMillimeters;
+            var receipts = documents.Select(document => new PosReceipt(
+                Guid.NewGuid(),
+                new DocumentId(document.OrderId),
+                document.OrderNumber,
+                null,
+                document.CreatedAt,
+                document.CustomerIdentification ?? string.Empty,
+                document.Lines.Select(line => new PosReceiptLine(
+                    line.ProductCode ?? string.Empty,
+                    line.ProductName,
+                    line.Quantity,
+                    line.UnitPrice,
+                    line.DiscountAmount,
+                    0,
+                    line.LineTotal)).ToArray(),
+                [],
+                document.Total,
+                0,
+                document.Total,
+                null,
+                null,
+                width,
+                "Order",
+                CustomerName: document.CustomerName ?? "Cliente")).ToArray();
+            await printer.PrintOrdersAsync(receipts, ct);
+            return Results.Ok(new { printedCount = receipts.Length });
+        });
+
         edge.MapPost("/orders/invoice", async (
             InvoicePosOrdersRequest request,
             PosOrderServerClient server,
-            ConfigurableOrderDocumentPrinter printer,
             ConfigurablePosReceiptPrinter receiptPrinter,
-            PosPrinterConfigurationStore printerSettings,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
@@ -147,17 +184,7 @@ public static class PosOrderEndpoints
                     .Where(result => result.Error is null && result.Receipt is not null)
                     .Select(result => result.Receipt!)
                     .ToArray();
-                var printConfiguration = printerSettings.Load();
-                if (printConfiguration.OrdersOutputFormat !=
-                    PrintTemplateFormats.Receipt)
-                    await printer.PrintAsync(
-                        receipts,
-                        printConfiguration.OrdersPrinterName,
-                        printConfiguration.OrdersOutputFormat,
-                        ct);
-                else
-                    foreach (var receipt in receipts)
-                        await receiptPrinter.PrintOrdersReceiptAsync(receipt, ct);
+                await receiptPrinter.PrintSalesDocumentsAsync(receipts, ct);
                 return Results.Ok(response with
                 {
                     PrintStatus = receipts.Length == 0 ? "NotRequired" : "Sent"
@@ -173,7 +200,7 @@ public static class PosOrderEndpoints
                     PrintStatus = "Failed",
                     PrintError = "Los pedidos se facturaron, pero no fue posible imprimir: " +
                                  (string.IsNullOrWhiteSpace(error.Message)
-                                     ? "la impresora configurada no respondió. Revisa la impresora de Pedidos en Periféricos."
+                                     ? "la impresora configurada no respondió. Revisa la impresora de Facturas en Periféricos."
                                      : error.Message)
                 });
             }
@@ -191,3 +218,5 @@ public sealed record InvoicePosOrdersRequest(
     string? PaymentNotes,
     string IdempotencyKey,
     string DocumentType = "SalesInvoice");
+
+public sealed record PrintPosOrdersRequest(IReadOnlyCollection<Guid> OrderIds);

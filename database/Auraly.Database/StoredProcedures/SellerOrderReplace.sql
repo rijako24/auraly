@@ -30,7 +30,8 @@ BEGIN
         Status=2,ExternalStatus=N'InventoryTransferAccepted',
         ReservationTransferId=@ReservationTransferId,RequiresStockReview=0,
         UpdatedAt=SYSUTCDATETIME()
-    WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+    WHERE OrderId=@OrderId AND BusinessId=@BusinessId AND Status IN(2,5)
+      AND NOT EXISTS(SELECT 1 FROM dbo.OrderInvoiceLinks link WHERE link.OrderId=@OrderId);
     IF @@ROWCOUNT <> 1 THROW 51303, 'No se pudo actualizar el pedido.', 1;
 
     DELETE dbo.OrderItems WHERE OrderId=@OrderId;

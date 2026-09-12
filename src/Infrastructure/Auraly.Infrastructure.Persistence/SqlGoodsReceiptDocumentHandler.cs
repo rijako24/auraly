@@ -366,22 +366,26 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             SELECT @SharesPrices=SharesProductPrices,@TenantId=TenantId
             FROM dbo.Businesses WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId;
 
-            UPDATE price
-            SET CostBasisType=@CostBasisType,CostBasisAmount=@ObservedCost,PreparedAmount=@RoundedPrice,
-                TargetMarginPercent=@TargetMargin,EffectiveMarginPercent=@EffectiveMargin,
-                InputMode=N'Margin'
-            FROM dbo.ProductPrices price
-            INNER JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
-            WHERE price.ProductId=@ProductId AND price.IsActive=1
+            UPDATE proposal
+            SET Status=N'Superseded'
+            FROM dbo.PriceRevisionProposals proposal
+            INNER JOIN dbo.Businesses target ON target.BusinessId=proposal.BusinessId
+            WHERE proposal.ProductId=@ProductId
+              AND proposal.Status IN(N'PendingReview',N'Approved')
               AND ((@SharesPrices=1 AND target.TenantId=@TenantId
                     AND target.SharesProductPrices=1 AND target.IsActive=1)
-                OR (@SharesPrices=0 AND price.BusinessId=@BusinessId));
+                OR (@SharesPrices=0 AND proposal.BusinessId=@BusinessId));
 
+            DECLARE @CreatedProposals TABLE(
+              ProposalId UNIQUEIDENTIFIER NOT NULL,
+              BusinessId UNIQUEIDENTIFIER NOT NULL);
             INSERT dbo.PriceRevisionProposals
               (PriceRevisionProposalId,BusinessId,ProductId,SourceDocumentId,SourceLineNumber,
                PreviousObservedUnitCost,ObservedUnitCost,CurrentSalePrice,CurrentMarginPercent,
                TargetMarginPercent,SuggestedSalePrice,RoundedSuggestedSalePrice,
                EffectiveMarginAfterRounding,LastInputMode,Status,CreatedAt)
+            OUTPUT inserted.PriceRevisionProposalId,inserted.BusinessId
+              INTO @CreatedProposals(ProposalId,BusinessId)
             SELECT NEWID(),price.BusinessId,@ProductId,@DocumentId,@LineNumber,@PreviousCost,@ObservedCost,
                price.Amount,@CurrentMargin,@TargetMargin,@RawPrice,@RoundedPrice,
                @EffectiveMargin,N'Margin',N'PendingReview',@Now
@@ -391,22 +395,43 @@ public sealed class SqlGoodsReceiptDocumentHandler(
               AND ((@SharesPrices=1 AND target.TenantId=@TenantId
                     AND target.SharesProductPrices=1 AND target.IsActive=1)
                 OR (@SharesPrices=0 AND price.BusinessId=@BusinessId));
+
+            UPDATE preparation
+            SET Status=N'Superseded',SupersededAt=@Now
+            FROM dbo.ProductPricePreparations preparation
+            INNER JOIN @CreatedProposals created ON created.BusinessId=preparation.BusinessId
+            WHERE preparation.ProductId=@ProductId AND preparation.Status=N'Pending';
+
+            INSERT dbo.ProductPricePreparations
+              (ProductPricePreparationId,BusinessId,ProductId,SourceProposalId,
+               SourceDocumentId,SourceLineNumber,PreparationOrigin,PublicAmountSnapshot,
+               PreparedAmount,CostBasisType,CostBasisAmount,TargetMarginPercent,
+               EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,
+               Status,PreparedByUserId,PreparedAt)
+            SELECT NEWID(),price.BusinessId,@ProductId,created.ProposalId,
+                   @DocumentId,@LineNumber,N'GoodsReceipt',price.Amount,@RoundedPrice,
+                   @CostBasisType,@ObservedCost,@TargetMargin,@EffectiveMargin,N'Margin',
+                   @RoundingIncrement,@RoundingMode,N'Pending',@UserId,@Now
+            FROM @CreatedProposals created
+            INNER JOIN dbo.ProductPrices price ON price.BusinessId=created.BusinessId
+              AND price.ProductId=@ProductId AND price.IsActive=1;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@Id", ids.NewId());
         command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
         command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         AddNullableDecimal(command, "@PreviousCost", state.PreviousObservedUnitCost, 19, 6);
         AddDecimal(command, "@ObservedCost", observedCost, 19, 6);
-        AddDecimal(command, "@CurrentPrice", state.CurrentSalePrice, 19, 4);
         AddNullableDecimal(command, "@CurrentMargin", currentMargin, 9, 6);
         AddDecimal(command, "@TargetMargin", targetMargin, 9, 6);
         AddDecimal(command, "@RawPrice", rawSuggested, 19, 4);
         AddDecimal(command, "@RoundedPrice", suggested, 19, 4);
         AddNullableDecimal(command, "@EffectiveMargin", effectiveMargin, 9, 6);
         command.Parameters.AddWithValue("@CostBasisType", costBasisType);
+        command.Parameters.AddWithValue("@RoundingIncrement", state.RoundingIncrement);
+        command.Parameters.AddWithValue("@RoundingMode", state.RoundingMode);
+        command.Parameters.AddWithValue("@UserId", receipt.ConfirmedByUserId);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

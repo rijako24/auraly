@@ -12,6 +12,7 @@ export type PosPreparationHealth = {
   preparationTotalSteps?: number;
   preparationCanResume?: boolean;
   synchronizationStages?: string[];
+  failedSynchronizationStage?: string | null;
   lastSynchronizationFailed?: boolean;
   lastSynchronizationError?: string | null;
   automaticRetryScheduled?: boolean;
@@ -67,17 +68,20 @@ export function posPreparationView(
   }
 
   if (health.lastSynchronizationFailed) {
+    const failedResource = health.preparationStage === "Catalog"
+      ? "Productos y precios"
+      : activeStages || health.failedSynchronizationStage || "Preparación pendiente";
     return {
       title: "La preparación se detuvo",
       detail: posPublicError(
         health.lastSynchronizationError,
         "No fue posible terminar la preparación de esta caja.",
       ) ?? "No fue posible terminar la preparación de esta caja.",
-      currentResource: activeStages || "Preparación pendiente",
+      currentResource: failedResource,
       resourceProgress: health.catalogProgressPercent ?? null,
       overallProgress,
       processedLabel: "Corrige la causa y reintenta cuando estés listo",
-      connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Sin conexión con Auraly",
+      connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Verificando conexión con Auraly",
       resumeLabel: "Los 3 reintentos automáticos terminaron",
     };
   }
@@ -111,7 +115,7 @@ export function posPreparationView(
       resourceProgress: null,
       overallProgress,
       processedLabel: null,
-      connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Esperando conexión con Auraly",
+      connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Verificando conexión con Auraly",
       resumeLabel: "La información se guarda de forma segura en este equipo",
     };
   }
@@ -123,7 +127,7 @@ export function posPreparationView(
     resourceProgress: null,
     overallProgress,
     processedLabel: null,
-    connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Esperando conexión con Auraly",
+    connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Verificando conexión con Auraly",
     resumeLabel: "Auraly abrirá facturación apenas termine la validación",
   };
 }

@@ -131,7 +131,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                    CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
                           AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
                         THEN s.PriceChannelId END,c.RequiresElectronicInvoice,
-                   CAST(COALESCE(cp.IsCreditEnabled,0) AS bit),COALESCE(cp.DefaultDueDays,0),
+                   CAST(COALESCE(cp.IsCreditEnabled,0) AS bit),
                    CASE WHEN cp.CreditLimit IS NULL THEN NULL
                         ELSE CASE WHEN cp.CreditLimit-COALESCE(balance.Outstanding,0)<0 THEN 0
                                   ELSE cp.CreditLimit-COALESCE(balance.Outstanding,0) END END
@@ -162,8 +162,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 items.Add(new(
                     reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                     reader.IsDBNull(3) ? null : reader.GetGuid(3),
-                    reader.GetBoolean(4), reader.GetBoolean(5), reader.GetInt32(6),
-                    reader.IsDBNull(7) ? null : reader.GetDecimal(7)));
+                    reader.GetBoolean(4), reader.GetBoolean(5),
+                    reader.IsDBNull(6) ? null : reader.GetDecimal(6)));
         var hasMore = items.Count > request.Take;
         if (hasMore) items.RemoveAt(items.Count - 1);
         await transaction.CommitAsync(cancellationToken);

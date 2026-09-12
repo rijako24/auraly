@@ -18,6 +18,7 @@ public static class OrderRules
         return storedStatus switch
         {
             2 or 4 => "Available",
+            5 => "InReview",
             6 => "Cancelled",
             7 => "AwaitingPayment",
             91 => "Expired",

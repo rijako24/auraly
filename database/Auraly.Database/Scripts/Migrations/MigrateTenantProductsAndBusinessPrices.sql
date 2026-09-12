@@ -51,7 +51,7 @@ INSERT dbo.ProductPrices
    CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,
    RoundingMode,PublishedByUserId,PublishedAt,ValidFrom,ValidUntil,IsActive,CreatedAt)
 SELECT NEWID(),business.BusinessId,product.ProductId,
-       COALESCE(sourcePrice.Amount,0),COALESCE(sourcePrice.PreparedAmount,sourcePrice.Amount,0),
+       sourcePrice.Amount,sourcePrice.Amount,
        COALESCE(sourcePrice.CurrencyCode,product.Currency,N'COP'),sourcePrice.CostBasisType,
        sourcePrice.CostBasisAmount,sourcePrice.TargetMarginPercent,sourcePrice.EffectiveMarginPercent,
        sourcePrice.InputMode,sourcePrice.RoundingIncrement,sourcePrice.RoundingMode,
@@ -59,10 +59,10 @@ SELECT NEWID(),business.BusinessId,product.ProductId,
        COALESCE(sourcePrice.ValidFrom,SYSUTCDATETIME()),NULL,1,SYSUTCDATETIME()
 FROM dbo.Products product
 INNER JOIN dbo.Businesses business ON business.TenantId=product.TenantId AND business.IsActive=1
-OUTER APPLY (
+CROSS APPLY (
   SELECT TOP(1) price.*
   FROM dbo.ProductPrices price
-  WHERE price.ProductId=product.ProductId AND price.IsActive=1
+  WHERE price.ProductId=product.ProductId AND price.IsActive=1 AND price.Amount>0
   ORDER BY CASE WHEN price.BusinessId=product.BusinessId THEN 0 ELSE 1 END,price.ValidFrom DESC
 ) sourcePrice
 WHERE NOT EXISTS (
@@ -73,16 +73,10 @@ INSERT dbo.InventoryBalances
   (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,
    LastProcessingSequence,UpdatedAt)
 SELECT warehouse.BusinessId,warehouse.WarehouseId,product.ProductId,0,
-       COALESCE(sourceBalance.AverageUnitCost,0),0,0,SYSUTCDATETIME()
+       0,0,0,SYSUTCDATETIME()
 FROM dbo.Products product
 INNER JOIN dbo.Businesses business ON business.TenantId=product.TenantId AND business.IsActive=1
 INNER JOIN dbo.Warehouses warehouse ON warehouse.BusinessId=business.BusinessId AND warehouse.IsActive=1
-OUTER APPLY (
-  SELECT TOP(1) balance.AverageUnitCost
-  FROM dbo.InventoryBalances balance
-  WHERE balance.ProductId=product.ProductId
-  ORDER BY balance.UpdatedAt DESC
-) sourceBalance
 WHERE product.ManageStock=1 AND NOT EXISTS (
   SELECT 1 FROM dbo.InventoryBalances existing
   WHERE existing.BusinessId=warehouse.BusinessId AND existing.WarehouseId=warehouse.WarehouseId

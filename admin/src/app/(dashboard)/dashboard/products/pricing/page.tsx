@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
+import { History, PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
+import { ProductPriceHistoryDialog } from "@/components/pricing/product-price-history-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,6 +45,7 @@ export default function PricingPage() {
   const canReview = permissions.has("pricing.proposals.review");
   const canPublish = permissions.has("pricing.prices.publish");
   const canBulk = permissions.has("pricing.bulk-publish");
+  const canReadHistory = permissions.has("pricing.history.read");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
@@ -52,6 +54,7 @@ export default function PricingPage() {
   const [drafts, setDrafts] = useState<Record<string, PricePublicationDraft>>({});
   const [hiddenProposalIds, setHiddenProposalIds] = useState<Set<string>>(new Set());
   const [priceReportRows, setPriceReportRows] = useState<ReportRow[] | null>(null);
+  const [historyProduct, setHistoryProduct] = useState<{ id: string; name: string }>();
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const query = usePriceProposals({
@@ -310,12 +313,13 @@ export default function PricingPage() {
     {
       id: "actions",
       header: "",
-      cell: ({ row }) => isPublishable(row.original) ? <div className="flex items-center justify-end gap-1">
-        {canPublish && <Button type="button" variant="ghost" size="sm" disabled={publish.isPending} onClick={() => void publishRows([row.original])} aria-label={`Publicar precio de ${row.original.productName}`}><Send className="mr-2 h-4 w-4" />Publicar</Button>}
-        {canReview && <Button type="button" variant="ghost" size="sm" disabled={reject.isPending} onClick={() => void rejectRows([row.original])} aria-label={`Descartar propuesta de ${row.original.productName}`}><XCircle className="mr-2 h-4 w-4" />Descartar</Button>}
-      </div> : null,
+      cell: ({ row }) => <div className="flex items-center justify-end gap-1">
+        {canReadHistory && <Button type="button" variant="ghost" size="sm" onClick={() => setHistoryProduct({ id: row.original.productId, name: row.original.productName })} aria-label={`Ver historial de ${row.original.productName}`}><History className="mr-2 h-4 w-4" />Historial</Button>}
+        {isPublishable(row.original) && canPublish && <Button type="button" variant="ghost" size="sm" disabled={publish.isPending} onClick={() => void publishRows([row.original])} aria-label={`Publicar precio de ${row.original.productName}`}><Send className="mr-2 h-4 w-4" />Publicar</Button>}
+        {isPublishable(row.original) && canReview && <Button type="button" variant="ghost" size="sm" disabled={reject.isPending} onClick={() => void rejectRows([row.original])} aria-label={`Descartar propuesta de ${row.original.productName}`}><XCircle className="mr-2 h-4 w-4" />Descartar</Button>}
+      </div>,
     },
-  ], [canPublish, canReview, draftFor, navigatePricingGrid, publish.isPending, publishRows, reject.isPending, rejectRows, updateMargin, updateSalePrice]);
+  ], [canPublish, canReadHistory, canReview, draftFor, navigatePricingGrid, publish.isPending, publishRows, reject.isPending, rejectRows, updateMargin, updateSalePrice]);
 
   const bulkActions = useMemo(() => {
     const actions = [] as Array<{
@@ -358,6 +362,12 @@ export default function PricingPage() {
   />;
 
   return <div className="space-y-6">
+    <ProductPriceHistoryDialog
+      productId={historyProduct?.id}
+      productName={historyProduct?.name}
+      open={Boolean(historyProduct)}
+      onOpenChange={(open) => { if (!open) setHistoryProduct(undefined); }}
+    />
     <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
       <div>
         <p className="text-sm font-medium text-primary">Productos</p>

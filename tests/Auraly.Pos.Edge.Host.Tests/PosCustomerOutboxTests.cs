@@ -1,8 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Parties;
@@ -102,8 +99,7 @@ public sealed class PosCustomerOutboxTests
         await store.InitializeAsync();
         var sessionId = Guid.NewGuid();
         var items = Array.Empty<PosCatalogItem>();
-        var hash = Convert.ToHexString(SHA256.HashData(
-            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items)))).ToLowerInvariant();
+        var hash = CatalogBootstrapIntegrity.Compute(items);
         await store.BeginBootstrapAsync(new CatalogSyncSessionResponse(
             sessionId, 0, 0, DateTimeOffset.UtcNow.AddHours(1)));
         await store.ApplyBootstrapPageAsync(new CatalogBootstrapPage(

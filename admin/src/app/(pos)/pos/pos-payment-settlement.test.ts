@@ -11,15 +11,13 @@ import {
 
 describe("handlePosPaymentAmountEnter", () => {
   it("does not invent another payment while the written total is incomplete", () => {
-    let addedCash = false;
     let submitted = false;
     handlePosPaymentAmountEnter({
       key: "Enter",
       preventDefault: () => undefined,
       currentTarget: { form: { requestSubmit: () => { submitted = true; } } },
-    }, 35, () => { addedCash = true; });
+    }, 35);
 
-    assert.equal(addedCash, false);
     assert.equal(submitted, false);
   });
 
@@ -29,7 +27,7 @@ describe("handlePosPaymentAmountEnter", () => {
       key: "Enter",
       preventDefault: () => undefined,
       currentTarget: { form: { requestSubmit: () => { submitted = true; } } },
-    }, 0, () => assert.fail("must not add another payment"));
+    }, 0);
 
     assert.equal(submitted, true);
   });
@@ -55,16 +53,16 @@ describe("splitCreditCheckout", () => {
   const customer = {
     customerId: "customer-1", identification: "9001", name: "Cliente crédito",
     priceChannelId: null, requiresElectronicInvoice: false, isActive: true,
-    isCreditEnabled: true, defaultCreditDueDays: 30, availableCredit: 500,
+    isCreditEnabled: true, availableCredit: 500,
   };
 
   it("converts customer credit into financed terms instead of received money", () => {
     const value = splitCreditCheckout([
       { methodCode: "Cash", amount: 40, reference: null },
       { methodCode: "Credit", amount: 60, reference: null },
-    ], customer, new Date("2026-08-23T12:00:00.000Z"));
+    ], customer);
     assert.deepEqual(value.payments, [{ methodCode: "Cash", amount: 40, reference: null }]);
-    assert.deepEqual(value.credit, { amount: 60, dueDate: "2026-09-22T12:00:00.000Z" });
+    assert.deepEqual(value.credit, { amount: 60 });
   });
 
   it("leaves credit authorization to the current server balance", () => {

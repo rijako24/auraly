@@ -13,12 +13,14 @@ import { sellerOrdersApi, type SellerCatalogItem, type SellerOrderRequest, type 
 import type { CommerceOrderDetail } from "@/services/orders/commerce-orders-client";
 import { SELLER_ORDER_SYNC_REQUEST_EVENT, sellerOrderErrorMessage } from "@/services/orders/seller-order-reliability";
 import { useAuthStore } from "@/stores/auth-store";
+import { editableOrderAvailableQuantity } from "@/components/orders/order-review";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop, editing, localFirst = false, onClose, onCreated }: { businessId: string; warehouseId: string; route: SalesRouteDetail | null; stop: SalesRouteStop; editing?: CommerceOrderDetail|null; localFirst?: boolean; onClose: () => void; onCreated: (orderId: string) => Promise<void> }) {
   const userId = useAuthStore((state) => state.user?.userId ?? "");
   const key = `${businessId}:${warehouseId}:${route?.routeId ?? "outside-route"}:${stop.routeStopId}:${editing?.orderId??"new"}`;
   const searchRef = useRef<HTMLInputElement>(null);
+  const searchTimer = useRef<number | null>(null);
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState(false);
   const [results, setResults] = useState<SellerCatalogItem[]>([]);
@@ -43,7 +45,10 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
         } catch { /* The cached catalog still allows any known draft lines to render. */ }
       }
       if (!active) return;
-      setKnownItems(Object.fromEntries(available.map((item) => [item.productId, item])));
+      const known=Object.fromEntries(available.map((item) => [item.productId, item]));
+      if(editing) for(const line of editing.lines){if(!line.productId)continue;const catalogItem=known[line.productId];known[line.productId]={productId:line.productId,productCode:line.productCode??line.sku??catalogItem?.productCode??"",name:line.productName,unitCode:line.unitCode,unitPrice:line.unitPrice,priceSource:line.priceSource,quantityOnHand:editableOrderAvailableQuantity(line.quantityOnHand,line.reservedQuantity),manageStock:line.manageStock};}
+      if(draft) for(const line of draft.request.lines){const catalogItem=known[line.productId];if(!catalogItem)continue;known[line.productId]={...catalogItem,unitPrice:typeof line.unitPrice==="number"&&line.unitPrice>0?line.unitPrice:catalogItem.unitPrice,priceSource:line.priceSource||catalogItem.priceSource};}
+      setKnownItems(known);
       if(editing){setQuantities(Object.fromEntries(editing.lines.flatMap(line=>line.productId?[[line.productId,line.quantity]]:[])));setNotes(editing.notes??"");}
       else if (draft) { setQuantities(draft.quantities); setNotes(draft.request.notes ?? ""); }
     });
@@ -52,9 +57,11 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
 
   useEffect(() => {
     if (!Object.values(quantities).some((quantity) => quantity > 0)) return;
-    const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: localFirst || !navigatorOnline(), notes: notes || null, idempotencyKey: `draft-${key}`, lines: Object.entries(quantities).filter(([, quantity]) => quantity > 0).map(([productId, quantity]) => ({ productId, quantity })) };
+    const lines=Object.entries(quantities).filter(([, quantity]) => quantity > 0).flatMap(([productId, quantity]) => { const item=knownItems[productId]; return item?[{ productId, quantity, unitPrice:item.unitPrice, discountAmount:0, priceSource:item.priceSource }]:[]; });
+    if(!lines.length)return;
+    const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: localFirst || !navigatorOnline(), notes: notes || null, idempotencyKey: `draft-${key}`, lines };
     void saveSellerDraft(key, request, quantities);
-  }, [businessId, key, localFirst, notes, quantities, route, stop.customerId, stop.partySiteId, stop.routeStopId, warehouseId]);
+  }, [businessId, key, knownItems, localFirst, notes, quantities, route, stop.customerId, stop.partySiteId, stop.routeStopId, warehouseId]);
 
   const selected = useMemo(() => Object.entries(quantities).filter(([, quantity]) => quantity > 0).flatMap(([productId, quantity]) => knownItems[productId] ? [{ item: knownItems[productId], quantity }] : []), [knownItems, quantities]);
   const units = selected.reduce((sum, value) => sum + value.quantity, 0);
@@ -64,6 +71,10 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
   const shortages = online ? selected.filter((value) => value.item.manageStock && value.quantity > value.item.quantityOnHand) : [];
 
   const search = async () => {
+    if (searchTimer.current !== null) {
+      window.clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+    }
     const term = query.trim();
     if (term.length < 2) { toast.info("Escribe al menos dos letras o el código del producto."); return; }
     setLoading(true); setSearched(true);
@@ -78,8 +89,9 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
         return;
       }
       const page = await sellerOrdersApi.catalog({ businessId, warehouseId, customerId: stop.customerId, search: term, skip: 0, take: 100 });
-      setResults(page.items);
-      setKnownItems((current) => ({ ...current, ...Object.fromEntries(page.items.map((item) => [item.productId, item])) }));
+      const visibleItems=page.items.map((item)=>{const original=editing?.lines.find((line)=>line.productId===item.productId);return original?{...item,unitPrice:original.unitPrice,priceSource:original.priceSource,quantityOnHand:editableOrderAvailableQuantity(item.quantityOnHand,original.reservedQuantity)}:item;});
+      setResults(visibleItems);
+      setKnownItems((current) => ({ ...current, ...Object.fromEntries(visibleItems.map((item) => [item.productId, item])) }));
       await saveSellerCatalog(businessId, warehouseId, stop.customerId, page.items);
     } catch {
       const cached = await loadSellerCatalog(businessId, warehouseId, stop.customerId);
@@ -92,8 +104,14 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
   };
   useEffect(() => {
     if (query.trim().length < 2) return;
-    const timer = window.setTimeout(() => void search(), 250);
-    return () => window.clearTimeout(timer);
+    searchTimer.current = window.setTimeout(() => {
+      searchTimer.current = null;
+      void search();
+    }, 250);
+    return () => {
+      if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+    };
     // The query is the only trigger; workspace and customer changes remount the dialog.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
@@ -112,7 +130,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
     if (!userId) { toast.error("No encontramos el usuario de esta sesión. Vuelve a iniciar sesión."); return; }
     setSaving(true);
     try {
-      const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !online, notes: notes || null, idempotencyKey: crypto.randomUUID(), lines: selected.map(({ item, quantity }) => ({ productId: item.productId, quantity })) };
+      const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !online, notes: notes || null, idempotencyKey: crypto.randomUUID(), lines: selected.map(({ item, quantity }) => {const original=editing?.lines.find((line)=>line.productId===item.productId);return { productId: item.productId, quantity, unitPrice:item.unitPrice, discountAmount:original?.discountAmount??0, priceSource:item.priceSource };}) };
       let synchronized = online;
       let result: SellerOrderResult;
       if (editing) {

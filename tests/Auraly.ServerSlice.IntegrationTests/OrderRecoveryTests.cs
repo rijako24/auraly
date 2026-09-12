@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using Auraly.Api;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
@@ -11,7 +12,98 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Seller_order_creation_resolves_cross_product_promotion_as_one_document()
+    public async Task User_with_create_permission_can_create_an_order_without_being_a_commercial_seller()
+    {
+        var userId = Guid.NewGuid();
+        var customerPartyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var taxProfileId = Guid.NewGuid();
+        await EnsureOrdersWarehouseAsync();
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(
+              UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+              FirstName,LastName,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,@Username,UPPER(@Username),
+              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),
+              N'Administrador',N'Pedidos',1,SYSDATETIMEOFFSET());
+            INSERT dbo.Parties(
+              PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerPartyId,@TenantId,N'Organization',N'Cliente pedido administrativo',
+              N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@CustomerPartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto pedido administrativo',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(
+              ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,
+              ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            VALUES(@ProductId,@TenantId,@BusinessId,@ProductCode,@ProductCode,
+              N'Producto pedido administrativo',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
+            INSERT dbo.ProductPrices(
+              ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
+              RoundingIncrement,RoundingMode,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@ProductId,12500,N'COP',
+              DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET());
+            """,
+            new("@UserId", userId), new("@TenantId", fixture.TenantId),
+            new("@Username", $"admin-order-{userId:N}"),
+            new("@CustomerPartyId", customerPartyId), new("@CustomerId", customerId),
+            new("@BusinessId", fixture.BusinessId), new("@ProductId", productId),
+            new("@TaxProfileId", taxProfileId), new("@TaxCode", $"OA-{taxProfileId:N}"[..32]),
+            new("@ProductCode", $"ADM-{productId:N}"[..24]));
+
+        using var client = fixture.CreateUserClient(userId, OrderPermissionCodes.Create);
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/seller-orders",
+            new
+            {
+                businessId = fixture.BusinessId,
+                warehouseId = fixture.WarehouseId,
+                customerId,
+                partySiteId = (Guid?)null,
+                routeId = (Guid?)null,
+                routeStopId = (Guid?)null,
+                capturedOffline = false,
+                notes = "Creado por permiso sin rol comercial",
+                idempotencyKey = Guid.NewGuid().ToString("N"),
+                lines = new[]
+                {
+                    new
+                    {
+                        productId,
+                        quantity = 1m,
+                        unitPrice = 12500m,
+                        discountAmount = 0m,
+                        priceSource = "Public"
+                    }
+                }
+            });
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"El pedido respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        var orderId = body.GetProperty("orderId").GetGuid();
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT CapturedByUserId,SellerId
+            FROM dbo.Orders
+            WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+            """;
+        command.Parameters.AddWithValue("@OrderId", orderId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(userId, reader.GetGuid(0));
+        Assert.True(reader.IsDBNull(1));
+    }
+
+    [Fact]
+    public async Task Seller_order_creation_preserves_the_prices_captured_by_the_shared_resolver()
     {
         var userId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
@@ -86,7 +178,8 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             new("@TaxProfileId", taxProfileId), new("@TaxCode", $"SO-{taxProfileId:N}"[..32]),
             new("@PromotionId", promotionId));
 
-        using var client = fixture.CreateUserClient(userId, "orders.create");
+        using var client = fixture.CreateUserClient(
+            userId, OrderPermissionCodes.Create, OrderPermissionCodes.Read);
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/seller-orders",
             new
@@ -102,14 +195,14 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 idempotencyKey = Guid.NewGuid().ToString("N"),
                 lines = new[]
                 {
-                    new { productId = firstProductId, quantity = 1m },
-                    new { productId = secondProductId, quantity = 1m }
+                    new { productId = firstProductId, quantity = 1m, unitPrice = 111m, discountAmount = 1m, priceSource = "Promotion" },
+                    new { productId = secondProductId, quantity = 1m, unitPrice = 99m, discountAmount = 4m, priceSource = "Promotion" }
                 }
             });
         Assert.True(response.IsSuccessStatusCode,
             $"El pedido respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
         var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
-        Assert.Equal(200m, body.GetProperty("total").GetDecimal());
+        Assert.Equal(205m, body.GetProperty("total").GetDecimal());
         var orderId = body.GetProperty("orderId").GetGuid();
 
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -125,8 +218,377 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         await using var reader = await command.ExecuteReaderAsync();
         var prices = new Dictionary<Guid, decimal>();
         while (await reader.ReadAsync()) prices.Add(reader.GetGuid(0), reader.GetDecimal(1));
-        Assert.Equal(100m, prices[firstProductId]);
-        Assert.Equal(100m, prices[secondProductId]);
+        Assert.Equal(111m, prices[firstProductId]);
+        Assert.Equal(99m, prices[secondProductId]);
+
+        using var printResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/orders/print-batch",
+            new OrderPrintBatchRequest([orderId, orderId]));
+        printResponse.EnsureSuccessStatusCode();
+        var printable = Assert.Single(Assert.IsType<List<OrderPrintDocument>>(
+            await printResponse.Content.ReadFromJsonAsync<List<OrderPrintDocument>>()));
+        Assert.Equal(orderId, printable.OrderId);
+        Assert.Equal(205m, printable.Total);
+        Assert.Equal("Cliente precios pedido", printable.CustomerName);
+        Assert.Collection(
+            printable.Lines.OrderBy(line => line.UnitPrice),
+            line =>
+            {
+                Assert.Equal(99m, line.UnitPrice);
+                Assert.Equal(4m, line.DiscountAmount);
+                Assert.Equal(95m, line.LineTotal);
+            },
+            line =>
+            {
+                Assert.Equal(111m, line.UnitPrice);
+                Assert.Equal(1m, line.DiscountAmount);
+                Assert.Equal(110m, line.LineTotal);
+            });
+
+        using var missingPrint = await client.PostAsJsonAsync(
+            "/api/commerce/v1/orders/print-batch",
+            new OrderPrintBatchRequest([orderId, Guid.NewGuid()]));
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, missingPrint.StatusCode);
+    }
+
+    [Fact]
+    public async Task Insufficient_seller_order_reserves_sufficient_lines_then_review_completes_only_the_pending_inventory()
+    {
+        var userId = Guid.NewGuid();
+        var customerPartyId = Guid.NewGuid();
+        var sellerPartyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var taxProfileId = Guid.NewGuid();
+        var firstProductId = Guid.NewGuid();
+        var secondProductId = Guid.NewGuid();
+        var ordersWarehouseId = await EnsureOrdersWarehouseAsync();
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,@Username,UPPER(@Username),CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Revisión',N'Pedido',1,SYSDATETIMEOFFSET());
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES
+              (@CustomerPartyId,@TenantId,N'Organization',N'Cliente revisión',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
+              (@SellerPartyId,@TenantId,N'NaturalPerson',N'Vendedor revisión',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
+            UPDATE dbo.AppUsers SET PartyId=@SellerPartyId WHERE UserId=@UserId;
+            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@CustomerPartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@BusinessId,@SellerPartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'IVA revisión',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            VALUES
+              (@FirstProductId,@TenantId,@BusinessId,@FirstCode,@FirstCode,N'Producto suficiente',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@SecondProductId,@TenantId,@BusinessId,@SecondCode,@SecondCode,N'Producto insuficiente',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET());
+            INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@FirstProductId,1000,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET()),
+              (NEWID(),@BusinessId,@SecondProductId,2000,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET());
+            INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+            VALUES
+              (@BusinessId,@WarehouseId,@FirstProductId,7,500,3500,0,SYSDATETIMEOFFSET()),
+              (@BusinessId,@WarehouseId,@SecondProductId,2,1000,2000,0,SYSDATETIMEOFFSET());
+            """,
+            new("@UserId", userId), new("@TenantId", fixture.TenantId),
+            new("@Username", $"review-{userId:N}"), new("@CustomerPartyId", customerPartyId),
+            new("@SellerPartyId", sellerPartyId), new("@CustomerId", customerId),
+            new("@SellerId", sellerId), new("@SellerCode", $"RV-{sellerId:N}"[..20]),
+            new("@BusinessId", fixture.BusinessId), new("@WarehouseId", fixture.WarehouseId),
+            new("@TaxProfileId", taxProfileId), new("@TaxCode", $"RV-{taxProfileId:N}"[..16]),
+            new("@FirstProductId", firstProductId), new("@SecondProductId", secondProductId),
+            new("@FirstCode", $"RV-A-{firstProductId:N}"[..24]),
+            new("@SecondCode", $"RV-B-{secondProductId:N}"[..24]));
+
+        using var client = fixture.CreateUserClient(userId,
+            OrderPermissionCodes.Read, OrderPermissionCodes.Create, OrderPermissionCodes.Update);
+        using var create = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
+        {
+            businessId = fixture.BusinessId,
+            warehouseId = fixture.WarehouseId,
+            customerId,
+            capturedOffline = false,
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 5m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+                new { productId = secondProductId, quantity = 10m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
+            },
+        });
+        create.EnsureSuccessStatusCode();
+        var created = await create.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.True(created.GetProperty("requiresReview").GetBoolean());
+        Assert.Equal("InReview", created.GetProperty("status").GetString());
+        var orderId = created.GetProperty("orderId").GetGuid();
+        Assert.Equal((2m, 2m, 5m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+
+        var reviews = Assert.IsType<OrderPage>(await client.GetFromJsonAsync<OrderPage>(
+            "/api/commerce/v1/orders?page=1&pageSize=20&status=InReview"));
+        Assert.Contains(reviews.Items, order => order.OrderId == orderId && order.Status == "InReview");
+
+        using var detailResponse = await client.GetAsync($"/api/commerce/v1/orders/{orderId:D}");
+        Assert.True(detailResponse.IsSuccessStatusCode,
+            $"El detalle respondió {(int)detailResponse.StatusCode}: {await detailResponse.Content.ReadAsStringAsync()}");
+        var detail = Assert.IsType<OrderDetail>(await detailResponse.Content.ReadFromJsonAsync<OrderDetail>());
+        Assert.Equal("InReview", detail.Status);
+        var sufficientLine = Assert.Single(detail.Lines, line => line.ProductId == firstProductId);
+        Assert.Equal(2m, sufficientLine.QuantityOnHand);
+        Assert.Equal(5m, sufficientLine.ReservedQuantity);
+        var insufficientLine = Assert.Single(detail.Lines, line => line.ProductId == secondProductId);
+        Assert.Equal(2m, insufficientLine.QuantityOnHand);
+        Assert.Equal(0m, insufficientLine.ReservedQuantity);
+
+        using var readOnly = fixture.CreateUserClient(userId, OrderPermissionCodes.Read);
+        using (var forbiddenReview = await readOnly.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
+        {
+            customerId,
+            notes = "Sin permiso de revisión",
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 5m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+                new { productId = secondProductId, quantity = 2m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
+            },
+        }))
+            Assert.Equal(System.Net.HttpStatusCode.Forbidden, forbiddenReview.StatusCode);
+
+        using var reviewer = fixture.CreateUserClient(userId,
+            OrderPermissionCodes.Read, OrderPermissionCodes.Review);
+        using (var forbiddenChange = await reviewer.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
+        {
+            customerId,
+            notes = "Intento de cambiar una línea ya reservada",
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 4m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+                new { productId = secondProductId, quantity = 2m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
+            },
+        }))
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, forbiddenChange.StatusCode);
+
+        var reviewKey = Guid.NewGuid().ToString("N");
+        var reviewRequest = new
+        {
+            customerId,
+            notes = "Ajustado a existencia disponible",
+            idempotencyKey = reviewKey,
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 5m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+                new { productId = secondProductId, quantity = 2m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
+            },
+        };
+        using var confirm = await reviewer.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", reviewRequest);
+        confirm.EnsureSuccessStatusCode();
+        Assert.Equal((2m, 0m, 5m, 2m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        using (var replay = await reviewer.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", reviewRequest))
+            replay.EnsureSuccessStatusCode();
+        Assert.Equal((2m, 0m, 5m, 2m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+
+        using (var reduceAndRemove = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
+        {
+            customerId,
+            notes = "Edición completa con devolución a ventas",
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 3m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+            },
+        }))
+            reduceAndRemove.EnsureSuccessStatusCode();
+        Assert.Equal((4m, 2m, 3m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+
+        using (var increase = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
+        {
+            customerId,
+            notes = "Edición completa con reserva incremental",
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 6m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+            },
+        }))
+            increase.EnsureSuccessStatusCode();
+        Assert.Equal((1m, 2m, 6m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+
+        using var createForRemoval = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
+        {
+            businessId = fixture.BusinessId,
+            warehouseId = fixture.WarehouseId,
+            customerId,
+            capturedOffline = false,
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 1m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+                new { productId = secondProductId, quantity = 10m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
+            },
+        });
+        createForRemoval.EnsureSuccessStatusCode();
+        var removalReview = await createForRemoval.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.Equal("InReview", removalReview.GetProperty("status").GetString());
+        var removalOrderId = removalReview.GetProperty("orderId").GetGuid();
+        Assert.Equal((0m, 2m, 7m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+
+        using (var removePendingLine = await reviewer.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{removalOrderId:D}", new
+        {
+            customerId,
+            notes = "Línea faltante eliminada durante revisión",
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = firstProductId, quantity = 1m, unitPrice = 999999m, discountAmount = 0m, priceSource = "Manipulated" },
+            },
+        }))
+            removePendingLine.EnsureSuccessStatusCode();
+        Assert.Equal((0m, 2m, 7m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+
+        using var removedDetailResponse = await client.GetAsync($"/api/commerce/v1/orders/{removalOrderId:D}");
+        removedDetailResponse.EnsureSuccessStatusCode();
+        var removedDetail = Assert.IsType<OrderDetail>(await removedDetailResponse.Content.ReadFromJsonAsync<OrderDetail>());
+        var preservedLine = Assert.Single(removedDetail.Lines);
+        Assert.Equal(firstProductId, preservedLine.ProductId);
+        Assert.Equal(1111m, preservedLine.UnitPrice);
+
+        async Task<(decimal FirstSource, decimal SecondSource, decimal FirstReserved, decimal SecondReserved)> ReadBalancesAsync(
+            Guid first, Guid second, Guid reservedWarehouse)
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                  COALESCE((SELECT QuantityOnHand FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@SourceWarehouseId AND ProductId=@FirstProductId),0),
+                  COALESCE((SELECT QuantityOnHand FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@SourceWarehouseId AND ProductId=@SecondProductId),0),
+                  COALESCE((SELECT QuantityOnHand FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@ReservedWarehouseId AND ProductId=@FirstProductId),0),
+                  COALESCE((SELECT QuantityOnHand FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@ReservedWarehouseId AND ProductId=@SecondProductId),0);
+                """;
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@SourceWarehouseId", fixture.WarehouseId);
+            command.Parameters.AddWithValue("@ReservedWarehouseId", reservedWarehouse);
+            command.Parameters.AddWithValue("@FirstProductId", first);
+            command.Parameters.AddWithValue("@SecondProductId", second);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            return (reader.GetDecimal(0), reader.GetDecimal(1), reader.GetDecimal(2), reader.GetDecimal(3));
+        }
+    }
+
+    [Fact]
+    public async Task Linked_inventory_family_is_allocated_in_parent_units_and_review_moves_only_the_pending_quantity()
+    {
+        var userId = Guid.NewGuid();
+        var partyId = Guid.NewGuid();
+        var sellerPartyId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var taxProfileId = Guid.NewGuid();
+        var parentProductId = Guid.NewGuid();
+        var childProductId = Guid.NewGuid();
+        var ordersWarehouseId = await EnsureOrdersWarehouseAsync();
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,@Username,UPPER(@Username),CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Familia',N'Inventario',1,SYSDATETIMEOFFSET());
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES
+              (@PartyId,@TenantId,N'Organization',N'Cliente familia inventario',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
+              (@SellerPartyId,@TenantId,N'NaturalPerson',N'Vendedor familia inventario',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
+            UPDATE dbo.AppUsers SET PartyId=@SellerPartyId WHERE UserId=@UserId;
+            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@BusinessId,@SellerPartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto familia',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            VALUES
+              (@ParentProductId,@TenantId,@BusinessId,@ParentCode,@ParentCode,N'Unidad padre',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@ChildProductId,@TenantId,@BusinessId,@ChildCode,@ChildCode,N'Media unidad',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
+            INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@ChildProductId,@ParentProductId,0.5,1,0,0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@ParentProductId,1000,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET()),
+              (NEWID(),@BusinessId,@ChildProductId,550,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET());
+            INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+            VALUES(@BusinessId,@WarehouseId,@ParentProductId,5,400,2000,0,SYSDATETIMEOFFSET());
+            """,
+            new("@UserId", userId), new("@TenantId", fixture.TenantId),
+            new("@Username", $"inventory-family-{userId:N}"), new("@PartyId", partyId),
+            new("@SellerPartyId", sellerPartyId), new("@SellerId", sellerId),
+            new("@SellerCode", $"IF-{sellerId:N}"[..20]),
+            new("@CustomerId", customerId), new("@BusinessId", fixture.BusinessId),
+            new("@WarehouseId", fixture.WarehouseId), new("@TaxProfileId", taxProfileId),
+            new("@TaxCode", $"IF-{taxProfileId:N}"[..12]),
+            new("@ParentProductId", parentProductId), new("@ChildProductId", childProductId),
+            new("@ParentCode", $"IF-P-{parentProductId:N}"[..16]),
+            new("@ChildCode", $"IF-C-{childProductId:N}"[..16]));
+
+        using var client = fixture.CreateUserClient(userId,
+            OrderPermissionCodes.Read, OrderPermissionCodes.Create, OrderPermissionCodes.Review);
+        using var create = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
+        {
+            businessId = fixture.BusinessId,
+            warehouseId = fixture.WarehouseId,
+            customerId,
+            capturedOffline = false,
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = childProductId, quantity = 8m, unitPrice = 550m, discountAmount = 0m, priceSource = "Captured" },
+                new { productId = parentProductId, quantity = 3m, unitPrice = 1000m, discountAmount = 0m, priceSource = "Captured" },
+            },
+        });
+        Assert.True(create.IsSuccessStatusCode,
+            $"El pedido vinculado respondió {(int)create.StatusCode}: {await create.Content.ReadAsStringAsync()}");
+        var created = await create.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.Equal("InReview", created.GetProperty("status").GetString());
+        var orderId = created.GetProperty("orderId").GetGuid();
+        Assert.Equal((1m, 4m), await ReadParentBalancesAsync());
+
+        var detail = Assert.IsType<OrderDetail>(await client.GetFromJsonAsync<OrderDetail>(
+            $"/api/commerce/v1/orders/{orderId:D}"));
+        Assert.Equal(8m, Assert.Single(detail.Lines, line => line.ProductId == childProductId).ReservedQuantity);
+        Assert.Equal(0m, Assert.Single(detail.Lines, line => line.ProductId == parentProductId).ReservedQuantity);
+
+        using var review = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
+        {
+            customerId,
+            notes = "Cantidad padre ajustada a la existencia restante",
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            lines = new[]
+            {
+                new { productId = childProductId, quantity = 8m, unitPrice = 550m, discountAmount = 0m, priceSource = "Captured" },
+                new { productId = parentProductId, quantity = 1m, unitPrice = 1000m, discountAmount = 0m, priceSource = "Captured" },
+            },
+        });
+        Assert.True(review.IsSuccessStatusCode,
+            $"La revisión vinculada respondió {(int)review.StatusCode}: {await review.Content.ReadAsStringAsync()}");
+        var reviewed = await review.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.Equal("Confirmed", reviewed.GetProperty("status").GetString());
+        Assert.Equal((0m, 5m), await ReadParentBalancesAsync());
+
+        async Task<(decimal Sales, decimal Orders)> ReadParentBalancesAsync()
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                  COALESCE((SELECT QuantityOnHand FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@SalesWarehouseId AND ProductId=@ProductId),0),
+                  COALESCE((SELECT QuantityOnHand FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@OrdersWarehouseId AND ProductId=@ProductId),0);
+                """;
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@SalesWarehouseId", fixture.WarehouseId);
+            command.Parameters.AddWithValue("@OrdersWarehouseId", ordersWarehouseId);
+            command.Parameters.AddWithValue("@ProductId", parentProductId);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            return (reader.GetDecimal(0), reader.GetDecimal(1));
+        }
     }
 
     [Fact]
@@ -676,6 +1138,17 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             using var allowed = await client.GetAsync(
                 $"/api/pos/v1/orders?userId={fixture.UserId:D}&businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&workSessionId={fixture.WorkSessionId:D}&page=1&pageSize=50");
             Assert.Equal(System.Net.HttpStatusCode.OK, allowed.StatusCode);
+
+            using var printRoute = await client.PostAsJsonAsync(
+                "/api/pos/v1/orders/print-batch",
+                new PosPrintOrdersRequest(
+                    fixture.UserId,
+                    fixture.BusinessId,
+                    fixture.WarehouseId,
+                    fixture.WorkSessionId,
+                    [Guid.NewGuid()]));
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, printRoute.StatusCode);
+            Assert.NotEqual(System.Net.HttpStatusCode.MethodNotAllowed, printRoute.StatusCode);
 
             using var unknownUser = await client.GetAsync(
                 $"/api/pos/v1/orders?userId={Guid.NewGuid():D}&businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&workSessionId={fixture.WorkSessionId:D}&page=1&pageSize=50");

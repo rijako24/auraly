@@ -711,9 +711,9 @@ app.MapPost(
             CancellationToken cancellationToken) =>
         {
             if (request.BusinessId == Guid.Empty || request.CustomerId == Guid.Empty ||
-                request.Amount <= 0 || request.DueDate == default)
+                request.Amount <= 0)
                 return Results.Problem(
-                    "El cliente, valor y vencimiento de la venta a crédito no son válidos.",
+                    "El cliente y valor de la venta a crédito no son válidos.",
                     statusCode: StatusCodes.Status400BadRequest);
             var identity = httpContext.User.ToPosDeviceIdentity();
             var result = await validator.ValidateAsync(

@@ -47,6 +47,10 @@ export type CommerceOrderLine = {
   unitPrice: number;
   discountAmount: number;
   lineTotal: number;
+  quantityOnHand: number;
+  manageStock: boolean;
+  priceSource: string;
+  reservedQuantity: number;
 };
 
 export type CommerceOrderDetail = CommerceOrderListItem & {
@@ -60,6 +64,28 @@ export type CommerceOrderDetail = CommerceOrderListItem & {
   paymentTransactionId: string | null;
   paymentStatus: string | null;
   lines: CommerceOrderLine[];
+  warehouseId: string | null;
+};
+
+export type CommerceOrderPrintLine = {
+  productCode: string | null;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  discountAmount: number;
+  lineTotal: number;
+};
+
+export type CommerceOrderPrintDocument = {
+  orderId: string;
+  businessId: string;
+  orderNumber: string;
+  createdAt: string;
+  customerName: string | null;
+  customerIdentification: string | null;
+  currency: string;
+  total: number;
+  lines: CommerceOrderPrintLine[];
 };
 
 export type CommerceOrderFilters = {
@@ -143,6 +169,16 @@ export function recoverCommerceOrder(
       method: "POST",
       headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify(request),
+    },
+  );
+}
+
+export function loadCommerceOrderPrintBatch(orderIds: string[]) {
+  return orderRequest<CommerceOrderPrintDocument[]>(
+    "/api/commerce/v1/orders/print-batch",
+    {
+      method: "POST",
+      body: JSON.stringify({ orderIds }),
     },
   );
 }

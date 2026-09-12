@@ -118,7 +118,7 @@ public sealed class SqlSalesReportingProjectionWriter(
           """,session.Connection,session.Transaction);
         c.Parameters.AddWithValue("@Id",v.OrderId);c.Parameters.AddWithValue("@Tenant",v.TenantId);c.Parameters.AddWithValue("@Business",v.BusinessId);
         c.Parameters.Add("@Date",SqlDbType.Date).Value=v.CreatedDate.ToDateTime(TimeOnly.MinValue);c.Parameters.AddWithValue("@At",v.CreatedAt);
-        c.Parameters.AddWithValue("@Number",v.OrderNumber);c.Parameters.AddWithValue("@Seller",v.SellerId);c.Parameters.AddWithValue("@SellerName",v.SellerName);
+        c.Parameters.AddWithValue("@Number",v.OrderNumber);c.Parameters.AddWithValue("@Seller",(object?)v.SellerId??DBNull.Value);c.Parameters.AddWithValue("@SellerName",(object?)v.SellerName??DBNull.Value);
         c.Parameters.AddWithValue("@Customer",v.CustomerId);c.Parameters.AddWithValue("@CustomerName",v.CustomerName);c.Parameters.AddWithValue("@Route",(object?)v.RouteId??DBNull.Value);
         c.Parameters.AddWithValue("@RouteName",(object?)v.RouteName??DBNull.Value);c.Parameters.AddWithValue("@ZoneId",(object?)v.ZoneId??DBNull.Value);
         c.Parameters.AddWithValue("@ZoneName",(object?)v.ZoneName??DBNull.Value);c.Parameters.AddWithValue("@RouteStopId",(object?)v.RouteStopId??DBNull.Value);

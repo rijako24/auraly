@@ -738,6 +738,78 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Online_capture_aggregates_linked_presentations_in_parent_inventory_units()
+    {
+        var userId = Guid.NewGuid();
+        var taxProfileId = Guid.NewGuid();
+        var parentProductId = Guid.NewGuid();
+        var childProductId = Guid.NewGuid();
+        var parentCode = $"ON-P-{parentProductId:N}"[..16];
+        var childCode = $"ON-C-{childProductId:N}"[..16];
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,@Username,UPPER(@Username),CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Venta',N'Familia',1,SYSDATETIMEOFFSET());
+            UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;
+            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto familia online',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            VALUES
+              (@ParentProductId,@TenantId,@BusinessId,@ParentCode,@ParentCode,N'Padre online',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@ChildProductId,@TenantId,@BusinessId,@ChildCode,@ChildCode,N'Media unidad online',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
+            INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@ChildProductId,@ParentProductId,0.5,1,0,0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@ParentProductId,1000,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET()),
+              (NEWID(),@BusinessId,@ChildProductId,550,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET());
+            INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+            VALUES(@BusinessId,@WarehouseId,@ParentProductId,5,400,2000,0,SYSDATETIMEOFFSET());
+            """,
+            new("@UserId", userId), new("@TenantId", fixture.TenantId),
+            new("@Username", $"online-family-{userId:N}"), new("@WarehouseId", fixture.WarehouseId),
+            new("@TaxProfileId", taxProfileId), new("@BusinessId", fixture.BusinessId),
+            new("@TaxCode", $"OF-{taxProfileId:N}"[..12]),
+            new("@ParentProductId", parentProductId), new("@ChildProductId", childProductId),
+            new("@ParentCode", parentCode), new("@ChildCode", childCode));
+        try
+        {
+            using var client = fixture.CreateUserClient(
+                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+            var workSession = await fixture.OpenWorkSessionAsync(client);
+            var draft = await OpenAsync(client, workSession.WorkSessionId);
+            var withChild = await MutateAsync<OnlineSalesDraft>(
+                client, HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest(childCode, 8m, draft.Version));
+
+            using (var rejectedRequest = Mutation(
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest(parentCode, 2m, withChild.Version)))
+            using (var rejected = await client.SendAsync(rejectedRequest))
+            {
+                Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+                Assert.Contains("Inventario insuficiente", await rejected.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            }
+
+            var accepted = await MutateAsync<OnlineSalesDraft>(
+                client, HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest(parentCode, 1m, withChild.Version));
+            Assert.Equal(2, accepted.Lines.Count);
+            Assert.Contains(accepted.Lines, line => line.ProductId == childProductId && line.Quantity == 8m);
+            Assert.Contains(accepted.Lines, line => line.ProductId == parentProductId && line.Quantity == 1m);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "UPDATE dbo.Warehouses SET AllowNegativeStockSales=1 WHERE WarehouseId=@WarehouseId;",
+                new SqlParameter("@WarehouseId", fixture.WarehouseId));
+        }
+    }
+
+    [Fact]
     public async Task Online_capture_does_not_validate_inventory_for_non_stock_products()
     {
         var userId = Guid.NewGuid();

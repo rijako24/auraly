@@ -8,4 +8,5 @@ public record CreateBusinessRequest(
     string? Email,
     string? Website,
     string? TimeZone = null,
-    bool SharesProductPrices = false);
+    bool SharesProductPrices = false,
+    Guid PriceSourceBusinessId = default);

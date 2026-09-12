@@ -2,6 +2,13 @@ import { apiClient, withPagedDefaults } from "./client";
 import type { PagedRequest, PagedResponse } from "@/types/api";
 import type { Business, BusinessAvailabilityBlock, BusinessAvailabilityBlockPayload, WorkingHour } from "@/types/entities";
 
+export type CreateBusinessRequest = Pick<
+  Business,
+  "name" | "description" | "address" | "phone" | "email" | "website" | "timeZone" | "sharesProductPrices"
+> & {
+  priceSourceBusinessId: string;
+};
+
 export const businessesApi = {
   list: (params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<Business>>(
@@ -9,7 +16,7 @@ export const businessesApi = {
       withPagedDefaults({ pageSize: 500, ...(params ?? {}) })
     ),
   getById: (id: string) => apiClient.get<Business>(`/businesses/${id}`),
-  create: (data: Partial<Business>) =>
+  create: (data: CreateBusinessRequest) =>
     apiClient.post<Business>("/businesses", data),
   update: (id: string, data: Partial<Business>) =>
     apiClient.put<Business>(`/businesses/${id}`, data),

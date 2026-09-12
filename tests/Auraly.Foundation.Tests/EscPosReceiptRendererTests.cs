@@ -454,6 +454,69 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("Transferencia", html);
     }
 
+    [Fact]
+    public void Order_receipt_has_order_identity_and_omits_fiscal_tax_and_payment_sections()
+    {
+        var receipt = Receipt() with
+        {
+            DocumentType = "Order",
+            DocumentNumber = "PED-0000042",
+            FiscalNumber = "FE-NOT-ALLOWED",
+            CustomerName = "Cliente pedido",
+            BusinessName = "Sede principal",
+            WarehouseName = "Bodega de venta"
+        };
+
+        var esc = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(receipt));
+        var html = new HtmlReceiptPreviewRenderer().Render(receipt);
+
+        AssertOrderPresentation(esc);
+        AssertOrderPresentation(html);
+        Assert.Contains("data-auraly-report=\"order\"", html);
+        Assert.Contains("Cliente pedido", html);
+        Assert.Contains("Producto &amp; prueba", html);
+    }
+
+    [Theory]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter, 2)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal, 2)]
+    [InlineData(HalfLetterDocumentRenderer.Letter, 1)]
+    public void Every_order_sheet_format_uses_order_template_without_sale_only_sections(
+        string format,
+        int copies)
+    {
+        var receipt = OnlineReceipt() with
+        {
+            DocumentType = "Order",
+            DocumentNumber = "PED-0000042",
+            FiscalNumber = "FE-NOT-ALLOWED",
+            CustomerName = "Cliente pedido"
+        };
+
+        var html = new HalfLetterDocumentRenderer().Render([receipt], format);
+
+        AssertOrderPresentation(html);
+        Assert.Equal(copies, html.Split("PED-0000042").Length - 1);
+        Assert.Equal(copies, html.Split("data-auraly-report=\"order\"").Length - 1);
+        Assert.Equal(copies, html.Split("Cliente pedido").Length - 1);
+    }
+
+    private static void AssertOrderPresentation(string value)
+    {
+        Assert.Contains("Pedido", value);
+        Assert.Contains("PED-0000042", value);
+        Assert.Contains("Total", value);
+        Assert.Contains("Comprobante emitido por Auraly", value);
+        Assert.Contains("www.auralyapp.com", value);
+        Assert.DoesNotContain("FE-NOT-ALLOWED", value);
+        Assert.DoesNotContain("CUFE", value);
+        Assert.DoesNotContain("Impuestos por tarifa", value);
+        Assert.DoesNotContain("IVA 19%", value);
+        Assert.DoesNotContain("Medios de pago", value);
+        Assert.DoesNotContain("Efectivo", value);
+        Assert.DoesNotContain("Subtotal", value);
+    }
+
     private static OnlineSalesReceipt OnlineReceipt() =>
         new(
             Guid.NewGuid(),

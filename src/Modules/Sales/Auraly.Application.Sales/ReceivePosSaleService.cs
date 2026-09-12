@@ -269,8 +269,8 @@ public sealed class ReceivePosSaleService(
         if (request.Credit.CustomerId == Guid.Empty || request.CustomerId != request.Credit.CustomerId)
             throw new PosSaleInvalidException(
                 "A credit sale requires the selected customer as debtor.");
-        if (request.Credit.Amount <= 0 || request.Credit.DueDate < request.CommercialSnapshot.IssuedAt)
-            throw new PosSaleInvalidException("The financed balance and due date are invalid.");
+        if (request.Credit.Amount <= 0)
+            throw new PosSaleInvalidException("The financed balance is invalid.");
         if (request.FiscalSnapshot is not null &&
             (request.UblSnapshot is null || request.UblSnapshot.PaymentFormCode != "2" ||
              request.UblSnapshot.DueDate != DateOnly.FromDateTime(request.Credit.DueDate.Date)))

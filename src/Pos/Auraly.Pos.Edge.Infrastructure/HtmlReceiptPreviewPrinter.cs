@@ -68,7 +68,8 @@ public sealed class HtmlReceiptPreviewRenderer
                 "Receipt width must be 58 or 80 mm.");
 
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
-        var template = PosPrintTemplateCatalog.ForSale(receipt.DocumentType);
+        var isOrder = receipt.DocumentType == "Order";
+        var template = PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
         var bodyFontSize = isFiscal ? 12 : 11;
         var issuedBy = isFiscal
             ? "Factura emitida por Auraly"
@@ -125,6 +126,9 @@ public sealed class HtmlReceiptPreviewRenderer
         var netPayable = receipt.WithholdingTotal > 0
             ? receipt.NetPayableAmount
             : receipt.PayableAmount;
+        var summary = isOrder
+            ? $"<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div><hr class=\"rule summary\">"
+            : $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Subtotal", Money(receipt.UntaxedAmount))}{Pair("Total impuestos", Money(receipt.TaxAmount))}{withholdings}<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div><hr class=\"rule summary\"><div class=\"section-title\">Medios de pago</div>{payments}<hr class=\"rule\">";
 
         var companyName = Encode(receipt.CompanyName ?? string.Empty);
         var scope = Scope(receipt.BusinessName);
@@ -217,19 +221,9 @@ public sealed class HtmlReceiptPreviewRenderer
                 <hr class="rule">
                 {{lines}}
                 <hr class="rule">
-                <div class="section-title">Impuestos por tarifa</div>
-                <table class="tax-table"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{{taxes}}</tbody></table>
-                {{Pair("Subtotal", Money(receipt.UntaxedAmount))}}
-                {{Pair("Total impuestos", Money(receipt.TaxAmount))}}
-                {{withholdings}}
-                <hr class="rule summary">
-                <div class="pair total"><span>Total</span><strong>{{Money(netPayable)}}</strong></div>
-                <hr class="rule summary">
-                <div class="section-title">Medios de pago</div>
-                {{payments}}
-                <hr class="rule">
+                {{summary}}
                 {{fiscalFooter}}
-                <footer class="platform-footer">{{issuedBy}}<br><strong>www.auralyapp.co</strong></footer>
+                <footer class="platform-footer">{{issuedBy}}<br><strong>{{(isOrder ? "www.auralyapp.com" : "www.auralyapp.co")}}</strong></footer>
               </main>
               <script>
                 window.addEventListener("load", () => window.setTimeout(() => window.print(), 250));

@@ -214,7 +214,7 @@ public sealed class PosArchitectureTests
         Assert.Contains("target < 0 || target >= results.length", productSearchDialog, StringComparison.Ordinal);
         Assert.Contains("input.current?.focus()", productSearchDialog, StringComparison.Ordinal);
         Assert.Contains(
-            "Flechas recorren; Tab entra al listado; Enter agrega; F1 verifica precios; Esc vuelve al lector.",
+            "Flechas recorren; Enter agrega; F2 consulta existencias; F1 verifica precios; Esc vuelve al lector.",
             productSearchDialog,
             StringComparison.Ordinal);
         Assert.Contains("data-pos-focus-surface=\"modal\"", productSearchDialog, StringComparison.Ordinal);
@@ -398,7 +398,7 @@ public sealed class PosArchitectureTests
         var changeWorkspaceStart = page.IndexOf(
             "async function changeOnlineWorkspace()", StringComparison.Ordinal);
         var changeWorkspaceEnd = page.IndexOf(
-            "if (client instanceof PosEdgeClient", changeWorkspaceStart, StringComparison.Ordinal);
+            "async function logoutOnlineUser()", changeWorkspaceStart, StringComparison.Ordinal);
         Assert.True(changeWorkspaceStart >= 0 && changeWorkspaceEnd > changeWorkspaceStart);
         var changeWorkspace = page[changeWorkspaceStart..changeWorkspaceEnd];
 
@@ -461,8 +461,9 @@ public sealed class PosArchitectureTests
         Assert.DoesNotContain("PriceChannelResolver.Resolve(", edge, StringComparison.Ordinal);
         Assert.DoesNotContain("PromotionPriceResolver.Resolve(", online, StringComparison.Ordinal);
         Assert.DoesNotContain("PromotionPriceResolver.Resolve(", edge, StringComparison.Ordinal);
-        Assert.Contains("ResolveLinesAsync(", orders, StringComparison.Ordinal);
+        Assert.Contains("ResolveProductFactsAsync(", orders, StringComparison.Ordinal);
         Assert.Contains("ResolveCommercePricesAsync(", orders, StringComparison.Ordinal);
+        Assert.Contains("input.UnitPrice??legacyPrice!.UnitPrice", orders, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -519,18 +520,23 @@ public sealed class PosArchitectureTests
             repositoryRoot, "database", "Auraly.Database", "Scripts",
             "PreDeployment.sql"));
 
-        Assert.Contains("const availabilityVersion = useRef(0)", dialog, StringComparison.Ordinal);
-        Assert.Contains("availabilityProductId !== selectedProduct.productId", dialog, StringComparison.Ordinal);
+        Assert.Contains("const handledAvailabilityRequest = useRef(availabilityRequest)", dialog, StringComparison.Ordinal);
+        Assert.Contains("setAvailabilityLookup({", dialog, StringComparison.Ordinal);
+        Assert.Contains("onLoadAvailability(product.productId, controller.signal)", dialog, StringComparison.Ordinal);
         Assert.Contains("h-[calc(100dvh-2rem)] max-h-[48rem]", dialog, StringComparison.Ordinal);
-        Assert.Contains("flex h-44 shrink-0 flex-col", dialog, StringComparison.Ordinal);
-        Assert.Contains("min-h-0 flex-1 overflow-y-auto", dialog, StringComparison.Ordinal);
-        Assert.Contains("availabilityPending ? \"visible\" : \"invisible\"", dialog, StringComparison.Ordinal);
-        Assert.Contains("aria-busy=\"true\"", dialog, StringComparison.Ordinal);
-        Assert.Contains("Consultando existencias", dialog, StringComparison.Ordinal);
-        Assert.Contains("El producto local sigue disponible", dialog, StringComparison.Ordinal);
-        Assert.Contains("aria-label=\"Existencias por sede y bodega\"", dialog, StringComparison.Ordinal);
+        Assert.Contains("min-h-0 flex-1 overflow-auto", dialog, StringComparison.Ordinal);
+        Assert.Contains("Existencias <kbd", dialog, StringComparison.Ordinal);
+        Assert.Contains("<PosProductAvailabilityDialog", dialog, StringComparison.Ordinal);
+        Assert.Contains("Existencias por sede y bodega", dialog, StringComparison.Ordinal);
+        Assert.Contains("Sin conexión al servidor. No es posible consultar existencias en este momento.", dialog, StringComparison.Ordinal);
+        Assert.Contains("Tu perfil no tiene permiso para consultar existencias por bodega.", dialog, StringComparison.Ordinal);
         Assert.Contains("connected={serverConnected}", page, StringComparison.Ordinal);
-        Assert.Contains("client.productWarehouseAvailability(productId)", page, StringComparison.Ordinal);
+        Assert.Contains("client?.productWarehouseAvailability(productId, signal)", page, StringComparison.Ordinal);
+        Assert.Contains("availabilityController.current?.abort()", dialog, StringComparison.Ordinal);
+        Assert.DoesNotContain("useEffect(() => {\n    if (!open || !selectedProduct)", dialog, StringComparison.Ordinal);
+        Assert.Contains("const loadProductAvailability = useCallback(", page, StringComparison.Ordinal);
+        Assert.Contains("onLoadAvailability={loadProductAvailability}", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("onLoadAvailability={(productId)", page, StringComparison.Ordinal);
         Assert.Contains("/catalog/products/{productId:guid}/warehouse-availability", edgeHost, StringComparison.Ordinal);
         Assert.Contains("const string inventoryAvailabilityRead = \"pos.inventory.availability.read\"", edgeHost, StringComparison.Ordinal);
         Assert.Contains(".includes(\"pos.inventory.availability.read\")", page, StringComparison.Ordinal);
@@ -551,8 +557,9 @@ public sealed class PosArchitectureTests
             repositoryRoot, "admin", "src", "services", "pos",
             "online-pos-client.ts"));
 
-        Assert.Contains("title=\"Punto de venta\"", peripheralDialog, StringComparison.Ordinal);
-        Assert.Contains("title=\"Facturas desde pedidos\"", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("title=\"Facturas\"", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("title=\"Pedidos\"", peripheralDialog, StringComparison.Ordinal);
+        Assert.DoesNotContain("Facturas desde pedidos", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Impresora del sistema", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Posición inicial", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Dividir el valor por 1.000", peripheralDialog, StringComparison.Ordinal);

@@ -157,7 +157,7 @@ public sealed class PosConfigurationTests
                 80,
                 "Microsoft Print to PDF",
                 PosPrinterName: "Microsoft Print to PDF",
-                OrdersPrinterName: "Microsoft Print to PDF"));
+                OrderPrinterName: "Microsoft Print to PDF"));
             var raw = new RecordingRawPrintJob();
             var rendered = new RecordingRenderedPrintJob();
             var documents = new ConfigurableOrderDocumentPrinter(
@@ -239,7 +239,7 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
-    public async Task Orders_workflow_honors_its_configured_sheet_format_and_printer()
+    public async Task Invoices_from_orders_use_the_same_format_and_printer_as_pos()
     {
         var directory = Path.Combine(
             Path.GetTempPath(), "auraly-orders-sheet-" + Guid.NewGuid().ToString("N"));
@@ -254,8 +254,8 @@ public sealed class PosConfigurationTests
                 80,
                 "Media carta",
                 PosPrinterName: "Factura POS",
-                OrdersPrinterName: "Pedidos media carta",
-                OrdersOutputFormat: PrintTemplateFormats.HalfLetter));
+                PosOutputFormat: PrintTemplateFormats.HalfLetter,
+                OrderPrinterName: "Pedidos"));
             var raw = new RecordingRawPrintJob();
             var rendered = new RecordingRenderedPrintJob();
             var documents = new ConfigurableOrderDocumentPrinter(
@@ -268,11 +268,98 @@ public sealed class PosConfigurationTests
                 rendered,
                 documents);
 
-            await printer.PrintOrdersReceiptAsync(Receipt());
+            var receipt = Receipt();
+            await printer.PrintSalesDocumentsAsync([new OnlineSalesReceipt(
+                receipt.DocumentId.Value,
+                receipt.DocumentType,
+                receipt.DocumentNumber,
+                receipt.FiscalNumber,
+                receipt.IssuedAt,
+                receipt.CustomerIdentification,
+                receipt.Lines.Select(line => new OnlineSalesReceiptLine(
+                    line.ProductCode, line.Description, line.Quantity,
+                    line.UnitPrice, line.Discount, line.Tax, line.Total)).ToArray(),
+                receipt.Payments.Select(payment => new OnlineSalesPayment(
+                    payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
+                receipt.UntaxedAmount,
+                receipt.TaxAmount,
+                receipt.PayableAmount,
+                receipt.Cufe,
+                receipt.QrPayload,
+                null,
+                "Cliente")]);
 
             Assert.Empty(raw.PrinterNames);
-            Assert.Equal(["Pedidos media carta"], rendered.PrinterNames);
+            Assert.Equal(["Factura POS"], rendered.PrinterNames);
             Assert.Contains("Comprobante de venta", rendered.Documents.Single());
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Order_ticket_workflow_is_independent_and_batches_selected_sheet_orders()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-order-tickets-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw,
+                "Tirilla venta",
+                80,
+                "Documentos venta",
+                PosPrinterName: "Caja POS",
+                PosOutputFormat: PrintTemplateFormats.Letter,
+                OrderPrinterName: "Pedidos media carta",
+                OrderOutputFormat: PrintTemplateFormats.HalfLetter,
+                OrderReceiptPaperWidthMillimeters: 58));
+            var rendered = new RecordingRenderedPrintJob();
+            var documents = new ConfigurableOrderDocumentPrinter(
+                store, new HalfLetterDocumentRenderer(), rendered);
+            var printer = new ConfigurablePosReceiptPrinter(
+                store,
+                new EscPosReceiptRenderer(),
+                new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(),
+                rendered,
+                documents);
+            var first = Receipt() with
+            {
+                DocumentType = "Order",
+                DocumentNumber = "PED-001",
+                FiscalNumber = null,
+                Cufe = null,
+                QrPayload = null,
+                Payments = []
+            };
+            var second = first with
+            {
+                PrintJobId = Guid.NewGuid(),
+                DocumentId = new DocumentId(Guid.NewGuid()),
+                DocumentNumber = "PED-002"
+            };
+
+            await printer.PrintOrdersAsync([first, second]);
+
+            var reloaded = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts")).Load();
+            Assert.Equal("Caja POS", reloaded.PosPrinterName);
+            Assert.Equal("Pedidos media carta", reloaded.OrderPrinterName);
+            Assert.Equal(PrintTemplateFormats.HalfLetter, reloaded.OrderOutputFormat);
+            Assert.Equal(58, reloaded.OrderReceiptPaperWidthMillimeters);
+            Assert.Equal(["Pedidos media carta"], rendered.PrinterNames);
+            Assert.Single(rendered.Documents);
+            Assert.Contains("PED-001", rendered.Documents[0]);
+            Assert.Contains("PED-002", rendered.Documents[0]);
+            Assert.DoesNotContain("Medios de pago", rendered.Documents[0]);
+            Assert.DoesNotContain("Impuestos por tarifa", rendered.Documents[0]);
         }
         finally
         {
@@ -297,7 +384,8 @@ public sealed class PosConfigurationTests
                 "Microsoft XPS Document Writer",
                 OrderPrinterModes.WindowsPrint,
                 PosOutputFormat: PrintTemplateFormats.HalfLetter,
-                PosPrinterName: "Microsoft XPS Document Writer"));
+                PosPrinterName: "Microsoft XPS Document Writer",
+                OrderPrinterName: "Pedidos"));
             var rendered = new RecordingRenderedPrintJob();
             var documents = new ConfigurableOrderDocumentPrinter(
                 store, new HalfLetterDocumentRenderer(), rendered);
@@ -356,8 +444,8 @@ public sealed class PosConfigurationTests
                 path, Path.Combine(directory, "receipts"));
             var saved = store.Save(new PosPrinterConfiguration(
                 PosPrinterModes.WindowsRaw, "  Tirilla  ", 58, "  Carta  ",
-                PosPrinterName: "  Caja POS  ", OrdersPrinterName: "  Pedidos  ",
-                OrdersReceiptPaperWidthMillimeters: 80,
+                PosPrinterName: "  Caja POS  ", OrderPrinterName: "  Pedidos  ",
+                OrderReceiptPaperWidthMillimeters: 80,
                 Scale: new PosScaleConfiguration(
                     true, "  COM8  ", 19_200, 7, "Even", "Two", true,
                     "P\\r\\n", 2, 8, true, true, 3_000)));
@@ -367,8 +455,8 @@ public sealed class PosConfigurationTests
             Assert.Equal("Tirilla", saved.ReceiptPrinterName);
             Assert.Equal("Carta", saved.LetterPrinterName);
             Assert.Equal("Caja POS", reloaded.PosPrinterName);
-            Assert.Equal("Pedidos", reloaded.OrdersPrinterName);
-            Assert.Equal(80, reloaded.OrdersReceiptPaperWidthMillimeters);
+            Assert.Equal("Pedidos", reloaded.OrderPrinterName);
+            Assert.Equal(80, reloaded.OrderReceiptPaperWidthMillimeters);
             Assert.Equal(58, reloaded.ReceiptPaperWidthMillimeters);
             Assert.True(reloaded.Scale?.Enabled);
             Assert.Equal("COM8", reloaded.Scale?.PortName);
@@ -376,7 +464,7 @@ public sealed class PosConfigurationTests
             Assert.Equal("P\\r\\n", reloaded.Scale?.RequestText);
             Assert.True(reloaded.Scale?.DivideBy1000);
             Assert.Equal(PrintTemplateFormats.Receipt, reloaded.PosOutputFormat);
-            Assert.Equal(PrintTemplateFormats.HalfLetter, reloaded.OrdersOutputFormat);
+            Assert.Equal(PrintTemplateFormats.HalfLetter, reloaded.OrderOutputFormat);
             Assert.Equal(8, reloaded.TemplateRoutes?.Count);
             Assert.All(
                 reloaded.TemplateRoutes!.Where(route =>
@@ -424,13 +512,13 @@ public sealed class PosConfigurationTests
                 ReceiptPrinterName = "Tirilla",
                 LetterPrinterName = "Documentos",
                 PosPrinterName = "Documentos",
-                OrdersPrinterName = "Documentos",
+                OrderPrinterName = "Documentos",
                 PosOutputFormat = format,
-                OrdersOutputFormat = format
+                OrderOutputFormat = format
             });
 
             Assert.Equal(format, saved.PosOutputFormat);
-            Assert.Equal(format, saved.OrdersOutputFormat);
+            Assert.Equal(format, saved.OrderOutputFormat);
             Assert.Equal("Documentos", saved.PrinterFor("SalesInvoice", format));
         }
         finally
@@ -452,7 +540,7 @@ public sealed class PosConfigurationTests
             var invalid = PosPrinterConfiguration.Default with
             {
                 PosPrinterName = "Caja",
-                OrdersPrinterName = "Pedidos",
+                OrderPrinterName = "Pedidos",
                 Scale = new PosScaleConfiguration(
                     true, "COM1", 9_600, 8, "Invalid", "One")
             };
@@ -494,7 +582,7 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
-    public async Task Sales_orders_and_closure_use_the_printers_assigned_to_their_workflows()
+    public async Task Pos_and_order_invoices_share_the_invoice_printer_while_closure_uses_it_too()
     {
         var directory = Path.Combine(
             Path.GetTempPath(), "auraly-routing-" + Guid.NewGuid().ToString("N"));
@@ -509,9 +597,7 @@ public sealed class PosConfigurationTests
                 80,
                 "Media carta",
                 PosPrinterName: "Factura POS",
-                OrdersPrinterName: "Pedidos POS",
-                OrdersOutputFormat: PrintTemplateFormats.Receipt,
-                OrdersReceiptPaperWidthMillimeters: 58));
+                OrderPrinterName: "Pedidos"));
             var raw = new RecordingRawPrintJob();
             var rendered = new RecordingRenderedPrintJob();
             var documents = new ConfigurableOrderDocumentPrinter(
@@ -526,7 +612,7 @@ public sealed class PosConfigurationTests
             var receipt = Receipt();
 
             await receiptPrinter.PrintAsync(receipt);
-            await receiptPrinter.PrintOrdersReceiptAsync(new OnlineSalesReceipt(
+            await receiptPrinter.PrintSalesDocumentsAsync([new OnlineSalesReceipt(
                 receipt.DocumentId.Value,
                 receipt.DocumentType,
                 receipt.DocumentNumber,
@@ -544,7 +630,7 @@ public sealed class PosConfigurationTests
                 receipt.Cufe,
                 receipt.QrPayload,
                 null,
-                "Cliente"));
+                "Cliente")]);
             var now = DateTimeOffset.UtcNow;
             await new PosWorkSessionClosurePrinter(store, rendered).PrintAsync(
                 new WorkSessionClosureView(
@@ -556,7 +642,7 @@ public sealed class PosConfigurationTests
 
             Assert.Empty(raw.PrinterNames);
             Assert.Equal(
-                new[] { "Factura POS", "Pedidos POS", "Factura POS" },
+                new[] { "Factura POS", "Factura POS", "Factura POS" },
                 rendered.PrinterNames);
             Assert.Contains("class=\"tax-table\"", rendered.Documents[0]);
         }
@@ -627,8 +713,9 @@ public sealed class PosConfigurationTests
                 "Tirilla",
                 80,
                 "Pedidos",
-                OrdersPrinterName: "Pedidos",
-                OrdersOutputFormat: PrintTemplateFormats.HalfLetter));
+                PosPrinterName: "Tirilla",
+                OrderPrinterName: "Pedidos",
+                OrderOutputFormat: PrintTemplateFormats.HalfLetter));
             var rendered = new RecordingRenderedPrintJob();
             var printer = new ConfigurableOrderDocumentPrinter(
                 store, new HalfLetterDocumentRenderer(), rendered);
@@ -691,7 +778,7 @@ public sealed class PosConfigurationTests
                 "Letter printer",
                 PosOutputFormat: PrintTemplateFormats.HalfLetter,
                 PosPrinterName: "Microsoft XPS Document Writer",
-                OrdersPrinterName: "Orders printer"));
+                OrderPrinterName: "Orders printer"));
             var raw = new RecordingRawPrintJob();
             var rendered = new RecordingRenderedPrintJob();
             var workstation = new PosWorkstationIdentity(

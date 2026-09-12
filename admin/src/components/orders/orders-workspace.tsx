@@ -2,6 +2,7 @@
 
 import {
   Check,
+  Banknote,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -9,9 +10,9 @@ import {
   ClipboardList,
   Expand,
   FileText,
-  Landmark,
   Loader2,
   PackageSearch,
+  Pencil,
   Printer,
   Receipt,
   RotateCcw,
@@ -26,7 +27,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "@/components/ui/date-picker";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
@@ -44,9 +44,8 @@ import {
   type CommerceOrderPage,
 } from "@/services/orders/commerce-orders-client";
 import { loadAllMatchingOrders } from "@/services/orders/order-batch-selection";
-import type { PosSettlementConfiguration } from "@/services/pos/pos-edge-client";
-import { Textarea } from "@/components/ui/textarea";
 import { getOrderAvailability } from "./order-availability";
+import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
 
 const ORDER_STATUS_REFRESH_INTERVAL_MS = 10_000;
 
@@ -81,14 +80,14 @@ type OrdersWorkspaceProps = {
     pageSize: number;
   }) => Promise<CommerceOrderPage>;
   loadDetail: (orderId: string) => Promise<CommerceOrderDetail>;
-  loadSettlementConfiguration?: () => Promise<PosSettlementConfiguration>;
   onRecover?: (order: CommerceOrderListItem) => Promise<void>;
   onRetryEmission?: (orderId: string) => Promise<void>;
+  onConfirmReview?: (order: CommerceOrderDetail, lines: ReviewOrderLineInput[]) => Promise<void>;
+  onEditOrder?: (order: CommerceOrderDetail) => void;
+  onPrintSelected?: (orders: CommerceOrderListItem[]) => Promise<{ printedCount: number }>;
   onInvoiceSelected?: (
     orders: CommerceOrderListItem[],
-    paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
-    transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -125,9 +124,11 @@ export function OrdersWorkspace({
   showHeader = true,
   loadPage,
   loadDetail,
-  loadSettlementConfiguration,
   onRecover,
   onRetryEmission,
+  onConfirmReview,
+  onEditOrder,
+  onPrintSelected,
   onInvoiceSelected,
   onExpand,
   onConfigurePrinting,
@@ -152,17 +153,11 @@ export function OrdersWorkspace({
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
   const [detail, setDetail] = useState<CommerceOrderDetail | null>(null);
+  const [reviewing, setReviewing] = useState<CommerceOrderDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState("Cash");
-  const [transferOpen, setTransferOpen] = useState(false);
-  const [transferLoading, setTransferLoading] = useState(false);
-  const [settlementConfiguration, setSettlementConfiguration] = useState<PosSettlementConfiguration | null>(null);
-  const [transferBankAccountId, setTransferBankAccountId] = useState("");
-  const [transferReference, setTransferReference] = useState("");
-  const [transferNotes, setTransferNotes] = useState("");
   const [documentType, setDocumentType] = useState<"SalesInvoice" | "SalesReceipt">(
     "SalesInvoice",
   );
@@ -185,29 +180,6 @@ export function OrdersWorkspace({
     onlyMine: onlyMine || undefined,
     source,
   }), [createdFrom, createdTo, customerId, onlyMine, product, query, routeId, sellerId, source, status]);
-
-  const openTransfer = useCallback(async () => {
-    if (!loadSettlementConfiguration) {
-      setError("No fue posible cargar la configuración de transferencias.");
-      return;
-    }
-    setTransferLoading(true);
-    setError(null);
-    try {
-      const configuration = await loadSettlementConfiguration();
-      if (configuration.isAccountingEnabled && configuration.bankAccounts.length === 0) {
-        setError("Contabilidad está activa, pero no hay una cuenta bancaria disponible.");
-        return;
-      }
-      setSettlementConfiguration(configuration);
-      setTransferBankAccountId((current) => current || configuration.bankAccounts.find((account) => account.isPrimary)?.bankAccountId || "");
-      setTransferOpen(true);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible cargar la configuración de transferencias.");
-    } finally {
-      setTransferLoading(false);
-    }
-  }, [loadSettlementConfiguration]);
 
   const refresh = useCallback(async (silent = false) => {
     if (!connected) {
@@ -349,27 +321,6 @@ export function OrdersWorkspace({
       await refresh();
       return;
     }
-    let confirmedOrderIds = new Set<string>();
-    if (paymentMethod !== "Transfer") {
-      try {
-        const details = await Promise.all(available.map((order) => loadDetail(order.orderId)));
-        confirmedOrderIds = new Set(details
-          .filter((order) => order.paymentStatus === "Confirmed")
-          .map((order) => order.orderId));
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "No fue posible validar el pago de los pedidos.");
-        return;
-      }
-    }
-    const requiresTransfer = paymentMethod === "Transfer" || confirmedOrderIds.size > 0;
-    if (requiresTransfer) {
-      const accountRequired = settlementConfiguration?.isAccountingEnabled === true;
-      if (!settlementConfiguration || !transferReference.trim() ||
-          (accountRequired && !transferBankAccountId)) {
-        await openTransfer();
-        return;
-      }
-    }
     setWorking(true);
     setError(null);
     setNotice(null);
@@ -381,22 +332,9 @@ export function OrdersWorkspace({
       for (const [index, order] of available.entries()) {
         const activeEvent = { id: `${order.orderId}-active`, text: `Validando y emitiendo ${order.orderNumber}`, tone: "active" as const };
         setInvoiceProgress((current) => current && ({ ...current, current: order.orderNumber, events: [...current.events.slice(-3), activeEvent] }));
-        const effectivePaymentMethod = confirmedOrderIds.has(order.orderId)
-          ? "Transfer"
-          : paymentMethod;
         const result = await onInvoiceSelected(
           [order],
-          effectivePaymentMethod,
           documentType,
-          effectivePaymentMethod === "Transfer"
-            ? {
-                bankAccountId: settlementConfiguration!.isAccountingEnabled
-                  ? transferBankAccountId
-                  : null,
-                reference: transferReference.trim(),
-                notes: transferNotes.trim() || null,
-              }
-            : undefined,
         );
         completed += result.completedCount;
         failed += result.failedCount;
@@ -428,6 +366,21 @@ export function OrdersWorkspace({
     } finally {
       setWorking(false);
       window.setTimeout(() => setInvoiceProgress(null), 2200);
+    }
+  }
+
+  async function printSelected() {
+    if (!onPrintSelected || selectedOrders.length === 0) return;
+    setWorking(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await onPrintSelected(selectedOrders);
+      setNotice(`${result.printedCount} ${result.printedCount === 1 ? "pedido enviado" : "pedidos enviados"} a impresión.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible imprimir los pedidos.");
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -564,15 +517,28 @@ export function OrdersWorkspace({
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
           <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:px-4 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-center">
-            <label className="flex w-full shrink-0 items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
-              <Checkbox
-                checked={allMatchingSelected ? true : selected.size > 0 ? "indeterminate" : false}
-                disabled={selectingAll}
-                onCheckedChange={() => void toggleSelectAllMatching()}
-                className="h-5 w-5 rounded-md"
-              />
-              {selectingAll ? "Seleccionando…" : "Seleccionar disponibles"}
-            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex w-full shrink-0 items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
+                <Checkbox
+                  checked={allMatchingSelected ? true : selected.size > 0 ? "indeterminate" : false}
+                  disabled={selectingAll}
+                  onCheckedChange={() => void toggleSelectAllMatching()}
+                  className="h-5 w-5 rounded-md"
+                />
+                {selectingAll ? "Seleccionando…" : "Seleccionar disponibles"}
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!selectedOrders.length || working || selectingAll || !onPrintSelected}
+                onClick={() => void printSelected()}
+                className="border-teal-200 bg-white text-teal-800 hover:bg-teal-50"
+              >
+                {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
+                Imprimir ({selectedOrders.length})
+              </Button>
+            </div>
             <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
               <div className="w-full min-w-0 sm:w-[22rem] xl:w-[20rem]">
                 <div
@@ -614,23 +580,19 @@ export function OrdersWorkspace({
                     <Printer className="h-4 w-4" />
                   </Button>
                 )}
-                <Select value={paymentMethod} onValueChange={(value) => {
-                  setPaymentMethod(value);
-                  if (value === "Transfer") void openTransfer();
-                }}>
-                  <SelectTrigger className="w-full sm:w-44">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Cash">Efectivo</SelectItem>
-                    <SelectItem value="DebitCard">Tarjeta débito</SelectItem>
-                    <SelectItem value="CreditCard">Tarjeta crédito</SelectItem>
-                    <SelectItem value="Transfer">Transferencia</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div
+                  className="flex h-9 min-w-36 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-800 shadow-sm"
+                  aria-label="Medio de pago: Efectivo"
+                  title="Los pedidos se facturan en efectivo"
+                >
+                  <span className="grid h-6 w-6 place-items-center rounded-lg bg-emerald-600 text-white">
+                    <Banknote className="h-3.5 w-3.5" />
+                  </span>
+                  Efectivo
+                </div>
                 <Button
                   type="button"
-                  disabled={!selectedOrders.length || working || selectingAll || transferLoading || !onInvoiceSelected}
+                  disabled={!selectedOrders.length || working || selectingAll || !onInvoiceSelected}
                   onClick={() => void invoiceSelected()}
                   className="col-span-2 w-full whitespace-nowrap bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
                 >
@@ -659,6 +621,7 @@ export function OrdersWorkspace({
               {data.items.map((order) => {
                 const checked = selected.has(order.orderId);
                 const availability = getOrderAvailability(order, activeOrderId);
+                const reviewable = order.status === "InReview" && Boolean(onConfirmReview);
                 return (
                   <article
                     key={order.orderId}
@@ -728,11 +691,11 @@ export function OrdersWorkspace({
                     )}
                     <button
                       type="button"
-                      disabled={!availability.canUseInCurrentSession || !onRecover || working}
-                      onClick={() => void recover(order)}
+                      disabled={reviewable ? working : !availability.canUseInCurrentSession || !onRecover || working}
+                      onClick={() => reviewable ? void showDetail(order.orderId) : void recover(order)}
                       className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 px-3 text-sm font-bold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      <RotateCcw className="h-4 w-4" />
+                      {reviewable ? <Pencil className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
                       {availability.actionLabel}
                     </button>
                     {compact && (
@@ -861,6 +824,15 @@ export function OrdersWorkspace({
                   <Check className="mb-1 h-4 w-4" />
                   Al facturar se aplicarán los impuestos vigentes y se generará una factura independiente.
                 </div>
+                {onEditOrder && ["InReview","Pending","Available","Confirmed"].includes(detail.status) ? (
+                  <Button type="button" className="w-full bg-teal-700 hover:bg-teal-800" onClick={() => { onEditOrder(detail); setDetail(null); }}>
+                    <Pencil className="mr-2 h-4 w-4" />Editar pedido completo
+                  </Button>
+                ) : detail.status === "InReview" && onConfirmReview && (
+                  <Button type="button" className="w-full bg-amber-500 text-amber-950 hover:bg-amber-400" onClick={() => { setReviewing(detail); setDetail(null); }}>
+                    <Pencil className="mr-2 h-4 w-4" />Revisar y ajustar existencias
+                  </Button>
+                )}
                 {(detail.status === "EmissionFailed" || detail.status === "ProcessingEmission") && onRetryEmission && (
                   <Button
                     type="button"
@@ -891,56 +863,17 @@ export function OrdersWorkspace({
         </div>
       )}
 
-      <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Datos de la transferencia</DialogTitle>
-            <DialogDescription>
-              La referencia identifica el movimiento. La cuenta principal se propone, pero puedes cambiarla.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {settlementConfiguration?.isAccountingEnabled && (
-              <div className="space-y-2">
-                <Label>Cuenta bancaria</Label>
-                <Select value={transferBankAccountId} onValueChange={setTransferBankAccountId}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona una cuenta" /></SelectTrigger>
-                  <SelectContent>
-                    {settlementConfiguration.bankAccounts.map((account) => (
-                      <SelectItem key={account.bankAccountId} value={account.bankAccountId}>
-                        {account.displayName} · {account.bankName} · {account.accountNumber}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="order-transfer-reference">Referencia</Label>
-              <Input id="order-transfer-reference" maxLength={160} value={transferReference}
-                onChange={(event) => setTransferReference(event.target.value)}
-                placeholder="Comprobante o referencia bancaria" autoFocus />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="order-transfer-notes">Nota (opcional)</Label>
-              <Textarea id="order-transfer-notes" maxLength={500} value={transferNotes}
-                onChange={(event) => setTransferNotes(event.target.value)}
-                placeholder="Detalle útil para conciliación" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => {
-              setTransferOpen(false);
-              if (!transferReference.trim()) setPaymentMethod("Cash");
-            }}>Cancelar</Button>
-            <Button type="button"
-              disabled={!transferReference.trim() || (settlementConfiguration?.isAccountingEnabled === true && !transferBankAccountId)}
-              onClick={() => setTransferOpen(false)}>
-              <Landmark className="mr-2 h-4 w-4" />Guardar transferencia
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {reviewing && onConfirmReview && <OrderReviewEditor
+        order={reviewing}
+        onClose={() => setReviewing(null)}
+        onConfirm={async (lines) => {
+          await onConfirmReview(reviewing, lines);
+          setReviewing(null);
+          setNotice(`${reviewing.orderNumber} quedó confirmado y con inventario reservado.`);
+          await refresh(true);
+        }}
+      />}
+
     </div>
   );
 }
@@ -978,6 +911,7 @@ function OrderStatusSelect({ value, onChange }: { value: string; onChange: (valu
     <SelectTrigger><SelectValue /></SelectTrigger>
     <SelectContent>
       <SelectItem value="Available">Disponibles</SelectItem>
+      <SelectItem value="InReview">Requieren revisión</SelectItem>
       <SelectItem value="Invoiced">Facturados</SelectItem>
       <SelectItem value="ProcessingEmission">Procesando emisión</SelectItem>
       <SelectItem value="EmissionFailed">Con error de emisión</SelectItem>

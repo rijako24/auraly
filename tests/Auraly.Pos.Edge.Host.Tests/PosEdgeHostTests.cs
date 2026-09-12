@@ -1,8 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
@@ -364,7 +364,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     10m,
                     null,
                     null));
-            Assert.Equal(HttpStatusCode.Conflict, orderPrint.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, orderPrint.StatusCode);
             using var scale = await client.PostAsync("/edge/v1/scale/read", null);
             Assert.Equal(HttpStatusCode.ServiceUnavailable, scale.StatusCode);
             var now = DateTimeOffset.UtcNow;
@@ -731,18 +731,26 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     [Fact]
     public async Task Cashier_can_find_a_local_customer_apply_its_price_and_discount_the_line()
     {
-        var customers = await Client.GetFromJsonAsync<CustomerSearchPageContract>(
+        var customerJson = await Client.GetStringAsync(
             "/edge/v1/customers?search=300&take=50");
+        Assert.DoesNotContain("defaultDueDays", customerJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("defaultCreditDueDays", customerJson, StringComparison.OrdinalIgnoreCase);
+        var customers = JsonSerializer.Deserialize<CustomerSearchPageContract>(
+            customerJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var customer = Assert.Single(customers!.Items);
         Assert.Equal("Cliente POS", customer.Name);
+        Assert.True(customer.IsCreditEnabled);
+        Assert.Equal(500_000m, customer.AvailableCredit);
 
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
         var selectedResponse = await Client.PutAsJsonAsync(
             $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
             new SelectCustomerRequest(customer.CustomerId));
         selectedResponse.EnsureSuccessStatusCode();
-        var selected = await selectedResponse.Content.ReadFromJsonAsync<PosCustomerSelection>();
+        var selected = await selectedResponse.Content.ReadFromJsonAsync<PosCustomerSelectionView>();
         Assert.Equal(customer.CustomerId, selected!.Draft.CustomerId);
+        Assert.Equal(500_000m, selected.Customer!.AvailableCredit);
 
         var capture = await Client.PostAsJsonAsync(
             "/edge/v1/capture",
@@ -1087,6 +1095,38 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.NotEqual("LocalLoginRequired", problem.GetProperty("code").GetString());
     }
 
+    [Fact]
+    public async Task Health_exposes_a_durable_initial_enrollment_session_for_ui_recovery()
+    {
+        var store = _factory!.Services.GetRequiredService<PosEdgeEnrollmentStore>();
+        var original = store.Load();
+        var now = DateTimeOffset.UtcNow;
+        var userId = Guid.NewGuid();
+        var access = new OfflineAuthenticationLeaseAcquireResponse(
+            new SignedOfflineAuthenticationLease("test", "PS256", "payload", "signature"),
+            new OfflineAuthenticationLeaseUser(
+                userId, "admin", "Administrador", [CommercePermissionCodes.SalesCreate],
+                [1], [2], 1, now));
+        try
+        {
+            store.Save(CreateEnrollmentPackage(Guid.NewGuid()) with
+            {
+                InitialOfflineAccess = access
+            });
+            using var client = _factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+
+            var health = await client.GetFromJsonAsync<JsonElement>("/edge/v1/health");
+
+            Assert.True(health.GetProperty("initialEnrollmentSessionAvailable").GetBoolean());
+        }
+        finally
+        {
+            if (original is null) store.Clear();
+            else store.Save(original);
+        }
+    }
+
     public async Task InitializeAsync()
     {
         var customerId = Guid.NewGuid();
@@ -1204,9 +1244,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             100m, "COP", true, null, ["770123"], []);
         var sessionId = Guid.NewGuid();
         var items = new[] { product };
-        var hash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
-            .ToLowerInvariant();
+        var hash = CatalogBootstrapIntegrity.Compute(items);
         await store.BeginBootstrapAsync(
             new CatalogSyncSessionResponse(sessionId, 0, 1, DateTimeOffset.UtcNow.AddHours(1)));
         await store.ApplyBootstrapPageAsync(
@@ -1253,7 +1291,11 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     priceChannelId,
                     true,
                     AppliesWithholding: true,
-                    TaxResponsibilities: ["O-23"]),
+                    TaxResponsibilities: ["O-23"],
+                    IsCreditEnabled: true,
+                    CreditLimit: 500_000m,
+                    AvailableCredit: 500_000m,
+                    DefaultDueDays: 30),
                 new PosCustomerPricing(
                     tierCustomerId,
                     "4001234567",
@@ -1295,7 +1337,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         int? NextOffset);
 
     private sealed record CustomerSearchPageContract(
-        IReadOnlyList<PosCustomerPricing> Items,
+        IReadOnlyList<PosCustomerView> Items,
         bool HasMore,
         int? NextOffset);
 

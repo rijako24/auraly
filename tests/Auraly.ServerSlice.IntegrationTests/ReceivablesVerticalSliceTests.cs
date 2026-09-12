@@ -64,9 +64,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             var sale = await CompleteAsync(client, selection.Draft,
                 new CompleteOnlineSalesDraftRequest(
                     selection.Draft.Version, [],
-                    new OnlineSalesCreditTerms(
-                        selection.Draft.PayableAmount,
-                        DateTimeOffset.UtcNow.AddDays(30)),
+                    new OnlineSalesCreditTerms(selection.Draft.PayableAmount),
                     DocumentType: PosSaleDocumentTypes.Receipt),
                 $"commercial-credit-{Guid.NewGuid():N}");
 
@@ -146,9 +144,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             var accountedSale = await CompleteAsync(client, accountedSelection.Draft,
                 new CompleteOnlineSalesDraftRequest(
                     accountedSelection.Draft.Version, [],
-                    new OnlineSalesCreditTerms(
-                        accountedSelection.Draft.PayableAmount,
-                        DateTimeOffset.UtcNow.AddDays(30)),
+                    new OnlineSalesCreditTerms(accountedSelection.Draft.PayableAmount),
                     DocumentType: PosSaleDocumentTypes.Receipt),
                 $"accounted-commercial-credit-{Guid.NewGuid():N}");
             Assert.Equal("Posted", await ScalarAsync<string>(
@@ -184,8 +180,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         {
             Content = JsonContent.Create(new CompleteOnlineSalesDraftRequest(
                 selection.Draft.Version, [],
-                new OnlineSalesCreditTerms(selection.Draft.PayableAmount,
-                    DateTimeOffset.UtcNow.AddDays(30))))
+                new OnlineSalesCreditTerms(selection.Draft.PayableAmount)))
         };
         request.Headers.Add("Idempotency-Key", $"disabled-credit-{Guid.NewGuid():N}");
         using var response = await client.SendAsync(request);
@@ -194,6 +189,41 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE CustomerId=@Id", customerId));
+    }
+
+    [Fact]
+    public async Task Credit_due_date_is_derived_from_the_server_customer_terms()
+    {
+        var (customerId, userId) = await ConfigureAsync();
+        using var client = fixture.CreateUserClient(userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open,
+            ReceivablesPermissionCodes.ManageCredit);
+        using (var profile = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/customers/{customerId:D}/credit",
+                   new UpdateCustomerCreditProfileRequest(
+                       fixture.BusinessId, 500_000m, 30, true)))
+            profile.EnsureSuccessStatusCode();
+
+        var workSession = await fixture.OpenWorkSessionAsync(client);
+        var draft = await CaptureAsync(client,
+            await OpenDraftAsync(client, workSession.WorkSessionId));
+        var selection = await SelectCustomerAsync(client, draft, customerId);
+        var startedAt = DateTimeOffset.UtcNow;
+        var sale = await CompleteAsync(client, selection.Draft,
+            new CompleteOnlineSalesDraftRequest(
+                selection.Draft.Version,
+                [],
+                new OnlineSalesCreditTerms(selection.Draft.PayableAmount),
+                DocumentType: PosSaleDocumentTypes.Receipt),
+            $"credit-due-date-{Guid.NewGuid():N}");
+
+        var receivable = await ReadReceivableAsync(sale.Receipt.DocumentId);
+        Assert.Equal(customerId, receivable.CustomerId);
+        Assert.InRange(
+            receivable.DueDate,
+            startedAt.AddDays(30),
+            DateTimeOffset.UtcNow.AddDays(30));
     }
 
     [Fact]
@@ -214,11 +244,11 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
         device.DefaultRequestHeaders.Add(
             "X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
-        var dueDate = DateTimeOffset.UtcNow.AddDays(30);
+        var startedAt = DateTimeOffset.UtcNow;
         using (var allowed = await device.PostAsJsonAsync(
                    "/api/pos/v1/sales/credit-validation",
                    new PosCreditValidationRequest(
-                       fixture.BusinessId, customerId, 100_000m, dueDate,
+                       fixture.BusinessId, customerId, 100_000m,
                        FiscalEnvironment: 2)))
         {
             allowed.EnsureSuccessStatusCode();
@@ -231,12 +261,17 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 ServerSliceFixture.SupplierTaxId,
                 result.FiscalMaterial.Supplier.Identification);
             Assert.Equal(customerId, result.CustomerId);
+            Assert.NotNull(result.DueDate);
+            Assert.InRange(
+                result.DueDate.Value,
+                startedAt.AddDays(30),
+                DateTimeOffset.UtcNow.AddDays(30));
         }
 
         using var rejected = await device.PostAsJsonAsync(
             "/api/pos/v1/sales/credit-validation",
             new PosCreditValidationRequest(
-                fixture.BusinessId, customerId, 600_000m, dueDate));
+                fixture.BusinessId, customerId, 600_000m));
         Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
         Assert.Contains(
             "supera el cupo disponible",
@@ -273,15 +308,13 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var selection = await SelectCustomerAsync(client, draft, customerId);
         Assert.NotNull(selection.Customer);
         Assert.True(selection.Customer.IsCreditEnabled);
-        Assert.Equal(30, selection.Customer.DefaultCreditDueDays);
         Assert.Equal(500_000m, selection.Customer.AvailableCredit);
-        var dueDate = DateTimeOffset.UtcNow.AddDays(30);
         var checkoutKey = $"receivable-sale-{Guid.NewGuid():N}";
         var checkout = await CompleteAsync(client, selection.Draft,
             new CompleteOnlineSalesDraftRequest(
                 selection.Draft.Version,
                 [],
-                new OnlineSalesCreditTerms(selection.Draft.PayableAmount, dueDate)),
+                new OnlineSalesCreditTerms(selection.Draft.PayableAmount)),
             checkoutKey);
 
         var receivable = await ReadReceivableAsync(checkout.Receipt.DocumentId);
@@ -419,8 +452,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var checkout = await CompleteAsync(client, selection.Draft,
             new CompleteOnlineSalesDraftRequest(
                 selection.Draft.Version, [],
-                new OnlineSalesCreditTerms(
-                    selection.Draft.PayableAmount, DateTimeOffset.UtcNow.AddDays(30)),
+                new OnlineSalesCreditTerms(selection.Draft.PayableAmount),
                 DocumentType: PosSaleDocumentTypes.Receipt),
             $"return-credit-sale-{Guid.NewGuid():N}");
         var receivable = await ReadReceivableAsync(checkout.Receipt.DocumentId);
@@ -649,7 +681,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
             SELECT r.ReceivableId,r.CustomerId,r.OriginalAmount,
-                   r.OutstandingAmount,r.Status,d.CreditAmount,
+                   r.OutstandingAmount,r.Status,r.DueDate,d.CreditAmount,
                    d.ProcessingStatus,j.Status,j.LastError
             FROM dbo.SalesDocuments d
             LEFT JOIN dbo.DocumentProcessingJobs j
@@ -662,9 +694,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.True(await reader.ReadAsync());
         if (reader.IsDBNull(0))
             throw new InvalidOperationException(
-                $"Receivable missing. Credit={reader.GetDecimal(5)}; document={reader.GetString(6)}; job={(reader.IsDBNull(7) ? "none" : reader.GetString(7))}; error={(reader.IsDBNull(8) ? "none" : reader.GetString(8))}");
+                $"Receivable missing. Credit={reader.GetDecimal(6)}; document={reader.GetString(7)}; job={(reader.IsDBNull(8) ? "none" : reader.GetString(8))}; error={(reader.IsDBNull(9) ? "none" : reader.GetString(9))}");
         return new(reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2),
-            reader.GetDecimal(3), reader.GetString(4));
+            reader.GetDecimal(3), reader.GetString(4), reader.GetFieldValue<DateTimeOffset>(5));
     }
 
     private async Task EnsureAccountAsync(SqlConnection connection,
@@ -865,5 +897,5 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 
     private sealed record ReceivableEvidence(
         Guid ReceivableId, Guid CustomerId, decimal OriginalAmount,
-        decimal OutstandingAmount, string Status);
+        decimal OutstandingAmount, string Status, DateTimeOffset DueDate);
 }

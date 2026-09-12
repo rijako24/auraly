@@ -19,7 +19,6 @@ type PosPaymentAmountEnterEvent = {
 export function handlePosPaymentAmountEnter(
   event: PosPaymentAmountEnterEvent,
   missing: number,
-  _addCashPayment: () => void,
 ): boolean {
   if (event.key !== "Enter") return false;
   event.preventDefault();
@@ -41,7 +40,6 @@ const tolerance = 0.005;
 export function splitCreditCheckout(
   payments: PosPaymentInput[],
   customer: PosCustomer | null,
-  now: Date = new Date(),
 ): { payments: PosPaymentInput[]; credit: PosCreditTerms | null } {
   const creditRows = payments.filter((payment) => payment.methodCode === "Credit");
   if (creditRows.length === 0) return { payments, credit: null };
@@ -49,10 +47,9 @@ export function splitCreditCheckout(
   const creditRow = creditRows[0];
   if (!customer)
     throw new Error("Debe seleccionar un cliente para vender a crédito.");
-  const dueDate = new Date(now.getTime() + (customer.defaultCreditDueDays ?? 0) * 86_400_000);
   return {
     payments: payments.filter((payment) => payment.methodCode !== "Credit"),
-    credit: { amount: creditRow.amount, dueDate: dueDate.toISOString() },
+    credit: { amount: creditRow.amount },
   };
 }
 

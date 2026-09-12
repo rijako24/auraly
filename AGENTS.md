@@ -26,6 +26,7 @@ Antes de crear una clase, servicio, flujo, handler, endpoint, tabla, configuraci
 - Determinar si se debe extender, reutilizar, consolidar o eliminar algo existente. Copiar una implementacion para avanzar mas rapido no es una opcion valida.
 - Toda funcionalidad nueva debe entrar por un motor y punto de extension canonicos. Una tarea funcional no puede crear otro motor, processor, worker propietario, job table, writer o cola que replique una capacidad existente; si ningun propietario actual parece aplicable, se detiene la implementacion y se eleva la decision arquitectonica.
 - Identificar efectos sobre multi-tenancy, autorizacion, datos, concurrencia, idempotencia, compatibilidad, observabilidad y rollback.
+- Tratar rendimiento como atributo obligatorio desde el diseño: definir el camino critico, volumen esperado, numero de viajes de red/consultas y presupuesto de latencia o throughput antes de implementar. No se acepta N+1, trabajo por render, polling descontrolado ni procesamiento proporcional a datos ajenos a la operacion.
 - Definir evidencia de aceptacion antes de implementar: test, build, lint, consulta o escenario reproducible.
 
 ## Forma de trabajar
@@ -51,6 +52,7 @@ Un cambio de implementacion no esta terminado hasta que:
 - Cumple `docs/estandares-de-ingenieria.md` y las invariantes del modulo.
 - Tiene pruebas proporcionales al riesgo, incluida una regresion para el bug corregido.
 - Compila y pasa los checks relevantes de backend/frontend; si alguno no se pudo ejecutar, se reporta expresamente.
+- Cumple el presupuesto de rendimiento acordado y aporta una medicion reproducible del camino critico, sin carga de diagnostico concurrente que adultere el resultado.
 - No deja rutas duplicadas, codigo muerto, configuracion huerfana ni secretos/datos sensibles.
 - Conserva aislamiento por tenant, idempotencia, autorizacion y observabilidad donde aplican.
 - La entrega resume archivos cambiados, decisiones, evidencia ejecutada y riesgos pendientes reales.

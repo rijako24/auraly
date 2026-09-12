@@ -175,10 +175,26 @@ public sealed record PublishedPrice(
 public sealed record PublishPricesResult(IReadOnlyList<PublishedPrice> Items, long CatalogCursor);
 
 public sealed record ProductPriceHistoryItem(
-    Guid ProductPriceId, Guid ProductId, decimal Amount, string CurrencyCode,
-    decimal? CostBasisAmount, decimal? EffectiveMarginPercent, string? InputMode,
-    DateTimeOffset ValidFrom, DateTimeOffset? ValidUntil, Guid? PublishedByUserId,
-    DateTimeOffset? PublishedAt, bool IsActive);
+    Guid ActivityId,
+    Guid ProductId,
+    string ActivityType,
+    string Origin,
+    string Status,
+    decimal PublicAmount,
+    decimal PreparedAmount,
+    decimal? CostBasisAmount,
+    string? CostBasisType,
+    decimal? TargetMarginPercent,
+    decimal? EffectiveMarginPercent,
+    string? InputMode,
+    decimal? RoundingIncrement,
+    string? RoundingMode,
+    Guid? SourceDocumentId,
+    int? SourceLineNumber,
+    Guid? SourceProductId,
+    Guid? UserId,
+    string UserName,
+    DateTimeOffset OccurredAt);
 
 public sealed record PriceChannelProductReport(
     Guid PriceChannelId,

@@ -1,6 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Auraly.Contracts.Catalog;
 using Auraly.Domain.Catalog;
@@ -125,12 +123,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         CatalogBootstrapPage page,
         CancellationToken cancellationToken = default)
     {
-        var expectedHash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(page.Items))))
-            .ToLowerInvariant();
-        if (!CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(expectedHash),
-                Encoding.ASCII.GetBytes(page.IntegrityHash.ToLowerInvariant())))
+        if (!CatalogBootstrapIntegrity.IsValid(page.Items, page.IntegrityHash))
             throw new InvalidDataException("The catalog bootstrap page failed its integrity validation.");
 
         await using var connection = new SqliteConnection(connectionString);
@@ -311,6 +304,71 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         return await reader.ReadAsync(cancellationToken) ? ReadProduct(reader) : null;
     }
 
+    public async Task<IReadOnlyDictionary<Guid, decimal>> InventoryFamilyAsync(
+        Guid inventoryProductId,
+        CancellationToken cancellationToken = default)
+    {
+        if (inventoryProductId == Guid.Empty)
+            throw new ArgumentOutOfRangeException(nameof(inventoryProductId));
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT ProductId,InventoryFactor
+            FROM PosCatalogProducts
+            WHERE IsActive=1 AND
+              (InventoryProductId=@InventoryProductId OR
+               (InventoryProductId IS NULL AND ProductId=@InventoryProductId));
+            """;
+        command.Parameters.Add(P("@InventoryProductId", inventoryProductId.ToString("D")));
+        var family = new Dictionary<Guid, decimal>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var factor = Convert.ToDecimal(reader.GetValue(1), CultureInfo.InvariantCulture);
+            if (factor <= 0)
+                throw new InvalidDataException("The local inventory factor must be positive.");
+            family.Add(Guid.Parse(reader.GetString(0)), factor);
+        }
+        return family;
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, (Guid InventoryProductId, decimal InventoryFactor, bool ManagesStock)>>
+        InventoryDescriptorsAsync(
+            IReadOnlyCollection<Guid> productIds,
+            CancellationToken cancellationToken = default)
+    {
+        if (productIds.Count == 0)
+            return new Dictionary<Guid, (Guid, decimal, bool)>();
+        var distinct = productIds.Where(value => value != Guid.Empty).Distinct().ToArray();
+        if (distinct.Length == 0)
+            return new Dictionary<Guid, (Guid, decimal, bool)>();
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        var parameters = distinct
+            .Select((value, index) => P($"@ProductId{index}", value.ToString("D")))
+            .ToArray();
+        command.Parameters.AddRange(parameters);
+        command.CommandText = $"""
+            SELECT ProductId,COALESCE(InventoryProductId,ProductId),InventoryFactor,ManagesStock
+            FROM PosCatalogProducts
+            WHERE IsActive=1 AND ProductId IN ({string.Join(',', parameters.Select(value => value.ParameterName))});
+            """;
+        var result = new Dictionary<Guid, (Guid, decimal, bool)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var factor = Convert.ToDecimal(reader.GetValue(2), CultureInfo.InvariantCulture);
+            if (factor <= 0)
+                throw new InvalidDataException("The local inventory factor must be positive.");
+            result.Add(
+                Guid.Parse(reader.GetString(0)),
+                (Guid.Parse(reader.GetString(1)), factor, reader.GetInt64(3) == 1));
+        }
+        return result;
+    }
+
     private async Task<PosCatalogItem?> FindSingleAsync(string value, CancellationToken ct)
     {
         await using var connection = new SqliteConnection(connectionString);
@@ -389,10 +447,12 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         productCommand.CommandText = $"""
             INSERT INTO {products}
               (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
-               ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent)
+               ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent,
+               InventoryProductId,InventoryFactor)
             VALUES
               (@ProductId,@ProductCode,@Reference,@Name,@BaseUnitCode,@TaxCode,@TaxRate,@UnitPrice,@UnitCost,@ManagesStock,@CurrencyCode,@IsActive,@IsWeighable,@AllowsFractionalSale,@ScaleJson,@ScalePrefix,@CategoryName,
-               @ProductCategoryId,@ProductBrandId,@ProductCategoryAncestorIds,@AverageUnitCost,@LatestUnitCost,@TargetMarginPercent)
+               @ProductCategoryId,@ProductBrandId,@ProductCategoryAncestorIds,@AverageUnitCost,@LatestUnitCost,@TargetMarginPercent,
+               @InventoryProductId,@InventoryFactor)
             ON CONFLICT(ProductId) DO UPDATE SET
               ProductCode=excluded.ProductCode,Reference=excluded.Reference,Name=excluded.Name,
               BaseUnitCode=excluded.BaseUnitCode,TaxCode=excluded.TaxCode,TaxRate=excluded.TaxRate,
@@ -402,7 +462,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               ProductCategoryId=excluded.ProductCategoryId,ProductBrandId=excluded.ProductBrandId,
               ProductCategoryAncestorIds=excluded.ProductCategoryAncestorIds,
               AverageUnitCost=excluded.AverageUnitCost,LatestUnitCost=excluded.LatestUnitCost,
-              TargetMarginPercent=excluded.TargetMarginPercent;
+              TargetMarginPercent=excluded.TargetMarginPercent,
+              InventoryProductId=excluded.InventoryProductId,InventoryFactor=excluded.InventoryFactor;
             """;
         foreach (var name in new[]
                  {
@@ -410,7 +471,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                      "@TaxRate", "@UnitPrice", "@UnitCost", "@ManagesStock", "@CurrencyCode", "@IsActive",
                      "@IsWeighable", "@AllowsFractionalSale", "@ScaleJson", "@ScalePrefix", "@CategoryName",
                      "@ProductCategoryId", "@ProductBrandId", "@ProductCategoryAncestorIds", "@AverageUnitCost",
-                     "@LatestUnitCost", "@TargetMarginPercent"
+                     "@LatestUnitCost", "@TargetMarginPercent", "@InventoryProductId", "@InventoryFactor"
                  })
             productCommand.Parameters.Add(P(name, null));
 
@@ -444,7 +505,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 item.Scale is null ? null : JsonSerializer.Serialize(item.Scale), item.Scale?.BarcodePrefix,
                 item.CategoryName, item.ProductCategoryId?.ToString("D"), item.ProductBrandId?.ToString("D"),
                 JsonSerializer.Serialize(item.ProductCategoryAncestorIds ?? []), item.AverageUnitCost,
-                item.LatestUnitCost, item.TargetMarginPercent
+                item.LatestUnitCost, item.TargetMarginPercent,
+                (item.InventoryProductId ?? item.ProductId).ToString("D"), item.InventoryFactor
             };
             for (var index = 0; index < values.Length; index++)
                 productCommand.Parameters[index].Value = values[index] ?? DBNull.Value;
@@ -499,7 +561,10 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("AverageUnitCost")), CultureInfo.InvariantCulture),
             Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("LatestUnitCost")), CultureInfo.InvariantCulture),
             reader.IsDBNull(reader.GetOrdinal("TargetMarginPercent")) ? null :
-                Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("TargetMarginPercent")), CultureInfo.InvariantCulture));
+                Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("TargetMarginPercent")), CultureInfo.InvariantCulture),
+            reader.IsDBNull(reader.GetOrdinal("InventoryProductId")) ? null :
+                Guid.Parse(reader.GetString(reader.GetOrdinal("InventoryProductId"))),
+            Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("InventoryFactor")), CultureInfo.InvariantCulture));
     }
 
     private static async Task<PosCatalogStatus> StatusAsync(
@@ -596,6 +661,23 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT '0';";
                 await alter.ExecuteNonQueryAsync(ct);
             }
+            if (!columns.Contains("InventoryProductId"))
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN InventoryProductId TEXT NULL;";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
+            if (!columns.Contains("InventoryFactor"))
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN InventoryFactor TEXT NOT NULL DEFAULT '1';";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
+            await using (var index = connection.CreateCommand())
+            {
+                index.CommandText = $"CREATE INDEX IF NOT EXISTS IX_{table}_InventoryProductId ON {table}(InventoryProductId);";
+                await index.ExecuteNonQueryAsync(ct);
+            }
         }
     }
 
@@ -647,7 +729,9 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         ProductCategoryAncestorIds TEXT NULL,
         AverageUnitCost TEXT NOT NULL DEFAULT '0',
         LatestUnitCost TEXT NOT NULL DEFAULT '0',
-        TargetMarginPercent TEXT NULL
+        TargetMarginPercent TEXT NULL,
+        InventoryProductId TEXT NULL,
+        InventoryFactor TEXT NOT NULL DEFAULT '1'
         """;
 
     private static readonly string Schema = $"""

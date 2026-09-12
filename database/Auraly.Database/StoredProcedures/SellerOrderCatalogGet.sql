@@ -26,13 +26,17 @@ BEGIN
            COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
            p.Name,
            COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
-           COALESCE(balance.QuantityOnHand,0),
-           p.ManageStock
+           COALESCE(balance.QuantityOnHand,0)/COALESCE(NULLIF(inventoryLink.InventoryFactor,0),1),
+           CAST(CASE WHEN p.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS BIT)
     FROM dbo.Products p
+    LEFT JOIN dbo.ProductLinks inventoryLink
+      ON inventoryLink.BusinessId=@BusinessId
+     AND inventoryLink.ChildProductId=p.ProductId
+     AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
     LEFT JOIN dbo.InventoryBalances balance
       ON balance.BusinessId=@BusinessId
      AND balance.WarehouseId=@WarehouseId
-     AND balance.ProductId=p.ProductId
+     AND balance.ProductId=COALESCE(inventoryLink.ParentProductId,p.ProductId)
     WHERE p.TenantId=@TenantId AND p.IsActive=1
       AND EXISTS(
         SELECT 1 FROM dbo.ProductPrices price

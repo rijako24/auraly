@@ -11,6 +11,7 @@ import {
   loadCommerceOrder,
   loadCommerceOrders,
   retryCommerceOrderEmission,
+  type CommerceOrderDetail,
 } from "@/services/orders/commerce-orders-client";
 import {
   loadSalesWorkspaceOptions,
@@ -26,6 +27,8 @@ import { isSellerOperationalProfile, ordersLandingView } from "@/lib/default-sta
 import { routesApi, type SalesRouteListItem } from "@/services/api/routes";
 import { PosPrinterDialog } from "@/app/(pos)/pos/pos-printer-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
+import { sellerOrdersApi } from "@/services/api/seller-orders";
+import { SellerOrderCaptureDialog } from "@/components/orders/seller-order-capture-dialog";
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -35,6 +38,8 @@ export default function OrdersPage() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [routeOptions, setRouteOptions] = useState<SalesRouteListItem[]>([]);
   const [printerOpen, setPrinterOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<CommerceOrderDetail | null>(null);
+  const [ordersRevision, setOrdersRevision] = useState(0);
   const [printerClient] = useState(() => {
     const token = readEdgeTokenFromLaunch();
     return token ? new PosEdgeClient(token, readEdgeUserSession()) : null;
@@ -129,25 +134,39 @@ export default function OrdersPage() {
         </div>
       )}
       <OrdersWorkspace
+        key={ordersRevision}
         showHeader={false}
         routeOptions={routeOptions.map((route) => ({ routeId: route.routeId, name: route.name }))}
         onlyMine={!!user && isSellerOperationalProfile(user.roles ?? [], user.permissions ?? [])}
         source={user && isSellerOperationalProfile(user.roles ?? [], user.permissions ?? []) ? 1 : undefined}
         loadPage={loadCommerceOrders}
         loadDetail={loadCommerceOrder}
-        loadSettlementConfiguration={async () => {
-          if (!workspace || !user) throw new Error("Selecciona una sede y una bodega.");
-          const context = await selectSalesWorkspace(workspace);
-          return new OnlinePosClient(
-            context,
-            user.userId,
-            `${user.firstName} ${user.lastName}`.trim() || user.username,
-            readEdgeTokenFromLaunch(),
-          ).settlementConfiguration();
-        }}
         onRetryEmission={async (orderId) => {
           await retryCommerceOrderEmission(orderId);
         }}
+        onConfirmReview={user?.permissions?.includes("orders.review") ? async (order, lines) => {
+          if (!order.customerId) throw new Error("El pedido no tiene un cliente válido.");
+          await sellerOrdersApi.update(order.orderId, {
+            customerId: order.customerId,
+            notes: order.notes,
+            idempotencyKey: crypto.randomUUID(),
+            lines,
+          });
+        } : undefined}
+        onEditOrder={user?.permissions?.includes("orders.update") ? setEditingOrder : undefined}
+        onPrintSelected={
+          workspace && user
+            ? async (orders) => {
+                const context = await selectSalesWorkspace(workspace);
+                return new OnlinePosClient(
+                  context,
+                  user.userId,
+                  `${user.firstName} ${user.lastName}`.trim() || user.username,
+                  readEdgeTokenFromLaunch(),
+                ).printOrders(orders.map((order) => order.orderId));
+              }
+            : undefined
+        }
         onRecover={
           workspace && user
             ? async (order) => {
@@ -158,7 +177,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user
-            ? async (orders, paymentMethodCode, documentType, transfer) => {
+            ? async (orders, documentType) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
@@ -169,11 +188,8 @@ export default function OrdersPage() {
                 );
                 const response = await client.invoiceOrders(
                   orders.map((order) => order.orderId),
-                  paymentMethodCode,
+                  "Cash",
                   documentType,
-                  transfer?.reference,
-                  transfer?.bankAccountId,
-                  transfer?.notes,
                 );
                 return {
                   completedCount: response.completedCount,
@@ -187,6 +203,35 @@ export default function OrdersPage() {
       />
       {printerOpen && (
         <PosPrinterDialog client={printerClient} onClose={() => setPrinterOpen(false)} />
+      )}
+      {editingOrder?.customerId && (editingOrder.warehouseId || workspace?.warehouseId) && (
+        <SellerOrderCaptureDialog
+          businessId={editingOrder.businessId}
+          warehouseId={editingOrder.warehouseId ?? workspace!.warehouseId}
+          route={null}
+          stop={{
+            routeStopId: `order-${editingOrder.orderId}`,
+            customerId: editingOrder.customerId,
+            partySiteId: "",
+            sequence: 0,
+            customerName: editingOrder.customerName ?? "Cliente",
+            identification: editingOrder.customerIdentification,
+            siteName: "Pedido comercial",
+            addressLine: editingOrder.deliveryAddress ?? "",
+            neighborhood: null,
+            cityName: "",
+            phone: editingOrder.customerPhone,
+            googleMapsUrl: null,
+            latitude: null,
+            longitude: null,
+            plannedVisitTime: null,
+            visitNote: null,
+            rowVersion: "",
+          }}
+          editing={editingOrder}
+          onClose={() => setEditingOrder(null)}
+          onCreated={async () => { setEditingOrder(null); setOrdersRevision((value) => value + 1); }}
+        />
       )}
       {!workspace && (
         <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">

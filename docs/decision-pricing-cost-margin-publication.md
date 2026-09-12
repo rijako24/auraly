@@ -19,6 +19,15 @@ La regla vigente es:
 
 - `ProductPrices` contiene el precio base por `BusinessId + ProductId`;
 - `Products` no persiste `UnitPrice`: cualquier precio mostrado desde el producto es una proyección de la versión activa de `ProductPrices`;
+- crear un producto vendible desde Catálogo exige un precio positivo y lo materializa
+  con el mismo valor en todas las sedes activas del tenant;
+- crear una sede exige elegir otra sede activa del mismo tenant como origen y
+  materializa en una sola operación el precio activo de todos sus productos;
+  no busca ni combina fuentes distintas por producto, y crea VEN, PED, AVE y
+  TRA con inventario y costo iniciales en cero;
+- un registro usado exclusivamente por el catálogo conversacional, que nunca ha
+  tenido un precio comercial positivo, no se convierte artificialmente en producto
+  de caja ni recibe un precio inventado durante la migración;
 - lista o canal son configuraciones excluyentes del cliente;
 - sin precio especial se usa siempre el precio base del negocio;
 - la ausencia de precio especial nunca bloquea una venta;
@@ -176,6 +185,35 @@ Rejected
 Superseded
 ```
 
+### Preparación versionada
+
+Costo base, origen del costo, margen objetivo, margen efectivo, modo de entrada,
+redondeo y precio calculado forman un único conjunto preparado. Prepararlo desde
+una entrada de mercancía, desde la ficha del producto o por una relación de
+producto crea una versión inmutable en `ProductPricePreparations`.
+
+- solamente una preparación puede estar pendiente por `BusinessId + ProductId`;
+- una preparación posterior marca la anterior como `Superseded`, sin borrarla;
+- guardar la ficha sin cambiar ningún valor del conjunto de precio no crea otra
+  preparación ni reemplaza la que ya estaba pendiente;
+- `ProductPrices` no se modifica durante la preparación;
+- publicar copia el conjunto pendiente completo a una nueva versión de
+  `ProductPrices` y marca la preparación como `Published`;
+- el origen, documento, producto relacionado, usuario y fecha permanecen en el
+  historial;
+- las filas preexistentes cuyo borrador estaba mezclado con `ProductPrices` se
+  migran una sola vez como preparación de origen `Migration`.
+
+Esta tabla es simultáneamente el estado pendiente y el kardex de preparaciones;
+no existe un segundo borrador ni una auditoría duplicada de preparación.
+
+Al publicar, si la sede tiene `SharesProductPrices=1`, se crea una versión
+publicada, un cambio de catálogo y un mensaje de outbox para cada sede activa del
+tenant que también comparte precios. Si no comparte, esos tres efectos se limitan
+a la sede actual. El dispatcher despierta inmediatamente cada ámbito afectado y
+las cajas recuperan el cambio desde su cursor local; el outbox permite recuperarlo
+si una caja estaba desconectada.
+
 ## 4. Edición bidireccional
 
 ### El usuario modifica utilidad
@@ -211,7 +249,8 @@ Al confirmar una entrada, el motor crítico procesa en su turno:
 8. solicitud durable de propuesta de precio;
 9. outbox y finalización del documento.
 
-La entrada **no modifica `ProductPrices`**.
+La entrada **no modifica `ProductPrices`**. Registra una nueva preparación
+completa y reemplaza únicamente la preparación pendiente anterior del producto.
 
 Después del commit, Pricing crea la propuesta idempotente. El usuario la revisa desde:
 

@@ -20,6 +20,7 @@ export function PosProductSearchDialog({
   busy,
   verifierMode,
   focusRequest,
+  availabilityRequest,
   onSearch,
   connected,
   canReadAvailability,
@@ -30,10 +31,14 @@ export function PosProductSearchDialog({
   busy: boolean;
   verifierMode: boolean;
   focusRequest: number;
+  availabilityRequest: number;
   onSearch: (term: string, skip: number) => Promise<PosCatalogSearchPage>;
   connected: boolean;
   canReadAvailability: boolean;
-  onLoadAvailability: (productId: string) => Promise<PosProductWarehouseAvailability[]>;
+  onLoadAvailability: (
+    productId: string,
+    signal?: AbortSignal,
+  ) => Promise<PosProductWarehouseAvailability[]>;
   onSelect: (product: PosCatalogProduct) => Promise<boolean>;
   onCancel: () => void;
 }) {
@@ -48,12 +53,13 @@ export function PosProductSearchDialog({
   const input = useRef<HTMLInputElement>(null);
   const modal = useRef<HTMLElement>(null);
   const requestVersion = useRef(0);
-  const availabilityVersion = useRef(0);
+  const handledAvailabilityRequest = useRef(availabilityRequest);
   const resultElements = useRef(new Map<number, HTMLButtonElement>());
-  const [availability, setAvailability] = useState<PosProductWarehouseAvailability[]>([]);
-  const [availabilityProductId, setAvailabilityProductId] = useState<string | null>(null);
-  const [availabilityLoading, setAvailabilityLoading] = useState(false);
-  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const availabilityController = useRef<AbortController | null>(null);
+  const [availabilityLookup, setAvailabilityLookup] = useState<{
+    product: PosCatalogProduct;
+    response: Promise<PosProductWarehouseAvailability[]> | null;
+  } | null>(null);
 
   usePosModalBehavior({
     modalRef: modal,
@@ -94,42 +100,33 @@ export function PosProductSearchDialog({
     return () => window.clearTimeout(timer);
   }, [onSearch, term]);
 
-  useEffect(() => {
-    const product = results[selected];
-    const version = ++availabilityVersion.current;
-    setAvailability([]);
-    setAvailabilityProductId(product?.productId ?? null);
-    setAvailabilityLoading(false);
-    if (!product) {
-      setAvailabilityError(null);
-      return;
-    }
-    if (!canReadAvailability) {
-      setAvailabilityError("Tu perfil no tiene permiso para consultar existencias por bodega.");
-      return;
-    }
-    if (!connected) {
-      setAvailabilityError("Sin conexión al servidor. El producto local sigue disponible, pero no podemos consultar otras bodegas.");
-      return;
-    }
-    setAvailabilityError(null);
-    setAvailabilityLoading(true);
-    void onLoadAvailability(product.productId)
-      .then((items) => {
-        if (availabilityVersion.current === version) setAvailability(items);
-      })
-      .catch(() => {
-        if (availabilityVersion.current === version)
-          setAvailabilityError("No fue posible consultar las existencias del servidor.");
-      })
-      .finally(() => {
-        if (availabilityVersion.current === version) setAvailabilityLoading(false);
-      });
-  }, [canReadAvailability, connected, onLoadAvailability, results, selected]);
-
   const selectedProduct = results[selected];
-  const availabilityPending = Boolean(selectedProduct) &&
-    (availabilityProductId !== selectedProduct.productId || availabilityLoading);
+
+  const openAvailability = useCallback((product: PosCatalogProduct) => {
+    availabilityController.current?.abort();
+    const controller = canReadAvailability && connected
+      ? new AbortController()
+      : null;
+    availabilityController.current = controller;
+    setAvailabilityLookup({
+      product,
+      response: controller
+        ? onLoadAvailability(product.productId, controller.signal)
+        : null,
+    });
+  }, [canReadAvailability, connected, onLoadAvailability]);
+
+  const closeAvailability = useCallback(() => {
+    availabilityController.current?.abort();
+    availabilityController.current = null;
+    setAvailabilityLookup(null);
+  }, []);
+
+  useEffect(() => {
+    if (availabilityRequest === handledAvailabilityRequest.current) return;
+    handledAvailabilityRequest.current = availabilityRequest;
+    if (selectedProduct) openAvailability(selectedProduct);
+  }, [availabilityRequest, openAvailability, selectedProduct]);
 
   const loadMore = useCallback(async () => {
     if (busy || loading || loadingMore || !hasMore || nextOffset === null) return;
@@ -222,15 +219,26 @@ export function PosProductSearchDialog({
               {verifierMode ? "Escanea o busca: Enter sólo consulta. Pulsa F1 para volver a agregar productos." : "Nombre, código interno, referencia, código de barras o alterno."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            className="grid h-10 w-10 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-600/20"
-            aria-label="Cerrar búsqueda"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => selectedProduct && openAvailability(selectedProduct)}
+              disabled={!selectedProduct}
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-teal-700/20 px-3 text-sm font-semibold text-teal-800 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-teal-600/20"
+            >
+              <Boxes className="h-4 w-4" />
+              Existencias <kbd className="rounded bg-teal-100 px-1.5 py-0.5 text-[11px]">F2</kbd>
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={busy}
+              className="grid h-10 w-10 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-600/20"
+              aria-label="Cerrar búsqueda"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </header>
 
         <div className="shrink-0 p-5 pb-3">
@@ -282,7 +290,7 @@ export function PosProductSearchDialog({
           <p className="mt-2 text-xs text-slate-500">
             {verifierMode
               ? "Flechas recorren; Tab entra al listado; Enter consulta; Esc vuelve al lector."
-              : "Flechas recorren; Tab entra al listado; Enter agrega; F1 verifica precios; Esc vuelve al lector."}
+              : "Flechas recorren; Enter agrega; F2 consulta existencias; F1 verifica precios; Esc vuelve al lector."}
           </p>
         </div>
 
@@ -360,65 +368,119 @@ export function PosProductSearchDialog({
           )}
         </div>
 
-        <section className="flex h-44 shrink-0 flex-col border-t border-slate-200 bg-slate-50/80 px-5 py-4" aria-label="Existencias por sede y bodega">
-          <header className="mb-2 flex shrink-0 items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                <Boxes className="h-4 w-4 text-teal-700" />
-                Existencias por sede y bodega
-              </h3>
-              <p className="truncate text-xs text-slate-500">
-                {results[selected]?.name ?? "Selecciona un producto para consultar su disponibilidad."}
-              </p>
-            </div>
-            <span
-              className={`flex h-5 w-44 shrink-0 items-center justify-end gap-2 text-xs font-medium text-teal-800 ${availabilityPending ? "visible" : "invisible"}`}
-              role="status"
-              aria-hidden={!availabilityPending}
-            >
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Consultando existencias
-            </span>
-          </header>
+      </section>
+      {availabilityLookup && (
+        <PosProductAvailabilityDialog
+          product={availabilityLookup.product}
+          connected={connected}
+          canReadAvailability={canReadAvailability}
+          response={availabilityLookup.response}
+          onClose={closeAvailability}
+        />
+      )}
+    </div>
+  );
+}
 
-          {!selectedProduct ? (
-            <div className="grid min-h-0 flex-1 place-items-center rounded-xl border border-slate-200 bg-white px-4 text-center text-sm text-slate-500">
-              Selecciona un producto para consultar su disponibilidad.
+function PosProductAvailabilityDialog({
+  product,
+  connected,
+  canReadAvailability,
+  response,
+  onClose,
+}: {
+  product: PosCatalogProduct;
+  connected: boolean;
+  canReadAvailability: boolean;
+  response: Promise<PosProductWarehouseAvailability[]> | null;
+  onClose: () => void;
+}) {
+  const modal = useRef<HTMLElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const [availability, setAvailability] = useState<PosProductWarehouseAvailability[]>([]);
+  const [loading, setLoading] = useState(canReadAvailability && connected);
+  const [error, setError] = useState<string | null>(
+    !canReadAvailability
+      ? "Tu perfil no tiene permiso para consultar existencias por bodega."
+      : !connected
+        ? "Sin conexión al servidor. No es posible consultar existencias en este momento."
+        : null,
+  );
+
+  usePosModalBehavior({ modalRef: modal, initialFocusRef: closeButton, onEscape: onClose });
+
+  useEffect(() => {
+    if (!response) return;
+    let active = true;
+    void response
+      .then((value) => {
+        if (active) setAvailability(value);
+      })
+      .catch((caught) => {
+        if (!active) return;
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+        setError("No fue posible consultar las existencias del servidor.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [response]);
+
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/65 p-4">
+      <section
+        ref={modal}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pos-product-availability-title"
+        data-pos-focus-surface="modal"
+        className="flex max-h-[80dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+      >
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 p-5">
+          <div className="min-w-0">
+            <h2 id="pos-product-availability-title" className="flex items-center gap-2 text-xl font-semibold text-slate-950">
+              <Boxes className="h-5 w-5 text-teal-700" />
+              Existencias por sede y bodega
+            </h2>
+            <p className="mt-1 truncate text-sm text-slate-500">{product.name} · {product.productCode}</p>
+          </div>
+          <button ref={closeButton} type="button" onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-600/20" aria-label="Cerrar existencias">
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+
+        <div className="min-h-56 overflow-y-auto p-5">
+          {loading ? (
+            <div className="grid min-h-48 place-items-center text-sm font-medium text-teal-800" role="status">
+              <span className="flex items-center gap-2"><Loader2 className="h-5 w-5 animate-spin" />Consultando existencias</span>
             </div>
-          ) : availabilityPending ? (
-            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white" aria-busy="true" aria-label="Consultando existencias por bodega">
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                <span>Sede</span><span>Bodega</span><span className="text-right">Existencias</span>
-              </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 px-3 py-3">
-                <span className="h-3 animate-pulse rounded-full bg-slate-200" />
-                <span className="h-3 animate-pulse rounded-full bg-slate-200" />
-                <span className="ml-auto h-3 w-12 animate-pulse rounded-full bg-teal-100" />
-              </div>
-            </div>
-          ) : availabilityError ? (
-            <div className="flex min-h-0 flex-1 items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm text-amber-950">
+          ) : error ? (
+            <div className="flex min-h-40 items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm text-amber-950" role="status">
               {connected ? <ShieldAlert className="h-5 w-5 shrink-0 text-amber-700" /> : <WifiOff className="h-5 w-5 shrink-0 text-amber-700" />}
-              {availabilityError}
+              {error}
             </div>
           ) : (
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-slate-200 bg-white">
+            <div className="overflow-hidden rounded-xl border border-slate-200">
               <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                 <span>Sede</span><span>Bodega</span><span className="text-right">Existencias</span>
               </div>
               {availability.map((item) => (
-                <div key={`${item.businessId}-${item.warehouseId}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] items-center gap-3 border-b border-slate-100 px-3 py-2 text-sm last:border-b-0">
+                <div key={`${item.businessId}-${item.warehouseId}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] items-center gap-3 border-b border-slate-100 px-3 py-3 text-sm last:border-b-0">
                   <span className="truncate font-medium text-slate-800">{item.businessName}{item.isCurrentBusiness && <small className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-bold text-teal-800">Actual</small>}</span>
                   <span className="flex min-w-0 items-center gap-2 truncate text-slate-600"><Warehouse className="h-3.5 w-3.5 shrink-0 text-teal-700" />{item.warehouseName} · {item.warehouseCode}</span>
                   <strong className={`text-right tabular-nums ${item.quantityOnHand < 0 ? "text-red-700" : "text-slate-900"}`}>{item.quantityOnHand.toLocaleString("es-CO", { maximumFractionDigits: 3 })}</strong>
                 </div>
               ))}
               {availability.length === 0 && (
-                <p className="grid min-h-16 place-items-center p-3 text-center text-sm text-slate-500">No hay bodegas operativas para este producto.</p>
+                <p className="grid min-h-28 place-items-center p-4 text-center text-sm text-slate-500">No hay bodegas operativas para este producto.</p>
               )}
             </div>
           )}
-        </section>
+        </div>
       </section>
     </div>
   );

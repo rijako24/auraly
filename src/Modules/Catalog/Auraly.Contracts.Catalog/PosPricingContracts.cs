@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Auraly.Contracts.Catalog;
 
 public sealed record PosPriceChannelDefinition(
@@ -19,7 +21,7 @@ public sealed record PosCustomerPricing(
     bool IsCreditEnabled = false,
     decimal? CreditLimit = null,
     decimal? AvailableCredit = null,
-    int DefaultDueDays = 0,
+    [property: JsonIgnore] int DefaultDueDays = 0,
     DateTimeOffset? PriceChannelValidFrom = null,
     DateTimeOffset? PriceChannelValidUntil = null);
 

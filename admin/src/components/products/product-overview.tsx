@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Barcode, CircleDollarSign, Images, Link2, PackagePlus, Tags, Truck } from "lucide-react";
+import { Barcode, CircleDollarSign, History, Images, Link2, PackagePlus, Tags, Truck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ProductPriceHistoryDialog } from "@/components/pricing/product-price-history-dialog";
 import { ProductFormSection } from "@/components/products/product-create-workspace";
 import { ProductImageGallery } from "@/components/products/product-image-gallery";
 import { ProductInventoryByWarehouse } from "@/components/products/product-inventory-by-warehouse";
@@ -13,8 +15,11 @@ import { productMerchandisingApi } from "@/services/api/product-merchandising";
 import { pricingApi } from "@/services/api/pricing";
 import { productsApi, type Product } from "@/services/api/products";
 import { taxProfilesApi } from "@/services/api/tax-profiles";
+import { useAuthStore } from "@/stores/auth-store";
 
 export function ProductOverview({ product }: { product: Product }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const canReadPriceHistory = useAuthStore((state) => state.user?.permissions.includes("pricing.history.read") ?? false);
   const detail = useQuery({ queryKey: ["catalog-product-detail", product.productId], queryFn: () => productsApi.getCatalog(product.productId) });
   const merchandising = useQuery({ queryKey: ["product-merchandising", product.productId], queryFn: () => productMerchandisingApi.get(product.productId) });
   const pricing = useQuery({ queryKey: ["product-pricing-context", product.productId], queryFn: () => pricingApi.getProductContext(product.productId) });
@@ -34,6 +39,7 @@ export function ProductOverview({ product }: { product: Product }) {
   if (isLoading) return <div className="space-y-5">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-44 animate-pulse rounded-2xl bg-muted" />)}</div>;
 
   return <div className="space-y-5">
+    <ProductPriceHistoryDialog productId={product.productId} productName={product.name} open={historyOpen} onOpenChange={setHistoryOpen} />
     {(detail.isError || merchandising.isError) && <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">No fue posible cargar toda la ficha del producto. Reintenta antes de editar.</div>}
 
     <ProductFormSection id="product-identity" icon={PackagePlus} title="Identidad" description="Lo que el equipo usa para encontrar y reconocer el producto.">
@@ -81,6 +87,7 @@ export function ProductOverview({ product }: { product: Product }) {
     </ProductFormSection>
 
     <ProductFormSection id="product-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decisión explícita.">
+      {canReadPriceHistory && <div className="mb-3 flex justify-end"><Button type="button" variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History className="mr-2 h-4 w-4" />Ver kardex de precio</Button></div>}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Summary label="IVA de venta" value={salesTax ? `${salesTax.name} - ${salesTax.rate}%` : "Sin configurar"} />
         <Summary label="IVA de compra" value={purchaseTax ? `${purchaseTax.name} - ${purchaseTax.rate}%` : "Sin configurar"} />

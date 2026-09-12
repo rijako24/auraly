@@ -1,6 +1,7 @@
 using System.Data;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
+using Auraly.Domain.Inventory;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -73,28 +74,43 @@ public sealed partial class SqlOnlineSalesDraftStore
             P("@DraftId", draftId)
         ]);
 
-        var remaining = new Dictionary<Guid, decimal>();
-        var issues = new List<OnlineSalesInventoryIssue>();
+        var lines = new List<InventoryDemandLine>();
+        var lineDetails = new Dictionary<Guid, (string Code, string Description)>();
+        var availableByInventoryProduct = new Dictionary<Guid, decimal>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            if (!reader.GetBoolean(7)) continue;
+            var lineId = reader.GetGuid(0);
             var inventoryProductId = reader.GetGuid(6);
-            var factor = reader.GetDecimal(5);
-            var available = remaining.TryGetValue(inventoryProductId, out var current)
-                ? current
-                : reader.GetDecimal(8);
-            var requested = reader.GetDecimal(4);
-            var requiredInventory = requested * factor;
-            if (requiredInventory > available)
-            {
-                issues.Add(new OnlineSalesInventoryIssue(
-                    reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
-                    reader.GetString(3), requested,
-                    Math.Max(0, decimal.Round(available / factor, 6))));
-            }
-            remaining[inventoryProductId] = Math.Max(0, available - requiredInventory);
+            lines.Add(new InventoryDemandLine(
+                lineId,
+                reader.GetGuid(1),
+                inventoryProductId,
+                reader.GetDecimal(5),
+                reader.GetDecimal(4),
+                reader.GetBoolean(7)));
+            lineDetails[lineId] = (reader.GetString(2), reader.GetString(3));
+            availableByInventoryProduct.TryAdd(inventoryProductId, reader.GetDecimal(8));
         }
-        return new OnlineSalesInventoryValidation(issues.Count == 0, true, issues);
+
+        var issues = InventoryDemandResolver.AllocateWholeLines(lines, availableByInventoryProduct)
+            .Where(allocation => !allocation.CanReserve)
+            .Select(allocation =>
+            {
+                var detail = lineDetails[allocation.Line.LineId];
+                return new OnlineSalesInventoryIssue(
+                    allocation.Line.LineId,
+                    allocation.Line.ProductId,
+                    detail.Code,
+                    detail.Description,
+                    allocation.Line.Quantity,
+                    Math.Max(0, decimal.Round(
+                        InventoryDemandResolver.InProductUnits(
+                            allocation.AvailableInventoryQuantity,
+                            allocation.Line.InventoryFactor),
+                        6)));
+            })
+            .ToArray();
+        return new OnlineSalesInventoryValidation(issues.Length == 0, true, issues);
     }
 }

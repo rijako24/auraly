@@ -66,3 +66,12 @@ export function useSavePreparedProductPrice() {
     request: import("@/services/api/pricing").PublishProductPriceRequest;
   }) => pricingApi.savePreparedProduct(productId, request));
 }
+
+export function useProductPriceHistory(productId?: string, enabled = true) {
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  return useQuery({
+    queryKey: ["product-price-history", businessId, productId],
+    queryFn: () => pricingApi.getProductHistory(productId!),
+    enabled: enabled && !!businessId && !!productId,
+  });
+}

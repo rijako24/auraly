@@ -1,6 +1,4 @@
 using System.Data;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Auraly.Application.Catalog;
 using Auraly.Contracts.Catalog;
@@ -165,10 +163,11 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             {
                 var price = request.Prices.Single();
                 await ExecuteAsync(connection, transaction, """
-                    UPDATE price
-                    SET PreparedAmount=@PreparedAmount,CostBasisType=N'Manual',CostBasisAmount=@CostBasis,
-                        TargetMarginPercent=@TargetMargin,EffectiveMarginPercent=@TargetMargin,
-                        InputMode=@InputMode,RoundingIncrement=@RoundingIncrement,RoundingMode=@RoundingMode
+                    DECLARE @Targets TABLE(
+                      BusinessId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+                      PublicAmount DECIMAL(19,4) NOT NULL);
+                    INSERT @Targets(BusinessId,PublicAmount)
+                    SELECT price.BusinessId,price.Amount
                     FROM dbo.ProductPrices price
                     INNER JOIN dbo.Businesses currentBusiness ON currentBusiness.BusinessId=@BusinessId
                     INNER JOIN dbo.Businesses targetBusiness ON targetBusiness.BusinessId=price.BusinessId
@@ -178,16 +177,72 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                             AND targetBusiness.SharesProductPrices=1 AND targetBusiness.IsActive=1)
                         OR (currentBusiness.SharesProductPrices=0 AND price.BusinessId=@BusinessId));
                     IF @@ROWCOUNT=0 THROW 51024,'The product has no active base price.',1;
+
+                    DECLARE @CurrentPreparedAmount DECIMAL(19,4),
+                            @CurrentCostBasis DECIMAL(19,6),
+                            @CurrentTargetMargin DECIMAL(9,6),
+                            @CurrentInputMode NVARCHAR(16),
+                            @CurrentRoundingIncrement DECIMAL(19,4),
+                            @CurrentRoundingMode NVARCHAR(16);
+                    SELECT @CurrentPreparedAmount=COALESCE(preparation.PreparedAmount,price.Amount),
+                           @CurrentCostBasis=COALESCE(preparation.CostBasisAmount,price.CostBasisAmount),
+                           @CurrentTargetMargin=COALESCE(preparation.TargetMarginPercent,price.TargetMarginPercent),
+                           @CurrentInputMode=COALESCE(preparation.InputMode,price.InputMode,N'Margin'),
+                           @CurrentRoundingIncrement=COALESCE(preparation.RoundingIncrement,price.RoundingIncrement,1),
+                           @CurrentRoundingMode=COALESCE(preparation.RoundingMode,price.RoundingMode,N'Nearest')
+                    FROM dbo.ProductPrices price
+                    OUTER APPLY (
+                      SELECT TOP(1) pending.PreparedAmount,pending.CostBasisAmount,
+                        pending.TargetMarginPercent,pending.InputMode,
+                        pending.RoundingIncrement,pending.RoundingMode
+                      FROM dbo.ProductPricePreparations pending
+                      WHERE pending.BusinessId=@BusinessId AND pending.ProductId=@ProductId
+                        AND pending.Status=N'Pending'
+                      ORDER BY pending.PreparedAt DESC,pending.ProductPricePreparationId DESC
+                    ) preparation
+                    WHERE price.BusinessId=@BusinessId AND price.ProductId=@ProductId
+                      AND price.IsActive=1;
+
+                    IF @CurrentPreparedAmount<>@PreparedAmount
+                       OR ISNULL(@CurrentCostBasis,-1)<>ISNULL(@CostBasis,-1)
+                       OR ISNULL(@CurrentTargetMargin,-1)<>ISNULL(@TargetMargin,-1)
+                       OR @CurrentInputMode<>@InputMode
+                       OR @CurrentRoundingIncrement<>@RoundingIncrement
+                       OR @CurrentRoundingMode<>@RoundingMode
+                    BEGIN
+                      UPDATE proposal SET Status=N'Superseded'
+                      FROM dbo.PriceRevisionProposals proposal
+                      INNER JOIN @Targets target ON target.BusinessId=proposal.BusinessId
+                      WHERE proposal.ProductId=@ProductId
+                        AND proposal.Status IN(N'PendingReview',N'Approved');
+
+                      UPDATE preparation
+                      SET Status=N'Superseded',SupersededAt=@Now
+                      FROM dbo.ProductPricePreparations preparation
+                      INNER JOIN @Targets target ON target.BusinessId=preparation.BusinessId
+                      WHERE preparation.ProductId=@ProductId AND preparation.Status=N'Pending';
+
+                      INSERT dbo.ProductPricePreparations
+                        (ProductPricePreparationId,BusinessId,ProductId,PreparationOrigin,
+                         PublicAmountSnapshot,PreparedAmount,CostBasisType,CostBasisAmount,
+                         TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,
+                         RoundingMode,Status,PreparedByUserId,PreparedAt)
+                      SELECT NEWID(),target.BusinessId,@ProductId,N'Product',target.PublicAmount,
+                             @PreparedAmount,N'Manual',@CostBasis,@TargetMargin,@TargetMargin,
+                             @InputMode,@RoundingIncrement,@RoundingMode,N'Pending',@UserId,@Now
+                      FROM @Targets target;
+                    END;
                     """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId),
                     P("@PreparedAmount", price.PreparedAmount ?? price.Amount), P("@CostBasis", price.CostBasisAmount),
                     P("@TargetMargin", price.TargetMarginPercent), P("@InputMode", price.InputMode),
-                    P("@RoundingIncrement", price.RoundingIncrement), P("@RoundingMode", price.RoundingMode)], ct);
+                    P("@RoundingIncrement", price.RoundingIncrement), P("@RoundingMode", price.RoundingMode),
+                    P("@UserId", user.UserId), P("@Now", now)], ct);
             }
 
             if (request.Link is { SharesPrice: true } linkedCost)
                 await SqlLinkedProductCostPreparation.PrepareAsync(
                     connection, transaction, user.BusinessId, linkedCost.ParentProductId,
-                    productId, linkedCost.PriceFactor!.Value, ct);
+                    productId, linkedCost.PriceFactor!.Value, user.UserId, now, ct);
 
             if (request.Scale is not null)
             {
@@ -300,7 +355,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@Now", now)], ct);
                 if (child.SharesPrice)
                     await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
-                        productId, child.ChildProductId, child.PriceFactor!.Value, ct);
+                        productId, child.ChildProductId, child.PriceFactor!.Value, user.UserId, now, ct);
             }
 
             foreach (var alias in request.Aliases ?? [])
@@ -531,7 +586,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             (@Cursor IS NULL OR p.ProductId>@Cursor)
             """, [P("@Cursor", cursor), P("@SessionId", sessionId), P("@Take", pageSize)], pageSize, sessionId, ct);
         var next = items.Count == pageSize ? items[^1].ProductId.ToString("D") : null;
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items)))).ToLowerInvariant();
+        var hash = CatalogBootstrapIntegrity.Compute(items);
         return new CatalogBootstrapPage(sessionId, high, next, next is not null, hash, items);
     }
 
@@ -576,7 +631,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             )
             SELECT TOP (@Take) c.CatalogChangeId,c.ChangeKind,p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,
               t.DianTaxCode,t.Rate,pr.Amount,pr.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
-              COALESCE(pr.CostBasisAmount,0),p.ManageStock,
+              COALESCE(pr.CostBasisAmount,0),
+              CAST(CASE WHEN p.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit),
               COALESCE((SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),N'[]'),
               COALESCE((SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),N'[]'),
               s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces,
@@ -585,7 +641,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                         FROM CategoryAncestors ancestor
                         WHERE ancestor.DescendantId=p.ProductCategoryId),N''),
               averageCost.Amount,latestCost.Amount,
-              COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent)
+              COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent),
+              COALESCE(inventoryLink.ParentProductId,p.ProductId),
+              COALESCE(inventoryLink.InventoryFactor,1)
             FROM LatestProductChanges c
             JOIN dbo.Products p ON p.ProductId=c.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
@@ -595,6 +653,10 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               AND warehouseValue.BusinessId=b.BusinessId AND warehouseValue.IsActive=1
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=c.BusinessId AND pr.IsActive=1
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
+            LEFT JOIN dbo.ProductLinks inventoryLink
+              ON inventoryLink.BusinessId=@BusinessId
+             AND inventoryLink.ChildProductId=p.ProductId
+             AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
             OUTER APPLY
             (
               SELECT COALESCE(MAX(NULLIF(balance.AverageUnitCost,0)),pr.CostBasisAmount,0) Amount
@@ -753,7 +815,25 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     private const string ProductSelect = """
         SELECT p.ProductId,@BusinessId,COALESCE(p.ProductCode,p.Sku),p.Reference,p.Name,p.IsActive,
           (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes barcode WHERE barcode.ProductId=p.ProductId AND barcode.BusinessId=@BusinessId AND barcode.IsActive=1 FOR JSON PATH),
-          (SELECT Amount,CurrencyCode,CostBasisAmount,TargetMarginPercent,PreparedAmount,InputMode,RoundingIncrement,RoundingMode FROM dbo.ProductPrices x WHERE x.ProductId=p.ProductId AND x.BusinessId=@BusinessId AND x.IsActive=1 FOR JSON PATH),
+          (SELECT price.Amount,price.CurrencyCode,
+                  COALESCE(preparation.CostBasisAmount,price.CostBasisAmount) CostBasisAmount,
+                  COALESCE(preparation.TargetMarginPercent,price.TargetMarginPercent) TargetMarginPercent,
+                  COALESCE(preparation.PreparedAmount,price.Amount) PreparedAmount,
+                  COALESCE(preparation.InputMode,price.InputMode,N'Margin') InputMode,
+                  COALESCE(preparation.RoundingIncrement,price.RoundingIncrement,1) RoundingIncrement,
+                  COALESCE(preparation.RoundingMode,price.RoundingMode,N'Nearest') RoundingMode
+             FROM dbo.ProductPrices price
+             OUTER APPLY (
+               SELECT TOP(1) pending.PreparedAmount,pending.CostBasisAmount,
+                 pending.TargetMarginPercent,pending.InputMode,
+                 pending.RoundingIncrement,pending.RoundingMode
+               FROM dbo.ProductPricePreparations pending
+               WHERE pending.BusinessId=price.BusinessId AND pending.ProductId=price.ProductId
+                 AND pending.Status=N'Pending'
+               ORDER BY pending.PreparedAt DESC,pending.ProductPricePreparationId DESC
+             ) preparation
+             WHERE price.ProductId=p.ProductId AND price.BusinessId=@BusinessId
+               AND price.IsActive=1 FOR JSON PATH),
           (SELECT s.SupplierId,s.Identification,s.Name,sp.SupplierProductCode,c.BaseUnitCost,sp.IsPrimary,sp.PurchasePresentationName,sp.UnitsPerPresentation
              FROM dbo.SupplierProducts sp JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId
              JOIN dbo.SupplierCostAgreements c ON c.SupplierProductId=sp.SupplierProductId AND c.IsActive=1
@@ -818,7 +898,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             )
             SELECT TOP (@Take) p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,t.DianTaxCode,t.Rate,
               pr.Amount,pr.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
-              COALESCE(pr.CostBasisAmount,0),p.ManageStock,
+              COALESCE(pr.CostBasisAmount,0),
+              CAST(CASE WHEN p.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit),
               (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),
               (SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),
               s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces,
@@ -827,13 +908,19 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                         FROM CategoryAncestors ancestor
                         WHERE ancestor.DescendantId=p.ProductCategoryId),N''),
               averageCost.Amount,latestCost.Amount,
-              COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent)
+              COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent),
+              COALESCE(inventoryLink.ParentProductId,p.ProductId),
+              COALESCE(inventoryLink.InventoryFactor,1)
             FROM dbo.CatalogSyncSessions ss
             JOIN dbo.CatalogSyncSessionProducts ssp ON ssp.CatalogSyncSessionId=ss.CatalogSyncSessionId
             JOIN dbo.Products p ON p.ProductId=ssp.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=ss.BusinessId AND pr.IsActive=1
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
+            LEFT JOIN dbo.ProductLinks inventoryLink
+              ON inventoryLink.BusinessId=ss.BusinessId
+             AND inventoryLink.ChildProductId=p.ProductId
+             AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
             OUTER APPLY
             (
               SELECT COALESCE(MAX(NULLIF(balance.AverageUnitCost,0)),pr.CostBasisAmount,0) Amount
@@ -878,7 +965,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             reader.GetString(offset + 25).Split(',', StringSplitOptions.RemoveEmptyEntries)
                 .Select(Guid.Parse).ToArray(),
             reader.GetDecimal(offset + 26),reader.GetDecimal(offset + 27),
-            reader.IsDBNull(offset + 28) ? null : reader.GetDecimal(offset + 28));
+            reader.IsDBNull(offset + 28) ? null : reader.GetDecimal(offset + 28),
+            reader.GetGuid(offset + 29),reader.GetDecimal(offset + 30));
     }
 
     private static T[] DeserializeArray<T>(SqlDataReader reader, int ordinal) =>

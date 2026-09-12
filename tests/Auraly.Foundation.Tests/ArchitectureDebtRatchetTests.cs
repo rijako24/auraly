@@ -60,6 +60,39 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void Sales_and_orders_share_the_canonical_inventory_demand_resolver()
+    {
+        var owners = new[]
+        {
+            Path.Combine("src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+                "SqlOnlineSalesDraftStore.cs"),
+            Path.Combine("src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+                "SqlOnlineSalesDraftStore.InventoryValidation.cs"),
+            Path.Combine("src", "Pos", "Auraly.Pos.Edge.Infrastructure", "PosCaptureService.cs"),
+            Path.Combine("src", "API", "Auraly.Api", "SellerOrdersApi.cs")
+        };
+        foreach (var owner in owners)
+            Assert.Contains(
+                "InventoryDemandResolver.",
+                File.ReadAllText(Path.Combine(RepositoryRoot, owner)),
+                StringComparison.Ordinal);
+
+        var resolver = Path.Combine(
+            RepositoryRoot, "src", "Modules", "Inventory",
+            "Auraly.Domain.Inventory", "InventoryDemandResolver.cs");
+        var duplicatedArithmetic = new Regex(
+            @"\.Quantity\s*\*\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?InventoryFactor",
+            RegexOptions.IgnoreCase);
+        var violations = CSharpFiles("src")
+            .Where(file => !string.Equals(file, resolver, StringComparison.OrdinalIgnoreCase))
+            .Where(file => duplicatedArithmetic.IsMatch(File.ReadAllText(file)))
+            .Select(file => Path.GetRelativePath(RepositoryRoot, file))
+            .ToArray();
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
     public void CanonicalEngines_AreNotDuplicated()
     {
         AssertSingleClass("DocumentProcessingEngine");
@@ -215,8 +248,14 @@ public sealed class ArchitectureDebtRatchetTests
         var sellerSource = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "API", "Auraly.Api", "SellerOrdersApi.cs"));
         Assert.Contains("Procedure(\"dbo.SellerOrderCreate\",connection,transaction)", sellerSource, StringComparison.Ordinal);
+        Assert.Contains("FindEditableAsync(connection,transaction", sellerSource, StringComparison.Ordinal);
         Assert.Contains("ConfirmSystemTransferAtomicallyAsync", sellerSource, StringComparison.Ordinal);
         Assert.Contains("Procedure(\"dbo.SellerOrderConfirm\",connection,transaction)", sellerSource, StringComparison.Ordinal);
+
+        var editableOrderSql = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "database", "Auraly.Database", "StoredProcedures", "SellerOrderEditableGet.sql"));
+        Assert.Contains("WITH(UPDLOCK,HOLDLOCK)", editableOrderSql, StringComparison.Ordinal);
+        Assert.Contains("ReservedQuantity", editableOrderSql, StringComparison.Ordinal);
 
         var checkoutReleaseSource = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",

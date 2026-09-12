@@ -185,6 +185,20 @@ dotnet publish `
 if ($LASTEXITCODE -ne 0) { throw 'La publicación de Auraly Desktop falló.' }
 
 Copy-Item -Path (Join-Path $desktopPublish "*") -Destination $payload -Recurse -Force
+$requiredDesktopRuntimeFiles = @(
+    'Auraly.Desktop.exe',
+    'Auraly.Desktop.runtimeconfig.json',
+    'hostfxr.dll',
+    'hostpolicy.dll',
+    'coreclr.dll',
+    'System.Private.CoreLib.dll'
+)
+foreach ($requiredRuntimeFile in $requiredDesktopRuntimeFiles) {
+    $requiredRuntimePath = Join-Path $payload $requiredRuntimeFile
+    if (-not (Test-Path -LiteralPath $requiredRuntimePath -PathType Leaf)) {
+        throw "La publicación autocontenida de Auraly Desktop no produjo '$requiredRuntimeFile'."
+    }
+}
 $node = (Get-Command node.exe -ErrorAction Stop).Source
 Copy-Item -LiteralPath $node -Destination $runtime
 Copy-Item -Path (Join-Path $root "admin\.next\standalone\*") `

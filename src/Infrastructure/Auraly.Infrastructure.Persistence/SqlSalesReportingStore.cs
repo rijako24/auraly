@@ -143,6 +143,7 @@ public sealed class SqlSalesReportingStore(
             SUM(CONVERT(bigint,CASE WHEN Status IN(2,3,4) THEN 1 ELSE 0 END)),SUM(CONVERT(bigint,CASE WHEN RequiresStockReview=1 OR Status=5 THEN 1 ELSE 0 END)),
             SUM(CONVERT(bigint,CASE WHEN InvoiceDocumentId IS NOT NULL THEN 1 ELSE 0 END))
           FROM reporting.CommercialReportOrderFacts WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND CreatedDate BETWEEN @From AND @To
+            AND SellerId IS NOT NULL
             AND (@AccessSellerId IS NULL OR SellerId=@AccessSellerId)
           GROUP BY SellerId,SellerName ORDER BY SUM(TotalAmount) DESC,SellerName;
           """,connection);

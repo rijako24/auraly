@@ -70,7 +70,7 @@ public sealed record CommercialVisitReportPage(
     long VisitedCount,long OrderedCount,decimal EffectivenessPercent);
 
 public sealed record CommercialOrderProjectionSource(Guid TenantId,Guid BusinessId,Guid OrderId,
-    DateOnly CreatedDate,DateTimeOffset CreatedAt,string OrderNumber,Guid SellerId,string SellerName,
+    DateOnly CreatedDate,DateTimeOffset CreatedAt,string OrderNumber,Guid? SellerId,string? SellerName,
     Guid CustomerId,string CustomerName,Guid? RouteId,decimal TotalAmount,int Status,bool RequiresStockReview,
     Guid? PartySiteId=null,Guid? RouteStopId=null,Guid? ZoneId=null,string? RouteName=null,string? ZoneName=null,
     string SourceChannel="SellerOrder",bool CapturedOffline=false,DateTimeOffset? ConfirmedAt=null,

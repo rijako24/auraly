@@ -384,7 +384,7 @@ public static class PosEdgeHostApplication
                 await context.Response.WriteAsJsonAsync(new
                 {
                     code = "OrderServerRejected",
-                    detail = "El servidor rechaz\u00F3 la operaci\u00F3n de pedidos."
+                    detail = error.Message
                 });
             }            catch (InvalidOperationException error)
                 when (string.Equals(
@@ -607,6 +607,7 @@ public static class PosEdgeHostApplication
             PosLocalSessionAccessor sessions,
             PosLocalIdentityStore identities,
             PosLocalWorkSessionStore workSessions,
+            PosEnrollmentSessionCompleter enrollmentCompletion,
             PosSynchronizationSignal synchronization,
             CancellationToken ct) =>
         {
@@ -616,6 +617,8 @@ public static class PosEdgeHostApplication
             if (authenticated.WorkSessionId != active.WorkSessionId)
                 await identities.AssignWorkSessionAsync(
                     authenticated.SessionId, active.WorkSessionId, ct);
+            await enrollmentCompletion.AcknowledgeAsync(
+                authenticated.UserId, ct);
             synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
             return Results.Ok(authenticated with
             {
@@ -701,6 +704,7 @@ public static class PosEdgeHostApplication
             PosServerConnectionState server,
             PosPushConnectionState push,
             PosWorkstationIdentity workstation,
+            PosEdgeEnrollmentStore enrollments,
             PosCatalogStore catalog,
             PosLocalIdentityStore identities,
             PosEdgeSaleStore sales,
@@ -776,6 +780,8 @@ public static class PosEdgeHostApplication
                 fiscalWarnings,
                 permissions = user?.Permissions ?? Array.Empty<string>(),
                 identityReady,
+                initialEnrollmentSessionAvailable =
+                    enrollments.Load()?.InitialOfflineAccess is not null,
                 catalogStatus = catalogStatus.Status,
                 catalogCursor = catalogStatus.Cursor,
                 catalogUpdatedAt = catalogStatus.UpdatedAt,
@@ -905,7 +911,7 @@ public static class PosEdgeHostApplication
             var hasMore = values.Length > pageSize;
             return Results.Ok(new
             {
-                items = values.Take(pageSize),
+                items = values.Take(pageSize).Select(PosCustomerView.From),
                 hasMore,
                 nextOffset = hasMore ? offset + pageSize : (int?)null
             });
@@ -937,7 +943,8 @@ public static class PosEdgeHostApplication
                 customer.Identification);
             synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
             return Results.Accepted(
-                $"/edge/v1/customers/{customer.CustomerId:D}", customer);
+                $"/edge/v1/customers/{customer.CustomerId:D}",
+                PosCustomerView.From(customer));
         });
         edge.MapGet("/customers/{customerId:guid}", async (
             Guid customerId,
@@ -945,7 +952,9 @@ public static class PosEdgeHostApplication
             CancellationToken ct) =>
         {
             var customer = await catalog.GetCustomerAsync(customerId, ct);
-            return customer is null ? Results.NotFound() : Results.Ok(customer);
+            return customer is null
+                ? Results.NotFound()
+                : Results.Ok(PosCustomerView.From(customer));
         });
         edge.MapGet("/sales", async (
             string? search,
@@ -1085,10 +1094,11 @@ public static class PosEdgeHostApplication
         {
             try
             {
-                return Results.Ok(await customers.SelectAsync(
-                    new DraftId(draftId),
-                    request.CustomerId,
-                    ct));
+                return Results.Ok(PosCustomerSelectionView.From(
+                    await customers.SelectAsync(
+                        new DraftId(draftId),
+                        request.CustomerId,
+                        ct)));
             }
             catch (KeyNotFoundException error)
             {

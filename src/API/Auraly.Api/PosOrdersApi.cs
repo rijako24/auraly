@@ -62,6 +62,20 @@ public static class PosOrdersApi
                 return await orders.GetAsync(actor, orderId, ct);
             }));
 
+        group.MapPost("/print-batch", async (
+            HttpContext context,
+            PosPrintOrdersRequest request,
+            OrderService orders,
+            IPosOrderActorResolver actors,
+            CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var actor = await actors.ResolveAsync(
+                    context.User.ToPosDeviceIdentity(), request.ToExecutionContext(), ct);
+                return await orders.GetPrintBatchAsync(
+                    actor, new OrderPrintBatchRequest(request.OrderIds), ct);
+            }));
+
         group.MapPost("/{orderId:guid}/claim", async (
             HttpContext context,
             Guid orderId,
@@ -191,6 +205,17 @@ public sealed record PosInvoiceOrdersRequest(
     string DocumentType = "SalesInvoice",
     Guid? BankAccountId = null,
     string? PaymentNotes = null)
+{
+    public PosOrderExecutionContext ToExecutionContext() =>
+        new(UserId, BusinessId, WarehouseId, WorkSessionId);
+}
+
+public sealed record PosPrintOrdersRequest(
+    Guid UserId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    Guid WorkSessionId,
+    IReadOnlyCollection<Guid> OrderIds)
 {
     public PosOrderExecutionContext ToExecutionContext() =>
         new(UserId, BusinessId, WarehouseId, WorkSessionId);

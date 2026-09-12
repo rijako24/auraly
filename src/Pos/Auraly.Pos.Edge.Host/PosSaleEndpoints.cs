@@ -21,8 +21,7 @@ public sealed record CompletePaymentRequest(
     string? Notes = null);
 
 public sealed record CompleteCreditRequest(
-    decimal Amount,
-    DateTimeOffset DueDate);
+    decimal Amount);
 
 public sealed record CompleteDraftRequest(
     string? CustomerIdentification,
@@ -199,15 +198,17 @@ internal static class PosSaleHostModule
                     var validation = await creditServer.ValidateAsync(
                         customerId,
                         request.Credit.Amount,
-                        request.Credit.DueDate,
                         PosSaleDocumentTypes.IsFiscal(request.DocumentType)
                             ? (int?)fiscalRuntime.Current?.Environment
                             : null,
                         ct);
+                    var dueDate = validation.DueDate
+                        ?? throw new InvalidOperationException(
+                            "Auraly Server no devolvió el vencimiento de la cartera.");
                     credit = new PosSaleCreditTerms(
                         customerId,
                         request.Credit.Amount,
-                        request.Credit.DueDate);
+                        dueDate);
                     if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
                     {
                         var fiscal = fiscalRuntime.Current

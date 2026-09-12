@@ -42,6 +42,7 @@ public sealed class EscPosReceiptRenderer
             : receipt.CompanyName);
         Write(stream, NormalSize);
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
+        var isOrder = receipt.DocumentType == "Order";
         WriteBoldLine(stream, PosReceiptPresentation.Title(receipt));
         WriteBoldLine(stream, PosReceiptPresentation.DisplayNumber(receipt));
         WriteLine(stream, receipt.IssuedAt.ToLocalTime()
@@ -66,43 +67,49 @@ public sealed class EscPosReceiptRenderer
                 WriteLine(stream, Right($"Descuento {Money(line.Discount)}", columns));
         }
         WriteLine(stream, new string('-', columns));
-        WriteLine(stream, Pair("Subtotal", Money(receipt.UntaxedAmount), columns));
-        WriteBoldLine(stream, "Impuestos por tarifa");
-        WriteBoldLine(stream, TaxRow("Impuesto", "Base", "Valor", columns));
-        foreach (var tax in receipt.Lines
-                     .GroupBy(line => new { line.TaxCode, line.TaxRate })
-                     .Select(group => new
-                     {
-                         group.Key.TaxCode,
-                         group.Key.TaxRate,
-                         Base = group.Sum(line => line.Total - line.Tax),
-                         Amount = group.Sum(line => line.Tax)
-                     })
-                     .OrderBy(value => value.TaxCode, StringComparer.Ordinal)
-                     .ThenBy(value => value.TaxRate))
+        if (!isOrder)
         {
-            WriteLine(stream, TaxRow(
-                $"{TaxName(tax.TaxCode)} {Rate(tax.TaxRate)}%",
-                Money(tax.Base),
-                Money(tax.Amount),
-                columns));
+            WriteLine(stream, Pair("Subtotal", Money(receipt.UntaxedAmount), columns));
+            WriteBoldLine(stream, "Impuestos por tarifa");
+            WriteBoldLine(stream, TaxRow("Impuesto", "Base", "Valor", columns));
+            foreach (var tax in receipt.Lines
+                         .GroupBy(line => new { line.TaxCode, line.TaxRate })
+                         .Select(group => new
+                         {
+                             group.Key.TaxCode,
+                             group.Key.TaxRate,
+                             Base = group.Sum(line => line.Total - line.Tax),
+                             Amount = group.Sum(line => line.Tax)
+                         })
+                         .OrderBy(value => value.TaxCode, StringComparer.Ordinal)
+                         .ThenBy(value => value.TaxRate))
+            {
+                WriteLine(stream, TaxRow(
+                    $"{TaxName(tax.TaxCode)} {Rate(tax.TaxRate)}%",
+                    Money(tax.Base),
+                    Money(tax.Amount),
+                    columns));
+            }
+            WriteLine(stream, Pair("Total impuestos", Money(receipt.TaxAmount), columns));
+            if (receipt.WithholdingTotal > 0)
+                WriteLine(stream, Pair("Total bruto", Money(receipt.PayableAmount), columns));
+            foreach (var withholding in receipt.Withholdings ?? [])
+                WriteLine(stream, Pair(
+                    $"Ret. {withholding.Name}",
+                    $"-{Money(withholding.Amount)}", columns));
+            if (receipt.WithholdingTotal > 0)
+                WriteLine(stream, Pair("Total retenciones", $"-{Money(receipt.WithholdingTotal)}", columns));
         }
-        WriteLine(stream, Pair("Total impuestos", Money(receipt.TaxAmount), columns));
-        if (receipt.WithholdingTotal > 0)
-            WriteLine(stream, Pair("Total bruto", Money(receipt.PayableAmount), columns));
-        foreach (var withholding in receipt.Withholdings ?? [])
-            WriteLine(stream, Pair(
-                $"Ret. {withholding.Name}",
-                $"-{Money(withholding.Amount)}", columns));
-        if (receipt.WithholdingTotal > 0)
-            WriteLine(stream, Pair("Total retenciones", $"-{Money(receipt.WithholdingTotal)}", columns));
         WriteBoldLine(stream, Pair(
             "Total",
             Money(receipt.WithholdingTotal > 0 ? receipt.NetPayableAmount : receipt.PayableAmount),
             columns));
-        WriteBoldLine(stream, "Medios de pago");
-        foreach (var payment in receipt.Payments)
-            WriteBoldLine(stream, Pair(PaymentName(payment.MethodCode), Money(payment.Amount), columns));
+        if (!isOrder)
+        {
+            WriteBoldLine(stream, "Medios de pago");
+            foreach (var payment in receipt.Payments)
+                WriteBoldLine(stream, Pair(PaymentName(payment.MethodCode), Money(payment.Amount), columns));
+        }
         WriteLine(stream, new string('-', columns));
         if (isFiscal)
         {
@@ -116,7 +123,7 @@ public sealed class EscPosReceiptRenderer
         WriteBoldLine(stream, isFiscal
             ? "Factura emitida por Auraly"
             : "Comprobante emitido por Auraly");
-        WriteLine(stream, "www.auralyapp.co");
+        WriteLine(stream, isOrder ? "www.auralyapp.com" : "www.auralyapp.co");
         WriteLine(stream, string.Empty);
         WriteLine(stream, string.Empty);
         Write(stream, Cut);
@@ -250,7 +257,9 @@ public sealed class EscPosReceiptRenderer
 internal static class PosReceiptPresentation
 {
     public static string Title(PosReceipt receipt) =>
-        PosSaleDocumentTypes.IsFiscal(receipt.DocumentType)
+        receipt.DocumentType == "Order"
+            ? "Pedido"
+            : PosSaleDocumentTypes.IsFiscal(receipt.DocumentType)
             ? "Factura electronica de venta"
             : "Comprobante de venta";
 

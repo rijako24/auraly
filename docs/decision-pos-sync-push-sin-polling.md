@@ -162,9 +162,19 @@ usuarios POS autorizados; nunca se repite por cliente. Después, la caja abre co
 su última versión íntegra y la puesta al día ocurre en segundo plano, activada
 por el handshake.
 
-Si la preparación inicial falla, conserva sus checkpoints, expone una causa
-segura y queda pausada. Solo la acción manual **Reintentar preparación** vuelve a
-ejecutarla; no hay reintento automático.
+La página de catálogo usa `CatalogBootstrapIntegrity` como único propietario del
+digest en servidor, Edge y pruebas. Su núcleo estable cubre el contrato vendible
+y no incorpora campos aditivos: desplegar servidor e instalador en distinto orden
+no puede invalidar una página válida. Los campos extendidos conservan sus
+validaciones de dominio y persistencia al aplicarse en SQLite.
+
+Si la preparación inicial falla por DNS, timeout o una respuesta temporal,
+conserva sus checkpoints y ejecuta como máximo tres reintentos automáticos con
+espera creciente de 5, 10 y 20 segundos. Después queda pausada, expone una causa
+segura y solo la acción manual **Reintentar preparación** inicia una serie nueva.
+Los errores permanentes no se reintentan automáticamente. La preparación no
+ofrece acciones equivalentes de salida o reenrolamiento: conserva únicamente la
+navegación global **Volver**.
 
 Un precio nuevo no repricia silenciosamente una línea ya capturada. Se usa en
 líneas posteriores o mediante una acción explícita, autorizada y confirmada.

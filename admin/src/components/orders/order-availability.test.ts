@@ -53,6 +53,17 @@ test("un pedido sin reclamo conserva el estado disponible", () => {
   );
 });
 
+test("un pedido con inventario insuficiente se presenta como revisión", () => {
+  const availability = getOrderAvailability({
+    orderId: "order-review",
+    canInvoice: false,
+    status: "InReview",
+    claim: null,
+  });
+  assert.equal(availability.label, "Requiere revisión");
+  assert.equal(availability.actionLabel, "Revisar");
+});
+
 test("el pedido cargado queda ocupado aunque el listado todavía no refleje el reclamo", () => {
   assert.deepEqual(
     getOrderAvailability(

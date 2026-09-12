@@ -10,6 +10,7 @@ test("preserves the recovered order price and discount when building update line
       quantity: 3,
       unitPrice: 12_500,
       discount: 2_500,
+      priceSource: "PriceChannel",
     },
   ]);
 
@@ -19,6 +20,7 @@ test("preserves the recovered order price and discount when building update line
       quantity: 3,
       unitPrice: 12_500,
       discountAmount: 2_500,
+      priceSource: "PriceChannel",
     },
   ]);
 });

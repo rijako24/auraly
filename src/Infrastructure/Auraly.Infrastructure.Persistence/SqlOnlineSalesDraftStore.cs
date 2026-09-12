@@ -7,6 +7,7 @@ using Auraly.Application.Inventory;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.Authorization;
+using Auraly.Domain.Inventory;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -99,13 +100,11 @@ public sealed partial class SqlOnlineSalesDraftStore(
             connection, transaction, state.BusinessId, state.WarehouseId,
             productId, cancellationToken);
         DemandAllowedQuantity(product.AllowsFractionalSale, quantity);
-        var totalQuantity = (await ReadLineProductsAsync(
-            connection, transaction, draftId, cancellationToken))
-            .Where(line => line.ProductId == productId)
-            .Sum(line => line.Quantity) + quantity;
+        var totalQuantity = await ReadProductQuantityAsync(
+            connection, transaction, draftId, productId, null, cancellationToken) + quantity;
         await DemandInventoryAsync(
-            connection, transaction, state, productId, product.ManagesStock,
-            totalQuantity, cancellationToken);
+            connection, transaction, state, draftId, productId, null,
+            quantity, cancellationToken);
         await ExecuteAsync(connection, transaction, """
                 INSERT dbo.SalesDraftLines(
                   SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
@@ -177,13 +176,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
         var product = await ReadProductAsync(
             connection, transaction, state.BusinessId, state.WarehouseId, line.ProductId, cancellationToken);
         DemandAllowedQuantity(product.AllowsFractionalSale, quantity);
-        var totalQuantity = (await ReadLineProductsAsync(
-                connection, transaction, draftId, cancellationToken))
-            .Where(candidate => candidate.ProductId == line.ProductId && candidate.LineId != lineId)
-            .Sum(candidate => candidate.Quantity) + quantity;
         await DemandInventoryAsync(
-            connection, transaction, state, line.ProductId, product.ManagesStock,
-            totalQuantity, cancellationToken);
+            connection, transaction, state, draftId, line.ProductId, lineId,
+            quantity, cancellationToken);
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE dbo.SalesDraftLines
             SET Quantity=@Quantity
@@ -661,7 +656,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
                    COALESCE(t.Code,N'01'),COALESCE(t.Rate,0),
                    price.Amount,
                    price.CurrencyCode,p.AllowsFractionalSale,
-                    COALESCE(NULLIF(balance.AverageUnitCost,0),price.CostBasisAmount,0),p.ManageStock,
+                    COALESCE(NULLIF(balance.AverageUnitCost,0),price.CostBasisAmount,0),
+                    CAST(CASE WHEN p.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit),
                     p.CategoryName,p.ProductCategoryId,p.ProductBrandId,
                     COALESCE((SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),ancestor.ProductCategoryId),N',')
                               FROM ProductCategoryAncestors ancestor),N''),
@@ -681,6 +677,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
             ) price
             LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId
               AND balance.ProductId=p.ProductId AND balance.WarehouseId=@WarehouseId
+            LEFT JOIN dbo.ProductLinks inventoryLink
+              ON inventoryLink.BusinessId=@BusinessId
+             AND inventoryLink.ChildProductId=p.ProductId
+             AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
             OUTER APPLY
             (
               SELECT COALESCE(
@@ -907,6 +907,29 @@ public sealed partial class SqlOnlineSalesDraftStore(
         return result;
     }
 
+    private static async Task<decimal> ReadProductQuantityAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid draftId,
+        Guid productId,
+        Guid? excludedLineId,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT COALESCE(SUM(Quantity),0)
+            FROM dbo.SalesDraftLines WITH (UPDLOCK,HOLDLOCK)
+            WHERE SalesDraftId=@DraftId AND ProductId=@ProductId
+              AND (@ExcludedLineId IS NULL OR SalesDraftLineId<>@ExcludedLineId);
+            """;
+        command.Parameters.AddRange([
+            P("@DraftId", draftId), P("@ProductId", productId),
+            P("@ExcludedLineId", excludedLineId)
+        ]);
+        return Convert.ToDecimal(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
+    }
+
     private static async Task<OnlineSalesCustomer?> ReadCustomerAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -924,7 +947,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                    CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
                           AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
                         THEN s.PriceChannelId END,c.RequiresElectronicInvoice,
-                   CAST(COALESCE(cp.IsCreditEnabled,0) AS bit),COALESCE(cp.DefaultDueDays,0),
+                   CAST(COALESCE(cp.IsCreditEnabled,0) AS bit),
                    CASE WHEN cp.CreditLimit IS NULL THEN NULL
                         ELSE CASE WHEN cp.CreditLimit-COALESCE(balance.Outstanding,0)<0 THEN 0
                                   ELSE cp.CreditLimit-COALESCE(balance.Outstanding,0) END END
@@ -946,8 +969,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             ? new(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2).Trim(),
                 reader.IsDBNull(3) ? null : reader.GetGuid(3),
-                reader.GetBoolean(4), reader.GetBoolean(5), reader.GetInt32(6),
-                reader.IsDBNull(7) ? null : reader.GetDecimal(7))
+                reader.GetBoolean(4), reader.GetBoolean(5),
+                reader.IsDBNull(6) ? null : reader.GetDecimal(6))
             : null;
     }
 
@@ -955,37 +978,77 @@ public sealed partial class SqlOnlineSalesDraftStore(
         SqlConnection connection,
         SqlTransaction transaction,
         DraftState state,
+        Guid draftId,
         Guid productId,
-        bool managesStock,
-        decimal requestedQuantity,
+        Guid? excludedLineId,
+        decimal selectedQuantity,
         CancellationToken ct)
     {
-        if (!managesStock || state.WarehouseAllowsNegativeStock) return;
+        if (state.WarehouseAllowsNegativeStock) return;
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT COALESCE(balance.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
+            DECLARE @InventoryProductId UNIQUEIDENTIFIER;
+            DECLARE @SelectedFactor DECIMAL(19,6);
+            DECLARE @ManagesStock BIT;
+            SELECT @InventoryProductId=COALESCE(link.ParentProductId,p.ProductId),
+                   @SelectedFactor=COALESCE(NULLIF(link.InventoryFactor,0),1),
+                   @ManagesStock=CAST(CASE WHEN p.ManageStock=1 OR link.ProductLinkId IS NOT NULL
+                                           THEN 1 ELSE 0 END AS BIT)
             FROM dbo.Products p
             LEFT JOIN dbo.ProductLinks link
               ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
-            LEFT JOIN dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
-              ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
-             AND balance.ProductId=COALESCE(link.ParentProductId,p.ProductId)
             WHERE p.ProductId=@ProductId
               AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
-            ;
+                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
+
+            DECLARE @Available DECIMAL(19,6)=COALESCE((
+              SELECT balance.QuantityOnHand
+              FROM dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
+              WHERE balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
+                AND balance.ProductId=@InventoryProductId),0);
+            SELECT @InventoryProductId,@SelectedFactor,@ManagesStock,@Available;
+
+            SELECT line.SalesDraftLineId,line.ProductId,line.Quantity,
+                   COALESCE(lineLink.ParentProductId,line.ProductId),
+                   COALESCE(NULLIF(lineLink.InventoryFactor,0),1),
+                   CAST(CASE WHEN lineProduct.ManageStock=1 OR lineLink.ProductLinkId IS NOT NULL
+                             THEN 1 ELSE 0 END AS BIT)
+            FROM dbo.SalesDraftLines line WITH (UPDLOCK,HOLDLOCK)
+            JOIN dbo.Products lineProduct ON lineProduct.ProductId=line.ProductId
+            LEFT JOIN dbo.ProductLinks lineLink
+              ON lineLink.BusinessId=@BusinessId AND lineLink.ChildProductId=line.ProductId
+             AND lineLink.SharesInventory=1 AND lineLink.IsActive=1
+            WHERE line.SalesDraftId=@DraftId
+              AND COALESCE(lineLink.ParentProductId,line.ProductId)=@InventoryProductId
+              AND (@ExcludedLineId IS NULL OR line.SalesDraftLineId<>@ExcludedLineId);
             """;
         command.Parameters.AddRange([
             P("@BusinessId", state.BusinessId), P("@WarehouseId", state.WarehouseId),
-            P("@ProductId", productId)
+            P("@DraftId", draftId), P("@ProductId", productId),
+            P("@ExcludedLineId", excludedLineId)
         ]);
-        var scalar = await command.ExecuteScalarAsync(ct);
-        var available = scalar is null or DBNull ? 0m : Convert.ToDecimal(scalar, CultureInfo.InvariantCulture);
-        if (available < requestedQuantity)
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new OnlineSalesDraftValidationException("El producto ya no está disponible.");
+        var inventoryProductId = reader.GetGuid(0);
+        var selectedFactor = reader.GetDecimal(1);
+        var managesStock = reader.GetBoolean(2);
+        var available = reader.GetDecimal(3);
+        var demandLines = new List<InventoryDemandLine>();
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            demandLines.Add(new(
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(3),
+                reader.GetDecimal(4), reader.GetDecimal(2), reader.GetBoolean(5)));
+        demandLines.Add(new(
+            Guid.Empty, productId, inventoryProductId, selectedFactor,
+            selectedQuantity, managesStock));
+        var demand = InventoryDemandResolver.Resolve(demandLines).SingleOrDefault();
+        if (demand is not null && available < demand.RequiredInventoryQuantity)
             throw new OnlineSalesDraftValidationException(
-                $"Inventario insuficiente. Disponible: {Invariant(available)}.");
+                $"Inventario insuficiente. Disponible: {Invariant(InventoryDemandResolver.InProductUnits(available, selectedFactor))}.");
     }
 
     private static async Task<OnlineSalesDraft> ReadDraftAsync(
@@ -1015,10 +1078,16 @@ public sealed partial class SqlOnlineSalesDraftStore(
         details.CommandText = """
             SELECT line.SalesDraftLineId,line.ProductId,line.ProductCode,line.Description,line.UnitCode,
                    line.TaxCode,line.TaxRate,line.Quantity,line.BaseUnitPrice,line.UnitPrice,line.CurrencyCode,
-                   line.PriceSource,line.DiscountAmount,line.DocumentUnitCost,product.ManageStock,product.AllowsFractionalSale,
+                   line.PriceSource,line.DiscountAmount,line.DocumentUnitCost,
+                   CAST(CASE WHEN product.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit),
+                   product.AllowsFractionalSale,
                    line.PromotionDiscountAmount
             FROM dbo.SalesDraftLines line
             JOIN dbo.Products product ON product.ProductId=line.ProductId
+            LEFT JOIN dbo.ProductLinks inventoryLink
+              ON inventoryLink.BusinessId=(SELECT BusinessId FROM dbo.SalesDrafts WHERE SalesDraftId=@DraftId)
+             AND inventoryLink.ChildProductId=line.ProductId
+             AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
             WHERE line.SalesDraftId=@DraftId ORDER BY line.Position,line.SalesDraftLineId;
             """;
         details.Parameters.Add(P("@DraftId", draftId));
@@ -1121,7 +1190,16 @@ public sealed partial class SqlOnlineSalesDraftStore(
         CancellationToken ct)
     {
         await using var command = new SqlCommand(
-            "SELECT ManageStock FROM dbo.Products WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND ProductId=@ProductId AND IsActive=1;",
+            """
+            SELECT CAST(CASE WHEN product.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit)
+            FROM dbo.Products product
+            LEFT JOIN dbo.ProductLinks inventoryLink
+              ON inventoryLink.BusinessId=@BusinessId
+             AND inventoryLink.ChildProductId=product.ProductId
+             AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
+            WHERE product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              AND product.ProductId=@ProductId AND product.IsActive=1;
+            """,
             connection, transaction);
         command.Parameters.AddRange([P("@BusinessId", businessId), P("@ProductId", productId)]);
         return await command.ExecuteScalarAsync(ct) is bool value

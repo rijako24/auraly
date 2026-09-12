@@ -239,10 +239,9 @@ public sealed class PosSaleCompletionService(
             : await catalog.GetCustomerAsync(draft.CustomerId.Value, ct);
         if (command.Credit is not null &&
             (draft.CustomerId != command.Credit.CustomerId ||
-             command.Credit.Amount <= 0 ||
-             command.Credit.DueDate < command.IssuedAt))
+             command.Credit.Amount <= 0))
             throw new InvalidOperationException(
-                "El cliente, valor o vencimiento del crédito no coincide con la venta activa.");
+                "El cliente o valor del crédito no coincide con la venta activa.");
         if (command.DocumentType == PosSaleDocumentTypes.Receipt && draft.CustomerId is not null)
         {
             if (customer?.RequiresElectronicInvoice == true)

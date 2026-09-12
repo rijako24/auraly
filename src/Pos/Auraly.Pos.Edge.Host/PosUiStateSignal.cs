@@ -13,11 +13,12 @@ public sealed class PosUiStateSignal : IPosSynchronizationProgressSink
     public (Guid SubscriptionId, ChannelReader<string> Reader) Subscribe()
     {
         var subscriptionId = Guid.NewGuid();
-        var channel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+        var channel = Channel.CreateBounded<string>(new BoundedChannelOptions(1)
         {
             SingleReader = true,
             SingleWriter = false,
-            AllowSynchronousContinuations = false
+            AllowSynchronousContinuations = false,
+            FullMode = BoundedChannelFullMode.DropWrite
         });
         subscribers[subscriptionId] = channel;
         return (subscriptionId, channel.Reader);

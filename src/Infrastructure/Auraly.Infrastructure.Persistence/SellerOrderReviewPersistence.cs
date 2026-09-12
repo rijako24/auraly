@@ -9,7 +9,16 @@ public sealed record EditableSellerOrder(
     int Status,
     Guid WarehouseId,
     Guid OrdersWarehouseId,
-    IReadOnlyDictionary<Guid, decimal> ReservedQuantities);
+    IReadOnlyDictionary<Guid, EditableSellerOrderLine> Lines);
+
+public sealed record EditableSellerOrderLine(
+    Guid ProductId,
+    decimal Quantity,
+    decimal ReservedQuantity,
+    decimal UnitPrice,
+    decimal DiscountAmount,
+    string PriceSource,
+    bool ManageStock);
 
 public sealed record SellerOrderReplacementLine(
     Guid ProductId,
@@ -25,16 +34,15 @@ public sealed record SellerOrderReplacementLine(
 public static class SellerOrderReviewPersistence
 {
     public static async Task<EditableSellerOrder?> FindEditableAsync(
-        SqlServerConnectionFactory connections,
+        SqlConnection connection,
+        SqlTransaction transaction,
         Guid orderId,
         Guid businessId,
         Guid userId,
         Guid? workSessionId,
         CancellationToken cancellationToken)
     {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await using var command = Procedure("dbo.SellerOrderEditableGet", connection);
+        await using var command = Procedure("dbo.SellerOrderEditableGet", connection, transaction);
         command.Parameters.AddRange([
             Parameter("@OrderId", orderId),
             Parameter("@BusinessId", businessId),
@@ -46,7 +54,7 @@ public static class SellerOrderReviewPersistence
         int status;
         Guid warehouseId;
         Guid ordersWarehouseId;
-        var reserved = new Dictionary<Guid, decimal>();
+        var lines = new Dictionary<Guid, EditableSellerOrderLine>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1) || reader.IsDBNull(3) || reader.IsDBNull(4))
@@ -59,9 +67,19 @@ public static class SellerOrderReviewPersistence
             if (!await reader.NextResultAsync(cancellationToken))
                 return null;
             while (await reader.ReadAsync(cancellationToken))
-                reserved[reader.GetGuid(0)] = reader.GetDecimal(1);
+            {
+                var line = new EditableSellerOrderLine(
+                    reader.GetGuid(0),
+                    reader.GetDecimal(1),
+                    reader.GetDecimal(2),
+                    reader.GetDecimal(3),
+                    reader.GetDecimal(4),
+                    reader.GetString(5),
+                    reader.GetBoolean(6));
+                lines[line.ProductId] = line;
+            }
         }
-        return new EditableSellerOrder(number, customerId, status, warehouseId, ordersWarehouseId, reserved);
+        return new EditableSellerOrder(number, customerId, status, warehouseId, ordersWarehouseId, lines);
     }
 
     public static async Task ReplaceAsync(

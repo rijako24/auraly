@@ -681,6 +681,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/products/{created.ProductId:D}",
                 updated);
             update.EnsureSuccessStatusCode();
+            Assert.Equal(0, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.ProductPricePreparations WHERE ProductId=@Product;",
+                new SqlParameter("@Product", created.ProductId)));
             var updatedSignal = await ReadCatalogSynchronizationMessageAsync(
                 publishedSignal.AvailableThroughCursor);
             Assert.True(
@@ -800,11 +803,14 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             using var response = await admin.PutAsJsonAsync(
                 $"/api/commerce/v1/products/{created.ProductId:D}", changed);
             Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            var detail = (await response.Content.ReadFromJsonAsync<ProductDetail>())!;
+            Assert.Equal(12_500m, Assert.Single(detail.Prices).Amount);
+            Assert.Equal(14_900m, Assert.Single(detail.Prices).PreparedAmount);
             Assert.Equal(1, await ScalarAsync<int>(
                 "SELECT COUNT(*) FROM dbo.SupplierProducts WHERE ProductId=@Product AND SupplierId=@Supplier AND IsPrimary=1 AND IsActive=1;",
                 new SqlParameter("@Product", created.ProductId), new SqlParameter("@Supplier", secondSupplierId)));
             Assert.Equal(14_900m, await ScalarAsync<decimal>(
-                "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1;",
+                "SELECT PreparedAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending';",
                 new SqlParameter("@Product", created.ProductId)));
         }
         finally
@@ -874,7 +880,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.ProductImages WHERE ProductId=@Product AND ProductImageId=@Image AND IsPrimary=1;",
             new SqlParameter("@Product", first.ProductId), new SqlParameter("@Image", firstImageId)));
         Assert.Equal(13_900m, await ScalarAsync<decimal>(
-            "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1;",
+            "SELECT PreparedAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending';",
             new SqlParameter("@Product", first.ProductId)));
 
         var rejectedImageId = Guid.NewGuid();

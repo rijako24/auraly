@@ -39,8 +39,11 @@ enrolado.
     usuarios POS autorizados, sus verificadores locales y permisos; no existe
     una segunda descarga obligatoria de usuarios para terminar el enrolamiento.
 12. Al reiniciar el servicio, SQLite se crea o actualiza automáticamente. Edge
-    instala atómicamente ese snapshot y consume una sola vez el acceso inicial
-    protegido para abrir la identidad local.
+    instala atómicamente ese snapshot y conserva el acceso inicial protegido
+    hasta que el navegador recibe su sesión y abre la sesión operativa de caja.
+    Solo entonces lo consume. Si la respuesta local se pierde antes de esa
+    confirmación, el mismo enrolamiento se puede completar nuevamente sin crear
+    otro dispositivo ni depender de `sessionStorage`.
 13. La preparación completa, sin depender de un cliente seleccionado, descarga
     por páginas todos los productos y todos los clientes del negocio, además de
     promociones, canales, parámetros y catálogos operativos. El snapshot del
@@ -56,10 +59,18 @@ Si una etapa de la preparación falla por DNS, timeout o una respuesta temporal
 del servidor, Edge conserva el checkpoint y agenda hasta tres reintentos con
 espera creciente (5, 10 y 20 segundos). Mientras espera, la interfaz informa el
 número de intento sin bloquear el cierre de la aplicación. Si los tres fallan,
-la preparación queda pausada y ofrece **Reintentar preparación**, **Repetir
-enrolamiento** y **Salir de Auraly**. Un reintento manual inicia una serie nueva
-de hasta tres intentos automáticos. Los fallos permanentes de identidad,
-compatibilidad o validación no se disfrazan como problemas transitorios.
+la preparación queda pausada y ofrece únicamente **Reintentar preparación**;
+la navegación global conserva un solo **Volver**. No se presenta reenrolamiento
+como solución a un fallo de catálogo ni se duplican acciones para abandonar la
+pantalla. Un reintento manual inicia una serie nueva de hasta tres intentos
+automáticos. Los fallos permanentes de identidad, compatibilidad o validación no
+se disfrazan como problemas transitorios.
+
+El digest de cada página de catálogo se calcula exclusivamente mediante
+`CatalogBootstrapIntegrity`. Protege el núcleo estable del contrato vendible y
+permite evolución aditiva del DTO sin romper el bootstrap entre una API y una
+caja actualizadas en distinto orden; Edge valida por separado los campos
+extendidos antes de persistirlos.
 
 Los detalles técnicos completos permanecen en los logs locales. La salud y el
 historial consumidos por la interfaz nunca exponen `ServerUrl`, hostnames,

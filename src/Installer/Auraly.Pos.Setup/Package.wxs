@@ -10,7 +10,8 @@
            Codepage="65001"
            Compressed="yes">
     <SummaryInformation Description="Instalador de Auraly" />
-    <MajorUpgrade DowngradeErrorMessage="Ya hay una versión más reciente de Auraly instalada." />
+    <MajorUpgrade Schedule="afterInstallExecute"
+                  DowngradeErrorMessage="Ya hay una versión más reciente de Auraly instalada." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Icon Id="AuralyIcon.ico" SourceFile="..\..\Desktop\Auraly.Desktop\Assets\Auraly.ico" />

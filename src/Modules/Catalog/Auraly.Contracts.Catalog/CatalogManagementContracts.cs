@@ -152,7 +152,9 @@ public sealed record PosCatalogItem(
     IReadOnlyCollection<Guid>? ProductCategoryAncestorIds = null,
     decimal AverageUnitCost = 0,
     decimal LatestUnitCost = 0,
-    decimal? TargetMarginPercent = null)
+    decimal? TargetMarginPercent = null,
+    Guid? InventoryProductId = null,
+    decimal InventoryFactor = 1m)
 {
     public PosCatalogItem(
         Guid productId,

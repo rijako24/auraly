@@ -79,33 +79,30 @@ internal static class PosPeripheralModule
             PosPrinterConfigurationStore configuration,
             CancellationToken ct) =>
         {
+            var orderTicketWorkflow = workflow == "order-tickets";
             if (request.DocumentId == Guid.Empty ||
-                !PosSaleDocumentTypes.IsSupported(request.DocumentType))
+                (orderTicketWorkflow
+                    ? request.DocumentType != "Order"
+                    : !PosSaleDocumentTypes.IsSupported(request.DocumentType)))
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
                     [nameof(request)] = ["El documento para imprimir no es válido."]
                 });
-            if (workflow is not (null or "pos" or "orders"))
+            if (workflow is not (null or "pos" or "order-tickets"))
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
                     [nameof(workflow)] = ["El flujo de impresión no es válido."]
                 });
             var settings = configuration.Load();
-            var ordersWorkflow = workflow == "orders";
-            var workflowPrinterName = ordersWorkflow
-                ? settings.OrdersPrinterName
+            var workflowPrinterName = orderTicketWorkflow
+                ? settings.OrderPrinterName
                 : settings.PosPrinterName;
-            var outputFormat = ordersWorkflow
-                ? settings.OrdersOutputFormat
-                : settings.PosOutputFormat;
-            workflowPrinterName ??= settings.PrinterFor(
-                request.DocumentType, outputFormat);
             if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
                 string.IsNullOrWhiteSpace(workflowPrinterName))
                 return Results.Problem(
-                    ordersWorkflow
-                        ? "Configura la impresora del flujo de pedidos."
-                        : "Configura una impresora para impresión directa.",
+                    orderTicketWorkflow
+                        ? "Configura la impresora de pedidos."
+                        : "Configura la impresora de facturas.",
                     statusCode: StatusCodes.Status409Conflict);
             try
             {
@@ -130,8 +127,8 @@ internal static class PosPeripheralModule
                     CustomerName: request.CustomerName,
                     BusinessName: request.BusinessName,
                     WarehouseName: request.WarehouseName);
-                if (ordersWorkflow)
-                    await printer.PrintOrdersReceiptAsync(receipt, ct);
+                if (orderTicketWorkflow)
+                    await printer.PrintOrderAsync(receipt, ct);
                 else
                     await printer.PrintAsync(receipt, ct);
                 return Results.NoContent();

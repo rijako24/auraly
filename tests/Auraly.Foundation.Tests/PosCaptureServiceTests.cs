@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Platform.Domain.Enums;
@@ -177,6 +174,8 @@ public sealed class PosCaptureServiceTests
                 "770123", scope, customerId, false, Guid.NewGuid());
 
             Assert.Equal(2, addedAgain.Draft!.Lines.Count);
+            Assert.Equal(2, availability.Requests.Count);
+            Assert.Equal([1m, 2m], availability.Requests.Select(request => request.Quantity));
             var editedLine = addedAgain.Draft.Lines.Single(line => line.LineId == original.LineId);
             var automatic = addedAgain.Draft.Lines.Single(line => line.LineId != original.LineId);
             Assert.Equal(95m, editedLine.UnitPrice);
@@ -192,6 +191,43 @@ public sealed class PosCaptureServiceTests
             var recovered = await drafts.GetOrCreateActiveAsync(scope);
             Assert.Equal(95m, recovered.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
             Assert.Equal(original.PriceSource, recovered.Lines.Single(line => line.LineId == original.LineId).PriceSource);
+        });
+    }
+
+    [Fact]
+    public async Task Linked_inventory_family_is_validated_once_in_the_selected_product_unit()
+    {
+        Guid childId = Guid.Empty;
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = null;
+
+            var root = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            var child = await service.CaptureAsync(
+                "770124", scope, customerId, false, Guid.NewGuid());
+
+            Assert.True(root.Added);
+            Assert.True(child.Added);
+            Assert.Equal(2, availability.Requests.Count);
+            Assert.Equal(productId, availability.Requests[0].ProductId);
+            Assert.Equal(1m, availability.Requests[0].Quantity);
+            Assert.Equal(childId, availability.Requests[1].ProductId);
+            // One root unit already captured plus one child that represents half
+            // a root equals three units expressed in the selected child unit.
+            Assert.Equal(3m, availability.Requests[1].Quantity);
+        }, additionalItemsFactory: productId =>
+        {
+            childId = Guid.NewGuid();
+            return
+            [
+                new PosCatalogItem(
+                    childId, "P-2", "REF-2", "Child", "EA", "VAT19", 19m,
+                    60m, "COP", IsActive: true, IsWeighable: false,
+                    AllowsFractionalSale: false, Scale: null, Barcodes: ["770124"],
+                    Identifiers: [], UnitCost: 0m, ManagesStock: false,
+                    InventoryProductId: productId, InventoryFactor: 0.5m)
+            ];
         });
     }
 
@@ -261,7 +297,8 @@ public sealed class PosCaptureServiceTests
     private static async Task WithServiceAsync(
         Func<PosCaptureService, PosDraftStore, PosDraftScope, Guid, Guid, RecordingAvailabilityClient, Task> test,
         bool managesStock = true,
-        Func<Guid, IReadOnlyCollection<PosPromotion>>? promotionsFactory = null)
+        Func<Guid, IReadOnlyCollection<PosPromotion>>? promotionsFactory = null,
+        Func<Guid, IReadOnlyCollection<PosCatalogItem>>? additionalItemsFactory = null)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-capture-{Guid.NewGuid():N}.db");
         try
@@ -275,12 +312,12 @@ public sealed class PosCaptureServiceTests
                 AllowsFractionalSale: false, Scale: null, Barcodes: ["770123"],
                 Identifiers: [], UnitCost: 0m, ManagesStock: managesStock);
             var sessionId = Guid.NewGuid();
-            var items = new[] { item };
-            var hash = Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
-                .ToLowerInvariant();
+            var items = new[] { item }
+                .Concat(additionalItemsFactory?.Invoke(productId) ?? [])
+                .ToArray();
+            var hash = CatalogBootstrapIntegrity.Compute(items);
             await catalog.BeginBootstrapAsync(
-                new CatalogSyncSessionResponse(sessionId, 0, 1, DateTimeOffset.UtcNow.AddHours(1)));
+                new CatalogSyncSessionResponse(sessionId, 0, items.Length, DateTimeOffset.UtcNow.AddHours(1)));
             await catalog.ApplyBootstrapPageAsync(
                 new CatalogBootstrapPage(sessionId, 0, null, false, hash, items));
             await catalog.PromoteBootstrapAsync();

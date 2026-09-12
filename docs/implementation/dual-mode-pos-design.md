@@ -204,6 +204,10 @@ producción. No se puede afirmar paridad online si el estado vive solo en React.
   se invoca dentro del checkout y desde Edge conectado mediante el endpoint
   autenticado del dispositivo. Sin servidor, Edge rechaza el crédito antes de
   emitir; nunca autoriza con el cupo potencialmente obsoleto del catálogo local.
+  La autorización comprueba cliente habilitado y saldo disponible. La fecha de
+  vencimiento no la calcula ni la envía el cliente: el servidor la deriva del
+  plazo vigente del perfil al crear la cuenta por cobrar. Esa fecha gobierna
+  exclusivamente el vencimiento y la mora de la cartera.
 - La disponibilidad de inventario conserva su política propia: con servidor
   valida existencia actual y sin servidor aplica la regla offline provisionada.
 - Un borrador iniciado en un adaptador termina en ese adaptador.

@@ -247,6 +247,20 @@ public sealed class PosSynchronizationEventLogTests
     }
 
     [Fact]
+    public void Local_user_interface_notifications_are_coalesced_until_consumed()
+    {
+        var signal = new PosUiStateSignal();
+        var subscription = signal.Subscribe();
+
+        for (var index = 0; index < 100; index++) signal.Publish();
+
+        Assert.True(subscription.Reader.TryRead(out var message));
+        Assert.Equal("state", message);
+        Assert.False(subscription.Reader.TryRead(out _));
+        signal.Unsubscribe(subscription.SubscriptionId);
+    }
+
+    [Fact]
     public async Task Unified_outbox_isolates_retry_barriers_between_sessions()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-unified-outbox-{Guid.NewGuid():N}.db");
@@ -332,6 +346,51 @@ public sealed class PosSynchronizationEventLogTests
 
             await SetStatusAsync(connection, closureId, PosOutboxStatus.Uploaded);
             Assert.Null(await dispatcher.NextAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Unified_outbox_treats_work_session_guids_case_insensitively()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            $"auraly-unified-outbox-case-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path}";
+        var now = new DateTimeOffset(2026, 9, 11, 19, 0, 0, TimeSpan.Zero);
+        var blockedSession = Guid.NewGuid();
+        var activeSession = Guid.NewGuid();
+        try
+        {
+            await PosUnifiedOutboxSchema.EnsureCreatedAsync(connectionString);
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync();
+            var blockedOpening = Guid.NewGuid();
+            await InsertAsync(connection, blockedOpening, blockedSession,
+                PosOutboxMessageTypes.WorkSessionOpened, "RetryScheduled", now,
+                now.AddMinutes(5));
+            await InsertAsync(connection, Guid.NewGuid(), blockedSession,
+                "sales.receipt.confirmed", "Pending", now.AddSeconds(1), null);
+            await InsertAsync(connection, Guid.NewGuid(), activeSession,
+                PosOutboxMessageTypes.WorkSessionOpened, "Pending", now.AddSeconds(2), null);
+
+            await using (var upperCase = connection.CreateCommand())
+            {
+                upperCase.CommandText = """
+                    UPDATE Outbox SET WorkSessionId=upper(WorkSessionId)
+                    WHERE Type='sales.receipt.confirmed';
+                    """;
+                await upperCase.ExecuteNonQueryAsync();
+            }
+
+            var dispatcher = new PosUnifiedOutboxDispatcher(
+                connectionString, new FixedTimeProvider(now));
+
+            Assert.Equal(PosUnifiedOutboxRoute.WorkSessionOpened, await dispatcher.NextAsync());
         }
         finally
         {

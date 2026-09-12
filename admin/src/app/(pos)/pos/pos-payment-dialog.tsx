@@ -306,7 +306,7 @@ export function PosPaymentDialog({
     // implicit form action for Enter. Own the keyboard contract here: an
     // incomplete payment remains editable and only a complete payment submits
     // this same form through its canonical submit handler.
-    handlePosPaymentAmountEnter(event, settlement.missing, () => addPayment("Cash"));
+    handlePosPaymentAmountEnter(event, settlement.missing);
   }
 
   function saveCardCapture() {
@@ -391,7 +391,7 @@ export function PosPaymentDialog({
           </p>
         )}
         {creditError && <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm font-medium text-amber-900">{creditError}</p>}
-        {customer?.isCreditEnabled && <p className="mt-3 text-xs text-slate-500">Crédito habilitado · plazo {customer.defaultCreditDueDays ?? 0} días · cupo disponible {customer.availableCredit == null ? "sin límite" : money.format(customer.availableCredit)}</p>}
+        {customer?.isCreditEnabled && <p className="mt-3 text-xs text-slate-500">Crédito habilitado · cupo disponible {customer.availableCredit == null ? "sin límite" : money.format(customer.availableCredit)}</p>}
 
         <div className="mt-4 space-y-3">
           {payments.map((payment, index) => (
@@ -462,7 +462,7 @@ export function PosPaymentDialog({
               ) : payment.methodCode === "Cash" ? (
                 <div className="text-xs font-medium text-slate-600"><span>Efectivo</span><div className="mt-1 flex h-11 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900"><span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-700 text-white">$</span><span>Cambio automático</span></div></div>
               ) : payment.methodCode === "Credit" ? (
-                <div className="text-xs font-medium text-slate-600"><span>Crédito del cliente</span><div className="mt-1 flex h-11 items-center rounded-lg border border-violet-200 bg-violet-50 px-3 text-sm font-semibold text-violet-900">{customer ? `Plazo ${customer.defaultCreditDueDays ?? 0} días` : "Selecciona un cliente"}</div></div>
+                <div className="text-xs font-medium text-slate-600"><span>Crédito del cliente</span><div className="mt-1 flex h-11 items-center rounded-lg border border-violet-200 bg-violet-50 px-3 text-sm font-semibold text-violet-900">{customer ? `Cupo disponible ${customer.availableCredit == null ? "sin límite" : money.format(customer.availableCredit)}` : "Selecciona un cliente"}</div></div>
               ) : payment.methodCode === "Transfer" ? (
                 <div className="text-xs font-medium text-slate-600"><span>Transferencia</span><button type="button" onClick={() => openTransferCapture(payment.id, payment)} className={`mt-1 flex h-11 w-full items-center gap-2 rounded-lg border px-3 text-left text-sm font-semibold ${payment.reference && (!accountingEnabled || payment.bankAccountId) ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}><Receipt className="h-4 w-4 shrink-0"/><span className="truncate">{payment.reference && (!accountingEnabled || payment.bankAccountId) ? `${accountingEnabled ? `${bankAccounts.find(account => account.bankAccountId === payment.bankAccountId)?.displayName ?? "Cuenta"} · ` : ""}${payment.reference}` : "Registrar transferencia"}</span></button></div>
               ) : (

@@ -130,8 +130,8 @@ export function PosPrinterDialog({
           ) : value ? (
             <>
               <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">{client?"Impresión directa por flujo":"Impresión desde el navegador"}</p><p className="mt-1 text-xs text-slate-600">{client?"Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.":"Sin Auraly, al emitir se abrirá el diálogo del navegador para escoger la impresora y confirmar el trabajo."}</p></div>
-              <WorkflowPrinterCard title="Punto de venta" description="Facturas y comprobantes emitidos desde la caja." format={value.posOutputFormat??"Receipt"} printerName={value.posPrinterName??printerFor(value,value.posOutputFormat??"Receipt")} paperWidth={value.receiptPaperWidthMillimeters} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"pos",format,printerName,paperWidth))}/>
-              <WorkflowPrinterCard title="Facturas desde pedidos" description="Facturas electrónicas y comprobantes de venta generados al facturar pedidos." format={value.ordersOutputFormat??"HalfLetter"} printerName={value.ordersPrinterName??printerFor(value,value.ordersOutputFormat??"HalfLetter")} paperWidth={value.ordersReceiptPaperWidthMillimeters??80} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"orders",format,printerName,paperWidth))}/>
+              <WorkflowPrinterCard title="Facturas" description="Facturas electrónicas y comprobantes emitidos desde el punto de venta o al facturar pedidos." format={value.posOutputFormat??"Receipt"} printerName={value.posPrinterName??printerFor(value,value.posOutputFormat??"Receipt")} paperWidth={value.receiptPaperWidthMillimeters} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"invoices",format,printerName,paperWidth))}/>
+              <WorkflowPrinterCard title="Pedidos" description="Pedidos impresos desde la vista administrativa, antes de facturarlos." format={value.orderOutputFormat??"HalfLetter"} printerName={value.orderPrinterName??printerFor(value,value.orderOutputFormat??"HalfLetter")} paperWidth={value.orderReceiptPaperWidthMillimeters??80} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"orders",format,printerName,paperWidth))}/>
               {client&&!printers.length && (
                 <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
                   Windows no reporto impresoras instaladas. Instala el controlador y vuelve a abrir esta configuracion.
@@ -189,12 +189,16 @@ function printerFor(value:PosPrinterConfiguration,format:PosPrintTemplateFormat)
   return value.templateRoutes?.find(route=>route.format===format)?.printerName??(format==="Receipt"?value.receiptPrinterName:value.letterPrinterName);
 }
 
-function configureWorkflow(value:PosPrinterConfiguration,workflow:"pos"|"orders",format:PosPrintTemplateFormat,printerName:string|null,paperWidth:58|80):PosPrinterConfiguration{
+function configureWorkflow(value:PosPrinterConfiguration,workflow:"invoices"|"orders",format:PosPrintTemplateFormat,printerName:string|null,paperWidth:58|80):PosPrinterConfiguration{
   const routes=(value.templateRoutes??[]).filter(route=>route.format!==format);
-  const templateRoutes=[...routes,...(["SalesInvoice","SalesReceipt"] as const).map(documentType=>({documentType,format,printerName}))];
+  const templateRoutes=workflow==="orders"
+    ? value.templateRoutes
+    : [...routes,...(["SalesInvoice","SalesReceipt"] as const).map(documentType=>({documentType,format,printerName}))];
   return {...value,receiptMode:"WindowsRaw",orderMode:"WindowsPrint",templateRoutes,
-    ...(workflow==="pos"?{posOutputFormat:format,posPrinterName:printerName,receiptPaperWidthMillimeters:paperWidth,receiptPrinterName:printerName}:{ordersOutputFormat:format,ordersPrinterName:printerName,ordersReceiptPaperWidthMillimeters:paperWidth}),
-    ...(format!=="Receipt"?{letterPrinterName:printerName}:{})};
+    ...(workflow==="invoices"
+      ? {posOutputFormat:format,posPrinterName:printerName,receiptPaperWidthMillimeters:paperWidth,receiptPrinterName:printerName}
+      : {orderOutputFormat:format,orderPrinterName:printerName,orderReceiptPaperWidthMillimeters:paperWidth}),
+    ...(workflow==="invoices"&&format!=="Receipt"?{letterPrinterName:printerName}:{})};
 }
 
 function ScaleConfiguration({ value, serialPorts, busy, onChange, onTest }: {
@@ -239,7 +243,7 @@ function defaultScale(): NonNullable<PosPrinterConfiguration["scale"]> {
 
 export function validPeripheralConfiguration(value: PosPrinterConfiguration, direct: boolean) {
   if (!direct) return true;
-  if (!value.posPrinterName || !value.ordersPrinterName) return false;
+  if (!value.posPrinterName || !value.orderPrinterName) return false;
   if (!value.scale?.enabled) return true;
   return Boolean(value.scale.portName) && value.scale.baudRate > 0 &&
     value.scale.dataBits >= 5 && value.scale.dataBits <= 8 &&

@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Auraly.Contracts.Authentication;
+using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Orders;
 using Microsoft.Data.SqlClient;
 using Auraly.Contracts.Tenants;
 using Auraly.Contracts.TenantBilling;
@@ -209,6 +211,27 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             result.TenantId, "CASHIER", "pos.synchronization.events.read"));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.inventory.availability.read"));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", OrderPermissionCodes.Review));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", OrderPermissionCodes.Create));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", OrderPermissionCodes.Update));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "SELLER", OrderPermissionCodes.Create));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "SELLER", OrderPermissionCodes.Review));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "SELLER", OrderPermissionCodes.Update));
+        foreach (var role in new[] { "ADMINISTRATOR", "ADMINISTRATIVE" })
+        {
+            Assert.True(await RoleHasPermissionAsync(
+                result.TenantId, role, OrderPermissionCodes.Create));
+            Assert.True(await RoleHasPermissionAsync(
+                result.TenantId, role, OrderPermissionCodes.Update));
+            Assert.True(await RoleHasPermissionAsync(
+                result.TenantId, role, OrderPermissionCodes.Review));
+        }
         Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "inventory.read"));
         Assert.False(await RoleHasPermissionAsync(
@@ -620,8 +643,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
     private static WaivedTenantProvisioningRequest Waived(ProvisionTenantRequest request) =>
         new(request, new TenantQuoteRequest("business", "Annual", 0, 0, 0, 0));
     [Fact]
-    public async Task Creating_any_later_business_also_provisions_sales_and_orders_warehouses()
+    public async Task Creating_any_later_business_provisions_all_warehouses_and_prices_in_both_directions()
     {
+        var existingProductPrice = await ReadProductPriceAsync(
+            fixture.BusinessId,
+            fixture.ProductId);
         var suffix = Guid.NewGuid().ToString("N")[..8];
         using var admin = fixture.CreateAdminClient("businesses.create");
         using var response = await admin.PostAsJsonAsync(
@@ -633,7 +659,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                 Address = "Carrera 2 # 3-4",
                 Phone = "3000000000",
                 Email = $"norte-{suffix}@auraly.test",
-                TimeZone = "America/Bogota"
+                TimeZone = "America/Bogota",
+                PriceSourceBusinessId = fixture.BusinessId
             });
         var body = await response.Content.ReadAsStringAsync();
         Assert.True(
@@ -641,11 +668,120 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             $"Expected Created but received {response.StatusCode}: {body}");
         var business = await response.Content.ReadFromJsonAsync<BusinessCreatedResponse>();
         Assert.NotNull(business);
-        Assert.Equal(2, await CountDefaultWarehousesAsync(fixture.TenantId, business!.BusinessId));
+        Assert.Equal(4, await CountDefaultWarehousesAsync(fixture.TenantId, business!.BusinessId));
+        Assert.Equal(existingProductPrice, await ReadProductPriceAsync(
+            business.BusinessId,
+            fixture.ProductId));
+        Assert.Equal(4, await CountProductBalancesAsync(
+            business.BusinessId,
+            fixture.ProductId));
         Assert.Equal(1, await CountDefaultCostCentersAsync(fixture.TenantId, business.BusinessId));
         Assert.Equal(3, await CountOnlineSalesDocumentSeriesAsync(fixture.TenantId, business.BusinessId));
         Assert.Equal(14, await CountDefaultDocumentSeriesAsync(
             fixture.TenantId, business.BusinessId));
+
+        var selectedSourcePrice = existingProductPrice + 1_237m;
+        await ExecuteAsync(
+            """
+            UPDATE dbo.ProductPrices
+            SET Amount=@Amount,PreparedAmount=@Amount
+            WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+            """,
+            new SqlParameter("@Amount", selectedSourcePrice),
+            new SqlParameter("@BusinessId", business.BusinessId),
+            new SqlParameter("@ProductId", fixture.ProductId));
+        using var selectedSourceResponse = await admin.PostAsJsonAsync(
+            "/api/v1/businesses",
+            new
+            {
+                Name = $"Sede copia {suffix}",
+                Description = "Copia una única sede origen",
+                Address = "Carrera 5 # 6-7",
+                Phone = "3000000001",
+                Email = $"copia-{suffix}@auraly.test",
+                TimeZone = "America/Bogota",
+                PriceSourceBusinessId = business.BusinessId
+            });
+        var selectedSourceBody = await selectedSourceResponse.Content.ReadAsStringAsync();
+        Assert.True(
+            selectedSourceResponse.StatusCode == HttpStatusCode.Created,
+            $"Expected Created but received {selectedSourceResponse.StatusCode}: {selectedSourceBody}");
+        var copiedBusiness = await selectedSourceResponse.Content.ReadFromJsonAsync<BusinessCreatedResponse>();
+        Assert.NotNull(copiedBusiness);
+        Assert.Equal(selectedSourcePrice, await ReadProductPriceAsync(
+            copiedBusiness!.BusinessId,
+            fixture.ProductId));
+
+        await ExecuteAsync(
+            """
+            IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId)
+              INSERT dbo.TaxProfiles(
+                  TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+              VALUES(@TaxProfileId,@BusinessId,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
+            """,
+            new SqlParameter("@TaxProfileId", fixture.TaxProfileId),
+            new SqlParameter("@BusinessId", fixture.BusinessId));
+        var productPrice = 27_350m;
+        var productCode = $"MULTI-{Guid.NewGuid():N}";
+        using var catalog = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        using var productResponse = await catalog.PostAsJsonAsync(
+            "/api/commerce/v1/products",
+            new SaveProductRequest(
+                fixture.BusinessId,
+                productCode,
+                productCode,
+                $"Producto multisede {suffix}",
+                null,
+                "EA",
+                fixture.TaxProfileId,
+                true,
+                false,
+                [],
+                [],
+                [new ProductPriceInput(productPrice, CostBasisAmount: 20_000m,
+                    TargetMarginPercent: 20m)],
+                [new SupplierCostInput(
+                    fixture.SupplierId,
+                    "900999001",
+                    "Proveedor E2E",
+                    null,
+                    20_000m)],
+                null,
+                fixture.TaxProfileId));
+        var productBody = await productResponse.Content.ReadAsStringAsync();
+        Assert.True(productResponse.StatusCode == HttpStatusCode.Created,
+            $"Expected Created but received {productResponse.StatusCode}: {productBody}");
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductDetail>();
+        Assert.NotNull(product);
+        Assert.Equal(0, await CountActiveBusinessesWithoutPriceAsync(
+            fixture.TenantId,
+            product!.ProductId,
+            productPrice));
+        Assert.Equal(4, await CountProductBalancesAsync(
+            business.BusinessId,
+            product.ProductId));
+    }
+
+    [Fact]
+    public async Task Creating_a_business_rejects_a_price_source_outside_the_authenticated_tenant_atomically()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var before = await CountBusinessesAsync(fixture.TenantId);
+        using var admin = fixture.CreateAdminClient("businesses.create");
+        using var response = await admin.PostAsJsonAsync(
+            "/api/v1/businesses",
+            new CreateBusinessRequest(
+                $"Sede rechazada {suffix}", null, null, null,
+                $"rechazada-{suffix}@auraly.test", null,
+                PriceSourceBusinessId: Guid.NewGuid()));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(before, await CountBusinessesAsync(fixture.TenantId));
+        Assert.Contains("sede activa del mismo tenant", await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<(Guid CountryId, Guid DivisionId, Guid CityId)> ReadGeographyAsync()
@@ -873,6 +1009,86 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
     }
 
 
+    private async Task<decimal> ReadProductPriceAsync(Guid businessId, Guid productId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT Amount
+            FROM dbo.ProductPrices
+            WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        return Convert.ToDecimal(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountActiveBusinessesWithoutPriceAsync(
+        Guid tenantId,
+        Guid productId,
+        decimal expectedPrice)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.Businesses business
+            WHERE business.TenantId=@TenantId AND business.IsActive=1
+              AND NOT EXISTS (
+                SELECT 1
+                FROM dbo.ProductPrices price
+                WHERE price.BusinessId=business.BusinessId
+                  AND price.ProductId=@ProductId
+                  AND price.IsActive=1
+                  AND price.Amount=@ExpectedPrice);
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@ExpectedPrice", expectedPrice);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountProductBalancesAsync(Guid businessId, Guid productId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.InventoryBalances balance
+            INNER JOIN dbo.Warehouses warehouse
+              ON warehouse.BusinessId=balance.BusinessId
+             AND warehouse.WarehouseId=balance.WarehouseId
+            WHERE balance.BusinessId=@BusinessId AND balance.ProductId=@ProductId
+              AND warehouse.Code IN(N'VEN',N'PED',N'AVE',N'TRA')
+              AND balance.QuantityOnHand=0
+              AND balance.AverageUnitCost=0
+              AND balance.InventoryValue=0;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountBusinessesAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT COUNT(*) FROM dbo.Businesses WHERE TenantId=@TenantId;",
+            connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task ExecuteAsync(string sql, params SqlParameter[] parameters)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddRange(parameters);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private async Task<int> CountDefaultWarehousesAsync(Guid tenantId, Guid businessId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -882,7 +1098,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             FROM dbo.Warehouses w
             INNER JOIN dbo.Businesses b ON b.BusinessId=w.BusinessId
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
-              AND w.Code IN(N'VEN',N'PED') AND w.IsActive=1;
+              AND w.Code IN(N'VEN',N'PED',N'AVE',N'TRA') AND w.IsActive=1;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);

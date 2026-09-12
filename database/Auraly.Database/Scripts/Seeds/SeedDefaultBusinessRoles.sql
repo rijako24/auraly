@@ -65,13 +65,13 @@ JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.
 WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ACCOUNTANT')
   AND NOT (
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
+      N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.create',N'orders.update',N'orders.review',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.synchronization.events.read',N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
-      N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.invoice',
+      N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
@@ -118,13 +118,13 @@ WHERE roleValue.IsActive=1
       AND (permissionValue.Resource NOT LIKE N'tenants.%' AND permissionValue.Resource NOT LIKE N'platform.%'
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
+      N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.create',N'orders.update',N'orders.review',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.synchronization.events.read',N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
-      N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.invoice',
+      N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',

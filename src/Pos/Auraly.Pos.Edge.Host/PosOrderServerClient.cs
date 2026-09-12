@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
 using Auraly.Pos.Edge.Infrastructure;
@@ -29,6 +30,24 @@ public sealed class PosOrderServerClient(
             HttpMethod.Get,
             $"/api/pos/v1/orders/{orderId:D}?{ContextQuery(session)}",
             null,
+            null,
+            cancellationToken);
+
+    public Task<IReadOnlyList<OrderPrintDocument>> PrintBatchAsync(
+        PosLocalUserSession session,
+        IReadOnlyCollection<Guid> orderIds,
+        CancellationToken cancellationToken) =>
+        SendAsync<IReadOnlyList<OrderPrintDocument>>(
+            HttpMethod.Post,
+            "/api/pos/v1/orders/print-batch",
+            JsonContent.Create(new
+            {
+                userId = session.UserId,
+                businessId = runtime.BusinessId.Value,
+                warehouseId = runtime.WarehouseId.Value,
+                workSessionId = session.WorkSessionId,
+                orderIds
+            }),
             null,
             cancellationToken);
 
@@ -125,13 +144,45 @@ public sealed class PosOrderServerClient(
         using var response = await http.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var detail = await response.Content.ReadAsStringAsync(cancellationToken);
+            var detail = await ReadDetailAsync(response, cancellationToken);
             throw new PosOrderServerException((int)response.StatusCode, detail);
         }
         return await response.Content.ReadFromJsonAsync<T>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidDataException(
                 "Auraly Server devolvió una respuesta vacía para pedidos.");
+    }
+
+    private static async Task<string> ReadDetailAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.TryGetProperty("detail", out var detail) &&
+                    detail.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(detail.GetString()))
+                    return detail.GetString()!;
+            }
+            catch (JsonException)
+            {
+                // Only structured problem details are safe to expose in the local UI.
+            }
+        }
+        return response.StatusCode switch
+        {
+            System.Net.HttpStatusCode.MethodNotAllowed =>
+                "La versión de Auraly Server no admite todavía esta operación de pedidos.",
+            System.Net.HttpStatusCode.Forbidden =>
+                "El usuario no tiene permiso para realizar esta operación de pedidos.",
+            System.Net.HttpStatusCode.NotFound =>
+                "El pedido ya no está disponible en el servidor.",
+            _ => "Auraly Server no pudo completar la operación de pedidos."
+        };
     }
 }
 

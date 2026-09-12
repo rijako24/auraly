@@ -3,6 +3,7 @@ type PosOrderDraftLine = {
   quantity: number;
   unitPrice: number;
   discount: number;
+  priceSource: string;
 };
 
 export function buildPosOrderUpdateLines(lines: PosOrderDraftLine[]) {
@@ -11,5 +12,6 @@ export function buildPosOrderUpdateLines(lines: PosOrderDraftLine[]) {
     quantity: line.quantity,
     unitPrice: line.unitPrice,
     discountAmount: line.discount,
+    priceSource: line.priceSource,
   }));
 }

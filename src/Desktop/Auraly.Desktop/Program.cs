@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.ComponentModel;
-using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
@@ -254,9 +253,13 @@ internal static class Program
     internal static async Task WaitUntilReadyAsync(
         string url,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? headers = null)
     {
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        if (headers is not null)
+            foreach (var header in headers)
+                client.DefaultRequestHeaders.Add(header.Key, header.Value);
         var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -264,7 +267,7 @@ internal static class Program
             try
             {
                 using var response = await client.GetAsync(url, cancellationToken);
-                if (response.StatusCode != HttpStatusCode.ServiceUnavailable) return;
+                if (response.IsSuccessStatusCode) return;
             }
             catch (HttpRequestException)
             {

@@ -5,6 +5,7 @@ INSERT @SellerPermissions ([Resource]) VALUES
   (N'orders.read'),
   (N'orders.create'),
   (N'orders.update'),
+  (N'orders.review'),
   (N'routes.read'),
   (N'routes.visits.record'),
   (N'customers.read'),

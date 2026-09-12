@@ -170,7 +170,6 @@ public sealed record PosCreditValidationRequest(
     Guid BusinessId,
     Guid CustomerId,
     decimal Amount,
-    DateTimeOffset DueDate,
     int? FiscalEnvironment = null);
 
 public sealed record PosCreditFiscalMaterial(
@@ -185,7 +184,8 @@ public sealed record PosCreditValidationResult(
     decimal? AvailableCredit,
     bool IsAllowed,
     string? RejectionReason,
-    PosCreditFiscalMaterial? FiscalMaterial = null);
+    PosCreditFiscalMaterial? FiscalMaterial = null,
+    DateTimeOffset? DueDate = null);
 
 public static class PosSaleFiscalMappings
 {

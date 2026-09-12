@@ -17,7 +17,7 @@ public sealed class PosCreditServerClientTests
         var customerId = Guid.NewGuid();
         var deviceId = Guid.NewGuid();
         var dueDate = new DateTimeOffset(2026, 10, 10, 0, 0, 0, TimeSpan.Zero);
-        var handler = new CreditValidationHandler(customerId, 50_000m);
+        var handler = new CreditValidationHandler(customerId, 50_000m, dueDate);
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test") };
         var client = new PosCreditServerClient(
             http,
@@ -25,14 +25,14 @@ public sealed class PosCreditServerClientTests
             new PosOperationalScope(businessId, warehouseId));
 
         var result = await client.ValidateAsync(
-            customerId, 50_000m, dueDate, fiscalEnvironment: null,
+            customerId, 50_000m, fiscalEnvironment: null,
             cancellationToken: default);
 
         Assert.True(result.IsAllowed);
         Assert.Equal(businessId, handler.Request!.BusinessId);
         Assert.Equal(customerId, handler.Request.CustomerId);
         Assert.Equal(50_000m, handler.Request.Amount);
-        Assert.Equal(dueDate, handler.Request.DueDate);
+        Assert.Equal(dueDate, result.DueDate);
         Assert.Equal(deviceId.ToString("D"), handler.DeviceId);
         Assert.Equal("device-secret", handler.Secret);
     }
@@ -53,7 +53,6 @@ public sealed class PosCreditServerClientTests
             client.ValidateAsync(
                 Guid.NewGuid(),
                 50_000m,
-                DateTimeOffset.UtcNow.AddDays(30),
                 fiscalEnvironment: null,
                 cancellationToken: default));
 
@@ -62,7 +61,8 @@ public sealed class PosCreditServerClientTests
 
     private sealed class CreditValidationHandler(
         Guid expectedCustomerId,
-        decimal expectedAmount) : HttpMessageHandler
+        decimal expectedAmount,
+        DateTimeOffset dueDate) : HttpMessageHandler
     {
         public PosCreditValidationRequest? Request { get; private set; }
         public string? DeviceId { get; private set; }
@@ -84,7 +84,8 @@ public sealed class PosCreditServerClientTests
                     expectedAmount,
                     75_000m,
                     IsAllowed: true,
-                    RejectionReason: null))
+                    RejectionReason: null,
+                    DueDate: dueDate))
             };
         }
     }

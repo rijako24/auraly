@@ -91,7 +91,6 @@ public sealed record OnlineSalesCustomer(
     Guid? PriceChannelId,
     bool RequiresElectronicInvoice,
     bool IsCreditEnabled,
-    int DefaultCreditDueDays,
     decimal? AvailableCredit);
 
 public sealed record OnlineSalesCustomerSelection(

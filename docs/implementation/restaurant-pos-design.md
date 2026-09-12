@@ -1,367 +1,457 @@
 # POS para restaurantes y bares
 
-Fecha: 2026-09-09. Estado: propuesta de producto y arquitectura para revisión; no implementada.
+Fecha de consolidación: 2026-09-10. Estado: **diseño cerrado de V1 para implementar por etapas; no implementado**.
 
-Este es el documento propietario de la propuesta. La entrega comprende investigación, diseño de interacción, configuración, brechas del runtime y criterios de aceptación. La maqueta usa datos ficticios y no ejecuta ventas. La implementación deberá ratificar los cambios de persistencia y contratos aquí propuestos; este documento no sustituye decisiones vigentes ni autoriza un motor nuevo.
+Este documento sustituye las versiones anteriores de la propuesta gastronómica. Cada regla tiene una sección propietaria; planes, formularios y maqueta la referencian, sin conservar alternativas contradictorias. Se mantienen los propietarios canónicos de Auraly. Las pruebas sobre hardware son condiciones de habilitación, no decisiones funcionales pendientes.
 
-## 1. Decisión de producto
+## 1. Alcance y fronteras
 
-Agregar **Restaurante y bar** como presentación del POS existente. El usuario conserva catálogo, precios, clientes, descuentos, pedidos, facturación, devoluciones, movimientos de dinero, inventario y cierre de sesión de venta. Mesas y cuentas abiertas son el contexto de atención adicional.
+Restaurante y bar es una nueva presentación táctil de ventas, con su propia captura online por mesas. Reutiliza catálogo, precios, impuestos, pagos, factura, inventario, contabilidad y consultas existentes.
 
-Dos vistas principales, **Mesas** y **Venta**, comparten el mismo estado de trabajo. **Cuentas** permite encontrar consumos abiertos de mesas, barra y ventas pausadas sin recorrer el plano. **Comandas** ofrece la preparación y entrega virtual por estación. **Operaciones** reúne los accesos existentes; **Configuración** queda sujeta a permiso administrativo. No se crea otra aplicación de facturación ni un catálogo gastronómico duplicado.
+**Frontera acordada:** borrador gastronómico completamente nuevo e independiente del borrador normal. La caja local, su preparación, enrolamiento, SQLite, sesión y formato actual de envío permanecen iguales. No se modifica SalesDrafts, su unicidad por WorkSession, su ciclo ni OnlineSalesCheckoutReceipts para alojar mesas. No se agrega ServiceOpen ni una entidad de visita/atención que duplique el borrador.
 
-La pantalla de venta abre con categorías verticales a la izquierda, la primera categoría seleccionada y productos con fotografías en el centro; a la derecha, el plano del local. Elegir mesa abre su cuenta en ese mismo panel, con retorno inmediato a Mapa. Cambiar de vista nunca cambia silenciosamente entre servidor y Edge.
+El endpoint de facturación admite únicamente estos metadatos adicionales opcionales: **TableId en encabezado; AddedByUserId y AddedAt por detalle**, todos nullable y omitibles. AddedByUserId identifica al usuario que incorporó el producto, sin atarlo al rol Mesero. AddedAt es la hora servidor de esa incorporación, no la emisión ni la persistencia posterior de la factura. SalesDocumentLines y PosSaleLineContract revisados no tienen actualmente ese timestamp: se agrega nullable. La ausencia de los campos conserva el contrato normal. Los IDs internos de origen, ronda, aprobación, receta y auditoría se resuelven en servidor desde la captura gastronómica; no se añaden al payload público de facturación. §6 define el enlace y la idempotencia.
 
-### Cajero, meseros y dinero: definición de la primera versión
+V1 incluye editor del restaurante, mesas/cuentas, rol Mesero y permisos, tablets y puestos compartidos, una/dos pantallas, ingredientes/recetas, inventario excluyente, comandas virtuales/físicas, push/sonido, precuenta, factura, cancelación con pérdida, auditoría y menú digital público por QR.
 
-**Decisión final del usuario:** el cajero inicia sesión y conserva la sesión de trabajo de Auraly. Los meseros toman pedidos, abren mesas, agregan consumos, envían rondas e imprimen la **precuenta**. El cajero recibe el dinero, registra el pago y emite la factura. No hay sesiones de caja, fondos ni cierres por mesero. Esta definición sustituye las alternativas anteriores de login financiero por mesero y cobro indistinto.
+Fuera de V1: huella, restaurante offline, varias cuentas simultáneas por mesa, fusionar cuentas, dividir una mesa en varias facturas, reservas de fecha/hora, lista de espera, autopedido QR, nuevos domicilios, preautorización de tarjeta, propina y reparto, subrecetas y producción anticipada por lotes. No mostrar controles operativos de esas ampliaciones. Se conservan los medios de pago combinados y pedidos comerciales soportados por Auraly.
 
-La identificación rápida del mesero es contexto de autoría de atención: no cambia el principal cajero autenticado, no cierra ni reemplaza su WorkSession y no concede sus permisos financieros. Cada ronda/línea registra quién la capturó y quién la envió. En V1 la mesa queda asociada al mesero que inicia su cuenta. Para continuar se valida la contraseña secundaria del responsable; otro mesero necesita autorización del supervisor con permiso explícito de intervención. La aprobación no reasigna permanentemente la mesa. Registrar responsable, actor efectivo y supervisor aprobador por separado. La huella queda fuera de V1.
+### Vocabulario único
 
-**Recorrido:** cajero inicia su sesión habitual → mesero toca mesa → valida contraseña secundaria del responsable o aprobación acotada del supervisor → abre/recupera cuenta → agrega cantidades y envía → cocina/barra reciben → mesero imprime precuenta → cliente entrega dinero → mesero lo lleva al cajero → cajero recupera la misma cuenta, verifica el total actual, registra pago y factura. La precuenta no registra dinero recibido ni convierte la cuenta en factura. Antes de que el cajero registre el cobro, el importe sigue pendiente en el sistema; el traslado físico del efectivo no crea una caja del mesero.
+| Concepto | Significado |
+| --- | --- |
+| Salón | Área física: interior, terraza, piso. |
+| Mesa | Lugar identificado con una sola cuenta abierta. Un puesto de barra numerado puede modelarse como mesa. |
+| Cuenta / borrador de restaurante | El mismo pedido temporal que acumula consumos hasta facturar o cancelar. |
+| Origen | Identidad permanente de ese ciclo para auditoría y vínculos; no contiene otro carrito. |
+| Ronda | Envío confirmado de cantidades nuevas o correcciones referenciadas. |
+| Estación | Destino de preparación o retiro, diferente de salón, bodega y computador. |
+| Configuración de comanda | Recepción/salida de una estación: virtual, física o ambas. |
+| Comanda | Instancia por ronda y estación; tarjeta y tirilla representan el mismo trabajo. |
+| Precuenta | Presentación revisable del consumo. No es factura ni pago. |
+| Cajero | Usuario que factura y recibe dinero en su WorkSession habitual. |
+| Mesero | Rol de Terceros. El usuario de acceso se vincula por separado. |
 
-La precuenta lleva referencia recuperable (código o QR), mesa, fecha/hora, versión, líneas, cantidades, total y texto **Precuenta · No es factura**. El QR identifica la cuenta para un operador autorizado; no contiene credenciales ni confiere acceso público. Si hubo nuevos consumos, el cajero ve Consumo actualizado, compara con la precuenta y cobra la versión vigente. El checkout congela versión/importe y preserva idempotencia; un resultado incierto se reconcilia antes de otro intento. Pagar no libera la mesa hasta confirmar salida y resolver entregas.
+## 2. Propietarios y base existente
 
-### Una o dos pantallas del mismo computador
+Aplican [estándares](../estandares-de-ingenieria.md), [invariantes](../invariantes-arquitectonicas-auraly.md), [mapa](../mapa-motores-flujos-y-extensiones.md) y [cuatro motores](../decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md). La última decisión prevalece sobre textos anteriores: el motor operacional procesa efectos físicos; finanzas, fiscal y reporting tienen sus propietarios.
 
-Una pantalla reúne atención y cobro con un cambio explícito a modo Cajero. **El cajero utiliza la misma pantalla de venta y el mismo mapa: toca mesa y pulsa Facturar.** La cuenta se recupera directamente; no se copia ni se convierte en otro pedido. Dos pantallas permiten Atención atrás y Cajero delante, sobre el mismo computador y la misma sesión financiera del cajero. La tablet de cada estación de preparación es independiente de esta opción. No son dos cajas ni dos jornadas.
+| Capacidad | Propietario y extensión |
+| --- | --- |
+| Presentación POS | Comandos/adaptadores/diálogos compartidos de PosClient; nueva vista, sin copiar reglas de la página normal. |
+| Plano, mesas, captura y preparación | Sales, con persistencia gastronómica propia y casos de uso autorizados. |
+| Menú, ingrediente y receta | Catalog, sobre Products, ProductImages y merchandising existentes. |
+| Persona/Mesero | Parties; relación especializada sobre Party por negocio. |
+| Usuarios y permisos | Identity/Authorization, credencial secundaria y aprobaciones actuales ampliadas por propósito. |
+| Negocio, bodega, jornada | Organization/WorkSessions actuales. |
+| Emisión | Endpoint vigente y ReceivePosSaleService; no otro emisor, numerador o calculador. |
+| Inventario y costo | DocumentProcessingEngine/handlers → SqlInventoryLedgerWriter → InventoryValuationCalculator. Operaciones dedicadas reutilizan SqlInventoryOperationProcessor. |
+| Dinero, cartera y asientos | AccountingProcessingCoordinator y SqlAccountingPostingProcessor. |
+| Facturas/notas electrónicas | FiscalProcessingCoordinator y sus snapshots/adaptadores. |
+| Auditoría | Infraestructura AuditLogs existente, con eventos de negocio transaccionales. |
+| Push | Streams, gateway y dispatcher/outbox POS existentes. |
+| Impresión | Perfiles, PosPrintTemplateCatalog y adaptadores actuales. |
+| Reportes | Reporting y consultas operativas paginadas; no otro consolidado de ventas. |
 
-La superficie Atención tiene capacidades limitadas a pedidos y precuentas, aunque el equipo tenga sesión del cajero. Cobro, devoluciones financieras, movimientos de dinero y cierre exigen actuación del cajero y sus permisos canónicos. Cambiar una etiqueta, ruta o campo de usuario en la UI no habilita esas acciones. En una sola pantalla, volver a Cajero requiere revalidar su identidad; el mesero nunca puede aprovechar una sesión privilegiada que siga abierta por detrás. En doble pantalla, identificar un mesero atrás no cambia al cajero delante ni sus operaciones en curso.
+Hallazgos revisados: SalesDrafts exige usuario/sesión y exclusividad Active por WorkSession; LockDraftAsync filtra por usuario. OnlineSalesCheckoutReceipts tiene FKs al draft normal y al siguiente. SaveProductRequest incluye ManageInventory; falta Es ingrediente. Parties aún no enumera Mesero. Las aprobaciones actuales no equivalen a login de meseros. El stream de preparación, receta, autoría y recepción automática de comandas necesitan extensión. Ninguna de estas brechas se declara implementada por existir una maqueta.
 
-**Brecha técnica:** el host actual conserva un usuario local activo por dispositivo. La propuesta V1 preserva ese principal cajero y no requiere sesiones financieras por monitor. Sí exige una capacidad de atención limitada y evidencia verificable de identidad del mesero bajo Authorization: contexto vinculado al principal, sede, dispositivo/superficie, vigencia y operaciones permitidas. Debe validarse en API/host, sin entregar el token pleno del cajero a la pantalla posterior ni confiar en un WaiterId arbitrario. No crear otro motor de autenticación. Concretar este contrato y actualizar la documentación propietaria del acceso es parte del slice de implementación; no afirmar que existe hoy.
+La nueva lógica gastronómica se integra del lado servidor. La ampliación de inventario/contabilidad sí necesita desarrollo en esos propietarios: que el payload cambie poco no significa que el backend solo necesite añadir columnas. No se requiere cambiar el cliente local ni sus contratos de preparación/enrolamiento.
 
-DeviceId sigue identificando el computador y WorkSessionId la jornada del cajero. Un identificador técnico de superficie, si el shell lo necesita para foco/lectores, no es caja, usuario financiero ni serie. Persistencia, numeración, catálogo y outbox mantienen sus propietarios. La cuenta gastronómica compartida conserva autoría de atención y recibe la sesión canónica del cajero que finalmente factura; no se mueve dinero al mesero.
+### Frontera de compatibilidad comprobable
 
-Configurar Una/Dos pantallas, monitor de atención/cobro y entrada táctil. Comprobar uso simultáneo, foco, teclado en pantalla, suspensión e impresión sobre el computador real. No incorporar lectores biométricos en V1. Dos monitores conectados no certifican dos operadores simultáneos.
+La mayoría de datos gastronómicos será nueva, pero no se afirma que solo cambien las tablas de factura en toda la solución: también se extienden clasificación/configuración de productos, auditoría, permisos y contratos propietarios de receta/pérdida/impresión. La captura normal y la caja local conservan su comportamiento. Las extensiones compartidas tienen defaults compatibles y solo aplican efectos gastronómicos con origen servidor validado; TableId por sí solo no activa receta, autorización ni tratamiento contable.
 
-Aceptación: responsable continúa con su contraseña secundaria; otro mesero solo interviene con aprobación válida y autoría separada; la WorkSession del cajero permanece igual; precuenta sin pago/factura; mesero sin acceso a cobro aun manipulando UI; cajero recupera la misma cuenta y cobra una sola vez; consumo agregado invalida el total anterior; relevo de mesero no cambia al cajero de la pantalla frontal; dinero, documentos y cierre aparecen en la jornada canónica del cajero.
+Hallazgo de código: PosSaleContractSerializer.Hash calcula SHA-256 del JSON serializado y ReceivePosSaleService lo compara con el recibo previo. Agregar propiedades nullable sin omitirlas puede alterar la huella de solicitudes antiguas. En los tres campos nuevos usar omisión individual cuando son nulos (JsonIgnoreCondition.WhenWritingNull), sin cambiar opciones globales, orden/nombres de campos existentes ni algoritmo de hash. Se exige conservar exactamente serialización y hash de fixtures históricos, verificar omitido frente a null explícito y recuperar reintentos previos al despliegue; no regenerar las huellas esperadas para ocultar una regresión. Los valores gastronómicos presentes sí forman parte de la huella.
 
-## 2. Investigación de interfaces
+Migración aditiva, sin backfill de autores/mesas inventados, defaults obligatorios ni borrado en cascada hacia ventas. Consultas e impresos admiten metadatos ausentes, sin INNER JOIN que elimine facturas normales. Validar despliegue y bloqueos sobre un volumen representativo, contratos anteriores, operación normal con restaurante deshabilitado y con restaurante habilitado, y convivencia de clientes antiguos/nuevos. La seguridad de diseño permite implementar con riesgo acotado; ausencia de regresiones requiere evidencia sobre la implementación, no se certifica con esta maqueta.
 
-Consulta de fuentes oficiales el 9 de septiembre de 2026. Se revisaron guías y capturas públicas, no instalaciones comerciales autenticadas ni pruebas cronometradas de esos productos. Las observaciones describen la documentación consultada; no aseguran paridad entre países, planes o versiones.
-
-| Producto y fuente | Organización observada | Decisión para Auraly |
-| --- | --- | --- |
-| [Toast: opciones de pantalla](https://doc.toasttab.com/doc/platformguide/adminUiOptionsReference.html), [modificadores](https://central.toasttab.com/articles/Knowledge/Advanced-Modifier-Configuration) y [guía visual, pp. 7–9 y 16–19](https://s3.amazonaws.com/toasttab/static-content/training/Toast_Quickstart_Guide.pdf) | Menús y grupos de productos, cuenta, envío a cocina, atención por mesa y separación de cuentas. La guía visual es histórica, sin fecha comprobada: sirve como referencia de composición, no como prueba de la interfaz vigente. | Productos a un toque, modificadores legibles bajo cada plato y separación clara de enviar/cobrar. |
-| [Lightspeed Restaurant K-Series: pantalla de venta](https://k-series-support.lightspeedhq.com/hc/en-us/articles/360050328394-Understanding-the-Register-screen), [servicio de mesas](https://k-series-support.lightspeedhq.com/hc/en-us/articles/360050308894-Placing-basic-orders) | Resumen de pedido, teclado y menú; categorías centrales, productos a la derecha. Comensales y tiempos organizan las líneas. La captura oficial fue inspeccionada visualmente. | Mantener zonas estables; teclado numérico contextual para dar más espacio al catálogo. Cuenta por comensal o ronda cuando se necesite. |
-| [Square: grupos y diseño del menú](https://squareup.com/help/us/en/article/7804-organize-your-menu-with-square-for-restaurants), [plano](https://squareup.com/help/us/en/article/6427-building-your-floor-plan) | Editor de mosaicos con tamaños, colores, imágenes y posición. Los grupos visuales se separan de las categorías que sirven a reportes y enrutamiento. La captura del editor fue inspeccionada visualmente. | Favoritos y orden visual administrables sin reclasificar productos ni alterar precios. Evitar mosaicos de tamaños arbitrarios en la operación diaria. |
-| [Odoo 19: restaurantes](https://www.odoo.com/documentation/19.0/applications/sales/point_of_sale/restaurant.html) | Navegación entre mesas, venta y pedidos; salones, nombres de cuentas de barra, traslado/unión, rondas y división de cuentas. | Un recorrido continuo mesa → captura → preparación → cobro. Diferenciar ubicación física de cuenta. |
-| [Fudo: funcionalidades](https://fu.do/es/funcionalidades/), [mostrador](https://soporte.fu.do/es/articles/11730844-7-mostrador-meson), [cobro parcial](https://soporte.fu.do/es/articles/11730861-como-realizar-un-cierre-cobro-parcial-dividir-el-total-de-una-mesa) | Mapa de salas y mesas, transferencia de consumos, venta directa y cobro de algunos productos manteniendo abierta la atención. La documentación distingue capacidades de computadora y app. | Lenguaje cercano a la operación local: salón, mesa, mesero, comanda y precuenta. Misma cuenta recuperable entre vistas y cierre parcial explícito. |
-
-La síntesis es propia: Auraly debe priorizar posición predecible, lectura rápida y pocos toques. La fotografía es opcional; nombre, precio y disponibilidad nunca dependen de ella. No se adoptan automáticamente reglas fiscales, modelos de caja ni pagos específicos de los proveedores.
-
-La maqueta que acompaña esta propuesta permite explorar Venta, Mesas, Cuentas y Configuración con un conjunto ficticio de productos y mesas. Simula cantidades, modificadores, rondas, traslado, pago, limpieza y edición básica de mesas. La maqueta ilustra contraseña secundaria con claves ficticias, autorización de supervisor, una cuenta por mesa, cajero financiero único, plano por coordenadas y comandas por estación. Credenciales, push, impresoras y operaciones reales no están conectados. Sus cambios viven solo durante la demostración y no persisten al recargar.
-
-## 3. Base existente y brechas comprobadas
-
-La revisión es de código y esquema del checkout actual, incluyendo cambios ajenos que se preservaron. No equivale a certificar producción ni a ejecutar sus pruebas.
-
-| Capacidad | Evidencia local | Tratamiento |
-| --- | --- | --- |
-| Contrato común de POS | `admin/src/services/pos/pos-edge-client.ts`, interfaz `PosClient`; `online-pos-client.ts` | Compartir comandos y adaptadores entre ambas presentaciones. |
-| Captura, cobro, temporales, pedidos y cierre | `admin/src/app/(pos)/pos/page.tsx`: `captureSelectedProduct`, `saveTemporary`, `recoverTemporary`, `saveOrder`, `recoverOrder`, `invoiceOrders`, `completeSale`, `closeWorkSession` | Extraer únicamente el estado/comandos necesarios para montar dos layouts; no copiar la página ni sus reglas. |
-| Borradores durables | `OnlineSalesDraftService`, `SqlOnlineSalesDraftStore`, `SalesDrafts`, `SalesDraftLines`, `SalesDraftMutationReceipts` | Extender el mismo propietario para cuentas de atención. |
-| Restricción de cuentas actuales | `UX_SalesDrafts_ActiveWorkSession`; `LockDraftAsync` filtra `d.UserId=@UserId`; mutaciones exigen `Active` | Varias cuentas de mesa compartidas **no** se obtienen simplemente guardando el número en `Name`. Hace falta ámbito compartido autorizado, ciclo de cuenta y revisión de índices. |
-| Catálogo para mosaicos | `OnlineSalesProduct` tiene identificación, precio y unidad; `SearchOnlineSalesRequest` busca texto y pagina. No expone allí categoría, foto ni orden de menú. `ProductCategories`, `ProductImages`, `ProductMerchandising` ya existen. | Extender la proyección y búsqueda canónica con filtros y metadatos; no descargar todo el catálogo administrativo. |
-| Variantes, modificadores y rondas | `SalesDraftLines` tiene `Note` pero el DTO `OnlineSalesDraftLine` no la expone; no se encontró modelado gastronómico de grupos, selección obligatoria o envíos por ronda en la búsqueda realizada. | Diseñar el slice completo: configuración, captura, snapshot, precio, preparación, impresión y pruebas. |
-| Checkout y efectos | `OnlineSalesDraftApi` → `OnlineSalesCheckoutService` → `ReceivePosSaleService`; DI en `Program.cs` registra el mismo store para drafts/checkout/historial/importación | La cuenta se emite por el pipeline actual. Inventario, fiscal, contabilidad y reporting conservan sus propietarios. |
-| Pedidos comerciales | `PosOrdersApi`, `OrderService`; el POS informa que guardar pedido reserva inventario | Una comanda no puede convertirse automáticamente en pedido comercial: cambiaría el efecto físico. Conservar la acción Guardar pedido con su semántica actual. |
-| Impresión | `PosPrinterConfigurationStore`, `ConfigurableOrderDocumentPrinter`, `ConfigurablePosReceiptPrinter`; diseño `pos-printer-configuration-design.md` | Reutilizar configuración, render y transportes. Incorporar propósitos y plantillas versionadas de comanda/precuenta. No asumir confirmación física de papel. |
-| Mesas | No se localizaron maestros/atenciones de restaurante en módulos, tablas o POS examinados. `BusinessResources` representa un recurso con cantidad, no mesa identificada con atención y cuenta. | Nuevos datos de atención bajo Sales; no reinterpretar recursos de agenda como mesas activas. |
-| Productos vinculados | `ProductLinks` y `decision-modulo-conversion-de-productos.md` | Reutilizar equivalencias válidas, por ejemplo botella/copa. Una receta de múltiples ingredientes no es esa conversión. |
-
-**Prevalencia documental:** varios documentos POS del 29–30 de julio aún mencionan `RegisterId`, cajas y pendientes ya conectados en la UI. Para contexto/numeración prevalece `decision-eliminar-caja-contexto-usuario-dispositivo.md` del 31 de julio; el esquema actual de `SalesDrafts` confirma sede, bodega, usuario y sesión. Para sincronización prevalece `decision-pos-sync-push-sin-polling.md`. Esta propuesta no adopta los textos históricos contradictorios; su limpieza global queda fuera del alcance documental de restaurantes. No hay bloqueo para este diseño, pero la implementación no debe usar esas secciones como especificación vigente.
-
-## 4. Pantalla táctil de venta
+## 3. Pantalla de venta y operaciones
 
 ### Composición
 
-En terminal horizontal de 1280×800 o superior: cabecera compacta, categorías verticales a la izquierda, mosaicos fotográficos al centro y panel Mapa/Cuenta a la derecha (aproximadamente 32–35%). La primera categoría se abre automáticamente. En 1024 px se reducen columnas de producto antes que tamaño de controles. En teléfono de 360–430 px: Mesas, Productos y Cuenta son vistas consecutivas; resumen y acción de cuenta al alcance del pulgar. El modo compacto no encoge la pantalla de escritorio.
+**Distribución final acordada: dos pasos.** Primero, el plano ocupa el **100% del área de trabajo**, con salones, estados y selección de mesa; todavía no se muestran productos ni cuentas. Tocar mesa identifica/autoriza según §5 antes de devolver su borrador. Al aprobar, el plano deja lugar a la toma de pedido: **cuenta a la izquierda, aproximadamente 30%; categorías y productos con imágenes a la derecha, aproximadamente 70%**. Cabecera compacta; primera categoría disponible abierta, cuadrícula táctil y cuenta visibles simultáneamente. Cuenta muestra mesa, mesero responsable, actor actual, cajero/contexto financiero y total; tablet de mesero sin cajero asignado indica Pendiente de caja, sin atribuir uno ficticio.
 
-Cabecera: sede/bodega, usuario, conectividad, navegación Mesas/Venta/Cuentas y Operaciones. El número de mesa y nombre de cuenta permanecen visibles durante cualquier modificación o cobro.
+Volver a mesas recupera el plano completo y conserva lo confirmado de la cuenta. En puesto compartido termina la intervención y exige identificar al mesero al abrir cualquier mesa, incluso la misma; no cambia la sesión financiera del cajero. Cancelar o fallar autenticación conserva el mapa, sin abrir/asignar mesa ni mostrar su detalle. La proporción 70/30 es objetivo de escritorio, no un ancho rígido: la cuenta conserva espacio para nombres, importes y controles táctiles; si no caben, se usa navegación móvil.
 
-Catálogo: búsqueda por nombre/código, categorías verticales y líneas opcionales sobre la cuadrícula; mosaicos estables con fotografía del producto, nombre, precio final y distintivo de modificadores/agotado. Las fotos reutilizan ProductImages; una imagen faltante muestra una ausencia explícita, nunca otra foto engañosa. La maqueta utiliza fotografías ilustrativas de Unsplash. Un máximo de dos niveles visibles. La búsqueda global muestra la ruta de categoría y no queda atrapada en el filtro anterior. Los productos populares se fijan manualmente: no se reordenan en plena jornada.
+Cabecera: negocio/bodega, usuario/contexto efectivo, conexión y accesos Venta, Mesas, Cuentas, Comandas, Operaciones y Configuración según permisos. Salón filtra mesas, categoría/línea filtra productos, estación enruta comanda y bodega determina stock. Cambiar una dimensión no cambia implícitamente otra.
 
-Cuenta: mesa o nombre de barra, mesero responsable, comensales, líneas y cantidades, separación de **Por enviar** y rondas ya enviadas. Pie con total del consumo, propina aceptada cuando exista, saldo y acciones **Enviar a preparación**, **Precuenta**, **Dividir**, **Cobrar**.
+Mosaicos con nombre, fotografía propia, precio y marcas de modificadores/agotado; imagen neutra si falta foto. Posiciones estables, favoritos administrados y búsqueda global por nombre/código con ruta de categoría. No reordenar productos automáticamente durante la jornada. Elegibilidad de ingredientes definida en §7.
 
-Área de salón (Terraza) filtra mesas. Grupo de menú (Bebidas) filtra productos. Estación de preparación (Barra) enruta comandas. Bodega gobierna inventario. Son dimensiones diferentes aunque el negocio use nombres parecidos; cambiar una no cambia implícitamente las otras.
+En tablet vertical/teléfono: Mesas → Productos → Cuenta, con resumen y acción al alcance del pulgar. Apilar sin encoger controles. Plano con zoom/desplazamiento y lista equivalente. Objetivos: botones primarios 56 px, secundarios 48 px, separación 8 px, texto operativo 16–18 px, contraste/foco y etiquetas además del color.
 
-### Interacciones
+**Apariencia de Auraly, con modo luz y modo oscuro completos.** Reutilizar ThemeToggle/next-themes y los tokens semánticos de la aplicación; no tema exclusivo del restaurante ni configuración por mesa/negocio. En luz predominan blanco en cabecera, plano, cuenta, tarjetas y diálogos, con fondo gris muy suave, bordes discretos y acento verde azulado en acciones/selección. Evitar cabecera permanentemente oscura, grandes rellenos saturados y cuadrícula decorativa dominante en el plano de venta. En oscuro usar superficies diferenciadas y texto legible, sin invertir fotografías. Estados de mesa mantienen texto/iconos además de color. Cambiar tema conserva mesa, actor, cantidades, categoría y contexto; no exige recarga. Aplicar a POS, editor, comandas y diálogos. El menú público respeta la preferencia del visitante, sin publicar la preferencia privada del cajero.
 
-- Producto simple: un toque agrega una unidad. La línea se destaca y muestra estado de guardado; se distingue captura pendiente de confirmada. Cada toque intencional suma; un reintento de red no suma otra vez.
-- Cantidad: botones +/− grandes en línea y teclado numérico al tocar la cantidad. Retirar una línea enviada exige el flujo de corrección con motivo.
-- Producto configurable: panel con grupos, mínimo/máximo, extras y precio resultante. No se puede agregar sin completar un grupo obligatorio. Separar dos unidades con preparaciones distintas.
-- Ronda: enviar únicamente cambios pendientes. Volver a una mesa nunca reenvía lo anterior. Repetir ronda crea cantidades nuevas, revalida precio/disponibilidad y muestra el resumen antes de enviar.
-- Notas: presets administrados y texto libre; alertas de alergia visibles en línea y comanda. No afirmar que un plato es seguro a partir de una nota.
-- Cambio de mesa/cuenta: guarda el estado, conserva selección por cuenta y avisa de cambios pendientes fallidos. Un error de red no convierte el borrador en una cuenta guardada.
-- Acciones frecuentes a un toque; adicionales a dos. Sin acciones esenciales ocultas en hover, doble clic, swipe o pulsación larga. Arrastrar solo en el editor de plano y siempre con alternativa por botones/campos.
-- Controles principales de 56 px; secundarios al menos 48 px; separación de 8 px. Tipografía de operación 16–18 px y nombres legibles. Contraste, foco y texto acompañan siempre al color.
-- Mantener teclado y lector existentes. Un diálogo conserva sus atajos y devuelve foco al invocador táctil o a captura según el dispositivo.
+### Interacción
 
-Estados obligatorios: carga, salón vacío con acceso a configuración autorizado, búsqueda sin resultados, producto agotado, guardado pendiente/fallido, conflicto de edición, cuenta en emisión, permiso insuficiente y conexión perdida. Un saldo obsoleto no habilita cobrar.
+- Producto simple agrega una unidad; sin mesa/cuenta activa solicita selección, sin agregar a una cuenta implícita.
+- Tocar otra vez el mosaico del catálogo suma una unidad; los botones + y − de la cuenta aparecen al agregar. + conserva autor/hora del incremento; − reduce pendientes. Afectar enviados abre Cancelar/corregir (§9). **Tocar nombre, importe, cantidad como texto o cuerpo de la línea no hace nada en V1:** no abre editor, descuento ni diálogo. Modificaciones sensibles permanecen en acciones explícitas autorizadas, no en el toque de la fila.
+- Modificadores por grupos administrados, mínimo/máximo, obligatoriedad y orden; extras cobrables usan precio/producto canónicos. Preparaciones distintas conservan líneas distintas.
+- Agrupar visualmente no fusiona incorporaciones de diferentes autores, horas, recetas o preparaciones.
+- Enviar comanda manda solo cantidades nuevas; Repetir ronda crea nuevas identidades y revalida disponibilidad/configuración/precio.
+- Notas y alergias se muestran en preparación. No interpretar texto libre como descuento de ingredientes o garantía alimentaria. Cambios de receta/ruta se declaran en opciones tipadas.
+- Pausar conserva la cuenta online y vuelve al mapa; no factura, reserva ni envía cocina.
+- Toda captura diferencia Guardando, Confirmado, Fallido e Incierto. Sin acciones esenciales por hover/doble clic/pulsación larga.
+- Diálogos reutilizan lector, teclado, foco y convenciones POS; el mapa siempre permite volver.
 
-## 5. Mesas, atenciones y cuentas
+Estados de UI: carga, vacío con acción pertinente, sin resultados, agotado, configuración inválida, conflicto, permiso insuficiente, emisión pendiente y desconexión. La falta de conexión no parece una cuenta vacía.
 
-**Mesa** es el lugar físico. **Atención** es la visita del grupo. **Cuenta** es el consumo que se cobrará mediante un borrador de venta. **Factura/documento de venta** es el resultado confirmado e inmutable. **Una mesa solo puede tener una cuenta activa y una atención activa a la vez.** Se abre, acumula rondas, se factura, termina la atención y luego puede abrirse una cuenta nueva. Cada ciclo tiene identidad e historial propios. No permitir cuentas hermanas ni apertura paralela en la misma mesa.
+### Paridad con Auraly
 
-No guardar un único `TableId` mutable en una factura y usarlo para representar todo el historial. Conservar la relación con la atención y el contexto congelado al emitir.
-
-### Estados visibles
-
-| Estado de mesa | Significado y transición |
+| Operación | Acceso y comportamiento |
 | --- | --- |
-| Libre | Sin atención abierta, limpia y habilitada. Tocar abre contexto; confirmar Abrir mesa ocupa atómicamente. |
-| Ocupada | Atención activa, incluso si está pagada y los clientes siguen sentados. Mostrar tiempo, mesero, personas, saldo de su única cuenta. |
-| Por limpiar | Atención terminada; todavía no admite una nueva. Acción Listo para usar → Libre. |
-| Fuera de servicio | Bloqueo administrativo con motivo. Solo se establece sin atención abierta; no borra historial. |
+| Cliente, precios, descuentos, factura | Comandos/diálogos de Sales con permisos actuales. |
+| Pausas normales/pedidos comerciales | Cuentas → flujos existentes. Los pedidos conservan sus reservas; no son comandas. |
+| Facturas, reimpresión y devoluciones | Operaciones → documentos originales. |
+| Dinero, arqueo y cierre | Operaciones → WorkSession del cajero. |
+| Entrada de mercancía | Operaciones → Purchasing. |
+| Salida, avería, conteo y traslado | Operaciones → Inventory. |
+| Periféricos | Configuración canónica de dispositivos/impresión. |
 
-**Por cobrar**, **pagada**, **productos por enviar**, **demora** y **reserva próxima** son indicadores independientes, no estados mutuamente excluyentes de la mesa. **Cerrada** identifica la cuenta/atención terminada en el historial. Evita confundir mesa clausurada, venta pagada y mesa lista.
+Abrir un flujo existente identifica claramente su contexto y conserva el de restaurante. No copiar una cuenta de mesa a otro carrito ni convertirla a pedido comercial para enviarla. El mesero no hereda permisos financieros o de inventario. La venta normal directa continúa en su pantalla actual; el restaurante atiende también puestos numerados de barra con el mismo ciclo de mesa.
 
-Las transiciones se ejecutan mediante acciones autorizadas; no hay un dropdown que permita pintar cualquier estado. Los labels y metadatos visibles se sirven desde catálogos persistidos; las invariantes de transición pertenecen al dominio.
+## 4. Estudio de salón: editor personalizable
 
-### Plano y lista
+### Inicio y composición
 
-Pestañas de salones con ocupadas/total; alternancia Plano/Lista; filtros Todas, Mis mesas y Necesitan atención. La lista favorece búsqueda por número, mesero o cuenta y teléfonos pequeños. El plano reproduce posiciones con mesas redondas/rectangulares, capacidad y referencias visuales como entrada/barra. La maqueta muestra una distribución ilustrativa, no medidas del local.
+Ruta: Configuración → Restaurante → Salones y mesas. Nombre: **Estudio de salón**. Iniciar con Plano vacío, Plantilla editable o Mi plano como fondo. El asistente solicita salón y dimensiones; para imagen permite calibrar una distancia conocida o trabajar en proporción, identificado como tal. No inferir medidas del local desde la referencia visual del usuario.
 
-**Estudio de salón:** módulo visual con lienzo por salón, dimensiones/proporciones, mesas numeradas, forma, capacidad, tamaño, posición y orientación. Permite arrastrar, ajustar con campos, alinear a guías y añadir paredes, columnas, puertas, barra y referencias de circulación. Un fondo/plano aportado por el negocio puede servir de guía; no inventar medidas reales a partir de la imagen de referencia. Publicar conserva coordenadas y proporciones en el mapa de ventas: nunca reorganiza mesas automáticamente para llenar una cuadrícula. En pantallas pequeñas usar ampliación o lista accesible, manteniendo el plano como representación fiel.
+Escritorio: biblioteca lateral, lienzo dominante e inspector de selección. Tablet: biblioteca/inspector plegables. Herramientas: seleccionar, mover lienzo, zoom/encajar, guías, deshacer/rehacer, vista previa y Publicar. Arrastrar desde biblioteca o tocar objeto y tocar lienzo son alternativas equivalentes.
 
-Cambios de distribución se preparan como borrador, se previsualizan y se publican con versión. No renumerar, eliminar ni mover una mesa ocupada a otro salón sin el flujo autorizado. Detectar códigos repetidos, figuras fuera del plano y solapamientos antes de publicar; preservar versión anterior para reversión. La maqueta permite posiciones/tamaños por campos, arrastre, formas, numeración y referencias, con datos ilustrativos; el versionado, dimensiones físicas, rotación y validación completa de publicación son requisitos de implementación.
+### Herramientas V1
 
-Traslado: seleccionar destino libre, revisar y confirmar. En V1 un destino ocupado se rechaza; no fusionar cuentas ni mesas ocupadas. Conservar la misma cuenta, responsable, rondas y ubicación actualizada en comandas. Los documentos emitidos conservan su contexto histórico.
-
-La mesa queda ocupada después de facturar hasta resolver entregas y confirmar salida. La cuenta emitida no se edita: correcciones usan devoluciones/notas canónicas. Para otro consumo se debe finalizar el ciclo anterior y abrir una atención nueva. No crear una segunda cuenta mientras la atención previa siga activa.
-
-## 6. Cobro y operación de bar
-
-**Precuenta:** presentación revisable del consumo actual, identificada como precuenta; no consume consecutivo fiscal, no registra pagos ni cierra la mesa. Incluye número de revisión y hora para distinguirla de una cuenta modificada después.
-
-**Dividir pago:** una cuenta/documento con varios medios o aportantes. Los importes deben sumar exactamente el saldo; el redondeo residual se presenta explícitamente. No implica dividir platos ni emitir varias facturas.
-
-**Una cuenta por mesa:** separar consumos en cuentas simultáneas y cobrar productos abriendo otros borradores queda fuera de V1. Dividir el pago usa los medios/aportantes soportados por el cobro canónico, conservando una sola cuenta y su documento. No introducir cobros parciales nuevos sin contrato existente y aceptación contable.
-
-**Propina:** concepto separado, visible y voluntario; aceptar, editar o rechazar. No convertirla en ingreso por producto ni en descuento negativo. El tratamiento financiero, la distribución y el snapshot deben integrarse con Accounting y los contratos de pago antes de habilitarla. La voluntariedad se apoya en la [Ley 1935 publicada por la SIC](https://sedeelectronica.sic.gov.co/transparencia/normativa/ley-1935) y su [orientación sobre precios y propinas](https://sedeelectronica.sic.gov.co/index.php/temas/proteccion-al-consumidor/derechos-y-deberes/inconvenientes-precio). El diseño no fija impuestos ni porcentajes universales.
-
-Bar: cuentas con nombre corto, acceso a últimas cuentas, repetir ronda, favoritos de bebidas, copa/botella como presentaciones del catálogo y precios horarios mediante promociones existentes. Preautorización de tarjeta requiere una capacidad verificada del proveedor; no se simula guardando datos de tarjeta. Cover, descorche o cargos adicionales explícitos usan conceptos vendibles y tratamiento fiscal configurados, separados de propina.
-
-### Paridad con la venta actual
-
-| Acción solicitada | Ubicación y propietario |
+| Elemento | Personalización |
 | --- | --- |
-| Buscar, agregar, editar, descuentos, cliente, factura/ticket | Venta; comandos actuales y diálogos compartidos. |
-| Pausar/recuperar venta | Cuentas → Pausadas; la cuenta de mesa se conserva además vinculada a su atención. Pausar no libera mesa ni envía cocina. |
-| Guardar, recuperar y facturar pedidos | Cuentas → Pedidos; `OrderService` y políticas actuales. La reserva de mercancía conserva su significado. |
-| Consultar/reimprimir facturas y devolver | Operaciones → Documentos/Devoluciones; snapshot y casos de uso existentes. |
-| Entrada/salida de dinero, arqueo y cierre | Operaciones → Sesión de venta; `WorkSessions`. No es movimiento de mercancía. |
-| Entrada de mercancía | Operaciones → Recepción de mercancía; workspace de compras existente, con vuelta al contexto de atención. |
-| Salida/ajuste/avería/traslado de mercancía | Operaciones → Inventario; workspace y motor documental existentes. No modificar stock desde el mosaico. |
-| Impresoras y periféricos | Operaciones → Periféricos; perfiles existentes ampliados. |
+| Mesas | Circular, ovalada, cuadrada, rectangular, esquinas redondeadas y polígono simple editable; número/nombre, capacidad, tamaño, orientación, color base y sillas. |
+| Barra | Recta, en L o contorno poligonal; puestos independientes numerados cuando reciben cuentas. Dibujar Barra no crea una estación automáticamente. |
+| Construcción | Paredes por segmentos con espesor, puertas/apertura visual, ventanas, columnas y divisiones; guías para unir extremos. |
+| Referencias | Cocina, baños, entrada, escalera, plantas, etiquetas, zonas y objetos genéricos con forma/nombre. Sin efectos comerciales por dibujarlos. |
+| Manipulación | Arrastrar/soltar, tiradores para tamaño/giro, campos numéricos, mover por teclado, duplicar, selección múltiple, alinear/distribuir, agrupar y bloquear. |
+| Creación rápida | Lotes de mesas por filas/columnas con numeración y preview; duplicar salón exige códigos nuevos. |
+| Capas | Fondo, estructura, mobiliario y mesas; mostrar/ocultar/bloquear. |
+| Apariencia | Colores/materiales planos, etiquetas y sillas opcionales. Estados operativos mantienen texto/contraste sobre el estilo elegido. |
 
-El mesero no hereda permisos de compras, inventario o cierre por usar esta vista. Las acciones se ofrecen conforme a permisos/capacidades reales y la API vuelve a autorizarlas.
+Geometría personalizada como datos vectoriales validados, nunca scripts/HTML del usuario. Fondos mediante almacenamiento de archivos existente con scope, validación de formato/tamaño y versión. Plantillas y biblioteca administrables se obtienen de catálogos; fixtures de la maqueta no se trasladan como listas quemadas a producción.
 
-## 7. Configuración gastronómica
+### Representaciones y publicación
 
-### Contraseña secundaria y autorización de intervención
+Tres representaciones: **Plano detallado**, **Plano simplificado**, **Lista de mesas**. Los planos comparten coordenadas; simplificar oculta decoración, no reacomoda. Lista con número, salón, capacidad y estado, búsqueda y filtros. No se incluye 3D.
 
-V1 reutiliza la **contraseña secundaria existente**. No incorpora huella, biometría ni un PIN paralelo. El cajero conserva login y WorkSession; la validación del mesero solo concede atención sobre la cuenta indicada. Al abrir una mesa libre se selecciona e identifica al mesero; la apertura/primera captura aceptada asigna responsable de forma atómica. Seleccionar el nombre en una lista no prueba su identidad.
+Autoguardado online del borrador de plano con estado visible y recuperación. Deshacer/rehacer dentro de sesión. Una concesión de edición por salón, validada en servidor y con versión: otro editor ve lectura o toma control autorizado explícitamente. Desconexión suspende cambios y exige reconciliar, sin publicar una copia local obsoleta.
 
-Mesa ocupada: mostrar responsable y pedir su contraseña secundaria. Si otro mesero interviene, validar su identidad como ejecutor y solicitar la contraseña secundaria del supervisor con permiso para intervenir cuentas de otros meseros. La aprobación se limita a cuenta, intervención y versión/operación autorizada; se consume con el mecanismo canónico y expira. No convierte al operador en supervisor ni cambia permanentemente el responsable. El prototipo simplifica esta doble validación con selección de ejecutor y clave ficticia del supervisor; la implementación exige evidencia del ejecutor y del aprobador por separado.
+Publicación con preview y validación: códigos únicos por negocio, dimensiones positivas, límites del salón, polígonos simples, referencias válidas; mesas superpuestas o atravesadas por paredes bloquean. Superposición decorativa puede advertirse y confirmarse. El dibujo no certifica aforo o normas de construcción.
 
-Al enviar, pausar, cerrar la precuenta o vencer la intervención, terminar el acceso del mesero y volver al mapa. Su cuenta y la sesión del cajero permanecen. Respuestas tardías conservan actor y correlación originales. Cambiar a Cajero requiere la validación canónica del cajero; ocultar botones no es un control de seguridad. La superficie Atención no recibe su token financiero pleno.
+Mesa ocupada mantiene identidad, número, salón y geometría publicados hasta liberarse. Se admiten cambios en mesas libres/decoración que no invadan ocupadas. Desactivar/eliminar lógicamente conserva historia. Revertir plano pasa las mismas validaciones y nunca restaura estado financiero. La publicación emite una versión completa por push; todas las pantallas muestran el mismo plano.
 
-**Capacidad existente comprobada:** Authorization posee PosApprovalService, IPosApprovalStore/SqlPosApprovalStore, SupervisorCredentials y PosApprovalRequests. AuthorizeLocallyAsync verifica la credencial secundaria con PBKDF2 y comparación en tiempo constante, filtra supervisores por permiso/sede y rechaza autoaprobación. Existe configuración/revocación, vencimiento y credencial de un solo uso. Se reutiliza este propietario y almacenamiento; no crear RestaurantPasswords ni otro servicio de credenciales.
+## 5. Meseros, autorización y equipos
 
-**Extensión necesaria:** actualmente AuthorizeLocallyAsync busca supervisores habilitados para una acción sensible; no es un login genérico de meseros. ValidateSensitivePermission todavía no admite una intervención gastronómica. Añadir el caso de uso tipado de identificación del mesero y el permiso de supervisor al catálogo/flujo canónicos, conservando autenticación financiera del cajero. No otorgar a todos los meseros permisos de supervisor para reutilizar la API tal cual. La validación del responsable no es una autoaprobación: es otro propósito explícito dentro de Authorization; la excepción supervisada conserva la prohibición de autoaprobación y sus recibos. Revisar contratos que hoy ligan RequestedByUserId/WorkSessionId al cajero para preservar ejecutor mesero y aprobador reales sin datos ficticios.
+### Rol y cuenta de usuario
 
-Credenciales fuera de logs, snapshots, localStorage y comandas. Conservar políticas canónicas de vigencia, revocación e intentos y ampliar evidencia donde falte. La API valida tenant, sede, usuario habilitado, responsable de la cuenta, alcance y versión. Un WaiterId enviado por la UI no habilita mutaciones.
+Agregar Mesero al formulario de Terceros, filtros y role-options paginado canónico. Relación especializada Party + Business, única, con estado, código/nombre corto opcionales, versión y auditoría. Misma persona, sin duplicar identificación/contactos, sin IsWaiter en Parties y sin reinterpretar Seller.
 
-Aceptación: contraseña correcta/incorrecta; responsable permitido; mesero distinto rechazado; supervisor sin permiso rechazado; aprobación válida limitada a esta cuenta; reuso, vencimiento y cambio de versión controlados; autor y aprobador auditados; ningún cambio en la WorkSession del cajero; mesa única aun con aperturas concurrentes.
+**Marcar Mesero no crea/vincula Usuario ni permite login.** Guardar su configuración sin usuario es válido; se muestra Sin usuario vinculado. Un administrador lo vincula manualmente después por el flujo existente AppUsers.PartyId y asigna permisos. Empleado, Mesero y Usuario son independientes; no activa nómina ni WorkSession. La credencial secundaria pertenece a Authorization.
 
-Ruta propuesta: Configuración → Ventas → Restaurante y bar, por sede. Editor con vista previa y guardado versionado. Valores iniciales provienen de perfiles/seeds idempotentes sin sobrescribir personalizaciones.
+Desactivar Mesero exige resolver responsables activos mediante relevo o cierre, revoca nuevas intervenciones y conserva historial y otros roles. La [decisión del maestro de personas](../decision-maestro-parties-roles-sedes-y-cuentas-usuario.md) sigue siendo autoridad de identidad.
 
-| Sección | Datos y comportamiento |
-| --- | --- |
-| Experiencia de venta | Habilitación por sede, presentación predeterminada, pantalla inicial por perfil, densidad táctil y fotos opcionales. |
-| Salones y mesas | Nombre/código, orden, vigencia, plano; mesa con código único por sede, salón, capacidad, forma y coordenadas. Crear en lote, duplicar disposición, mover por campos o arrastre y previsualizar. Desactivar conserva historial; prohibido retirar una mesa ocupada. |
-| Menú táctil | Seleccionar productos/categorías existentes, grupos visuales, favoritos, posición y disponibilidad por horario/canal. No duplica nombre fiscal, precio, impuestos ni existencia. Un agotado permanece visible con razón. |
-| Modificadores | Grupos por producto con mínimo/máximo, obligatoriedad y orden; opciones administradas, extras vinculados a producto vendible cuando tengan precio/stock. Alergias y notas distinguibles de extras cobrables. |
-| Preparación | Estaciones Cocina/Barra/etc. administradas; regla de enrutamiento por producto o categoría con precedencia explícita y validación de destino. Rondas, tiempos y avisos de demora configurables. |
-| Impresión | Destinos por estación y dispositivo, formato/copia y plantilla versionada; comanda de prueba, falla visible y reimpresión identificada. No activar cajón desde comanda/precuenta. |
-| Atención | Comensales opcionales u obligatorios, mesero responsable, flujo de limpieza, reglas de traslado/unión y relevo. No hacer a las mesas propiedad permanente de un usuario. |
-| Cobro | Separación de cuentas, propina y motivos de corrección; capacidades habilitadas solo cuando el contrato financiero correspondiente esté listo. Medios y precios vienen de catálogos existentes. |
-| Permisos | Atender, ver otras mesas, reasignar mesero, trasladar, corregir enviados, cobrar, finalizar atención, administrar plano y configuración. Se agregan al catálogo de permisos actual. |
+### Acceso a mesa
 
-Las áreas y motivos son maestros reales; usar `BusinessReasons` con `ReasonType` para los motivos, no un nuevo catálogo aislado. Los meseros usan identidades/roles operativos existentes y búsqueda paginada; no crear una segunda tabla de personas.
+Negocio → Restaurante → Atención: **Restringir pedidos al mesero responsable de la mesa**. Política versionada del negocio; modalidad Personal/Compartido autorizada por servidor.
 
-Reservas de hora/fecha, lista de espera, QR/autopedido, domicilios nuevos y recetas/costeo por ingredientes quedan como ampliaciones posteriores. Las comandas virtuales y el tablero de preparación sí forman parte del alcance solicitado. No se exponen configuraciones operativas vacías.
-
-### Comandas virtuales: pedir, preparar y entregar
-
-El modo de atención se configura **por producto vendible**, con destino explícito y posibles reglas predeterminadas por categoría que se resuelven en Catalog. La UI consume el resultado; no deduce la necesidad de cocinar por el nombre, categoría o precio del artículo.
-
-| Modo | Ejemplo ilustrativo | Recorrido |
+| Contexto | Restricción desactivada | Restricción activada |
 | --- | --- | --- |
-| Entrega directa | Cerveza embotellada, agua | Capturado → Por entregar → Entregado. No aparece como trabajo de cocina. Puede mostrarse en la bandeja de retiro de Barra si el negocio usa esa estación. |
-| Requiere preparación | Hamburguesa, pizza | Capturado → Pendiente en Cocina → En preparación → Listo → Entregado. |
-| Requiere preparación en barra | Cóctel, bebida elaborada | El mismo recorrido de preparación, con estación Barra. |
+| Tablet personal | Mesero ya autenticado abre cualquier mesa permitida sin contraseña adicional. | Responsable entra directamente; otro mesero requiere aprobación supervisora antes de recibir el borrador. |
+| Puesto compartido | Antes de abrir cualquier mesa, identificar al mesero con su contraseña secundaria. Cualquier mesero autorizado puede intervenir, sin aprobación por pertenencia de mesa. | Antes de abrir cualquier mesa, contraseña secundaria del mesero; si es otro responsable, además aprobación del supervisor. |
+| Cajero para facturar | Accede con su usuario y permisos financieros. | Igual: no se exige ser mesero responsable para cobrar. |
 
-Los ejemplos no son reglas globales: una cerveza servida desde barril puede requerir una tarea de barra; un producto envasado puede entregarlo directamente el mesero. Configurar modo, estación de preparación o retiro, nombre corto de comanda, orden y objetivo de tiempo. Las variantes o extras que cambien el destino deben declarar su efecto tipado, no esconderlo en una nota.
+Mesa libre se asigna al mesero de la apertura. Sin restricción, ese responsable es referencia histórica, no exclusividad. **Identificación y exclusividad son reglas distintas:** en compartido siempre se verifica la contraseña secundaria; la opción de negocio solo decide si otro mesero necesita supervisor. Seleccionar un nombre no basta para obtener acceso. En tablet personal, la sesión vigente ya verifica al mesero: no se repite la clave por mesa, pero se aplica la restricción y se reautentica si vence la sesión. No atribuir al responsable histórico lo que agregó otra persona. Registrar por separado usuario del puesto, mesero verificado y supervisor; la credencial no constituye prueba biométrica.
 
-**Enviar pedido** confirma una ronda inmutable con todos sus ítems y distribuye tareas: una cerveza entra en Por entregar y una hamburguesa en Pendiente de Cocina. Los productos siguen en la misma cuenta comercial. Marcar Entregado en un producto directo puede confirmar su solicitud y entrega en un comando explícito, manteniendo trazabilidad. El stock conserva el efecto de la venta/pedido actual; avanzar una tarjeta no lo descuenta.
+Supervisor aprueba ejecutor, cuenta, acción, versión y vigencia mediante mecanismo canónico consumible; ejecutor y aprobador son distintos. Aprobar no reasigna responsable ni concede descuentos/cobro. Relevo es acción separada auditada. Compartido vuelve al mapa y termina intervención al enviar, pausar, terminar o vencer; tablet conserva su sesión personal. No se cierra WorkSession del cajero.
 
-**Tablero virtual por estación:** columnas Pendientes, En preparación y Listos; bandeja Por entregar para productos directos cuando corresponda. Cada tarjeta muestra mesa/cuenta, ronda, antigüedad, mesero, cantidades y modificaciones. Un envío puede crear grupos por Cocina y Barra vinculados a una única ronda. El personal usa Empezar, Marcar listo y Entregado, según permisos. El mesero recibe un aviso visible de los ítems listos; una alerta sonora opcional no es la única señal.
+Activar restricción con cuentas abiertas exige resolver responsables faltantes, sin asignarlos al administrador por defecto. API protege lectura del borrador y cada mutación. Mapa expone solo resumen autorizado. Política, permisos y credenciales revocados se revalidan online.
 
-El estado se conserva por ítem/cantidad y estación, no solo por cuenta. Si de tres hamburguesas están listas dos, mostrar 2/3. Si el café sale antes del plato principal, puede entregarse sin cerrar el resto de la ronda. Los estados agregados se derivan de esas cantidades. El cierre financiero y la finalización del servicio son independientes; pagar por anticipado no marca preparado ni entregado.
+### Caja y pantallas
 
-**Correcciones:** retirar una línea no enviada modifica el borrador. Si fue enviada, la cocina recibe una cancelación o cambio identificado con motivo y revisión; no desaparece silenciosamente. Una preparación iniciada puede requerir aprobación y registrar merma mediante el flujo de inventario correspondiente. Rehacer un producto es una tarea explícita vinculada al original, sin cobrarlo otra vez automáticamente. Reimprimir o refrescar el tablero no vuelve a preparar.
+Mesero puede iniciar sesión personal sin abrir caja financiera. Cajero mantiene su usuario y jornada habitual, recibe dinero y factura muchas mesas. La cuenta pertenece al negocio; no queda bloqueada por cerrar la jornada del cajero que estaba al abrirla. Cierre informa mesas abiertas, sin facturarlas/cancelarlas automáticamente; otro cajero autorizado puede cobrarlas en su propia WorkSession.
 
-**Confiabilidad:** aceptación durable de ronda antes del aviso; acciones versionadas por ítem/cantidad; idempotencia del envío y de Empezar/Listo/Entregado; distribución y acuses asociados a la misma identidad de ronda. Ante conflicto, se recarga el estado actual. Una estación desconectada se marca sin conexión y conserva el último dato como histórico; al volver recupera lo pendiente mediante outbox/notificación y consulta canónicas, sin sondeo por temporizador ni otra cola de cocina. La UI distingue Pedido guardado, Pendiente de recibir en estación y Recibido; nunca deduce preparación a partir de que salió papel.
+Una pantalla alterna Atención/Cajero con revalidación al entrar a cobro. Dos pantallas del mismo computador: Atención detrás y Cajero delante, como superficies online separadas; sin alterar el enrolamiento o la preparación local. Atención usa credencial/capacidad limitada, nunca el token financiero pleno. Cambio de mesero no cambia al cajero. Tablets de meseros y cocina son independientes del número de monitores.
 
-**Pantallas:** Comandas es una vista operativa reutilizable en la pantalla existente o en un dispositivo de cocina/barra autorizado. No convierte la configuración de una/dos pantallas de ventas en obligación de comprar una tercera. La elección de impresora complementaria es opcional; el tablero virtual debe funcionar sin papel.
+Permisos nuevos se registran en Authorization: administrar restaurante/plano/comandas, atender, ver/iniciar/listo/entregar, trasladar/relevar, aprobar intervención y cancelación preparada. Reutilizar permisos existentes de descuentos, factura, devolución, impresión e inventario. Administrador los recibe por sincronización determinista. Aprobar una pérdida vinculada no concede al mesero permiso general de averías.
 
-**Tablet dedicada en cocina, solicitada por el usuario:** instalar/abrir una vista de preparación a pantalla completa, orientada horizontalmente y con sesión autorizada de esa estación. La tablet de cocina es adicional a la opción de una/dos pantallas del computador de ventas: son configuraciones independientes. Puede haber otra tablet de Barra si el negocio la necesita. Kitchen no recibe credenciales administrativas ni facultades de cobro por mostrar comandas.
+## 6. Borrador independiente, factura y auditoría
 
-**Nombre y distribución:** la configuración se llama **Estaciones de preparación** y la pantalla operativa **Comandas en vivo**. Cocina y Barra son ejemplos editables, no dos destinos fijos: el negocio puede crear Parrilla, Pizzería o Postres. Cada estación define nombre, sede, orden, activación, dispositivos autorizados, impresora opcional, objetivos de tiempo y preferencias de aviso. Cada producto declara entrega directa o preparación y su destino válido. Una tablet queda vinculada a su estación y abre su propio listado; la vista Todas es para coordinación con permiso, no un filtro que permita acceder a estaciones no autorizadas. El filtro visual de la maqueta solo ilustra esas vistas.
+### Ciclo
 
-Ejemplo: mesa 04 envía dos hamburguesas, un mojito y dos cervezas en la misma ronda. Cocina recibe una tarjeta con las hamburguesas; Barra, otra con el mojito; Entrega, las cervezas configuradas para retiro directo. Las tres conservan la misma referencia de mesa/ronda y una sola cuenta comercial. No duplicar todos los productos en todas las tablets. El ruteo por estación tiene precedente en [Toast: routing overview](https://doc.toasttab.com/doc/platformguide/platformKitchenRoutingOverview.html); aquí se adopta una regla explícita de producto y extensiones tipadas para modificadores.
+Cuenta: Abierta → En emisión → Facturada, o Abierta → Cancelada. Pausa/Precuenta son indicadores de Abierta. Cancelación pendiente impide emitir lo afectado hasta resolverla. Al iniciar emisión se congela versión/total y no se aceptan nuevas capturas.
 
-Al desactivar una estación con trabajo pendiente, exigir resolverlo o reasignarlo explícitamente. Una reasignación deja origen/destino, motivo y versión, avisa a ambas estaciones y conserva la identidad de la preparación. Trasladar la mesa cambia su ubicación visible, sin crear otra comanda. Dejar sin estación un producto que requiere preparación produce un error de configuración visible, nunca envío silencioso a Cocina.
+Mesa: Libre, Ocupada, Por limpiar, Fuera de servicio. Cuenta abierta/en emisión ocupa mesa. Facturada queda Ocupada/Pagada hasta resolver entregas y salida de clientes; finalizar conduce a limpieza o Libre si ese paso está desactivado. Fuera de servicio solo sin ciclo ocupado. No nuevas cuentas simultáneas ni cambios de estado arbitrarios.
 
-**Recepción automática push, requisito obligatorio:** la tablet abierta recibe nuevas comandas, modificaciones, cancelaciones y estados sin refrescar ni pulsar Recibir. Tras el commit de Sales, el stream durable y la outbox canónicos publican la invalidación; la tablet recupera el delta autorizado, lo aplica y actualiza tarjetas. La señal despierta la lectura, no reemplaza el registro durable de la comanda. Confirmar recepción del delta no significa que el cocinero haya empezado: Empezar sigue siendo una acción operativa.
+Abrir explícitamente fija OpenedAt del servidor aunque todavía no haya productos; no deducir apertura del primer producto. Restricción transaccional única de origen activo por mesa. Traslado solo a mesa libre del mismo negocio/bodega: conserva origen, responsable, rondas y autoría; notifica nueva ubicación. Origen/destino se bloquean en orden estable. No fusionar cuentas.
 
-El runtime tiene `PosSynchronizationStreams`, `IPosSynchronizationPushGateway`, `PosSynchronizationInvalidation` e `IPosSynchronizationOutboxDispatcher` en `PosSynchronization.cs`, además de `SqlPosSynchronizationOutboxDispatcher`. Todavía no declara un stream de preparación: extender este contrato y sus proyecciones, autorizaciones, suscripción y recuperación, bajo la [decisión de sincronización push](../decision-pos-sync-push-sin-polling.md). No crear otro gateway, dispatcher o job table de notificaciones. La partición por estación debe respetar tenant/sede y permisos tanto al suscribir como al leer o mutar; los grupos actuales por negocio/dispositivo/usuario no certifican por sí solos el aislamiento de estación.
+### Datos y enlace de emisión
 
-Push en una tablet activa y una notificación del sistema con la aplicación cerrada son capacidades distintas. La primera es obligatoria para operar. Web Push de segundo plano puede añadirse como complemento, sujeto a suscripción, permisos y soporte del sistema ([MDN: Push API](https://developer.mozilla.org/en-US/docs/Web/API/Push_API)); no garantiza ejecutar un tono personalizado con el dispositivo suspendido. La operación de cocina debe mantener la aplicación visible y validar la política de suspensión del equipo. Durante desconexión mostrar Sin conexión y la hora del último estado confirmado; al reconectar recuperar por cursor sin recarga manual, duplicados ni repetición masiva de pitidos históricos.
+Sales incorpora persistencia de salones/planos/versiones/objetos, mesas, estaciones/comandas, **borradores gastronómicos**, incorporaciones, rondas/revisiones, preparación y vínculos de efectos. Catalog incorpora receta/componentes/versiones/modificadores; Parties incorpora Mesero. No se crean job tables nuevas ni tabla de visita adicional.
 
-**Diseño de las tarjetas:** una tarjeta por ronda y estación, con la mesa y antigüedad destacadas arriba, mesero y referencia como apoyo, y líneas de producto con cantidad grande. Modificadores bajo el plato, alertas relevantes diferenciadas y progreso 2/3 cuando haya entrega parcial. Los ítems de una misma ronda comparten tarjeta; no llenar la tablet de tarjetas por cada unidad. Botones Empezar, Marcar listo y Entregado de al menos 56 px en la operación real; acciones parciales junto al ítem. La prioridad de lectura es mesa → producto/cantidad → modificaciones → tiempo → acción.
+Cada borrador recibe origen permanente. Incorporación tiene producto, cantidad, autor, evidencia de identidad, hora/orden, receta/modificadores y versión. El resumen puede agrupar, pero no destruir proveniencia. Reducir cantidad conserva quién incorporó y quién corrigió. Una única línea agregada con un solo mesero no puede representar contribuciones de varias personas: al emitir se separan los detalles necesarios.
 
-Tarjetas sobre fondo de bajo brillo, bordes suaves, contraste alto, espacios generosos y estados con color + texto. Llegada con aparición/desplazamiento suave de 200–350 ms y marca Nueva; mover de estado conserva la referencia visual y evita saltos de orden durante un toque. No hay parpadeos ni animaciones perpetuas. Respetar reducción de movimiento ([W3C, técnica C39](https://www.w3.org/WAI/WCAG21/Techniques/css/C39)). Las demoras usan umbrales por estación/producto, texto de tiempo y énfasis progresivo; no una animación roja constante ni urgencias inventadas.
+**El endpoint normal conserva su función:** valida y persiste los metadatos nullable de §1 y ejecuta su emisor actual. Se conservan SoldByUserId/WorkSession del cajero. IDs de mesero/mesa se validan en tenant/negocio cuando están presentes; jamás confieren permisos.
 
-**Pitido de nueva comanda:** sonido corto, amable y reconocible de dos notas, habilitado por tablet con volumen y prueba. Mostrar **Activar sonido** al iniciar si el navegador requiere interacción; no dar por hecho que una web puede reproducir audio en segundo plano. La política de reproducción automática de Chrome incluye Web Audio y recomienda reanudar `AudioContext` tras un gesto del usuario: [documentación oficial de Chrome](https://developer.chrome.com/blog/autoplay/). Sonido activo/silenciado/bloqueado es visible; acompaña una señal visual de llegada y nunca es el único aviso.
+AddedByUserId referencia AppUsers.UserId; no usar un campo ambiguo que admita indistintamente UserId o PartyId. AppUsers ya vincula PartyId. Para esta V1 toda intervención se autentica y, por tanto, tiene usuario: no se necesita otro PartyId público en el detalle para identificarla. La auditoría congela también la persona/rol y nombres históricos al capturar; no reconstruye autoría histórica desde un vínculo de usuario editable. Desactivar usuario o cambiar su vínculo no borra ni reasigna la autoría anterior. En restaurante, el servidor obtiene autor/hora del borrador autorizado y rechaza discrepancias en la emisión; no confía en un ID de mesero suministrado libremente por el cliente. En compartido, el autor es el mesero autenticado con clave secundaria, no el cajero de la sesión financiera ni el supervisor que aprobó. Si dos usuarios agregan el mismo producto se conservan incorporaciones/detalles distintos.
 
-Señal audible **una vez por comanda/estación/notificación nueva**, no por cada línea ni por cada re-render. Agrupar ráfagas para evitar saturar la cocina. Guardar el cursor/recibo de aviso por dispositivo en el mecanismo de sincronización existente; una reconexión muestra las comandas recuperadas sin reproducir una cascada histórica. Un cambio o cancelación de una comanda ya recibida utiliza un aviso distinguible y no se presenta como otra comanda nueva. La selección del tono es configuración de presentación local, sin otro motor de notificaciones.
+La coordinación del borrador nuevo vive en Sales, fuera de OnlineSalesDraftService/OnlineSalesCheckoutReceipts. Al confirmar la cuenta gastronómica registra en su propio estado un intento durable: origen, versión, cajero/WorkSession, DocumentId e idempotencia compatibles con la emisión existente y hash del snapshot. Usa el mismo endpoint/servicio de emisión, sin otro cálculo o factura intermediaria. El vínculo servidor DocumentId → origen permite resolver auditoría/receta sin nuevos campos públicos. Debe quedar preparado antes de enviar a emitir y ser único por origen/documento. Un estado de intento/recibo no es otro borrador ni una cola de facturación.
 
-La tablet muestra conexión, última actualización y pedidos pendientes de recibir/confirmar. No dejar silenciosamente una pantalla vacía cuando perdió red. Probar suspensión/reactivación, bloqueo de pantalla, permisos de audio y volumen sobre la tablet real; conservar mensajes de error accionables. El prototipo puede simular una llegada y reproducir un tono tras interacción explícita, pero no certifica recepción push ni audio sobre hardware de cocina.
+La implementación valida la procedencia contra ese intento, no infiere una receta histórica solamente porque TableId sea no nulo. La factura conserva mesa y autor/hora nullable; etiquetas históricas de mesa/mesero se congelan internamente para que renombrar no cambie impresos. Atribuciones y contexto se guardan junto al snapshot aceptado. Fallos entre emisión y limpieza se reconcilian mediante DocumentId/clave originales, nunca reenviando como otra venta.
 
-**Permisos:** administrar enrutamiento, enviar pedido, consultar estación, iniciar preparación, marcar listo, entregar, corregir/anular enviados y rehacer. Se materializan en los catálogos/roles de Authorization; un preset de pantalla no los concede. En V1 los meseros solo atienden y emiten precuentas; el cajero es quien registra el pago y factura, con revalidación explícita al retornar a su modo.
+Tras documento aceptado, recibo/vínculo durables y referencias de auditoría/comandas seguras, puede purgarse el contenido del borrador. La mesa conserva referencia al ciclo/documento ocupado, sin copiar líneas. No cascadas desde borrador a eventos, comandas, pérdidas o recibos. Un cancelado sin factura conserva historia y soportes; no requiere factura cero. La limpieza se recupera por el ciclo propietario, sin crear worker de purga exclusivo.
 
-Datos adicionales: estaciones activas por sede, reglas de atención de producto, snapshots de ronda y estado/cantidades atendidas por ítem y estación. La cuenta conserva líneas comerciales; las tareas de preparación se vinculan por identidad y no mantienen otros precios o totales. Sales y el handler de comanda del motor documental son los propietarios propuestos; cambios de estado y señales continúan por los casos de uso del mismo módulo y la outbox existente.
+### Precuenta y cobro
 
-Aceptación: cerveza directa no crea tarea de cocina; hamburguesa llega a Cocina; cóctel llega a Barra; ronda mixta se distribuye sin duplicarse; preparación/entrega parcial por cantidades; listo notifica al mesero; doble toque o reconexión no duplica tareas; cancelar enviado deja historial visible; pagar no implica entregar; cambiar de mesero no cambia actor del envío ya aceptado; funcionamiento de tablero sin impresora; ninguna transición de preparación crea un movimiento de inventario adicional.
+Mesero imprime precuenta con referencia/QR, mesa, revisión, fecha/hora, líneas y total: **Precuenta · No es factura**. QR solo localiza cuenta para operador autorizado. No registra pago ni consume numeración fiscal. Cliente entrega dinero y mesero lo lleva al cajero; no se crea caja del mesero.
 
-Aceptación de tablet: tarjeta agrupa líneas por ronda/estación; llegada anima una vez; sonido suena una vez con audio habilitado; silencio y permiso bloqueado tienen indicación visual; recuperación tras suspensión no repite todos los tonos; alertas de cambio/cancelación conservan referencia; ráfaga de pedidos no bloquea los controles; reducción de movimiento no oculta información; cocinero distingue mesa, cantidades y modificaciones a distancia de trabajo y puede completar el recorrido sin entrenamiento técnico.
+Cajero toca mesa → Facturar → preview vigente → medios → confirma. Cambios posteriores a precuenta muestran Consumo actualizado. Bloquear productos por enviar, cancelaciones pendientes o resultado incierto; se permiten entregas pendientes indicadas, sin marcarlas listas por cobrar. Varios medios soportados deben sumar total; una cuenta/un documento.
 
-## 8. Extensión técnica propuesta
+UI distingue emisión, confirmación financiera y estado fiscal. Una falla DIAN/contable no repite cobro/stock. El borrador no declara éxito sin recibo autoritativo. Después de facturar, correcciones usan documentos de §9.
 
-### Impresión automática de comandas, opcional por estación
+### Auditoría completa
 
-**Requisito incluido:** cada estación admite **Pantalla**, **Impresora** o **Pantalla + impresora**. La comanda virtual no elimina la tirilla. Cocina y Barra eligen salidas independientes, y una estación puede operar solo en papel. La precuenta del mesero y la factura del cajero mantienen propósitos y destinos propios; no se confunden con la comanda de preparación.
+Cada mutación y evento de negocio se guarda transaccionalmente: apertura, agregar/quitar/cantidades, precios/descuentos, notas/modificadores, actor/autorización, envío/corrección/cancelación, preparación, traslado, precuenta/impresión/copia, intentos/resultados de cobro/emisión, cierre y configuración. Efectos externos distinguen solicitud/acuse/resultado. Si falla auditoría no se confirma la mutación.
 
-**Montaje propuesto:** impresora térmica USB o instalada por red en Windows, con el componente local de Auraly en el computador que puede imprimir en ella. Puede ser el computador del cajero u otro equipo autorizado como receptor de impresión. La tablet muestra comandas; no necesita conectarse por USB a la impresora ni mantener una pestaña haciendo de puente. El host local recibe la señal push y recupera el trabajo autorizado. El equipo, Auraly local y la impresora deben estar encendidos y disponibles.
+Evento: ID, origen, tenant/business, mesa contextual, incorporación/ronda/revisión, usuario efectivo, mesero verificado y evidencia de autenticación, supervisor, dispositivo/superficie, hora servidor, secuencia/versión, operación/correlación, motivo y antes/después relevantes. No contraseñas/tokens/datos de tarjeta ni copia de estos hechos a logs inseguros.
 
-No se requiere un mesero/cajero adicional autenticado en la pantalla de cocina para escuchar impresiones. Se requiere identidad técnica del equipo, autorización de los destinos asignados y el proceso local en ejecución. **El runtime actual ya separa impresión de sesión comercial:** RequiresLocalUserSession excluye /edge/v1/print y configuración de impresoras, manteniendo la seguridad local del host. Esto no prueba que exista recepción autónoma de comandas: hay que añadir su suscripción/consumo durable al host y su autorización de dispositivo, sin abrir endpoints públicos ni distribuir el token del cajero.
+Consulta por origen antes de factura; factura usa su vínculo interno al mismo origen. No copiar/reasociar evento por evento al emitir ni editar pasado: corrección crea nuevo hecho. Retención sobrevive al borrador y respeta política documental/privacidad canónica. Identidad histórica mínima no depende de usuario activo.
 
-**Límite de Windows:** SystemWindowsRenderedPrintJob invoca Auraly.Desktop.exe --print-html --printer y espera su resultado. Por eso V1 debe operar con el componente instalado en un contexto de Windows que soporte ese adaptador y su driver. Configurar inicio automático en ese contexto; no prometer funcionamiento tras cerrar la sesión de Windows, con PC suspendido o como servicio de sesión 0 sin validarlo. Puede cerrarse/bloquearse la interfaz comercial solo si el host continúa vivo; el empaquetado debe comprobarlo. No crear un servicio de Windows nuevo por suposición.
+CentralAuditPolicy actual usa whitelist EF y no garantiza auditoría comercial completa. Extender AuditLogs/contratos e índices de origen/secuencia con escritura enlistada en la transacción Sales; no truncar hechos con límites de diagnóstico ni crear otra auditoría gastronómica. Consulta paginada en el servicio actual.
 
-**Flujo durable y propietario:**
+## 7. Productos, recetas e inventario
 
-1. Sales confirma la ronda y congela mesa/visita, estación, actor, líneas, notas y versión de plantilla; registra su entrega por destino mediante los contratos/outbox canónicos.
-2. La sincronización existente avisa al equipo designado. El host descarga solo lo autorizado, incluso después de reconexión, y reclama la entrega con versión/lease si hay varios receptores posibles.
-3. El receptor persiste el intento/recibo idempotente en el almacenamiento/outbox existentes antes del efecto físico. Identidad: ronda + estación + destino + revisión + copia. La notificación duplicada no inicia otro intento ya resuelto.
-4. Usa PosPrinterConfigurationStore y el adaptador/render canónicos de ConfigurableOrderDocumentPrinter/ConfigurablePosReceiptPrinter según el nuevo propósito tipado. No crear otra biblioteca de tirillas, dispatcher propietario, cola de jobs o writer paralelo. El registro operativo de entrega es trazabilidad de ese documento, no otra cola general.
-5. Reporta Pendiente, Recibido por equipo, Enviado a impresora, Falló o Resultado por verificar. Enviar al spooler o terminar el proceso no demuestra que salió papel. No marcar Preparado ni Entregado a cliente por una impresión.
+### Ingredientes y receta
 
-Los destinos tienen un equipo primario explícito. Ver el tablero en dos tablets o recibir push en dos computadores no imprime dos veces. Si se permite respaldo, la reasignación es controlada y conserva la identidad; no activar dos receptores como dueños simultáneos. Un timeout después de entregar al spooler deja resultado incierto: revisar y reimprimir con referencia y marca **Copia/Reimpresión**, no reintentar físicamente en silencio. No prometer exactamente una hoja bajo toda falla posible. Impresión fallida no revierte pedido ni repite venta, inventario o pago; en modo dual la tarjeta sigue visible y muestra el fallo de papel.
+En Productos, checkbox **Es ingrediente**: “Se utiliza en recetas y no está disponible para venta directa”. Sigue visible en compras, administración e inventario. El catálogo de venta online excluye ingredientes de mosaicos, búsqueda, favoritos y códigos; Sales valida adición directa por ID. No desactivar el producto globalmente para ocultarlo.
 
-**Estilo de tirilla Auraly:** ampliar PosPrintTemplateCatalog con propósitos/versiones inmutables de comanda y precuenta, siguiendo [configuración de impresión POS](pos-printer-configuration-design.md). Reutilizar anchos 58/80 mm, marca, tipografía, capitalización natural, márgenes, jerarquía y transportes. Encabezado Comanda · Cocina/Barra; mesa y ronda destacadas; hora/mesero; cantidad, producto y modificadores muy legibles; referencia de seguimiento y copia cuando corresponda. Comanda sin precios, pagos, CUFE ficticio ni apariencia de factura. Precuenta con precios/total y texto No es factura. La factura real conserva la plantilla canónica y sus datos fiscales.
+La clasificación se proyecta del lado servidor en los catálogos de venta compatibles; no cambia DTO, preparación o sincronizador del cliente local. No se promete que un terminal antiguo desconectado conozca una nueva clasificación. Su envío normal sin metadatos conserva el contrato y conciliación existentes. La exclusión gastronómica se garantiza online; no se añade soporte de recetas gastronómicas al cliente local en esta V1. El alta/clasificación identifica ese alcance para no ofrecer una garantía offline inexistente.
 
-Configuración por estación: salida, equipo receptor, impresora instalada, ancho, copias, corte compatible, plantilla activa y prueba. Cajón deshabilitado en comanda/precuenta. BrowserPreview abre diálogo y sirve para impresión manual; **no** es el transporte de impresión automática. Para impresión silenciosa usar el adaptador Windows instalado y la impresora comprobada. Mantener opciones disponibles desde API/configuración, no nombres de impresoras del desarrollador.
+Sección Receta del producto preparado: solo ingredientes activos autorizados, con cantidad positiva por unidad vendible y unidad compatible. Un mismo ingrediente en varias recetas; no familias/ProductLinks, subrecetas o ciclos. Conversión y precisión proceden del catálogo de unidades.
 
-Aceptación: Cocina virtual, Barra papel y salida dual; recepción sin refrescar ni sesión comercial en cocina; recuperación tras reinicio del receptor; notificación duplicada sin reimpresión; estación y receptor aislados por tenant/sede; dos receptores sin doble toma; papel agotado/impresora apagada y recuperación visible; timeout incierto/reimpresión identificada; cancelación y cambio como corrección referenciada; consistencia entre preview y tirilla 58/80 mm; nombres largos/acentos/notas; ningún cajón ni movimiento financiero al imprimir. Validar con impresora física antes de habilitar automático. La maqueta solo ofrece vista previa y preferencias ilustrativas.
+Receta versionada/publicada; la ronda congela versión, cantidades y modificadores de cada incorporación. Una ronda posterior puede usar nueva receta, sin recalcular lo enviado. Notas libres no alteran stock; omisiones/extras que cambian receta tienen efecto tipado. Extras destinados a otra estación se agregan como producto separado en V1.
 
-### Propietarios y persistencia
+No desmarcar ingrediente en recetas activas sin resolver dependencias. Cambios que invaliden cuentas abiertas requieren resolución/revalidación explícita. Migración deja productos existentes sin marcar, sin inferencia por nombre.
 
-Sales posee atención, asociación de mesas y cuentas; sus casos de uso existentes se amplían con comandos de servicio. La configuración visual del menú pertenece a Catalog; el POS solo la presenta. Organization/Authorization siguen validando sede, bodega, actor y sesión.
+### Modalidades excluyentes
 
-Datos nuevos mínimos propuestos, a concretar en schema-first:
+Producto con receta elige **Qué inventario se descuenta al vender**:
 
-- `RestaurantAreas` y `RestaurantTables`: maestros por sede, orden/activación, capacidad/geometría y versión. Configuración visual del plano no tiene efectos contables.
-- `RestaurantVisits` y `RestaurantVisitTables`: visita, responsable, comensales, apertura/salida y ocupación histórica. Índice único filtrado por mesa para vínculo activo; FKs y validación de sede evitan cruces.
-- `SalesDrafts`: referencia opcional a visita, nombre de cuenta y discriminación tipada del ámbito de borrador. Una cuenta de servicio abierta pertenece a la sede/visita, con autor original y responsables auditados; no al borrador activo exclusivo de una sesión. La venta estándar conserva su índice y comportamiento. No usar un JSON libre ni perder el control de concurrencia.
+| Modalidad | Configuración | Efecto |
+| --- | --- | --- |
+| Producto terminado | ManageInventory activo en terminado; receta informativa para esta venta. | Descontar terminado, no componentes. |
+| Ingredientes de la receta | Terminado sin saldo propio; receta válida con ingredientes inventariables. | Descontar componentes, no terminado. |
 
-La unicidad V1 se impone en persistencia: una visita activa por mesa y una cuenta de servicio por visita, con FKs y restricciones únicas compatibles con cierre/histórico. Apertura, asignación del mesero y creación de cuenta se aceptan en la misma transacción. Un doble toque o dos dispositivos concurrentes recuperan la misma cuenta o reciben conflicto; nunca crean dos. No basta con ocultar Nueva cuenta en UI.
-- `SalesDraftLines`: identidad de línea estable y metadatos gastronómicos tipados; selecciones de modificadores y extras relacionados. No mezclar automáticamente líneas con preparaciones, comensales o rondas distintas.
-- Configuración de grupos/opciones de modificadores y su relación con productos en Catalog, sin precios paralelos a productos/extras vendibles.
-- Rondas de preparación y líneas snapshot vinculadas a las líneas de venta. Son el registro inmutable de lo solicitado a cocina, no una segunda cuenta comercial ni una tabla de jobs.
+Una sola selección validada en Catalog; no dos interruptores independientes. Los ingredientes mantienen control de stock para sus otros usos. Productos sin receta mantienen su política actual. Cambiar modalidad exige resolver existencias/reservas/operaciones afectadas con movimientos explícitos, sin convertir inventario editando un campo.
 
-No introducir todas las tablas por anticipado: cada slice incorpora solo las necesarias junto con contratos, API, permisos, seeds, DI, admin y pruebas.
+Vender terminados preelaborados requiere existencias de entradas/operaciones legítimas. Receta no crea automáticamente producción. Producción anticipada por lotes queda fuera de V1; no se inventa una entrada gratuita ni se presenta conversión por familia como receta.
 
-Para concretar la compatibilidad se propone un estado interno `ServiceOpen` para las cuentas gastronómicas. `Active` conserva su unicidad por sesión para la venta estándar. Los comandos autorizados de atención pueden editar `ServiceOpen`; no basta con relajar globalmente `DemandActiveVersion`. La sesión de creación queda como auditoría y el checkout recibe/valida la sesión actual del cobrador. La transición a `Issuing` congela esa atribución. El cambio de estado y sus restricciones deben aprobarse junto con la migración del contrato, sin asignar usuarios o sesiones ficticias a las mesas.
+### Momento elegido para V1
 
-### Preparación y motores
+**Descontar al procesar la factura aceptada, tanto preparados como directos.** Capturar/enviar/Empezar/Listo/Entregado/Imprimir no reserva ni mueve inventario. Única excepción: recurso ya preparado que se cancela antes de facturar, cuya pérdida se registra por §9 y se excluye del consumo facturado.
 
-Propuesta: la comanda confirmada es un tipo operacional del motor documental existente, con su `IConfirmedDocumentHandler`, estado y eventos de preparación bajo Sales. Confirmar una ronda crea el trabajo en `DocumentProcessingJobs` y congela sus líneas; el handler no factura, no cobra y no mueve inventario. No crear `RestaurantEngine`, `KitchenWorker` propietario ni una segunda cola general. Las actualizaciones de preparación operan sobre ese documento autorizado y versionado.
+Descontar al iniciar cocina se descarta para esta versión: requeriría consumo parcial previo, stock en proceso, liberación/reclasificación y distinguir en factura lo ya aplicado. No se añade un flag “ya consumido” al endpoint ni un motor de comandas para descontar inventario.
 
-La impresión consume el snapshot de la ronda mediante los transportes actuales. La durabilidad de envío/acuse a varias estaciones debe comprobarse en el slice: los renderers actuales no demuestran por sí solos entrega de una comanda. Cualquier entrega durable adicional se integra a la outbox y activación existentes; no se inventa un spooler propietario. Un timeout de impresora significa resultado desconocido: comprobar y reimprimir con la misma referencia y marca de copia, sin prometer exactamente una impresión física.
+Disponibilidad de captura consulta InventoryBalances según terminado o ingredientes. Es orientativa: mesas abiertas no reservan y pueden competir por stock. Antes de aceptar factura se aplica validación/resolución de existencias canónica. Procesar un hecho ya aceptado conserva orden y política de negativos vigentes; no introducir un rechazo tardío contrario al motor.
 
-El inventario mantiene el momento definido por ventas/pedidos canónicos. Una comanda no reserva por sí sola. Si el negocio exige consumir ingredientes al preparar, deberá aprobarse un diseño de documento/receta que entre al motor documental y evite descontarlos otra vez al vender. La conversión por familia actual no autoriza ese comportamiento.
+Costo reconocido por SqlInventoryLedgerWriter en su secuencia, con InventoryValuationCalculator. Costo del plato por receta es suma de sus componentes valorados; no precio de menú ni otra fórmula UI. Guardar asignación de cantidades/costo por detalle aunque el writer consolide movimientos de ingredientes. Precisión/redondeos canónicos con residuo determinista. V1 no capitaliza mano de obra/indirectos mediante recetas; siguen sus gastos actuales.
 
-### Flujo de extremo a extremo
+La adaptación de receta se resuelve desde snapshot servidor de origen gastronómico. Documentos normales sin dicho origen conservan efecto vigente. Cambiar la receta después no modifica costo histórico, devoluciones o pérdidas.
 
-1. Abrir mesa: autorizar sede/actor, validar habilitación y ocupar de forma atómica; devolver visita, cuenta y versión. Repetir la clave devuelve el mismo resultado.
-2. Capturar: `PosClient` → comandos de Sales → pricing/disponibilidad canónicos → transacción de draft/líneas/recibo de mutación. Notificar cambios mediante outbox existente.
-3. Enviar: versión esperada → diferencias aún no enviadas → ronda snapshot y trabajo documental. Mostrar guardado, pendiente de preparación o fallo; no confundirlos con papel impreso.
-4. Cobrar: bloquear mutaciones de la cuenta elegida → preview autoritativo → `OnlineSalesCheckoutService`/ruta Edge vigente → pipeline de venta, recibo idempotente y snapshot. Un fallo fiscal/contable posterior no repite consumo, cobro ni comanda.
-5. Actualizar la relación cuenta/documento como parte de la aceptación durable; si una proyección de atención requiere reconciliación, usar el mismo documento/clave. La pantalla no declara pagado hasta recuperar el resultado autoritativo.
-6. Finalizar atención: exigir cuentas y entregas resueltas y salida confirmada; cerrar ocupación y marcar Por limpiar en una transacción. Listo para usar habilita otra visita.
+## 8. Estaciones, comandas, push e impresión
 
-La selección de mesa compartida exige revisar tanto `LockDraftAsync` como checkout, temporales, índices y permisos; agregar únicamente una excepción de usuario a una query sería insuficiente. Los borradores personales conservan aislamiento. El usuario que atendió y quien cobró quedan separados; el cobro pertenece a la sesión de trabajo del cobrador, no modifica ventas históricas del mesero.
+### Configuración única
 
-### Concurrencia y desconexión
+**Producto → Estación → Configuración de comanda → Virtual / Física / Ambas**.
 
-Cada comando mutante tiene versión esperada e idempotencia por sede, entidad, actor/operación y hash de contenido. SQL conserva recibos durables. Las transferencias bloquean origen/destino en orden estable. Dos aperturas de mesa o dos cobros concurrentes producen un único ganador; el segundo recibe resultado idempotente o conflicto visible, nunca último guardado silencioso.
+Estación: código/nombre, negocio, orden, activación, preparación/retiro y objetivo de tiempo. Producto vendible: modo directo/preparado, estación explícita y nombre corto opcional. Categoría facilita asignación inicial, pero se persiste destino del producto; cambiar categoría no redirige pendientes.
 
-Mesas compartidas requieren una autoridad accesible. Primera entrega: atención de mesas centralizada online; el POS Edge conserva la venta directa offline existente. Al perder conexión se muestra el último plano con hora, bloqueando ocupación, traslado y cobro de cuentas compartidas. No copiar la misma mesa a varios SQLite independientes. Operación compartida por LAN o concesión exclusiva offline requeriría decisión de autoridad y recuperación, no un interruptor de UI.
+Comanda de estación: nombre, estación, modalidad, accesos/dispositivos, aviso y vínculo a equipo/perfil de impresora. Una activa por estación/negocio. Perfil de Printing es única fuente de nombre de impresora, ancho 58/80 mm, copias, corte/plantilla; el formulario Comanda lo administra mediante ese propietario, sin duplicar en Estación o Producto. Cambiar impresora no exige editar productos.
 
-Push invalida vistas; las lecturas recuperan cambios al abrir, reconectar, volver de suspensión o ante notificación. No sondeo periódico. Los tiempos visibles pueden avanzar localmente como presentación, usando instantes del servidor y zona del negocio para reglas.
+Directos también tienen destino de retiro/Entrega para conservar trazabilidad sin poner cerveza embotellada a cocinar. Estación inactiva/sin comanda bloquea envío con error visible; nunca fallback a Cocina. Nuevo destino/perfil aplica a nuevos envíos; pendientes se reasignan explícitamente con auditoría.
 
-Auditar aperturas, traslados, intervenciones autorizadas, correcciones, envíos, cobros y cierre con usuario, sesión, documento/visita y correlación. Métricas: latencia de captura/envío, conflictos, comandos pendientes y reimpresiones. No registrar datos de tarjeta ni notas sensibles completas en logs.
+### Ronda y estados
 
-## 9. Entrega por slices
+Una tarjeta por mesa/ronda/estación, con número grande, tiempo, mesero, cantidades y notas/modificadores. Pantalla y tirilla comparten ID/contenido; acuses de salida no son estado de preparación.
 
-1. **Vista táctil con paridad:** catálogo proyectado para mosaicos, filtros y dos layouts usando los mismos comandos; operaciones existentes accesibles. Aceptar únicamente con los journeys actuales funcionando en ambas vistas.
-2. **Mesas y cuentas compartidas:** configuración, plano/lista, apertura, cuentas, traslado, limpieza, permisos, concurrencia y asociación a checkout. Conectividad central obligatoria.
-3. **Servicio de restaurante:** modificadores, notas, rondas, entrega directa, comandas virtuales y tablero de preparación por estación, comanda/precuenta versionadas, una cuenta por mesa y precuenta. Para la primera operación real de restaurante, completar 1–3, no declarar suficiente el plano.
-4. **Acceso y presentación por equipo:** identificación de mesero sin cambiar la WorkSession del cajero; una pantalla o dos superficies del mismo equipo, con capacidad limitada de atención y retorno autorizado a Cajero. El modo doble se habilita después de validar sus contratos y hardware real. Huella fuera de V1.
-5. **Bar y gestión avanzada:** propina con integración financiera completa, repetir ronda, tiempos y reportes de atención. Recetas, reservas y preautorizaciones requieren su diseño propietario específico.
+Preparación: Pendiente → En preparación → Listo → Entregado. Directo: Por entregar → Entregado. Cantidades parciales 2/3, sin avanzar más de lo pendiente. Cancelación usa §9; no borrado silencioso. Vista Todas exige coordinación; cada estación lee/muta solo lo autorizado.
 
-Activación por sede con configuración validada. Migración aditiva que preserve borradores/documentos estándar. Desactivación permite terminar las atenciones ya abiertas y evita abrir nuevas; no elimina historial. Rollback de la UI a estándar es válido para ventas estándar; cuentas de servicio abiertas deben drenarse mediante una versión compatible antes de retirar soporte backend. No revertir esquema destruyendo cuentas.
+Tarjetas de bajo brillo, contraste, jerarquía mesa/productos/notas/tiempo/acción y botones 56 px. Nueva llegada con transición 200–350 ms; no cambiar posición durante toque, destellos o animación perpetua. Movimiento reducido elimina desplazamiento y conserva señal textual.
 
-## 10. Criterios de aceptación
+**Comandas sin efecto físico no crean DocumentProcessingJobs.** Sales acepta ronda/estados, recibo, auditoría y outbox en transacción; sincronización distribuye. No KitchenWorker, RestaurantEngine ni cola propietaria. Solo factura/pérdida u otros efectos físicos usan motor operacional; reclasificaciones financieras usan Accounting.
 
-Objetivos de usabilidad propuestos, todavía no medidos: agregar producto simple en un toque, cambiar categoría en uno y salón en uno; abrir mesa con confirmación en dos. Prueba con personal de salón/bar: tomar una ronda de seis productos, corregir uno, enviarla, imprimir precuenta y facturar con el cajero sin asistencia. Medir errores, toques y tiempo, además de recoger comprensión de los estados.
+### Push y audio
 
-| Escenario | Evidencia requerida al implementar |
+Extender streams/gateway/dispatcher/outbox existentes de acuerdo con la [decisión push](../decision-pos-sync-push-sin-polling.md). Partición tenant/business/estación, autorización al suscribir/leer/actuar. Aviso invalida y cursor durable recupera al abrir, reconectar, reanudar o recibir notificación; sin HTTP periódico. Backoff de reconexión del socket no es sondeo de pedidos.
+
+Notificación duplicada no crea tarea, impresión o sonido. Pitido de dos notas, volumen/silencio/prueba por equipo, Activar sonido por gesto cuando el navegador lo requiere. Recuperación histórica sin ráfaga de tonos; entradas nuevas agrupadas si llegan juntas. Tablet suspendida no garantiza sonido: recupera al reanudar. Mostrar conexión/última actualización/pendientes; no vacío engañoso.
+
+### Papel y receptor
+
+Computador autorizado con impresora Windows USB/red y componente de impresión Auraly ejecutándose. Tablet no hace de puente. No exige sesión financiera de cocina; sí identidad técnica y autorización de destino. Esta recepción de comandas es extensión del adaptador de impresión, aislada del enrolamiento/preparación y envío de facturas de la caja local. No cambia sus rutas ni su proceso comercial.
+
+Un receptor primario reclama por lease con identidad origen/ronda/estación/revisión/destino/copia en el almacenamiento/outbox actuales; dos tablets no imprimen dos veces. Respaldo mediante reasignación exclusiva auditada. Impresión no se dispara por renderizar tarjeta. Dispositivo debe estar online para reclamar; lo ya entregado a Windows puede terminar desconectado.
+
+Estados de salida: Pendiente, Aceptado por receptor, Entregado al sistema de impresión, Fallido, Resultado incierto. Spooler no prueba papel físico. Incertidumbre requiere revisión/reimpresión explícita marcada Copia; no retry físico ciego. Fallo de papel no borra tarjeta ni repite factura/stock.
+
+Reutilizar [impresión POS](pos-printer-configuration-design.md), PosPrinterConfigurationStore y PosPrintTemplateCatalog. Plantilla Comanda versionada: estación, mesa, ronda/hora, actor, productos/cantidades/modificadores y corrección referenciada; sin precios fiscales ni cajón. Precuenta/factura mantienen propósitos propios. Reimpresión usa versión congelada.
+
+Windows directo para automático; BrowserPreview manual y File diagnóstico. Adaptador actual invoca Auraly.Desktop en contexto Windows compatible: proceso disponible e impresora probada. No prometer sesión 0, equipo dormido o sesión Windows cerrada. No agregar servicio/worker propietario de impresión.
+
+## 9. Cancelación, pérdida y contabilidad
+
+### Investigación y decisión
+
+Fuentes oficiales consultadas el 2026-09-10, con contexto colombiano. [IAS 2, IFRS Foundation](https://www.ifrs.org/issued-standards/list-of-standards/ias-2-inventories/) establece reconocimiento como gasto de pérdidas de inventario cuando ocurren. Aplicación de diseño: plato preparado cancelado y descartado genera pérdida al costo registrado, no por precio de menú. Cuenta específica según perfil contable del negocio; no código universal impuesto por esta norma.
+
+El [Estatuto Tributario, art. 64](https://normograma.dian.gov.co/dian/compilacion/docs/estatuto_tributario.htm#64) condiciona disminuciones fiscales y soportes; una cancelación no es automáticamente deducible ni toda pérdida es obsolescencia. El [art. 486](https://normograma.dian.gov.co/dian/compilacion/docs/estatuto_tributario.htm#486) prevé ajustes de IVA descontable por pérdidas con condiciones/excepciones. Registrar evidencia para revisión tributaria, sin aplicar deducibilidad, porcentajes o IVA automáticamente por cancelar.
+
+La [doctrina unificada DIAN, §3.1.7](https://normograma.dian.gov.co/dian/compilacion/docs/concepto_tributario_dian_0000106_2022.htm) distingue anulación de operación y falta de pago; las correcciones de factura usan nota/caso de uso según tipo y estado. No borrar factura ni reutilizar número.
+
+### Regla y flujo
+
+**Un plato preparado cancelado y sus ingredientes no regresan al inventario disponible.** Separar retiro del cobro y disposición física. No cargo automático a mesero/cocinero/nómina.
+
+| Situación | Resolución | Efecto |
+| --- | --- | --- |
+| Error antes de enviar y sin preparar | Editar/quitar con auditoría. | Sin stock ni pérdida. |
+| Enviado, estación confirma No preparado | Solicitud, confirmación de estación y autorización de corrección enviada. | Sin salida/reposición; retirar cobro y avisar cancelación. |
+| Preparado/consumo irreversible, sin factura | Cantidad perdida, motivo, confirmación y aprobación supervisora. | Retirar cobro; baja única de ingredientes o terminado y gasto al costo. |
+| Preparación parcial | Estación informa componentes realmente usados, supervisor valida. | Baja solo lo consumido; el resto nunca salió. No inferir un porcentaje uniforme de receta. |
+| Preparado, factura aceptada | Cajero tramita devolución/nota sin reposición. | Corrección financiera/fiscal y reclasificación del costo original; cero movimientos adicionales de stock. |
+| Rehacer | Pérdida/reproceso y nuevo intento vinculados. | Una unidad cobrable; registrar recursos extra una sola vez, según momento descrito abajo. |
+
+Solicitud sobre enviado coloca Cancelación solicitada; bloquea transiciones incompatibles de esa cantidad hasta resolución. No suponer No preparado porque pantalla muestre Pendiente. Virtual: estación confirma realidad; papel: supervisor registra confirmación obtenida de cocina sin fingir acuse digital. Concurrencia con Empezar/Listo exige reconciliación por versión y realidad física.
+
+Retirar preparados antes de factura exige aceptar duraderamente su efecto de pérdida; la cuenta muestra incidencia pendiente hasta resultado. Si hay faltantes contables/físicos, conservar hecho y resolución canónica, sin inventar entrada compensatoria ni perder incidente. Cancelación total cierra sin factura una vez resueltos efectos y salida. Historial sobrevive al borrador.
+
+Plato consumido/entregado y cliente no paga no es desperdicio por definición: continuar cobro/cartera autorizado; no anular venta ficticiamente. Cortesías, donación/autoconsumo no se disfrazan de pérdida. Producto directo intacto solo puede reponerse por devolución estándar si se verifica vendible; jamás por inferencia para preparados.
+
+### Integración antes y después de factura
+
+Antes de factura: reutilizar **Damage** del módulo Inventory. Su modalidad actual lleva avería a AVE a valor cero; agregar disposición tipada **Destrucción/consumo irreversible**, salida definitiva sin entrada a AVE ni otra bodega. Avería normal mantiene su default y comportamiento. No almacenar carne cocinada como carne cruda en AVE.
+
+Sales acepta cancelación/snapshot/aprobación/auditoría y fuente Damage en transacción mediante contratos enlistados de los propietarios; ninguna tabla tiene dos writers. Damage usa DocumentProcessingJobs → handler/processor → writer actuales. Modalidad receta baja componentes congelados; modalidad terminado baja unidades del terminado. La factura excluye cantidades canceladas. Accounting recibe la señal canónica, nunca se escribe asiento desde cocina.
+
+Después de factura: extender devolución/nota con disposición **Sin reposición por consumo irreversible** por detalle, cantidad física devuelta cero y costo original vinculado. No generar entrada de stock ni otro Damage que repita la baja. El handler y SqlAccountingPostingProcessor deben distinguir este caso del retorno normal que debita Inventario. La fuente financiera conserva corrección y reclasificación una sola vez, esperando costo original confirmado cuando todavía esté pendiente.
+
+Rehacer antes de factura: Damage consume intento fallido; factura consume reemplazo. Después de factura: venta original conserva ingreso/costo, y consumo adicional del reemplazo se reconoce con motivo de reproceso por el propietario de pérdidas cuando se realiza. No registrar dos pérdidas por el mismo exceso de consumo ni otra factura al cliente. Autorizar rehacer no equivale a consumir: confirmar realización/consumo irreversible con evidencia.
+
+### Asientos ilustrativos y soporte
+
+Ejemplo: precio $30.000, costo registrado $10.000; impuestos omitidos solo para explicar costo.
+
+- Preparado cancelado antes de factura: débito Pérdida por alimentos preparados $10.000 / crédito Inventario $10.000. No ingreso, caja ni pérdida por $30.000.
+- Después de factura y baja ya reconocida: débito Pérdida por alimentos preparados $10.000 / crédito Costo de ventas $10.000, más corrección financiera/fiscal de venta por importe procedente. No debitar ni volver a acreditar Inventario.
+- Reembolso, si procede, pertenece al cajero y al flujo financiero actual; no a estación.
+
+Política elegida para descarte. Accounting resuelve DamagedInventoryExpense, cuentas y centro de costo desde configuración; etiquetas por motivo pueden identificar pérdida gastronómica. No códigos PUC/tasas quemados. Con/sin libro mayor mantiene el modo canónico congelado; error contable no reaplica stock.
+
+Soporte: origen, mesa, ronda/incorporación, cantidades solicitadas/canceladas/preparadas, receta/componentes, bodega, costo y referencia de valoración, motivo BusinessReasons, disposición, actor/confirmación de estación/aprobador, fechas y documento de pérdida/corrección. Adjuntos y revisión contable/fiscal según caso. Aprobación operativa no sustituye acta/firmas tributarias: permitir anexarlas en el historial. Reporte distingue valor retirado del cobro y costo perdido; no etiqueta pérdida como deducción aprobada.
+
+## 10. Menú digital público por QR
+
+### Experiencia del cliente
+
+Cada tenant tiene un enlace público estable para imprimir como QR. Abre el menú en el navegador del celular, sin instalar app, login o datos personales. Un solo negocio publicado abre directamente su carta; varios negocios permiten elegir sede desde el enlace general y cada sede tiene enlace directo. No mezclar precios/cartas de negocios distintos. URL con dominio público configurado y alias estable; esta entrega no inventa dominio ni publica un tenant real.
+
+**Única jerarquía visible: Categoría → Productos.** Pescados, Carnes, Pastas, Bebidas y Postres son ejemplos. Sin líneas, grupos, subgrupos ni familias. Reutilizar categoría del producto, corregida en Productos; no otra taxonomía o catálogo público de productos.
+
+Diseño móvil: marca/logo/sede y portada opcional compactos, categorías accesibles inmediatamente, primera categoría abierta y búsqueda por nombre/descripción. Categorías con desplazamiento horizontal y alternativa Ver categorías. Tarjetas con foto, nombre, descripción breve, precio final y moneda; tocar abre ficha con foto amplia, descripción completa y presentaciones/precios existentes. Volver conserva categoría y posición. Escritorio amplía columnas. Dos estilos configurables: **Carta fotográfica** y **Carta compacta con miniaturas**, mismo contenido/orden. Acento/portada de marca con contraste validado. Sin imagen, tarjeta limpia; no foto falsa.
+
+Agotado se muestra cuando existe indisponibilidad comercial declarada, sin publicar stock exacto. Ocultar categorías vacías, ingredientes, inactivos y productos sin precio publicable; los últimos generan incidencia administrativa, no precio cero inventado. Favoritos del POS no crean categorías públicas adicionales.
+
+Animaciones: cambio de categoría 180–250 ms, ficha/imagen 200–300 ms, respuesta al toque y entrada breve de tarjetas visibles. Sin carrusel automático, vídeo automático o movimiento perpetuo. Movimiento reducido conserva toda la interacción sin desplazamientos. Imágenes responsivas, primeras prioritarias y resto lazy, espacio reservado sin saltos. Controles de 48 px, foco, lector de pantalla, zoom de texto y lectura fluida desde 320 px.
+
+V1 es **solo consulta**: sin carrito, pedido, pago o acceso a mesa/factura. El QR contiene únicamente URL pública, no token/usuario/cuenta. Es distinto del QR de precuenta para operadores.
+
+### Configuración, publicación y seguridad
+
+Ruta Configuración → Restaurante → Menú digital: habilitar, negocio, alias/enlace, marca/estilo, orden de categorías/productos, preview móvil y descargar QR. Productos mantiene categoría, nombre, imagen y precio; merchandising incorpora **Mostrar en menú digital** y descripción comercial pública cuando la interna no sea apta para publicación. No capturar el precio otra vez. Publicar por primera vez exige revisión explícita de selección/textos/precios; productos nuevos no se hacen públicos por crearlos.
+
+Precios desde canal/lista pública elegida en el motor actual, con importe final/moneda/impuestos canónicos; sin precios privados por cliente ni propina/cargos ocultos. Cambios publicados actualizan el menú versionado manteniendo QR; borradores no se publican. Precio horario usa reglas vigentes del motor y caché hasta siguiente cambio efectivo. No calcular precios/impuestos en frontend. Despublicar muestra Menú no disponible. Cambio de alias mantiene redirección controlada, sin reasignar la dirección vieja a otro tenant.
+
+Catalog/merchandising posee selección/proyección; Organization resuelve tenant/negocio/alias, Branding y archivos conservan propietarios. Endpoint anónimo de solo lectura con DTO permitido: marca, categoría, nombre/descripción pública, imagen, presentación, precio final, moneda, disponibilidad comercial y revisión. Nunca costos, recetas, proveedores, márgenes, saldos, usuarios, mesas o cuentas. Scope resuelto desde publicación; parámetros no amplían visibilidad/tenant. Rate limit, caché por tenant/negocio/canal/revisión y ETag; contenido escapado, sin HTML ejecutable.
+
+Invalidación canónica al cambiar publicación/precio, sin worker/cola nuevos. En páginas abiertas, gateway existente con suscripción pública limitada a revisión del menú, jamás a streams privados; recuperar al aviso/reanudar conservando posición. Cambio de carta avisa sin mover contenido durante un toque. Sin conexión, último contenido marcado desactualizado hasta revalidar; no promete precio vigente ni habilita POS offline.
+
+QR descargable PNG/SVG y composición imprimible con nombre, Ver menú y URL legible. Generar QR real para URL configurada y probar escaneo; no QR decorativo. On-premise requiere dirección HTTPS públicamente accesible/autorizada o publicación pública existente: no exponer caja local ni prometer acceso celular a IP privada. Es condición de despliegue verificable. La maqueta es preview sin enlace público activo.
+
+Referencias oficiales consultadas el 2026-09-10: [Sunday menú](https://sundayapp.com/digital-menu/) y [configuración](https://intercom.help/sundayapp-help/en/articles/12857479-how-to-create-a-digital-menu), [Menutech menú](https://www.menutech.com/en/features/digital-menus) y [URL/QR](https://help.menutech.com/article/1338-how-can-i-share-my-menutech-menu-via-chromecast-url-or-qr-code). Se toman marca/fotos, acceso sin app, categorías y enlace reutilizable. La propuesta Auraly conserva precio único del catálogo y no adopta pedidos, traducción automática o IA de esos proveedores.
+
+## 11. Integridad, conexión y administración
+
+Mutación: OperationId, hash, versión esperada y recurso; actor/scope derivados de autorización. Misma clave/contenido recupera recibo; otro contenido se rechaza. Apertura y emisión únicas por origen; cantidades controladas por incorporación/porción/intento físico. Reloj servidor y secuencia, no reloj del dispositivo.
+
+Restaurante solo online contra servidor SaaS/on-premise accesible. Sin captura desconectada, draft local autoritativo ni pedidos acumulados para subir. Sin red: último confirmado en lectura/desactualizado, bloqueo de mutaciones/envío/cobro/reclamos de impresión. Resultado incierto se concilia por clave original. No fallback de mesa a caja local.
+
+Configuración por propietario: Organization habilitación/acceso/limpieza/comensales; Sales plano/mesas/estaciones/comandas; Catalog ingredientes/recetas/menú; Parties Mesero; Identity/Authorization acceso; Printing perfil físico; Accounting cuentas. Formularios enlazan sin duplicar campos.
+
+Catálogos/opciones de negocio desde tabla/API, paginados si aplica; labels y presets editables persistidos. Estados técnicos tipados protegen transiciones. Motivos desde BusinessReasons. Sin semillas que sobrescriban personalización ni datos del desarrollador como defaults.
+
+Observabilidad: latencia de captura/envío/recepción, conflictos, estación retrasada, impresión/reimpresión, cancelaciones pendientes, costo perdido, emisión incierta y efectos pendientes. Consultas paginadas e integración con Reporting; no otro consolidado ni jobs preventivos.
+
+## 12. Plan de implementación y habilitación
+
+Diseño cerrado; no quedan elecciones funcionales delegadas a quien programe. Nombres físicos de contratos/tablas se ajustan a convenciones, conservando estas fronteras.
+
+| Etapa | Entrega vertical |
 | --- | --- |
-| Venta estándar y táctil | Mismos importes, impuestos, cliente, promociones, pagos y documento; paridad de pausas/pedidos/cierre. |
-| Dos usuarios abren la misma mesa | Una sola visita activa; rechazo o recuperación explícita de la segunda solicitud. |
-| Dos usuarios editan/cobran una cuenta | Sin pérdida de líneas, doble cobro ni dos documentos por el mismo intento. |
-| Reintento después de timeout | Misma mutación/ronda/documento; mismos números y ningún efecto físico o financiero duplicado. |
-| Reabrir navegador y cambio de mesero | Recuperación durable, roles correctos e historia de atención intacta. |
-| Cuenta única por mesa | Dos aperturas concurrentes no crean cuentas paralelas. Después de cerrar se abre otra con identidad nueva. |
-| Producto con extras obligatorios | Validación de mínimo/máximo, precio autoritativo, snapshot e impresión consistentes. |
-| Modificar después de enviar | Corrección explícita con motivo y nueva referencia; no borrar silenciosamente lo que vio cocina. |
-| Recalcular cuenta con promociones | Preview del propietario de precios; conservación de cantidades, sin mover líneas pagadas ni inventar descuentos. |
-| Falla de impresión/fiscal/contabilidad | Venta/ronda recuperable; reintento no vuelve a capturar o cobrar. |
-| Aislamiento | IDs de otra sede/tenant y acciones sin permiso rechazados por API, incluso con UI manipulada. |
-| Plano y configuración | Opciones activas desde API, orden/scope correcto, históricos inactivos legibles, sin listas de negocio quemadas. |
-| Sin red | Plano identificado como desactualizado, mutaciones compartidas bloqueadas y venta directa Edge con contrato vigente. |
-| Táctil/accesibilidad | Journeys en 1280×800, 1024×768, tableta vertical y 390 px; teclado, foco, targets, estados vacíos/errores y contraste. |
-| Inventario | Enviar/duplicar/reimprimir comanda no genera kardex; venta/pedido conserva exactamente el efecto canónico. |
+| 1. Identidad/configuración | Mesero independiente, permisos/matriz de acceso, estaciones/comandas y perfil de impresión. |
+| 2. Plano y mesas | Estudio de salón, publicación/versiones, mapa/lista, cuenta única y acceso autorizado. |
+| 3. Cuenta/factura/auditoría | Persistencia gastronómica, incorporaciones, intento independiente y emisor vigente con campos opcionales; limpieza segura. |
+| 4. Preparación | Rondas/parciales/correcciones, push/cursor, audio e impresión por estación. |
+| 5. Receta/pérdida | Elegibilidad, componentes/snapshots, consumo al facturar y cancelación antes/después, Damage sin AVE, devolución sin reposición y contabilidad. |
+| 6. Menú público | Proyección segura, categorías/productos, marca, enlace/QR, precios vigentes y experiencia móvil. |
+| 7. Experiencia integrada | Vista táctil/diálogos y recorridos completos en dispositivos; pruebas de compatibilidad y fallos. |
 
-Regresiones existentes a extender: `OnlineSalesDraftCommandTests`, `OnlineSalesCheckoutTests`, `OrderRecoveryTests`, `OrderBatchInvoiceTests`, `PosArchitectureTests`, `PosDraftStoreTests`, `admin/e2e/pos-browser-regression.spec.ts` y `cash-closure-and-return-resolution.spec.ts`. Ejecutar los checks de backend, SQL y admin proporcionales a cada slice según las normas del repositorio.
+Operación real gastronómica requiere las siete etapas, auditoría y cancelaciones incluidas. Habilitación por negocio tras configuración válida; no interfaz operativa con integridad incompleta. Migraciones aditivas schema-first, contratos opcionales y seeds idempotentes. No cambiar preparación/enrolamiento local, draft normal, recibos normales o formato histórico de sus facturas.
 
-Auditoría de esta entrega de diseño: se contrastó la propuesta con AGENTS, estándares, invariantes y decisiones POS citadas. Se preservan propietarios de ventas, inventario, pagos, fiscal, contabilidad, reporting y catálogos; no se implementaron motores, tablas, endpoints ni reglas nuevas. Los contratos compartidos, preparación durable, propina y operación offline de mesas son brechas identificadas, no capacidades que la maqueta pueda certificar. Builds, SQL y pruebas de negocio corresponden a la implementación posterior y no se ejecutan para esta entrega documental.
+Deshabilitar impide nuevas aperturas y deja terminar cuentas con una versión compatible. Rollback conserva datos/origen/eventos/trabajos/plantillas y no vuelve a un cliente incapaz de leer cuentas abiertas. Modificar datos del restaurante no borra historia de ventas normales. Trabajar en único checkout preservando cambios ajenos.
 
-La revisión final incorpora las decisiones vigentes del usuario: contraseña secundaria sin huella; responsable por mesa con excepción supervisada; una sola cuenta por atención/mesa; sesión y dinero del cajero; facturación desde el mismo mapa; estaciones con push y salidas virtual, papel o ambas. La extensión de identidad del mesero, las restricciones únicas y el receptor automático son trabajo pendiente sobre propietarios existentes. No se altera el checkout ni se crea una ruta alternativa de inventario/contabilidad.
+## 13. Criterios de aceptación
 
-Evidencia de la maqueta: comprobación de sintaxis y recorridos locales con Playwright/Edge; acceso válido/inválido, responsable y excepción supervisada, autoría visible, continuidad del cajero, precuenta, cobro simulado y nueva atención sin consumo anterior, modificadores/rondas, enrutamiento Cocina/Barra/Entrega, tarjetas agrupadas, activación/silencio de audio, editor por coordenadas y arrastre, referencias físicas, selección de salida y preview de tirilla. Revisión de 20 combinaciones de vista/ancho (320, 390, 768 y 1024 px), apariencia oscura y preferencia de movimiento reducido. Sin errores de navegador en los recorridos comprobados. Esta evidencia no valida credenciales reales, push entre dispositivos, impresión física, concurrencia SQL ni funcionamiento simultáneo de dos monitores.
+| ID | Escenario | Resultado obligatorio |
+| --- | --- | --- |
+| A01 | Caja local/normal | Mismo enrolamiento/preparación/draft/envío y resultado sin nuevos campos; omitidos/nulos compatibles, JSON/hash históricos idénticos y reintentos anteriores reconocidos; probar con restaurante habilitado y deshabilitado. |
+| A02 | Mesero sin Usuario | Rol guardable sin alta/vínculo automático ni login; vinculación posterior manual sobre misma Party. |
+| A03 | Matriz de acceso | Compartido exige clave con restricción activa o inactiva; otro responsable requiere supervisor solo con restricción. Personal reutiliza sesión vigente. Clave inválida/cancelada no revela borrador ni abre mesa; volver al plano termina intervención compartida. Cobro mantiene permisos del cajero. |
+| A04 | Concurrencia | Una cuenta/factura por origen; conflictos sin pérdida ni doble efecto. |
+| A05 | Emisión y limpieza interrumpidas | Resultado original recuperable, atribución/auditoría intactas, nuevo ciclo con otra identidad. |
+| A06 | Precuenta vieja | Mostrar consumo actual; no cobrar versión obsoleta. |
+| A07 | Offline/reconexión | Cero nuevas mutaciones desconectadas; cursor/recibo sin duplicados; no polling. |
+| A08 | Rondas/estaciones | Productos a destino, tarjeta por ronda/grupo, parcial 2/3 y correcciones coherentes. |
+| A09 | Virtual/física/ambas | Una identidad, contenido consistente, acuses separados, múltiples tablets sin copias accidentales. |
+| A10 | Impresora/fallo | Pruebas físicas 58/80 mm, recepción sin cajero de cocina, incertidumbre y copia explícitas, sin doble stock/pago. |
+| A11 | Sonido/animación | Nueva llegada una vez; bloqueo/mute visibles, ráfagas/reconexión y movimiento reducido. |
+| A12 | Editor completo | Plantilla/vacío/fondo, mesas personalizadas, paredes, arrastre/tiradores/giro, selección múltiple, deshacer y campos. |
+| A13 | Publicación/plano | Detallado/simplificado fieles y lista equivalente; validación, versión y ocupado protegido al publicar/revertir. |
+| A14 | Ingredientes/receta | Selector solo ingredientes; exclusión online incluso por ID, unidades/versiones y dependencias válidas. |
+| A15 | Inventario excluyente | Factura descuenta terminado o componentes, nunca ambos; comanda no genera kardex. |
+| A16 | Cancelación antes de factura | No preparado: cero stock. Preparado: baja/gasto únicos al costo y sin retorno a AVE/disponible. |
+| A17 | Cancelación después | Corrección sin reposición; reclasificación sin doble costo/stock; reembolso único. |
+| A18 | Parcial/rehacer | Consumo real por intento y una unidad cobrable; sin pérdida duplicada. |
+| A19 | Falla de motor | Rollback íntegro, retry del mismo job, sin avance o efectos parciales. |
+| A20 | Auditoría | Agregar/quitar/enviar/cancelar/autorizar/cobrar visibles desde factura y origen sin factura. |
+| A21 | Scope/permisos | IDs ajenos, revocación, replay y manipulación rechazados por API y receptor. |
+| A22 | Relevo cajero | Mesas permanecen; siguiente cajero cobra en su jornada; mesero sin dinero propio. |
+| A23 | Hardware/accesibilidad/tema | 1280×800, 1024×768, tablet vertical y 320–430 px; teclado/foco/lector y dos monitores sin fuga de sesión. Luz/oscuro en plano, cuenta, catálogo, editor, comandas y diálogos; contraste WCAG AA, estados reconocibles y cambio de tema sin perder contexto. |
+| A24 | Migración/rollback | Contrato previo legible, filas históricas conservadas y reversión compatible con cuentas abiertas. |
+| A25 | QR público por tenant/sede | Escaneo real abre carta correcta sin login, sin cruces de precios/tenant ni tokens; mismo QR tras actualizar. |
+| A26 | Menú por categorías | Solo categoría/productos; foto/descripción/precio; exclusión de ingredientes, búsqueda y ficha sin carrito. |
+| A27 | Publicación del menú | Preview/activar/desactivar, precio canónico publicado, datos privados ausentes, caché invalidada y offline identificado. |
+| A28 | Menú accesible | Carta fotográfica/compacta de 320 px a escritorio, imágenes sin saltos, categorías legibles y movimiento reducido. |
+| A29 | Composición y toque de línea | Plano inicial al 100%, sin catálogo/cuenta. Tras acceso, cuenta izquierda ≈30% y productos/categorías derecha ≈70%; volver recupera plano completo. Mosaico agrega, +/− ajustan y tocar fila no abre editor; controles legibles en tamaños menores. |
+
+Implementación: build/backend/SQL y pruebas frontend pertinentes; ampliar OnlineSalesDraftCommandTests, OnlineSalesCheckoutTests, OrderRecoveryTests, OrderBatchInvoiceTests, PosArchitectureTests y recorridos POS para probar que lo normal no cambia. Casos gastronómicos nuevos prueban contratos públicos, concurrencia, reintentos y efectos. Cada etapa termina con auditoría posterior contra AGENTS y documentos propietarios. Maqueta no certifica SQL, hardware o finanzas.
+
+## 14. Referencias visuales y entrega de diseño
+
+Investigación inicial de interfaces del 2026-09-09: [Toast](https://doc.toasttab.com/doc/platformguide/adminUiOptionsReference.html) y [enrutamiento](https://doc.toasttab.com/doc/platformguide/platformKitchenRoutingOverview.html), [Lightspeed Register](https://k-series-support.lightspeedhq.com/hc/en-us/articles/360050328394-Understanding-the-Register-screen), [Square plano](https://squareup.com/help/us/en/article/6427-building-your-floor-plan) y [menú](https://squareup.com/help/us/en/article/7804-organize-your-menu-with-square-for-restaurants), [Odoo restaurante](https://www.odoo.com/documentation/19.0/applications/sales/point_of_sale/restaurant.html) y [Fudo](https://fu.do/es/funcionalidades/). Se revisaron guías/capturas oficiales, no instalaciones comerciales ni tiempos medidos. Inspiración: zonas estables, selección directa, plano fiel, rondas y separación envío/cobro; funciones observadas como dividir cuentas no se incorporan por defecto.
+
+La imagen aportada orienta fotos y selección táctil; la distribución final es la de §3: plano completo y, tras acceso, cuenta/productos en proporción aproximada 30/70. La maqueta de artifacts/restaurant-pos/auraly-restaurante.html usa datos ficticios; muestra interacción, no autentica/factura/contabiliza/sincroniza/imprime realmente. Este documento define el contrato completo; las herramientas no simuladas exhaustivamente no se consideran implementadas.
+
+Auditoría de cierre: se retiraron visita paralela, ServiceOpen, alteración de draft/checkout normal, usuario automático por Mesero, huella, offline gastronómico y exclusividad incondicional por mesa. Se fijaron endpoint nullable mínimo, receta excluyente, consumo al facturar, pérdidas sin reposición, comanda sin job de inventario, impresora configurada en Comanda y editor personalizable. Un propietario por regla; alcance, etapas y aceptación coherentes. Esta entrega modifica documentación y demostración visual, no código productivo, schema, datos ni dependencias.
+
+Verificación de la demostración (2026-09-10): recorrido automatizado del plano completo sin catálogo, apertura 30/70, clave obligatoria en puesto compartido aun sin exclusividad, rechazo/cancelación de acceso sin mostrar detalle, regreso al plano y nueva identificación, toque de línea inerte y aprobación supervisora. Se comprobaron cambio luz/oscuro conservando cuenta, cabecera blanca en luz, vínculo manual Mesero/Usuario, receta, edición/deshacer/preview/publicación del plano, configuración de impresora de comanda, menú/ficha pública, adaptación entre 320 y 1024 px, estado desconectado y movimiento reducido, sin errores JavaScript en ese recorrido. Revisión visual de plano y cuenta en luz, cuenta y editor oscuros y carta. `git diff --check` pasó para los documentos de esta entrega. La revisión posterior conserva Sales/Authorization y el tema global como propietarios, sin cambios productivos ni nuevas fuentes de datos. Estas verificaciones no equivalen a ejecutar los 29 criterios sobre producción: autenticación real, concurrencia SQL, contabilidad, push, impresión y dos monitores se validarán al implementar sus etapas.

@@ -7,6 +7,14 @@ export function usesEnrolledPosRuntime(health: PosLaunchHealth) {
   return health.status !== "EnrollmentRequired";
 }
 
+export function shouldUseEnrolledPosRuntime(
+  health: PosLaunchHealth,
+  workspaceChangeRequested: boolean,
+  fiscalHabilitationRequested: boolean,
+) {
+  return usesEnrolledPosRuntime(health) && !workspaceChangeRequested && !fiscalHabilitationRequested;
+}
+
 export function workspaceActivationMode(
   currentMode: "edge" | "online" | null,
   currentBusinessId: string,

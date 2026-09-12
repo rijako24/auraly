@@ -11,6 +11,11 @@ import { printWorkSessionClosure } from "./pos-work-session-close";
 import { announceSessionReplacement } from "@/lib/auth-session";
 import { buildLoginRedirect } from "@/lib/login-redirect";
 import { isCurrentEdgeUserSession } from "./pos-edge-session";
+import {
+  createPosStateInvalidationNotifier,
+  isChangedPosStateEvent,
+  posStateStreamReconnectDelay,
+} from "./pos-state-invalidation";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -47,7 +52,6 @@ export type PosCustomer = {
   priceChannelId: string | null;
   requiresElectronicInvoice: boolean;
   isCreditEnabled?: boolean;
-  defaultCreditDueDays?: number;
   availableCredit?: number | null;
   isActive: boolean;
 };
@@ -279,7 +283,7 @@ export type PosReceiptLine = {
 
 export type PosPrintableReceipt = {
   documentId: string;
-  documentType: PosSaleDocumentType;
+  documentType: PosSaleDocumentType | "Order";
   documentNumber: string;
   fiscalNumber: string | null;
   issuedAt: string;
@@ -428,7 +432,7 @@ export type PosInventoryValidation = {
   wasValidated: boolean;
   issues: PosInventoryIssue[];
 };
-export type PosCreditTerms = { amount: number; dueDate: string };
+export type PosCreditTerms = { amount: number };
 
 export type PosWorkSessionPaymentCount = {
   paymentMethodCode: string;
@@ -545,6 +549,7 @@ export interface PosClient {
     fiscalWarnings: string[];
     dianQuotaAvailable: boolean | null;
     identityReady: boolean;
+    initialEnrollmentSessionAvailable?: boolean;
     catalogStatus: string;
     synchronizationInProgress: boolean;
     automaticRetryScheduled?: boolean;
@@ -573,7 +578,10 @@ export interface PosClient {
   openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
-  productWarehouseAvailability(productId: string): Promise<PosProductWarehouseAvailability[]>;
+  productWarehouseAvailability(
+    productId: string,
+    signal?: AbortSignal,
+  ): Promise<PosProductWarehouseAvailability[]>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
   customer(customerId: string): Promise<PosCustomer>;
   customerCountries(): Promise<PosCountry[]>;
@@ -630,6 +638,7 @@ export interface PosClient {
     bankAccountId?: string | null,
     paymentNotes?: string | null,
   ): Promise<InvoiceOrdersResponse>;
+  printOrders(orderIds: string[]): Promise<{ printedCount: number }>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
   printCashMovement(ticket: PosCashMovementTicket): Promise<void>;
@@ -666,7 +675,6 @@ export type PosPrinterConfiguration = {
   letterPrinterName: string | null;
   orderMode: "BrowserPreview" | "WindowsPrint";
   posOutputFormat: PosPrintTemplateFormat;
-  ordersOutputFormat: PosPrintTemplateFormat;
   templateRoutes: Array<{
     documentType: "SalesInvoice" | "SalesReceipt";
     format: PosPrintTemplateFormat;
@@ -674,8 +682,9 @@ export type PosPrinterConfiguration = {
   }> | null;
   scale: PosScaleConfiguration | null;
   posPrinterName?: string | null;
-  ordersPrinterName?: string | null;
-  ordersReceiptPaperWidthMillimeters?: 58 | 80;
+  orderOutputFormat: PosPrintTemplateFormat;
+  orderPrinterName?: string | null;
+  orderReceiptPaperWidthMillimeters?: 58 | 80;
 };
 
 export type PosPrintTemplateFormat =
@@ -716,7 +725,7 @@ export function loadBrowserPrinterConfiguration(): PosPrinterConfiguration {
     letterPrinterName: null,
     orderMode: "BrowserPreview",
     posOutputFormat: "Receipt",
-    ordersOutputFormat: "HalfLetter",
+    orderOutputFormat: "HalfLetter",
     templateRoutes: null,
     scale: null,
   };
@@ -771,6 +780,7 @@ export class PosEdgeClient implements PosClient {
       fiscalWarnings: string[];
       dianQuotaAvailable: boolean | null;
       identityReady: boolean;
+      initialEnrollmentSessionAvailable: boolean;
       catalogStatus: string;
       synchronizationInProgress: boolean;
       automaticRetryScheduled?: boolean;
@@ -822,7 +832,7 @@ export class PosEdgeClient implements PosClient {
   printReceipt(
     receipt: PosPrintableReceipt,
     branding?: TenantBranding | null,
-    workflow: "pos" | "orders" = "pos",
+    workflow: "pos" | "order-tickets" = "pos",
   ) {
     return this.requestVoid(`/edge/v1/print/receipt?workflow=${workflow}`, {
       method: "POST",
@@ -865,6 +875,28 @@ export class PosEdgeClient implements PosClient {
 
   watchLocalState(onStateChanged: () => void): () => void {
     const controller = new AbortController();
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+    let connectedOnce = false;
+    const invalidations = createPosStateInvalidationNotifier(
+      () => {
+        if (!controller.signal.aborted) onStateChanged();
+      },
+      (notify) => {
+        const timer = setTimeout(notify, 250);
+        return () => clearTimeout(timer);
+      },
+    );
+    const scheduleReconnect = () => {
+      if (controller.signal.aborted || reconnectTimer !== null) return;
+      invalidations.notify();
+      const delay = posStateStreamReconnectDelay(reconnectAttempt);
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        void listen();
+      }, delay);
+    };
     const listen = async () => {
       try {
         const response = await fetch(`${EDGE_BASE_URL}/edge/v1/events`, {
@@ -876,7 +908,15 @@ export class PosEdgeClient implements PosClient {
           },
           signal: controller.signal,
         });
-        if (!response.ok || !response.body) return;
+        if (!response.ok || !response.body) {
+          scheduleReconnect();
+          return;
+        }
+
+        const recoveredConnection = connectedOnce;
+        connectedOnce = true;
+        reconnectAttempt = 0;
+        if (recoveredConnection) invalidations.notify();
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -887,17 +927,24 @@ export class PosEdgeClient implements PosClient {
           pending += decoder.decode(next.value, { stream: true });
           let boundary = pending.indexOf("\n\n");
           while (boundary >= 0) {
+            const event = pending.slice(0, boundary);
             pending = pending.slice(boundary + 2);
-            onStateChanged();
+            if (isChangedPosStateEvent(event)) invalidations.notify();
             boundary = pending.indexOf("\n\n");
           }
         }
+        scheduleReconnect();
       } catch {
-        // The loopback host can be stopped while the application stays open.
+        // The loopback host can restart while the application stays open.
+        scheduleReconnect();
       }
     };
     void listen();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      invalidations.dispose();
+    };
   }
 
   cashMovementReasons(direction: PosCashMovementDirection) {
@@ -1002,9 +1049,10 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
-  productWarehouseAvailability(productId: string) {
+  productWarehouseAvailability(productId: string, signal?: AbortSignal) {
     return this.request<PosProductWarehouseAvailability[]>(
       `/edge/v1/catalog/products/${productId}/warehouse-availability`,
+      { signal },
     );
   }
 
@@ -1291,6 +1339,13 @@ export class PosEdgeClient implements PosClient {
         documentType,
         idempotencyKey: crypto.randomUUID(),
       }),
+    });
+  }
+
+  printOrders(orderIds: string[]) {
+    return this.request<{ printedCount: number }>("/edge/v1/orders/print", {
+      method: "POST",
+      body: JSON.stringify({ orderIds }),
     });
   }
 

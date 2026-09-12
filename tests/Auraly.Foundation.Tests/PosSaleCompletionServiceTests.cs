@@ -173,6 +173,36 @@ public sealed class PosSaleCompletionServiceTests
         });
     }
 
+    [Fact]
+    public async Task Server_resolved_credit_due_date_is_preserved_in_the_local_sale_snapshot()
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            var customerId = Guid.NewGuid();
+            var draft = await fixture.AddLineAsync();
+            draft = await fixture.Drafts.AssignPartiesAsync(
+                draft.DraftId,
+                customerId,
+                sellerId: null);
+
+            var dueDate = fixture.IssuedAt.AddDays(30);
+            var result = await fixture.CompleteAsync(
+                draft.DraftId,
+                payments: [],
+                credit: new PosSaleCreditTerms(
+                    customerId,
+                    10_000m,
+                    dueDate));
+
+            Assert.NotNull(result);
+            var credit = PosSaleContractSerializer.Deserialize(
+                Assert.Single(await fixture.Sales.GetPendingOutboxAsync()).Payload).Credit;
+            Assert.NotNull(credit);
+            Assert.Equal(customerId, credit.CustomerId);
+            Assert.Equal(dueDate, credit.DueDate);
+        });
+    }
+
     private static async Task WithFixtureAsync(Func<Fixture, Task> test)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-completion-{Guid.NewGuid():N}.db");

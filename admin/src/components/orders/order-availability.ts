@@ -52,6 +52,9 @@ export function getOrderAvailability(
   if (order.status === "Invoiced") {
     return { canUseInCurrentSession: false, label: "Facturado", actionLabel: "Facturado", tone: "invoiced" };
   }
+  if (order.status === "InReview") {
+    return { canUseInCurrentSession: false, label: "Requiere revisión", actionLabel: "Revisar", tone: "claimed" };
+  }
   if (order.status === "ProcessingEmission") {
     return { canUseInCurrentSession: false, label: "Procesando emisión", actionLabel: "Procesando emisión", tone: "claimed" };
   }

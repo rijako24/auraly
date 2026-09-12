@@ -24,6 +24,11 @@ public interface IOrderStore
         Guid orderId,
         CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<OrderPrintDocument>> GetPrintBatchAsync(
+        OrderActor actor,
+        IReadOnlyCollection<Guid> orderIds,
+        CancellationToken cancellationToken);
+
     Task<OrderClaimSummary> ClaimAsync(
         OrderActor actor,
         Guid orderId,
@@ -88,6 +93,24 @@ public sealed class OrderService(
             throw new OrderValidationException("El pedido es obligatorio.");
         return await orders.GetAsync(actor, orderId, cancellationToken)
             ?? throw new OrderNotFoundException("El pedido no existe en esta sede.");
+    }
+
+    public async Task<IReadOnlyList<OrderPrintDocument>> GetPrintBatchAsync(
+        OrderActor actor,
+        OrderPrintBatchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(actor, OrderPermissionCodes.Read);
+        ArgumentNullException.ThrowIfNull(request);
+        var orderIds = request.OrderIds?.Distinct().ToArray() ?? [];
+        if (orderIds.Length is < 1 or > 500 || orderIds.Any(id => id == Guid.Empty))
+            throw new OrderValidationException(
+                "Selecciona entre 1 y 500 pedidos válidos para imprimir.");
+        var documents = await orders.GetPrintBatchAsync(actor, orderIds, cancellationToken);
+        if (documents.Count != orderIds.Length)
+            throw new OrderNotFoundException(
+                "Uno o más pedidos no existen en la sede autenticada.");
+        return documents;
     }
 
     public Task<OrderClaimSummary> ClaimAsync(

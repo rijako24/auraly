@@ -12,8 +12,7 @@ public sealed record OnlineSalesPayment(
     string? Notes = null);
 
 public sealed record OnlineSalesCreditTerms(
-    decimal Amount,
-    DateTimeOffset DueDate);
+    decimal Amount);
 
 public sealed record CompleteOnlineSalesDraftRequest(
     long ExpectedVersion,

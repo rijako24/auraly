@@ -19,6 +19,10 @@ public sealed record PreparedDirectProductPricePublication(
     decimal? TargetMarginPercent, decimal SalePrice, decimal? EffectiveMarginPercent,
     decimal RoundingIncrement, string RoundingMode);
 
+public sealed record PricePublicationStoreResult(
+    PublishPricesResult Result,
+    IReadOnlyList<Guid> TargetBusinessIds);
+
 public sealed record PriceChannelReportProductSource(
     Guid ProductId, string ProductCode, string ProductName,
     decimal PublicAmount, string CurrencyCode,
@@ -39,7 +43,7 @@ public interface IPricingStore
     Task<PriceProposalSource?> GetProposalAsync(PricingUserIdentity user, Guid proposalId, CancellationToken ct);
     Task ReviewAsync(PricingUserIdentity user, Guid proposalId, PriceCalculationResult calculation, byte[] expectedRowVersion, CancellationToken ct);
     Task RejectAsync(PricingUserIdentity user, Guid proposalId, byte[] expectedRowVersion, string? reason, CancellationToken ct);
-    Task<PublishPricesResult> PublishAsync(PricingUserIdentity user, IReadOnlyList<PreparedPricePublication> values, DateTimeOffset now, CancellationToken ct);
+    Task<PricePublicationStoreResult> PublishAsync(PricingUserIdentity user, IReadOnlyList<PreparedPricePublication> values, DateTimeOffset now, CancellationToken ct);
     Task<ProductPricingContext?> GetProductContextAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
     Task<PreparedProductPrice> SavePreparedProductAsync(PricingUserIdentity user, PreparedDirectProductPricePublication value, DateTimeOffset now, CancellationToken ct);
     Task<IReadOnlyList<ProductPriceHistoryItem>> HistoryAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
@@ -118,9 +122,10 @@ public sealed class PricingService(
                 result.RoundingMode, expected, source.IsManual));
         }
 
-        var published = await store.PublishAsync(user, prepared, timeProvider.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(user.TenantId, user.BusinessId, CancellationToken.None);
-        return published;
+        var outcome = await store.PublishAsync(user, prepared, timeProvider.GetUtcNow(), ct);
+        foreach (var businessId in outcome.TargetBusinessIds)
+            await synchronization.DispatchPendingAsync(user.TenantId, businessId, CancellationToken.None);
+        return outcome.Result;
     }
 
     public async Task<ProductPricingContext> GetProductContextAsync(PricingUserIdentity user, Guid productId, CancellationToken ct)

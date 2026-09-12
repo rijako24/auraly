@@ -58,6 +58,7 @@
 :r .\Migrations\20260907_AddPaymentBankAccountSelection.sql
 :r .\Migrations\20260908_AddTargetedPosSynchronization.sql
 :r .\Migrations\MigratePricePublicationAuditOrigins.sql
+:r .\Migrations\MigrateProductPricePreparations.sql
 :r .\Migrations\RemoveLegacyFiscalConfiguration.sql
 GO
 :r .\Seeds\SeedReferenceOptions.sql

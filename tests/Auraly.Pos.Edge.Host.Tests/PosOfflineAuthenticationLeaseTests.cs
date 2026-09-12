@@ -239,13 +239,24 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
             InitialOfflineAccess: initialAccess,
             InitialIdentitySnapshot: identitySnapshot));
 
-        var session = await new PosEnrollmentSessionCompleter(
-            enrollment, identities, leases).CompleteAsync();
+        var completer = new PosEnrollmentSessionCompleter(
+            enrollment, identities, leases);
+        var session = await completer.CompleteAsync();
 
         Assert.Equal(_userId, session.UserId);
         Assert.Contains(CommercePermissionCodes.SalesDiscount, session.Permissions);
         Assert.True(await identities.HasIdentitySnapshotAsync());
         Assert.True(await identities.ContainsUserAsync(initialAccess.User.Username));
+        Assert.NotNull(enrollment.Load()!.InitialOfflineAccess);
+        Assert.NotNull(enrollment.Load()!.InitialIdentitySnapshot);
+
+        var retriedSession = await completer.CompleteAsync();
+
+        Assert.Equal(_userId, retriedSession.UserId);
+        Assert.NotEqual(session.Token, retriedSession.Token);
+
+        await completer.AcknowledgeAsync(_userId);
+
         Assert.Null(enrollment.Load()!.InitialOfflineAccess);
         Assert.Null(enrollment.Load()!.InitialIdentitySnapshot);
     }

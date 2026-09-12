@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Auraly.Contracts.Catalog;
 using Auraly.Platform.Domain.Enums;
@@ -10,12 +8,24 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosPricingStoreTests
 {
     [Fact]
+    public void Customer_credit_due_days_are_not_serialized_to_the_pos_catalog()
+    {
+        var customer = new PosCustomerPricing(
+            Guid.NewGuid(), "900100200", "Cliente", null, true,
+            IsCreditEnabled: true, AvailableCredit: 500_000m, DefaultDueDays: 30);
+
+        var json = JsonSerializer.Serialize(customer);
+
+        Assert.DoesNotContain("defaultDueDays", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Local_resolver_uses_channel_quantity_tiers_and_always_falls_back_to_business_price()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-pricing-{Guid.NewGuid():N}.db");
         try
         {
-            var store = new PosCatalogStore($"Data Source={path}");
+            var store = new PosCatalogStore($"Data Source={path};Pooling=False");
             await store.InitializeAsync();
             var productId = Guid.NewGuid();
             var sessionId = Guid.NewGuid();
@@ -23,9 +33,7 @@ public sealed class PosPricingStoreTests
                 productId, "P-1", "REF-1", "Product", "EA", "VAT19", 19m,
                 100m, "COP", true, null, ["7701"], []);
             var items = new[] { item };
-            var hash = Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
-                .ToLowerInvariant();
+            var hash = CatalogBootstrapIntegrity.Compute(items);
             await store.BeginBootstrapAsync(
                 new CatalogSyncSessionResponse(sessionId, 0, 1, DateTimeOffset.UtcNow.AddHours(1)));
             await store.ApplyBootstrapPageAsync(
@@ -74,7 +82,7 @@ public sealed class PosPricingStoreTests
         {
             var now = new DateTimeOffset(2026, 9, 4, 12, 0, 0, TimeSpan.Zero);
             var clock = new FixedTimeProvider(now);
-            var store = new PosCatalogStore($"Data Source={path}", clock);
+            var store = new PosCatalogStore($"Data Source={path};Pooling=False", clock);
             await store.InitializeAsync();
             var hygieneId = Guid.NewGuid();
             var meatId = Guid.NewGuid();
@@ -92,9 +100,7 @@ public sealed class PosPricingStoreTests
                     AllowsFractionalSale: false, Scale: null, Barcodes: [], Identifiers: [],
                     CategoryName: "Meat", ProductCategoryId: meatCategoryId)
             };
-            var hash = Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
-                .ToLowerInvariant();
+            var hash = CatalogBootstrapIntegrity.Compute(items);
             await store.BeginBootstrapAsync(
                 new CatalogSyncSessionResponse(sessionId, 0, items.Length, now.AddHours(1)));
             await store.ApplyBootstrapPageAsync(
@@ -196,7 +202,7 @@ public sealed class PosPricingStoreTests
         {
             var now = new DateTimeOffset(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
             var clock = new MutableTimeProvider(now);
-            var store = new PosCatalogStore($"Data Source={path}", clock);
+            var store = new PosCatalogStore($"Data Source={path};Pooling=False", clock);
             await store.InitializeAsync();
             var productId = Guid.NewGuid();
             var items = new[]
@@ -205,9 +211,7 @@ public sealed class PosPricingStoreTests
                     100m, "COP", true, false, false, null, [], [])
             };
             var sessionId = Guid.NewGuid();
-            var hash = Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
-                .ToLowerInvariant();
+            var hash = CatalogBootstrapIntegrity.Compute(items);
             await store.BeginBootstrapAsync(
                 new CatalogSyncSessionResponse(sessionId, 0, 1, now.AddHours(1)));
             await store.ApplyBootstrapPageAsync(
@@ -242,7 +246,7 @@ public sealed class PosPricingStoreTests
         try
         {
             var now = new DateTimeOffset(2026, 9, 8, 12, 0, 0, TimeSpan.Zero);
-            var store = new PosCatalogStore($"Data Source={path}", new FixedTimeProvider(now));
+            var store = new PosCatalogStore($"Data Source={path};Pooling=False", new FixedTimeProvider(now));
             await store.InitializeAsync();
             var first = Guid.NewGuid();
             var second = Guid.NewGuid();

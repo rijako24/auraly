@@ -65,9 +65,9 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
             saved.EnsureSuccessStatusCode();
         }
         Assert.Equal(6_400m, await ScalarAsync<decimal>(
-            "SELECT CostBasisAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
+            "SELECT CostBasisAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending'", childId));
         Assert.Equal(8_000m, await ScalarAsync<decimal>(
-            "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
+            "SELECT PreparedAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending'", childId));
         Assert.Equal(1_000m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
         using (var inventory = fixture.CreateAdminClient(InventoryPermissionCodes.Read))
@@ -97,6 +97,15 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
                        PricingRoundingModes.Nearest, 4_000m)))
             prepare.EnsureSuccessStatusCode();
 
+        // A later manual preparation on the child owns its pricing policy. Publishing the
+        // parent may update the linked cost, but it must preserve this pending margin.
+        using (var prepareChild = await pricing.PutAsJsonAsync(
+                   $"/api/commerce/v1/pricing/products/{childId:D}/prepared-price",
+                   new PublishProductPriceRequest(
+                       PriceInputModes.Margin, 25m, null, 1m,
+                       PricingRoundingModes.Nearest, 800m)))
+            prepareChild.EnsureSuccessStatusCode();
+
         Assert.Equal(1_000m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
         Assert.Equal(1, await ScalarAsync<int>(
@@ -116,10 +125,12 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
 
         Assert.Equal(1_000m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
-        Assert.Equal(10_000m, await ScalarAsync<decimal>(
-            "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
+        Assert.Equal(10_666.6667m, await ScalarAsync<decimal>(
+            "SELECT PreparedAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending'", childId));
         Assert.Equal(8_000m, await ScalarAsync<decimal>(
-            "SELECT CostBasisAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
+            "SELECT CostBasisAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending'", childId));
+        Assert.Equal(25m, await ScalarAsync<decimal>(
+            "SELECT TargetMarginPercent FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending'", childId));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.ProductPrices WHERE ProductId=@Product", childId));
         Assert.Equal(0, await ScalarAsync<int>(
@@ -128,7 +139,7 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
         var childCandidates = await pricing.GetFromJsonAsync<PriceRevisionPage>(
             "/api/commerce/v1/pricing/proposals?page=1&pageSize=100&status=Approved");
         var childCandidate = Assert.Single(childCandidates!.Items.Where(x => x.ProductId == childId));
-        Assert.Equal(10_000m, childCandidate.SuggestedSalePrice);
+        Assert.Equal(10_666.6667m, childCandidate.SuggestedSalePrice);
     }
 
     private async Task SeedProductAsync(Guid productId, decimal price)

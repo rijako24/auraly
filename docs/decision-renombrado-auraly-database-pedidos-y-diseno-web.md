@@ -365,6 +365,14 @@ No todas deben entrar al primer incremento, pero estado, auditoría, sincronizac
 ### Ciclo de vida
 
 - confirmar;
+- al crear, reservar en una sola operación las líneas con existencia suficiente; una línea insuficiente no mueve inventario y deja el pedido `InReview`, sin deshacer las demás reservas válidas;
+- persistir por línea la cantidad ya reservada para que toda edición mueva únicamente la diferencia entre la cantidad deseada y la reservada;
+- en `InReview`, permitir con `orders.review` reducir o eliminar sólo las líneas pendientes; conservar sus valores comerciales y bloquear las líneas ya reservadas;
+- permitir con `orders.update` la edición completa antes de facturar: agregar, aumentar, reducir o eliminar productos, reservando aumentos y devolviendo reducciones de `PED` a la bodega de venta en la misma transacción;
+- asignar `orders.create`, `orders.update` y `orders.review` a las plantillas Administrador, Vendedor y Cajero; la autorización depende del permiso efectivo y no de que el usuario tenga un registro de vendedor comercial;
+- confirmar el pedido y habilitarlo para facturación sólo cuando todas las líneas restantes que controlan inventario estén reservadas;
+- resolver productos, precios e inventario mediante consultas por lote para todo el documento; queda prohibido consultar la base de datos o servicios externos una vez por línea;
+- agrupar los deltas de inventario de cada edición en, como máximo, una transferencia de reserva `VEN -> PED` y una devolución `PED -> VEN`, ambas dentro de la transacción del pedido; el costo de I/O no debe crecer como una consulta o transferencia adicional por producto;
 - cancelar con motivo;
 - reabrir si el estado y permiso lo admiten;
 - historial de cambios;
@@ -401,6 +409,15 @@ El inventario no se descarga. Si una política exige disponibilidad y no existe 
 - documentos y pagos relacionados;
 - estado de sincronización;
 - exportación autorizada.
+
+### Impresión
+
+- la selección de la bandeja solicita todos los pedidos al caso de uso `OrderService` en un solo lote;
+- `SqlOrderStore` carga encabezados y líneas con un único comando y dos resultsets, sin una consulta por pedido ni por producto;
+- la representación reutiliza el pipeline canónico de impresión y usa la plantilla versionada `order` para tirilla, media carta, media oficio y carta;
+- el documento conserva número, cliente, líneas y total capturados en el pedido; no expone impuestos, datos fiscales ni medios de pago porque aún no existe una venta;
+- la configuración de `Facturas` es única para documentos emitidos desde el punto de venta o al facturar pedidos; la impresora, formato y ancho de tirilla de `Pedidos` son independientes y se usan solo al imprimir el pedido;
+- en formatos de hoja todos los pedidos seleccionados forman un único trabajo multipágina; en tirilla cada pedido es un ticket independiente.
 
 ---
 

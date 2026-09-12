@@ -843,9 +843,17 @@ public sealed class SqlInventoryOperationStore(
               AND IsActive=1 AND (IsSystem=0 OR @AllowSystemWarehouses=1 OR (@DocumentType=N'Damage' AND IsSystem=1 AND Code=N'AVE')))
               THROW 51202,'Selecciona una bodega de inventario de destino activa.',1;
             IF EXISTS(SELECT x.ProductId FROM OPENJSON(@Products) WITH(ProductId UNIQUEIDENTIFIER '$') x
-              LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.TenantId=@TenantId AND p.IsActive=1 AND p.ManageStock=1
-              WHERE p.ProductId IS NULL)
-              THROW 51203,'Every product must be active, belong to the business and manage stock.',1;
+              LEFT JOIN dbo.Products p
+                ON p.ProductId=x.ProductId AND p.TenantId=@TenantId AND p.IsActive=1
+              LEFT JOIN dbo.ProductLinks inventoryLink
+                ON inventoryLink.BusinessId=@BusinessId AND inventoryLink.ChildProductId=p.ProductId
+               AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
+              LEFT JOIN dbo.Products inventoryProduct
+                ON inventoryProduct.ProductId=COALESCE(inventoryLink.ParentProductId,p.ProductId)
+               AND inventoryProduct.TenantId=@TenantId AND inventoryProduct.IsActive=1
+               AND inventoryProduct.ManageStock=1
+              WHERE p.ProductId IS NULL OR inventoryProduct.ProductId IS NULL)
+              THROW 51203,'Every product must resolve to an active inventory product in the authenticated business.',1;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);

@@ -28,6 +28,7 @@ test("shows the reason and offers a manual retry after automatic retries fail", 
     serverConnected: false,
     identityReady: true,
     catalogStatus: "Bootstrapping",
+    preparationStage: "Catalog",
     lastSynchronizationFailed: true,
     lastSynchronizationError: "No hay conexión válida con Auraly Server.",
     preparationCompletedSteps: 1,
@@ -36,6 +37,7 @@ test("shows the reason and offers a manual retry after automatic retries fail", 
 
   assert.equal(view.title, "La preparación se detuvo");
   assert.match(view.detail, /No hay conexión válida/);
+  assert.equal(view.currentResource, "Productos y precios");
   assert.equal(view.resumeLabel, "Los 3 reintentos automáticos terminaron");
 });
 
@@ -67,7 +69,7 @@ test("does not invent a percentage while identity totals are unknown", () => {
 
   assert.equal(view.resourceProgress, null);
   assert.equal(view.currentResource, "usuarios y permisos");
-  assert.equal(view.connectionLabel, "Esperando conexión con Auraly");
+  assert.equal(view.connectionLabel, "Verificando conexión con Auraly");
 });
 
 test("explains an empty catalog instead of looking stuck", () => {

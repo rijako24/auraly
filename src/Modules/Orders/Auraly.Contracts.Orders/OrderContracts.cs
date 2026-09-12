@@ -5,6 +5,7 @@ public static class OrderPermissionCodes
     public const string Read = "orders.read";
     public const string Create = "orders.create";
     public const string Update = "orders.update";
+    public const string Review = "orders.review";
     public const string Recover = "orders.recover";
     public const string Invoice = "orders.invoice";
     public const string Cancel = "orders.cancel";
@@ -70,7 +71,11 @@ public sealed record OrderLine(
     decimal Quantity,
     decimal UnitPrice,
     decimal DiscountAmount,
-    decimal LineTotal);
+    decimal LineTotal,
+    decimal QuantityOnHand = 0m,
+    bool ManageStock = false,
+    string PriceSource = "Captured",
+    decimal ReservedQuantity = 0m);
 
 public sealed record OrderDetail(
     Guid OrderId,
@@ -97,6 +102,27 @@ public sealed record OrderDetail(
     OrderClaimSummary? Claim,
     IReadOnlyList<OrderLine> Lines,
     Guid? WarehouseId = null);
+
+public sealed record OrderPrintBatchRequest(IReadOnlyCollection<Guid> OrderIds);
+
+public sealed record OrderPrintLine(
+    string? ProductCode,
+    string ProductName,
+    decimal Quantity,
+    decimal UnitPrice,
+    decimal DiscountAmount,
+    decimal LineTotal);
+
+public sealed record OrderPrintDocument(
+    Guid OrderId,
+    Guid BusinessId,
+    string OrderNumber,
+    DateTimeOffset CreatedAt,
+    string? CustomerName,
+    string? CustomerIdentification,
+    string Currency,
+    decimal Total,
+    IReadOnlyList<OrderPrintLine> Lines);
 
 public sealed record ClaimOrderRequest(
     Guid WorkSessionId,

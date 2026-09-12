@@ -96,6 +96,28 @@ export interface PreparedProductPrice {
   effectiveMarginPercent: number | null;
   savedAt: string;
 }
+export interface ProductPriceHistoryItem {
+  activityId: string;
+  productId: string;
+  activityType: "Preparation" | "Publication";
+  origin: "GoodsReceipt" | "ProposalReview" | "Product" | "LinkedProduct" | "Migration" | "ReceiptProposal" | "Manual";
+  status: "Pending" | "Published" | "Superseded" | "Discarded";
+  publicAmount: number;
+  preparedAmount: number;
+  costBasisAmount: number | null;
+  costBasisType: string | null;
+  targetMarginPercent: number | null;
+  effectiveMarginPercent: number | null;
+  inputMode: PriceInputMode | null;
+  roundingIncrement: number | null;
+  roundingMode: PricingRoundingMode | null;
+  sourceDocumentId: string | null;
+  sourceLineNumber: number | null;
+  sourceProductId: string | null;
+  userId: string | null;
+  userName: string;
+  occurredAt: string;
+}
 export interface PublishPricesResult {
   items: Array<{
     productPriceId: string;
@@ -133,4 +155,6 @@ export const pricingApi = {
     apiClient.get<ProductPricingContext>(`/commerce/v1/pricing/products/${productId}/context`),
   savePreparedProduct: (productId: string, request: PublishProductPriceRequest) =>
     apiClient.put<PreparedProductPrice>(`/commerce/v1/pricing/products/${productId}/prepared-price`, request),
+  getProductHistory: (productId: string) =>
+    apiClient.get<ProductPriceHistoryItem[]>(`/commerce/v1/pricing/products/${productId}/history`),
 };

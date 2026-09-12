@@ -62,6 +62,14 @@ public static class OrdersApi
             await Handle(() => service.GetAsync(
                 context.User.ToOrderUserActor(), orderId, ct)));
 
+        group.MapPost("/print-batch", async (
+            HttpContext context,
+            OrderPrintBatchRequest request,
+            OrderService service,
+            CancellationToken ct) =>
+            await Handle(() => service.GetPrintBatchAsync(
+                context.User.ToOrderUserActor(), request, ct)));
+
         group.MapPost("/{orderId:guid}/claim", async (
             HttpContext context,
             Guid orderId,

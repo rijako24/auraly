@@ -18,7 +18,7 @@ public static class PosOutboxOrdering
               )
               OR
               (
-                prior.WorkSessionId=current.WorkSessionId
+                lower(prior.WorkSessionId)=lower(current.WorkSessionId)
                 AND
                 (
                   (prior.Type='work-session.opened'

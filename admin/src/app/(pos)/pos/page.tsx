@@ -72,9 +72,12 @@ import {
   authorizePosEnrollment,
   redeemPosEnrollment,
   waitForRedeemedPosEdge,
-  waitForUnenrolledPosEdge,
 } from "@/services/pos/pos-enrollment";
-import { shouldCompletePosEnrollment } from "@/services/pos/pos-enrollment-transition";
+import {
+  completePendingPosEnrollment,
+  isPosPreparationPending,
+  shouldCompletePosEnrollment,
+} from "@/services/pos/pos-enrollment-transition";
 import {
   canIssuePosDocument,
   dianQuotaExhaustedMessage,
@@ -115,14 +118,9 @@ import { capturePosFunctionShortcut, isPosCashDrawerShortcut, POS_ACTION_SHORTCU
 import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
-import { usesEnrolledPosRuntime, workspaceActivationMode } from "@/services/pos/pos-launch-session";
+import { shouldUseEnrolledPosRuntime, workspaceActivationMode } from "@/services/pos/pos-launch-session";
 import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
-import { Progress } from "@/components/ui/progress";
-import {
-  posPreparationView,
-  type PosPreparationHealth,
-} from "./pos-preparation-progress";
-import { exitPosApplication } from "./pos-desktop-update-protocol";
+import type { PosPreparationHealth } from "./pos-preparation-progress";
 import { posPublicError } from "./pos-public-error";
 
 
@@ -239,6 +237,11 @@ export default function PosPage() {
   const [setupLoading, setSetupLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupNotice, setSetupNotice] = useState<string | null>(null);
+  const [preparationActive, setPreparationActive] = useState(false);
+  const [preparationSelection, setPreparationSelection] = useState<{
+    option: SalesWorkspaceOption;
+    documentType: PosSaleDocumentType;
+  } | null>(null);
   const [workspaceConfigurationOffline, setWorkspaceConfigurationOffline] =
     useState(false);
   const [draft, setDraft] = useState<PosDraft | null>(null);
@@ -251,8 +254,8 @@ export default function PosPage() {
   }>({ phase: "idle", value: "" });
   const [quantityShortage, setQuantityShortage] = useState<PosQuantityShortage | null>(null);
   const [productSearchFocusRequest, setProductSearchFocusRequest] = useState(0);
+  const [productAvailabilityRequest, setProductAvailabilityRequest] = useState(0);
   const [paymentFocusRequest, setPaymentFocusRequest] = useState(0);
-  const [preparationReenrollmentOpen, setPreparationReenrollmentOpen] = useState(false);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [edgeReady, setEdgeReady] = useState(false);
@@ -555,10 +558,12 @@ export default function PosPage() {
                 setError(dianQuotaExhaustedMessage);
             }
 
-            if (usesEnrolledPosRuntime(health) && !workspaceChangeRequested) {
+            const fiscalHabilitationRequested = new URLSearchParams(window.location.search)
+              .get("fiscalHabilitation") === "1";
+            if (shouldUseEnrolledPosRuntime(health, workspaceChangeRequested, fiscalHabilitationRequested)) {
               if (active) {
                 setEdgeLoginState(
-                  !health.identityReady || health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
+                  !health.identityReady || isPosPreparationPending(health.status)
                     ? "preparing"
                     : health.status === "LoginRequired"
                       ? "required"
@@ -624,54 +629,64 @@ export default function PosPage() {
     if (!client) return;
     let active = true;
     let checking = false;
+    let refreshRequested = false;
     let hydrated = false;
+    let stopLiveState: (() => void) | null = null;
+
+    const applyHealth = (health: Awaited<ReturnType<typeof client.health>>) => {
+      if (!active) return;
+      if (client.mode === "edge") setPreparationHealth(health);
+      if (client.mode === "edge") setEdgePermissions(health.permissions ?? []);
+      setSynchronization({
+        inProgress: health.synchronizationInProgress,
+        automaticRetryScheduled: health.automaticRetryScheduled ?? false,
+        automaticRetryAttempt: health.automaticRetryAttempt ?? 0,
+        lastAt: health.lastSynchronizationAt,
+        failed: health.lastSynchronizationFailed,
+        pendingCount: health.pendingSynchronizationCount,
+        oldestPendingAt: health.oldestPendingSynchronizationAt,
+        error: posPublicError(health.lastSynchronizationError),
+      });
+      setServerConnected(health.serverConnected);
+      setPushConnected(health.pushConnected);
+      setWorkstation({
+        deviceSeriesCode: health.deviceSeriesCode,
+        businessId: health.businessId,
+        warehouseId: health.warehouseId,
+        businessName: health.businessName,
+        warehouseName: health.warehouseName,
+        warehouseAllowsNegativeStockSales: health.warehouseAllowsNegativeStockSales,
+        userDisplayName: health.userDisplayName || "\u2014",
+        userId: health.userId,
+        workSessionId: health.workSessionId ?? null,
+        deviceId: health.deviceId ?? null,
+        fiscalReady: health.fiscalReady,
+        fiscalWarnings: health.fiscalWarnings ?? [],
+        dianQuotaAvailable: health.dianQuotaAvailable ?? null,
+      });
+      if (health.dianQuotaAvailable === false && documentType === "SalesInvoice")
+        setError(dianQuotaExhaustedMessage);
+    };
 
     const connect = async () => {
-      if (checking) return;
+      if (checking) {
+        refreshRequested = true;
+        return;
+      }
       checking = true;
       try {
-        const health = await client.health();
-        if (active) {
-          if (client.mode === "edge") setPreparationHealth(health);
-          if (client.mode === "edge") setEdgePermissions(health.permissions ?? []);
-          setSynchronization({
-            inProgress: health.synchronizationInProgress,
-            automaticRetryScheduled: health.automaticRetryScheduled ?? false,
-            automaticRetryAttempt: health.automaticRetryAttempt ?? 0,
-            lastAt: health.lastSynchronizationAt,
-            failed: health.lastSynchronizationFailed,
-            pendingCount: health.pendingSynchronizationCount,
-            oldestPendingAt: health.oldestPendingSynchronizationAt,
-            error: posPublicError(health.lastSynchronizationError),
-          });
-          setServerConnected(health.serverConnected);
-          setPushConnected(health.pushConnected);
-          setWorkstation({
-            deviceSeriesCode: health.deviceSeriesCode,
-            businessId: health.businessId,
-            warehouseId: health.warehouseId,
-            businessName: health.businessName,
-            warehouseName: health.warehouseName,
-            warehouseAllowsNegativeStockSales: health.warehouseAllowsNegativeStockSales,
-            userDisplayName: health.userDisplayName || "\u2014",
-            userId: health.userId,
-            workSessionId: health.workSessionId ?? null,
-            deviceId: health.deviceId ?? null,
-            fiscalReady: health.fiscalReady,
-            fiscalWarnings: health.fiscalWarnings ?? [],
-            dianQuotaAvailable: health.dianQuotaAvailable ?? null,
-          });
-          if (health.dianQuotaAvailable === false && documentType === "SalesInvoice")
-            setError(dianQuotaExhaustedMessage);
-        }
+        let health = await client.health();
+        applyHealth(health);
         if (client instanceof PosEdgeClient && shouldCompletePosEnrollment(
-          window.sessionStorage.getItem("auraly.pos.complete-enrollment") === "1",
           health.status,
+          health.initialEnrollmentSessionAvailable === true,
+          Boolean(health.userId),
         )) {
           try {
-            let session = await client.completeEnrollment();
-            window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
-            session = await client.openWorkSession();
+            const completed = await completePendingPosEnrollment(client);
+            health = completed.health;
+            const session = completed.session;
+            applyHealth(health);
             if (active) {
               setWorkstation((current) => ({
                 ...current,
@@ -681,36 +696,55 @@ export default function PosPage() {
               }));
               setEdgePermissions(session.permissions);
               setEdgeLoginError(null);
-              const preparationPending =
-                health.status === "IdentitySynchronizing" || health.status === "Synchronizing";
+              const preparationPending = isPosPreparationPending(health.status);
               setEdgeLoginState(preparationPending ? "preparing" : null);
               setEdgeReady(!preparationPending);
             }
-            return;
           } catch (caught) {
-            window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
-            if (active) setEdgeLoginError(caught instanceof Error
-              ? caught.message
-              : "No fue posible abrir la sesión local inicial.");
+            if (active) {
+              setEdgeLoginState("preparing");
+              setEdgeLoginError(posPublicError(
+                caught instanceof Error ? caught.message : null,
+                "No fue posible abrir la sesión local inicial.",
+              ) ?? "No fue posible abrir la sesión local inicial.");
+            }
+            return;
+          }
+        }
+        if (client instanceof PosEdgeClient && health.userId && !health.workSessionId) {
+          const session = await client.openWorkSession();
+          health = await client.health();
+          applyHealth(health);
+          if (active) {
+            setWorkstation((current) => ({
+              ...current,
+              userDisplayName: session.displayName,
+              userId: session.userId,
+              workSessionId: session.workSessionId,
+            }));
+            setEdgePermissions(session.permissions);
           }
         }
         if (
           client.mode === "edge" &&
-          (health.status === "IdentitySynchronizing" ||
-            health.status === "Synchronizing" ||
-            health.status === "LoginRequired")
+          (isPosPreparationPending(health.status) || health.status === "LoginRequired")
         ) {
           if (active) {
             setEdgeReady(false);
             setEdgeLoginState(
-              health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
+              isPosPreparationPending(health.status)
                 ? "preparing"
                 : "required",
             );
           }
           return;
         }
-        if (active && client.mode === "edge") setEdgeLoginState(null);
+        if (active && client.mode === "edge") {
+          setEdgeLoginState(null);
+          setPreparationActive(false);
+          setSetupNotice(null);
+          setSetupError(null);
+        }
         if (!hydrated) {
           const [current, pending, numbers] = await Promise.all([
             client.activeDraft(),
@@ -741,19 +775,26 @@ export default function PosPage() {
         }
       } finally {
         checking = false;
+        if (active && refreshRequested) {
+          refreshRequested = false;
+          void connect();
+        }
       }
     };
 
-    void connect();
-    const stopLiveState = client instanceof PosEdgeClient
-      ? client.watchLocalState(() => void connect())
-      : client instanceof OnlinePosClient
-        ? client.watchWarehousePolicy((allowsNegativeStock) =>
-            setWorkstation((current) => ({
-              ...current,
-              warehouseAllowsNegativeStockSales: allowsNegativeStock,
-            })))
-        : null;
+    const startLiveState = () => {
+      if (!active || stopLiveState) return;
+      stopLiveState = client instanceof PosEdgeClient
+        ? client.watchLocalState(() => void connect())
+        : client instanceof OnlinePosClient
+          ? client.watchWarehousePolicy((allowsNegativeStock) =>
+              setWorkstation((current) => ({
+                ...current,
+                warehouseAllowsNegativeStockSales: allowsNegativeStock,
+              })))
+          : null;
+    };
+    void connect().finally(startLiveState);
     const handleOnline = () => void connect();
     const handleOffline = () => {
       if (client.mode === "online") {
@@ -986,6 +1027,10 @@ export default function PosPage() {
         !closurePreview &&
         !confirmation;
     if (event.ctrlKey || event.altKey || event.shiftKey) return;
+    if (productSearchOpen && shortcut === POS_ACTION_SHORTCUTS.editLines) {
+      setProductAvailabilityRequest((current) => current + 1);
+      return;
+    }
     if (
         !event.ctrlKey &&
         shortcut === POS_ACTION_SHORTCUTS.returns &&
@@ -1948,7 +1993,7 @@ export default function PosPage() {
   }
   async function changeDocumentType(value: PosSaleDocumentType) {
     if (!client || busy) return;
-    if (!canIssuePosDocument(value, workstation.fiscalReady, workstation.dianQuotaAvailable !== false)) {
+    if (!canIssuePosDocument(value, workstation.fiscalReady, workstation.dianQuotaAvailable !== false, habilitationMode)) {
       setDocumentTypeOpen(false);
       setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
         ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
@@ -1994,7 +2039,7 @@ export default function PosPage() {
       ? "SalesInvoice"
       : documentType;
     if (!canIssuePosDocument(effectiveDocumentType, workstation.fiscalReady,
-      workstation.dianQuotaAvailable !== false)) {
+      workstation.dianQuotaAvailable !== false, habilitationMode)) {
       setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
         ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
       return;
@@ -2111,6 +2156,12 @@ export default function PosPage() {
     [client],
   );
 
+  const loadProductAvailability = useCallback(
+    (productId: string, signal?: AbortSignal) =>
+      client?.productWarehouseAvailability(productId, signal) ?? Promise.resolve([]),
+    [client],
+  );
+
   const customerCountries = useCallback(
     () => client?.customerCountries() ?? Promise.resolve([]),
     [client],
@@ -2161,28 +2212,37 @@ export default function PosPage() {
     try {
       await client.synchronizeNow();
       setMessage("Auraly está subiendo los pendientes y descargando los cambios de esta estación.");
-    } catch {
-      setSynchronization((current) => ({ ...current, inProgress: false, failed: true }));
-      setMessage("No fue posible iniciar la actualización. Puedes seguir facturando con los datos locales.");
+    } catch (caught) {
+      const publicMessage = posPublicError(
+        caught instanceof Error ? caught.message : null,
+        "No fue posible iniciar la actualización.",
+      ) ?? "No fue posible iniciar la actualización.";
+      setSynchronization((current) => ({
+        ...current,
+        inProgress: false,
+        failed: true,
+        error: publicMessage,
+      }));
+      if (edgeLoginState === "preparing" || preparationActive) {
+        setEdgeLoginError(publicMessage);
+      } else {
+        setMessage("No fue posible iniciar la actualización. Puedes seguir facturando con los datos locales.");
+      }
     }
   }
 
-  async function restartPreparationEnrollment() {
-    if (!(client instanceof PosEdgeClient) || !edgeEnrollmentToken || busy) return;
-    setBusy(true);
+  async function retryPreparation() {
+    setSetupError(null);
     setEdgeLoginError(null);
-    try {
-      await client.restartEnrollment();
-      window.localStorage.removeItem("auraly.pos.user-session");
-      await waitForUnenrolledPosEdge(edgeEnrollmentToken);
-      window.location.replace("/login");
-    } catch (caught) {
-      setPreparationReenrollmentOpen(false);
-      setEdgeLoginError(caught instanceof Error
-        ? caught.message
-        : "No fue posible reiniciar el enrolamiento.");
-    } finally {
-      setBusy(false);
+    if (client instanceof PosEdgeClient) {
+      await synchronizeNow();
+      return;
+    }
+    if (preparationSelection) {
+      await prepareInstalledPos(
+        preparationSelection.option,
+        preparationSelection.documentType,
+      ).catch(() => undefined);
     }
   }
 
@@ -2433,7 +2493,10 @@ export default function PosPage() {
     authorization?: PosSensitiveAuthorization,
   ) {
     if (!edgeEnrollmentToken) return;
+    setPreparationActive(true);
+    setPreparationSelection({ option, documentType: initialDocumentType });
     setSetupError(null);
+    setEdgeLoginError(null);
     setSetupNotice("Autorizando y preparando esta caja…");
     window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     setSetupLoading(true);
@@ -2444,19 +2507,24 @@ export default function PosPage() {
         authorization,
       );
       setSetupNotice("Guardando la identidad segura de la caja…");
-      window.sessionStorage.setItem("auraly.pos.complete-enrollment", "1");
       await redeemPosEnrollment(edgeEnrollmentToken, enrollment);
       setSetupNotice("Reiniciando el servicio local y preparando usuarios, permisos y catálogo…");
       await waitForRedeemedPosEdge(edgeEnrollmentToken);
-      window.location.reload();
+      const edgeClient = new PosEdgeClient(edgeEnrollmentToken, readEdgeUserSession());
+      const health = await edgeClient.health();
+      setPreparationHealth(health);
+      setEdgeLoginState("preparing");
+      setSetupNotice(null);
+      setClient(edgeClient);
     } catch (caught) {
-      window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
       const message = caught instanceof Error
         ? caught.message
         : "No fue posible enrolar esta estación.";
       setSetupNotice(null);
-      setSetupError(message);
-      setError(message);
+      setSetupError(posPublicError(
+        message,
+        "No fue posible terminar la preparación de esta caja.",
+      ) ?? "No fue posible terminar la preparación de esta caja.");
       throw caught;
     } finally {
       setSetupLoading(false);
@@ -2517,132 +2585,38 @@ export default function PosPage() {
     }
   }
 
-  if (client instanceof PosEdgeClient && edgeLoginState === "preparing") {
-    const preparation = posPreparationView(preparationHealth);
-    const visibleProgress = preparation.resourceProgress ?? preparation.overallProgress;
+  if (preparationActive || (client instanceof PosEdgeClient && edgeLoginState === "preparing")) {
+    const preparationError =
+      setupError ??
+      edgeLoginError ??
+      (synchronization.failed && !synchronization.automaticRetryScheduled
+        ? synchronization.error
+        : null);
     return (
-      <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#061719] px-5 py-10 text-white">
-        <div aria-hidden className="absolute -left-28 top-[-8rem] h-80 w-80 rounded-full bg-teal-400/10 blur-3xl" />
-        <div aria-hidden className="absolute -bottom-32 right-[-6rem] h-96 w-96 rounded-full bg-cyan-300/10 blur-3xl" />
-        <section
-          aria-labelledby="pos-preparation-title"
-          aria-live="polite"
-          className="relative w-full max-w-xl rounded-[2rem] border border-white/10 bg-white/[0.06] p-6 shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-8"
-        >
-          <button
-            type="button"
-            onClick={exitPosApplication}
-            aria-label="Salir de Auraly"
-            className="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full border border-white/15 text-slate-300 transition hover:bg-white/10 hover:text-white"
-          >
-            <X className="h-5 w-5" />
-          </button>
-          <div className="flex items-start gap-4">
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-teal-200/20 bg-teal-300/10">
-              <Package className="h-6 w-6 text-teal-200" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-teal-200">Preparando tu caja</p>
-              <h1 id="pos-preparation-title" className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
-                {preparation.title}
-              </h1>
-              <p className="mt-2 text-sm leading-6 text-slate-300">{preparation.detail}</p>
-            </div>
-          </div>
-
-          <div className="mt-8 rounded-2xl border border-white/10 bg-black/15 p-4 sm:p-5">
-            <div className="flex items-end justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Ahora</p>
-                <p className="mt-1 truncate font-bold text-white">{preparation.currentResource}</p>
-              </div>
-              <p className="shrink-0 text-3xl font-black tabular-nums text-teal-200">
-                {visibleProgress === null ? "…" : `${visibleProgress}%`}
-              </p>
-            </div>
-            {visibleProgress === null ? (
-              <div
-                role="progressbar"
-                aria-label="Calculando el progreso de la preparación"
-                className="mt-4 h-2.5 overflow-hidden rounded-full bg-white/10"
-              >
-                <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-teal-400 via-cyan-200 to-teal-400" />
-              </div>
-            ) : (
-              <Progress
-                aria-label={`Preparación ${visibleProgress}%`}
-                value={visibleProgress}
-                className="mt-4 h-2.5 bg-white/10 [&>div]:bg-gradient-to-r [&>div]:from-teal-400 [&>div]:to-cyan-200"
-              />
-            )}
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
-              <span>{preparation.processedLabel ?? (visibleProgress === null ? "Calculando el total…" : "Avance por etapas completadas")}</span>
-              {preparation.overallProgress !== null && preparation.resourceProgress !== null && (
-                <span>Preparación general: {preparation.overallProgress}%</span>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-3">
-              {preparationHealth?.serverConnected ? (
-                <Wifi className="h-4 w-4 shrink-0 text-emerald-300" />
-              ) : (
-                <WifiOff className="h-4 w-4 shrink-0 text-amber-300" />
-              )}
-              <span className="text-slate-200">{preparation.connectionLabel}</span>
-            </div>
-            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-3">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-200" />
-              <span className="text-slate-200">{preparation.resumeLabel}</span>
-            </div>
-          </div>
-
-          {(edgeLoginError || synchronization.error) && (
-            <p role="alert" className="mt-5 rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">
-              {edgeLoginError ?? synchronization.error}
-            </p>
-          )}
-          {synchronization.failed && (
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => void synchronizeNow()}
-                disabled={synchronization.inProgress || busy}
-                className="h-11 rounded-xl bg-teal-300 px-4 font-bold text-[#071a1d] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {synchronization.inProgress ? "Reintentando…" : "Reintentar preparación"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreparationReenrollmentOpen(true)}
-                disabled={busy}
-                className="h-11 rounded-xl border border-white/20 px-4 font-bold text-white transition hover:bg-white/10 disabled:opacity-40"
-              >
-                Repetir enrolamiento
-              </button>
-            </div>
-          )}
-          <p className="mt-6 text-center text-xs text-slate-400">
-            El progreso queda guardado. Ante una interrupción de red, Auraly reintenta hasta 3 veces antes de pedir intervención.
-          </p>
-          <button type="button" onClick={exitPosApplication} className="mx-auto mt-3 block text-sm font-semibold text-slate-300 underline decoration-slate-500 underline-offset-4 hover:text-white">Salir de Auraly</button>
-        </section>
-        {preparationReenrollmentOpen && (
-          <PosConfirmDialog
-            title="¿Repetir el enrolamiento de esta caja?"
-            description="Se quitará únicamente la autorización protegida del equipo. Los comprobantes, consecutivos y datos locales se conservan."
-            confirmLabel="Sí, repetir enrolamiento"
-            tone="primary"
-            busy={busy}
-            onConfirm={restartPreparationEnrollment}
-            onCancel={() => setPreparationReenrollmentOpen(false)}
-          />
-        )}
-      </main>
+      <PosOnlineSetup
+          options={onlineOptions}
+          loading={false}
+          error={null}
+          tenantName={onlineTenantName || workstation.businessName || "Auraly"}
+          userDisplayName={onlineUserName || workstation.userDisplayName || "usuario"}
+          onSelect={activateOnline}
+          edgeCapable={edgeEnrollmentRequired}
+          canEnrollOffline={canEnrollOffline}
+          enrollmentUnavailableReason={enrollmentAvailability?.reason}
+          enrollmentCapacity={enrollmentAvailability}
+          onEnroll={prepareInstalledPos}
+          enrollmentState={client?.mode === "edge" ? "enrolled" : "available"}
+          preparation={{
+            health: preparationHealth,
+            message: setupNotice,
+            error: preparationError,
+            retrying: setupLoading || synchronization.inProgress || busy,
+            onRetry: preparationError ? () => void retryPreparation() : undefined,
+            onBack: () => router.back(),
+          }}
+        />
     );
   }
-
   async function logoutOnlineUser() {
     if (busy) return;
     setBusy(true);
@@ -2674,6 +2648,7 @@ export default function PosPage() {
         enrollmentCapacity={enrollmentAvailability}
         onEnroll={prepareInstalledPos}
         forcedDocumentType={habilitationMode ? "SalesInvoice" : undefined}
+        fiscalHabilitationOnly={habilitationMode}
         enrollmentState={client?.mode === "edge" ? "enrolled" : edgeEnrollmentRequired ? "available" : "web"}
         configurationOffline={workspaceConfigurationOffline}
         configuredDocumentType={workspaceChanging ? documentType : undefined}
@@ -2816,7 +2791,7 @@ export default function PosPage() {
         </div>
       )}
 
-      {workstation.fiscalWarnings.length > 0 && (
+      {!habilitationMode && workstation.fiscalWarnings.length > 0 && (
         <div role="alert" className="flex items-start gap-3 border-b border-amber-300/40 bg-amber-100 px-5 py-3 text-sm text-amber-950">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div><strong className="block">Atención con la resolución DIAN</strong><ul className="mt-1 list-disc pl-5">{workstation.fiscalWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>
@@ -3391,14 +3366,13 @@ export default function PosPage() {
                 activeOrderId={draft?.sourceOrderId}
                 loadPage={(filters) => client!.orders(filters)}
                 loadDetail={(orderId) => client!.order(orderId)}
-                loadSettlementConfiguration={() => client!.settlementConfiguration()}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
-                onInvoiceSelected={(orders, method, documentType, transfer) =>
+                onPrintSelected={(orders) => client!.printOrders(orders.map((order) => order.orderId))}
+                onInvoiceSelected={(orders, documentType) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
-                    method,
+                    "Cash",
                     documentType,
-                    transfer,
                   )
                 }
                 onConfigurePrinting={() => setPrinterOpen(true)}
@@ -3439,14 +3413,13 @@ export default function PosPage() {
               activeOrderId={draft?.sourceOrderId}
               loadPage={(filters) => client.orders(filters)}
               loadDetail={(orderId) => client.order(orderId)}
-              loadSettlementConfiguration={() => client.settlementConfiguration()}
               onRecover={(order) => recoverPosOrder(order.orderId)}
-              onInvoiceSelected={(orders, method, documentType, transfer) =>
+              onPrintSelected={(orders) => client.printOrders(orders.map((order) => order.orderId))}
+              onInvoiceSelected={(orders, documentType) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
-                  method,
+                  "Cash",
                   documentType,
-                  transfer,
                 )
               }
               onConfigurePrinting={() => setPrinterOpen(true)}
@@ -3475,10 +3448,11 @@ export default function PosPage() {
           busy={busy}
           verifierMode={priceVerifierMode}
           focusRequest={productSearchFocusRequest}
+          availabilityRequest={productAvailabilityRequest}
           onSearch={searchProducts}
           connected={serverConnected}
           canReadAvailability={canReadProductAvailability}
-          onLoadAvailability={(productId) => client.productWarehouseAvailability(productId)}
+          onLoadAvailability={loadProductAvailability}
           onSelect={selectSearchProduct}
           onCancel={() => {
             setProductSearchOpen(false);
@@ -3566,6 +3540,7 @@ export default function PosPage() {
             selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType,
             workstation.fiscalReady,
             workstation.dianQuotaAvailable !== false,
+            habilitationMode,
           )}
           customer={selectedCustomer}
           focusRequest={paymentFocusRequest}

@@ -122,6 +122,41 @@ public sealed partial class SqlOnlineSalesDraftStore
         PreparedOnlineSaleSettlement settlement,
         CancellationToken cancellationToken)
     {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await PrepareInvoiceAttemptAsync(
+                    user,
+                    draftId,
+                    request,
+                    idempotencyKey,
+                    fiscalMaterial,
+                    settlement,
+                    cancellationToken);
+            }
+            catch (SqlException exception)
+                when (exception.Number == 1205 && attempt < 4)
+            {
+                // SQL Server selects one transaction as the victim when two valid
+                // issuances contend for the same server-side series. Retrying the
+                // whole idempotent transaction is the only safe retry boundary.
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(25 * attempt),
+                    cancellationToken);
+            }
+        }
+    }
+
+    private async Task<PreparedOnlineSalesCheckout> PrepareInvoiceAttemptAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        FiscalVerificationMaterial fiscalMaterial,
+        PreparedOnlineSaleSettlement settlement,
+        CancellationToken cancellationToken)
+    {
         var requestHash = CheckoutHash(draftId, request);
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -162,10 +197,15 @@ public sealed partial class SqlOnlineSalesDraftStore
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
 
-        await ValidateCreditAsync(connection, transaction, state.BusinessId,
-            state.CustomerId, request.Credit, cancellationToken);
-
         var now = settlement.Context.OccurredAt;
+        var creditDueDate = await ResolveCreditDueDateAsync(
+            connection,
+            transaction,
+            state.BusinessId,
+            state.CustomerId,
+            request.Credit,
+            now,
+            cancellationToken);
         var configuration = await ReadCheckoutConfigurationAsync(
             connection, transaction, state.BusinessId,
             PosSaleDocumentTypes.Invoice, PosSaleDocumentTypes.Invoice,
@@ -317,14 +357,17 @@ public sealed partial class SqlOnlineSalesDraftStore
                         line.TaxRate)).ToArray(),
                 request.Credit is null ? "1" : "2",
                 payments.Length == 0 ? "ZZZ" : PaymentMeansCode(payments[0].MethodCode),
-                DateOnly.FromDateTime((request.Credit?.DueDate ?? now).Date),
+                DateOnly.FromDateTime((creditDueDate ?? now).Date),
                 payments.Select(payment => payment.Reference)
                     .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))),
             state.CustomerId,
             SaleSourceModes.Online,
             state.SourceOrderId,
             Credit: request.Credit is null || state.CustomerId is null ? null :
-                new PosSaleCreditContract(state.CustomerId.Value, request.Credit.Amount, request.Credit.DueDate),
+                new PosSaleCreditContract(
+                    state.CustomerId.Value,
+                    request.Credit.Amount,
+                    creditDueDate!.Value),
             FiscalHabilitationOnly: request.FiscalHabilitationOnly);
 
         await ReleaseOrderInventoryAsync(connection, transaction, user, state, cancellationToken);
@@ -789,8 +832,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 .Append(payment.Notes?.Trim());
         }
         if (request.Credit is not null)
-            value.Append("|credit:").Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture))
-                .Append(':').Append(request.Credit.DueDate.ToString("O", CultureInfo.InvariantCulture));
+            value.Append("|credit:")
+                .Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture));
 
         return Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(value.ToString())));

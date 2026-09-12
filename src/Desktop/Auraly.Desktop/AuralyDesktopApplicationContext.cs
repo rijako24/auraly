@@ -60,7 +60,11 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
                 $"{webOrigin}/login", TimeSpan.FromSeconds(45), shutdown.Token);
             splash.SetStage("Preparando Auraly", 1);
             await Program.WaitUntilReadyAsync(
-                $"{edgeOrigin}/edge/v1/health", TimeSpan.FromSeconds(45), shutdown.Token);
+                $"{edgeOrigin}/edge/v1/health", TimeSpan.FromSeconds(45), shutdown.Token,
+                new Dictionary<string, string>
+                {
+                    ["X-Auraly-Edge-Session"] = sessionToken
+                });
 
             splash.SetStage("Abriendo Auraly", 2);
             var target = $"{webOrigin}/login#edgeToken={Uri.EscapeDataString(sessionToken)}";
@@ -100,13 +104,18 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
 
     private async Task RestoreEdgeAsync()
     {
-        if (restartingEdge || edge is null || !edge.HasExited || shutdown.IsCancellationRequested
-            || DateTimeOffset.UtcNow < nextEdgeRestartAt)
+        if (restartingEdge || shutdown.IsCancellationRequested ||
+            DateTimeOffset.UtcNow < nextEdgeRestartAt)
             return;
+        if (edge is not null && !edge.HasExited) return;
         restartingEdge = true;
         try
         {
-            Program.RemoveChild(edge);
+            if (edge is not null)
+            {
+                Program.RemoveChild(edge);
+                edge = null;
+            }
             await Task.Delay(1200, shutdown.Token);
             edge = Program.StartEdge(
                 root, configuration, data, sessionToken, webOrigin, edgeOrigin);
@@ -114,7 +123,11 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
             await Program.WaitUntilReadyAsync(
                 $"{edgeOrigin}/edge/v1/health",
                 TimeSpan.FromSeconds(30),
-                shutdown.Token);
+                shutdown.Token,
+                new Dictionary<string, string>
+                {
+                    ["X-Auraly-Edge-Session"] = sessionToken
+                });
         }
         catch (OperationCanceledException)
         {
@@ -123,7 +136,10 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
         {
             nextEdgeRestartAt = DateTimeOffset.UtcNow.AddSeconds(5);
             if (edge is not null)
+            {
                 Program.RemoveChild(edge);
+                edge = null;
+            }
             var log = Path.Combine(data, "logs", "desktop-error.log");
             await File.AppendAllTextAsync(
                 log,

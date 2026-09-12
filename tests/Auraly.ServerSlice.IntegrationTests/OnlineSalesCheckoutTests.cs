@@ -615,7 +615,9 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         try
         {
             foreach (var response in responses)
-                response.EnsureSuccessStatusCode();
+                Assert.True(
+                    response.IsSuccessStatusCode,
+                    $"La emisión concurrente respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
             var first = await responses[0].Content
                 .ReadFromJsonAsync<CompleteOnlineSalesDraftResponse>();
             var second = await responses[1].Content

@@ -3,6 +3,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Auraly.Platform.Application.Common.Exceptions;
 using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Platform.Infrastructure.Data;
 
@@ -15,6 +16,7 @@ public sealed class SqlBusinessDefaultsProvisioner(
     public async Task ProvisionWarehousesAsync(
         Guid tenantId,
         Guid businessId,
+        Guid priceSourceBusinessId,
         string inventoryCostBasis,
         CancellationToken cancellationToken)
     {
@@ -34,6 +36,14 @@ public sealed class SqlBusinessDefaultsProvisioner(
 
             IF EXISTS (SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId)
                 THROW 51042,'La sede ya tiene bodegas configuradas.',1;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM dbo.Businesses
+                WHERE BusinessId=@PriceSourceBusinessId
+                  AND TenantId=@TenantId
+                  AND IsActive=1
+                  AND BusinessId<>@BusinessId)
+                THROW 51043,'La sede origen de precios no pertenece al tenant autenticado o no está activa.',1;
 
             INSERT dbo.Warehouses
               (WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
@@ -72,30 +82,24 @@ public sealed class SqlBusinessDefaultsProvisioner(
                InputMode,RoundingIncrement,RoundingMode,PublishedByUserId,PublishedAt,
                ValidFrom,ValidUntil,IsActive,CreatedAt)
             SELECT NEWID(),@BusinessId,product.ProductId,
-                   COALESCE(sourcePrice.Amount,0),COALESCE(sourcePrice.PreparedAmount,sourcePrice.Amount,0),
+                   sourcePrice.Amount,sourcePrice.Amount,
                    COALESCE(sourcePrice.CurrencyCode,product.Currency,N'COP'),sourcePrice.CostBasisType,
                    sourcePrice.CostBasisAmount,sourcePrice.TargetMarginPercent,sourcePrice.EffectiveMarginPercent,
                    sourcePrice.InputMode,sourcePrice.RoundingIncrement,sourcePrice.RoundingMode,
                    sourcePrice.PublishedByUserId,sourcePrice.PublishedAt,@Now,NULL,1,@Now
             FROM dbo.Products product
-            OUTER APPLY (
-              SELECT TOP(1) price.* FROM dbo.ProductPrices price
-              WHERE price.ProductId=product.ProductId AND price.IsActive=1
-              ORDER BY CASE WHEN price.BusinessId=product.BusinessId THEN 0 ELSE 1 END,price.ValidFrom DESC
-            ) sourcePrice
+            INNER JOIN dbo.ProductPrices sourcePrice
+              ON sourcePrice.BusinessId=@PriceSourceBusinessId
+             AND sourcePrice.ProductId=product.ProductId
+             AND sourcePrice.IsActive=1
             WHERE product.TenantId=@TenantId;
 
             INSERT dbo.InventoryBalances
               (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,
                LastProcessingSequence,UpdatedAt)
-            SELECT @BusinessId,warehouse.WarehouseId,product.ProductId,0,
-                   COALESCE(sourceBalance.AverageUnitCost,0),0,0,@Now
+            SELECT @BusinessId,warehouse.WarehouseId,product.ProductId,0,0,0,0,@Now
             FROM dbo.Products product
             CROSS JOIN dbo.Warehouses warehouse
-            OUTER APPLY (
-              SELECT TOP(1) balance.AverageUnitCost FROM dbo.InventoryBalances balance
-              WHERE balance.ProductId=product.ProductId ORDER BY balance.UpdatedAt DESC
-            ) sourceBalance
             WHERE product.TenantId=@TenantId AND product.ManageStock=1
               AND warehouse.BusinessId=@BusinessId;
 
@@ -123,12 +127,22 @@ public sealed class SqlBusinessDefaultsProvisioner(
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@PriceSourceBusinessId", priceSourceBusinessId);
         command.Parameters.AddWithValue("@SalesWarehouseId", ids.NewId());
         command.Parameters.AddWithValue("@OrdersWarehouseId", ids.NewId());
         command.Parameters.AddWithValue("@DamagedWarehouseId", ids.NewId());
         command.Parameters.AddWithValue("@CostBasis", inventoryCostBasis);
         command.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number == 51043)
+        {
+            throw new DomainValidationException(
+                "priceSourceBusinessId",
+                "Selecciona una sede activa del mismo tenant como origen de los precios.");
+        }
 
         await using var accounting = new SqlCommand("dbo.AccountingDefaultsProvision", connection, transaction)
         {

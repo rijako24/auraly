@@ -33,6 +33,7 @@ Todo cambio comienza con descubrimiento del sistema existente:
 - Verificar si existe una decision arquitectonica vigente. Si el nuevo requisito la contradice, hacer visible el conflicto antes de codificar una ruta paralela.
 - Confirmar la causa raiz de un bug con evidencia. Corregir sintomas mediante frases, flags o condiciones especiales solo es aceptable cuando esa sea realmente la capa propietaria.
 - Evaluar el radio de impacto: tenants, datos historicos, clientes API, admin, workers, integraciones, despliegue y rollback.
+- Diseñar también el rendimiento antes de escribir código. Para cada camino crítico se declara el volumen esperado, el presupuesto de latencia/throughput, los viajes de red, consultas, serializaciones y complejidad respecto al tamaño de los datos. "Funciona" sin cumplir ese presupuesto no es terminado.
 
 La implementacion debe ser el slice vertical mas pequeno que deje una capacidad completa. Un diff pequeno no es una virtud si deja contratos o fuentes de verdad inconsistentes.
 
@@ -186,6 +187,17 @@ Las reglas concretas del motor conversacional viven exclusivamente en `docs/agen
 - No resolver latencia introduciendo ejecucion duplicada o consistencia eventual no modelada.
 - Los logs ayudan a diagnosticar pero no sustituyen tests ni estado durable.
 
+### Rendimiento como atributo de calidad obligatorio
+
+- Todo diseño e implementación debe identificar sus caminos críticos y fijar un presupuesto verificable antes del cambio. En interacción humana se expresa al menos como latencia objetivo; en procesos masivos, como volumen, memoria y throughput. Cuando el requisito no dé una cifra, se mide la línea base y se documenta un objetivo razonado.
+- La evidencia debe separar tiempo de UI, proceso local, red, proveedor y persistencia. No se valida rendimiento mientras corren suites, builds u otras cargas que contaminen la medición, salvo que esa concurrencia forme parte explícita del escenario.
+- Una acción trabaja solo con los datos que necesita. Se prohíben N+1, consultas o llamadas por fila, trabajo disparado por cada render, polling sin límite, reintentos superpuestos y recálculo de agregados no afectados. Las colecciones se paginan o acotan y el I/O independiente se agrupa o paraleliza cuando conserva las invariantes.
+- Frontend y clientes deben estabilizar dependencias reactivas, cancelar trabajo obsoleto, deduplicar solicitudes en vuelo y coalescer señales de invalidación. Una señal indica que se relea el estado una vez; no habilita una tormenta de consultas.
+- En persistencia se revisan proyección, índices, plan de consulta, cardinalidad, locks y duración transaccional proporcionalmente al riesgo. En red se minimizan round trips y payload, sin mover reglas autoritativas a la UI ni debilitar consistencia para aparentar velocidad.
+- Las optimizaciones respetan Clean Architecture y DDD: se realizan en el propietario canónico del caso de uso o en su adaptador de infraestructura, sin duplicar reglas, crear atajos entre capas ni convertir un cache en fuente de verdad.
+- La regresión automatizada debe preferir conteos deterministas de consultas, llamadas y complejidad. Los umbrales de tiempo se ejecutan en entornos controlados y se complementan con percentiles representativos cuando dependen de red o infraestructura.
+- Antes de publicar se registra la línea base, el resultado posterior y el escenario usado. Incumplir el presupuesto bloquea la entrega igual que una prueba funcional fallida.
+
 ## 14. Frontend y contratos de UI
 
 - Reutilizar componentes y convenciones existentes antes de crear variantes visuales o de estado.
@@ -265,6 +277,7 @@ Antes de entregar, verificar:
 - [ ] No hay hardcoding de tenant, ambiente, secretos, catalogo ni datos vivos.
 - [ ] Multi-tenancy, autorizacion, idempotencia, concurrencia y tiempo fueron evaluados.
 - [ ] Errores, logging, metricas y cancelacion son adecuados al riesgo.
+- [ ] Se definio y midio el presupuesto de rendimiento; no hay N+1, trabajo por render, polling descontrolado ni I/O sobre datos no afectados.
 - [ ] Se actualizaron todos los contratos/persistencia/configuracion/UI realmente afectados.
 - [ ] Hay regresiones y pruebas de fallas relevantes, no solo happy path.
 - [ ] Build, tests y lint relevantes se ejecutaron o sus bloqueos se reportaron con precision.

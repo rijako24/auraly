@@ -13,7 +13,6 @@ public sealed class PosCreditServerClient(
     public async Task<PosCreditValidationResult> ValidateAsync(
         Guid customerId,
         decimal amount,
-        DateTimeOffset dueDate,
         int? fiscalEnvironment,
         CancellationToken cancellationToken)
     {
@@ -21,7 +20,7 @@ public sealed class PosCreditServerClient(
             HttpMethod.Post, "/api/pos/v1/sales/credit-validation")
         {
             Content = JsonContent.Create(new PosCreditValidationRequest(
-                scope.BusinessId, customerId, amount, dueDate, fiscalEnvironment))
+                scope.BusinessId, customerId, amount, fiscalEnvironment))
         };
         request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);

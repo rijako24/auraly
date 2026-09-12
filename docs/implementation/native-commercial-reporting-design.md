@@ -36,8 +36,12 @@ Los pedidos comerciales guardan como columnas tipadas `WarehouseId`,
 `RequiresStockReview`. Estas propiedades dejan de pertenecer a
 `CustomAttributesJson`.
 
-La creación valida que el usuario tenga un vendedor comercial activo y que la
-ruta, parada, cliente y sede pertenezcan a esa asignación. El despliegue incluye
+La creación autoriza exclusivamente mediante `orders.create`; no exige que la
+cuenta esté asociada a un vendedor comercial. Si la cuenta sí tiene vendedor,
+el pedido conserva esa atribución. Si el pedido proviene de una ruta, conserva
+el vendedor propietario de la ruta y una cuenta de vendedor no puede usar una
+ruta ajena. Un pedido sin ruta creado por una cuenta administrativa conserva
+`CapturedByUserId` y deja `SellerId` vacío, sin atribuir ventas ficticias. El despliegue incluye
 un backfill idempotente para pedidos anteriores; las lecturas mantienen un
 fallback temporal al JSON únicamente para compatibilidad durante el cutover.
 

@@ -11,7 +11,8 @@ Conectar el costo observado por una entrada de mercanc?a con una propuesta revis
 
 1. El motor procesa la entrada de mercanc?a en el orden durable del negocio.
 2. Purchasing conserva el costo observado y actualiza los efectos propios del documento.
-3. Se crea una propuesta idempotente en PriceRevisionProposals.
+3. Se crea una propuesta idempotente en PriceRevisionProposals y una versión
+   completa en ProductPricePreparations.
 4. La vista Productos > Precios y rentabilidad consulta propuestas paginadas.
 5. El usuario edita margen sobre venta o precio de venta.
 6. La API vuelve a calcular el resultado con decimal y aplica el redondeo.
@@ -25,6 +26,8 @@ No existe sondeo peri?dico. Al abrir o reconectar, la puesta al d?a por cursor r
 ## Responsabilidades
 
 - ProductPrices es el precio base publicado por BusinessId y ProductId.
+- ProductPricePreparations conserva el último conjunto pendiente y todas sus
+  versiones anteriores; es el kardex de preparación.
 - SupplierCostObservations conserva costos observados; no se descarga al POS.
 - PriceRevisionProposals conserva la decisi?n pendiente y su concurrencia.
 - PricePublicationAudits explica qui?n public?, desde qu? costo y con qu? margen.
@@ -32,6 +35,17 @@ No existe sondeo peri?dico. Al abrir o reconectar, la puesta al d?a por cursor r
 - PosSynchronizationOutboxMessages evita perder la se?al push.
 
 La edici?n general del producto ya no puede cambiar el precio publicado. La creaci?n conserva un precio inicial necesario para que el producto sea vendible; todo cambio posterior pasa por Pricing.
+
+Preparar tampoco modifica los snapshots de costo, margen o redondeo publicados.
+Cada nueva preparación inserta una fila inmutable y marca la pendiente anterior
+como reemplazada. La publicación consume exactamente la preparación vigente y
+copia todo el conjunto a ProductPrices en una sola transacción.
+
+Una edición general del producto solo crea esa versión si cambió realmente algún
+valor del conjunto preparado. Con precios compartidos, la publicación crea el
+cambio de catálogo y el outbox para cada sede participante y solicita el despacho
+inmediato de todos esos ámbitos; con precios independientes solo afecta la sede
+actual. Cada POS aplica el delta desde el cursor persistido en su SQLite local.
 
 ## C?lculo
 

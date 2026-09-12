@@ -87,6 +87,23 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Pos_installer_upgrade_preserves_the_self_contained_desktop_runtime()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var package = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Installer", "Auraly.Pos.Setup", "Package.wxs"));
+        var installer = File.ReadAllText(Path.Combine(
+            repositoryRoot, "scripts", "Build-AuralyPosInstaller.ps1"));
+
+        Assert.Contains("MajorUpgrade Schedule=\"afterInstallExecute\"", package,
+            StringComparison.Ordinal);
+        Assert.Contains("'hostfxr.dll'", installer, StringComparison.Ordinal);
+        Assert.Contains("'hostpolicy.dll'", installer, StringComparison.Ordinal);
+        Assert.Contains("'coreclr.dll'", installer, StringComparison.Ordinal);
+        Assert.Contains("'System.Private.CoreLib.dll'", installer, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Immutable_release_contains_environment_specific_signed_pos_installers()
     {
         var repositoryRoot = FindRepositoryRoot();
