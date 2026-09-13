@@ -174,9 +174,7 @@ public sealed class PosCatalogStoreTests
             const int productCount = 40_000;
             const int checkpoint = 20_000;
             const int pageSize = 1_000;
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var session = new CatalogSyncSessionResponse(Guid.NewGuid(), productCount, productCount, DateTimeOffset.UtcNow.AddHours(1));
-            await store.BeginBootstrapAsync(session);
             var products = Enumerable.Range(1, productCount)
                 .Select(index => Product() with
                 {
@@ -187,6 +185,8 @@ public sealed class PosCatalogStoreTests
                     Barcodes = [$"770{index:0000000000}"]
                 })
                 .ToArray();
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            await store.BeginBootstrapAsync(session);
 
             for (var offset = 0; offset < checkpoint; offset += pageSize)
             {

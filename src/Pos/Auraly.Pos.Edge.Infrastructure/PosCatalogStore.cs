@@ -590,10 +590,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         command.Transaction = (SqliteTransaction)transaction;
         command.CommandText = """
             SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor,UpdatedAt,
-                   TotalProducts,
-                   CASE WHEN Status='Bootstrapping'
-                        THEN (SELECT COUNT(*) FROM PosCatalogStagingProducts)
-                        ELSE TotalProducts END
+                   TotalProducts,TotalProducts
             FROM PosCatalogState WHERE StateId=1;
             """;
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -749,6 +746,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         """;
 
     private static readonly string Schema = $"""
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
         PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS PosCatalogState(
           StateId INTEGER PRIMARY KEY CHECK(StateId=1),
