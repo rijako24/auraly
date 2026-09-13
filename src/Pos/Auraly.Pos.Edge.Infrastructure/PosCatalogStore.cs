@@ -469,17 +469,49 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 """, parameters, ct);
         }
 
-        await using var productCommand = connection.CreateCommand();
-        productCommand.Transaction = (SqliteTransaction)transaction;
-        productCommand.CommandText = $"""
+        var productRows = effectiveItems.Select(item => new
+        {
+            ProductId = item.ProductId.ToString("D"),
+            item.ProductCode,
+            item.Reference,
+            item.Name,
+            item.BaseUnitCode,
+            item.TaxCode,
+            item.TaxRate,
+            item.UnitPrice,
+            item.UnitCost,
+            ManagesStock = item.ManagesStock ? 1 : 0,
+            item.CurrencyCode,
+            IsActive = item.IsActive ? 1 : 0,
+            IsWeighable = item.IsWeighable ? 1 : 0,
+            AllowsFractionalSale = item.AllowsFractionalSale ? 1 : 0,
+            ScaleJson = item.Scale is null ? null : JsonSerializer.Serialize(item.Scale),
+            ScalePrefix = item.Scale?.BarcodePrefix,
+            item.CategoryName,
+            ProductCategoryId = item.ProductCategoryId?.ToString("D"),
+            ProductBrandId = item.ProductBrandId?.ToString("D"),
+            ProductCategoryAncestorIds = JsonSerializer.Serialize(item.ProductCategoryAncestorIds ?? []),
+            item.AverageUnitCost,
+            item.LatestUnitCost,
+            item.TargetMarginPercent,
+            InventoryProductId = (item.InventoryProductId ?? item.ProductId).ToString("D"),
+            item.InventoryFactor
+        });
+        await ExecuteAsync(connection, transaction, $"""
             INSERT INTO {products}
               (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
                ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent,
                InventoryProductId,InventoryFactor)
-            VALUES
-              (@ProductId,@ProductCode,@Reference,@Name,@BaseUnitCode,@TaxCode,@TaxRate,@UnitPrice,@UnitCost,@ManagesStock,@CurrencyCode,@IsActive,@IsWeighable,@AllowsFractionalSale,@ScaleJson,@ScalePrefix,@CategoryName,
-               @ProductCategoryId,@ProductBrandId,@ProductCategoryAncestorIds,@AverageUnitCost,@LatestUnitCost,@TargetMarginPercent,
-               @InventoryProductId,@InventoryFactor)
+            SELECT
+              json_extract(value,'$.ProductId'),json_extract(value,'$.ProductCode'),json_extract(value,'$.Reference'),json_extract(value,'$.Name'),
+              json_extract(value,'$.BaseUnitCode'),json_extract(value,'$.TaxCode'),json_extract(value,'$.TaxRate'),json_extract(value,'$.UnitPrice'),
+              json_extract(value,'$.UnitCost'),json_extract(value,'$.ManagesStock'),json_extract(value,'$.CurrencyCode'),json_extract(value,'$.IsActive'),
+              json_extract(value,'$.IsWeighable'),json_extract(value,'$.AllowsFractionalSale'),json_extract(value,'$.ScaleJson'),json_extract(value,'$.ScalePrefix'),
+              json_extract(value,'$.CategoryName'),json_extract(value,'$.ProductCategoryId'),json_extract(value,'$.ProductBrandId'),
+              json_extract(value,'$.ProductCategoryAncestorIds'),json_extract(value,'$.AverageUnitCost'),json_extract(value,'$.LatestUnitCost'),
+              json_extract(value,'$.TargetMarginPercent'),json_extract(value,'$.InventoryProductId'),json_extract(value,'$.InventoryFactor')
+            FROM json_each(@Rows)
+            WHERE true
             ON CONFLICT(ProductId) DO UPDATE SET
               ProductCode=excluded.ProductCode,Reference=excluded.Reference,Name=excluded.Name,
               BaseUnitCode=excluded.BaseUnitCode,TaxCode=excluded.TaxCode,TaxRate=excluded.TaxRate,
@@ -491,69 +523,24 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               AverageUnitCost=excluded.AverageUnitCost,LatestUnitCost=excluded.LatestUnitCost,
               TargetMarginPercent=excluded.TargetMarginPercent,
               InventoryProductId=excluded.InventoryProductId,InventoryFactor=excluded.InventoryFactor;
-            """;
-        foreach (var name in new[]
-                 {
-                     "@ProductId", "@ProductCode", "@Reference", "@Name", "@BaseUnitCode", "@TaxCode",
-                     "@TaxRate", "@UnitPrice", "@UnitCost", "@ManagesStock", "@CurrencyCode", "@IsActive",
-                     "@IsWeighable", "@AllowsFractionalSale", "@ScaleJson", "@ScalePrefix", "@CategoryName",
-                     "@ProductCategoryId", "@ProductBrandId", "@ProductCategoryAncestorIds", "@AverageUnitCost",
-                     "@LatestUnitCost", "@TargetMarginPercent", "@InventoryProductId", "@InventoryFactor"
-                 })
-            productCommand.Parameters.Add(P(name, null));
+            """, [P("@Rows", JsonSerializer.Serialize(productRows))], ct);
 
-        await using var barcodeCommand = connection.CreateCommand();
-        barcodeCommand.Transaction = (SqliteTransaction)transaction;
-        barcodeCommand.CommandText =
-            $"INSERT INTO {barcodes}(ProductId,Value) VALUES(@ProductId,@Value);";
-        barcodeCommand.Parameters.Add(P("@ProductId", null));
-        barcodeCommand.Parameters.Add(P("@Value", null));
+        var barcodeRows = effectiveItems.SelectMany(item =>
+            item.Barcodes.Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(value => new { ProductId = item.ProductId.ToString("D"), Value = value }));
+        await ExecuteAsync(connection, transaction, $"""
+            INSERT INTO {barcodes}(ProductId,Value)
+            SELECT json_extract(value,'$.ProductId'),json_extract(value,'$.Value')
+            FROM json_each(@Rows);
+            """, [P("@Rows", JsonSerializer.Serialize(barcodeRows))], ct);
 
-        await using var identifierCommand = connection.CreateCommand();
-        identifierCommand.Transaction = (SqliteTransaction)transaction;
-        identifierCommand.CommandText =
-            $"INSERT INTO {identifiers}(ProductId,Type,Value) VALUES(@ProductId,@Type,@Value);";
-        identifierCommand.Parameters.Add(P("@ProductId", null));
-        identifierCommand.Parameters.Add(P("@Type", null));
-        identifierCommand.Parameters.Add(P("@Value", null));
-
-        await productCommand.PrepareAsync(ct);
-        await barcodeCommand.PrepareAsync(ct);
-        await identifierCommand.PrepareAsync(ct);
-
-        foreach (var item in effectiveItems)
-        {
-            var productId = item.ProductId.ToString("D");
-            var values = new object?[]
-            {
-                productId, item.ProductCode, item.Reference, item.Name, item.BaseUnitCode, item.TaxCode,
-                item.TaxRate, item.UnitPrice, item.UnitCost, item.ManagesStock ? 1 : 0, item.CurrencyCode,
-                item.IsActive ? 1 : 0, item.IsWeighable ? 1 : 0, item.AllowsFractionalSale ? 1 : 0,
-                item.Scale is null ? null : JsonSerializer.Serialize(item.Scale), item.Scale?.BarcodePrefix,
-                item.CategoryName, item.ProductCategoryId?.ToString("D"), item.ProductBrandId?.ToString("D"),
-                JsonSerializer.Serialize(item.ProductCategoryAncestorIds ?? []), item.AverageUnitCost,
-                item.LatestUnitCost, item.TargetMarginPercent,
-                (item.InventoryProductId ?? item.ProductId).ToString("D"), item.InventoryFactor
-            };
-            for (var index = 0; index < values.Length; index++)
-                productCommand.Parameters[index].Value = values[index] ?? DBNull.Value;
-            await productCommand.ExecuteNonQueryAsync(ct);
-
-            barcodeCommand.Parameters[0].Value = productId;
-            foreach (var barcode in item.Barcodes.Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                barcodeCommand.Parameters[1].Value = barcode;
-                await barcodeCommand.ExecuteNonQueryAsync(ct);
-            }
-
-            identifierCommand.Parameters[0].Value = productId;
-            foreach (var identifier in item.Identifiers)
-            {
-                identifierCommand.Parameters[1].Value = identifier.Type;
-                identifierCommand.Parameters[2].Value = identifier.Value;
-                await identifierCommand.ExecuteNonQueryAsync(ct);
-            }
-        }
+        var identifierRows = effectiveItems.SelectMany(item => item.Identifiers.Select(identifier =>
+            new { ProductId = item.ProductId.ToString("D"), identifier.Type, identifier.Value }));
+        await ExecuteAsync(connection, transaction, $"""
+            INSERT INTO {identifiers}(ProductId,Type,Value)
+            SELECT json_extract(value,'$.ProductId'),json_extract(value,'$.Type'),json_extract(value,'$.Value')
+            FROM json_each(@Rows);
+            """, [P("@Rows", JsonSerializer.Serialize(identifierRows))], ct);
     }
 
     private static PosCatalogItem ReadProduct(SqliteDataReader reader)
