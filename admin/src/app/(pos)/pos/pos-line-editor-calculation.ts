@@ -21,6 +21,36 @@ export function salePriceForMargin(
   return round(netUnit * (1 + taxRate / 100) / (1 - discountPercent / 100), 6);
 }
 
+export function lineEconomicsAfterPriceChange(
+  unitCost: number,
+  quantity: number,
+  previousSalePriceWithTax: number,
+  previousDiscountWithTax: number,
+  nextSalePriceWithTax: number,
+  taxRate: number,
+): { discount: number; discountPercent: number; marginPercent: number } {
+  const discountPercent = lineDiscountPercent(
+    previousDiscountWithTax,
+    quantity,
+    previousSalePriceWithTax,
+  );
+  const discount = round(
+    Math.max(0, quantity * nextSalePriceWithTax) * discountPercent / 100,
+    6,
+  );
+  return {
+    discount,
+    discountPercent,
+    marginPercent: lineMarginPercent(
+      unitCost,
+      quantity,
+      nextSalePriceWithTax,
+      discount,
+      taxRate,
+    ),
+  };
+}
+
 export function lineEconomicsForMargin(
   unitCost: number, marginPercent: number, taxRate: number,
 ): { unitPrice: number; discount: number; discountPercent: number } {
@@ -59,6 +89,10 @@ export function prorateAdditionalSaleValue(
     unitPrice: round(line.unitPrice + unitIncrement, 6),
     allocatedValue: round(unitIncrement * line.quantity, 6),
   }));
+}
+
+export function isPositiveWholeSaleValue(value: number): boolean {
+  return Number.isInteger(value) && value > 0;
 }
 
 export type GridDirection = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";

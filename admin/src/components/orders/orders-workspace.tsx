@@ -45,6 +45,7 @@ import {
   type CommerceOrderPage,
 } from "@/services/orders/commerce-orders-client";
 import { loadAllMatchingOrders } from "@/services/orders/order-batch-selection";
+import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
 import { getOrderAvailability } from "./order-availability";
 import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
 
@@ -61,21 +62,11 @@ const date = new Intl.DateTimeFormat("es-CO", {
   timeStyle: "short",
 });
 
-function localToday() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
-function endOfLocalDayExclusive(value: string) {
-  const nextDay = new Date(`${value}T00:00:00`);
-  nextDay.setDate(nextDay.getDate() + 1);
-  return nextDay.toISOString();
-}
-
 type OrdersWorkspaceProps = {
   compact?: boolean;
   connected?: boolean;
   showHeader?: boolean;
+  initialStatus?: string;
   loadPage: (filters: CommerceOrderFilters & {
     page: number;
     pageSize: number;
@@ -123,6 +114,7 @@ export function OrdersWorkspace({
   compact = false,
   connected = true,
   showHeader = true,
+  initialStatus = "All",
   loadPage,
   loadDetail,
   onRecover,
@@ -144,9 +136,9 @@ export function OrdersWorkspace({
   const [query, setQuery] = useState("");
   const [customerId, setCustomerId] = useState("all");
   const [product, setProduct] = useState("");
-  const [status, setStatus] = useState("All");
-  const [createdFrom, setCreatedFrom] = useState(localToday);
-  const [createdTo, setCreatedTo] = useState(localToday);
+  const [status, setStatus] = useState(initialStatus);
+  const [createdFrom, setCreatedFrom] = useState(localOrderDateValue);
+  const [createdTo, setCreatedTo] = useState(localOrderDateValue);
   const [routeId, setRouteId] = useState("All");
   const [sellerId, setSellerId] = useState("all");
   const [filtersExpanded, setFiltersExpanded] = useState(false);
@@ -172,10 +164,10 @@ export function OrdersWorkspace({
     product: product || undefined,
     status: status === "All" ? undefined : status,
     createdFrom: createdFrom
-      ? new Date(`${createdFrom}T00:00:00`).toISOString()
+      ? orderDayRange(createdFrom).createdFrom
       : undefined,
     createdTo: createdTo
-      ? endOfLocalDayExclusive(createdTo)
+      ? orderDayRange(createdTo).createdTo
       : undefined,
     routeId: routeId === "All" ? undefined : routeId,
     sellerId: sellerId !== "all" ? sellerId : undefined,
@@ -462,8 +454,8 @@ export function OrdersWorkspace({
           <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
             <div><h3 className="font-semibold text-slate-950">Filtrar pedidos</h3><p className="text-sm text-slate-500">Combina cliente, vendedor, producto, estado y rango de fechas.</p></div>
             <Button type="button" variant="ghost" size="sm" onClick={() => {
-              setCustomerId("all"); setProduct(""); setStatus("All"); setRouteId("All"); setSellerId("all");
-              setCreatedFrom(localToday()); setCreatedTo(localToday()); setPage(1);
+              setCustomerId("all"); setProduct(""); setStatus(initialStatus); setRouteId("All"); setSellerId("all");
+              setCreatedFrom(localOrderDateValue()); setCreatedTo(localOrderDateValue()); setPage(1);
             }}>Restablecer</Button>
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">

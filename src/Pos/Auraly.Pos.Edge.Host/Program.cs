@@ -167,7 +167,6 @@ public static class PosEdgeHostApplication
             credentials.DeviceId,
             sp.GetRequiredService<PosOfflineLeaseVerifier>(),
             sp.GetRequiredService<TimeProvider>()));
-        builder.Services.AddSingleton<PosOfflineLeaseClient>();
         builder.Services.AddSingleton<PosEdgeAuthenticationService>();
         builder.Services.AddSingleton<PosEnrollmentSessionCompleter>();
         builder.Services.AddSingleton<PosEnrollmentRevocationHandler>();
@@ -527,8 +526,6 @@ public static class PosEdgeHostApplication
                     ? StatusCodes.Status423Locked
                     : error.Code == "IdentityUnavailable"
                         ? StatusCodes.Status503ServiceUnavailable
-                        : error.Code == "OfflineLeaseConflict"
-                            ? StatusCodes.Status409Conflict
                         : StatusCodes.Status401Unauthorized;
                 return Results.Json(
                     new { code = error.Code, detail = error.Message },
@@ -619,7 +616,8 @@ public static class PosEdgeHostApplication
                     authenticated.SessionId, active.WorkSessionId, ct);
             await enrollmentCompletion.AcknowledgeAsync(
                 authenticated.UserId, ct);
-            synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
+            if (active.CreatedNow)
+                synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
             return Results.Ok(authenticated with
             {
                 WorkSessionId = active.WorkSessionId
@@ -691,7 +689,7 @@ public static class PosEdgeHostApplication
             }
             catch (PosLocalLoginException error)
             {
-                var status = error.Code is "IdentityUnavailable" or "CloudLoginRequired"
+                var status = error.Code == "IdentityUnavailable"
                     ? StatusCodes.Status409Conflict
                     : StatusCodes.Status401Unauthorized;
                 return Results.Json(
@@ -826,6 +824,7 @@ public static class PosEdgeHostApplication
             int? skip,
             int? take,
             Guid? customerId,
+            bool? publicPriceOnly,
             PosCatalogStore catalog,
             CancellationToken ct) =>
         {
@@ -838,6 +837,22 @@ public static class PosEdgeHostApplication
                 ct)).ToArray();
             var hasMore = values.Length > pageSize;
             var visible = values.Take(pageSize).ToArray();
+            if (publicPriceOnly == true)
+            {
+                return Results.Ok(new
+                {
+                    items = visible.Select(value => new
+                    {
+                        value.ProductId, value.ProductCode, value.Reference, value.Name,
+                        value.BaseUnitCode, value.TaxCode, value.TaxRate,
+                        unitPrice = value.UnitPrice, value.CurrencyCode, value.IsActive,
+                        value.IsWeighable, value.AllowsFractionalSale,
+                        priceSource = "Base", promotionDiscount = 0m
+                    }).ToArray(),
+                    hasMore,
+                    nextOffset = hasMore ? offset + pageSize : (int?)null
+                });
+            }
             var resolutions = await catalog.ResolvePricesAsync(
                 visible.Select(value => new PosPriceLineRequest(
                     value.ProductId.ToString("D"), value.ProductId, 1m)).ToArray(),
@@ -1151,6 +1166,8 @@ public static class PosEdgeHostApplication
                 await orderServer.CancelAsync(
                     user,
                     sourceOrderId.Value,
+                    draftId,
+                    authorization,
                     "Venta reiniciada desde el punto de venta.",
                     $"pos-order-cancel:{operationId}",
                     ct);
@@ -1164,7 +1181,6 @@ public static class PosEdgeHostApplication
             Guid draftId,
             CompleteOnlineSalesOrderDraftRequest request,
             PosDraftStore drafts,
-            PosOrderServerClient orderServer,
             PosEdgeRuntimeContext context,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
@@ -1172,34 +1188,16 @@ public static class PosEdgeHostApplication
             var user = sessions.Required();
             var draft = await drafts.GetAsync(new DraftId(draftId), ct)
                 ?? throw new KeyNotFoundException("La venta activa no existe.");
-            var order = await orderServer.GetAsync(user, request.OrderId, ct);
-            var expectedLines = draft.Lines
-                .GroupBy(line => line.ProductId.Value)
-                .OrderBy(group => group.Key)
-                .Select(group => (
-                    ProductId: group.Key,
-                    Quantity: group.Sum(line => line.Quantity),
-                    UnitPrice: group.First().UnitPrice,
-                    Discount: group.Sum(line => line.Discount)))
-                .ToArray();
-            var actualLines = order.Lines
-                .Where(line => line.ProductId.HasValue)
-                .OrderBy(line => line.ProductId!.Value)
-                .Select(line => (
-                    ProductId: line.ProductId!.Value,
-                    line.Quantity,
-                    line.UnitPrice,
-                    Discount: line.DiscountAmount))
-                .ToArray();
-            if (order.BusinessId != context.BusinessId.Value ||
-                order.CustomerId != draft.CustomerId ||
-                !expectedLines.SequenceEqual(actualLines) ||
-                (draft.SourceOrderId.HasValue && draft.SourceOrderId != order.OrderId))
+            if (request.OrderId == Guid.Empty ||
+                (draft.SourceOrderId.HasValue && draft.SourceOrderId != request.OrderId))
                 throw new InvalidOperationException(
                     "La venta solo se puede limpiar automáticamente después de guardar su pedido.");
+
+            // The cloud create/update request already returned the canonical OrderId. Re-reading the
+            // complete order here added a second WAN round trip to every installed POS save and did
+            // not make clearing this device's own local draft safer. A recovered order remains bound
+            // to its original id above; new orders only clear local state after cloud success.
             await drafts.CancelAsync(new DraftId(draftId), ct);
-            if (draft.SourceOrderId.HasValue)
-                await orderServer.ReleaseAsync(user, draft.SourceOrderId.Value, ct);
             return Results.Ok(await drafts.GetOrCreateActiveAsync(context.ScopeFor(user), ct));
         });
         edge.MapPost("/drafts/{draftId:guid}/temporary", async (

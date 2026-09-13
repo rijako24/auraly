@@ -173,7 +173,8 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             if(reservations.Length>0)await TransferAsync(identity,$"seller-order-edit-reserve:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-reserve:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Nueva reserva del pedido {number}",reservations.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
             await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,customerId,context.Name,context.Identification,context.Email,context.Phone,context.Address,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
                 review?5:2,review?"StockReview":"InventoryTransferAccepted",review,
-                lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m}))).ToArray(),token);
+                lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m}))).ToArray(),
+                actor.UserId,request.WorkSessionId,token);
             var reportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
             await transaction.CommitAsync(token);
             await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token,reportingVersion);
@@ -285,9 +286,10 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var total=lines.Sum(line=>line.LineTotal);
             var reservationTransferId=DeterministicGuid($"seller-order-transfer:{orderId:N}");
             var reservableLines=lines.Where(line=>line.ManageStock&&line.CanReserve).ToArray();
+            var confirmedExternalStatus=reservableLines.Length>0?"InventoryTransferProcessed":"Confirmed";
             var persistedLines=lines.Select(line=>{var lineTotal=line.LineTotal;var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);var reservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m;return new{productId=line.ProductId,code=line.Code,name=line.Name,unitCode=line.UnitCode,quantity=line.Quantity,unitPrice=line.UnitPrice,discountAmount=line.DiscountAmount,taxAmount=tax,lineTotal,rawPayloadJson=JsonSerializer.Serialize(new{line.PriceSource,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=reservedQuantity})};});
             await using(var insert=Procedure("dbo.SellerOrderCreate",connection,transaction))
-            {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@WarehouseId",request.WarehouseId),P("@OrdersWarehouseId",context.OrdersWarehouseId),P("@ReservationTransferId",reservationTransferId),P("@RouteId",request.RouteId),P("@RouteStopId",request.RouteStopId),P("@PartySiteId",request.PartySiteId),P("@CapturedByUserId",actor.UserId),P("@CapturedOffline",request.CapturedOffline),P("@RequiresStockReview",review),P("@Status",review?5:3),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":"InventoryTransferPending"),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
+            {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@WarehouseId",request.WarehouseId),P("@OrdersWarehouseId",context.OrdersWarehouseId),P("@ReservationTransferId",reservationTransferId),P("@RouteId",request.RouteId),P("@RouteStopId",request.RouteStopId),P("@PartySiteId",request.PartySiteId),P("@CapturedByUserId",actor.UserId),P("@CapturedOffline",request.CapturedOffline),P("@RequiresStockReview",review),P("@Status",review?5:2),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":confirmedExternalStatus),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
             var stockLines=reservableLines.Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();
             if(stockLines.Length>0)
             {
@@ -304,8 +306,6 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 return new(orderId,number,"InReview",total,true,warnings);
             }
 
-            await using(var confirm=Procedure("dbo.SellerOrderConfirm",connection,transaction))
-            {confirm.Parameters.AddRange([P("@ExternalStatus",stockLines.Length>0?"InventoryTransferProcessed":"Confirmed"),P("@OrderId",orderId),P("@BusinessId",request.BusinessId)]);await confirm.ExecuteNonQueryAsync(token);}
             var finalReportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
             await transaction.CommitAsync(token);
             await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token,finalReportingVersion);

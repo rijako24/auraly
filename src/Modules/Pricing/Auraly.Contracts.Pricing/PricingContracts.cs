@@ -102,7 +102,17 @@ public sealed record PriceRevisionListItem(
     string Origin,
     decimal? AverageUnitCost,
     decimal? LatestUnitCost,
-    decimal? LatestLandedUnitCost);
+    decimal? LatestLandedUnitCost,
+    IReadOnlyList<LinkedPriceProductListItem> LinkedProducts);
+
+public sealed record LinkedPriceProductListItem(
+    Guid ProductId,
+    string ProductCode,
+    string ProductName,
+    decimal PriceFactor,
+    decimal CurrentSalePrice,
+    decimal? PreparedSalePrice,
+    decimal? TargetMarginPercent);
 
 public sealed record PriceRevisionPage(
     IReadOnlyList<PriceRevisionListItem> Items,

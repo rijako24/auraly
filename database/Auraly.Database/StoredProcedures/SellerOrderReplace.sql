@@ -13,7 +13,9 @@ CREATE PROCEDURE [dbo].[SellerOrderReplace]
     @Status INT,
     @ExternalStatus NVARCHAR(80),
     @RequiresStockReview BIT,
-    @LinesJson NVARCHAR(MAX)
+    @LinesJson NVARCHAR(MAX),
+    @UserId UNIQUEIDENTIFIER,
+    @WorkSessionId UNIQUEIDENTIFIER = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -48,4 +50,13 @@ BEGIN
         UnitCode NVARCHAR(24) '$.unitCode',Quantity DECIMAL(19,6) '$.quantity',UnitPrice DECIMAL(19,4) '$.unitPrice',DiscountAmount DECIMAL(19,4) '$.discountAmount',
         LineTotal DECIMAL(19,4) '$.lineTotal',RawPayloadJson NVARCHAR(MAX) '$.rawPayloadJson') j;
     IF @@ROWCOUNT = 0 THROW 51304, 'El pedido requiere al menos un producto.', 1;
+
+    IF @WorkSessionId IS NOT NULL
+    BEGIN
+        UPDATE dbo.OrderClaims
+        SET ReleasedAt=COALESCE(ReleasedAt,SYSUTCDATETIME())
+        WHERE OrderId=@OrderId AND BusinessId=@BusinessId
+          AND WorkSessionId=@WorkSessionId AND UserId=@UserId
+          AND ReleasedAt IS NULL;
+    END
 END

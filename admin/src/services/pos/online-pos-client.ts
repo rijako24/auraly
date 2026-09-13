@@ -517,10 +517,10 @@ export class OnlinePosClient implements PosClient {
   }
 
 
-  async searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null) {
+  async searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null, publicPriceOnly = false) {
     const page = await request<OnlineProductPage>(
       "/api/commerce/v1/pos/drafts/products/search",
-      this.post({ context: this.scope(), search, skip, take, customerId }),
+      this.post({ context: this.scope(), search, skip, take, customerId, publicPriceOnly }),
     );
     return page satisfies PosCatalogSearchPage;
   }

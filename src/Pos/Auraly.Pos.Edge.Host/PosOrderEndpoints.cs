@@ -15,10 +15,12 @@ public sealed class PosOrderRecoveryService(
         Guid orderId,
         CancellationToken cancellationToken)
     {
-        await server.ClaimAsync(session, orderId, cancellationToken);
+        var prepared = false;
         try
         {
-            var order = await server.GetAsync(session, orderId, cancellationToken);
+            var order = await server.PrepareRecoveryAsync(
+                session, orderId, cancellationToken);
+            prepared = true;
             var productIds = order.Lines
                 .Select(line => line.ProductId ?? throw new InvalidOperationException(
                     $"El producto '{line.ProductName}' del pedido no está vinculado al catálogo."))
@@ -61,14 +63,17 @@ public sealed class PosOrderRecoveryService(
         }
         catch
         {
-            try
+            if (prepared)
             {
-                await server.ReleaseAsync(session, orderId, CancellationToken.None);
-            }
-            catch (Exception releaseError)
-                when (releaseError is HttpRequestException or PosOrderServerException)
-            {
-                // The server lease expires durably; never hide the original recovery error.
+                try
+                {
+                    await server.ReleaseAsync(session, orderId, CancellationToken.None);
+                }
+                catch (Exception releaseError)
+                    when (releaseError is HttpRequestException or PosOrderServerException)
+                {
+                    // The server lease expires durably; never hide the original recovery error.
+                }
             }
             throw;
         }

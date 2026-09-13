@@ -2,7 +2,8 @@
 
 > Actualización 2026-08-30: este mecanismo queda limitado al traspaso inicial de
 > enrolamiento y a compatibilidad con ejecutables anteriores. En el ejecutable
-> vigente, un login local posterior no llama este endpoint ni exige que la
+> vigente, un login local posterior no llama este endpoint ni ningún otro del
+> servidor, y tampoco exige que la
 > concesión siga vigente. La autoridad local durable es el equipo enrolado más la
 > proyección protegida de identidades; su antigüedad no bloquea el acceso.
 
@@ -120,10 +121,10 @@ Los escenarios nuevos prueban:
   `dbo.PosDevices`; la concesion nueva no contiene `RegisterId`, bodega, serie ni
   concepto de caja. El cambio fisico de esa autoridad a `EnrolledDevice` debe
   hacerse en la rebanada canonica que elimina caja sin duplicar tablas.
-- El servicio general de sincronizacion de POS preexistente aun usa un
-  `PeriodicTimer`. La concesion no crea un segundo sondeo, pero la decision global
-  de operar exclusivamente mediante Pub/Sub todavia exige reemplazar ese ciclo
-  completo. No se declara resuelto aqui.
+- La sincronización operativa de POS es dirigida por eventos: ejecuta un catch-up
+  acotado al arrancar, procesa invalidaciones de Web PubSub y reintenta solamente
+  trabajo fallido o pendiente. El login no crea sondeos ni dispara descargas, y la
+  primera conexión push no duplica el catch-up de arranque.
 - Una revocación, desactivación o cambio de permisos ocurrido mientras el POS
   está totalmente desconectado solo se conoce al reconectar. Esta es una
   consecuencia explícita del acceso local durable sin vencimiento temporal.

@@ -100,6 +100,8 @@ public static class SellerOrderReviewPersistence
         string externalStatus,
         bool requiresStockReview,
         IReadOnlyCollection<SellerOrderReplacementLine> lines,
+        Guid userId,
+        Guid? workSessionId,
         CancellationToken cancellationToken)
     {
         await using (var update = Procedure("dbo.SellerOrderReplace", connection, transaction))
@@ -119,6 +121,8 @@ public static class SellerOrderReviewPersistence
                 Parameter("@RequiresStockReview", requiresStockReview),
                 Parameter("@OrderId", orderId),
                 Parameter("@BusinessId", businessId),
+                Parameter("@UserId", userId),
+                Parameter("@WorkSessionId", workSessionId),
                 Parameter("@LinesJson", System.Text.Json.JsonSerializer.Serialize(lines.Select(line => new
                 {
                     productId = line.ProductId,

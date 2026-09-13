@@ -189,14 +189,18 @@ public sealed class PosApprovalService(
         return approval;
     }
 
-    public Task<IReadOnlyList<PosApprovalRequestView>> PendingAsync(
+    public async Task<IReadOnlyList<PosApprovalRequestView>> PendingAsync(
         PosApprovalUserIdentity user,
         Guid businessId,
         CancellationToken cancellationToken = default)
     {
         Require(user, CommercePermissionCodes.PosApprovalsRead);
+        Require(user, CommercePermissionCodes.PosApprovalsAuthorize);
         EnsureBusiness(user, businessId);
-        return store.PendingAsync(user, businessId, cancellationToken);
+        var pending = await store.PendingAsync(user, businessId, cancellationToken);
+        return pending
+            .Where(request => user.Permissions.Contains(request.PermissionResource))
+            .ToArray();
     }
 
     public async Task<PosApprovalDecisionResult> DecideAsync(
@@ -375,6 +379,29 @@ public sealed class PosApprovalService(
             throw new PosApprovalException("InvalidScope", "La finalización remota no identifica completamente la autorización.");
         return store.CompleteForDeviceAsync(
             tenantId, deviceId, approvalRequestId, request, cancellationToken);
+    }
+
+    public async Task ValidateLocalDeviceAuthorizerAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid requesterUserId,
+        Guid authorizedByUserId,
+        string permissionResource,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateSensitivePermission(permissionResource);
+        if (tenantId == Guid.Empty || businessId == Guid.Empty ||
+            requesterUserId == Guid.Empty || authorizedByUserId == Guid.Empty ||
+            requesterUserId == authorizedByUserId)
+            throw new PosApprovalException(
+                "InvalidApproval",
+                "La autorización local no identifica un supervisor diferente y vigente.");
+        var authorizers = await store.AuthorizersAsync(
+            tenantId, businessId, permissionResource, cancellationToken);
+        if (authorizers.All(candidate => candidate.UserId != authorizedByUserId))
+            throw new PosApprovalException(
+                "InvalidApproval",
+                "El supervisor ya no puede autorizar esta acción.");
     }
 
     public Task ConfigureCredentialAsync(

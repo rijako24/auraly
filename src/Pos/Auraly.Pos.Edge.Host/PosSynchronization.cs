@@ -376,6 +376,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private readonly Guid businessId;
     private readonly WebPubSubClient client;
     private IReadOnlyList<string> authorizedGroups = [];
+    private int successfulConnections;
     private readonly Channel<bool> terminalDisconnections =
         Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
         {
@@ -479,7 +480,11 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         pushState.MarkConnected();
         events.Record("Success", "Connection", "Caja conectada con Auraly Server");
         uiState.Publish();
-        signal.Signal(PosSynchronizationTrigger.All);
+        // The hosted service already starts one bounded catch-up without waiting
+        // for Web PubSub. Only a reconnection may have missed invalidations.
+        if (PosSynchronizationConnectionPolicy.RequiresCatchUp(
+                Interlocked.Increment(ref successfulConnections)))
+            signal.Signal(PosSynchronizationTrigger.All);
         return Task.CompletedTask;
     }
 
@@ -538,6 +543,12 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
             PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Configuration,
             _ => PosSynchronizationTrigger.None
         };
+}
+
+internal static class PosSynchronizationConnectionPolicy
+{
+    public static bool RequiresCatchUp(int successfulConnectionNumber) =>
+        successfulConnectionNumber > 1;
 }
 
 internal sealed class PosEventDrivenSynchronizationHostedService(

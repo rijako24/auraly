@@ -1,10 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { lineDiscountPercent, lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin } from "./pos-line-editor-calculation";
+import { isPositiveWholeSaleValue, lineDiscountPercent, lineEconomicsAfterPriceChange, lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin } from "./pos-line-editor-calculation";
 
 test("keeps value and percentage discounts synchronized", () => {
   assert.equal(lineDiscountPercent(20_000, 2, 100_000), 10);
+});
+
+test("changing sale price preserves the discount percentage and recalculates value and margin", () => {
+  assert.deepEqual(
+    lineEconomicsAfterPriceChange(50_000, 2, 100_000, 20_000, 120_000, 0),
+    { discount: 24_000, discountPercent: 10, marginPercent: 53.7037 },
+  );
+});
+
+test("distributed price increments recalculate discount value for fractional quantities", () => {
+  assert.deepEqual(
+    lineEconomicsAfterPriceChange(4_000, 0.5, 10_000, 500, 12_000, 0),
+    { discount: 600, discountPercent: 10, marginPercent: 62.963 },
+  );
 });
 
 test("calculates margin from the net untaxed sale", () => {
@@ -52,6 +66,15 @@ test("preserves fractional quantities and the requested total within money preci
   ], 1_000);
   assert.ok(Math.abs(result.reduce((sum, line) => sum + line.allocatedValue, 0) - 1_000) < .00001);
   assert.throws(() => prorateAdditionalSaleValue(result, 0));
+  assert.throws(() => prorateAdditionalSaleValue(result, -1));
+});
+
+test("the additional distributed charge accepts only positive whole values", () => {
+  assert.equal(isPositiveWholeSaleValue(1), true);
+  assert.equal(isPositiveWholeSaleValue(10_000), true);
+  assert.equal(isPositiveWholeSaleValue(0), false);
+  assert.equal(isPositiveWholeSaleValue(-1), false);
+  assert.equal(isPositiveWholeSaleValue(1.5), false);
 });
 
 test("moves through editable columns and stops at the horizontal edges", () => {

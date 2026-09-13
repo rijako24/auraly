@@ -65,6 +65,15 @@ public sealed partial class SqlOnlineSalesDraftStore
                 reader.GetDecimal(17), reader.IsDBNull(18) ? null : reader.GetDecimal(18))));
         }
 
+        var hasMore = candidates.Count > request.Take;
+        if (hasMore) candidates.RemoveAt(candidates.Count - 1);
+        if (request.PublicPriceOnly)
+        {
+            var publicItems = candidates.Select(candidate => candidate.Product).ToArray();
+            return new(publicItems, hasMore,
+                hasMore ? request.Skip + publicItems.Length : null);
+        }
+
         await reader.NextResultAsync(cancellationToken);
         Guid? channelId = await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0)
             ? reader.GetGuid(0)
@@ -110,8 +119,6 @@ public sealed partial class SqlOnlineSalesDraftStore
                     value.ProductCategoryId, value.ServiceCategoryId)).ToArray()));
         }
 
-        var hasMore = candidates.Count > request.Take;
-        if (hasMore) candidates.RemoveAt(candidates.Count - 1);
         var priceInputs = candidates.Select(candidate => new CommercePriceLineInput(
             candidate.Product.ProductId.ToString("D"), candidate.Snapshot.Name,
             candidate.Snapshot.UnitPrice, 1m,

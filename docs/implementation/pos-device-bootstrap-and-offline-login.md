@@ -77,10 +77,17 @@ Antes de mostrar el login, una caja conectada obtiene del cursor local:
 Esta puesta al día empieza al abrir, pero no bloquea el login de un usuario ya
 provisionado. Sin Internet usa la última proyección local protegida. La ausencia
 o corrupción de esa proyección sí bloquea; su antigüedad, por sí sola, no.
-Si el usuario escrito no está en SQLite y el dispositivo tiene conexión, el
-login solicita una única actualización de identidades con la credencial del
-equipo y vuelve a validar localmente. Una contraseña incorrecta de un usuario ya
-conocido no provoca llamadas al servidor.
+El login nunca solicita una actualización ni valida credenciales contra el
+servidor. Si el usuario no está en SQLite, la contraseña es incorrecta o todavía
+no existe una proyección promovida, falla localmente. La sincronización de
+seguridad corre por su carril independiente y los cambios quedan disponibles en
+el siguiente intento, sin convertir el submit en una operación de red.
+
+La reconciliación inicial pertenece al arranque de Edge y se ejecuta una sola vez,
+en paralelo al acceso. La primera conexión del canal push no repite esa descarga;
+solo una reconexión posterior puede pedir un catch-up por cambios posiblemente
+perdidos. Abrir el POS reanuda la sesión operativa local sin señal de outbox ni
+consulta remota; únicamente una sesión nueva encola su alta para envío asíncrono.
 
 Cada equipo conserva una sola autenticación local activa: un login nuevo cierra
 el token local anterior y su navegador vuelve al login al recibir
@@ -102,9 +109,9 @@ Después del login el menú se deriva de permisos efectivos:
 - módulos online aparecen según permisos;
 - sin conexión, una ruta online aparece deshabilitada con `Requiere conexión`;
 - con conexión, la API vuelve a validar usuario, negocio y permiso;
-- si el perfil local posee módulos de servidor, el mismo envío del login crea la
-  sesión web y abre el shell autorizado; si el servidor está temporalmente caído,
-  conserva Facturación local sin conceder esos módulos;
+- el login de una instalación enrolada abre Facturación con la sesión local; el
+  acceso a módulos administrativos requiere entrar explícitamente en modo Cloud
+  y crear allí la sesión web;
 - un navegador no enrolado puede usar módulos online, pero no simula impresión,
   periféricos, outbox ni venta offline.
 

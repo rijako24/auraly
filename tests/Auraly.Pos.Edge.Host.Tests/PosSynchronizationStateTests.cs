@@ -5,6 +5,19 @@ namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosSynchronizationStateTests
 {
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(2, true)]
+    [InlineData(5, true)]
+    public void Initial_push_connection_does_not_duplicate_startup_catchup(
+        int connectionNumber,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            PosSynchronizationConnectionPolicy.RequiresCatchUp(connectionNumber));
+    }
+
     [Fact]
     public void Failed_stage_explains_manual_retry_and_clears_when_user_retries()
     {

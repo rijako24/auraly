@@ -8,6 +8,7 @@ import {
   isCurrentWebSessionVersion,
   retryAuthenticatedRequest,
   runAuthenticationSessionReplacement,
+  runLocalPosSessionReplacement,
   shouldRunCloudBackgroundSynchronization,
   shouldRedirectUnauthenticatedDashboard,
   shouldRefreshSession,
@@ -70,6 +71,33 @@ describe("auth session decisions", () => {
     finishLogin("authenticated");
     assert.equal(await replacement, "authenticated");
     assert.deepEqual(events, ["boundary", "login", "boundary"]);
+  });
+
+  it("retires the old local token and coalesces simultaneous POS logins", async () => {
+    const events: string[] = [];
+    let finishLogin!: (value: string) => void;
+    const loginResult = new Promise<string>((resolve) => { finishLogin = resolve; });
+    let loginCalls = 0;
+    const login = () => {
+      loginCalls += 1;
+      events.push("login");
+      return loginResult;
+    };
+
+    const first = runLocalPosSessionReplacement(
+      () => events.push("retire"),
+      login,
+    );
+    const second = runLocalPosSessionReplacement(
+      () => events.push("second-retire"),
+      login,
+    );
+
+    assert.deepEqual(events, ["retire", "login"]);
+    finishLogin("local-session");
+    assert.equal(await first, "local-session");
+    assert.equal(await second, "local-session");
+    assert.equal(loginCalls, 1);
   });
 
   it("keeps an enrolled POS session independent from a stale web cookie", () => {

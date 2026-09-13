@@ -99,10 +99,15 @@ test("el modal de periféricos cubre el viewport completo desde el body", async 
   await page.route("**/api/commerce/v1/pos/installer", route => json(route, { downloadUrl: "/auraly-installer.exe", version: "1.0.0", sha256: "test", tenantPreconfigured: false }));
 
   await page.goto("/dashboard/orders");
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
   await page.getByRole("button", { name: "Configurar plantillas e impresoras" }).click();
 
   const backdrop = page.getByTestId("peripherals-dialog-backdrop");
-  await expect(page.getByRole("dialog", { name: "Periféricos" })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Periféricos" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveCSS("color", "rgb(2, 6, 23)");
+  await expect(dialog.getByText("Formato").first()).toHaveCSS("color", "rgb(2, 6, 23)");
+  await expect(dialog.getByRole("button", { name: "Cancelar" })).toHaveCSS("color", "rgb(2, 6, 23)");
   expect(await backdrop.evaluate(element => element.parentElement === document.body)).toBe(true);
   await expect(backdrop).toHaveCSS("position", "fixed");
   expect(await backdrop.boundingBox()).toEqual({ x: 0, y: 0, width: 1440, height: 1000 });

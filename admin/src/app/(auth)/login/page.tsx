@@ -22,16 +22,14 @@ import { authApi } from "@/services/api/auth";
 import { establishWebSession } from "@/services/api/client";
 import {
   PosEdgeClient,
-  PosEdgeError,
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
 import {
-  shouldFallbackToLocalPos,
   usesEnrolledPosRuntime,
 } from "@/services/pos/pos-launch-session";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
-import { defaultStartRoute, requiresCloudWorkspace } from "@/lib/default-start-route";
+import { defaultStartRoute } from "@/lib/default-start-route";
 import {
   clearPreviousWebIdentityContext,
   runAuthenticationSessionReplacement,
@@ -143,30 +141,9 @@ function LoginForm() {
       };
 
       if (edgeClient && !forceCloud) {
-        try {
-          const localSession = await edgeClient.login(username, password);
-          if (requiresCloudWorkspace(localSession.permissions)) {
-            try {
-              await loginToCloud();
-            } catch (cloudError) {
-              if (shouldFallbackToLocalPos(cloudError, navigator.onLine)) {
-                window.location.replace("/pos");
-                return;
-              }
-              await edgeClient.logout().catch(() => undefined);
-              throw cloudError;
-            }
-            return;
-          }
-          useAuthStore.getState().clearAuth();
-          window.location.replace("/pos");
-        } catch (error) {
-          if (error instanceof PosEdgeError && error.code === "CloudLoginRequired") {
-            await loginToCloud();
-            return;
-          }
-          throw error;
-        }
+        await edgeClient.login(username, password);
+        useAuthStore.getState().clearAuth();
+        window.location.replace("/pos");
         return;
       }
       await loginToCloud();

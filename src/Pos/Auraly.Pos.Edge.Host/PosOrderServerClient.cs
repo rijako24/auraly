@@ -73,9 +73,22 @@ public sealed class PosOrderServerClient(
             null,
             cancellationToken);
 
+    public Task<OrderDetail> PrepareRecoveryAsync(
+        PosLocalUserSession session,
+        Guid orderId,
+        CancellationToken cancellationToken) =>
+        SendAsync<OrderDetail>(
+            HttpMethod.Post,
+            $"/api/pos/v1/orders/{orderId:D}/prepare-recovery",
+            JsonContent.Create(ContextBody(session)),
+            null,
+            cancellationToken);
+
     public Task<CancelOrderResponse> CancelAsync(
         PosLocalUserSession session,
         Guid orderId,
+        Guid draftId,
+        PosSensitiveActionAuthorization authorization,
         string reason,
         string idempotencyKey,
         CancellationToken cancellationToken) =>
@@ -88,7 +101,15 @@ public sealed class PosOrderServerClient(
                 businessId = runtime.BusinessId.Value,
                 warehouseId = runtime.WarehouseId.Value,
                 workSessionId = session.WorkSessionId,
-                reason
+                reason,
+                restartAuthorization = new
+                {
+                    draftId,
+                    permissionResource = authorization.PermissionResource,
+                    authorizedByUserId = authorization.AuthorizedByUserId,
+                    approvalRequestId = authorization.RemoteApprovalRequestId,
+                    operationId = authorization.OperationId
+                }
             }),
             idempotencyKey,
             cancellationToken);

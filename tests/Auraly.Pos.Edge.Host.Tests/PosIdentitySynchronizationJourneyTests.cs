@@ -79,7 +79,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
     }
 
     [Fact]
-    public async Task Connected_login_refreshes_a_stale_local_password_and_keeps_the_pos_session()
+    public async Task Enrolled_login_does_not_refresh_a_stale_password_from_the_server()
     {
         var databasePath = Path.Combine(
             Path.GetTempPath(), $"auraly-identity-lease-refresh-{Guid.NewGuid():N}.db");
@@ -142,26 +142,18 @@ public sealed class PosIdentitySynchronizationJourneyTests
                     })),
                 TimeProvider.System);
             await leaseStore.InitializeAsync();
-            var authentication = new PosEdgeAuthenticationService(
-                identities,
-                new PosIdentitySynchronizer(
-                    unavailableIdentityHttp,
-                    credentials,
-                    new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()),
-                    identities,
-                    new PosSynchronizationEventLog(TimeProvider.System)),
-                new PosOfflineLeaseClient(leaseHttp, credentials),
-                leaseStore,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<PosEdgeAuthenticationService>.Instance);
+            var authentication = new PosEdgeAuthenticationService(identities);
 
-            var session = await authentication.LoginAsync(
-                new PosLocalLoginRequest("admin", currentPassword));
+            var error = await Assert.ThrowsAsync<PosLocalLoginException>(() =>
+                authentication.LoginAsync(
+                    new PosLocalLoginRequest("admin", currentPassword)));
 
-            Assert.Equal(userId, session.UserId);
-            Assert.Equal(1, leaseHandler.AcquireCount);
+            Assert.Equal("InvalidCredentials", error.Code);
+            Assert.Equal(0, leaseHandler.AcquireCount);
             Assert.Equal(0, leaseHandler.WorkSessionCount);
-            await identities.LoginAsync(
-                new PosLocalLoginRequest("admin", currentPassword));
+            var localSession = await authentication.LoginAsync(
+                new PosLocalLoginRequest("admin", "Previous-Password-1"));
+            Assert.Equal(userId, localSession.UserId);
         }
         finally
         {
@@ -175,7 +167,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Missing_or_uninitialized_local_identity_is_synchronized_once_and_then_logged_in(
+    public async Task Missing_or_uninitialized_local_identity_is_not_synchronized_by_login(
         bool hasExistingSnapshot)
     {
         var databasePath = Path.Combine(
@@ -214,17 +206,12 @@ public sealed class PosIdentitySynchronizationJourneyTests
             var authentication = CreateAuthentication(
                 identities, synchronizer, $"Data Source={databasePath}");
 
-            var session = await authentication.LoginAsync(
-                new PosLocalLoginRequest("new.cashier", password));
-
-            Assert.Equal(userId, session.UserId);
-            Assert.Equal("Cajera nueva", session.DisplayName);
-            Assert.Equal(1, handler.RequestCount);
-
-            await Assert.ThrowsAsync<PosLocalLoginException>(() =>
+            var error = await Assert.ThrowsAsync<PosLocalLoginException>(() =>
                 authentication.LoginAsync(
-                    new PosLocalLoginRequest("new.cashier", "wrong-password")));
-            Assert.Equal(1, handler.RequestCount);
+                    new PosLocalLoginRequest("new.cashier", password)));
+
+            Assert.Equal(hasExistingSnapshot ? "InvalidCredentials" : "IdentityUnavailable", error.Code);
+            Assert.Equal(0, handler.RequestCount);
         }
         finally
         {
@@ -312,7 +299,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
     }
 
     [Fact]
-    public async Task User_without_local_pos_access_is_delegated_to_cloud_after_one_refresh()
+    public async Task User_without_local_pos_access_is_rejected_without_cloud_fallback()
     {
         var databasePath = Path.Combine(
             Path.GetTempPath(), $"auraly-cloud-login-required-{Guid.NewGuid():N}.db");
@@ -342,8 +329,8 @@ public sealed class PosIdentitySynchronizationJourneyTests
             var error = await Assert.ThrowsAsync<PosLocalLoginException>(() =>
                 authentication.LoginAsync(new PosLocalLoginRequest("admin", "password")));
 
-            Assert.Equal("CloudLoginRequired", error.Code);
-            Assert.Equal(1, handler.RequestCount);
+            Assert.Equal("InvalidCredentials", error.Code);
+            Assert.Equal(0, handler.RequestCount);
         }
         finally
         {
@@ -371,27 +358,9 @@ public sealed class PosIdentitySynchronizationJourneyTests
         PosIdentitySynchronizer synchronizer,
         string connectionString)
     {
-        var http = new HttpClient(new UnavailableWorkSessionHandler())
-        {
-            BaseAddress = new Uri("https://auraly.test")
-        };
-        var deviceId = Guid.NewGuid();
-        var credentials = new PosDeviceCredentials(deviceId, "device-secret");
-        var leases = new PosOfflineLeaseClient(http, credentials);
-        var leaseStore = new PosOfflineLeaseStore(
-            connectionString,
-            Guid.NewGuid(),
-            deviceId,
-            new PosOfflineLeaseVerifier(
-                Microsoft.Extensions.Options.Options.Create(
-                    new PosOfflineLeaseTrustOptions())),
-            TimeProvider.System);
-        return new PosEdgeAuthenticationService(
-            identities,
-            synchronizer,
-            leases,
-            leaseStore,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<PosEdgeAuthenticationService>.Instance);
+        _ = synchronizer;
+        _ = connectionString;
+        return new PosEdgeAuthenticationService(identities);
     }
 
     private sealed class UnavailableWorkSessionHandler : HttpMessageHandler

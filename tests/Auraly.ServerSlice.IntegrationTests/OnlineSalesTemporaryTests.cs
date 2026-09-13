@@ -13,6 +13,77 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Critical_online_POS_queries_each_complete_in_under_one_second()
+    {
+        using var client = fixture.CreateAdminClient(
+            CommercePermissionCodes.SalesCreate,
+            "pos.inventory.availability.read",
+            "orders.read");
+        var context = new OnlineSalesDraftContext(
+            fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId);
+
+        OnlineSalesDraft? activeDraft = null;
+        await AssertFastAsync(
+            "borrador activo",
+            async () =>
+            {
+                var response = await client.PostAsJsonAsync(
+                    "/api/commerce/v1/pos/drafts/active",
+                    new OpenOnlineSalesDraftRequest(context));
+                if (response.IsSuccessStatusCode)
+                    activeDraft = await response.Content.ReadFromJsonAsync<OnlineSalesDraft>();
+                return response;
+            });
+        Assert.NotNull(activeDraft);
+        await AssertFastAsync(
+            "agregar producto",
+            async () =>
+            {
+                using var request = Mutation(
+                    $"/api/commerce/v1/pos/drafts/{activeDraft!.DraftId:D}/items",
+                    new AddOnlineSalesDraftItemRequest(
+                        fixture.ProductId.ToString("D"), 1m, activeDraft.Version));
+                return await client.SendAsync(request);
+            });
+        await AssertFastAsync(
+            "búsqueda de clientes",
+            () => client.PostAsJsonAsync(
+                "/api/commerce/v1/pos/drafts/customers/search",
+                new SearchOnlineSalesRequest(context, string.Empty, 0, 50)));
+        await AssertFastAsync(
+            "ventas pausadas",
+            () => client.PostAsJsonAsync(
+                "/api/commerce/v1/pos/drafts/temporaries/search",
+                new SearchOnlineSalesRequest(context, string.Empty, 0, 100)));
+        await AssertFastAsync(
+            "existencias por sede",
+            () => client.GetAsync(
+                $"/api/commerce/v1/pos/catalog/products/{fixture.ProductId:D}/warehouse-availability"));
+        await AssertFastAsync(
+            "pedidos disponibles",
+            () => client.GetAsync(
+                "/api/commerce/v1/orders?page=1&pageSize=50&status=Available"));
+
+        static async Task AssertFastAsync(
+            string operation,
+            Func<Task<HttpResponseMessage>> execute)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            using var response = await execute();
+            stopwatch.Stop();
+            var responseBody = response.IsSuccessStatusCode
+                ? string.Empty
+                : await response.Content.ReadAsStringAsync();
+            Assert.True(
+                response.IsSuccessStatusCode,
+                $"{operation} respondió {(int)response.StatusCode}: {responseBody}");
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+                $"{operation} tardó {stopwatch.Elapsed.TotalMilliseconds:N0} ms.");
+        }
+    }
+
+    [Fact]
     public async Task Product_search_returns_a_resolved_page_of_fifty_in_under_one_second()
     {
         var prefix = $"PERF-{Guid.NewGuid():N}";

@@ -29,6 +29,17 @@ export interface PriceRevisionListItem {
   averageUnitCost?: number | null;
   latestUnitCost?: number | null;
   latestLandedUnitCost?: number | null;
+  linkedProducts: LinkedPriceProductListItem[];
+}
+
+export interface LinkedPriceProductListItem {
+  productId: string;
+  productCode: string;
+  productName: string;
+  priceFactor: number;
+  currentSalePrice: number;
+  preparedSalePrice: number | null;
+  targetMarginPercent: number | null;
 }
 
 export interface PriceRevisionPage {

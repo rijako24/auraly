@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Diagnostics;
 using Auraly.Api;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
@@ -55,6 +56,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             new("@ProductCode", $"ADM-{productId:N}"[..24]));
 
         using var client = fixture.CreateUserClient(userId, OrderPermissionCodes.Create);
+        var stopwatch = Stopwatch.StartNew();
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/seller-orders",
             new
@@ -80,9 +82,13 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                     }
                 }
             });
+        stopwatch.Stop();
 
         Assert.True(response.IsSuccessStatusCode,
             $"El pedido respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"Guardar el pedido tardó {stopwatch.Elapsed.TotalMilliseconds:N0} ms.");
         var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
         var orderId = body.GetProperty("orderId").GetGuid();
 
@@ -378,6 +384,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         }
         Assert.Equal((2m, 2m, 5m, 0m),
             await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        Assert.Empty(await ActiveClaimOrderIdsAsync(userId, workSession.WorkSessionId));
 
         await ExecuteAsync(
             "UPDATE dbo.Orders SET CapturedByUserId=@OtherUserId WHERE OrderId=@OrderId;",
@@ -599,6 +606,30 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         var recoveredForRemoval = await OpenDraftAsync(client, workSession.WorkSessionId);
         Assert.Equal((7m, -8m, 0m, 10m),
             await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
+        using var resetRequester = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate);
+        using var approvalCreation = await resetRequester.PostAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/",
+            new CreatePosApprovalRequest(
+                fixture.BusinessId,
+                fixture.DeviceId,
+                workSession.WorkSessionId,
+                recoveredForRemoval.DraftId,
+                null,
+                CommercePermissionCodes.SalesRestartDraft,
+                "{\"action\":\"RestartRecoveredOrder\"}"));
+        approvalCreation.EnsureSuccessStatusCode();
+        var restartApproval = Assert.IsType<PosApprovalRequestView>(
+            await approvalCreation.Content.ReadFromJsonAsync<PosApprovalRequestView>());
+        using var approver = fixture.CreateAdminClient(
+            CommercePermissionCodes.SalesRestartDraft,
+            CommercePermissionCodes.PosApprovalsRead,
+            CommercePermissionCodes.PosApprovalsAuthorize);
+        using var approvalDecision = await approver.PostAsJsonAsync(
+            $"/api/commerce/v1/pos/approvals/{restartApproval.ApprovalRequestId:D}/decision",
+            new DecidePosApprovalRequest(true));
+        approvalDecision.EnsureSuccessStatusCode();
         using (var resetRequest = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/commerce/v1/pos/drafts/{recoveredForRemoval.DraftId:D}/reset")
@@ -607,8 +638,12 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 new ResetOnlineSalesDraftRequest(recoveredForRemoval.Version)),
         })
         {
-            resetRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
-            using var reset = await client.SendAsync(resetRequest);
+            var operationId = Guid.NewGuid();
+            resetRequest.Headers.Add("Idempotency-Key", operationId.ToString("D"));
+            resetRequest.Headers.Add(
+                "X-Auraly-Approval-Id",
+                restartApproval.ApprovalRequestId.ToString("D"));
+            using var reset = await resetRequester.SendAsync(resetRequest);
             Assert.True(reset.IsSuccessStatusCode,
                 $"El reinicio respondió {(int)reset.StatusCode}: {await reset.Content.ReadAsStringAsync()}");
         }

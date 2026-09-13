@@ -66,23 +66,28 @@ public sealed class SqlPosApprovalPushSubscriptionStore(SqlServerConnectionFacto
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT DISTINCT subscription.SubscriptionId,subscription.UserId,
+            SELECT subscription.SubscriptionId,subscription.UserId,
                 subscription.Endpoint,subscription.P256dh,subscription.Auth
             FROM dbo.PosApprovalPushSubscriptions subscription
             JOIN dbo.AppUsers app ON app.UserId=subscription.UserId AND app.IsActive=1
+            JOIN dbo.UserRoles assignment ON assignment.UserId=subscription.UserId
+              AND(assignment.BusinessId IS NULL OR assignment.BusinessId=@BusinessId)
+            JOIN dbo.RolePermissions rolePermission ON rolePermission.RoleId=assignment.RoleId
+            JOIN dbo.Permissions permission ON permission.PermissionId=rolePermission.PermissionId
             WHERE subscription.TenantId=@TenantId AND subscription.BusinessId=@BusinessId
               AND subscription.UserId<>@RequesterId
-              AND EXISTS(
-                SELECT 1 FROM dbo.UserRoles assignment
-                JOIN dbo.RolePermissions rolePermission ON rolePermission.RoleId=assignment.RoleId
-                JOIN dbo.Permissions permission ON permission.PermissionId=rolePermission.PermissionId
-                WHERE assignment.UserId=subscription.UserId
-                  AND(assignment.BusinessId IS NULL OR assignment.BusinessId=@BusinessId)
-                  AND permission.Resource=N'pos.approvals.receive_notifications');
+              AND permission.Resource IN(
+                N'pos.approvals.receive_notifications',
+                N'pos.approvals.authorize',
+                @PermissionResource)
+            GROUP BY subscription.SubscriptionId,subscription.UserId,
+                subscription.Endpoint,subscription.P256dh,subscription.Auth
+            HAVING COUNT(DISTINCT permission.Resource)=3;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", request.TenantId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@RequesterId", request.RequestedByUserId);
+        command.Parameters.AddWithValue("@PermissionResource", request.PermissionResource);
         var rows = new List<PosApprovalPushRecipient>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

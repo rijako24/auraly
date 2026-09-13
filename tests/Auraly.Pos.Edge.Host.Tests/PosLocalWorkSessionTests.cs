@@ -54,11 +54,14 @@ public sealed class PosLocalWorkSessionTests : IAsyncLifetime
         var userId = Guid.NewGuid();
         var first = await store.OpenOrResumeAsync(userId);
         var resumed = await store.OpenOrResumeAsync(userId);
+        Assert.True(first.CreatedNow);
+        Assert.False(resumed.CreatedNow);
         Assert.Equal(first.WorkSessionId, resumed.WorkSessionId);
 
         time.Advance(TimeSpan.FromHours(2));
         await store.MarkClosedAsync(first.WorkSessionId, userId, time.GetUtcNow());
         var second = await store.OpenOrResumeAsync(userId);
+        Assert.True(second.CreatedNow);
         Assert.NotEqual(first.WorkSessionId, second.WorkSessionId);
 
         await using var connection = new SqliteConnection($"Data Source={path}");

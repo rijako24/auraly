@@ -11,7 +11,8 @@ namespace Auraly.Pos.Edge.Host;
 public sealed record PosLocalWorkSession(
     Guid WorkSessionId,
     Guid UserId,
-    DateTimeOffset OpenedAt);
+    DateTimeOffset OpenedAt,
+    bool CreatedNow = false);
 
 /// <summary>
 /// Canonical owner of an enrolled device's operational sessions. Authentication
@@ -77,7 +78,7 @@ public sealed class PosLocalWorkSessionStore(
         }
 
         var opened = new PosLocalWorkSession(
-            ids.NewId(), userId, timeProvider.GetUtcNow());
+            ids.NewId(), userId, timeProvider.GetUtcNow(), CreatedNow: true);
         await using (var insert = connection.CreateCommand())
         {
             insert.Transaction = transaction;

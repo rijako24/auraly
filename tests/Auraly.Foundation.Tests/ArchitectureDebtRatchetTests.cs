@@ -250,7 +250,8 @@ public sealed class ArchitectureDebtRatchetTests
         Assert.Contains("Procedure(\"dbo.SellerOrderCreate\",connection,transaction)", sellerSource, StringComparison.Ordinal);
         Assert.Contains("FindEditableAsync(connection,transaction", sellerSource, StringComparison.Ordinal);
         Assert.Contains("ConfirmSystemTransferAtomicallyAsync", sellerSource, StringComparison.Ordinal);
-        Assert.Contains("Procedure(\"dbo.SellerOrderConfirm\",connection,transaction)", sellerSource, StringComparison.Ordinal);
+        Assert.Contains("P(\"@Status\",review?5:2)", sellerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("SellerOrderConfirm", sellerSource, StringComparison.Ordinal);
 
         var editableOrderSql = File.ReadAllText(Path.Combine(
             RepositoryRoot, "database", "Auraly.Database", "StoredProcedures", "SellerOrderEditableGet.sql"));

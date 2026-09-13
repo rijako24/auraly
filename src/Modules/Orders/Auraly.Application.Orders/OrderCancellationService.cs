@@ -36,6 +36,19 @@ public sealed class OrderCancellationService(
         if (!actor.Permissions.Contains(OrderPermissionCodes.Cancel))
             throw new OrderForbiddenException(
                 $"Permission '{OrderPermissionCodes.Cancel}' is required.");
+        return await CancelAuthorizedAsync(
+            actor, orderId, request, idempotencyKey, cancellationToken);
+    }
+
+    public async Task<CancelOrderResponse> CancelAuthorizedAsync(
+        OrderActor actor,
+        Guid orderId,
+        CancelOrderRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(request);
         if (orderId == Guid.Empty || string.IsNullOrWhiteSpace(request.Reason) ||
             request.Reason.Trim().Length > 500 || string.IsNullOrWhiteSpace(idempotencyKey) ||
             idempotencyKey.Trim().Length > 160)

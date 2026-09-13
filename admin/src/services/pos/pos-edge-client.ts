@@ -8,7 +8,10 @@ import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
 import type { TenantBranding } from "@/services/api/tenants";
 import { printWorkSessionClosure } from "./pos-work-session-close";
-import { announceSessionReplacement } from "@/lib/auth-session";
+import {
+  announceSessionReplacement,
+  runLocalPosSessionReplacement,
+} from "@/lib/auth-session";
 import { buildLoginRedirect } from "@/lib/login-redirect";
 import { isCurrentEdgeUserSession } from "./pos-edge-session";
 import {
@@ -577,7 +580,7 @@ export interface PosClient {
   settlementConfiguration(): Promise<PosSettlementConfiguration>;
   openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
-  searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
+  searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null, publicPriceOnly?: boolean): Promise<PosCatalogSearchPage>;
   productWarehouseAvailability(
     productId: string,
     signal?: AbortSignal,
@@ -754,6 +757,7 @@ export function saveBrowserPrinterConfiguration(
 
 export class PosEdgeClient implements PosClient {
   readonly mode = "edge" as const;
+  private latestHealth: Awaited<ReturnType<PosClient["health"]>> | null = null;
 
   constructor(
     private readonly sessionToken: string,
@@ -800,7 +804,10 @@ export class PosEdgeClient implements PosClient {
       preparationCanResume: boolean;
       synchronizationStages: string[];
       failedSynchronizationStage: string | null;
-    }>("/edge/v1/health");
+    }>("/edge/v1/health").then((health) => {
+      this.latestHealth = health;
+      return health;
+    });
   }
 
 
@@ -992,10 +999,20 @@ export class PosEdgeClient implements PosClient {
   }
 
   async login(username: string, password: string) {
-    const session = await this.request<PosLocalUserSession>("/edge/v1/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    });
+    const session = await runLocalPosSessionReplacement(
+      () => {
+        const previousSession = this.userSessionToken;
+        this.userSessionToken = null;
+        if (isCurrentEdgeUserSession(
+          previousSession,
+          window.localStorage.getItem("auraly.pos.user-session"),
+        )) window.localStorage.removeItem("auraly.pos.user-session");
+      },
+      () => this.request<PosLocalUserSession>("/edge/v1/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      }),
+    );
     if (!session.token) throw new PosEdgeError("El servicio local no devolvió una sesión de usuario.", 500);
     this.userSessionToken = session.token;
     window.localStorage.setItem("auraly.pos.user-session", session.token);
@@ -1013,10 +1030,20 @@ export class PosEdgeClient implements PosClient {
     return session;
   }
 
-  openWorkSession() {
-    return this.request<PosLocalUserSession>("/edge/v1/work-sessions/current", {
+  async openWorkSession() {
+    const session = await this.request<PosLocalUserSession>("/edge/v1/work-sessions/current", {
       method: "POST",
     });
+    if (this.latestHealth) {
+      this.latestHealth = {
+        ...this.latestHealth,
+        userId: session.userId,
+        userDisplayName: session.displayName,
+        workSessionId: session.workSessionId,
+        permissions: session.permissions,
+      };
+    }
+    return session;
   }
 
   async logout() {
@@ -1037,13 +1064,14 @@ export class PosEdgeClient implements PosClient {
     }
   }
 
-  searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null) {
+  searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null, publicPriceOnly = false) {
     const query = new URLSearchParams({
       search,
       skip: String(skip),
       take: String(take),
     });
     if (customerId) query.set("customerId", customerId);
+    if (publicPriceOnly) query.set("publicPriceOnly", "true");
     return this.request<PosCatalogSearchPage>(
       `/edge/v1/catalog/products?${query}`,
     );
@@ -1299,7 +1327,7 @@ export class PosEdgeClient implements PosClient {
   }
 
   async saveOrder(draft: PosDraft) {
-    const health = await this.health();
+    const health = this.latestHealth ?? await this.health();
     if (!health.serverConnected || !health.workSessionId)
       throw new Error("Guardar el pedido requiere conexión con Auraly.");
     const order = await savePosDraftAsOrder(

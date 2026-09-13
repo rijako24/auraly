@@ -38,6 +38,7 @@ public sealed class DianSchemaValidator
         AddSchema(schemas, null, Path.Combine(main, "UBL-Invoice-2.1.xsd"), resolver);
         AddSchema(schemas, null, Path.Combine(main, "UBL-CreditNote-2.1.xsd"), resolver);
         AddSchema(schemas, null, Path.Combine(main, "UBL-DebitNote-2.1.xsd"), resolver);
+        AddSchema(schemas, null, Path.Combine(main, "UBL-AttachedDocument-2.1.xsd"), resolver);
         schemas.Compile();
     }
 
@@ -374,13 +375,18 @@ public sealed class DianSchemaValidator
         // The .NET XSD validator narrows xs:integer to decimal and rejects valid
         // X.509 serial numbers longer than 29 digits. XMLDSIG defines that value
         // as an unbounded integer. Signature structure is checked above and its
-        // cryptographic integrity is verified by DianXadesSigner, so remove only
-        // the signature from the clone used for UBL XSD validation.
-        normalized.Descendants(Ds + "Signature")
-            .Select(signature => signature.Ancestors(Ext + "UBLExtension").FirstOrDefault())
-            .OfType<XElement>()
-            .Distinct()
-            .Remove();
+        // Cryptographic integrity is verified by DianXadesSigner. AttachedDocument
+        // has no second DIAN extension, so preserve its signature structure and
+        // normalize only the unbounded XMLDSIG serial that .NET narrows to decimal.
+        if (normalized.Root?.Name == DianUblNamespaces.AttachedDocument + "AttachedDocument")
+            foreach (var serial in normalized.Descendants(Ds + "X509SerialNumber"))
+                serial.Value = "1";
+        else
+            normalized.Descendants(Ds + "Signature")
+                .Select(signature => signature.Ancestors(Ext + "UBLExtension").FirstOrDefault())
+                .OfType<XElement>()
+                .Distinct()
+                .Remove();
         foreach (var element in normalized.Descendants()
                      .Where(value => value.Name == Sts + "ProviderID" ||
                                      value.Name == Sts + "AuthorizationProviderID"))

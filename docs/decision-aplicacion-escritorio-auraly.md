@@ -22,7 +22,7 @@ No es técnicamente seguro ni posible que una página web instale silenciosament
 2. Si no existe tenant en la URL, el login solicita empresa, usuario y contraseña. El ejemplo de empresa es `@auraly`.
 3. Si el enlace contiene el tenant key, por ejemplo `?tenant=@auraly`, el campo empresa aparece resuelto y no se puede editar.
 4. Sin enrolamiento, el login siempre valida contra Auraly Server y un fallo de red no se sustituye por una credencial almacenada en el navegador.
-5. Con enrolamiento, la misma pantalla visual valida primero la identidad en el runtime local protegido. Un perfil exclusivamente operativo entra a Facturación; un perfil con módulos de servidor y conectividad establece en el mismo envío su sesión web y abre el destino autorizado. No existe una segunda pantalla de “cajero”.
+5. Con enrolamiento, la misma pantalla visual valida exclusivamente la identidad en el runtime local protegido y entra a Facturación. No encadena autenticación web ni espera al servidor; el acceso explícito a módulos administrativos usa el modo Cloud.
 6. Un login online correcto recuerda el tenant key en ese dispositivo. Un intento fallido nunca reemplaza el valor recordado.
 7. El tenant key es inmutable después de crear la empresa. La aplicación puede copiar un enlace empresarial, pero no modificar la clave.
 
@@ -106,13 +106,16 @@ El navegador no intenta emular capacidades locales. POS Edge no implementa otro 
 - una conexión disponible actualiza usuarios, permisos, bloqueos y revocaciones mediante la sincronización de seguridad existente, pero una falla de red no convierte en inválida una preparación durable ya completada;
 - el snapshot y los deltas de seguridad son los únicos propietarios de los permisos locales; el lease de traspaso puede refrescar el verificador, pero nunca sustituye, amplía ni reduce una proyección de permisos ya instalada;
 - una instalación que proviene de la versión que permitía al lease pisar la proyección marca ese formato como anterior y descarga una sola vez el snapshot completo; después retoma la sincronización incremental por cursor;
-- al abrir, POS Edge inicia la actualización de identidades en segundo plano sin bloquear a usuarios ya descargados; si el usuario escrito no existe localmente, el submit visible conserva su estado de carga, espera como máximo una única actualización serializada y reintenta localmente, cubriendo la carrera con usuarios creados mientras la aplicación estuvo cerrada;
-- una contraseña incorrecta de un usuario ya presente nunca dispara sincronización ni consulta de autenticación al servidor;
+- al abrir, POS Edge inicia la actualización de identidades en segundo plano sin bloquear el login; el submit valida solamente la proyección local ya promovida y nunca espera esa actualización;
+- el arranque ejecuta una sola reconciliación acotada; la primera conexión de Web PubSub no la duplica y solo una reconexión posterior solicita un nuevo catch-up por eventos posiblemente perdidos;
+- un usuario ausente, una contraseña incorrecta o una proyección local no preparada fallan localmente y nunca disparan sincronización ni consulta de autenticación al servidor;
 - el primer usuario con permiso `sales.create` que elige trabajar sin conexión entra a ventas automáticamente cuando termina la descarga inicial, sin un segundo login;
 - la identidad local incluye a todos los usuarios activos con permiso `sales.create` para ese negocio, de modo que cualquiera de ellos puede iniciar una sesión local posteriormente;
 - una sesión local vigente se recupera al reiniciar la aplicación; el lanzador no la revoca ni obliga a adquirir otra concesión por abrir de nuevo;
+- reanudar una sesión de trabajo ya existente no despierta la outbox; únicamente crear una sesión operativa nueva encola y señala su apertura;
 - una vez enrolado, el equipo usa siempre el runtime local-first; no existe un archivo ni selector de modo que pueda contradecir el enrolamiento;
 - confirmar una venta escribe documento, numeración y outbox en una sola transacción SQLite;
+- guardar un pedido hace una sola escritura autoritativa; si provenía de una recuperación, la actualización libera el claim en la misma transacción y la limpieza posterior del borrador es local y no exige permisos de Pedidos;
 - la sincronización es idempotente y llega al mismo motor del servidor;
 - Web PubSub notifica cambios; no reemplaza la outbox ni la reconciliación por cursor;
 - reiniciar la aplicación no pierde ventas confirmadas ni trabajo durable.
@@ -159,7 +162,7 @@ Las entradas y salidas de efectivo son movimientos explícitos del turno, con mo
 ## 9. Criterios de aceptación
 
 1. Web y ejecutable presentan exactamente el mismo login general; no existe un login separado de cajero.
-2. Una instalación no enrolada solo autentica contra el servidor; una instalación enrolada usa el runtime local para Facturación y, cuando el perfil conectado posee módulos de servidor, establece la sesión web desde el mismo login.
+2. Una instalación no enrolada solo autentica contra el servidor; una instalación enrolada autentica exclusivamente en el runtime local y entra a Facturación sin depender del servidor.
 3. El tenant key no se puede editar después de crearlo.
 4. El dispositivo recuerda la última empresa solo tras autenticación correcta.
 5. El instalador descargado no contiene información del tenant.

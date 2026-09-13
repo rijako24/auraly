@@ -110,6 +110,8 @@
     "src/services/orders/pos-order-update-lines.test.ts",
     "src/services/orders/order-batch-selection.ts",
     "src/services/orders/order-batch-selection.test.ts",
+    "src/services/orders/order-date-filter.ts",
+    "src/services/orders/order-date-filter.test.ts",
     "src/services/orders/order-http-error.ts",
     "src/services/orders/order-http-error.test.ts",
     "src/services/orders/seller-order-reliability.ts",

@@ -148,6 +148,7 @@ builder.Services.AddScoped<IDianNumberingRangeClient, DianNumberingRangeClient>(
 builder.Services.AddSingleton<DianInvoiceUblBuilder>();
 builder.Services.AddSingleton<DianCreditNoteUblBuilder>();
 builder.Services.AddSingleton<DianDebitNoteUblBuilder>();
+builder.Services.AddSingleton<DianAttachedDocumentBuilder>();
 builder.Services.AddSingleton<DianSchemaValidator>();
 builder.Services.AddSingleton<DianPayrollXmlBuilder>();
 builder.Services.AddSingleton<DianPayrollSchemaValidator>();

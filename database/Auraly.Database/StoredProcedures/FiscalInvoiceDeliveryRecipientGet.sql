@@ -5,31 +5,43 @@ CREATE PROCEDURE dbo.FiscalInvoiceDeliveryRecipientGet
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT fiscal.DeliveryEmail,business.Name,sale.DocumentNumber,
-           fiscal.FiscalNumber,fiscal.IssuedAt,
-           COALESCE(party.DisplayName,party.LegalName,
-             LTRIM(RTRIM(CONCAT(party.FirstName,N' ',party.LastName))),
-             sale.CustomerIdentification),sale.PayableAmount,
-           sale.CustomerIdentification,sale.DocumentType,
-           signedXml.Content,signedXml.FileName,
-           applicationResponse.Content,applicationResponse.FileName
+    SELECT fiscal.BusinessId,fiscal.DeliveryEmail,sale.DocumentNumber,
+           fiscal.FiscalNumber,fiscal.IssuedAt,sale.PayableAmount,
+           signedXml.Content,applicationResponse.Content,
+           attachedDocument.Content,attachedDocument.FileName,
+           issuer.CertificateProvider,issuer.CertificateKeyReference,
+           issuer.CertificateThumbprint,issuer.TestSetId,statusResponse.Content
     FROM dbo.FiscalDocuments fiscal
     JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
      AND business.TenantId=@TenantId
     JOIN dbo.SalesDocuments sale ON sale.DocumentId=fiscal.DocumentId
      AND sale.BusinessId=fiscal.BusinessId
-    LEFT JOIN dbo.Customers customer ON customer.CustomerId=sale.CustomerId
-    LEFT JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+    JOIN dbo.FiscalDocumentProcesses process ON process.DocumentId=fiscal.DocumentId
+     AND process.BusinessId=fiscal.BusinessId
+    JOIN dbo.FiscalIssuerConfigurations issuer
+      ON issuer.FiscalIssuerConfigurationId=process.FiscalIssuerConfigurationId
     CROSS APPLY(
       SELECT TOP(1) artifact.Content,artifact.FileName
       FROM dbo.FiscalArtifacts artifact
       WHERE artifact.DocumentId=fiscal.DocumentId AND artifact.ArtifactType=N'SignedXml'
       ORDER BY artifact.ArtifactVersion DESC) signedXml
-    CROSS APPLY(
+    OUTER APPLY(
       SELECT TOP(1) artifact.Content,artifact.FileName
       FROM dbo.FiscalArtifacts artifact
       WHERE artifact.DocumentId=fiscal.DocumentId AND artifact.ArtifactType=N'DianApplicationResponse'
       ORDER BY artifact.ArtifactVersion DESC) applicationResponse
+    OUTER APPLY(
+      SELECT TOP(1) artifact.Content,artifact.FileName
+      FROM dbo.FiscalArtifacts artifact
+      WHERE artifact.DocumentId=fiscal.DocumentId
+        AND artifact.ArtifactType=N'SignedAttachedDocument'
+      ORDER BY artifact.ArtifactVersion DESC) attachedDocument
+    OUTER APPLY(
+      SELECT TOP(1) artifact.Content
+      FROM dbo.FiscalArtifacts artifact
+      WHERE artifact.DocumentId=fiscal.DocumentId
+        AND artifact.ArtifactType=N'SanitizedSoapResponse'
+      ORDER BY artifact.ArtifactVersion DESC) statusResponse
     WHERE fiscal.DocumentId=@DocumentId
       AND fiscal.DeliveryOutboxMessageId=@MessageId
       AND fiscal.FiscalStatus=N'DianAccepted'

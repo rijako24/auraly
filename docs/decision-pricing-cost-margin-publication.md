@@ -207,6 +207,13 @@ producto crea una versión inmutable en `ProductPricePreparations`.
 Esta tabla es simultáneamente el estado pendiente y el kardex de preparaciones;
 no existe un segundo borrador ni una auditoría duplicada de preparación.
 
+Una relación de productos agrupa la preparación y publicación únicamente cuando
+`ProductLinks.SharesPrice=1`: la vista muestra solo el producto principal como
+seleccionable, presenta sus hijos de precio como información y los publica en la
+misma transacción. Compartir inventario (`SharesInventory`) o permitir conversión
+(`AllowsConversion`) sin compartir precio no agrupa la vista ni la publicación;
+cada producto conserva su preparación y publicación independientes.
+
 Al publicar, si la sede tiene `SharesProductPrices=1`, se crea una versión
 publicada, un cambio de catálogo y un mensaje de outbox para cada sede activa del
 tenant que también comparte precios. Si no comparte, esos tres efectos se limitan

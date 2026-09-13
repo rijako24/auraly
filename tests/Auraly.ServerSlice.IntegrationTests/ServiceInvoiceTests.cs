@@ -171,6 +171,49 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal($"service-{context.CustomerId:N}@auraly.test",
             deliveryReader.GetString(1));
         Assert.Equal(1, deliveryReader.GetInt32(2));
+        await deliveryReader.DisposeAsync();
+
+        var deliveryLeaseId = Guid.NewGuid();
+        Guid deliveryMessageId;
+        await using (var lease = new SqlCommand("""
+            UPDATE message
+            SET LeaseId=@LeaseId,LeaseExpiresAt=DATEADD(MINUTE,5,SYSDATETIMEOFFSET())
+            OUTPUT inserted.MessageId
+            FROM dbo.TenantProvisioningOutboxMessages message
+            JOIN dbo.FiscalDocuments fiscal
+              ON fiscal.DeliveryOutboxMessageId=message.MessageId
+            WHERE fiscal.DocumentId=@DocumentId AND message.ProcessedAt IS NULL;
+            """, connection))
+        {
+            lease.Parameters.AddWithValue("@LeaseId", deliveryLeaseId);
+            lease.Parameters.AddWithValue("@DocumentId", first.DocumentId);
+            deliveryMessageId = (Guid)(await lease.ExecuteScalarAsync())!;
+        }
+
+        var attachedDocument = Encoding.UTF8.GetBytes("<AttachedDocument>signed</AttachedDocument>");
+        var attachedHash = SHA256.HashData(attachedDocument);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await using var save = new SqlCommand("""
+                EXEC dbo.FiscalInvoiceDeliveryArtifactSave
+                  @DocumentId,@MessageId,@TenantId,@LeaseId,@Content,@ContentHash,@FileName;
+                """, connection);
+            save.Parameters.AddWithValue("@DocumentId", first.DocumentId);
+            save.Parameters.AddWithValue("@MessageId", deliveryMessageId);
+            save.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            save.Parameters.AddWithValue("@LeaseId", deliveryLeaseId);
+            save.Parameters.AddWithValue("@Content", attachedDocument);
+            save.Parameters.AddWithValue("@ContentHash", attachedHash);
+            save.Parameters.AddWithValue("@FileName", "AttachedDocument-test.xml");
+            await save.ExecuteNonQueryAsync();
+        }
+
+        await using var storedArtifact = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.FiscalArtifacts
+            WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedAttachedDocument';
+            """, connection);
+        storedArtifact.Parameters.AddWithValue("@DocumentId", first.DocumentId);
+        Assert.Equal(1, Convert.ToInt32(await storedArtifact.ExecuteScalarAsync()));
     }
 
     [Fact]

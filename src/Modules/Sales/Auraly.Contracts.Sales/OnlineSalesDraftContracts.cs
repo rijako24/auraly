@@ -60,7 +60,8 @@ public sealed record SearchOnlineSalesRequest(
     string? Search = null,
     int Skip = 0,
     int Take = 50,
-    Guid? CustomerId = null);
+    Guid? CustomerId = null,
+    bool PublicPriceOnly = false);
 
 public sealed record OnlineSalesProduct(
     Guid ProductId,

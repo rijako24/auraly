@@ -11,7 +11,6 @@ import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } fr
 
 export type PosQuantityShortage = {
   lineId: string | null;
-  captureValue?: string | null;
   productName: string;
   requestedQuantity: number;
   availableQuantity: number;

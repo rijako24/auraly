@@ -30,6 +30,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { canOpenPosAdministrativeMenu } from "@/lib/default-start-route";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
+import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
 import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
 import {
   PosCatalogProduct,
@@ -112,7 +113,10 @@ import {
 } from "@/services/pos/pos-approval-client";
 import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-approval-permission";
 import { calculateRetailUnitPrice } from "./pos-retail-price";
-import { canRequestOrderSave } from "./pos-order-save-availability";
+import {
+  canRequestOrderSave,
+  removingLastRecoveredOrderLineCancelsOrder,
+} from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
 import { capturePosFunctionShortcut, isPosCashDrawerShortcut, POS_ACTION_SHORTCUTS } from "./pos-function-shortcut";
 import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
@@ -196,6 +200,7 @@ function authorizationIsCurrent(authorization: PosSensitiveAuthorization | null)
 
 export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
+  const captureInFlight = useRef(false);
   const router = useRouter();
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
   const cloudAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -216,6 +221,10 @@ export default function PosPage() {
     removeLine: (lineId: string) => { void lineId; return Promise.resolve(); },
     restartSale: () => Promise.resolve(),
   });
+  const initialEdgeHealth = useRef<{
+    client: PosEdgeClient;
+    health: Awaited<ReturnType<PosClient["health"]>>;
+  } | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
   const [workspaceChanging, setWorkspaceChanging] = useState(false);
   const [onlineOptions, setOnlineOptions] = useState<SalesWorkspaceOption[]>([]);
@@ -507,6 +516,23 @@ export default function PosPage() {
   }, [client]);
 
   useEffect(() => {
+    if (!client || !serverConnected) {
+      setOrdersCount(0);
+      return;
+    }
+    let active = true;
+    const range = orderDayRange(localOrderDateValue());
+    void client.orders({ ...range, status: "Available", page: 1, pageSize: 1 })
+      .then((page) => {
+        if (active) setOrdersCount(page.totalCount);
+      })
+      .catch(() => {
+        if (active) setOrdersCount(0);
+      });
+    return () => { active = false; };
+  }, [client, ordersRefreshVersion, serverConnected]);
+
+  useEffect(() => {
     let active = true;
     const bootstrap = async () => {
       const workspaceChangeRequested =
@@ -521,8 +547,14 @@ export default function PosPage() {
             const edgeClient = new PosEdgeClient(edgeToken, readEdgeUserSession());
             let health = await edgeClient.health();
             if (health.userId && !health.workSessionId) {
-              await edgeClient.openWorkSession();
-              health = await edgeClient.health();
+              const session = await edgeClient.openWorkSession();
+              health = {
+                ...health,
+                userDisplayName: session.displayName,
+                userId: session.userId,
+                workSessionId: session.workSessionId,
+                permissions: session.permissions,
+              };
             }
             if (active) {
               setPreparationHealth(health);
@@ -562,6 +594,7 @@ export default function PosPage() {
               .get("fiscalHabilitation") === "1";
             if (shouldUseEnrolledPosRuntime(health, workspaceChangeRequested, fiscalHabilitationRequested)) {
               if (active) {
+                initialEdgeHealth.current = { client: edgeClient, health };
                 setEdgeLoginState(
                   !health.identityReady || isPosPreparationPending(health.status)
                     ? "preparing"
@@ -675,7 +708,11 @@ export default function PosPage() {
       }
       checking = true;
       try {
-        let health = await client.health();
+        const preparedHealth = initialEdgeHealth.current?.client === client
+          ? initialEdgeHealth.current.health
+          : null;
+        if (preparedHealth) initialEdgeHealth.current = null;
+        let health = preparedHealth ?? await client.health();
         applyHealth(health);
         if (client instanceof PosEdgeClient && shouldCompletePosEnrollment(
           health.status,
@@ -713,8 +750,6 @@ export default function PosPage() {
         }
         if (client instanceof PosEdgeClient && health.userId && !health.workSessionId) {
           const session = await client.openWorkSession();
-          health = await client.health();
-          applyHealth(health);
           if (active) {
             setWorkstation((current) => ({
               ...current,
@@ -874,6 +909,13 @@ export default function PosPage() {
   async function requestRemoveLine(lineId: string) {
     const line = draft?.lines.find((candidate) => candidate.lineId === lineId);
     if (!line || busy) return;
+    if (removingLastRecoveredOrderLineCancelsOrder({
+      sourceOrderId: draft?.sourceOrderId,
+      lineCount: draft?.lines.length ?? 0,
+    })) {
+      await requestCancelSale();
+      return;
+    }
     try {
       await authorizeSensitiveEntry(
         "sales.lines.remove",
@@ -1224,17 +1266,24 @@ export default function PosPage() {
 
   async function capture(event: FormEvent) {
     event.preventDefault();
+    if (captureInFlight.current) return;
+    captureInFlight.current = true;
     const value = scan.trim();
     if (value) setScan("");
-    const parsed = parsePosBarcodeCapture(value);
-    if (!parsed.valid) {
-      setError(parsed.message);
-      setMessage("Revisa la captura");
-      rejectScan(value);
-      focusScanner();
-      return;
+    setQuantityShortage(null);
+    try {
+      const parsed = parsePosBarcodeCapture(value);
+      if (!parsed.valid) {
+        setError(parsed.message);
+        setMessage("Revisa la captura");
+        rejectScan(value);
+        focusScanner();
+        return;
+      }
+      await captureValue(parsed.code, parsed.quantity);
+    } finally {
+      captureInFlight.current = false;
     }
-    await captureValue(parsed.code, parsed.quantity);
   }
 
   async function captureValue(value: string, requestedQuantity = 1): Promise<boolean> {
@@ -1243,7 +1292,7 @@ export default function PosPage() {
       setError(
         client.mode === "online"
           ? "No hay conexi\u00f3n con Auraly. La venta en l\u00ednea requiere conexi\u00f3n con el servidor."
-          : "Los servicios locales del equipo no est\u00e1n disponibles. El c\u00f3digo se conservar\u00e1 para reintentar.",
+          : "Los servicios locales del equipo no est\u00e1n disponibles. El producto no fue agregado.",
       );
       setMessage(client.mode === "online" ? "Esperando conexi\u00f3n con Auraly" : "Esperando servicios del equipo");
       focusScanner();
@@ -1292,19 +1341,6 @@ export default function PosPage() {
             if (failure) {
               setError(null);
               setMessage(failure.message);
-              if (changed.status === "InsufficientInventory" && changed.availability)
-                setQuantityShortage({
-                  lineId: null,
-                  captureValue: value,
-                  productName: capturedLine.description,
-                  requestedQuantity,
-                  availableQuantity: changed.availability.availableQuantity,
-                  maximumLineQuantity: Math.max(0, changed.availability.availableQuantity - (draft?.lines ?? [])
-                    .filter((line) => line.productId.value === capturedLine.productId.value)
-                    .reduce((total, line) => total + line.quantity, 0)),
-                  allowsFractionalSale: capturedLine.allowsFractionalSale,
-                  managesInventory: true,
-                });
             }
             return false;
           }
@@ -1328,19 +1364,6 @@ export default function PosPage() {
         if (failure) {
           setError(null);
           setMessage(failure.message);
-          if (result.status === "InsufficientInventory" && result.availability)
-            setQuantityShortage({
-              lineId: null,
-              captureValue: value,
-              productName: result.capturedProduct?.product.name ?? value,
-              requestedQuantity,
-              availableQuantity: result.availability.availableQuantity,
-              maximumLineQuantity: Math.max(0, result.availability.availableQuantity - (result.draft?.lines ?? [])
-                .filter((line) => line.productId.value === result.capturedProduct?.product.productId)
-                .reduce((total, line) => total + line.quantity, 0)),
-              allowsFractionalSale: result.capturedProduct?.product.allowsFractionalSale ?? false,
-              managesInventory: true,
-            });
         }
       }
       return false;
@@ -2141,13 +2164,19 @@ export default function PosPage() {
 
   const searchProducts = useCallback(
     (term: string, skip: number) =>
-      client?.searchProducts(term, skip, 50, selectedCustomer?.customerId ?? null) ??
+      client?.searchProducts(
+        term,
+        skip,
+        50,
+        priceVerifierMode ? null : selectedCustomer?.customerId ?? null,
+        priceVerifierMode,
+      ) ??
       Promise.resolve({
         items: [],
         hasMore: false,
         nextOffset: null,
       }),
-    [client, selectedCustomer?.customerId],
+    [client, priceVerifierMode, selectedCustomer?.customerId],
   );
 
   const searchCustomers = useCallback(
@@ -2301,19 +2330,6 @@ export default function PosPage() {
         if (failure) {
           setError(null);
           setMessage(failure.message);
-          if (result.status === "InsufficientInventory" && result.availability)
-            setQuantityShortage({
-              lineId: null,
-              captureValue: product.productCode,
-              productName: product.name,
-              requestedQuantity: result.availability.requestedQuantity,
-              availableQuantity: result.availability.availableQuantity,
-              maximumLineQuantity: Math.max(0, result.availability.availableQuantity - linesBeforeCapture
-                .filter((line) => line.productId.value === product.productId)
-                .reduce((total, line) => total + line.quantity, 0)),
-              allowsFractionalSale: product.allowsFractionalSale,
-              managesInventory: true,
-            });
         }
         return false;
       }
@@ -2325,21 +2341,21 @@ export default function PosPage() {
         const changed = await client.changeQuantity(confirmedDraft.draftId.value, addedLine.lineId, targetQuantity);
         if (changed.status !== "Added" || !changed.draft) {
           const failure = describeCaptureFailure(changed);
+          try {
+            const rolledBack = await client.removeLine(
+              confirmedDraft.draftId.value,
+              addedLine.lineId,
+            );
+            setDraft(rolledBack);
+          } catch {
+            setDraft(confirmedDraft);
+            setError("No fue posible revertir la línea después de rechazar la cantidad. Revisa la venta antes de cobrar.");
+            setMessage("Revisión manual requerida");
+            return false;
+          }
           if (failure) {
             setError(null);
             setMessage(failure.message);
-            if (changed.status === "InsufficientInventory" && changed.availability)
-              setQuantityShortage({
-                lineId: addedLine.lineId,
-                productName: product.name,
-                requestedQuantity: targetQuantity,
-                availableQuantity: changed.availability.availableQuantity,
-                maximumLineQuantity: Math.max(0, changed.availability.availableQuantity - confirmedDraft.lines
-                  .filter((line) => line.productId.value === addedLine.productId.value && line.lineId !== addedLine.lineId)
-                  .reduce((total, line) => total + line.quantity, 0)),
-                allowsFractionalSale: addedLine.allowsFractionalSale,
-                managesInventory: true,
-              });
           }
           return false;
         }
@@ -3367,6 +3383,7 @@ export default function PosPage() {
               <OrdersWorkspace
                 key={`compact-orders-${ordersRefreshVersion}`}
                 compact
+                initialStatus="Available"
                 connected={serverConnected}
                 activeOrderId={draft?.sourceOrderId}
                 loadPage={(filters) => client!.orders(filters)}
@@ -3414,6 +3431,7 @@ export default function PosPage() {
           <main className="min-h-0 flex-1 overflow-auto p-5">
             <OrdersWorkspace
               key={`expanded-orders-${ordersRefreshVersion}`}
+              initialStatus="Available"
               connected={serverConnected}
               activeOrderId={draft?.sourceOrderId}
               loadPage={(filters) => client.orders(filters)}
@@ -3680,10 +3698,9 @@ export default function PosPage() {
         value={quantityShortage}
         busy={busy}
         onConfirm={async (quantity) => {
-          const { lineId, captureValue: capturedValue } = quantityShortage;
+          const { lineId } = quantityShortage;
           setQuantityShortage(null);
           if (lineId) await changeQuantity(lineId, quantity, false);
-          else if (capturedValue) await captureValue(capturedValue, quantity);
           if (productSearchOpen) focusProductSearch();
           else focusScanner();
         }}

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { History, PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
+import { History, Link2, PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { ReportViewer } from "@/components/reports/report-viewer";
@@ -218,7 +218,7 @@ export default function PricingPage() {
     {
       accessorKey: "productName",
       header: "Producto",
-      cell: ({ row }) => <div className="flex min-h-16 min-w-52 flex-col justify-center">
+      cell: ({ row }) => <div className="flex min-h-16 min-w-80 flex-col justify-center">
         <p className="font-semibold">{row.original.productName}</p>
         <p className="text-xs text-muted-foreground">
           {row.original.productCode} · {row.original.origin === "Product"
@@ -228,6 +228,13 @@ export default function PricingPage() {
         <p className="mt-1 text-xs text-muted-foreground">
           IVA de venta {formatPercent(row.original.salesTaxRate)} · {formatDateTime(row.original.createdAt)}
         </p>
+        {row.original.linkedProducts.length > 0 && <div className="mt-3 space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-foreground">
+          <p className="flex items-center gap-1.5 text-xs font-bold text-primary"><Link2 className="h-3.5 w-3.5" />Productos vinculados · se publican con el principal</p>
+          {row.original.linkedProducts.map((child) => <div key={child.productId} className="flex items-start justify-between gap-3 border-t border-primary/15 pt-2 text-xs first:border-0 first:pt-0">
+            <span className="min-w-0"><strong className="block truncate">{child.productName}</strong><span className="text-muted-foreground">{child.productCode} · factor {formatCompactNumber(child.priceFactor)}</span></span>
+            <span className="shrink-0 text-right tabular-nums"><span className="block text-muted-foreground">{formatCurrency(child.currentSalePrice)}</span><strong className="text-primary">→ {child.preparedSalePrice == null ? "Margen pendiente" : formatCurrency(child.preparedSalePrice)}</strong></span>
+          </div>)}
+        </div>}
       </div>,
     },
     {
@@ -467,4 +474,8 @@ function formatPercent(value: number | null) {
   return value === null ? "Sin definir" : `${new Intl.NumberFormat("es-CO", {
     maximumFractionDigits: 4,
   }).format(value)} %`;
+}
+
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 4 }).format(value);
 }

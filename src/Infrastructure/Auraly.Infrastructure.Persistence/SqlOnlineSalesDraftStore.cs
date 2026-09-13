@@ -546,9 +546,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
         {
             if (cancelSourceOrder)
             {
-                if (!user.Permissions.Contains(OrderPermissionCodes.Cancel))
-                    throw new OnlineSalesDraftForbiddenException(
-                        $"Permission '{OrderPermissionCodes.Cancel}' is required.");
                 cancellation = await CancelOrderCoreAsync(
                     connection,
                     transaction,

@@ -75,6 +75,24 @@ public sealed class DianXadesSignerTests : IDisposable
     }
 
     [Fact]
+    public async Task Signed_attached_document_is_cryptographically_valid_and_passes_xsd()
+    {
+        var signer = CreateSigner(certificate);
+        var signedInvoice = await signer.SignAsync(
+            CreateRequest(new DianInvoiceUblBuilder().Build(CreateInvoice()).Xml, certificate));
+        var response = Encoding.UTF8.GetBytes(
+            "<ApplicationResponse xmlns=\"urn:oasis:names:specification:ubl:schema:xsd:ApplicationResponse-2\" xmlns:cac=\"urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2\" xmlns:cbc=\"urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2\"><cbc:IssueDate>2026-07-28</cbc:IssueDate><cbc:IssueTime>10:16:00-05:00</cbc:IssueTime><cac:DocumentResponse><cac:Response><cbc:ResponseCode>00</cbc:ResponseCode></cac:Response></cac:DocumentResponse></ApplicationResponse>");
+        var attached = new DianAttachedDocumentBuilder().Build(
+            signedInvoice.SignedXml, response, DateTimeOffset.UtcNow);
+
+        var signedAttached = await signer.SignAsync(CreateRequest(attached.Xml, certificate));
+
+        DianXadesSigner.VerifySignature(signedAttached.SignedXml, certificate);
+        var validation = new DianSchemaValidator().Validate(signedAttached.SignedXml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+    }
+
+    [Fact]
     public async Task Changing_signed_document_invalidates_signature()
     {
         var unsigned = new DianInvoiceUblBuilder().Build(CreateInvoice()).Xml;

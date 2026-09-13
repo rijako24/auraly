@@ -37,7 +37,6 @@
     <Build Include="StoredProcedures\SellerOrderProductResolve.sql" />
     <Build Include="StoredProcedures\SellerOrderReplay.sql" />
     <Build Include="StoredProcedures\SellerOrderCreate.sql" />
-    <Build Include="StoredProcedures\SellerOrderConfirm.sql" />
     <Build Include="StoredProcedures\SellerOrderEditableGet.sql" />
     <Build Include="StoredProcedures\SellerOrderReplace.sql" />
     <Build Include="StoredProcedures\InventoryProcessingSequenceRequireCurrent.sql" />
@@ -76,6 +75,7 @@
     <Build Include="StoredProcedures\TenantSubscriptionSuspensionGet.sql" />
     <Build Include="StoredProcedures\TenantBillingReminderRecipientGet.sql" />
     <Build Include="StoredProcedures\FiscalInvoiceDeliveryRecipientGet.sql" />
+    <Build Include="StoredProcedures\FiscalInvoiceDeliveryArtifactSave.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationClaimGet.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationClaimMark.sql" />
     <Build Include="StoredProcedures\DispatchSettlementReturnsGet.sql" />

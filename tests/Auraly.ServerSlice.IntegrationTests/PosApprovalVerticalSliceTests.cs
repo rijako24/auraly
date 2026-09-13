@@ -3,8 +3,10 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Auraly.Application.Authorization;
 using Auraly.BuildingBlocks.Application.Synchronization;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -13,6 +15,60 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Push_recipients_must_be_able_to_authorize_the_requested_permission()
+    {
+        var supervisorId = Guid.NewGuid();
+        await SeedSupervisorAsync(supervisorId);
+        var store = new SqlPosApprovalPushSubscriptionStore(
+            new SqlServerConnectionFactory(
+                new AuralySqlConnectionSource(fixture.ConnectionString)));
+        var supervisor = new PosApprovalUserIdentity(
+            supervisorId,
+            fixture.TenantId,
+            fixture.BusinessId,
+            new HashSet<string>(StringComparer.Ordinal));
+        await store.UpsertAsync(
+            supervisor,
+            $"https://push.test/{supervisorId:N}",
+            "p256dh-test",
+            "auth-test",
+            CancellationToken.None);
+
+        var request = new PosApprovalRequestView(
+            Guid.NewGuid(),
+            fixture.TenantId,
+            fixture.BusinessId,
+            fixture.DeviceId,
+            fixture.WorkSessionId,
+            Guid.NewGuid(),
+            null,
+            CommercePermissionCodes.SalesRestartDraft,
+            fixture.UserId,
+            "Cajero prueba",
+            "{\"action\":\"RestartSale\"}",
+            PosApprovalStatus.Pending,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddMinutes(2),
+            null,
+            null,
+            null,
+            null);
+
+        Assert.Contains(
+            await store.RecipientsAsync(request, CancellationToken.None),
+            recipient => recipient.UserId == supervisorId);
+        Assert.DoesNotContain(
+            await store.RecipientsAsync(
+                request with
+                {
+                    ApprovalRequestId = Guid.NewGuid(),
+                    PermissionResource = CommercePermissionCodes.SalesDeletePausedDraft
+                },
+                CancellationToken.None),
+            recipient => recipient.UserId == supervisorId);
+    }
+
     [Fact]
     public async Task Remote_approval_is_scoped_pushed_consumed_once_and_synced_offline()
     {
@@ -334,6 +390,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
 
         using var supervisor = fixture.CreateUserClient(
             supervisorId,
+            CommercePermissionCodes.SalesRestartDraft,
             CommercePermissionCodes.PosApprovalsRead,
             CommercePermissionCodes.PosApprovalsAuthorize,
             CommercePermissionCodes.PosApprovalsReceiveNotifications);
@@ -358,7 +415,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(first);
         Assert.NotNull(second);
         Assert.Contains(pending!, item => item.ApprovalRequestId == first.ApprovalRequestId);
-        Assert.Contains(pending!, item => item.ApprovalRequestId == second.ApprovalRequestId);
+        Assert.DoesNotContain(pending!, item => item.ApprovalRequestId == second.ApprovalRequestId);
         Assert.NotEqual(first.ApprovalRequestId, second.ApprovalRequestId);
     }
 

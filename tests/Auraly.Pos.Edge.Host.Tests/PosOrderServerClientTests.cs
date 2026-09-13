@@ -36,15 +36,33 @@ public sealed class PosOrderServerClientTests
         var handler = new CancelOrderHandler(orderId);
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test") };
         var client = Client(http, Guid.NewGuid());
+        var session = Session();
+        var draftId = Guid.NewGuid();
+        var supervisorId = Guid.NewGuid();
+        var approvalId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+        var authorization = new PosSensitiveActionAuthorization(
+            null,
+            approvalId,
+            operationId,
+            session,
+            supervisorId,
+            "sales.drafts.restart");
 
         var result = await client.CancelAsync(
-            Session(), orderId, "Venta reiniciada.", "cancel-operation", default);
+            session, orderId, draftId, authorization,
+            "Venta reiniciada.", "cancel-operation", default);
 
         Assert.Equal("Cancelled", result.Status);
         Assert.Equal(HttpMethod.Post, handler.Method);
         Assert.Equal($"/api/pos/v1/orders/{orderId:D}/cancel", handler.Path);
         Assert.Equal("cancel-operation", handler.IdempotencyKey);
         Assert.Equal("Venta reiniciada.", handler.Reason);
+        Assert.Equal(draftId, handler.RestartAuthorization?.DraftId);
+        Assert.Equal(supervisorId, handler.RestartAuthorization?.AuthorizedByUserId);
+        Assert.Equal(approvalId, handler.RestartAuthorization?.ApprovalRequestId);
+        Assert.Equal(operationId, handler.RestartAuthorization?.OperationId);
+        Assert.Equal("sales.drafts.restart", handler.RestartAuthorization?.PermissionResource);
     }
 
     [Fact]
@@ -133,6 +151,7 @@ public sealed class PosOrderServerClientTests
         public string? Path { get; private set; }
         public string? IdempotencyKey { get; private set; }
         public string? Reason { get; private set; }
+        public RestartAuthorizationPayload? RestartAuthorization { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -143,6 +162,7 @@ public sealed class PosOrderServerClientTests
             IdempotencyKey = request.Headers.GetValues("Idempotency-Key").Single();
             var payload = await request.Content!.ReadFromJsonAsync<CancelPayload>(cancellationToken);
             Reason = payload!.Reason;
+            RestartAuthorization = payload.RestartAuthorization;
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = JsonContent.Create(new CancelOrderResponse(
@@ -152,5 +172,13 @@ public sealed class PosOrderServerClientTests
     }
 
     private sealed record PrintPayload(Guid[] OrderIds);
-    private sealed record CancelPayload(string Reason);
+    private sealed record CancelPayload(
+        string Reason,
+        RestartAuthorizationPayload RestartAuthorization);
+    private sealed record RestartAuthorizationPayload(
+        Guid DraftId,
+        string PermissionResource,
+        Guid AuthorizedByUserId,
+        Guid? ApprovalRequestId,
+        Guid OperationId);
 }

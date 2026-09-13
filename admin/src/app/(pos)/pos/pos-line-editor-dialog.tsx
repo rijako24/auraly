@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "./pos-money-input";
-import { lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, type GridDirection } from "./pos-line-editor-calculation";
+import { isPositiveWholeSaleValue, lineEconomicsAfterPriceChange, lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, type GridDirection } from "./pos-line-editor-calculation";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 type EditableLine = {
@@ -80,7 +80,17 @@ export function PosLineEditorDialog({
     let price = currentPrice, discount = currentDiscount, cost = currentCost;
     let margin = Number(line.margin.replace(",", ".")) || 0;
     if (field === "cost") cost = parseMoneyDraft(raw);
-    if (field === "price") price = parseMoneyDraft(raw);
+    if (field === "price") {
+      price = parseMoneyDraft(raw);
+      discount = lineEconomicsAfterPriceChange(
+        cost,
+        line.quantity,
+        currentPrice,
+        currentDiscount,
+        price,
+        line.taxRate,
+      ).discount;
+    }
     if (field === "discount") discount = parseMoneyDraft(raw);
     if (field === "percentage") {
       const value = Number(raw.replace(",", "."));
@@ -130,7 +140,7 @@ export function PosLineEditorDialog({
 
   const distributeAdditionalCharge = () => {
     const amount = parseMoneyDraft(additionalCharge);
-    if (amount <= 0) return;
+    if (!isPositiveWholeSaleValue(amount)) return;
     const allocations = new Map(prorateAdditionalSaleValue(
       drafts.map(line => ({
         lineId: line.lineId,
@@ -141,13 +151,22 @@ export function PosLineEditorDialog({
     ).map(line => [line.lineId, line]));
     setDrafts(current => current.map(line => {
       const allocation = allocations.get(line.lineId)!;
-      const discount = parseMoneyDraft(line.discount);
+      const currentPrice = parseMoneyDraft(line.unitPrice);
+      const currentDiscount = parseMoneyDraft(line.discount);
       const cost = parseMoneyDraft(line.unitCost);
+      const economics = lineEconomicsAfterPriceChange(
+        cost,
+        line.quantity,
+        currentPrice,
+        currentDiscount,
+        allocation.unitPrice,
+        line.taxRate,
+      );
       return {
         ...line,
         unitPrice: preciseMoneyDraft(allocation.unitPrice),
-        margin: decimalDraft(lineMarginPercent(
-          cost, line.quantity, allocation.unitPrice, discount, line.taxRate)),
+        discount: preciseMoneyDraft(economics.discount),
+        margin: decimalDraft(economics.marginPercent),
       };
     }));
     setAdditionalCharge("");
@@ -214,9 +233,9 @@ export function PosLineEditorDialog({
     <Dialog open={chargeOpen} onOpenChange={setChargeOpen}>
       <DialogContent className="max-w-md" onKeyDown={event => event.stopPropagation()}>
         <DialogHeader><DialogTitle>Distribuir cargo adicional</DialogTitle><DialogDescription>El valor se dividirá entre la suma de todas las cantidades y aumentará el precio de venta unitario de cada línea.</DialogDescription></DialogHeader>
-        <div className="space-y-2"><Label htmlFor="additional-sale-charge">Valor total que deseas agregar</Label><Input id="additional-sale-charge" autoFocus inputMode="decimal" value={additionalCharge} onChange={event => setAdditionalCharge(formatMoneyDraft(event.target.value))} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); distributeAdditionalCharge(); } }} placeholder="0" className="h-12 text-lg font-bold" /></div>
+        <div className="space-y-2"><Label htmlFor="additional-sale-charge">Valor entero que deseas agregar</Label><Input id="additional-sale-charge" autoFocus inputMode="numeric" value={additionalCharge} onChange={event => { if (!/[,-]/.test(event.target.value)) setAdditionalCharge(formatMoneyDraft(event.target.value)); }} onKeyDown={event => { if (["-", ",", ".", "Decimal"].includes(event.key)) event.preventDefault(); if (event.key === "Enter") { event.preventDefault(); distributeAdditionalCharge(); } }} placeholder="0" className="h-12 text-lg font-bold" /></div>
         <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">Cantidad total: <strong>{drafts.reduce((sum, line) => sum + line.quantity, 0)}</strong>{parseMoneyDraft(additionalCharge) > 0 && <> · Incremento por unidad: <strong>{formatMoneyValue(parseMoneyDraft(additionalCharge) / drafts.reduce((sum, line) => sum + line.quantity, 0))}</strong></>}</div>
-        <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setChargeOpen(false)}>Cancelar</Button><Button type="button" disabled={parseMoneyDraft(additionalCharge) <= 0} onClick={distributeAdditionalCharge}>Distribuir en las líneas</Button></div>
+        <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setChargeOpen(false)}>Cancelar</Button><Button type="button" disabled={!isPositiveWholeSaleValue(parseMoneyDraft(additionalCharge))} onClick={distributeAdditionalCharge}>Distribuir en las líneas</Button></div>
       </DialogContent>
     </Dialog>
   </div>;

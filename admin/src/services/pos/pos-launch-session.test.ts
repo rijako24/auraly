@@ -3,7 +3,6 @@ import test from "node:test";
 import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import {
   installedPosLaunchDestination,
-  shouldFallbackToLocalPos,
   shouldUseEnrolledPosRuntime,
   usesEnrolledPosRuntime,
   workspaceActivationMode,
@@ -72,19 +71,6 @@ test("an unenrolled installation opens the same shared Auraly login", () => {
     "/login",
   );
   assert.equal(installedPosLaunchDestination(null), "/login");
-});
-
-test("an administrative installed login falls back locally only when cloud is unavailable", () => {
-  const unavailable = Object.assign(new Error("Servicio no disponible"), { statusCode: 503 });
-  const denied = Object.assign(new Error("Credenciales inválidas"), { statusCode: 401 });
-  const timeout = new Error("The operation timed out");
-  timeout.name = "TimeoutError";
-
-  assert.equal(shouldFallbackToLocalPos(unavailable, true), true);
-  assert.equal(shouldFallbackToLocalPos(denied, true), false);
-  assert.equal(shouldFallbackToLocalPos(timeout, true), true);
-  assert.equal(shouldFallbackToLocalPos(new Error("Empresa requerida"), true), false);
-  assert.equal(shouldFallbackToLocalPos(denied, false), true);
 });
 
 test("enrollment is the single owner of installed runtime selection", () => {

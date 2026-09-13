@@ -9,3 +9,13 @@ export function canRequestOrderSave({
 }) {
   return connected && lineCount > 0 && !busy;
 }
+
+export function removingLastRecoveredOrderLineCancelsOrder({
+  sourceOrderId,
+  lineCount,
+}: {
+  sourceOrderId: string | null | undefined;
+  lineCount: number;
+}) {
+  return Boolean(sourceOrderId) && lineCount === 1;
+}

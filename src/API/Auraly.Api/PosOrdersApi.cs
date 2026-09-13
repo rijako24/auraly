@@ -1,5 +1,7 @@
 using Auraly.Application.Orders;
 using Auraly.Application.Sales;
+using Auraly.Application.Authorization;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
 
@@ -107,23 +109,85 @@ public static class PosOrdersApi
                 return new { released = true };
             }));
 
-        group.MapPost("/{orderId:guid}/cancel", async (
+        group.MapPost("/{orderId:guid}/prepare-recovery", async (
             HttpContext context,
             Guid orderId,
-            PosCancelOrderRequest request,
-            OrderCancellationService service,
+            PosOrderUserRequest request,
+            OrderRecoveryService recovery,
             IPosOrderActorResolver actors,
             CancellationToken ct) =>
             await Handle(async () =>
             {
                 var actor = await actors.ResolveAsync(
                     context.User.ToPosDeviceIdentity(), request.ToExecutionContext(), ct);
-                return await service.CancelAsync(
+                return (await recovery.PrepareAsync(
                     actor,
                     orderId,
-                    new CancelOrderRequest(request.Reason, request.WorkSessionId),
-                    context.Request.Headers["Idempotency-Key"].ToString(),
-                    ct);
+                    request.WorkSessionId,
+                    request.UserId,
+                    ct)).Order;
+            }));
+
+        group.MapPost("/{orderId:guid}/cancel", async (
+            HttpContext context,
+            Guid orderId,
+            PosCancelOrderRequest request,
+            OrderCancellationService service,
+            PosApprovalService approvals,
+            IPosOrderActorResolver actors,
+            CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var device = context.User.ToPosDeviceIdentity();
+                var actor = await actors.ResolveAsync(
+                    device, request.ToExecutionContext(), ct);
+                var cancellation = new CancelOrderRequest(
+                    request.Reason, request.WorkSessionId);
+                var key = context.Request.Headers["Idempotency-Key"].ToString();
+                if (actor.Permissions.Contains(OrderPermissionCodes.Cancel))
+                    return await service.CancelAsync(
+                        actor, orderId, cancellation, key, ct);
+
+                var authorization = request.RestartAuthorization
+                    ?? throw new OrderForbiddenException(
+                        $"Permission '{OrderPermissionCodes.Cancel}' is required.");
+                if (!string.Equals(
+                        authorization.PermissionResource,
+                        CommercePermissionCodes.SalesRestartDraft,
+                        StringComparison.Ordinal))
+                    throw new OrderForbiddenException(
+                        "La autorización no corresponde a reiniciar la venta.");
+                if (!actor.Permissions.Contains(authorization.PermissionResource))
+                {
+                    if (authorization.ApprovalRequestId is Guid approvalRequestId)
+                    {
+                        await approvals.ReserveForDeviceAsync(
+                            device.TenantId,
+                            device.DeviceId,
+                            approvalRequestId,
+                            new ReservePosApprovalForDeviceRequest(
+                                request.BusinessId,
+                                request.UserId,
+                                request.WorkSessionId,
+                                authorization.DraftId,
+                                null,
+                                authorization.PermissionResource,
+                                authorization.OperationId),
+                            ct);
+                    }
+                    else
+                    {
+                        await approvals.ValidateLocalDeviceAuthorizerAsync(
+                            device.TenantId,
+                            request.BusinessId,
+                            request.UserId,
+                            authorization.AuthorizedByUserId,
+                            authorization.PermissionResource,
+                            ct);
+                    }
+                }
+                return await service.CancelAuthorizedAsync(
+                    actor, orderId, cancellation, key, ct);
             }));
 
         group.MapPost("/invoice", async (
@@ -182,6 +246,17 @@ public static class PosOrdersApi
     private static async Task<IResult> Handle<T>(Func<Task<T>> action)
     {
         try { return Results.Ok(await action()); }
+        catch (PosApprovalException error)
+        {
+            var statusCode = error.Code is "Forbidden" or "SelfApprovalForbidden"
+                ? StatusCodes.Status403Forbidden
+                : error.Code is "InvalidApproval" or "AlreadyDecidedOrExpired"
+                    ? StatusCodes.Status409Conflict
+                    : error.Code == "ApprovalRequired"
+                        ? StatusCodes.Status428PreconditionRequired
+                        : StatusCodes.Status400BadRequest;
+            return Results.Problem(error.Message, statusCode: statusCode, title: error.Code);
+        }
         catch (OrderForbiddenException error)
         {
             return Results.Problem(error.Message, statusCode: StatusCodes.Status403Forbidden);
@@ -249,11 +324,19 @@ public sealed record PosCancelOrderRequest(
     Guid BusinessId,
     Guid WarehouseId,
     Guid WorkSessionId,
-    string Reason)
+    string Reason,
+    PosRestartOrderAuthorization? RestartAuthorization = null)
 {
     public PosOrderExecutionContext ToExecutionContext() =>
         new(UserId, BusinessId, WarehouseId, WorkSessionId);
 }
+
+public sealed record PosRestartOrderAuthorization(
+    Guid DraftId,
+    string PermissionResource,
+    Guid AuthorizedByUserId,
+    Guid? ApprovalRequestId,
+    Guid OperationId);
 
 public sealed record PosPrintOrdersRequest(
     Guid UserId,

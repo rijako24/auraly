@@ -4,6 +4,8 @@ using System.Net;
 using System.Text.Json;
 using Azure;
 using Azure.Communication.Email;
+using Auraly.Contracts.Fiscal;
+using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 
@@ -19,12 +21,15 @@ public sealed record PlatformEmailOptions(
 public sealed class PlatformEmailOutboxHostedService(
     SqlServerConnectionFactory connections,
     PlatformEmailOptions options,
+    DianAttachedDocumentBuilder attachedDocuments,
+    DianSchemaValidator fiscalSchemaValidator,
+    IFiscalXmlSigner fiscalXmlSigner,
+    TimeProvider timeProvider,
     ILogger<PlatformEmailOutboxHostedService> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly int[] RetrySeconds = [15, 60, 300, 900, 3600];
-    private static readonly Lazy<BinaryData> LogoContent = new(LoadLogoContent);
-    private const string LogoContentId = "auraly-logo";
+    private const int MaximumDianPackageBytes = 2 * 1024 * 1024;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -130,13 +135,80 @@ public sealed class PlatformEmailOutboxHostedService(
             ?? throw new InvalidOperationException("The fiscal invoice payload is empty.");
         var invoice = await LoadFiscalInvoiceAsync(
             payload.DocumentId, message.MessageId, message.TenantId, cancellationToken);
-        if (invoice is null) return;
-        var container = BuildFiscalContainer(invoice);
-        await SendAsync(client, invoice.Email,
-            $"Factura electrónica {invoice.FiscalNumber} · {invoice.BusinessName}",
-            BuildFiscalInvoiceHtml(invoice), BuildFiscalInvoicePlain(invoice),
-            cancellationToken,
-            [new($"FacturaElectronica-{SafeFileName(invoice.FiscalNumber)}.zip",
+        if (invoice is null)
+            throw new InvalidOperationException(
+                "The accepted fiscal invoice delivery package is not ready.");
+        var metadata = attachedDocuments.ReadMetadata(invoice.SignedXml);
+        var signedAttachedDocument = invoice.SignedAttachedDocument;
+        var signedAttachedDocumentFileName = invoice.SignedAttachedDocumentFileName;
+        byte[] container;
+        string attachmentFileName;
+        string subject;
+        string html;
+        string plain;
+        if (invoice.IsHabilitation && signedAttachedDocument is null)
+        {
+            if (invoice.DianStatusResponse is not { Length: > 0 })
+                throw new InvalidOperationException(
+                    "The accepted DIAN habilitation response is not ready.");
+            container = BuildHabilitationContainer(
+                invoice.FiscalNumber, invoice.SignedXml, invoice.DianStatusResponse,
+                invoice.IssuedAt);
+            attachmentFileName = $"PruebaHabilitacion-{SafeFileName(invoice.FiscalNumber)}.zip";
+            subject = $"[HABILITACIÓN DIAN] {BuildFiscalInvoiceSubject(metadata)}";
+            html = BuildHabilitationInvoiceHtml(invoice, metadata);
+            plain = BuildHabilitationInvoicePlain(invoice, metadata);
+        }
+        else
+        {
+            if (signedAttachedDocument is null)
+            {
+                if (invoice.ApplicationResponse is not { Length: > 0 })
+                    throw new InvalidOperationException(
+                        "The accepted fiscal invoice has no DIAN ApplicationResponse.");
+                var built = attachedDocuments.Build(
+                    invoice.SignedXml, invoice.ApplicationResponse, timeProvider.GetUtcNow());
+                var unsignedValidation = fiscalSchemaValidator.Validate(built.Xml);
+                if (!unsignedValidation.IsValid)
+                    throw new InvalidOperationException(
+                        $"The unsigned AttachedDocument is not schema-valid: {string.Join(" | ", unsignedValidation.Errors.Take(5))}");
+                var signed = await fiscalXmlSigner.SignAsync(new FiscalSigningRequest(
+                    invoice.BusinessId,
+                    built.Metadata.SupplierTaxId,
+                    built.Xml,
+                    new FiscalCertificateReference(
+                        invoice.BusinessId,
+                        invoice.CertificateProvider,
+                        invoice.CertificateKeyReference,
+                        invoice.CertificateThumbprint),
+                    timeProvider.GetUtcNow()), cancellationToken);
+                var signedValidation = fiscalSchemaValidator.Validate(signed.SignedXml);
+                if (!signedValidation.IsValid)
+                    throw new InvalidOperationException(
+                        $"The signed AttachedDocument is not schema-valid: {string.Join(" | ", signedValidation.Errors.Take(5))}");
+                signedAttachedDocument = signed.SignedXml;
+                signedAttachedDocumentFileName =
+                    $"AttachedDocument-{SafeFileName(invoice.FiscalNumber)}.xml";
+                await SaveFiscalDeliveryArtifactAsync(
+                    invoice, message, signedAttachedDocument,
+                    Convert.FromHexString(signed.Sha256Hex),
+                    signedAttachedDocumentFileName,
+                    cancellationToken);
+            }
+            container = BuildFiscalContainer(
+                signedAttachedDocumentFileName ?? "AttachedDocument.xml",
+                signedAttachedDocument,
+                invoice.IssuedAt);
+            attachmentFileName = $"FacturaElectronica-{SafeFileName(invoice.FiscalNumber)}.zip";
+            subject = BuildFiscalInvoiceSubject(metadata);
+            html = BuildFiscalInvoiceHtml(invoice, metadata);
+            plain = BuildFiscalInvoicePlain(invoice, metadata);
+        }
+        if (container.Length > MaximumDianPackageBytes)
+            throw new InvalidOperationException(
+                $"The DIAN delivery package exceeds the 2 MB limit ({container.Length} bytes).");
+        await SendAsync(client, invoice.Email, subject, html, plain, cancellationToken,
+            [new(attachmentFileName,
                 "application/zip", new BinaryData(container))]);
     }
 
@@ -144,12 +216,24 @@ public sealed class PlatformEmailOutboxHostedService(
         string html, string plain, CancellationToken cancellationToken,
         IReadOnlyList<EmailAttachment>? attachments = null)
     {
+        var email = BuildEmailMessage(
+            options.SenderAddress, recipient, subject, html, plain, attachments);
+        await client.SendAsync(WaitUntil.Completed, email, cancellationToken);
+    }
+
+    internal static EmailMessage BuildEmailMessage(
+        string senderAddress,
+        string recipient,
+        string subject,
+        string html,
+        string plain,
+        IReadOnlyList<EmailAttachment>? attachments = null)
+    {
         var content = new EmailContent(subject) { Html = html, PlainText = plain };
-        var email = new EmailMessage(options.SenderAddress, recipient, content);
-        email.Attachments.Add(new EmailAttachment("auraly-mark.png", "image/png", LogoContent.Value) { ContentId = LogoContentId });
+        var email = new EmailMessage(senderAddress, recipient, content);
         if (attachments is not null)
             foreach (var attachment in attachments) email.Attachments.Add(attachment);
-        await client.SendAsync(WaitUntil.Completed, email, cancellationToken);
+        return email;
     }
     private async Task<ClaimedMessage?> ClaimAsync(CancellationToken cancellationToken)
     {
@@ -216,14 +300,40 @@ public sealed class PlatformEmailOutboxHostedService(
         await using var reader = await command.ExecuteReaderAsync(
             CommandBehavior.SingleRow, cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+            ? new(documentId, reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                 reader.GetString(3), reader.GetFieldValue<DateTimeOffset>(4),
-                reader.GetString(5), reader.GetDecimal(6), reader.GetString(7),
-                reader.GetString(8), (byte[])reader[9],
-                reader.IsDBNull(10) ? "invoice.xml" : reader.GetString(10),
-                (byte[])reader[11],
-                reader.IsDBNull(12) ? "application-response.xml" : reader.GetString(12))
+                reader.GetDecimal(5), (byte[])reader[6],
+                reader.IsDBNull(7) ? null : (byte[])reader[7],
+                reader.IsDBNull(8) ? null : (byte[])reader[8],
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.GetString(10), reader.GetString(11), reader.GetString(12),
+                !reader.IsDBNull(13), reader.IsDBNull(14) ? null : (byte[])reader[14])
             : null;
+    }
+
+    private async Task SaveFiscalDeliveryArtifactAsync(
+        FiscalInvoiceRecipient invoice,
+        ClaimedMessage message,
+        byte[] content,
+        byte[] contentHash,
+        string fileName,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction =
+            (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = Procedure(
+            "dbo.FiscalInvoiceDeliveryArtifactSave", connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", invoice.DocumentId);
+        command.Parameters.AddWithValue("@MessageId", message.MessageId);
+        command.Parameters.AddWithValue("@TenantId", message.TenantId);
+        command.Parameters.AddWithValue("@LeaseId", message.LeaseId);
+        command.Parameters.AddWithValue("@Content", content);
+        command.Parameters.AddWithValue("@ContentHash", contentHash);
+        command.Parameters.AddWithValue("@FileName", fileName);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
     private async Task CompleteAsync(ClaimedMessage message, CancellationToken cancellationToken)
     {
@@ -264,6 +374,7 @@ public sealed class PlatformEmailOutboxHostedService(
         var name = WebUtility.HtmlEncode(recipient.Name);
         var url = WebUtility.HtmlEncode(activationUrl);
         var support = WebUtility.HtmlEncode(options.SupportEmail);
+        var logo = WebUtility.HtmlEncode(options.LogoUrl);
         return $$"""
             <!doctype html>
             <html lang="es">
@@ -294,7 +405,7 @@ public sealed class PlatformEmailOutboxHostedService(
                         <tr>
                           <td width="56" valign="middle">
                             <table role="presentation" width="48" height="48" cellspacing="0" cellpadding="0" bgcolor="#ccfbf1" style="width:48px;height:48px;background-color:#ccfbf1;border-radius:13px">
-                              <tr><td align="center" valign="middle"><img src="cid:{{LogoContentId}}" width="34" height="34" alt="Auraly" style="display:block;border:0;width:34px;height:34px"></td></tr>
+                              <tr><td align="center" valign="middle"><img src="{{logo}}" width="34" height="34" alt="Auraly" style="display:block;border:0;width:34px;height:34px"></td></tr>
                             </table>
                           </td>
                           <td valign="middle" style="padding-left:12px">
@@ -335,12 +446,13 @@ public sealed class PlatformEmailOutboxHostedService(
         var tenant = WebUtility.HtmlEncode(recipient.TenantName);
         var url = WebUtility.HtmlEncode(resetUrl);
         var support = WebUtility.HtmlEncode(options.SupportEmail);
+        var logo = WebUtility.HtmlEncode(options.LogoUrl);
         return $$"""
             <!doctype html><html lang="es"><body style="margin:0;background:#eef3f5;font-family:Inter,Segoe UI,Arial,sans-serif;color:#13202b">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px"><tr><td align="center">
             <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#fff;border:1px solid #dce5e9;border-radius:22px;overflow:hidden">
             <tr><td style="height:7px;background:#14b8a6"></td></tr><tr><td style="padding:30px 32px">
-            <img src="cid:{{LogoContentId}}" width="44" height="44" alt="Auraly" style="display:block"><h1 style="margin:24px 0 12px;font-size:28px">Recupera tu acceso</h1>
+            <img src="{{logo}}" width="44" height="44" alt="Auraly" style="display:block"><h1 style="margin:24px 0 12px;font-size:28px">Recupera tu acceso</h1>
             <p style="font-size:16px;line-height:1.6">Hola, <strong>{{name}}</strong>. Recibimos una solicitud para cambiar la contraseña de tu acceso a <strong>{{tenant}}</strong>.</p>
             <p style="margin:26px 0"><a href="{{url}}" style="display:inline-block;padding:14px 24px;border-radius:12px;background:#0f766e;color:#fff;text-decoration:none;font-weight:800">Crear nueva contraseña</a></p>
             <p style="padding:16px;border:1px solid #dce5e9;border-radius:14px;background:#f6f9fa;font-size:13px;line-height:1.55">Este enlace vence en 30 minutos y solo funciona una vez. Si no solicitaste el cambio, ignora este correo; tu contraseña actual seguirá vigente.</p>
@@ -369,12 +481,13 @@ public sealed class PlatformEmailOutboxHostedService(
         var amount = WebUtility.HtmlEncode(recipient.Amount.ToString("C0", new System.Globalization.CultureInfo("es-CO")));
         var due = WebUtility.HtmlEncode(recipient.DueAt.ToString("dd/MM/yyyy"));
         var support = WebUtility.HtmlEncode(options.SupportEmail);
+        var logo = WebUtility.HtmlEncode(options.LogoUrl);
         return $$"""
             <!doctype html><html lang="es"><body style="margin:0;background:#eef3f5;font-family:Inter,Segoe UI,Arial,sans-serif;color:#13202b">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px"><tr><td align="center">
             <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#fff;border:1px solid #dce5e9;border-radius:22px;overflow:hidden">
             <tr><td style="height:7px;background:#14b8a6"></td></tr><tr><td style="padding:30px 32px">
-            <img src="cid:{{LogoContentId}}" width="44" height="44" alt="Auraly" style="display:block"><h1 style="margin:24px 0 12px;font-size:28px">{{title}}</h1>
+            <img src="{{logo}}" width="44" height="44" alt="Auraly" style="display:block"><h1 style="margin:24px 0 12px;font-size:28px">{{title}}</h1>
             <p style="font-size:16px;line-height:1.6">Hola, <strong>{{name}}</strong>. {{message}}</p>
             <table role="presentation" width="100%" style="margin:20px 0;background:#f6f9fa;border:1px solid #dce5e9;border-radius:14px"><tr><td style="padding:16px;line-height:1.7"><strong>{{tenant}}</strong><br>Total: <strong>{{amount}}</strong><br>Vencimiento: {{due}}</td></tr></table>
             <p style="margin:26px 0"><a href="{{url}}" style="display:inline-block;padding:14px 24px;border-radius:12px;background:#0f766e;color:#fff;text-decoration:none;font-weight:800">Revisar y pagar en Auraly</a></p>
@@ -394,21 +507,46 @@ public sealed class PlatformEmailOutboxHostedService(
         Revisa y paga de forma segura en Auraly: {paymentUrl}
         """;
 
-    private static byte[] BuildFiscalContainer(FiscalInvoiceRecipient invoice)
+    internal static byte[] BuildFiscalContainer(
+        string fileName,
+        byte[] signedAttachedDocument,
+        DateTimeOffset issuedAt)
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+            WriteEntry(archive, SafeFileName(fileName), signedAttachedDocument, issuedAt);
+        return output.ToArray();
+    }
+
+    internal static byte[] BuildHabilitationContainer(
+        string fiscalNumber,
+        byte[] signedXml,
+        byte[] dianStatusResponse,
+        DateTimeOffset issuedAt)
     {
         using var output = new MemoryStream();
         using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
         {
-            WriteEntry(archive, SafeFileName(invoice.SignedXmlFileName), invoice.SignedXml);
-            WriteEntry(archive, SafeFileName(invoice.ApplicationResponseFileName),
-                invoice.ApplicationResponse);
+            var safeNumber = SafeFileName(fiscalNumber);
+            WriteEntry(archive, $"{safeNumber}-signed.xml", signedXml, issuedAt);
+            WriteEntry(archive, $"{safeNumber}-dian-test-set-response.json",
+                dianStatusResponse, issuedAt);
         }
         return output.ToArray();
     }
 
-    private static void WriteEntry(ZipArchive archive, string fileName, byte[] content)
+    private static void WriteEntry(
+        ZipArchive archive,
+        string fileName,
+        byte[] content,
+        DateTimeOffset issuedAt)
     {
         var entry = archive.CreateEntry(fileName, CompressionLevel.Optimal);
+        entry.LastWriteTime = issuedAt.Year < 1980
+            ? new DateTimeOffset(1980, 1, 1, 0, 0, 0, TimeSpan.Zero)
+            : issuedAt.Year > 2107
+                ? new DateTimeOffset(2107, 12, 31, 23, 59, 58, TimeSpan.Zero)
+                : issuedAt;
         using var stream = entry.Open();
         stream.Write(content);
     }
@@ -420,49 +558,90 @@ public sealed class PlatformEmailOutboxHostedService(
         return string.IsNullOrWhiteSpace(result) ? "documento" : result;
     }
 
-    private string BuildFiscalInvoiceHtml(FiscalInvoiceRecipient invoice)
+    internal static string BuildFiscalInvoiceSubject(DianAttachedDocumentMetadata metadata) =>
+        string.Join(';',
+            SubjectField(metadata.SupplierTaxId),
+            SubjectField(metadata.SupplierLegalName),
+            SubjectField(metadata.FiscalNumber),
+            SubjectField(metadata.DocumentTypeCode),
+            SubjectField(metadata.SupplierTradeName));
+
+    private static string SubjectField(string value) =>
+        value.Replace(';', ',').Replace('\r', ' ').Replace('\n', ' ').Trim();
+
+    private string BuildHabilitationInvoiceHtml(
+        FiscalInvoiceRecipient invoice,
+        DianAttachedDocumentMetadata metadata)
     {
-        var business = WebUtility.HtmlEncode(invoice.BusinessName);
-        var customer = WebUtility.HtmlEncode(invoice.CustomerName);
+        var business = WebUtility.HtmlEncode(metadata.SupplierLegalName);
+        var customer = WebUtility.HtmlEncode(metadata.CustomerName);
+        var fiscal = WebUtility.HtmlEncode(invoice.FiscalNumber);
+        return $$"""
+            <!doctype html><html lang="es"><body style="margin:0;background:#eef3f5;font-family:Inter,Segoe UI,Arial,sans-serif;color:#13202b">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px"><tr><td align="center">
+            <table role="presentation" width="620" cellspacing="0" cellpadding="0" style="max-width:620px;width:100%;background:#fff;border:1px solid #dce5e9;border-radius:22px;overflow:hidden">
+            <tr><td style="height:7px;background:#7c3aed"></td></tr><tr><td style="padding:30px 32px">
+            <p style="margin:0 0 5px;color:#6d28d9;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase">Prueba de habilitación DIAN</p>
+            <h1 style="margin:0 0 14px;font-size:28px">El envío electrónico de prueba está listo</h1>
+            <p style="font-size:16px;line-height:1.6">Hola, <strong>{{customer}}</strong>. <strong>{{business}}</strong> emitió el documento de habilitación <strong>{{fiscal}}</strong>.</p>
+            <p style="padding:14px;border-radius:12px;background:#f5f3ff;border:1px solid #ddd6fe;font-size:13px;line-height:1.6">Este documento pertenece al ambiente de pruebas. El ZIP contiene el XML firmado y la respuesta de aceptación del set DIAN; no es un soporte fiscal de producción.</p>
+            </td></tr><tr><td style="padding:20px 32px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px">Soporte: <a href="mailto:{{WebUtility.HtmlEncode(options.SupportEmail)}}">{{WebUtility.HtmlEncode(options.SupportEmail)}}</a> · Enviado por Auraly.</td></tr>
+            </table></td></tr></table></body></html>
+            """;
+    }
+
+    private string BuildHabilitationInvoicePlain(
+        FiscalInvoiceRecipient invoice,
+        DianAttachedDocumentMetadata metadata) =>
+        $"""
+        Prueba de habilitación DIAN de {metadata.SupplierLegalName} para {metadata.CustomerName}.
+        Documento: {invoice.FiscalNumber}.
+        El ZIP contiene el XML firmado y la respuesta de aceptación del set DIAN.
+        No es un soporte fiscal de producción.
+        Soporte: {options.SupportEmail}
+        """;
+
+    private string BuildFiscalInvoiceHtml(
+        FiscalInvoiceRecipient invoice,
+        DianAttachedDocumentMetadata metadata)
+    {
+        var business = WebUtility.HtmlEncode(metadata.SupplierLegalName);
+        var customer = WebUtility.HtmlEncode(metadata.CustomerName);
         var document = WebUtility.HtmlEncode(invoice.DocumentNumber);
         var fiscal = WebUtility.HtmlEncode(invoice.FiscalNumber);
         var amount = WebUtility.HtmlEncode(invoice.Amount.ToString(
             "C0", new System.Globalization.CultureInfo("es-CO")));
         var support = WebUtility.HtmlEncode(options.SupportEmail);
+        var logo = WebUtility.HtmlEncode(options.LogoUrl);
         return $$"""
             <!doctype html><html lang="es"><body style="margin:0;background:#eef3f5;font-family:Inter,Segoe UI,Arial,sans-serif;color:#13202b">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px"><tr><td align="center">
             <table role="presentation" width="620" cellspacing="0" cellpadding="0" style="max-width:620px;width:100%;background:#fff;border:1px solid #dce5e9;border-radius:22px;overflow:hidden">
             <tr><td style="height:7px;background:#14b8a6"></td></tr><tr><td style="padding:30px 32px">
-            <img src="cid:{{LogoContentId}}" width="44" height="44" alt="Auraly" style="display:block"><p style="margin:20px 0 5px;color:#0f766e;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase">Documento validado por la DIAN</p>
+            <img src="{{logo}}" width="44" height="44" alt="Auraly" style="display:block"><p style="margin:20px 0 5px;color:#0f766e;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase">Documento validado por la DIAN</p>
             <h1 style="margin:0 0 14px;font-size:28px">Tu factura electrónica está lista</h1>
             <p style="font-size:16px;line-height:1.6">Hola, <strong>{{customer}}</strong>. <strong>{{business}}</strong> emitió la factura electrónica de venta que encontrarás adjunta a este correo.</p>
             <table role="presentation" width="100%" style="margin:22px 0;background:#f0fdfa;border:1px solid #99f6e4;border-radius:14px"><tr><td style="padding:17px;line-height:1.8">Documento Auraly: <strong>{{document}}</strong><br>Número DIAN: <strong>{{fiscal}}</strong><br>Fecha: {{invoice.IssuedAt:dd/MM/yyyy HH:mm}}<br>Total: <strong>{{amount}}</strong></td></tr></table>
-            <p style="font-size:14px;line-height:1.6;color:#526170">El archivo ZIP adjunto conserva la factura XML firmada y la respuesta electrónica de validación recibida de la DIAN. Guárdalo como soporte del documento.</p>
+            <p style="font-size:14px;line-height:1.6;color:#526170">El archivo ZIP adjunto contiene el AttachedDocument firmado: allí se conservan la factura XML y la respuesta electrónica de validación de la DIAN. Guárdalo como soporte del documento.</p>
+            <p style="font-size:12px;line-height:1.6;color:#64748b">Correo autorrespuesta: {{support}}</p>
             <p style="padding:14px;border-radius:12px;background:#f6f9fa;border:1px solid #dce5e9;font-size:12px;color:#64748b">Este mensaje es informativo. No respondas con claves, contraseñas ni datos de pago.</p>
             </td></tr><tr><td style="padding:20px 32px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px">Soporte: <a href="mailto:{{support}}">{{support}}</a> · Enviado de forma segura por Auraly.</td></tr>
             </table></td></tr></table></body></html>
             """;
     }
 
-    private static string BuildFiscalInvoicePlain(FiscalInvoiceRecipient invoice) =>
+    private string BuildFiscalInvoicePlain(
+        FiscalInvoiceRecipient invoice,
+        DianAttachedDocumentMetadata metadata) =>
         $"""
-        Hola, {invoice.CustomerName}.
-        {invoice.BusinessName} emitió la factura electrónica {invoice.FiscalNumber}.
+        Hola, {metadata.CustomerName}.
+        {metadata.SupplierLegalName} emitió la factura electrónica {invoice.FiscalNumber}.
         Documento Auraly: {invoice.DocumentNumber}. Fecha: {invoice.IssuedAt:dd/MM/yyyy HH:mm}.
         Total: {invoice.Amount:C0} COP.
-        El ZIP adjunto contiene la factura XML firmada y la respuesta de validación de la DIAN.
+        El ZIP adjunto contiene el AttachedDocument firmado con la factura XML y la respuesta de validación de la DIAN.
+        Correo autorrespuesta: {options.SupportEmail}
         """;
 
-    private static BinaryData LoadLogoContent()
-    {
-        using var stream = typeof(PlatformEmailOutboxHostedService).Assembly
-            .GetManifestResourceStream("Auraly.Api.Assets.auraly-mark.png")
-            ?? throw new InvalidOperationException("The embedded Auraly email logo is missing.");
-        using var memory = new MemoryStream();
-        stream.CopyTo(memory);
-        return new BinaryData(memory.ToArray());
-    }
     private string BuildPlain(RecipientContext recipient, string activationUrl) =>
         $"""
         Hola, {recipient.Name}.
@@ -479,24 +658,27 @@ public sealed class PlatformEmailOutboxHostedService(
     private sealed record InvitationPayload(Guid InvitationId, Guid TenantId, string Email, string ActivationToken);
     private sealed record PasswordRecoveryPayload(Guid RequestId, string Email, string ResetToken);
     private sealed record SubscriptionReminderPayload(Guid NotificationId);
-    private sealed record FiscalInvoicePayload(Guid DocumentId, Guid BusinessId);
+    private sealed record FiscalInvoicePayload(Guid DocumentId);
     private sealed record PasswordRecoveryRecipient(string Email, string Name, string TenantName);
     private sealed record SubscriptionReminderRecipient(
         string Email, string Name, string TenantName, string Title, string Message,
         Guid RenewalOrderId, DateTimeOffset DueAt, decimal Amount);
     private sealed record FiscalInvoiceRecipient(
+        Guid DocumentId,
+        Guid BusinessId,
         string Email,
-        string BusinessName,
         string DocumentNumber,
         string FiscalNumber,
         DateTimeOffset IssuedAt,
-        string CustomerName,
         decimal Amount,
-        string CustomerIdentification,
-        string DocumentType,
         byte[] SignedXml,
-        string SignedXmlFileName,
-        byte[] ApplicationResponse,
-        string ApplicationResponseFileName);
+        byte[]? ApplicationResponse,
+        byte[]? SignedAttachedDocument,
+        string? SignedAttachedDocumentFileName,
+        string CertificateProvider,
+        string CertificateKeyReference,
+        string CertificateThumbprint,
+        bool IsHabilitation,
+        byte[]? DianStatusResponse);
     private sealed record RecipientContext(string TenantName, string Name);
 }

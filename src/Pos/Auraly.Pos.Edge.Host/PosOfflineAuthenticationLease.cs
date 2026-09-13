@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Auraly.Contracts.Authentication;
 using Auraly.Pos.Edge.Infrastructure;
@@ -14,7 +12,6 @@ public sealed class PosOfflineLeaseTrustOptions
     public Dictionary<string, string> TrustedPublicKeys { get; init; } =
         new(StringComparer.Ordinal);
 }
-
 public sealed record PosValidatedOfflineLease(
     OfflineAuthenticationLeasePayload Payload,
     SignedOfflineAuthenticationLease SignedLease);
@@ -77,7 +74,6 @@ public sealed class PosOfflineLeaseVerifier(
     private static PosLocalLoginException Invalid(string message) =>
         new("OfflineLeaseInvalid", message);
 }
-
 public sealed class PosOfflineLeaseStore(
     string connectionString,
     Guid tenantId,
@@ -279,54 +275,4 @@ public sealed class PosOfflineLeaseStore(
 
     private static string Normalize(string value) => value.Trim().ToUpperInvariant();
     private static string Format(DateTimeOffset value) => value.ToString("O");
-}
-
-public sealed class PosOfflineLeaseClient(
-    HttpClient http,
-    PosDeviceCredentials credentials)
-{
-    public async Task<OfflineAuthenticationLeaseAcquireResponse> AcquireAsync(
-        PosLocalLoginRequest request,
-        CancellationToken cancellationToken)
-    {
-        using var message = new HttpRequestMessage(
-            HttpMethod.Post,
-            "/api/pos/v1/authentication/offline-leases");
-        AddDeviceHeaders(message);
-        message.Content = JsonContent.Create(
-            new OfflineAuthenticationLeaseAcquireRequest(
-                request.Username, request.Password));
-        using var response = await http.SendAsync(message, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var code = response.StatusCode == HttpStatusCode.Conflict
-                ? "OfflineLeaseConflict"
-                : "InvalidCredentials";
-            throw new PosLocalLoginException(
-                code,
-                response.StatusCode == HttpStatusCode.Conflict
-                    ? "El usuario ya tiene una sesión activa en otro equipo."
-                    : "Usuario o contraseña incorrectos.");
-        }
-        return await response.Content.ReadFromJsonAsync<OfflineAuthenticationLeaseAcquireResponse>(
-            cancellationToken)
-            ?? throw new InvalidDataException("Auraly Server returned an empty offline lease.");
-    }
-
-    public async Task ReleaseAsync(Guid leaseId, CancellationToken cancellationToken)
-    {
-        using var message = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"/api/pos/v1/authentication/offline-leases/{leaseId:D}/release");
-        AddDeviceHeaders(message);
-        using var response = await http.SendAsync(message, cancellationToken);
-        response.EnsureSuccessStatusCode();
-    }
-
-    private void AddDeviceHeaders(HttpRequestMessage message)
-    {
-        message.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
-        message.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
-    }
-
 }

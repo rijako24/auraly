@@ -14,6 +14,7 @@ export type SessionExpiredEventDetail = {
 export type SessionRefreshResult = "refreshed" | "replaced" | "expired" | "unavailable";
 
 let activeLogin: Promise<unknown> | null = null;
+let activeLocalPosLogin: Promise<unknown> | null = null;
 
 const PREVIOUS_IDENTITY_STORAGE_KEYS = [
   "auth-state",
@@ -76,6 +77,26 @@ export async function runAuthenticationSessionReplacement<T>(
     return await operation;
   } finally {
     if (activeLogin === operation) activeLogin = null;
+  }
+}
+
+export async function runLocalPosSessionReplacement<T>(
+  retirePreviousSession: () => void,
+  login: () => Promise<T>,
+): Promise<T> {
+  if (activeLocalPosLogin) return activeLocalPosLogin as Promise<T>;
+  const operation = (async () => {
+    // Requests from the previous POS screen can still finish while the login
+    // view is replacing its local session. Retire the browser-held token first
+    // so those late 401 responses cannot be mistaken for a new external login.
+    retirePreviousSession();
+    return login();
+  })();
+  activeLocalPosLogin = operation;
+  try {
+    return await operation;
+  } finally {
+    if (activeLocalPosLogin === operation) activeLocalPosLogin = null;
   }
 }
 
