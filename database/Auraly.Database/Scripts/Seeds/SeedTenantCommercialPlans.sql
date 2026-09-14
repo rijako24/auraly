@@ -21,7 +21,7 @@ DECLARE @Services TABLE
     MonthlyNetPrice DECIMAL(19,4) NOT NULL
 );
 INSERT @Services VALUES
- ('13000000-0000-0000-0000-000000000000',N'starter',N'Plan Inicio',N'Suscripción mensual al software Auraly para una operación pequeña.',N'plan',1,60000),
+ ('13000000-0000-0000-0000-000000000000',N'starter',N'Plan Inicio',N'Suscripción mensual al software Auraly para una operación pequeña.',N'plan',1,80000),
  ('13000000-0000-0000-0000-000000000001',N'essential',N'Plan Esencial',N'Suscripción mensual al software Auraly.',N'plan',1,119900),
  ('13000000-0000-0000-0000-000000000002',N'business',N'Plan Negocio',N'Suscripción mensual al software Auraly.',N'plan',1,299900),
  ('13000000-0000-0000-0000-000000000003',N'company',N'Plan Empresa',N'Suscripción mensual al software Auraly.',N'plan',1,449900),
@@ -46,11 +46,11 @@ WHEN NOT MATCHED THEN INSERT
 
 MERGE billing.TenantCommercialPlans AS target
 USING (VALUES
- ('11000000-0000-0000-0000-000000000000',N'starter',CAST(0.15 AS decimal(9,6)),1,0,1,100,0,0,0,N'["POS","Facturación electrónica","100 documentos DIAN al mes"]'),
- ('11000000-0000-0000-0000-000000000001',N'essential',CAST(0.15 AS decimal(9,6)),3,0,1,500,10,0,0,N'["POS","Facturación electrónica","Contabilidad","Nómina"]'),
- ('11000000-0000-0000-0000-000000000002',N'business',CAST(0.15 AS decimal(9,6)),8,0,3,1500,30,1,0,N'["POS","Facturación electrónica","Contabilidad","Nómina","Soporte prioritario"]'),
- ('11000000-0000-0000-0000-000000000003',N'company',CAST(0.15 AS decimal(9,6)),12,0,5,3000,100,0,0,N'["POS","Facturación electrónica","Contabilidad","Nómina","Soporte prioritario"]'),
- ('11000000-0000-0000-0000-000000000004',N'corporate',CAST(0.15 AS decimal(9,6)),0,0,0,0,0,0,1,N'["Capacidad superior a Empresa","Acompañamiento especializado"]')
+ ('11000000-0000-0000-0000-000000000000',N'starter',CAST(0.15 AS decimal(9,6)),1,0,0,100,0,0,0,N'["Facturación electrónica","Inventario","100 documentos DIAN al mes"]'),
+ ('11000000-0000-0000-0000-000000000001',N'essential',CAST(0.15 AS decimal(9,6)),3,0,1,500,10,0,0,N'["POS","Facturación electrónica","Inventario","Contabilidad","Nómina"]'),
+ ('11000000-0000-0000-0000-000000000002',N'business',CAST(0.15 AS decimal(9,6)),8,0,3,1500,30,1,0,N'["POS","Facturación electrónica","Inventario","Contabilidad","Nómina","Soporte prioritario"]'),
+ ('11000000-0000-0000-0000-000000000003',N'company',CAST(0.15 AS decimal(9,6)),12,0,5,3000,100,0,0,N'["POS","Facturación electrónica","Inventario","Contabilidad","Nómina","Soporte prioritario"]'),
+ ('11000000-0000-0000-0000-000000000004',N'corporate',CAST(0.15 AS decimal(9,6)),0,0,0,0,0,0,1,N'["Facturación electrónica","Inventario","Contabilidad","Nómina","Capacidad superior a Empresa","Acompañamiento especializado"]')
 ) source(Id,Code,AnnualDiscount,FullUsers,SellerUsers,PosDevices,DianDocuments,PayrollEmployees,Recommended,Custom,Features)
 ON target.BillableServiceId=(SELECT BillableServiceId FROM billing.BillableServices WHERE BusinessId=@BillingBusinessId AND Code=source.Code)
 WHEN MATCHED THEN UPDATE SET AnnualDiscountRate=source.AnnualDiscount,

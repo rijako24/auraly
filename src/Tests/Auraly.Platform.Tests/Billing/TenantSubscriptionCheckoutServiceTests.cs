@@ -24,7 +24,7 @@ public sealed class TenantSubscriptionCheckoutServiceTests
         var payments = new Mock<IPaymentLinkService>();
         payments.Setup(value => value.PrepareWidgetCheckoutAsync(
                 It.Is<WompiWidgetCheckoutRequest>(request =>
-                    request.BusinessId == businessId && request.AmountInCents == 72_828_000),
+                    request.BusinessId == businessId && request.AmountInCents == 97_104_000),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((WompiWidgetCheckoutRequest request, CancellationToken _) =>
                 new(true, "pub", request.Reference, request.AmountInCents, "COP",
@@ -35,10 +35,10 @@ public sealed class TenantSubscriptionCheckoutServiceTests
         var result = await service.StartAsync(tenantId, new(), default);
 
         Assert.Equal(order.RenewalOrderId, result.RenewalOrderId);
-        Assert.Equal(72_828_000, result.Widget.AmountInCents);
+        Assert.Equal(97_104_000, result.Widget.AmountInCents);
         store.Verify(value => value.CreatePaymentAsync(tenantId,
             It.IsAny<Guid>(), order.RenewalOrderId,
-            $"TS-{order.RenewalOrderId:N}", 72_828_000,
+            $"TS-{order.RenewalOrderId:N}", 97_104_000,
             It.IsAny<DateTimeOffset>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -92,7 +92,7 @@ public sealed class TenantSubscriptionCheckoutServiceTests
                 tenantId, order.RenewalOrderId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TenantSubscriptionPaymentVerification(
                 order.RenewalOrderId, Guid.NewGuid(), businessId,
-                $"TS-{order.RenewalOrderId:N}", 72_828_000, expiresAt, 0, 1));
+                $"TS-{order.RenewalOrderId:N}", 97_104_000, expiresAt, 0, 1));
         var payments = new Mock<IPaymentLinkService>();
         payments.Setup(value => value.PrepareWidgetCheckoutAsync(
                 It.Is<WompiWidgetCheckoutRequest>(request =>
@@ -162,9 +162,9 @@ public sealed class TenantSubscriptionCheckoutServiceTests
     {
         var now = DateTimeOffset.UtcNow;
         return new(Guid.NewGuid(), 1, status, true, now, now.AddYears(1), now,
-            new("starter", "Inicio", "Annual", 60_000m, 12, 720_000m, .15m,
-                108_000m, 116_280m, 728_280m, 60_690m,
-                1, 0, 1, 100, 0, []),
-            new(1, 0, 1, 0));
+            new("starter", "Inicio", "Annual", 80_000m, 12, 960_000m, .15m,
+                144_000m, 155_040m, 971_040m, 80_920m,
+                1, 0, 0, 100, 0, []),
+            new(1, 0, 0, 0));
     }
 }

@@ -17,13 +17,15 @@ Planes de gestión empresarial, en COP por mes:
 
 | Código | Nombre | Precio | Usuarios completos | Cajas | Documentos DIAN/mes | Empleados de nómina |
 |---|---|---:|---:|---:|---:|---:|
-| `starter` | Inicio | $60.000 | 1 | 1 | 100 | 0 |
+| `starter` | Inicio | $80.000 | 1 | 0 | 100 | 0 |
 | `essential` | Esencial | $119.900 | 3 | 1 | 500 | 10 |
 | `business` | Negocio | $299.900 | 8 | 3 | 1.500 | 30 |
 | `company` | Empresa | $449.900 | 12 | 5 | 3.000 | 100 |
 | `corporate` | Corporativo a medida | Cotizado | Configurable | Configurable | Configurable | Configurable |
 
-`Negocio` aparece como recomendado. Adicionales:
+`Negocio` aparece como recomendado. Todos los planes incluyen facturación electrónica e inventario. Contabilidad y nómina están incluidas desde `Esencial`; `Inicio` no incluye caja, contabilidad ni nómina. La landing pública muestra únicamente `Inicio`, `Esencial` y `Negocio`, con sus precios base. `Empresa`, `Corporativo` y los valores unitarios de adicionales permanecen disponibles en el catálogo y el wizard de contratación, pero no se publican en esa sección comercial.
+
+Adicionales:
 
 | Código | Unidad | Precio |
 |---|---|---:|

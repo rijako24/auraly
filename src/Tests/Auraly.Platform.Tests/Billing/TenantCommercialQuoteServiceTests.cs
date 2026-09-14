@@ -53,9 +53,10 @@ public sealed class TenantCommercialQuoteServiceTests
             new("starter", "Monthly", 0, 0, 0, 3), default);
 
         quote.DianDocumentMonthlyLimit.Should().Be(3_100);
-        quote.MonthlySubtotalCop.Should().Be(120_000m);
-        quote.TaxAmountCop.Should().Be(22_800m);
-        quote.PayableAmountCop.Should().Be(142_800m);
+        quote.PosDeviceLimit.Should().Be(0);
+        quote.MonthlySubtotalCop.Should().Be(140_000m);
+        quote.TaxAmountCop.Should().Be(26_600m);
+        quote.PayableAmountCop.Should().Be(166_600m);
         quote.Lines.Single(line => line.Code == "dian_document_pack")
             .Quantity.Should().Be(3);
     }
@@ -105,8 +106,8 @@ public sealed class TenantCommercialQuoteServiceTests
         public Task<TenantCommercialCatalogDto> GetAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new TenantCommercialCatalogDto(
                 [
-                    new(Guid.NewGuid(), "starter", "Inicio", 60_000m, 19m, 0.15m,
-                        1, 0, 1, 100, 0, false, false, []),
+                    new(Guid.NewGuid(), "starter", "Inicio", 80_000m, 19m, 0.15m,
+                        1, 0, 0, 100, 0, false, false, ["Facturación electrónica", "Inventario"]),
                     new(Guid.NewGuid(), "essential", "Esencial", 119_900m, 19m, 0.15m,
                         3, 0, 1, 500, 10, false, false, []) ,
                     new(Guid.NewGuid(), "company", "Empresa", 449_900m, 19m, 0.15m,

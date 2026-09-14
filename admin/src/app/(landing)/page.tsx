@@ -85,7 +85,7 @@ const PLANS = [
 ];
 
 const OPERATIONS_PLAN_COPY: Record<string, { tagline: string; hint: string }> = {
-  starter: { tagline: "Todo lo esencial", hint: "Una persona, una caja y facturación electrónica para empezar con orden." },
+  starter: { tagline: "Empieza con control", hint: "Facturación electrónica e inventario para una operación pequeña que todavía no necesita caja, contabilidad ni nómina." },
   essential: { tagline: "Empieza con control", hint: "Para organizar y facturar una operación que empieza a crecer." },
   business: { tagline: "Más capacidad", hint: "La combinación recomendada para equipos con operación diaria." },
   company: { tagline: "Opera a escala", hint: "Para varias áreas, más cajas y una operación exigente." },
@@ -199,6 +199,7 @@ export default function LandingPage() {
   const whatsappContactHref = whatsappContactNumber
     ? `https://wa.me/${whatsappContactNumber}?text=${encodeURIComponent(WHATSAPP_CONTACT_MESSAGE)}`
     : null;
+  const visibleOperationsPlans = operationsCatalog.data?.plans.slice(0, 3) ?? [];
 
   const updateForm = (field: keyof DemoForm, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -393,16 +394,16 @@ export default function LandingPage() {
               <Badge className="mb-4 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Planes AURALY</Badge>
               <h2 className="text-3xl font-semibold sm:text-5xl">Planes que crecen contigo.</h2>
             </div>
-            <p className="max-w-md text-sm leading-6 text-black/65">POS, facturación electrónica, contabilidad y nómina con capacidad visible y ampliaciones sin sorpresas.</p>
+            <p className="max-w-md text-sm leading-6 text-black/65">Tres planes claros para empezar con facturación electrónica y sumar operación a medida que tu empresa crece.</p>
           </div>
           {operationsCatalog.isLoading && <div className="mt-10 rounded-2xl border border-black/10 bg-white p-8 text-center text-black/60">Cargando planes vigentes…</div>}
           {operationsCatalog.isError && <div role="alert" className="mt-10 grid gap-5 overflow-hidden rounded-[2rem] bg-[#0b292d] p-6 text-white sm:grid-cols-[1fr_auto] sm:items-center sm:p-8"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-[#69D9D0]">Capacidad a tu medida</p><h3 className="mt-2 text-2xl font-semibold">Encuentra el plan correcto con nuestro equipo.</h3><p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">Te ayudamos a calcular usuarios, cajas, documentos DIAN y empleados de nómina según tu operación real.</p></div><Button asChild className="rounded-full bg-[#69D9D0] px-6 text-[#07161A] hover:bg-[#8be8e1]"><a href="#demo">Consultar planes</a></Button></div>}
-          <div className="mt-10 grid auto-rows-fr items-stretch gap-4 min-[560px]:grid-cols-2 xl:grid-cols-5">
-            {operationsCatalog.data?.plans.map((plan) => {
+          <div className="mt-10 grid auto-rows-fr items-stretch gap-5 md:grid-cols-3">
+            {visibleOperationsPlans.map((plan) => {
               const copy = OPERATIONS_PLAN_COPY[plan.code] ?? { tagline: "Plan Auraly", hint: "Capacidad configurable para tu operación." };
               const capacity = plan.isCustom ? ["Capacidad superior a Empresa"] : [
                 `${plan.includedFullUsers} ${plan.includedFullUsers === 1 ? "usuario completo" : "usuarios completos"}`,
-                `${plan.includedPosDevices} ${plan.includedPosDevices === 1 ? "caja" : "cajas"}`,
+                ...(plan.includedPosDevices > 0 ? [`${plan.includedPosDevices} ${plan.includedPosDevices === 1 ? "caja" : "cajas"}`] : []),
                 `${plan.includedDianDocuments.toLocaleString("es-CO")} documentos DIAN / mes`,
                 ...(plan.includedPayrollEmployees > 0 ? [`${plan.includedPayrollEmployees} empleados de nómina`] : []),
               ];
@@ -410,7 +411,7 @@ export default function LandingPage() {
                 ...capacity,
                 ...plan.features.filter(feature => !feature.toLocaleLowerCase("es-CO").includes("documentos dian")),
               ])];
-              return <Card key={plan.planId} className={cn("flex h-full flex-col rounded-lg border-black/10 bg-white text-[#151515]", plan.isRecommended && "border-[#69D9D0] bg-[#E6FFFD]")}>
+              return <Card key={plan.planId} data-plan-code={plan.code} className={cn("flex h-full flex-col rounded-lg border-black/10 bg-white text-[#151515]", plan.isRecommended && "border-[#69D9D0] bg-[#E6FFFD]")}>
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle>{plan.name}</CardTitle>
@@ -424,6 +425,7 @@ export default function LandingPage() {
                 </CardHeader>
                 <CardContent className="flex flex-1 flex-col gap-5">
                   <p className="min-h-12 text-sm leading-6 text-black/65">{copy.hint}</p>
+                  {plan.code === "starter" && <p className="rounded-xl bg-[#f2f5f3] px-3 py-2 text-xs font-medium text-[#496064]">No incluye caja, contabilidad ni nómina.</p>}
                   <Separator className="bg-black/10" />
                   <ul className="space-y-3 text-sm">
                     {visibleFeatures.map((feature) => (
@@ -436,13 +438,6 @@ export default function LandingPage() {
                 </CardContent>
               </Card>;
             })}
-          </div>
-          <div className="mt-6 grid gap-5 rounded-[2rem] border border-[#1A5860]/15 bg-gradient-to-br from-white to-[#E6FFFD] p-6 lg:grid-cols-[.72fr_1.28fr] lg:p-8">
-            <div><p className="text-xs font-bold uppercase tracking-[.2em] text-[#1A5860]">Amplía cuando lo necesites</p><h3 className="mt-2 text-2xl font-semibold">Tu plan no limita tu crecimiento.</h3><p className="mt-3 text-sm leading-6 text-black/60">Agrega capacidad al crear la empresa o desde tu suscripción. El total se recalcula antes del pago.</p></div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {operationsCatalog.data?.addOns.map(addOn => <div key={addOn.addOnId} className="flex items-center justify-between gap-4 rounded-xl border border-black/5 bg-white/80 px-4 py-3 text-sm"><span>{addOn.name}<small className="block text-black/50">{addOn.unitLabel}</small></span><strong className="whitespace-nowrap text-[#0F2C33]">{cop.format(addOn.monthlyUnitPriceCop)} / mes</strong></div>)}
-              <div className="flex items-center justify-between gap-4 rounded-xl border border-black/5 bg-white/80 px-4 py-3 text-sm"><span>Sedes dentro del mismo NIT</span><strong className="whitespace-nowrap text-[#0F2C33]">Sin costo</strong></div>
-            </div>
           </div>
         </div>
       </section>

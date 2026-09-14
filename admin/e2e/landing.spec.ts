@@ -6,11 +6,13 @@ test.beforeEach(async ({ page }) => {
     contentType: "application/json",
     body: JSON.stringify({
       plans: [
-        { planId: "starter", code: "starter", name: "Esencial", monthlyPriceCop: 119900, salesTaxRate: 19, annualDiscountRate: 15, includedFullUsers: 1, includedSellerUsers: 0, includedPosDevices: 1, includedDianDocuments: 100, includedPayrollEmployees: 0, isRecommended: false, isCustom: false, features: ["Facturación y operación"] },
-        { planId: "business", code: "business", name: "Negocio", monthlyPriceCop: 299900, salesTaxRate: 19, annualDiscountRate: 15, includedFullUsers: 3, includedSellerUsers: 2, includedPosDevices: 2, includedDianDocuments: 1000, includedPayrollEmployees: 10, isRecommended: true, isCustom: false, features: ["Inventario y contabilidad"] },
-        { planId: "company", code: "company", name: "Empresa", monthlyPriceCop: 449900, salesTaxRate: 19, annualDiscountRate: 15, includedFullUsers: 5, includedSellerUsers: 5, includedPosDevices: 4, includedDianDocuments: 2000, includedPayrollEmployees: 30, isRecommended: false, isCustom: false, features: ["Operación multiárea"] },
+        { planId: "starter", code: "starter", name: "Plan Inicio", monthlyPriceCop: 80000, salesTaxRate: 19, annualDiscountRate: 15, includedFullUsers: 1, includedSellerUsers: 0, includedPosDevices: 0, includedDianDocuments: 100, includedPayrollEmployees: 0, isRecommended: false, isCustom: false, features: ["Facturación electrónica", "Inventario"] },
+        { planId: "essential", code: "essential", name: "Plan Esencial", monthlyPriceCop: 119900, salesTaxRate: 19, annualDiscountRate: 15, includedFullUsers: 3, includedSellerUsers: 0, includedPosDevices: 1, includedDianDocuments: 500, includedPayrollEmployees: 10, isRecommended: false, isCustom: false, features: ["POS", "Facturación electrónica", "Inventario", "Contabilidad", "Nómina"] },
+        { planId: "business", code: "business", name: "Plan Negocio", monthlyPriceCop: 299900, salesTaxRate: 19, annualDiscountRate: 15, includedFullUsers: 8, includedSellerUsers: 0, includedPosDevices: 3, includedDianDocuments: 1500, includedPayrollEmployees: 30, isRecommended: true, isCustom: false, features: ["POS", "Facturación electrónica", "Inventario", "Contabilidad", "Nómina", "Soporte prioritario"] },
+        { planId: "company", code: "company", name: "Plan Empresa", monthlyPriceCop: 449900, salesTaxRate: 19, annualDiscountRate: 15, includedFullUsers: 12, includedSellerUsers: 0, includedPosDevices: 5, includedDianDocuments: 3000, includedPayrollEmployees: 100, isRecommended: false, isCustom: false, features: ["POS", "Facturación electrónica", "Inventario", "Contabilidad", "Nómina"] },
+        { planId: "corporate", code: "corporate", name: "Personalizado", monthlyPriceCop: 0, salesTaxRate: 19, annualDiscountRate: 15, includedFullUsers: 0, includedSellerUsers: 0, includedPosDevices: 0, includedDianDocuments: 0, includedPayrollEmployees: 0, isRecommended: false, isCustom: true, features: ["Facturación electrónica", "Inventario", "Contabilidad", "Nómina", "Acompañamiento especializado"] },
       ],
-      addOns: [],
+      addOns: [{ addOnId: "full-user", code: "full_user", name: "Usuario completo adicional", unitLabel: "usuario", unitSize: 1, monthlyUnitPriceCop: 30000, salesTaxRate: 19 }],
     }),
   }));
 });
@@ -29,9 +31,28 @@ test("la landing vende la plataforma completa y conserva sus conversiones", asyn
   await expect(page.getByRole("heading", { name: "Planes que crecen contigo." })).toBeVisible();
   await expect(page.getByText("Facturación electrónica DIAN", { exact: true })).toBeVisible();
   await expect(page.getByText("Agentes listos para operar", { exact: true })).toBeVisible();
-  await expect(page.getByText("Esencial", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Negocio", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Empresa", { exact: true }).first()).toBeVisible();
+  const operationsPlans = page.locator("#planes");
+  await expect(operationsPlans.getByText("Plan Inicio", { exact: true })).toBeVisible();
+  await expect(operationsPlans.getByText(/\$\s*80\.000/)).toBeVisible();
+  const starterPlan = operationsPlans.locator('[data-plan-code="starter"]');
+  const essentialPlan = operationsPlans.locator('[data-plan-code="essential"]');
+  const businessPlan = operationsPlans.locator('[data-plan-code="business"]');
+  await expect(starterPlan.getByText("Facturación electrónica", { exact: true })).toBeVisible();
+  await expect(starterPlan.getByText("Inventario", { exact: true })).toBeVisible();
+  await expect(starterPlan.getByText("Contabilidad", { exact: true })).toBeHidden();
+  await expect(starterPlan.getByText("Nómina", { exact: true })).toBeHidden();
+  await expect(starterPlan.getByText("No incluye caja, contabilidad ni nómina.", { exact: true })).toBeVisible();
+  await expect(essentialPlan.getByText("Inventario", { exact: true })).toBeVisible();
+  await expect(essentialPlan.getByText("Contabilidad", { exact: true })).toBeVisible();
+  await expect(essentialPlan.getByText("Nómina", { exact: true })).toBeVisible();
+  await expect(businessPlan.getByText("Inventario", { exact: true })).toBeVisible();
+  await expect(businessPlan.getByText("Contabilidad", { exact: true })).toBeVisible();
+  await expect(businessPlan.getByText("Nómina", { exact: true })).toBeVisible();
+  await expect(operationsPlans.getByText("Plan Esencial", { exact: true })).toBeVisible();
+  await expect(operationsPlans.getByText("Plan Negocio", { exact: true })).toBeVisible();
+  await expect(operationsPlans.getByText("Plan Empresa", { exact: true })).toBeHidden();
+  await expect(operationsPlans.getByText("Personalizado", { exact: true })).toBeHidden();
+  await expect(operationsPlans.getByText("Usuario completo adicional", { exact: true })).toBeHidden();
   await expect(page.getByText("$350.000", { exact: true })).toBeHidden();
   await page.getByRole("button", { name: /Ver planes y precios de agentes/ }).click();
   await expect(page.getByText("$350.000", { exact: true })).toBeVisible();
@@ -55,9 +76,10 @@ test("la landing unificada conserva navegación y planes en teléfono", async ({
   await page.getByRole("button", { name: "Cerrar menú" }).click();
 
   await page.locator("#planes").scrollIntoViewIfNeeded();
-  await expect(page.getByText("Esencial", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Negocio", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Empresa", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Plan Inicio", { exact: true })).toBeVisible();
+  await expect(page.getByText("Plan Esencial", { exact: true })).toBeVisible();
+  await expect(page.getByText("Plan Negocio", { exact: true })).toBeVisible();
+  await expect(page.getByText("Plan Empresa", { exact: true })).toBeHidden();
   await expect(page.getByRole("link", { name: /Crear empresa/ }).first()).toBeVisible();
 
 });

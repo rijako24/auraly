@@ -14,7 +14,7 @@ public sealed class TenantSubscriptionLifecycleProcessTests
         var request = TenantSubscriptionLifecycleProcess.BuildQuoteRequest(Candidate());
 
         request.Should().BeEquivalentTo(new TenantQuoteRequest(
-            "starter", "Annual", 2, 1, 2, 3, 2));
+            "starter", "Annual", 2, 1, 3, 3, 2));
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public sealed class TenantSubscriptionLifecycleProcessTests
         "starter", "Annual",
         FullUserLimit: 3, SellerUserLimit: 1, PosDeviceLimit: 3,
         DianDocumentMonthlyLimit: 3_100, PayrollEmployeeLimit: 20,
-        IncludedFullUsers: 1, IncludedSellerUsers: 0, IncludedPosDevices: 1,
+        IncludedFullUsers: 1, IncludedSellerUsers: 0, IncludedPosDevices: 0,
         IncludedDianDocuments: 100, IncludedPayrollEmployees: 0,
         DianDocumentPackSize: 1_000, PayrollEmployeePackSize: 10,
         EmailRemindersEnabled: true, PreDueReminderDays: 5,
