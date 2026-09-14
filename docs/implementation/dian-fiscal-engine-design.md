@@ -73,6 +73,15 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   clave de seguimiento terminal anterior y normaliza únicamente la proyección UBL
   exigida por el anexo (por ejemplo, códigos DIAN y grupos obligatorios). No vuelve
   a ejecutar checkout, inventario, pago ni contabilidad y no consume consecutivo.
+- Conflicto de integridad: una repetición del mismo payload puede revalidar el
+  snapshot inmutable después de corregir el verificador. Si ahora es válido,
+  reserva cupo una sola vez, crea el job y payload durables faltantes y continúa
+  por el procesador canónico; conserva `DocumentId`, número, CUFE e idempotencia.
+- Los descuentos capturados por línea se informan en
+  `InvoiceLine/AllowanceCharge`, incluido `MultiplierFactorNumeric`, y ya están
+  reflejados en `LineExtensionAmount`. No se copian a
+  `LegalMonetaryTotal/AllowanceTotalAmount`, reservado por el anexo 1.9 para
+  descuentos globales del documento.
 - Timeout con `TrackId`: pasa a consulta, no crea otro documento.
 - Timeout ambiguo sin `TrackId`: queda `PendingDianResult` para intervención/consulta; la retransmisión automática queda bloqueada.
 - POS: el cursor solo avanza después de persistir la página; reiniciar no pierde venta, estado ni outbox.

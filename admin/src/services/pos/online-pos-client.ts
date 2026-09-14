@@ -1103,8 +1103,11 @@ export class OnlinePosClient implements PosClient {
     paymentReference?: string | null,
     bankAccountId?: string | null,
     paymentNotes?: string | null,
+    printAfterInvoice = true,
   ): Promise<InvoiceOrdersResponse> {
-    const printRoute = resolvePosOrderPrintRoute(this.edgeSessionToken);
+    const printRoute = printAfterInvoice
+      ? resolvePosOrderPrintRoute(this.edgeSessionToken)
+      : null;
     const browserPreview = printRoute === "browser"
       ? openHalfLetterPrintPreview()
       : null;
@@ -1121,6 +1124,11 @@ export class OnlinePosClient implements PosClient {
     });
     if (response.creditValidationIssues?.length) {
       closePrintPreview(browserPreview);
+      return response;
+    }
+    if (!printAfterInvoice) {
+      response.printStatus = "NotRequired";
+      await this.activeDraft();
       return response;
     }
     try {

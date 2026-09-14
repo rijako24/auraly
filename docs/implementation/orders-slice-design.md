@@ -74,6 +74,13 @@ no vuelve a resolver catálogo, disponibilidad ni reemplaza el detalle.
 
 Una selección produce una factura independiente por pedido. La operación completa tiene idempotencia durable, conserva progreso y devuelve resultado por pedido. Un pago ya confirmado por el pedido se registra como transferencia; de lo contrario se usa el medio seleccionado. Nunca se fusionan pedidos en una sola factura.
 
+La API y la interfaz limitan cada lote a 50 pedidos. La selección masiva conserva
+ese límite visible para que el usuario no prepare una solicitud que el servidor
+rechazará. `Imprimir al facturar` está activo de forma predeterminada y puede
+desmarcarse antes de emitir; esta preferencia sólo omite la vista previa o la
+impresora física y nunca cambia checkout, numeración, cartera, inventario ni el
+envío fiscal.
+
 La vista ofrece únicamente `Efectivo` y `Crédito`. `Efectivo` entra directamente al lote. Para `Crédito`, el mismo `POST /api/commerce/v1/orders/invoice` ejecuta primero una validación agrupada de todos los clientes y del valor acumulado de sus pedidos; es una sola consulta SQL para la selección completa. Si un cliente no tiene crédito habilitado o el valor agregado supera su cupo disponible, la respuesta identifica los clientes rechazados y no crea operación, borrador, liberación de inventario, factura ni cartera. Si todos cumplen, los pedidos se emiten uno por uno con idempotencia independiente.
 
 La prevalidación masiva no reemplaza la validación transaccional. Cada pedido a crédito envía `OnlineSalesCreditTerms` al checkout de ventas existente, que vuelve a validar el saldo bajo bloqueo y genera la cuenta por cobrar por el canal canónico. No existe un writer ni una ruta de cartera específica para pedidos.
@@ -91,6 +98,7 @@ La web usa JWT de usuario. POS Edge usa identidad del dispositivo y además resu
 - tabla moderna y paginada;
 - filtros combinables;
 - selección múltiple y facturación por lote;
+- control explícito `Imprimir al facturar`, activo por defecto;
 - detalle lateral;
 - recuperación de un solo pedido;
 - modo compacto dentro del POS;
@@ -110,7 +118,6 @@ la interfaz.
 - edición comercial completa del pedido;
 - rutas y despacho;
 - devoluciones;
-- impresión física automática de un lote desde el dashboard;
 - cambios tributarios dentro del pedido, porque pertenecen deliberadamente a la factura.
 
 Esas capacidades deben continuar en rebanadas verticales separadas y no como contratos vacíos.

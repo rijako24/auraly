@@ -4,6 +4,14 @@ import type {
   CommerceOrderPage,
 } from "./commerce-orders-client";
 
+export const ORDER_INVOICE_BATCH_LIMIT = 50;
+
+export function limitInvoiceBatch(
+  orders: CommerceOrderListItem[],
+): CommerceOrderListItem[] {
+  return orders.slice(0, ORDER_INVOICE_BATCH_LIMIT);
+}
+
 export async function loadAllMatchingOrders(
   loadPage: (
     filters: CommerceOrderFilters & { page: number; pageSize: number },

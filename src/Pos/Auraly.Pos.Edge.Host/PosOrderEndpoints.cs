@@ -214,6 +214,8 @@ public static class PosOrderEndpoints
                 ct);
             if (response.CreditValidationIssues is { Count: > 0 })
                 return Results.Ok(response with { PrintStatus = "NotRequired" });
+            if (!request.PrintAfterInvoice)
+                return Results.Ok(response with { PrintStatus = "NotRequired" });
             try
             {
                 var receipts = response.Results
@@ -253,7 +255,8 @@ public sealed record InvoicePosOrdersRequest(
     Guid? BankAccountId,
     string? PaymentNotes,
     string IdempotencyKey,
-    string DocumentType = "SalesInvoice");
+    string DocumentType = "SalesInvoice",
+    bool PrintAfterInvoice = true);
 
 public sealed record PrintPosOrdersRequest(IReadOnlyCollection<Guid> OrderIds);
 public sealed record SavePosOrderRequest(Guid DraftId);

@@ -2445,6 +2445,7 @@ export default function PosPage() {
     orderIds: string[],
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
+    printAfterInvoice: boolean,
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
   ) {
     if (!client) throw new Error("El punto de venta no está disponible.");
@@ -2455,6 +2456,7 @@ export default function PosPage() {
       transfer?.reference,
       transfer?.bankAccountId,
       transfer?.notes,
+      printAfterInvoice,
     );
     setMessage(
       (result.printError ? result.printError + " · " : "") +
@@ -3435,11 +3437,12 @@ export default function PosPage() {
                 loadDetail={(orderId) => client!.order(orderId)}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={(orders) => client!.printOrders(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     paymentMethodCode,
                     documentType,
+                    printAfterInvoice,
                   )
                 }
                 onConfigurePrinting={() => setPrinterOpen(true)}
@@ -3483,11 +3486,12 @@ export default function PosPage() {
               loadDetail={(orderId) => client.order(orderId)}
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={(orders) => client.printOrders(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType, paymentMethodCode) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
                   documentType,
+                  printAfterInvoice,
                 )
               }
               onConfigurePrinting={() => setPrinterOpen(true)}

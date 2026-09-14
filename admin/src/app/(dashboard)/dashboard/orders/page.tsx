@@ -149,7 +149,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user
-            ? async (orders, documentType, paymentMethodCode) => {
+            ? async (orders, documentType, paymentMethodCode, printAfterInvoice) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
@@ -162,6 +162,10 @@ export default function OrdersPage() {
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
                   documentType,
+                  null,
+                  null,
+                  null,
+                  printAfterInvoice,
                 );
                 return {
                   completedCount: response.completedCount,

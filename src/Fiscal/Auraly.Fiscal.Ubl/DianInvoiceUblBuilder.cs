@@ -161,7 +161,6 @@ public sealed class DianInvoiceUblBuilder
             MoneyElement("LineExtensionAmount", invoice.LineExtensionAmount, invoice.CurrencyCode),
             MoneyElement("TaxExclusiveAmount", invoice.TaxExclusiveAmount, invoice.CurrencyCode),
             MoneyElement("TaxInclusiveAmount", invoice.TaxInclusiveAmount, invoice.CurrencyCode),
-            MoneyElement("AllowanceTotalAmount", invoice.DiscountAmount, invoice.CurrencyCode),
             invoice.PayableRoundingAmount == 0
                 ? null
                 : MoneyElement("PayableRoundingAmount", invoice.PayableRoundingAmount,
@@ -177,6 +176,8 @@ public sealed class DianInvoiceUblBuilder
                 E(Cbc, "ID", "1"), E(Cbc, "ChargeIndicator", "false"),
                 E(Cbc, "AllowanceChargeReasonCode", "00"),
                 E(Cbc, "AllowanceChargeReason", "Descuento"),
+                E(Cbc, "MultiplierFactorNumeric", Percentage(
+                    line.DiscountAmount, line.Quantity * line.UnitPrice)),
                 MoneyElement("Amount", line.DiscountAmount, currency),
                 MoneyElement("BaseAmount", line.Quantity * line.UnitPrice, currency)),
             DianTaxTotalXml.Line(line.Taxes, currency),
@@ -218,6 +219,9 @@ public sealed class DianInvoiceUblBuilder
     private static string Date(DateOnly value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     private static string Money(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
     private static string Number(decimal value) => value.ToString("0.000000", CultureInfo.InvariantCulture);
+    private static string Percentage(decimal amount, decimal baseAmount) =>
+        decimal.Round(amount / baseAmount * 100m, 2, MidpointRounding.AwayFromZero)
+            .ToString("0.00", CultureInfo.InvariantCulture);
 
     private static byte[] Serialize(XDocument document)
     {

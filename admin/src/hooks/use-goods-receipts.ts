@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import {
   goodsReceiptsApi, type GoodsReceiptStatus, type SaveGoodsReceiptDraftRequest,
 } from "@/services/api/goods-receipts";
@@ -31,11 +32,16 @@ export function useGoodsReceiptProducts(
   supplierId?: string, search?: string, includeUnassociated = false,
 ) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const normalizedSearch = search?.trim() ?? "";
+  const requestedSearch = search?.trim() ?? "";
+  const [normalizedSearch, setNormalizedSearch] = useState("");
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setNormalizedSearch(requestedSearch), 250);
+    return () => window.clearTimeout(timeout);
+  }, [requestedSearch]);
   return useInfiniteQuery({
     queryKey: ["goods-receipt-products", businessId, supplierId, normalizedSearch, includeUnassociated],
     queryFn: ({ pageParam }) => goodsReceiptsApi.products(
-      supplierId!, normalizedSearch, includeUnassociated, pageParam, 50,
+      supplierId!, normalizedSearch, includeUnassociated, pageParam, 10,
     ),
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>

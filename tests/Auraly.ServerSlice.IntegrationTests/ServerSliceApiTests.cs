@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
+using Auraly.Application.Sales;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Infrastructure.Persistence;
@@ -407,6 +408,56 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(0, await fixture.CountAsync("InventoryMovements", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("ServerOutboxMessages", original.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalDocumentProcesses", original.DocumentId));
+    }
+
+    [Fact]
+    public async Task A_previously_blocked_valid_snapshot_is_reverified_and_enqueued_idempotently()
+    {
+        var request = fixture.CreateValidRequest(7_123);
+        var idempotencyKey = $"recover-integrity-{request.DocumentId:N}";
+        using var scope = fixture.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IPosSaleServerStore>();
+        var verifier = scope.ServiceProvider.GetRequiredService<IFiscalSnapshotVerifier>();
+        var receiver = scope.ServiceProvider.GetRequiredService<ReceivePosSaleService>();
+        var validVerification = await verifier.VerifyAsync(request, CancellationToken.None);
+        Assert.True(validVerification.IsVerified, validVerification.ConflictReason);
+
+        var snapshotJson = PosSaleContractSerializer.Serialize(request);
+        var payloadHash = PosSaleContractSerializer.Hash(request);
+        var blocked = await store.StoreReceptionAsync(
+            new StorePosSaleReceptionCommand(
+                request,
+                idempotencyKey,
+                snapshotJson,
+                payloadHash,
+                validVerification with
+                {
+                    IsVerified = false,
+                    ConflictReason = "Simulated verifier defect"
+                },
+                DateTimeOffset.UtcNow),
+            CancellationToken.None);
+        Assert.Equal(PosSaleRemoteStatuses.FiscalIntegrityConflict, blocked.FiscalStatus);
+        Assert.Equal("Blocked", blocked.ProcessingStatus);
+
+        var recovered = await receiver.ReceiveAsync(
+            new PosDeviceIdentity(fixture.DeviceId, fixture.TenantId),
+            idempotencyKey,
+            request,
+            CancellationToken.None);
+
+        Assert.NotEqual(PosSaleRemoteStatuses.FiscalIntegrityConflict, recovered.Status);
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingPayloads", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("FiscalSnapshots", request.DocumentId));
+
+        await receiver.ReceiveAsync(
+            new PosDeviceIdentity(fixture.DeviceId, fixture.TenantId),
+            idempotencyKey,
+            request,
+            CancellationToken.None);
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingPayloads", request.DocumentId));
     }
 
     private static PosSaleUploadRequest Mutate(PosSaleUploadRequest request, string mutation)

@@ -1205,7 +1205,7 @@ function ReceiptEditor({
                 </button>)}
               {products.hasNextPage && <Button type="button" variant="ghost" className="mt-2 w-full"
                 disabled={products.isFetchingNextPage} onClick={() => products.fetchNextPage()}>
-                {products.isFetchingNextPage ? "Cargando..." : "Cargar 50 más"}
+                {products.isFetchingNextPage ? "Cargando..." : "Cargar 10 más"}
               </Button>}
             </div>}
           {productMenuOpen && draft.supplierId && productSearch.trim().length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Escribe al menos una letra, código o referencia para buscar.</div>}

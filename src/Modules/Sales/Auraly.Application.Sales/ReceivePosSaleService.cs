@@ -55,6 +55,10 @@ public interface IPosSaleServerStore
     Task<StoredPosSale> StoreReceptionAsync(
         StorePosSaleReceptionCommand command,
         CancellationToken cancellationToken);
+
+    Task<StoredPosSale> RecoverFiscalIntegrityConflictAsync(
+        StorePosSaleReceptionCommand command,
+        CancellationToken cancellationToken);
 }
 
 public interface IPosSaleCustomerResolver
@@ -154,7 +158,7 @@ public sealed class ReceivePosSaleService(
         if (existing is not null)
         {
             EnsureSameRequest(existing, request.DocumentId, idempotencyKey, payloadHash);
-            if (existing.ProcessingStatus is "Completed" or "Blocked")
+            if (existing.ProcessingStatus == "Completed")
                 return ToResponse(existing, isDuplicate: true);
         }
 
@@ -175,15 +179,16 @@ public sealed class ReceivePosSaleService(
         }
 
         var receivedAt = timeProvider.GetUtcNow();
-        var stored = await store.StoreReceptionAsync(
-            new StorePosSaleReceptionCommand(
-                request,
-                idempotencyKey.Trim(),
-                snapshotJson,
-                payloadHash,
-                verification,
-                receivedAt),
-            cancellationToken);
+        var reception = new StorePosSaleReceptionCommand(
+            request,
+            idempotencyKey.Trim(),
+            snapshotJson,
+            payloadHash,
+            verification,
+            receivedAt);
+        var stored = existing?.ProcessingStatus == "Blocked" && verification.IsVerified
+            ? await store.RecoverFiscalIntegrityConflictAsync(reception, cancellationToken)
+            : await store.StoreReceptionAsync(reception, cancellationToken);
         EnsureSameRequest(stored, request.DocumentId, idempotencyKey, payloadHash);
 
         if (!verification.IsVerified || stored.ProcessingStatus == "Blocked")

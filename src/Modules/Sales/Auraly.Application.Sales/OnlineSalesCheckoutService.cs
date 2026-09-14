@@ -171,6 +171,10 @@ public sealed class OnlineSalesCheckoutService(
                 ? "FiscalConflict"
                 : "Completed",
             cancellationToken);
+        if (reception.Status == PosSaleRemoteStatuses.FiscalIntegrityConflict)
+            throw new OnlineSalesDraftValidationException(
+                "La factura no superó la validación fiscal interna y no fue enviada a la DIAN. " +
+                "Consulta el documento fiscal antes de volver a facturar el pedido.");
         return new CompleteOnlineSalesDraftResponse(
             OnlineSalesReceiptMapper.From(prepared.Request, reception.Status),
             prepared.NextDraft,

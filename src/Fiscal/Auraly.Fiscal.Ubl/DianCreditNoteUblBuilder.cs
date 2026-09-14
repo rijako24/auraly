@@ -136,7 +136,6 @@ public sealed class DianCreditNoteUblBuilder
             MoneyElement("LineExtensionAmount", note.LineExtensionAmount, note.CurrencyCode),
             MoneyElement("TaxExclusiveAmount", note.TaxExclusiveAmount, note.CurrencyCode),
             MoneyElement("TaxInclusiveAmount", note.TaxInclusiveAmount, note.CurrencyCode),
-            MoneyElement("AllowanceTotalAmount", note.DiscountAmount, note.CurrencyCode),
             MoneyElement("PayableAmount", note.PayableAmount, note.CurrencyCode));
 
     private static XElement CreditLine(DianCreditNoteLine line, string currency) =>
@@ -148,6 +147,8 @@ public sealed class DianCreditNoteUblBuilder
             line.DiscountAmount == 0 ? null : new XElement(Cac + "AllowanceCharge",
                 E(Cbc, "ID", "1"), E(Cbc, "ChargeIndicator", "false"),
                 E(Cbc, "AllowanceChargeReasonCode", "00"), E(Cbc, "AllowanceChargeReason", "Descuento"),
+                E(Cbc, "MultiplierFactorNumeric", Percentage(
+                    line.DiscountAmount, line.Quantity * line.UnitPrice)),
                 MoneyElement("Amount", line.DiscountAmount, currency),
                 MoneyElement("BaseAmount", line.Quantity * line.UnitPrice, currency)),
             new XElement(Cac + "Item", E(Cbc, "Description", line.Description),
@@ -185,6 +186,9 @@ public sealed class DianCreditNoteUblBuilder
     private static string Date(DateOnly value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     private static string Money(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
     private static string Number(decimal value) => value.ToString("0.000000", CultureInfo.InvariantCulture);
+    private static string Percentage(decimal amount, decimal baseAmount) =>
+        decimal.Round(amount / baseAmount * 100m, 2, MidpointRounding.AwayFromZero)
+            .ToString("0.00", CultureInfo.InvariantCulture);
     private static byte[] Serialize(XDocument document)
     {
         using var stream = new MemoryStream();

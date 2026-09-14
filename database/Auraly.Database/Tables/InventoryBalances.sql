@@ -28,4 +28,9 @@ GO
 CREATE INDEX [IX_InventoryBalances_WarehouseProduct]
     ON [dbo].[InventoryBalances] ([WarehouseId], [ProductId])
     INCLUDE ([QuantityOnHand], [AverageUnitCost], [InventoryValue]);
+GO
+
+CREATE INDEX [IX_InventoryBalances_ProductBusiness]
+    ON [dbo].[InventoryBalances] ([ProductId], [BusinessId])
+    INCLUDE ([QuantityOnHand], [AverageUnitCost], [InventoryValue]);
 

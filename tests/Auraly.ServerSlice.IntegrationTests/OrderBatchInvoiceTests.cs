@@ -409,6 +409,141 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Credit_order_with_customer_site_is_invoiced_without_server_error()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        var partyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seedCredit = connection.CreateCommand();
+            seedCredit.CommandText = """
+                DECLARE @CountryId UNIQUEIDENTIFIER,
+                        @DivisionId UNIQUEIDENTIFIER,
+                        @CityId UNIQUEIDENTIFIER;
+                SELECT TOP(1)
+                  @CountryId=country.CountryId,
+                  @DivisionId=division.AdministrativeDivisionId,
+                  @CityId=city.CityId
+                FROM dbo.Cities city
+                JOIN dbo.AdministrativeDivisions division
+                  ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+                JOIN dbo.Countries country ON country.CountryId=division.CountryId
+                WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+
+                INSERT dbo.Parties(
+                  PartyId,TenantId,PartyType,DisplayName,LegalName,
+                  CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                VALUES(
+                  @PartyId,@TenantId,N'Organization',N'Cliente crédito lote',
+                  N'Cliente crédito lote',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
+
+                INSERT dbo.Customers(
+                  CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+                  IsActive,CreatedBy,CreatedAt)
+                VALUES(@CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+
+                INSERT dbo.PartySites(
+                  PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+                  CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                VALUES(
+                  @PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+                  @DivisionId,@CityId,N'Calle 1',1,1,@UserId,SYSDATETIMEOFFSET());
+
+                INSERT dbo.CustomerCreditProfiles(
+                  CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,
+                  UpdatedByUserId,UpdatedAt)
+                VALUES(@CustomerId,@BusinessId,1000000,30,1,@UserId,SYSDATETIMEOFFSET());
+
+                UPDATE dbo.Orders
+                SET CustomerId=@CustomerId,PartySiteId=@PartySiteId,
+                    CustomerNameSnapshot=N'Cliente crédito lote',
+                    Subtotal=3126.33,Total=3126.33
+                WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+
+                UPDATE dbo.OrderItems
+                SET Quantity=.5,UnitPrice=6252.65,LineTotal=3126.33
+                WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+                """;
+            seedCredit.Parameters.AddWithValue("@PartyId", partyId);
+            seedCredit.Parameters.AddWithValue("@CustomerId", customerId);
+            seedCredit.Parameters.AddWithValue("@PartySiteId", partySiteId);
+            seedCredit.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            seedCredit.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seedCredit.Parameters.AddWithValue("@UserId", userId);
+            seedCredit.Parameters.AddWithValue("@OrderId", orderId);
+            await seedCredit.ExecuteNonQueryAsync();
+        }
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var command = new InvoiceOrdersRequest(
+            workSessionId,
+            fixture.WarehouseId,
+            userId,
+            [orderId],
+            "Credit",
+            null);
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var response = await InvoiceAsync(
+                client,
+                command,
+                $"credit-order-{Guid.NewGuid():N}");
+
+            Assert.Equal("Completed", response.Status);
+            Assert.Equal(1, response.CompletedCount);
+            Assert.Equal(0, response.FailedCount);
+            Assert.Null(response.CreditValidationIssues);
+            var result = Assert.Single(response.Results);
+            Assert.Equal("Invoiced", result.Status);
+            Assert.NotNull(result.DocumentId);
+
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+
+            await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+            await verifyConnection.OpenAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT document.CreditAmount,document.CustomerPartySiteId,
+                       receivable.PartySiteId,receivable.OutstandingAmount
+                FROM dbo.SalesDocuments document
+                JOIN dbo.Receivables receivable
+                  ON receivable.SourceDocumentId=document.DocumentId
+                WHERE document.DocumentId=@DocumentId;
+                """;
+            verify.Parameters.AddWithValue("@DocumentId", result.DocumentId.Value);
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(3126.33m, reader.GetDecimal(0));
+            Assert.Equal(partySiteId, reader.GetGuid(1));
+            Assert.Equal(partySiteId, reader.GetGuid(2));
+            Assert.Equal(3126.33m, reader.GetDecimal(3));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in fixture.DrainDocumentSignals())
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
+    }
+
+    [Fact]
     public async Task Invalid_order_in_a_batch_is_terminal_and_replays_without_a_stale_lease()
     {
         var userId = Guid.NewGuid();

@@ -46,13 +46,16 @@ import {
   type CommerceOrderPage,
   type OrderCreditValidationIssue,
 } from "@/services/orders/commerce-orders-client";
-import { loadAllMatchingOrders } from "@/services/orders/order-batch-selection";
+import {
+  limitInvoiceBatch,
+  loadAllMatchingOrders,
+  ORDER_INVOICE_BATCH_LIMIT,
+} from "@/services/orders/order-batch-selection";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
 import { getOrderAvailability } from "./order-availability";
 import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
 
 const ORDER_STATUS_REFRESH_INTERVAL_MS = 10_000;
-
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
@@ -84,6 +87,7 @@ type OrdersWorkspaceProps = {
     orders: CommerceOrderListItem[],
     documentType: "SalesInvoice" | "SalesReceipt",
     paymentMethodCode: "Cash" | "Credit",
+    printAfterInvoice: boolean,
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -138,6 +142,7 @@ export function OrdersWorkspace({
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CommerceOrderPage | null>(null);
   const [query, setQuery] = useState("");
+  const [printAfterInvoice, setPrintAfterInvoice] = useState(true);
   const [customerId, setCustomerId] = useState("all");
   const [product, setProduct] = useState("");
   const [status, setStatus] = useState(initialStatus);
@@ -271,9 +276,14 @@ export function OrdersWorkspace({
       const matches = await loadAllMatchingOrders(loadPage, orderFilters);
       const available = matches.filter((order) =>
         isAvailableForThisSession(order, activeOrderId));
-      setSelected(new Map(available.map((order) => [order.orderId, order])));
-      setAllMatchingSelected(true);
-      setNotice(`${available.length} pedidos disponibles seleccionados en todas las páginas.`);
+      const selectedBatch = limitInvoiceBatch(available);
+      setSelected(new Map(selectedBatch.map((order) => [order.orderId, order])));
+      setAllMatchingSelected(available.length <= ORDER_INVOICE_BATCH_LIMIT);
+      setNotice(
+        available.length > ORDER_INVOICE_BATCH_LIMIT
+          ? `Se seleccionaron los primeros ${ORDER_INVOICE_BATCH_LIMIT} pedidos disponibles, el máximo seguro por lote.`
+          : `${available.length} pedidos disponibles seleccionados en todas las páginas.`,
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No fue posible seleccionar todos los pedidos.");
     } finally {
@@ -311,6 +321,10 @@ export function OrdersWorkspace({
 
   async function invoiceSelected() {
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
+    if (selectedOrders.length > ORDER_INVOICE_BATCH_LIMIT) {
+      setError(`Puedes facturar máximo ${ORDER_INVOICE_BATCH_LIMIT} pedidos por lote.`);
+      return;
+    }
     const available = selectedOrders.filter((order) =>
       isAvailableForThisSession(order, activeOrderId));
     if (available.length !== selectedOrders.length) {
@@ -325,7 +339,12 @@ export function OrdersWorkspace({
     setNotice(null);
     setInvoiceProgress({ total: available.length, processed: 0, completed: 0, failed: 0, current: "Preparando lote", events: [] });
     try {
-      const result = await onInvoiceSelected(available, documentType, paymentMethodCode);
+      const result = await onInvoiceSelected(
+        available,
+        documentType,
+        paymentMethodCode,
+        printAfterInvoice,
+      );
       if (result.creditValidationIssues?.length) {
         setCreditValidationIssues(result.creditValidationIssues);
         setInvoiceProgress(null);
@@ -615,11 +634,22 @@ export function OrdersWorkspace({
                     <CreditCard className="h-3.5 w-3.5" />Crédito
                   </button>
                 </div>
+                <label className="col-span-2 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 sm:col-span-1">
+                  <Checkbox
+                    checked={printAfterInvoice}
+                    disabled={working}
+                    onCheckedChange={(checked) => setPrintAfterInvoice(checked === true)}
+                    aria-label="Imprimir al facturar"
+                    className="h-4 w-4 rounded"
+                  />
+                  <Printer className="h-3.5 w-3.5 text-teal-700" />
+                  Imprimir al facturar
+                </label>
                 <Button
                   type="button"
                   disabled={!selectedOrders.length || working || selectingAll || !onInvoiceSelected}
                   onClick={() => void invoiceSelected()}
-                  className="col-span-2 w-full whitespace-nowrap bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
+                  className="col-span-2 w-full whitespace-nowrap bg-teal-700 text-white hover:bg-teal-800 sm:col-span-1 sm:w-auto"
                 >
                   {working ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

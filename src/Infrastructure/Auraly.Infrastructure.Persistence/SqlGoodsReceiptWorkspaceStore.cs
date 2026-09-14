@@ -136,17 +136,24 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         const string sql = """
+            SET NOCOUNT ON;
+
             IF NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers
               WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
               THROW 51120,'The supplier is outside the authenticated business.',1;
+
+            DECLARE @TenantId UNIQUEIDENTIFIER,@SharesProductPrices BIT;
+            SELECT @TenantId=TenantId,@SharesProductPrices=SharesProductPrices
+            FROM dbo.Businesses
+            WHERE BusinessId=@BusinessId;
 
             SELECT COUNT(*)
             FROM dbo.Products p
             LEFT JOIN dbo.SupplierProducts sp
               ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
              AND sp.SupplierId=@SupplierId AND sp.IsActive=1
-            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+            WHERE (p.TenantId=@TenantId
                    OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
               AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
                              WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
@@ -157,7 +164,34 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                    OR sp.SupplierProductCode LIKE N'%'+@Search+N'%'
                    OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes pb
                               WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId
-                                AND pb.IsActive=1 AND pb.Barcode LIKE N'%'+@Search+N'%'));
+                                AND pb.IsActive=1 AND pb.Barcode LIKE N'%'+@Search+N'%'))
+            OPTION (RECOMPILE);
+
+            CREATE TABLE #RequestedProducts(
+              ProductId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY
+            );
+
+            INSERT #RequestedProducts(ProductId)
+            SELECT p.ProductId
+            FROM dbo.Products p
+            LEFT JOIN dbo.SupplierProducts sp
+              ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
+             AND sp.SupplierId=@SupplierId AND sp.IsActive=1
+            WHERE (p.TenantId=@TenantId
+                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
+              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
+                             WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
+                               AND link.SharesInventory=1 AND link.IsActive=1)
+              AND (@IncludeUnassociated=1 OR sp.SupplierProductId IS NOT NULL)
+              AND (@Search IS NULL OR p.ProductCode LIKE N'%'+@Search+N'%'
+                   OR p.Reference LIKE N'%'+@Search+N'%' OR p.Name LIKE N'%'+@Search+N'%'
+                   OR sp.SupplierProductCode LIKE N'%'+@Search+N'%'
+                   OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes pb
+                              WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId
+                                AND pb.IsActive=1 AND pb.Barcode LIKE N'%'+@Search+N'%'))
+            ORDER BY CASE WHEN sp.SupplierProductId IS NULL THEN 1 ELSE 0 END,p.Name,p.ProductId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+            OPTION (RECOMPILE);
 
             SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,
                    sp.SupplierProductCode,latest.LatestUnitCost,averageCost.AverageUnitCost,
@@ -168,7 +202,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                    CONVERT(BIT,CASE WHEN sp.SupplierProductId IS NULL THEN 0 ELSE 1 END),
                    COALESCE(sp.PurchasePresentationName,N'Unidad'),COALESCE(sp.UnitsPerPresentation,1),
                    COALESCE(sp.IsPrimary,CONVERT(BIT,0)),p.UnitGrossWeightKg
-            FROM dbo.Products p
+            FROM #RequestedProducts requested
+            INNER JOIN dbo.Products p ON p.ProductId=requested.ProductId
             LEFT JOIN dbo.SupplierProducts sp
               ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
              AND sp.SupplierId=@SupplierId AND sp.IsActive=1
@@ -185,9 +220,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 MAX(balance.AverageUnitCost)) AverageUnitCost
               FROM dbo.InventoryBalances balance
               INNER JOIN dbo.Businesses balanceBusiness ON balanceBusiness.BusinessId=balance.BusinessId
-              INNER JOIN dbo.Businesses currentBusiness ON currentBusiness.BusinessId=@BusinessId
               WHERE balance.ProductId=p.ProductId
-                AND (currentBusiness.SharesProductPrices=1 AND balanceBusiness.TenantId=currentBusiness.TenantId
+                AND (@SharesProductPrices=1 AND balanceBusiness.TenantId=@TenantId
                      AND balanceBusiness.SharesProductPrices=1 OR balance.BusinessId=@BusinessId)
             ) averageCost
             OUTER APPLY (
@@ -195,20 +229,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
               FROM dbo.ProductBarcodes pb
               WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId AND pb.IsActive=1
             ) b
-            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
-              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
-                             WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
-                               AND link.SharesInventory=1 AND link.IsActive=1)
-              AND (@IncludeUnassociated=1 OR sp.SupplierProductId IS NOT NULL)
-              AND (@Search IS NULL OR p.ProductCode LIKE N'%'+@Search+N'%'
-                   OR p.Reference LIKE N'%'+@Search+N'%' OR p.Name LIKE N'%'+@Search+N'%'
-                   OR sp.SupplierProductCode LIKE N'%'+@Search+N'%'
-                   OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes pb
-                              WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId
-                                AND pb.IsActive=1 AND pb.Barcode LIKE N'%'+@Search+N'%'))
             ORDER BY CASE WHEN sp.SupplierProductId IS NULL THEN 1 ELSE 0 END,p.Name,p.ProductId
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            OPTION (RECOMPILE);
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CommerceOrderListItem } from "./commerce-orders-client";
-import { loadAllMatchingOrders } from "./order-batch-selection";
+import {
+  limitInvoiceBatch,
+  loadAllMatchingOrders,
+  ORDER_INVOICE_BATCH_LIMIT,
+} from "./order-batch-selection";
 
 function order(index: number): CommerceOrderListItem {
   return {
@@ -55,4 +59,14 @@ test("detiene una paginación defectuosa que repite la misma página", async () 
     }), {}, 2),
     /no avanzó/,
   );
+});
+
+test("limita la selección masiva al máximo aceptado por el endpoint", () => {
+  const selected = limitInvoiceBatch(
+    Array.from({ length: ORDER_INVOICE_BATCH_LIMIT + 25 }, (_, index) => order(index + 1)),
+  );
+
+  assert.equal(selected.length, ORDER_INVOICE_BATCH_LIMIT);
+  assert.equal(selected[0].orderId, "order-1");
+  assert.equal(selected.at(-1)?.orderId, `order-${ORDER_INVOICE_BATCH_LIMIT}`);
 });

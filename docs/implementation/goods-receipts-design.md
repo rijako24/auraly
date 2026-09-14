@@ -76,6 +76,14 @@ Las bandejas usan la grilla compartida, paginación de servidor y filtros por es
 3. flechas arriba/abajo recorren cantidades;
 4. Enter en cantidad devuelve el foco al buscador.
 
+El modo `Todo el catálogo` conserva paginación real de servidor: la primera
+respuesta y cada carga incremental contienen como máximo 10 productos. La
+búsqueda se difiere 250 ms mientras el usuario escribe y el query SQL primero
+materializa los 10 identificadores solicitados; sólo después calcula códigos,
+costos e inventario para esos productos. La orden de compra comparte este
+selector y el mismo contrato, por lo que tampoco descarga ni enriquece el
+catálogo completo.
+
 El detalle de producto presenta rotación sólo como información de lectura. La edición del producto no puede escribirla.
 
 ## Contratos principales

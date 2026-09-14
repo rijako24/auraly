@@ -169,6 +169,145 @@ public sealed class SqlPosSaleServerStore(
         CancellationToken cancellationToken) =>
         StoreReceptionCoreAsync(command, 0, cancellationToken);
 
+    public Task<StoredPosSale> RecoverFiscalIntegrityConflictAsync(
+        StorePosSaleReceptionCommand command,
+        CancellationToken cancellationToken) =>
+        RecoverFiscalIntegrityConflictCoreAsync(command, 0, cancellationToken);
+
+    private async Task<StoredPosSale> RecoverFiscalIntegrityConflictCoreAsync(
+        StorePosSaleReceptionCommand command,
+        int deadlockAttempt,
+        CancellationToken cancellationToken)
+    {
+        if (!command.Verification.IsVerified || command.Request.FiscalSnapshot is null)
+            throw new ArgumentException(
+                "Only a verified fiscal snapshot can recover an integrity conflict.",
+                nameof(command));
+
+        var request = command.Request;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await EnsureAndLockBusinessCursorAsync(
+                connection, transaction, request.BusinessId,
+                command.ReceivedAt, cancellationToken);
+
+            await using var state = new SqlCommand("""
+                SELECT d.ProcessingStatus,d.FiscalStatus,s.IntegrityStatus,p.Status
+                FROM dbo.SalesDocuments d WITH(UPDLOCK,HOLDLOCK)
+                JOIN dbo.FiscalSnapshots s WITH(UPDLOCK,HOLDLOCK)
+                  ON s.DocumentId=d.DocumentId
+                JOIN dbo.FiscalDocumentProcesses p WITH(UPDLOCK,HOLDLOCK)
+                  ON p.DocumentId=d.DocumentId AND p.BusinessId=d.BusinessId
+                WHERE d.DocumentId=@DocumentId AND d.BusinessId=@BusinessId;
+                """, connection, transaction);
+            state.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            state.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+            var canRecover = false;
+            await using (var reader = await state.ExecuteReaderAsync(cancellationToken))
+            {
+                if (!await reader.ReadAsync(cancellationToken))
+                    throw new InvalidOperationException(
+                        "The fiscal conflict no longer has its durable document roots.");
+                canRecover = reader.GetString(0) == "Blocked" &&
+                    reader.GetString(1) == PosSaleRemoteStatuses.FiscalIntegrityConflict &&
+                    reader.GetString(2) == PosSaleRemoteStatuses.FiscalIntegrityConflict &&
+                    reader.GetString(3) == FiscalDocumentStatusCodes.FiscalIntegrityConflict;
+            }
+
+            if (!canRecover)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return await FindAsync(request.BusinessId, request.DocumentId,
+                           command.IdempotencyKey, cancellationToken)
+                       ?? throw new InvalidOperationException(
+                           "The fiscal document changed while its recovery was being prepared.");
+            }
+
+            var hasDianQuota = await SqlDianDocumentQuota.TryReserveAsync(
+                connection, transaction, request.BusinessId, request.DocumentId,
+                "Invoice", command.ReceivedAt, cancellationToken);
+            if (!hasDianQuota && request.SourceMode == SaleSourceModes.Online)
+                throw new InvalidOperationException(
+                    "No hay cupo de documentos DIAN. Compra un paquete antes de recuperar la factura electrónica.");
+
+            var fiscalStatus = hasDianQuota
+                ? PosSaleRemoteStatuses.FiscalVerified
+                : FiscalDocumentStatusCodes.BlockedByQuota;
+            await using (var update = new SqlCommand("""
+                UPDATE dbo.FiscalSnapshots
+                SET IntegrityStatus=@FiscalStatus,VerifiedAt=@Now,ConflictReason=NULL,
+                    CufeCalculated=@CufeCalculated
+                WHERE DocumentId=@DocumentId
+                  AND IntegrityStatus=@FiscalIntegrityConflict;
+
+                UPDATE dbo.SalesDocuments
+                SET ProcessingStatus=N'Received',FiscalStatus=@FiscalStatus,
+                    CufeCalculated=@CufeCalculated
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
+                  AND ProcessingStatus=N'Blocked'
+                  AND FiscalStatus=@FiscalIntegrityConflict;
+
+                UPDATE dbo.FiscalDocuments
+                SET FiscalStatus=@FiscalStatus,UpdatedAt=@Now
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
+                  AND FiscalStatus=@FiscalIntegrityConflict;
+
+                UPDATE dbo.FiscalDocumentProcesses
+                SET Status=@ProcessStatus,NextAttemptAt=NULL,LockedAt=NULL,LockedBy=NULL,
+                    LastErrorCode=NULL,LastErrorMessage=NULL,UpdatedAt=@Now,
+                    QuotaBlockedAt=CASE WHEN @ProcessStatus=@BlockedByQuota THEN @Now END
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
+                  AND Status=@FiscalIntegrityConflict;
+                """, connection, transaction))
+            {
+                update.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+                update.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+                update.Parameters.AddWithValue("@Now", command.ReceivedAt);
+                update.Parameters.AddWithValue("@CufeCalculated",
+                    command.Verification.CufeCalculated ?? request.FiscalSnapshot.Cufe);
+                update.Parameters.AddWithValue("@FiscalStatus", fiscalStatus);
+                update.Parameters.AddWithValue("@ProcessStatus", hasDianQuota
+                    ? FiscalDocumentStatusCodes.PendingGeneration
+                    : FiscalDocumentStatusCodes.BlockedByQuota);
+                update.Parameters.AddWithValue("@BlockedByQuota",
+                    FiscalDocumentStatusCodes.BlockedByQuota);
+                update.Parameters.AddWithValue("@FiscalIntegrityConflict",
+                    FiscalDocumentStatusCodes.FiscalIntegrityConflict);
+                if (await update.ExecuteNonQueryAsync(cancellationToken) != 4)
+                    throw new DBConcurrencyException(
+                        "The fiscal conflict changed while it was being recovered.");
+            }
+
+            await EnqueueDocumentAsync(connection, transaction, command, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
+            if (deadlockAttempt >= 4) throw;
+            await Task.Delay(TimeSpan.FromMilliseconds(25 * (deadlockAttempt + 1)),
+                cancellationToken);
+            return await RecoverFiscalIntegrityConflictCoreAsync(
+                command, deadlockAttempt + 1, cancellationToken);
+        }
+        catch
+        {
+            if (transaction.Connection is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+
+        return await FindAsync(request.BusinessId, request.DocumentId,
+                   command.IdempotencyKey, cancellationToken)
+               ?? throw new InvalidOperationException(
+                   "The recovered fiscal document could not be loaded.");
+    }
+
     private async Task<StoredPosSale> StoreReceptionCoreAsync(
         StorePosSaleReceptionCommand command,
         int deadlockAttempt,

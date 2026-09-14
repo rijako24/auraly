@@ -252,6 +252,49 @@ public sealed class DianInvoiceUblTests
     }
 
     [Fact]
+    public void Line_discount_is_not_reported_as_a_global_allowance()
+    {
+        var gross = 200_901.92m;
+        var discount = 901.92m;
+        var net = 200_000m;
+        var invoice = CreateInvoice() with
+        {
+            Lines =
+            [
+                new DianInvoiceLine(1, "P1", "999", "Producto", "EA",
+                    4m, 50_225.48m, discount, net,
+                    [new DianTax("01", "IVA", net, 0m, 0m)])
+            ],
+            Taxes = [new DianTax("01", "IVA", net, 0m, 0m)],
+            LineExtensionAmount = net,
+            TaxExclusiveAmount = net,
+            TaxInclusiveAmount = net,
+            DiscountAmount = discount,
+            PayableAmount = net
+        };
+
+        var built = new DianInvoiceUblBuilder().Build(invoice);
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var monetary = document.Descendants(
+            DianUblNamespaces.Cac + "LegalMonetaryTotal").Single();
+        var allowance = document.Descendants(
+            DianUblNamespaces.Cac + "InvoiceLine").Single().Element(
+                DianUblNamespaces.Cac + "AllowanceCharge")!;
+
+        Assert.Null(monetary.Element(DianUblNamespaces.Cbc + "AllowanceTotalAmount"));
+        Assert.Equal("false", allowance.Element(
+            DianUblNamespaces.Cbc + "ChargeIndicator")?.Value);
+        Assert.Equal("0.45", allowance.Element(
+            DianUblNamespaces.Cbc + "MultiplierFactorNumeric")?.Value);
+        Assert.Equal(discount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            allowance.Element(DianUblNamespaces.Cbc + "Amount")?.Value);
+        Assert.Equal(gross.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            allowance.Element(DianUblNamespaces.Cbc + "BaseAmount")?.Value);
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+    }
+
+    [Fact]
     public void Software_security_code_uses_official_sha384_composition()
     {
         var result = SoftwareSecurityCodeCalculator.Calculate(

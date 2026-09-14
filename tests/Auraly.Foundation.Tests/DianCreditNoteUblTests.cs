@@ -97,6 +97,11 @@ public sealed class DianCreditNoteUblTests
             DianUblNamespaces.Cbc + "UUID")?.Value);
         Assert.Equal("CUDS-SHA384", originalReference.Element(
             DianUblNamespaces.Cbc + "UUID")?.Attribute("schemeName")?.Value);
+        var monetary = xml.Descendants(
+            DianUblNamespaces.Cac + "LegalMonetaryTotal").Single();
+        Assert.Null(monetary.Element(DianUblNamespaces.Cbc + "AllowanceTotalAmount"));
+        Assert.Equal("16.67", xml.Descendants(
+            DianUblNamespaces.Cbc + "MultiplierFactorNumeric").Single().Value);
         var validation = new DianSchemaValidator().Validate(built.Xml);
         Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
     }

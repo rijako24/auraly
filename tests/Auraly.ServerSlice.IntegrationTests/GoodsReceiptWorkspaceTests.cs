@@ -10,6 +10,20 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Product_search_defaults_to_ten_rows()
+    {
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.ReadGoodsReceipts);
+
+        var products = await client.GetFromJsonAsync<GoodsReceiptProductPage>(
+            $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}" +
+            "&includeUnassociated=true");
+
+        Assert.NotNull(products);
+        Assert.Equal(10, products.PageSize);
+        Assert.InRange(products.Items.Count, 0, 10);
+    }
+
+    [Fact]
     public async Task Product_weight_drives_the_receipt_line_total_in_kilograms()
     {
         object originalWeight;

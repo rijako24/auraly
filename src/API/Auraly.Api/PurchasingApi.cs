@@ -127,7 +127,7 @@ public static class PurchasingApi
                     CancellationToken cancellationToken) =>
                     ExecuteAsync(() => service.FindProductsAsync(
                         context.User.ToPurchasingIdentity(), supplierId, search,
-                        includeUnassociated ?? false, page ?? 1, pageSize ?? 50,
+                        includeUnassociated ?? false, page ?? 1, pageSize ?? 10,
                         cancellationToken)))
             .RequireAuthorization("purchasing.user");
 

@@ -673,6 +673,7 @@ export interface PosClient {
     paymentReference?: string | null,
     bankAccountId?: string | null,
     paymentNotes?: string | null,
+    printAfterInvoice?: boolean,
   ): Promise<InvoiceOrdersResponse>;
   printOrders(orderIds: string[]): Promise<{ printedCount: number }>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
@@ -1377,6 +1378,7 @@ export class PosEdgeClient implements PosClient {
     paymentReference?: string | null,
     bankAccountId?: string | null,
     paymentNotes?: string | null,
+    printAfterInvoice = true,
   ) {
     return this.request<InvoiceOrdersResponse>("/edge/v1/orders/invoice", {
       method: "POST",
@@ -1386,6 +1388,7 @@ export class PosEdgeClient implements PosClient {
         paymentReference: paymentReference ?? null,
         bankAccountId: bankAccountId ?? null,
         paymentNotes: paymentNotes ?? null,
+        printAfterInvoice,
         documentType,
         idempotencyKey: crypto.randomUUID(),
       }),

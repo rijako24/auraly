@@ -249,7 +249,7 @@ export interface GoodsReceiptWithholdingCalculation {
 
 export const goodsReceiptsApi = {
   options: () => apiClient.get<GoodsReceiptOptions>("/commerce/v1/goods-receipts/options"),
-  products: (supplierId: string, search?: string, includeUnassociated = false, page = 1, pageSize = 50) =>
+  products: (supplierId: string, search?: string, includeUnassociated = false, page = 1, pageSize = 10) =>
     apiClient.get<GoodsReceiptProductPage>("/commerce/v1/goods-receipts/products", {
       supplierId, search, includeUnassociated, page, pageSize,
     }),
