@@ -427,6 +427,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             var catalog = await catalogResponse.Content.ReadFromJsonAsync<JsonElement>();
             var product = Assert.Single(catalog.GetProperty("items").EnumerateArray()
                 .Where(item => item.GetProperty("productId").GetGuid() == fixture.ProductId));
+            Assert.True(product.TryGetProperty("reference", out _));
             Assert.Equal(8_000m, product.GetProperty("unitPrice").GetDecimal());
             Assert.Equal("PriceChannel", product.GetProperty("priceSource").GetString());
         }

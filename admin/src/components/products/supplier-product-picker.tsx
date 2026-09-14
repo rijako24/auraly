@@ -131,9 +131,7 @@ export const SupplierProductPicker = forwardRef<HTMLInputElement, SupplierProduc
         <span className="shrink-0 text-right text-xs"><span className="block font-medium">Último {product.latestUnitCost == null ? "—" : formatCurrency(product.latestUnitCost)}</span>
           <span className="block text-muted-foreground">Promedio {product.averageUnitCost == null ? "—" : formatCurrency(product.averageUnitCost)}</span></span>
       </button>)}
-      {productsQuery.hasNextPage && <Button type="button" variant="ghost" className="mt-2 w-full"
-        disabled={productsQuery.isFetchingNextPage} onMouseDown={(event) => event.preventDefault()}
-        onClick={() => void productsQuery.fetchNextPage()}>{productsQuery.isFetchingNextPage ? "Cargando…" : "Cargar 10 más"}</Button>}
+      {productsQuery.isFetchingNextPage && <p className="px-3 py-2 text-center text-xs text-muted-foreground">Cargando 10 más…</p>}
     </div>}
     {open && supplierId && search.trim().length === 0 &&
       <div role="listbox" className="absolute z-40 mt-1 w-full rounded-xl border bg-background px-4 py-3 text-sm text-muted-foreground shadow-xl">Escribe al menos una letra, código o referencia para buscar.</div>}

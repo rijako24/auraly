@@ -24,6 +24,7 @@ BEGIN
 
     SELECT p.ProductId,
            COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
+           p.Reference,
            p.Name,
            COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
            COALESCE(balance.QuantityOnHand,0)/COALESCE(NULLIF(inventoryLink.InventoryFactor,0),1),

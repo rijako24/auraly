@@ -10,30 +10,44 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     public async Task<InventoryProductPage> GetProductsAsync(InventoryUserIdentity user, InventoryProductQuery query, bool includeCosts, CancellationToken token)
     {
         const string sql = """
+            SET NOCOUNT ON;
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND IsSystem=0)
               THROW 51201,'Selecciona una bodega de inventario activa.',1;
+
+            DECLARE @TenantId UNIQUEIDENTIFIER=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             SELECT COUNT(*) FROM dbo.Products p
-            LEFT JOIN dbo.ProductLinks link ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-            LEFT JOIN dbo.Products root ON root.ProductId=link.ParentProductId
-            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1 AND COALESCE(root.ManageStock,p.ManageStock)=1
-              AND link.ProductLinkId IS NULL AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
-              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1));
-            SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,COALESCE(p.BaseUnitCode,N'UN'),
-                   COALESCE(b.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1),
-                   CASE WHEN @IncludeCosts=1
-                        THEN COALESCE(NULLIF(b.AverageUnitCost,0),price.CostBasisAmount,0) * COALESCE(NULLIF(link.InventoryFactor,0),1)
-                   END,
-                   price.Amount * COALESCE(NULLIF(link.PriceFactor,0),1),p.ProductCategoryId,p.CategoryName
+            WHERE (p.TenantId=@TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
+              AND p.IsActive=1 AND p.ManageStock=1
+              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1)
+              AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
+              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
+            OPTION(RECOMPILE);
+
+            CREATE TABLE #RequestedProducts(ProductId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY);
+            INSERT #RequestedProducts(ProductId)
+            SELECT p.ProductId
             FROM dbo.Products p
-            LEFT JOIN dbo.ProductLinks link ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-            LEFT JOIN dbo.Products root ON root.ProductId=link.ParentProductId
-            LEFT JOIN dbo.InventoryBalances b ON b.BusinessId=@BusinessId AND b.ProductId=COALESCE(link.ParentProductId,p.ProductId) AND b.WarehouseId=@WarehouseId
+            WHERE (p.TenantId=@TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
+              AND p.IsActive=1 AND p.ManageStock=1
+              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1)
+              AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
+              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
+            ORDER BY p.Name,p.ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+            OPTION(RECOMPILE);
+
+            SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,COALESCE(p.BaseUnitCode,N'UN'),
+                   COALESCE(b.QuantityOnHand,0),
+                   CASE WHEN @IncludeCosts=1
+                        THEN COALESCE(NULLIF(b.AverageUnitCost,0),price.CostBasisAmount,0)
+                   END,
+                   price.Amount,p.ProductCategoryId,p.CategoryName
+            FROM #RequestedProducts requested
+            JOIN dbo.Products p ON p.ProductId=requested.ProductId
+            LEFT JOIN dbo.InventoryBalances b ON b.BusinessId=@BusinessId AND b.ProductId=p.ProductId AND b.WarehouseId=@WarehouseId
             LEFT JOIN dbo.ProductPrices price ON price.BusinessId=@BusinessId AND price.ProductId=p.ProductId
               AND price.IsActive=1 AND price.ValidFrom<=SYSUTCDATETIME() AND (price.ValidUntil IS NULL OR price.ValidUntil>SYSUTCDATETIME())
-            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1 AND COALESCE(root.ManageStock,p.ManageStock)=1
-              AND link.ProductLinkId IS NULL AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
-              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
-            ORDER BY p.Name,p.ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            ORDER BY p.Name,p.ProductId
+            OPTION(RECOMPILE);
             """;
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection);
         AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@IncludeCosts",includeCosts); command.Parameters.AddWithValue("@ProductCategoryId",(object?)query.ProductCategoryId??DBNull.Value);

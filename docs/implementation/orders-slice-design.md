@@ -113,6 +113,15 @@ puede derribar ni la lista ni el detalle. El cliente web sólo presenta mensajes
 de problema JSON controlados y nunca imprime una página HTML de error dentro de
 la interfaz.
 
+La búsqueda en vivo del catálogo de captura solicita una sola página de diez
+productos por interacción, después de 250 ms de espera, y muestra únicamente
+nombre, código, referencia, unidad, existencia y precio resuelto. Al llegar al
+final visible solicita automáticamente las siguientes diez filas; no descarga el
+catálogo completo ni hace enriquecimiento por producto. El presupuesto del
+camino servidor es menor a un segundo. La preparación offline sigue siendo una
+operación explícita y separada que descarga páginas grandes para instalar un
+snapshot completo; nunca se ejecuta al buscar o abrir el selector en línea.
+
 ## No incluido en esta rebanada
 
 - edición comercial completa del pedido;

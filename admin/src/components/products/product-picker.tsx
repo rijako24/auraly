@@ -10,7 +10,7 @@ import { inventoryApi, type InventoryProductItem } from "@/services/api/inventor
 import { productsApi } from "@/services/api/products";
 import { useActiveProductOptionScroll } from "./use-active-product-option-scroll";
 
-const PRODUCT_PAGE_SIZE = 50;
+const PRODUCT_PAGE_SIZE = 10;
 
 export function ProductPicker({
   businessId,
@@ -38,17 +38,23 @@ export function ProductPicker({
   showAddButton?: boolean;
 }) {
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timeout);
+  }, [search]);
+
   const query = useInfiniteQuery({
-    queryKey: ["product-picker", businessId, warehouseId ?? "catalog", conversionOnly, conversionFamilyRootProductId ?? "all-families", search.trim()],
+    queryKey: ["product-picker", businessId, warehouseId ?? "catalog", conversionOnly, conversionFamilyRootProductId ?? "all-families", debouncedSearch],
     queryFn: async ({ pageParam }) => {
-      if (warehouseId && conversionOnly) return inventoryApi.conversionProducts({ warehouseId, familyRootProductId: conversionFamilyRootProductId, search: search.trim() || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
-      if (warehouseId) return inventoryApi.products({ warehouseId, search: search.trim() || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
-      const page = await productsApi.list(businessId, { page: pageParam, pageSize: PRODUCT_PAGE_SIZE, search: search.trim() || undefined, includeInactive: false });
+      if (warehouseId && conversionOnly) return inventoryApi.conversionProducts({ warehouseId, familyRootProductId: conversionFamilyRootProductId, search: debouncedSearch || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
+      if (warehouseId) return inventoryApi.products({ warehouseId, search: debouncedSearch || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
+      const page = await productsApi.list(businessId, { page: pageParam, pageSize: PRODUCT_PAGE_SIZE, search: debouncedSearch || undefined, includeInactive: false });
       return { ...page, items: page.items.map((product) => ({ productId: product.productId, productCode: product.productCode ?? product.sku ?? "", reference: product.reference ?? null, productName: product.name, unitCode: "EA", quantityOnHand: product.stockQuantity ?? 0, averageUnitCost: null, saleUnitPrice: product.unitPrice })) };
     },
     initialPageParam: 1,
@@ -99,7 +105,7 @@ export function ProductPicker({
 
   function resultRows() {
     const messageClass = "p-4 text-sm text-muted-foreground";
-    if (query.isLoading) return <p className={`${messageClass} flex items-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>;
+    if (search.trim() !== debouncedSearch || query.isLoading) return <p className={`${messageClass} flex items-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>;
     if (query.isError) return <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>;
     if (products.length === 0) return <p className={messageClass}>No hay productos activos que coincidan con la búsqueda.</p>;
     return <>
@@ -109,7 +115,7 @@ export function ProductPicker({
         <small className="min-w-0 truncate text-muted-foreground">{product.productCode || "Sin código"}{product.reference ? ` · ${product.reference}` : ""}</small>
         <span className="flex items-center justify-end gap-3 text-xs text-muted-foreground">{product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span>
       </button>)}
-      {query.hasNextPage && <Button type="button" variant="ghost" className="mt-1 w-full" disabled={query.isFetchingNextPage} onMouseDown={(event) => event.preventDefault()} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Cargar 50 más</Button>}
+      {query.isFetchingNextPage && <p className={`${messageClass} flex items-center justify-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Cargando 10 más…</p>}
     </>;
   }
 

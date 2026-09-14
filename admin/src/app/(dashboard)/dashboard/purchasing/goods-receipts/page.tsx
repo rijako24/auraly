@@ -1203,10 +1203,7 @@ function ReceiptEditor({
                     <span className="block text-muted-foreground">Promedio {product.averageUnitCost == null ? "—" : formatCurrency(product.averageUnitCost)}</span>
                   </span>
                 </button>)}
-              {products.hasNextPage && <Button type="button" variant="ghost" className="mt-2 w-full"
-                disabled={products.isFetchingNextPage} onClick={() => products.fetchNextPage()}>
-                {products.isFetchingNextPage ? "Cargando..." : "Cargar 10 más"}
-              </Button>}
+              {products.isFetchingNextPage && <p className="px-3 py-2 text-center text-xs text-muted-foreground">Cargando 10 más…</p>}
             </div>}
           {productMenuOpen && draft.supplierId && productSearch.trim().length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Escribe al menos una letra, código o referencia para buscar.</div>}
           {productMenuOpen && draft.supplierId && productSearch.trim().length > 0 && !products.isLoading && productItems.length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Sin resultados para esta búsqueda.</div>}

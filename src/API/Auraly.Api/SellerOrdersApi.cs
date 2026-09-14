@@ -25,8 +25,8 @@ public static class SellerOrdersApi
         Guid? PartySiteId, Guid? RouteId, Guid? RouteStopId, bool CapturedOffline, string? Notes,
         string IdempotencyKey, IReadOnlyCollection<SellerOrderLineInput> Lines);
     public sealed record SellerCatalogRequest(Guid BusinessId, Guid WarehouseId, Guid CustomerId,
-        string? Search, int Skip = 0, int Take = 100);
-    public sealed record SellerCatalogItem(Guid ProductId, string ProductCode, string Name, string UnitCode,
+        string? Search, int Skip = 0, int Take = 10);
+    public sealed record SellerCatalogItem(Guid ProductId, string ProductCode, string? Reference, string Name, string UnitCode,
         decimal UnitPrice, string PriceSource, decimal QuantityOnHand, bool ManageStock);
     public sealed record SellerCatalogPage(IReadOnlyList<SellerCatalogItem> Items, bool HasMore, int? NextOffset);
     public sealed record SellerOrderResult(Guid OrderId, string OrderNumber, string Status,
@@ -258,8 +258,8 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         var candidates=new List<SellerCatalogCandidate>();
         await using var reader=await command.ExecuteReaderAsync(token);
         while(await reader.ReadAsync(token))candidates.Add(new(
-            reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),
-            reader.GetDecimal(4),reader.GetBoolean(5)));
+            reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetString(3),reader.GetString(4),
+            reader.GetDecimal(5),reader.GetBoolean(6)));
         await reader.DisposeAsync();
         var more=candidates.Count>take;
         if(more)candidates.RemoveAt(candidates.Count-1);
@@ -273,7 +273,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         {
             var price=prices[value.ProductId.ToString("D")];
             return new SellerOrdersApi.SellerCatalogItem(
-                value.ProductId,value.ProductCode,value.Name,value.UnitCode,price.UnitPrice,
+                value.ProductId,value.ProductCode,value.Reference,value.Name,value.UnitCode,price.UnitPrice,
                 price.PriceSource,value.QuantityOnHand,value.ManageStock);
         }).ToList();
         return new(values,more,more?request.Skip+values.Count:null);
@@ -434,7 +434,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         Guid LineId,int Position,Guid ProductId,decimal Quantity,decimal? UnitPrice,
         decimal DiscountAmount,string PriceSource,decimal? DocumentUnitCost);
     private sealed record SellerCatalogCandidate(
-        Guid ProductId,string ProductCode,string Name,string UnitCode,
+        Guid ProductId,string ProductCode,string? Reference,string Name,string UnitCode,
         decimal QuantityOnHand,bool ManageStock);
 
 }
