@@ -96,6 +96,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             transaction,
             state.BusinessId,
             state.CustomerId,
+            state.CustomerPartySiteId,
             request.Credit,
             now,
             ct);
@@ -151,7 +152,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                         ? null
                         : Math.Max(0m,
                             creditValidation.AvailableCredit.Value - request.Credit.Amount),
-                    user.UserName));
+                    user.UserName,
+                    state.CustomerPartySiteId),
+            CustomerPartySiteId: state.CustomerPartySiteId);
 
         await ReleaseOrderInventoryAsync(connection, transaction, user, state, ct);
 

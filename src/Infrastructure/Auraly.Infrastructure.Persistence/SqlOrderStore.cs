@@ -202,7 +202,8 @@ public sealed class SqlOrderStore(
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
-              COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId')))
+              COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
+              o.PartySiteId
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.PaymentTransactions pt
@@ -259,7 +260,8 @@ public sealed class SqlOrderStore(
             CreatedAt = DateTime.SpecifyKind(header.GetDateTime(18), DateTimeKind.Utc),
             Confirmed = header.GetBoolean(19),
             DocumentId = hasInvoice ? header.GetGuid(20) : (Guid?)null,
-            WarehouseId = header.IsDBNull(28) ? (Guid?)null : header.GetGuid(28)
+            WarehouseId = header.IsDBNull(28) ? (Guid?)null : header.GetGuid(28),
+            PartySiteId = header.IsDBNull(29) ? (Guid?)null : header.GetGuid(29)
         };
         await header.CloseAsync();
 
@@ -323,7 +325,7 @@ public sealed class SqlOrderStore(
             values.Subtotal, values.Discount, values.Total, values.PaymentId,
             values.PaymentStatus, values.CreatedAt,
             OrderRules.CanInvoice(storedStatus, values.Confirmed, hasInvoice),
-            values.DocumentId, claim, lines, values.WarehouseId);
+            values.DocumentId, claim, lines, values.WarehouseId, values.PartySiteId);
     }
 
     public async Task<IReadOnlyList<OrderPrintDocument>> GetPrintBatchAsync(

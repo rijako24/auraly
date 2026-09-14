@@ -27,10 +27,11 @@ public static class CustomerPaymentMethods
 public sealed record ReceivablesUserIdentity(Guid UserId, Guid TenantId, Guid BusinessId,
     IReadOnlySet<string> Permissions);
 public sealed record ReceivableQuery(int Page, int PageSize, string? Search, Guid? CustomerId,
-    string? Status, bool? Overdue);
+    string? Status, bool? Overdue, Guid? PartySiteId = null);
 public sealed record ReceivableListItem(Guid ReceivableId, Guid CustomerId, string CustomerName,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
-    DateTimeOffset DueDate, string Status, bool IsOverdue, DateTimeOffset CreatedAt);
+    DateTimeOffset DueDate, string Status, bool IsOverdue, DateTimeOffset CreatedAt,
+    Guid? PartySiteId = null, string? PartySiteName = null);
 public sealed record ReceivablePage(IReadOnlyList<ReceivableListItem> Items, int Page, int PageSize,
     int TotalCount, decimal TotalOutstanding, decimal TotalOverdue)
 {
@@ -41,7 +42,8 @@ public sealed record ReceivableTransactionView(Guid TransactionId, string Type, 
 public sealed record ReceivableDetail(Guid ReceivableId, Guid CustomerId, string CustomerName,
     string CustomerIdentification, Guid SourceDocumentId, string SourceDocumentType,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
-    DateTimeOffset DueDate, string Status, IReadOnlyList<ReceivableTransactionView> Transactions);
+    DateTimeOffset DueDate, string Status, IReadOnlyList<ReceivableTransactionView> Transactions,
+    Guid? PartySiteId = null, string? PartySiteName = null);
 public sealed record CustomerCreditProfile(Guid CustomerId, decimal? CreditLimit,
     int DefaultDueDays, bool IsCreditEnabled, decimal OutstandingAmount, decimal? AvailableCredit);
 public sealed record UpdateCustomerCreditProfileRequest(Guid BusinessId, decimal? CreditLimit,

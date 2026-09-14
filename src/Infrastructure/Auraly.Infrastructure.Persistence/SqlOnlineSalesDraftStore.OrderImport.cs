@@ -21,7 +21,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
             request.Lines.Select(line =>
                 $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.UnitPrice)}:{Invariant(line.DiscountAmount)}:{NormalizePriceSource(line.PriceSource)}:{(line.DocumentUnitCost is { } cost ? Invariant(cost) : "current")}"));
         var requestHash = Hash(
-            $"{operation}|{draftId:D}|{request.SourceOrderId:D}|{request.CustomerId:D}|{request.ExpectedVersion}|{payload}");
+            $"{operation}|{draftId:D}|{request.SourceOrderId:D}|{request.CustomerId:D}|{request.PartySiteId:D}|{request.ExpectedVersion}|{payload}");
 
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -76,6 +76,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                 transaction,
                 state.BusinessId,
                 request.CustomerId.Value,
+                request.PartySiteId,
                 cancellationToken);
         }
 
@@ -147,12 +148,13 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
               AND staleSession.Status<>N'Open';
 
             UPDATE dbo.SalesDrafts
-            SET CustomerId=@CustomerId,SourceOrderId=@OrderId,
+            SET CustomerId=@CustomerId,CustomerPartySiteId=@PartySiteId,SourceOrderId=@OrderId,
                 Reference=@Reference,UpdatedAt=@Now
             WHERE SalesDraftId=@DraftId;
             """,
             [
                 P("@CustomerId", request.CustomerId),
+                P("@PartySiteId", request.PartySiteId),
                 P("@OrderId", request.SourceOrderId),
                 P("@Reference", request.OrderNumber.Trim()),
                 P("@Now", time.GetUtcNow()),

@@ -55,6 +55,7 @@ public interface IOnlineSalesDraftStore
         OnlineSalesUserIdentity user,
         Guid draftId,
         Guid? customerId,
+        Guid? partySiteId,
         long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken);
@@ -268,7 +269,7 @@ public sealed class OnlineSalesDraftService(
         DemandPermission(user);
         ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
         return await drafts.SelectCustomerAsync(
-            user, draftId, request.CustomerId, request.ExpectedVersion,
+            user, draftId, request.CustomerId, request.PartySiteId, request.ExpectedVersion,
             idempotencyKey, cancellationToken);
     }
 

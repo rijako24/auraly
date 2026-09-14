@@ -34,7 +34,7 @@ public sealed partial class PosCatalogStore
                 SELECT CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
                        AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,
                        IsCreditEnabled,CreditLimit,AvailableCredit,DefaultDueDays,
-                       PriceChannelValidFrom,PriceChannelValidUntil
+                       PriceChannelValidFrom,PriceChannelValidUntil,SitesJson
                 FROM PosPricingCustomers;
                 """;
             await using var reader = await command.ExecuteReaderAsync(ct);
@@ -127,28 +127,39 @@ public sealed partial class PosCatalogStore
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
+            SELECT customer.CustomerId,customer.Identification,customer.Name,customer.PriceChannelId,customer.RequiresElectronicInvoice,customer.IsActive,
                    AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,
                    IsCreditEnabled,CreditLimit,AvailableCredit,DefaultDueDays,
-                   PriceChannelValidFrom,PriceChannelValidUntil
-            FROM PosPricingCustomers
-            WHERE IsActive=1
-              AND (@Term='' OR Identification LIKE @Prefix OR Name LIKE @Name)
-            ORDER BY CASE WHEN Identification=@Term THEN 0 ELSE 1 END,Name,CustomerId
+                   PriceChannelValidFrom,PriceChannelValidUntil,
+                   json_array(site.value),
+                   json_extract(site.value,'$.PartySiteId'),json_extract(site.value,'$.Name'),
+                   json_extract(site.value,'$.AddressLine')
+            FROM PosPricingCustomers customer
+            JOIN json_each(customer.SitesJson) site
+            WHERE customer.IsActive=1
+              AND (@Term='' OR NOT EXISTS(
+                SELECT 1 FROM json_each(@Tokens) token
+                WHERE lower(customer.Identification) NOT LIKE '%'||lower(token.value)||'%'
+                  AND lower(customer.Name) NOT LIKE '%'||lower(token.value)||'%'
+                  AND lower(COALESCE(json_extract(site.value,'$.Code'),'')) NOT LIKE '%'||lower(token.value)||'%'
+                  AND lower(COALESCE(json_extract(site.value,'$.Name'),'')) NOT LIKE '%'||lower(token.value)||'%'
+                  AND lower(COALESCE(json_extract(site.value,'$.AddressLine'),'')) NOT LIKE '%'||lower(token.value)||'%'))
+            ORDER BY CASE WHEN customer.Identification=@Term THEN 0 ELSE 1 END,
+                     customer.Name,json_extract(site.value,'$.Name'),customer.CustomerId,json_extract(site.value,'$.PartySiteId')
             LIMIT @Take OFFSET @Skip;
             """;
         var normalized = term.Trim();
         command.Parameters.AddRange([
             Q("@Term", normalized),
-            Q("@Prefix", $"{normalized}%"),
-            Q("@Name", $"%{normalized}%"),
+            Q("@Tokens", JsonSerializer.Serialize(normalized.Split(
+                ' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))),
             Q("@Take", take),
             Q("@Skip", skip)
         ]);
         var customers = new List<PosCustomerPricing>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
-            customers.Add(ReadCustomer(reader));
+            customers.Add(ReadSearchCustomer(reader));
         return customers;
     }
 
@@ -163,7 +174,7 @@ public sealed partial class PosCatalogStore
             SELECT CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
                    AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,
                    IsCreditEnabled,CreditLimit,AvailableCredit,DefaultDueDays,
-                   PriceChannelValidFrom,PriceChannelValidUntil
+                   PriceChannelValidFrom,PriceChannelValidUntil,SitesJson
             FROM PosPricingCustomers
             WHERE CustomerId=@CustomerId AND IsActive=1;
             """;
@@ -277,11 +288,11 @@ public sealed partial class PosCatalogStore
               CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
               AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,IsCreditEnabled,
               CreditLimit,AvailableCredit,DefaultDueDays,PriceChannelValidFrom,
-              PriceChannelValidUntil,IsPendingLocal)
+              PriceChannelValidUntil,SitesJson,IsPendingLocal)
             VALUES(@CustomerId,@Identification,@Name,@PriceChannelId,@RequiresElectronicInvoice,@IsActive,
               @AppliesWithholding,@TaxResponsibilities,@TaxJurisdictionCode,@IsCreditEnabled,
               @CreditLimit,@AvailableCredit,@DefaultDueDays,@PriceChannelValidFrom,
-              @PriceChannelValidUntil,0)
+              @PriceChannelValidUntil,@SitesJson,0)
             ON CONFLICT(CustomerId) DO UPDATE SET
               Identification=excluded.Identification,Name=excluded.Name,
               PriceChannelId=excluded.PriceChannelId,
@@ -292,7 +303,8 @@ public sealed partial class PosCatalogStore
               IsCreditEnabled=excluded.IsCreditEnabled,CreditLimit=excluded.CreditLimit,
               AvailableCredit=excluded.AvailableCredit,DefaultDueDays=excluded.DefaultDueDays,
               PriceChannelValidFrom=excluded.PriceChannelValidFrom,
-              PriceChannelValidUntil=excluded.PriceChannelValidUntil,IsPendingLocal=0;
+              PriceChannelValidUntil=excluded.PriceChannelValidUntil,
+              SitesJson=excluded.SitesJson,IsPendingLocal=0;
             """, CustomerParameters(customer), ct);
 
     private static SqliteParameter[] CustomerParameters(PosCustomerPricing customer) =>
@@ -308,7 +320,8 @@ public sealed partial class PosCatalogStore
         Q("@CreditLimit", customer.CreditLimit), Q("@AvailableCredit", customer.AvailableCredit),
         Q("@DefaultDueDays", customer.DefaultDueDays),
         Q("@PriceChannelValidFrom", customer.PriceChannelValidFrom?.ToString("O", CultureInfo.InvariantCulture)),
-        Q("@PriceChannelValidUntil", customer.PriceChannelValidUntil?.ToString("O", CultureInfo.InvariantCulture))
+        Q("@PriceChannelValidUntil", customer.PriceChannelValidUntil?.ToString("O", CultureInfo.InvariantCulture)),
+        Q("@SitesJson", JsonSerializer.Serialize(customer.Sites ?? []))
     ];
 
     public async Task ApplyPricingSnapshotAsync(
@@ -357,11 +370,11 @@ public sealed partial class PosCatalogStore
                   CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive,
                   AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,IsCreditEnabled,
                   CreditLimit,AvailableCredit,DefaultDueDays,PriceChannelValidFrom,
-                  PriceChannelValidUntil,IsPendingLocal)
+                  PriceChannelValidUntil,SitesJson,IsPendingLocal)
                 VALUES(@CustomerId,@Identification,@Name,@PriceChannelId,@RequiresElectronicInvoice,@IsActive,
                   @AppliesWithholding,@TaxResponsibilities,@TaxJurisdictionCode,@IsCreditEnabled,
                   @CreditLimit,@AvailableCredit,@DefaultDueDays,@PriceChannelValidFrom,
-                  @PriceChannelValidUntil,0)
+                  @PriceChannelValidUntil,@SitesJson,0)
                 ON CONFLICT(CustomerId) DO UPDATE SET
                   Identification=excluded.Identification,Name=excluded.Name,
                   PriceChannelId=excluded.PriceChannelId,
@@ -372,7 +385,8 @@ public sealed partial class PosCatalogStore
                   IsCreditEnabled=excluded.IsCreditEnabled,CreditLimit=excluded.CreditLimit,
                   AvailableCredit=excluded.AvailableCredit,DefaultDueDays=excluded.DefaultDueDays,
                   PriceChannelValidFrom=excluded.PriceChannelValidFrom,
-                  PriceChannelValidUntil=excluded.PriceChannelValidUntil,IsPendingLocal=0;
+                  PriceChannelValidUntil=excluded.PriceChannelValidUntil,
+                  SitesJson=excluded.SitesJson,IsPendingLocal=0;
                 """,
                 [Q("@CustomerId", customer.CustomerId), Q("@Identification", customer.Identification),
                  Q("@Name", customer.Name), Q("@PriceChannelId", customer.PriceChannelId),
@@ -385,7 +399,8 @@ public sealed partial class PosCatalogStore
                  Q("@CreditLimit", customer.CreditLimit), Q("@AvailableCredit", customer.AvailableCredit),
                  Q("@DefaultDueDays", customer.DefaultDueDays),
                  Q("@PriceChannelValidFrom", customer.PriceChannelValidFrom?.ToString("O", CultureInfo.InvariantCulture)),
-                 Q("@PriceChannelValidUntil", customer.PriceChannelValidUntil?.ToString("O", CultureInfo.InvariantCulture))], ct);
+                 Q("@PriceChannelValidUntil", customer.PriceChannelValidUntil?.ToString("O", CultureInfo.InvariantCulture)),
+                 Q("@SitesJson", JsonSerializer.Serialize(customer.Sites ?? []))], ct);
         foreach (var rule in snapshot.WithholdingRules ?? [])
             await ExecutePricingAsync(connection, transaction, """
                 INSERT INTO PosWithholdingRules(
@@ -697,6 +712,7 @@ public sealed partial class PosCatalogStore
               TaxJurisdictionCode TEXT NULL,IsCreditEnabled INTEGER NOT NULL DEFAULT 0,
               CreditLimit TEXT NULL,AvailableCredit TEXT NULL,DefaultDueDays INTEGER NOT NULL DEFAULT 0,
               PriceChannelValidFrom TEXT NULL,PriceChannelValidUntil TEXT NULL,
+              SitesJson TEXT NOT NULL DEFAULT '[]',
               IsPendingLocal INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS IX_PosPricingCustomers_Identification ON PosPricingCustomers(Identification);
             CREATE TABLE IF NOT EXISTS PosPriceChannels(
@@ -770,6 +786,7 @@ public sealed partial class PosCatalogStore
             command.CommandText = "ALTER TABLE PosPricingCustomers ADD COLUMN TaxJurisdictionCode TEXT NULL;";
             await command.ExecuteNonQueryAsync(ct);
         }
+        var requiresCustomerSiteBootstrap = !columns.Contains("SitesJson");
         foreach (var migration in new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["IsCreditEnabled"] = "ALTER TABLE PosPricingCustomers ADD COLUMN IsCreditEnabled INTEGER NOT NULL DEFAULT 0;",
@@ -778,6 +795,7 @@ public sealed partial class PosCatalogStore
             ["DefaultDueDays"] = "ALTER TABLE PosPricingCustomers ADD COLUMN DefaultDueDays INTEGER NOT NULL DEFAULT 0;",
             ["PriceChannelValidFrom"] = "ALTER TABLE PosPricingCustomers ADD COLUMN PriceChannelValidFrom TEXT NULL;",
             ["PriceChannelValidUntil"] = "ALTER TABLE PosPricingCustomers ADD COLUMN PriceChannelValidUntil TEXT NULL;",
+            ["SitesJson"] = "ALTER TABLE PosPricingCustomers ADD COLUMN SitesJson TEXT NOT NULL DEFAULT '[]';",
             ["IsPendingLocal"] = "ALTER TABLE PosPricingCustomers ADD COLUMN IsPendingLocal INTEGER NOT NULL DEFAULT 0;"
         })
         {
@@ -798,6 +816,17 @@ public sealed partial class PosCatalogStore
         {
             if (stateColumns.Contains(migration.Key)) continue;
             command.CommandText = migration.Value;
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        if (requiresCustomerSiteBootstrap)
+        {
+            command.CommandText = """
+                DELETE FROM PosPricingCustomers WHERE IsPendingLocal=0;
+                UPDATE PosPricingSynchronizationState
+                SET CustomerCursor=NULL,CustomerBootstrapActive=1,
+                    CustomerBootstrapNextCursor=NULL,CustomerBootstrapThroughCursor=NULL
+                WHERE StateId=1;
+                """;
             await command.ExecuteNonQueryAsync(ct);
         }
     }
@@ -832,7 +861,19 @@ public sealed partial class PosCatalogStore
             reader.IsDBNull(11) ? null : Convert.ToDecimal(reader.GetValue(11), CultureInfo.InvariantCulture),
             reader.GetInt32(12),
             reader.IsDBNull(13) ? null : DateTimeOffset.Parse(reader.GetString(13), CultureInfo.InvariantCulture),
-            reader.IsDBNull(14) ? null : DateTimeOffset.Parse(reader.GetString(14), CultureInfo.InvariantCulture));
+            reader.IsDBNull(14) ? null : DateTimeOffset.Parse(reader.GetString(14), CultureInfo.InvariantCulture),
+            JsonSerializer.Deserialize<PosCustomerSite[]>(reader.GetString(15)) ?? []);
+
+    private static PosCustomerPricing ReadSearchCustomer(SqliteDataReader reader)
+    {
+        var customer = ReadCustomer(reader);
+        return customer with
+        {
+            PartySiteId = Guid.Parse(reader.GetString(16)),
+            SiteName = reader.GetString(17),
+            SiteAddress = reader.GetString(18)
+        };
+    }
 
     private static PromotionRule ToRule(PosPromotion promotion) => new(
         promotion.PromotionId, promotion.Name, promotion.Priority, promotion.IsCombinable,

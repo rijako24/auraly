@@ -199,6 +199,7 @@ internal static class PosSaleHostModule
                             "Debe seleccionar un cliente para vender a crédito.");
                     var validation = await creditServer.ValidateAsync(
                         customerId,
+                        draft.CustomerPartySiteId,
                         request.Credit.Amount,
                         PosSaleDocumentTypes.IsFiscal(request.DocumentType)
                             ? (int?)fiscalRuntime.Current?.Environment

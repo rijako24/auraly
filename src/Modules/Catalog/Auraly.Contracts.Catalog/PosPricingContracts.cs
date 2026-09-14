@@ -23,7 +23,19 @@ public sealed record PosCustomerPricing(
     decimal? AvailableCredit = null,
     [property: JsonIgnore] int DefaultDueDays = 0,
     DateTimeOffset? PriceChannelValidFrom = null,
-    DateTimeOffset? PriceChannelValidUntil = null);
+    DateTimeOffset? PriceChannelValidUntil = null,
+    IReadOnlyList<PosCustomerSite>? Sites = null,
+    Guid? PartySiteId = null,
+    string? SiteName = null,
+    string? SiteAddress = null);
+
+public sealed record PosCustomerSite(
+    Guid PartySiteId,
+    string Code,
+    string Name,
+    string AddressLine,
+    string? Phone,
+    bool IsPrimary);
 
 public sealed record PosWithholdingRule(
     Guid RuleId, int Version, string Code, string Name, string Kind,

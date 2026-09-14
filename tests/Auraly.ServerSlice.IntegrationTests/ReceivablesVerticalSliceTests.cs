@@ -18,6 +18,75 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Credit_receivables_keep_the_selected_site_and_share_the_customer_balance()
+    {
+        var (customerId, userId, northSiteId, centerSiteId) = await ConfigureWithSitesAsync();
+        using var client = fixture.CreateUserClient(userId,
+            CommercePermissionCodes.SalesCreate,
+            ReceivablesPermissionCodes.Read,
+            ReceivablesPermissionCodes.ManageCredit);
+        using (var profile = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/customers/{customerId:D}/credit",
+                   new UpdateCustomerCreditProfileRequest(
+                       fixture.BusinessId, 500_000m, 30, true)))
+            profile.EnsureSuccessStatusCode();
+
+        var workSession = await fixture.OpenWorkSessionAsync(client);
+        var context = new OnlineSalesDraftContext(
+            fixture.BusinessId, fixture.WarehouseId, workSession.WorkSessionId);
+        using (var search = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/pos/drafts/customers/search",
+                   new SearchOnlineSalesRequest(context, $"Norte {northSiteId:N}")))
+        {
+            search.EnsureSuccessStatusCode();
+            var page = await search.Content.ReadFromJsonAsync<OnlineSalesCustomerPage>();
+            var item = Assert.Single(page!.Items);
+            Assert.Equal(northSiteId, item.PartySiteId);
+            Assert.Equal("Sede Norte", item.PartySiteName);
+        }
+
+        decimal expectedOutstanding = 0;
+        foreach (var siteId in new[] { northSiteId, centerSiteId })
+        {
+            var draft = await CaptureAsync(client,
+                await OpenDraftAsync(client, workSession.WorkSessionId));
+            var selection = await SelectCustomerAsync(client, draft, customerId, siteId);
+            var sale = await CompleteAsync(client, selection.Draft,
+                new CompleteOnlineSalesDraftRequest(
+                    selection.Draft.Version, [],
+                    new OnlineSalesCreditTerms(selection.Draft.PayableAmount),
+                    DocumentType: PosSaleDocumentTypes.Receipt),
+                $"site-credit-{siteId:N}-{Guid.NewGuid():N}");
+            expectedOutstanding += selection.Draft.PayableAmount;
+            Assert.Equal(siteId, await NullableGuidAsync(
+                "SELECT PartySiteId FROM dbo.Receivables WHERE SourceDocumentId=@Id",
+                sale.Receipt.DocumentId));
+            Assert.Equal(siteId, await NullableGuidAsync(
+                "SELECT CustomerPartySiteId FROM dbo.SalesDocuments WHERE DocumentId=@Id",
+                sale.Receipt.DocumentId));
+        }
+
+        using var listResponse = await client.GetAsync(
+            "/api/commerce/v1/receivables?page=1&pageSize=20&search=Sede%20Norte");
+        listResponse.EnsureSuccessStatusCode();
+        var receivables = await listResponse.Content.ReadFromJsonAsync<ReceivablePage>();
+        var north = Assert.Single(receivables!.Items);
+        Assert.Equal(northSiteId, north.PartySiteId);
+        Assert.Equal("Sede Norte", north.PartySiteName);
+        Assert.Equal(2, await ScalarAsync<int>("""
+            SELECT COUNT(*) FROM dbo.Receivables
+            WHERE CustomerId=@Id AND PartySiteId IS NOT NULL
+              AND Status IN(N'Open',N'PartiallyPaid')
+            """, customerId));
+        using var profileResponse = await client.GetAsync(
+            $"/api/commerce/v1/customers/{customerId:D}/credit");
+        profileResponse.EnsureSuccessStatusCode();
+        var consolidated = await profileResponse.Content.ReadFromJsonAsync<CustomerCreditProfile>();
+        Assert.Equal(expectedOutstanding, consolidated!.OutstandingAmount);
+        Assert.Equal(500_000m - expectedOutstanding, consolidated.AvailableCredit);
+    }
+
+    [Fact]
     public async Task Commercial_receipt_credit_and_collection_work_without_accounting_and_are_not_posted_retroactively()
     {
         var (customerId, userId) = await ConfigureAsync();
@@ -237,6 +306,13 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             profile.EnsureSuccessStatusCode();
 
         using var device = fixture.CreateClient();
+        var partySiteId = await ScalarAsync<Guid>("""
+            SELECT TOP(1) site.PartySiteId
+            FROM dbo.Customers customer
+            JOIN dbo.PartySites site ON site.PartyId=customer.PartyId AND site.IsActive=1
+            WHERE customer.CustomerId=@Id
+            ORDER BY site.IsPrimary DESC,site.PartySiteId
+            """, customerId);
         device.DefaultRequestHeaders.Add(
             "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
         device.DefaultRequestHeaders.Add(
@@ -246,7 +322,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                    "/api/pos/v1/sales/credit-validation",
                    new PosCreditValidationRequest(
                        fixture.BusinessId, customerId, 100_000m,
-                       FiscalEnvironment: 2)))
+                       FiscalEnvironment: 2, PartySiteId: partySiteId)))
         {
             allowed.EnsureSuccessStatusCode();
             var result = await allowed.Content.ReadFromJsonAsync<PosCreditValidationResult>();
@@ -268,7 +344,8 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         using var rejected = await device.PostAsJsonAsync(
             "/api/pos/v1/sales/credit-validation",
             new PosCreditValidationRequest(
-                fixture.BusinessId, customerId, 600_000m));
+                fixture.BusinessId, customerId, 600_000m,
+                PartySiteId: partySiteId));
         Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
         Assert.Contains(
             "supera el cupo disponible",
@@ -538,6 +615,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     {
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         var userId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -562,6 +640,19 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 INSERT dbo.Customers(
                   CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
                 VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+                DECLARE @CountryId uniqueidentifier,@DivisionId uniqueidentifier,@CityId uniqueidentifier;
+                SELECT TOP(1) @CountryId=country.CountryId,
+                              @DivisionId=division.AdministrativeDivisionId,
+                              @CityId=city.CityId
+                FROM dbo.Countries country
+                JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+                JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+                WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1;
+                INSERT dbo.PartySites(
+                  PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+                  AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                VALUES(@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+                  @DivisionId,@CityId,N'Dirección principal',1,1,@UserId,SYSDATETIMEOFFSET());
                 IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries
                     WHERE BusinessId=@BusinessId AND DocumentType=N'ReceivablePayment' AND IsActive=1)
                   INSERT dbo.DocumentSeries(
@@ -572,6 +663,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 """,
                 new("@PartyId", partyId),
                 new("@CustomerId", customerId),
+                new("@PartySiteId", partySiteId),
                 new("@TenantId", fixture.TenantId),
                 new("@BusinessId", fixture.BusinessId),
                 new("@UserId", userId),
@@ -609,6 +701,43 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         }
     }
 
+    private async Task<(Guid CustomerId, Guid UserId, Guid NorthSiteId, Guid CenterSiteId)>
+        ConfigureWithSitesAsync()
+    {
+        var (customerId, userId) = await ConfigureAsync();
+        var northSiteId = Guid.NewGuid();
+        var centerSiteId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await ExecuteAsync(connection, null, """
+            DECLARE @PartyId uniqueidentifier=(SELECT PartyId FROM dbo.Customers WHERE CustomerId=@CustomerId);
+            DELETE dbo.PartySites WHERE PartyId=@PartyId;
+            UPDATE dbo.Parties
+            SET DisplayName=N'Cliente crédito '+REPLACE(CONVERT(nvarchar(36),@NorthSiteId),N'-',N''),
+                LegalName=N'Cliente crédito '+REPLACE(CONVERT(nvarchar(36),@NorthSiteId),N'-',N'')
+            WHERE PartyId=@PartyId;
+            DECLARE @CountryId uniqueidentifier,@DivisionId uniqueidentifier,@CityId uniqueidentifier;
+            SELECT TOP(1) @CountryId=country.CountryId,
+                          @DivisionId=division.AdministrativeDivisionId,
+                          @CityId=city.CityId
+            FROM dbo.Countries country
+            JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+            JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+            WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1;
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES
+              (@NorthSiteId,@PartyId,N'NORTE',N'Sede Norte',@CountryId,@DivisionId,@CityId,
+               N'Carrera 10 Norte',N'3001001001',1,1,@UserId,SYSDATETIMEOFFSET()),
+              (@CenterSiteId,@PartyId,N'CENTRO',N'Sede Centro',@CountryId,@DivisionId,@CityId,
+               N'Calle 20 Centro',N'3002002002',0,1,@UserId,SYSDATETIMEOFFSET());
+            """,
+            new("@CustomerId", customerId), new("@NorthSiteId", northSiteId),
+            new("@CenterSiteId", centerSiteId), new("@UserId", userId));
+        return (customerId, userId, northSiteId, centerSiteId);
+    }
+
     private async Task<OnlineSalesDraft> OpenDraftAsync(
         HttpClient client, Guid workSessionId)
     {
@@ -638,13 +767,14 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     private static async Task<OnlineSalesCustomerSelection> SelectCustomerAsync(
-        HttpClient client, OnlineSalesDraft draft, Guid customerId)
+        HttpClient client, OnlineSalesDraft draft, Guid customerId,
+        Guid? partySiteId = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Put,
             $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
         {
             Content = JsonContent.Create(new SelectOnlineSalesDraftCustomerRequest(
-                customerId, draft.Version))
+                customerId, draft.Version, partySiteId))
         };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
         using var response = await client.SendAsync(request);
@@ -829,7 +959,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     private static async Task ExecuteAsync(SqlConnection connection,
-        SqlTransaction transaction, string sql, params SqlParameter[] parameters)
+        SqlTransaction? transaction, string sql, params SqlParameter[] parameters)
     {
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddRange(parameters);
@@ -854,6 +984,16 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@Id", id);
         return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!, typeof(T));
+    }
+
+    private async Task<Guid?> NullableGuidAsync(string sql, Guid id)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@Id", id);
+        var value = await command.ExecuteScalarAsync();
+        return value is null or DBNull ? null : (Guid)value;
     }
 
     private Task<int> CountAsync(string table, string column, Guid id)

@@ -13,8 +13,12 @@ public sealed class SalesDebitNoteProcessingTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Debit_note_references_invoice_and_creates_fiscal_accounting_and_receivable_work_once()
     {
-        var customerId = await CreateCustomerAsync();
-        var original = WithUblSnapshot(fixture.CreateValidRequest(9_701) with { CustomerId = customerId });
+        var (customerId, partySiteId) = await CreateCustomerAsync();
+        var original = WithUblSnapshot(fixture.CreateValidRequest(9_701) with
+        {
+            CustomerId = customerId,
+            CustomerPartySiteId = partySiteId
+        });
         using (var pos = fixture.CreateClient())
         using (var upload = fixture.CreateUploadMessage(original))
         using (var response = await pos.SendAsync(upload))
@@ -55,6 +59,8 @@ public sealed class SalesDebitNoteProcessingTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", debitNoteId));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.ServerOutboxMessages WHERE DocumentId=@Id", debitNoteId));
+        Assert.Equal(partySiteId, await ScalarAsync<Guid>(
+            "SELECT PartySiteId FROM dbo.Receivables WHERE SourceDocumentId=@Id", debitNoteId));
 
         using (var response = await client.GetAsync(
                    "/api/commerce/v1/sales-debit-notes?page=1&pageSize=20&search=NDB00"))
@@ -89,10 +95,11 @@ public sealed class SalesDebitNoteProcessingTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.SalesDebitNotes WHERE DebitNoteId=@Id", debitNoteId));
     }
 
-    private async Task<Guid> CreateCustomerAsync()
+    private async Task<(Guid CustomerId, Guid PartySiteId)> CreateCustomerAsync()
     {
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
@@ -104,14 +111,25 @@ public sealed class SalesDebitNoteProcessingTests(ServerSliceFixture fixture)
             INSERT dbo.Customers(CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
               IsActive,CreatedBy,CreatedAt)
             VALUES(@CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            SELECT TOP(1) @PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',country.CountryId,
+              division.AdministrativeDivisionId,city.CityId,N'Dirección principal',1,1,@UserId,
+              SYSDATETIMEOFFSET()
+            FROM dbo.Countries country
+            JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+            JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+            WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1;
             """;
         command.Parameters.AddWithValue("@PartyId", partyId);
         command.Parameters.AddWithValue("@CustomerId", customerId);
+        command.Parameters.AddWithValue("@PartySiteId", partySiteId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
         await command.ExecuteNonQueryAsync();
-        return customerId;
+        return (customerId, partySiteId);
     }
 
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)

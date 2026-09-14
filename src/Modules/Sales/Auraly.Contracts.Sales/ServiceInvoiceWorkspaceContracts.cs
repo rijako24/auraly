@@ -38,7 +38,10 @@ public sealed record ServiceInvoiceCustomerItem(
     Guid CustomerId,
     string Identification,
     string DisplayName,
-    string? Email);
+    string? Email,
+    Guid? PartySiteId = null,
+    string? PartySiteName = null,
+    string? PartySiteAddress = null);
 
 public sealed record ServiceInvoiceCustomerPage(
     IReadOnlyList<ServiceInvoiceCustomerItem> Items,
@@ -61,7 +64,8 @@ public sealed record IssueServiceInvoiceRequest(
     string PaymentMethodCode,
     string? PaymentReference = null,
     decimal CreditAmount = 0,
-    DateTimeOffset? CreditDueDate = null);
+    DateTimeOffset? CreditDueDate = null,
+    Guid? PartySiteId = null);
 
 public sealed record IssuedServiceInvoice(
     Guid DocumentId,

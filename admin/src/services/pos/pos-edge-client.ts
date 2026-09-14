@@ -49,6 +49,9 @@ export type PosCatalogSearchPage = {
 
 export type PosCustomer = {
   customerId: string;
+  partySiteId?: string | null;
+  siteName?: string | null;
+  siteAddress?: string | null;
   identification: string;
   name: string;
   priceChannelId: string | null;
@@ -181,6 +184,7 @@ export type PosDraftLineUpdate = Pick<
 export type PosDraft = {
   draftId: DraftId;
   customerId: string | null;
+  customerPartySiteId?: string | null;
   sellerId: string | null;
   status: string;
   name: string | null;
@@ -614,7 +618,7 @@ export interface PosClient {
     signal?: AbortSignal,
   ): Promise<PosProductWarehouseAvailability[]>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
-  customer(customerId: string): Promise<PosCustomer>;
+  customer(customerId: string, partySiteId?: string | null): Promise<PosCustomer>;
   customerCountries(): Promise<PosCountry[]>;
   customerDivisions(countryId: string): Promise<PosAdministrativeDivision[]>;
   customerCities(divisionId: string): Promise<PosCity[]>;
@@ -632,7 +636,7 @@ export interface PosClient {
   changeQuantity(draftId: string, lineId: string, quantity: number): Promise<PosCaptureResult>;
   setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   updateLines(draftId: string, lines: PosDraftLineUpdate[], includesProratedDiscount?: boolean): Promise<PosDraft>;
-  selectCustomer(draftId: string, customerId: string | null): Promise<PosCustomerSelection>;
+  selectCustomer(draftId: string, customerId: string | null, partySiteId?: string | null): Promise<PosCustomerSelection>;
   removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   cancelDraft(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   saveTemporary(
@@ -1140,8 +1144,9 @@ export class PosEdgeClient implements PosClient {
       body: JSON.stringify(input),
     });
   }
-  customer(customerId: string) {
-    return this.request<PosCustomer>(`/edge/v1/customers/${customerId}`);
+  customer(customerId: string, partySiteId: string | null = null) {
+    const query = partySiteId ? `?partySiteId=${encodeURIComponent(partySiteId)}` : "";
+    return this.request<PosCustomer>(`/edge/v1/customers/${customerId}${query}`);
   }
 
   createApproval(input: PosApprovalCreateInput) {
@@ -1198,12 +1203,12 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
-  selectCustomer(draftId: string, customerId: string | null) {
+  selectCustomer(draftId: string, customerId: string | null, partySiteId: string | null = null) {
     return this.request<PosCustomerSelection>(
       `/edge/v1/drafts/${draftId}/customer`,
       {
         method: "PUT",
-        body: JSON.stringify({ customerId }),
+        body: JSON.stringify({ customerId, partySiteId }),
       },
     );
   }

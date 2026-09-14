@@ -108,6 +108,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         SqlTransaction transaction,
         Guid businessId,
         Guid? customerId,
+        Guid? partySiteId,
         OnlineSalesCreditTerms? credit,
         DateTimeOffset issuedAt,
         CancellationToken cancellationToken)
@@ -126,7 +127,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             customerId.Value,
             credit.Amount,
             issuedAt,
-            cancellationToken);
+            cancellationToken,
+            partySiteId);
         if (!validation.IsAllowed)
             throw new OnlineSalesDraftValidationException(
                 validation.RejectionReason ?? "No fue posible validar el cupo del cliente.");

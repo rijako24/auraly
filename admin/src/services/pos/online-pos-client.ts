@@ -140,6 +140,7 @@ type OnlineDraft = {
   workSessionId: string;
   userId: string;
   customerId: string | null;
+  customerPartySiteId: string | null;
   sellerId: string | null;
   status: string;
   name: string | null;
@@ -169,6 +170,9 @@ type OnlineCustomerPage = {
     requiresElectronicInvoice: boolean;
     isCreditEnabled: boolean;
     availableCredit: number | null;
+    partySiteId: string | null;
+    siteName: string | null;
+    siteAddress: string | null;
   }>;
   hasMore: boolean;
   nextOffset: number | null;
@@ -593,6 +597,7 @@ export class OnlinePosClient implements PosClient {
     const created = await request<{
       customerId: string; identification: string; displayName: string;
       priceChannelId: string | null; requiresElectronicInvoice: boolean; isActive: boolean;
+      sites: Array<{ partySiteId: string; name: string; addressLine: string; isPrimary: boolean }>;
     }>("/api/commerce/v1/customers", this.post({
       operationId: crypto.randomUUID(),
       businessId: this.context.businessId,
@@ -612,19 +617,23 @@ export class OnlinePosClient implements PosClient {
       primarySite: input.primarySite,
       pricing: null,
     }));
+    const primarySite = created.sites.find((site) => site.isPrimary) ?? created.sites[0];
     return {
       customerId: created.customerId,
       identification: created.identification,
       name: created.displayName,
+      partySiteId: primarySite?.partySiteId ?? null,
+      siteName: primarySite?.name ?? input.primarySite.name,
+      siteAddress: primarySite?.addressLine ?? input.primarySite.addressLine,
       priceChannelId: created.priceChannelId,
       requiresElectronicInvoice: created.requiresElectronicInvoice,
       isActive: created.isActive,
     } satisfies PosCustomer;
   }
-  async customer(customerId: string) {
+  async customer(customerId: string, partySiteId: string | null = null) {
     const customer = await request<OnlineCustomerPage["items"][number]>(
       "/api/commerce/v1/pos/drafts/customers/get",
-      this.post({ context: this.scope(), customerId }),
+      this.post({ context: this.scope(), customerId, partySiteId }),
     );
     return mapCustomer(customer);
   }
@@ -744,11 +753,11 @@ export class OnlinePosClient implements PosClient {
     );
   }
 
-  async selectCustomer(draftId: string, customerId: string | null) {
+  async selectCustomer(draftId: string, customerId: string | null, partySiteId: string | null = null) {
     const selection = await request<OnlineCustomerSelection>(
       `/api/commerce/v1/pos/drafts/${draftId}/customer`,
       this.mutation(
-        { customerId, expectedVersion: this.version(draftId) },
+        { customerId, partySiteId, expectedVersion: this.version(draftId) },
         "PUT",
       ),
     );
@@ -1212,6 +1221,7 @@ export class OnlinePosClient implements PosClient {
     return {
       draftId: { value: draft.draftId },
       customerId: draft.customerId,
+      customerPartySiteId: draft.customerPartySiteId,
       sellerId: draft.sellerId,
       status: draft.status,
       name: draft.name,

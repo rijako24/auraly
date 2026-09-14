@@ -59,6 +59,7 @@ public sealed class PosOrderRecoveryService(
                 order.OrderId,
                 order.CustomerId,
                 lines,
+                order.PartySiteId,
                 cancellationToken);
         }
         catch

@@ -102,7 +102,8 @@ public sealed record OrderDetail(
     Guid? InvoiceDocumentId,
     OrderClaimSummary? Claim,
     IReadOnlyList<OrderLine> Lines,
-    Guid? WarehouseId = null);
+    Guid? WarehouseId = null,
+    Guid? PartySiteId = null);
 
 public sealed record OrderPrintBatchRequest(IReadOnlyCollection<Guid> OrderIds);
 

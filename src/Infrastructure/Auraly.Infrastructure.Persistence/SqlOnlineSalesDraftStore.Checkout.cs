@@ -316,6 +316,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             transaction,
             state.BusinessId,
             state.CustomerId,
+            state.CustomerPartySiteId,
             request.Credit,
             now,
             cancellationToken);
@@ -370,6 +371,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             transaction,
             state.BusinessId,
             state.CustomerId,
+            state.CustomerPartySiteId,
             configuration,
             cancellationToken);
         var lines = draft.Lines.Select((line, index) =>
@@ -486,9 +488,11 @@ public sealed partial class SqlOnlineSalesDraftStore
                     creditValidation.AvailableCredit is null
                         ? null
                         : Math.Max(0m,
-                            creditValidation.AvailableCredit.Value - request.Credit.Amount),
-                    user.UserName),
-            FiscalHabilitationOnly: request.FiscalHabilitationOnly);
+                    creditValidation.AvailableCredit.Value - request.Credit.Amount),
+                    user.UserName,
+                    state.CustomerPartySiteId),
+            FiscalHabilitationOnly: request.FiscalHabilitationOnly,
+            CustomerPartySiteId: state.CustomerPartySiteId);
 
         await ReleaseOrderInventoryAsync(connection, transaction, user, state, cancellationToken);
 
@@ -918,6 +922,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         SqlTransaction transaction,
         Guid businessId,
         Guid? customerId,
+        Guid? partySiteId,
         CheckoutConfiguration configuration,
         CancellationToken ct) =>
         await SqlSaleUblPartyReader.ReadCustomerAsync(
@@ -925,6 +930,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             transaction,
             businessId,
             customerId,
+            partySiteId,
             configuration.Supplier.Address,
             ct);
 

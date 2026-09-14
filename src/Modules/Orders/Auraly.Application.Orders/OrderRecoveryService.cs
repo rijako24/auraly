@@ -51,7 +51,8 @@ public sealed class OrderRecoveryService(
                         line.DiscountAmount,
                         line.PriceSource,
                         line.DocumentUnitCost)).ToArray(),
-                    request.ExpectedDraftVersion),
+                    request.ExpectedDraftVersion,
+                    order.PartySiteId),
                 idempotencyKey,
                 cancellationToken);
             importCompleted = true;

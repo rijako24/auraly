@@ -433,12 +433,13 @@ public sealed partial class SqlOnlineSalesDraftStore(
         OnlineSalesUserIdentity user,
         Guid draftId,
         Guid? customerId,
+        Guid? partySiteId,
         long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken)
     {
         const string operation = "SelectCustomer";
-        var hash = Hash($"{operation}|{draftId:D}|{customerId?.ToString("D") ?? "Final"}");
+        var hash = Hash($"{operation}|{draftId:D}|{customerId?.ToString("D") ?? "Final"}|{partySiteId?.ToString("D") ?? "None"}");
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -451,23 +452,23 @@ public sealed partial class SqlOnlineSalesDraftStore(
         {
             var replayedCustomer = await ReadCustomerAsync(
                 connection, transaction, state.BusinessId,
-                replay.CustomerId, cancellationToken);
+                replay.CustomerId, replay.CustomerPartySiteId, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new(replay, replayedCustomer);
         }
         DemandActiveVersion(state, expectedVersion);
         var customer = await ReadCustomerAsync(
             connection, transaction, state.BusinessId,
-            customerId, cancellationToken);
+            customerId, partySiteId, cancellationToken);
         if (customerId is not null && customer is null)
             throw new OnlineSalesDraftValidationException(
                 "El cliente no está disponible para este negocio.");
 
         await ExecuteAsync(connection, transaction, """
-            UPDATE dbo.SalesDrafts SET CustomerId=@CustomerId
+            UPDATE dbo.SalesDrafts SET CustomerId=@CustomerId,CustomerPartySiteId=@PartySiteId
             WHERE SalesDraftId=@DraftId;
             """,
-            [P("@CustomerId", customerId), P("@DraftId", draftId)], cancellationToken);
+            [P("@CustomerId", customerId), P("@PartySiteId", customer?.PartySiteId), P("@DraftId", draftId)], cancellationToken);
         await RepriceDraftAsync(
             connection, transaction, state, draftId, customerId, cancellationToken);
         var version = await AdvanceVersionAsync(
@@ -725,7 +726,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         command.Transaction = transaction;
         command.CommandText = """
             SELECT d.BusinessId,d.WarehouseId,d.WorkSessionId,d.Version,d.Status,
-                   d.CustomerId,w.AllowNegativeStockSales,d.SourceOrderId
+                   d.CustomerId,w.AllowNegativeStockSales,d.SourceOrderId,d.CustomerPartySiteId
             FROM dbo.SalesDrafts d WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
             JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
@@ -744,7 +745,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
             reader.GetInt64(3), reader.GetString(4),
             reader.IsDBNull(5) ? null : reader.GetGuid(5),
-            reader.GetBoolean(6),reader.IsDBNull(7) ? null : reader.GetGuid(7));
+            reader.GetBoolean(6),reader.IsDBNull(7) ? null : reader.GetGuid(7),
+            reader.IsDBNull(8) ? null : reader.GetGuid(8));
     }
 
     private static void DemandActiveVersion(DraftState state, long expectedVersion)
@@ -1099,6 +1101,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         SqlTransaction transaction,
         Guid businessId,
         Guid? customerId,
+        Guid? partySiteId,
         CancellationToken ct)
     {
         if (customerId is null) return null;
@@ -1114,9 +1117,17 @@ public sealed partial class SqlOnlineSalesDraftStore(
                    CAST(COALESCE(cp.IsCreditEnabled,0) AS bit),
                    CASE WHEN cp.CreditLimit IS NULL THEN NULL
                         ELSE CASE WHEN cp.CreditLimit-COALESCE(balance.Outstanding,0)<0 THEN 0
-                                  ELSE cp.CreditLimit-COALESCE(balance.Outstanding,0) END END
+                                  ELSE cp.CreditLimit-COALESCE(balance.Outstanding,0) END END,
+                   site.PartySiteId,site.Name,site.AddressLine
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            CROSS APPLY(
+                SELECT TOP(1) candidate.PartySiteId,candidate.Name,candidate.AddressLine
+                FROM dbo.PartySites candidate
+                WHERE candidate.PartyId=p.PartyId AND candidate.IsActive=1
+                  AND (@PartySiteId IS NULL OR candidate.PartySiteId=@PartySiteId)
+                ORDER BY candidate.IsPrimary DESC,candidate.Name,candidate.PartySiteId
+            ) site
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
             LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId
             OUTER APPLY(SELECT SUM(r.OutstandingAmount) Outstanding FROM dbo.Receivables r
@@ -1126,7 +1137,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
               AND c.IsActive=1 AND p.IsActive=1;
             """;
         command.Parameters.AddRange([
-            P("@CustomerId", customerId), P("@BusinessId", businessId)
+            P("@CustomerId", customerId), P("@BusinessId", businessId), P("@PartySiteId", partySiteId)
         ]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
@@ -1134,7 +1145,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2).Trim(),
                 reader.IsDBNull(3) ? null : reader.GetGuid(3),
                 reader.GetBoolean(4), reader.GetBoolean(5),
-                reader.IsDBNull(6) ? null : reader.GetDecimal(6))
+                reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9))
             : null;
     }
 
@@ -1240,7 +1254,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         command.CommandText = """
             SELECT draft.SalesDraftId,draft.BusinessId,draft.WarehouseId,draft.WorkSessionId,draft.UserId,
                    draft.CustomerId,draft.SellerId,draft.Status,draft.Name,draft.Reference,draft.Observation,
-                   draft.Version,draft.UpdatedAt,draft.SourceOrderId
+                   draft.Version,draft.UpdatedAt,draft.SourceOrderId,draft.CustomerPartySiteId
             FROM dbo.SalesDrafts draft
             JOIN OPENJSON(@DraftIdsJson) WITH(DraftId uniqueidentifier '$') input
               ON input.DraftId=draft.SalesDraftId;
@@ -1277,7 +1291,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 reader.IsDBNull(9) ? null : reader.GetString(9),
                 reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetInt64(11),
                 reader.GetFieldValue<DateTimeOffset>(12),
-                reader.IsDBNull(13) ? null : reader.GetGuid(13));
+                reader.IsDBNull(13) ? null : reader.GetGuid(13),
+                reader.IsDBNull(14) ? null : reader.GetGuid(14));
             lines[draftId] = [];
         }
         await reader.NextResultAsync(ct);
@@ -1313,7 +1328,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 header.Name, header.Reference, header.Observation, header.Version,
                 header.UpdatedAt, draftLines, draftLines.Sum(line => line.Net),
                 draftLines.Sum(line => line.Tax), draftLines.Sum(line => line.Total),
-                header.SourceOrderId);
+                header.SourceOrderId,header.CustomerPartySiteId);
         });
     }
 
@@ -1348,7 +1363,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         string Status,
         Guid? CustomerId,
         bool WarehouseAllowsNegativeStock,
-        Guid? SourceOrderId);
+        Guid? SourceOrderId,
+        Guid? CustomerPartySiteId);
     private sealed record DraftLineMatch(Guid LineId, decimal Quantity);
     private sealed record DraftLineProduct(
         Guid LineId,
@@ -1391,7 +1407,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         string? Observation,
         long Version,
         DateTimeOffset UpdatedAt,
-        Guid? SourceOrderId);
+        Guid? SourceOrderId,
+        Guid? CustomerPartySiteId);
 
     private static void DemandAllowedQuantity(bool allowsFractionalSale, decimal quantity)
     {

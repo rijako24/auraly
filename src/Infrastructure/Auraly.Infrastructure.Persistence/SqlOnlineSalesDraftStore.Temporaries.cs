@@ -176,26 +176,36 @@ public sealed partial class SqlOnlineSalesDraftStore
                    CAST(COALESCE(cp.IsCreditEnabled,0) AS bit),
                    CASE WHEN cp.CreditLimit IS NULL THEN NULL
                         ELSE CASE WHEN cp.CreditLimit-COALESCE(balance.Outstanding,0)<0 THEN 0
-                                  ELSE cp.CreditLimit-COALESCE(balance.Outstanding,0) END END
+                                  ELSE cp.CreditLimit-COALESCE(balance.Outstanding,0) END END,
+                   site.PartySiteId,site.Name,site.AddressLine
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            JOIN dbo.PartySites site ON site.PartyId=p.PartyId AND site.IsActive=1
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
             LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId
             OUTER APPLY(SELECT SUM(r.OutstandingAmount) Outstanding FROM dbo.Receivables r
                         WHERE r.CustomerId=c.CustomerId AND r.BusinessId=c.BusinessId
                           AND r.Status IN(N'Open',N'PartiallyPaid')) balance
             WHERE c.BusinessId=@BusinessId AND c.IsActive=1 AND p.IsActive=1
-              AND (@Search=N'' OR p.Identification LIKE @Prefix
-                   OR p.DisplayName LIKE @Contains OR p.LegalName LIKE @Contains
-                   OR p.FirstName LIKE @Contains OR p.LastName LIKE @Contains)
+              AND (@Search=N'' OR NOT EXISTS(
+                   SELECT 1 FROM STRING_SPLIT(@Search,N' ') term
+                   WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
+                     AND NOT (COALESCE(p.Identification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(p.DisplayName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(p.LegalName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(p.FirstName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(p.LastName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.Name LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.Code LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.AddressLine LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(site.Phone,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%')))
             ORDER BY CASE WHEN p.Identification=@Search THEN 0 ELSE 1 END,
-                     COALESCE(p.DisplayName,p.LegalName,p.FirstName),c.CustomerId
+                     COALESCE(p.DisplayName,p.LegalName,p.FirstName),site.Name,site.PartySiteId
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             """;
         var search = request.Search?.Trim() ?? string.Empty;
         command.Parameters.AddRange([
             P("@BusinessId", scope.BusinessId), P("@Search", search),
-            P("@Contains", $"%{search}%"), P("@Prefix", $"{search}%"),
             P("@Skip", request.Skip), P("@Take", request.Take + 1)
         ]);
         var items = new List<OnlineSalesCustomer>();
@@ -205,7 +215,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                     reader.IsDBNull(3) ? null : reader.GetGuid(3),
                     reader.GetBoolean(4), reader.GetBoolean(5),
-                    reader.IsDBNull(6) ? null : reader.GetDecimal(6)));
+                    reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                    reader.GetGuid(7),reader.GetString(8),reader.GetString(9)));
         var hasMore = items.Count > request.Take;
         if (hasMore) items.RemoveAt(items.Count - 1);
         await transaction.CommitAsync(cancellationToken);
@@ -432,7 +443,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT d.BusinessId,d.WarehouseId,d.WorkSessionId,d.Version,d.Status,
-                   d.CustomerId,w.AllowNegativeStockSales,d.SourceOrderId
+                   d.CustomerId,w.AllowNegativeStockSales,d.SourceOrderId,d.CustomerPartySiteId
             FROM dbo.SalesDrafts d WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
             JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
@@ -451,7 +462,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
             reader.GetInt64(3), reader.GetString(4),
             reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetBoolean(6),
-            reader.IsDBNull(7) ? null : reader.GetGuid(7));
+            reader.IsDBNull(7) ? null : reader.GetGuid(7),
+            reader.IsDBNull(8) ? null : reader.GetGuid(8));
     }
 
     private static void DemandTemporaryVersion(DraftState state, long expectedVersion)

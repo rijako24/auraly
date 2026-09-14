@@ -5,6 +5,9 @@ namespace Auraly.Pos.Edge.Host;
 
 public sealed record PosCustomerView(
     Guid CustomerId,
+    Guid? PartySiteId,
+    string? SiteName,
+    string? SiteAddress,
     string Identification,
     string Name,
     Guid? PriceChannelId,
@@ -15,6 +18,9 @@ public sealed record PosCustomerView(
 {
     public static PosCustomerView From(PosCustomerPricing customer) => new(
         customer.CustomerId,
+        customer.PartySiteId,
+        customer.SiteName,
+        customer.SiteAddress,
         customer.Identification,
         customer.Name,
         customer.PriceChannelId,

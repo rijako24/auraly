@@ -201,6 +201,8 @@ public sealed class SqlPosSaleServerStore(
                 return existing;
             }
 
+            await ValidateCustomerSiteAsync(
+                connection, transaction, request, cancellationToken);
             await ValidateCreditAsync(
                 connection, transaction, request, cancellationToken);
 
@@ -302,10 +304,45 @@ public sealed class SqlPosSaleServerStore(
             request.Credit.CustomerId,
             request.Credit.Amount,
             request.CommercialSnapshot.IssuedAt,
-            cancellationToken);
+            cancellationToken,
+            request.CustomerPartySiteId);
         if (!validation.IsAllowed)
             throw new PosSaleInvalidException(
                 validation.RejectionReason ?? "No fue posible validar el cupo del cliente.");
+        if (request.Credit.PartySiteId != request.CustomerPartySiteId)
+            throw new PosSaleInvalidException(
+                "La sede congelada del crédito no coincide con la sede de la venta.");
+    }
+
+    private static async Task ValidateCustomerSiteAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.CustomerId is null)
+        {
+            if (request.CustomerPartySiteId is not null)
+                throw new PosSaleInvalidException(
+                    "La sede seleccionada requiere un cliente en la venta.");
+            return;
+        }
+        if (request.CustomerPartySiteId is null)
+            throw new PosSaleInvalidException(
+                "Selecciona la sede del cliente para emitir la venta.");
+        await using var command = new SqlCommand("""
+            SELECT COUNT(1)
+            FROM dbo.Customers customer
+            JOIN dbo.PartySites site ON site.PartyId=customer.PartyId AND site.IsActive=1
+            WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+              AND customer.IsActive=1 AND site.PartySiteId=@PartySiteId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@CustomerId", request.CustomerId.Value);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        command.Parameters.AddWithValue("@PartySiteId", request.CustomerPartySiteId.Value);
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) != 1)
+            throw new PosSaleInvalidException(
+                "La sede seleccionada no pertenece al cliente de la venta.");
     }
 
     private static async Task InsertFiscalDocumentAsync(
@@ -356,7 +393,7 @@ public sealed class SqlPosSaleServerStore(
                 DocumentPrefix, DocumentSeriesCode, DocumentConsecutive,
                 FiscalSeriesId, FiscalAuthorizationId,
                 DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
-                FiscalPrefix, FiscalConsecutive, IssuedAt, CustomerIdentification, CustomerId,
+                FiscalPrefix, FiscalConsecutive, IssuedAt, CustomerIdentification, CustomerId, CustomerPartySiteId,
                 UntaxedAmount, TaxAmount, PayableAmount, CreditAmount, CreditDueDate, CufeReceived,
                 CufeCalculated, FiscalStatus, ProcessingStatus, ReceivedAt,
                 CreatedByDeviceId, SoldByUserId
@@ -368,7 +405,7 @@ public sealed class SqlPosSaleServerStore(
                 @DocumentPrefix, @DocumentSeriesCode, @DocumentConsecutive,
                 @FiscalSeriesId, @FiscalAuthorizationId,
                 @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
-                @FiscalPrefix, @FiscalConsecutive, @IssuedAt, @CustomerIdentification, @CustomerId,
+                @FiscalPrefix, @FiscalConsecutive, @IssuedAt, @CustomerIdentification, @CustomerId, @CustomerPartySiteId,
                 @UntaxedAmount, @TaxAmount, @PayableAmount, @CreditAmount, @CreditDueDate, @CufeReceived,
                 @CufeCalculated, @FiscalStatus, @ProcessingStatus, @ReceivedAt,
                 @DeviceId, @SoldByUserId
@@ -410,6 +447,7 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@CustomerIdentification", commercial.CustomerIdentification);
         AddDecimal(sqlCommand, "@UntaxedAmount", commercial.UntaxedAmount, 19, 4);
         sqlCommand.Parameters.AddWithValue("@CustomerId", (object?)request.CustomerId ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@CustomerPartySiteId", (object?)request.CustomerPartySiteId ?? DBNull.Value);
         AddDecimal(sqlCommand, "@TaxAmount", commercial.TaxAmount, 19, 4);
         AddDecimal(sqlCommand, "@PayableAmount", commercial.PayableAmount, 19, 4);
         AddDecimal(sqlCommand, "@CreditAmount", request.Credit?.Amount ?? 0m, 19, 4);

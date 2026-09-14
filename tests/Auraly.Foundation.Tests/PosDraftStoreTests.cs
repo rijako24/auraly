@@ -126,15 +126,18 @@ public sealed class PosDraftStoreTests
                 Discount = 1_000m,
                 PriceSource = "Promotion"
             };
+            var partySiteId = Guid.NewGuid();
 
             var imported = await store.ImportOrderAsync(
                 scope,
                 orderId,
                 customerId,
-                [orderCommercialLine]);
+                [orderCommercialLine],
+                partySiteId);
 
             Assert.Equal(orderId, imported.SourceOrderId);
             Assert.Equal(customerId, imported.CustomerId);
+            Assert.Equal(partySiteId, imported.CustomerPartySiteId);
             Assert.Equal("Promotion", imported.Lines.Single().PriceSource);
             Assert.Equal(14_285.71m, imported.UntaxedAmount);
             Assert.Equal(714.29m, imported.TaxAmount);
@@ -144,6 +147,7 @@ public sealed class PosDraftStoreTests
             await reopened.InitializeAsync();
             var recovered = await reopened.GetOrCreateActiveAsync(scope);
             Assert.Equal(orderId, recovered.SourceOrderId);
+            Assert.Equal(partySiteId, recovered.CustomerPartySiteId);
             Assert.Equal("VAT5", recovered.Lines.Single().TaxCode);
             Assert.Equal(5m, recovered.Lines.Single().TaxRate);
         });

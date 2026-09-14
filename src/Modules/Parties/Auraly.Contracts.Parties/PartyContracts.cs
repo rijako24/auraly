@@ -70,7 +70,8 @@ public sealed record CreateCustomerRequest(
     CustomerPricingInput? Pricing,
     bool RequiresElectronicInvoice = false,
     IReadOnlyCollection<PartySiteInput>? AdditionalSites = null,
-    Guid? RequestedCustomerId = null);
+    Guid? RequestedCustomerId = null,
+    Guid? RequestedPrimarySiteId = null);
 
 public sealed record AddPartySiteRequest(Guid OperationId, PartySiteInput Site);
 public sealed record UpdatePartySiteRequest(PartySiteInput Site, string RowVersion);

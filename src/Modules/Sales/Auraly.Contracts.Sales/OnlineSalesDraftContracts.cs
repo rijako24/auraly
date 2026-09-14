@@ -34,7 +34,8 @@ public sealed record UpdateOnlineSalesDraftLineRequest(
 
 public sealed record SelectOnlineSalesDraftCustomerRequest(
     Guid? CustomerId,
-    long ExpectedVersion);
+    long ExpectedVersion,
+    Guid? PartySiteId = null);
 
 public sealed record RemoveOnlineSalesDraftLineRequest(long ExpectedVersion);
 
@@ -97,7 +98,10 @@ public sealed record OnlineSalesCustomer(
     Guid? PriceChannelId,
     bool RequiresElectronicInvoice,
     bool IsCreditEnabled,
-    decimal? AvailableCredit);
+    decimal? AvailableCredit,
+    Guid? PartySiteId = null,
+    string? PartySiteName = null,
+    string? PartySiteAddress = null);
 
 public sealed record OnlineSalesCustomerSelection(
     OnlineSalesDraft Draft,
@@ -146,7 +150,8 @@ public sealed record OnlineSalesDraft(
     decimal UntaxedAmount,
     decimal TaxAmount,
     decimal PayableAmount,
-    Guid? SourceOrderId = null);
+    Guid? SourceOrderId = null,
+    Guid? CustomerPartySiteId = null);
 
 public sealed record OnlineSalesInventoryIssue(
     Guid LineId,
@@ -163,7 +168,8 @@ public sealed record OnlineSalesInventoryValidation(
 
 public sealed record GetOnlineSalesCustomerRequest(
     OnlineSalesDraftContext Context,
-    Guid CustomerId);
+    Guid CustomerId,
+    Guid? PartySiteId = null);
 
 public sealed record SearchOnlineSalesIssuedSalesRequest(
     OnlineSalesDraftContext Context,

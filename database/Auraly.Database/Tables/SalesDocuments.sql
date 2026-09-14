@@ -22,6 +22,7 @@ CREATE TABLE [dbo].[SalesDocuments]
     [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
     [CustomerIdentification] NVARCHAR(64) NOT NULL,
     [CustomerId] UNIQUEIDENTIFIER NULL,
+    [CustomerPartySiteId] UNIQUEIDENTIFIER NULL,
     [UntaxedAmount] DECIMAL(19, 4) NOT NULL,
     [TaxAmount] DECIMAL(19, 4) NOT NULL,
     [PayableAmount] DECIMAL(19, 4) NOT NULL,
@@ -52,6 +53,7 @@ CREATE TABLE [dbo].[SalesDocuments]
     CONSTRAINT [UQ_SalesDocuments_Business_Document] UNIQUE ([BusinessId], [DocumentId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [FK_SalesDocuments_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
+    CONSTRAINT [FK_SalesDocuments_CustomerPartySites] FOREIGN KEY ([CustomerPartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [UQ_SalesDocuments_AuralyNumber]
         UNIQUE ([BusinessId], [DocumentType], [DocumentPrefix], [DocumentSeriesCode], [DocumentConsecutive]),
     CONSTRAINT [CK_SalesDocuments_DocumentType] CHECK ([DocumentType] IN (N'SalesInvoice',N'SalesReceipt',N'ServiceInvoice')),

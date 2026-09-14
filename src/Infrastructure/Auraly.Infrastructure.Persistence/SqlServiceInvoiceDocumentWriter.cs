@@ -50,14 +50,14 @@ internal static class SqlServiceInvoiceDocumentWriter
                DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
                FiscalSeriesId,FiscalAuthorizationId,DocumentType,IdempotencyKey,PayloadHash,RequestHash,
                FiscalNumber,FiscalPrefix,FiscalConsecutive,IssuedAt,CustomerIdentification,
-               CustomerId,UntaxedAmount,TaxAmount,PayableAmount,CreditAmount,CreditDueDate,
+               CustomerId,CustomerPartySiteId,UntaxedAmount,TaxAmount,PayableAmount,CreditAmount,CreditDueDate,
                CufeReceived,CufeCalculated,FiscalStatus,ProcessingStatus,ReceivedAt,ProcessedAt,
                SoldByUserId)
             VALUES(@DocumentId,@BusinessId,NULL,NULL,N'Online',@DocumentSeriesId,
                @DocumentNumber,@DocumentPrefix,@SeriesCode,@DocumentConsecutive,
                @FiscalSeriesId,@AuthorizationId,N'ServiceInvoice',@IdempotencyKey,@Hash,@RequestHash,
                @FiscalNumber,@FiscalPrefix,@FiscalConsecutive,@Now,@CustomerIdentification,
-               @CustomerId,@Untaxed,@Tax,@Payable,@CreditAmount,@CreditDueDate,@Cufe,@Cufe,
+               @CustomerId,@CustomerPartySiteId,@Untaxed,@Tax,@Payable,@CreditAmount,@CreditDueDate,@Cufe,@Cufe,
                N'PendingGeneration',N'Processed',@Now,@Now,@SoldByUserId);
 
             IF @PaymentAmount>0
@@ -116,6 +116,7 @@ internal static class SqlServiceInvoiceDocumentWriter
         Add(command, "@Now", now);
         Add(command, "@CustomerIdentification", snapshot.CommercialSnapshot.CustomerIdentification);
         Add(command, "@CustomerId", write.CustomerId);
+        Add(command, "@CustomerPartySiteId", snapshot.CustomerPartySiteId);
         Add(command, "@Untaxed", snapshot.CommercialSnapshot.UntaxedAmount);
         Add(command, "@Tax", snapshot.CommercialSnapshot.TaxAmount);
         Add(command, "@Payable", snapshot.CommercialSnapshot.PayableAmount);

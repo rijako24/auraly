@@ -18,6 +18,9 @@ export interface ServiceInvoiceCustomerItem {
   identification: string;
   displayName: string;
   email?: string | null;
+  partySiteId: string;
+  partySiteName: string;
+  partySiteAddress: string;
 }
 
 export interface ServiceInvoicePage<T> {
@@ -119,13 +122,14 @@ export const serviceInvoicesApi = {
   issue: (
     businessId: string,
     customerId: string,
+    partySiteId: string,
     lines: IssueServiceInvoiceLine[],
     paymentMethodCode: string,
     paymentReference: string | undefined,
     idempotencyKey: string,
   ) => apiClient.postIdempotent<IssuedServiceInvoice>(
     "/commerce/v1/service-invoices/issue",
-    { businessId, customerId, lines, paymentMethodCode, paymentReference },
+    { businessId, customerId, partySiteId, lines, paymentMethodCode, paymentReference },
     idempotencyKey,
   ),
   history: (

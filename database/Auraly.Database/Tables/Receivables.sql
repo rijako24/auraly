@@ -24,6 +24,7 @@ CREATE TABLE [dbo].[Receivables]
     [ReceivableId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [CustomerId] UNIQUEIDENTIFIER NOT NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NULL,
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(64) NOT NULL,
     [DocumentNumber] NVARCHAR(64) NOT NULL,
@@ -37,6 +38,7 @@ CREATE TABLE [dbo].[Receivables]
     CONSTRAINT [PK_Receivables] PRIMARY KEY ([ReceivableId]),
     CONSTRAINT [FK_Receivables_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_Receivables_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
+    CONSTRAINT [FK_Receivables_PartySites] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [FK_Receivables_SourceJob] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType]) REFERENCES [dbo].[AccountingPostingJobs] ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [UQ_Receivables_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [CK_Receivables_Amounts] CHECK ([OriginalAmount] > 0 AND [OutstandingAmount] >= 0),
@@ -47,6 +49,10 @@ GO
 CREATE INDEX [IX_Receivables_Business_Due] ON [dbo].[Receivables] ([BusinessId],[Status],[DueDate]) INCLUDE ([CustomerId],[DocumentNumber],[OutstandingAmount]);
 GO
 CREATE INDEX [IX_Receivables_Customer_Status] ON [dbo].[Receivables] ([CustomerId],[Status]) INCLUDE ([OutstandingAmount],[DueDate]);
+GO
+CREATE INDEX [IX_Receivables_Business_Customer_Site_Status]
+    ON [dbo].[Receivables] ([BusinessId],[CustomerId],[PartySiteId],[Status],[DueDate])
+    INCLUDE ([DocumentNumber],[OutstandingAmount]);
 GO
 
 CREATE TABLE [dbo].[ReceivableTransactions]

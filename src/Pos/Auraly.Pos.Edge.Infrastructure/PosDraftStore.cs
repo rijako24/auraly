@@ -86,7 +86,8 @@ public sealed record PosDraft(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     IReadOnlyList<PosDraftLine> Lines,
-    Guid? SourceOrderId = null)
+    Guid? SourceOrderId = null,
+    Guid? CustomerPartySiteId = null)
 {
     public decimal UntaxedAmount => Lines.Sum(line => line.Net);
     public decimal TaxAmount => Lines.Sum(line => line.Tax);
@@ -160,6 +161,11 @@ public sealed class PosDraftStore
             command.CommandText = "ALTER TABLE PosDrafts ADD COLUMN SourceOrderId TEXT NULL;";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+        if (!columns.Contains("CustomerPartySiteId"))
+        {
+            command.CommandText = "ALTER TABLE PosDrafts ADD COLUMN CustomerPartySiteId TEXT NULL;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
         columns.Clear();
         command.CommandText = "PRAGMA table_info('PosDraftLines');";
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -206,6 +212,7 @@ public sealed class PosDraftStore
         Guid orderId,
         Guid? customerId,
         IReadOnlyCollection<PosDraftLineInput> lines,
+        Guid? customerPartySiteId = null,
         CancellationToken cancellationToken = default)
     {
         if (orderId == Guid.Empty) throw new ArgumentException("Order ID is required.", nameof(orderId));
@@ -219,7 +226,8 @@ public sealed class PosDraftStore
         {
             draftId = new DraftId(_idGenerator.NewId());
             await InsertActiveAsync(
-                connection, transaction, draftId.Value, scope, customerId, null, cancellationToken);
+                connection, transaction, draftId.Value, scope, customerId, null,
+                customerPartySiteId, cancellationToken);
         }
         else
         {
@@ -231,11 +239,13 @@ public sealed class PosDraftStore
 
         await ExecuteAsync(connection, transaction, """
             UPDATE PosDrafts
-            SET CustomerId=@CustomerId,SourceOrderId=@OrderId,UpdatedAt=@Now
+            SET CustomerId=@CustomerId,CustomerPartySiteId=@CustomerPartySiteId,
+                SourceOrderId=@OrderId,UpdatedAt=@Now
             WHERE DraftId=@DraftId AND Status='Active';
             """,
             [
-                P("@CustomerId", customerId), P("@OrderId", orderId),
+                P("@CustomerId", customerId), P("@CustomerPartySiteId", customerPartySiteId),
+                P("@OrderId", orderId),
                 P("@Now", Now()), P("@DraftId", draftId.Value.Value)
             ],
             cancellationToken);
@@ -300,7 +310,7 @@ public sealed class PosDraftStore
         var existing = await FindActiveIdAsync(connection, transaction, scope, cancellationToken);
         var draftId = existing ?? new DraftId(_idGenerator.NewId());
         if (existing is null)
-            await InsertActiveAsync(connection, transaction, draftId, scope, null, null, cancellationToken);
+            await InsertActiveAsync(connection, transaction, draftId, scope, null, null, null, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return await GetRequiredAsync(draftId, cancellationToken);
     }
@@ -317,7 +327,7 @@ public sealed class PosDraftStore
         if (draftId is null)
         {
             draftId = new DraftId(_idGenerator.NewId());
-            await InsertActiveAsync(connection, transaction, draftId.Value, scope, null, null, cancellationToken);
+            await InsertActiveAsync(connection, transaction, draftId.Value, scope, null, null, null, cancellationToken);
         }
 
         else
@@ -480,7 +490,8 @@ public sealed class PosDraftStore
         await RequireActiveAsync(connection, transaction, draftId, cancellationToken);
         await ExecuteAsync(connection, transaction, """
             UPDATE PosDrafts
-            SET CustomerId=@CustomerId,SellerId=@SellerId,UpdatedAt=@Now
+            SET CustomerPartySiteId=CASE WHEN CustomerId=@CustomerId THEN CustomerPartySiteId ELSE NULL END,
+                CustomerId=@CustomerId,SellerId=@SellerId,UpdatedAt=@Now
             WHERE DraftId=@DraftId;
             """,
             [
@@ -495,6 +506,7 @@ public sealed class PosDraftStore
     public async Task<PosDraft> AssignCustomerAndPricesAsync(
         DraftId draftId,
         Guid? customerId,
+        Guid? customerPartySiteId,
         IReadOnlyCollection<PosDraftLinePriceUpdate> prices,
         CancellationToken cancellationToken = default)
     {
@@ -539,11 +551,12 @@ public sealed class PosDraftStore
         }
         await ExecuteAsync(connection, transaction, """
             UPDATE PosDrafts
-            SET CustomerId=@CustomerId,UpdatedAt=@Now
+            SET CustomerId=@CustomerId,CustomerPartySiteId=@CustomerPartySiteId,UpdatedAt=@Now
             WHERE DraftId=@DraftId;
             """,
             [
                 P("@CustomerId", customerId),
+                P("@CustomerPartySiteId", customerPartySiteId),
                 P("@Now", Now()),
                 P("@DraftId", draftId.Value)
             ],
@@ -713,15 +726,19 @@ public sealed class PosDraftStore
                 scope,
                 source.CustomerId,
                 source.SellerId,
+                source.CustomerPartySiteId,
                 cancellationToken);
         else
             await ExecuteAsync(connection, transaction, """
                 UPDATE PosDrafts
-                SET CustomerId=@CustomerId,SellerId=@SellerId,UpdatedAt=@Now
+                SET CustomerId=@CustomerId,CustomerPartySiteId=@CustomerPartySiteId,
+                    SellerId=@SellerId,UpdatedAt=@Now
                 WHERE DraftId=@DraftId;
                 """,
                 [
-                    P("@CustomerId", source.CustomerId), P("@SellerId", source.SellerId),
+                    P("@CustomerId", source.CustomerId),
+                    P("@CustomerPartySiteId", source.CustomerPartySiteId),
+                    P("@SellerId", source.SellerId),
                     P("@Now", Now()), P("@DraftId", targetId.Value)
                 ],
                 cancellationToken);
@@ -774,21 +791,23 @@ public sealed class PosDraftStore
         PosDraftScope scope,
         Guid? customerId,
         Guid? sellerId,
+        Guid? customerPartySiteId,
         CancellationToken ct)
     {
         var now = Now();
         await ExecuteAsync(connection, transaction, """
             INSERT INTO PosDrafts(
-              DraftId,BusinessId,WarehouseId,DeviceId,WorkSessionId,UserId,CustomerId,SellerId,
+              DraftId,BusinessId,WarehouseId,DeviceId,WorkSessionId,UserId,CustomerId,CustomerPartySiteId,SellerId,
               Status,CreatedAt,UpdatedAt)
             VALUES(
-              @DraftId,@BusinessId,@WarehouseId,@DeviceId,@WorkSessionId,@UserId,@CustomerId,@SellerId,
+              @DraftId,@BusinessId,@WarehouseId,@DeviceId,@WorkSessionId,@UserId,@CustomerId,@CustomerPartySiteId,@SellerId,
               'Active',@Now,@Now);
             """,
             [
                 P("@DraftId", draftId.Value), P("@BusinessId", scope.BusinessId.Value),
                 P("@WarehouseId", scope.WarehouseId.Value), P("@DeviceId", scope.DeviceId.Value),
                 P("@WorkSessionId", scope.WorkSessionId.Value), P("@UserId", scope.UserId.Value), P("@CustomerId", customerId),
+                P("@CustomerPartySiteId", customerPartySiteId),
                 P("@SellerId", sellerId), P("@Now", now)
             ],
             ct);
@@ -1029,7 +1048,7 @@ public sealed class PosDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT BusinessId,WarehouseId,DeviceId,WorkSessionId,UserId,CustomerId,SellerId,Status,
-                   Name,Reference,Observation,CreatedAt,UpdatedAt,SourceOrderId
+                   Name,Reference,Observation,CreatedAt,UpdatedAt,SourceOrderId,CustomerPartySiteId
             FROM PosDrafts WHERE DraftId=@DraftId;
             """;
         command.Parameters.Add(P("@DraftId", draftId.Value));
@@ -1052,7 +1071,8 @@ public sealed class PosDraftStore
             DateTimeOffset.Parse(reader.GetString(11), CultureInfo.InvariantCulture),
             DateTimeOffset.Parse(reader.GetString(12), CultureInfo.InvariantCulture),
             [],
-            NullableGuid(reader, 13));
+            NullableGuid(reader, 13),
+            NullableGuid(reader, 14));
     }
 
     private static async Task<IReadOnlyList<PosDraftLine>> ReadLinesAsync(
@@ -1202,6 +1222,7 @@ public sealed class PosDraftStore
           WorkSessionId TEXT NOT NULL,
           UserId TEXT NOT NULL,
           CustomerId TEXT NULL,
+          CustomerPartySiteId TEXT NULL,
           SellerId TEXT NULL,
           Status TEXT NOT NULL CHECK(Status IN ('Active','Temporary','Consumed','Deleted')),
           Name TEXT NULL,

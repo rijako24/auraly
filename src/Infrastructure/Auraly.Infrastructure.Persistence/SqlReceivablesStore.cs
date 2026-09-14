@@ -23,12 +23,15 @@ public sealed class SqlReceivablesStore(
         const string where = """
             r.BusinessId=@BusinessId AND b.TenantId=@TenantId
             AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
+            AND (@PartySiteId IS NULL OR r.PartySiteId=@PartySiteId)
             AND (@Status IS NULL OR r.Status=@Status)
             AND (@Overdue IS NULL OR (@Overdue=1 AND r.OutstandingAmount>0 AND r.DueDate<@Now)
                  OR (@Overdue=0 AND (r.OutstandingAmount=0 OR r.DueDate>=@Now)))
             AND (@Search IS NULL OR r.DocumentNumber LIKE N'%' + @Search + N'%'
                  OR p.DisplayName LIKE N'%' + @Search + N'%'
-                 OR p.Identification LIKE N'%' + @Search + N'%')
+                 OR p.Identification LIKE N'%' + @Search + N'%'
+                 OR site.Name LIKE N'%' + @Search + N'%'
+                 OR site.Code LIKE N'%' + @Search + N'%')
             """;
         int count; decimal outstanding; decimal overdue;
         await using (var command = new SqlCommand($"""
@@ -36,7 +39,8 @@ public sealed class SqlReceivablesStore(
                    COALESCE(SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN r.OutstandingAmount ELSE 0 END),0)
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
-            INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE {where};
+            INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId WHERE {where};
             """, connection))
         {
             AddQuery(command, user, query, timeProvider.GetUtcNow());
@@ -47,10 +51,12 @@ public sealed class SqlReceivablesStore(
         await using (var command = new SqlCommand($"""
             SELECT r.ReceivableId,r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification),
                    r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,r.OutstandingAmount,r.DueDate,
-                   r.Status,r.CreatedAt,CAST(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 1 ELSE 0 END AS bit)
+                   r.Status,r.CreatedAt,CAST(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 1 ELSE 0 END AS bit),
+                   r.PartySiteId,site.Name
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
-            INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE {where}
+            INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId WHERE {where}
             ORDER BY CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 0 ELSE 1 END,r.DueDate,r.ReceivableId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """, connection))
@@ -61,7 +67,8 @@ public sealed class SqlReceivablesStore(
             await using var reader=await command.ExecuteReaderAsync(token);
             while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),
                 reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDateTimeOffset(7),
-                reader.GetString(8),reader.GetBoolean(10),reader.GetDateTimeOffset(9)));
+                reader.GetString(8),reader.GetBoolean(10),reader.GetDateTimeOffset(9),
+                reader.IsDBNull(11)?null:reader.GetGuid(11),reader.IsDBNull(12)?null:reader.GetString(12)));
         }
         return new(items,query.Page,query.PageSize,count,outstanding,overdue);
     }
@@ -72,25 +79,27 @@ public sealed class SqlReceivablesStore(
         await using var header=new SqlCommand("""
             SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification),COALESCE(p.Identification,N''),
                    r.SourceDocumentId,r.SourceDocumentType,r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,
-                   r.OutstandingAmount,r.DueDate,r.Status
+                   r.OutstandingAmount,r.DueDate,r.Status,r.PartySiteId,site.Name
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId
             WHERE r.ReceivableId=@Id AND r.BusinessId=@BusinessId AND b.TenantId=@TenantId;
             """,connection);
         header.Parameters.AddWithValue("@Id",id); header.Parameters.AddWithValue("@BusinessId",user.BusinessId); header.Parameters.AddWithValue("@TenantId",user.TenantId);
-        Guid customerId, sourceId; string name, identification, sourceType, number, currency, status; decimal original,balance; DateTimeOffset due;
+        Guid customerId, sourceId; Guid? partySiteId; string name, identification, sourceType, number, currency, status; string? partySiteName; decimal original,balance; DateTimeOffset due;
         await using(var reader=await header.ExecuteReaderAsync(token))
         {
             if(!await reader.ReadAsync(token)) return null;
             customerId=reader.GetGuid(0); name=reader.GetString(1); identification=reader.GetString(2); sourceId=reader.GetGuid(3);
             sourceType=reader.GetString(4); number=reader.GetString(5); currency=reader.GetString(6); original=reader.GetDecimal(7);
             balance=reader.GetDecimal(8); due=reader.GetDateTimeOffset(9); status=reader.GetString(10);
+            partySiteId=reader.IsDBNull(11)?null:reader.GetGuid(11); partySiteName=reader.IsDBNull(12)?null:reader.GetString(12);
         }
         var movements=new List<ReceivableTransactionView>();
         await using var detail=new SqlCommand("SELECT ReceivableTransactionId,TransactionType,Amount,SourceDocumentId,OccurredAt FROM dbo.ReceivableTransactions WHERE ReceivableId=@Id ORDER BY OccurredAt,ReceivableTransactionId",connection);
         detail.Parameters.AddWithValue("@Id",id); await using(var reader=await detail.ExecuteReaderAsync(token))
             while(await reader.ReadAsync(token)) movements.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetDecimal(2),reader.GetGuid(3),reader.GetDateTimeOffset(4)));
-        return new(id,customerId,name,identification,sourceId,sourceType,number,currency,original,balance,due,status,movements);
+        return new(id,customerId,name,identification,sourceId,sourceType,number,currency,original,balance,due,status,movements,partySiteId,partySiteName);
     }
 
     public async Task<CustomerCreditProfile?> GetCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId, CancellationToken token)
@@ -147,7 +156,8 @@ public sealed class SqlReceivablesStore(
             """,connection);
         command.Parameters.AddWithValue("@CustomerId",customerId); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@Limit",(object?)request.CreditLimit??DBNull.Value); command.Parameters.AddWithValue("@Days",request.DefaultDueDays);
-        command.Parameters.AddWithValue("@Enabled",request.IsCreditEnabled); command.Parameters.AddWithValue("@UserId",user.UserId); command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("@Enabled",request.IsCreditEnabled);
+        command.Parameters.AddWithValue("@UserId",user.UserId); command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
         command.Parameters.AddWithValue("@NotificationId",ids.NewId());
         try { await command.ExecuteNonQueryAsync(token); } catch(SqlException ex) when(ex.Number==51300) { throw new ReceivablesValidationException(ex.Message); }
         return (await GetCreditProfileAsync(user,customerId,token))!;
@@ -302,6 +312,6 @@ public sealed class SqlReceivablesStore(
     {
         await using var command=new SqlCommand("IF NOT EXISTS(SELECT 1 FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@Id) INSERT dbo.BusinessProcessingCursors(BusinessId,LastAssignedSequence,LastCompletedSequence,UpdatedAt) VALUES(@Id,0,0,@Now); UPDATE dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK) SET LastAssignedSequence=LastAssignedSequence+1,UpdatedAt=@Now OUTPUT inserted.LastAssignedSequence WHERE BusinessId=@Id;",c,t);command.Parameters.AddWithValue("@Id",businessId);command.Parameters.AddWithValue("@Now",now);return Convert.ToInt64(await command.ExecuteScalarAsync(token));
     }
-    private static void AddQuery(SqlCommand c,ReceivablesUserIdentity u,ReceivableQuery q,DateTimeOffset now){c.Parameters.AddWithValue("@BusinessId",u.BusinessId);c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.AddWithValue("@CustomerId",(object?)q.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@Status",(object?)q.Status??DBNull.Value);c.Parameters.AddWithValue("@Overdue",(object?)q.Overdue??DBNull.Value);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@Now",now);}
+    private static void AddQuery(SqlCommand c,ReceivablesUserIdentity u,ReceivableQuery q,DateTimeOffset now){c.Parameters.AddWithValue("@BusinessId",u.BusinessId);c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.AddWithValue("@CustomerId",(object?)q.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@PartySiteId",(object?)q.PartySiteId??DBNull.Value);c.Parameters.AddWithValue("@Status",(object?)q.Status??DBNull.Value);c.Parameters.AddWithValue("@Overdue",(object?)q.Overdue??DBNull.Value);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@Now",now);}
     private static void Money(SqlCommand c,string name,decimal value){var p=c.Parameters.Add(name,SqlDbType.Decimal);p.Precision=19;p.Scale=4;p.Value=value;}
 }

@@ -30,6 +30,7 @@ public sealed class PosCustomerOutboxStore(
     {
         await PosUnifiedOutboxSchema.EnsureCreatedAsync(connectionString, cancellationToken);
         var customerId = ids.NewId();
+        var partySiteId = ids.NewId();
         var request = new CreateCustomerRequest(
             customerId,
             scope.BusinessId,
@@ -47,7 +48,8 @@ public sealed class PosCustomerOutboxStore(
                 input.Phone),
             input.PrimarySite,
             null,
-            RequestedCustomerId: customerId);
+            RequestedCustomerId: customerId,
+            RequestedPrimarySiteId: partySiteId);
         var now = timeProvider.GetUtcNow();
         var local = new PosCustomerPricing(
             customerId,
@@ -55,7 +57,13 @@ public sealed class PosCustomerOutboxStore(
             input.DisplayName.Trim(),
             null,
             true,
-            false);
+            false,
+            Sites: [new PosCustomerSite(
+                partySiteId, input.PrimarySite.Code.Trim(), input.PrimarySite.Name.Trim(),
+                input.PrimarySite.AddressLine.Trim(), input.PrimarySite.Phone, true)],
+            PartySiteId: partySiteId,
+            SiteName: input.PrimarySite.Name.Trim(),
+            SiteAddress: input.PrimarySite.AddressLine.Trim());
 
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -78,8 +86,10 @@ public sealed class PosCustomerOutboxStore(
             insert.CommandText = """
                 INSERT INTO PosPricingCustomers(
                   CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,
-                  IsActive,AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,IsPendingLocal)
-                VALUES($customer,$identification,$name,NULL,$electronic,1,0,'[]',NULL,1);
+                  IsActive,AppliesWithholding,TaxResponsibilities,TaxJurisdictionCode,
+                  SitesJson,IsPendingLocal)
+                VALUES($customer,$identification,$name,NULL,$electronic,1,0,'[]',NULL,
+                       $sites,1);
                 INSERT INTO Outbox(
                   MessageId,DocumentId,WorkSessionId,Type,Payload,Status,AttemptCount,CreatedAt)
                 VALUES($customer,$customer,$session,$type,$payload,'Pending',0,$now);
@@ -88,6 +98,9 @@ public sealed class PosCustomerOutboxStore(
             insert.Parameters.AddWithValue("$identification", local.Identification);
             insert.Parameters.AddWithValue("$name", local.Name);
             insert.Parameters.AddWithValue("$electronic", local.RequiresElectronicInvoice ? 1 : 0);
+            // SitesJson is queried locally with the CLR property names (PartySiteId, Name, etc.).
+            // Keep the same durable shape used by the synchronized catalog rows.
+            insert.Parameters.AddWithValue("$sites", JsonSerializer.Serialize(local.Sites));
             insert.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
             insert.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CustomerCreated);
             insert.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(request, Json));

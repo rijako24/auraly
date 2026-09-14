@@ -7,6 +7,8 @@ export interface ReceivableListItem {
   receivableId: string;
   customerId: string;
   customerName: string;
+  partySiteId: string | null;
+  partySiteName: string | null;
   documentNumber: string;
   currencyCode: string;
   originalAmount: number;
@@ -32,6 +34,8 @@ export interface ReceivableDetail {
   documentNumber: string;
   customerId: string;
   customerName: string;
+  partySiteId: string | null;
+  partySiteName: string | null;
   dueDate: string;
   originalAmount: number;
   outstandingAmount: number;
@@ -101,6 +105,7 @@ export const receivablesApi = {
     pageSize?: number;
     search?: string;
     customerId?: string;
+    partySiteId?: string;
     status?: ReceivableStatus;
     overdue?: boolean;
   }) => apiClient.get<ReceivablePage>(

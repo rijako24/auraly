@@ -810,7 +810,7 @@ export default function PosPage() {
           setNextNumber(numbers?.document ?? null);
           setSelectedCustomer(
             current.customerId
-              ? await client.customer(current.customerId)
+              ? await client.customer(current.customerId, current.customerPartySiteId)
               : null,
           );
           hydrated = true;
@@ -877,7 +877,7 @@ export default function PosPage() {
         setDraft(recovered);
         setSelectedCustomer(null);
         if (recovered.customerId) {
-          void client.customer(recovered.customerId)
+          void client.customer(recovered.customerId, recovered.customerPartySiteId)
             .then(setSelectedCustomer)
             .catch(() => setMessage("Pedido recuperado; no fue posible actualizar el cliente."));
         }
@@ -1889,6 +1889,7 @@ export default function PosPage() {
       const selection = await client.selectCustomer(
         draft.draftId.value,
         customer?.customerId ?? null,
+        customer?.partySiteId ?? null,
       );
       setDraft(selection.draft);
       setSelectedCustomer(selection.customer);
@@ -2426,7 +2427,7 @@ export default function PosPage() {
     if (!client) throw new Error("El punto de venta no está disponible.");
     const recovered = await client.recoverOrder(orderId);
     const recoveredCustomer = recovered.customerId
-      ? await client.customer(recovered.customerId).catch(() => null)
+      ? await client.customer(recovered.customerId, recovered.customerPartySiteId).catch(() => null)
       : null;
     setDraft(recovered);
     setSelectedCustomer(recoveredCustomer);

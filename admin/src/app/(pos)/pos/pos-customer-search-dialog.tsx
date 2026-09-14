@@ -103,8 +103,8 @@ export function PosCustomerSearchDialog({
     try {
       const page = await onSearch(term.trim(), nextOffset);
       setResults((current) => {
-        const known = new Set(current.map((customer) => customer.customerId));
-        return [...current, ...page.items.filter((customer) => !known.has(customer.customerId))];
+        const known = new Set(current.map((customer) => customer.partySiteId ?? customer.customerId));
+        return [...current, ...page.items.filter((customer) => !known.has(customer.partySiteId ?? customer.customerId))];
       });
       setHasMore(page.hasMore);
       setNextOffset(page.nextOffset);
@@ -186,7 +186,7 @@ export function PosCustomerSearchDialog({
               if (list.scrollHeight - list.scrollTop - list.clientHeight < 100) void loadMore();
             }}>
               {results.map((customer, index) => (
-                <button key={customer.customerId} type="button" disabled={busy}
+                <button key={customer.partySiteId ?? customer.customerId} type="button" disabled={busy}
                   ref={(element) => { if (element) resultButtons.current.set(index, element); else resultButtons.current.delete(index); }}
                   onFocus={() => { setSelected(index); if (index === results.length - 1) void loadMore(); }}
                   onKeyDown={(event) => {
@@ -203,7 +203,7 @@ export function PosCustomerSearchDialog({
                   }}
                   onMouseEnter={() => setSelected(index)} onClick={() => void onSelect(customer)}
                   className={`grid w-full grid-cols-[minmax(0,1fr)_180px] items-center gap-4 border-b border-slate-100 px-3 py-3 text-left outline-none ${selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : "hover:bg-slate-50"}`}>
-                  <span className="truncate font-semibold text-slate-900">{customer.name}</span>
+                  <span className="min-w-0"><strong className="block truncate text-slate-900">{customer.siteName ? `${customer.name} · ${customer.siteName}` : customer.name}</strong>{customer.siteAddress&&<small className="block truncate text-slate-500">{customer.siteAddress}</small>}</span>
                   <span className="text-right text-sm tabular-nums text-slate-600">{customer.identification}</span>
                 </button>
               ))}

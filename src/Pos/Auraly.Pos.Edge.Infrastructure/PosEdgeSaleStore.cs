@@ -72,7 +72,8 @@ public sealed record PosEdgeIssueCommand(
     string DocumentType = PosSaleDocumentTypes.Invoice,
     WithholdingCalculationSnapshot? Withholding = null,
     PosSaleCreditContract? Credit = null,
-    string? CustomerName = null);
+    string? CustomerName = null,
+    Guid? CustomerPartySiteId = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -1145,7 +1146,8 @@ public sealed class PosEdgeSaleStore
             snapshot is null ? null : command.UblSnapshot,
             command.CustomerId,
             SourceOrderId: command.SourceOrderId,
-            Credit: command.Credit);
+            Credit: command.Credit,
+            CustomerPartySiteId: command.CustomerPartySiteId);
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>

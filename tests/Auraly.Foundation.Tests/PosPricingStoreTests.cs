@@ -283,6 +283,80 @@ public sealed class PosPricingStoreTests
         }
     }
 
+    [Fact]
+    public async Task Customer_search_returns_one_candidate_per_site_and_requires_every_token()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-customer-sites-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new PosCatalogStore($"Data Source={path};Pooling=False");
+            await store.InitializeAsync();
+            var kevin = Guid.NewGuid();
+            var north = Guid.NewGuid();
+            var south = Guid.NewGuid();
+            await store.ApplyPricingSnapshotAsync(new PosPricingSnapshot([], [], [],
+            [
+                new(kevin, "1001", "Ramirez Kevin", null, true,
+                    Sites:
+                    [
+                        new(north, "N", "Daniel Norte", "Calle 10", null, true),
+                        new(south, "S", "Sucursal Sur", "Carrera 20", null, false)
+                    ]),
+                new(Guid.NewGuid(), "1002", "Solo Kevin", null, true,
+                    Sites: [new(Guid.NewGuid(), "C", "Centro", "Calle 30", null, true)]),
+                new(Guid.NewGuid(), "1003", "Solo Daniel", null, true,
+                    Sites: [new(Guid.NewGuid(), "O", "Occidente", "Calle 40", null, true)])
+            ]));
+
+            var forward = await store.SearchCustomersAsync("Kevin Daniel");
+            var reverse = await store.SearchCustomersAsync("Daniel Kevin");
+            var allSites = await store.SearchCustomersAsync("Ramirez");
+
+            var match = Assert.Single(forward);
+            Assert.Equal(kevin, match.CustomerId);
+            Assert.Equal(north, match.PartySiteId);
+            Assert.Equal("Daniel Norte", match.SiteName);
+            Assert.Equal(north, Assert.Single(match.Sites!).PartySiteId);
+            Assert.Equal(north, Assert.Single(reverse).PartySiteId);
+            Assert.Equal([north, south], allSites.Select(item => item.PartySiteId).ToArray());
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Customer_site_search_remains_bounded_for_a_thousand_customers()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-customer-search-volume-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new PosCatalogStore($"Data Source={path};Pooling=False");
+            await store.InitializeAsync();
+            var customers = Enumerable.Range(0, 1_000)
+                .Select(index => new PosCustomerPricing(
+                    Guid.NewGuid(), $"ID-{index:D4}", $"Cliente {index:D4}", null, true,
+                    Sites: [new(Guid.NewGuid(), "P", $"Sede {index:D4}", $"Calle {index}", null, true)]))
+                .ToArray();
+            await store.ApplyPricingSnapshotAsync(new PosPricingSnapshot([], [], [], customers));
+
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            var result = await store.SearchCustomersAsync("Cliente 0999");
+            started.Stop();
+
+            Assert.Equal("ID-0999", Assert.Single(result).Identification);
+            Assert.True(started.Elapsed < TimeSpan.FromSeconds(2),
+                $"Local customer/site search took {started.Elapsed.TotalMilliseconds:N0} ms.");
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;

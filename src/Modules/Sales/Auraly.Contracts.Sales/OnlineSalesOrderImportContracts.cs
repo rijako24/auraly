@@ -13,4 +13,5 @@ public sealed record ImportOnlineSalesOrderRequest(
     string OrderNumber,
     Guid? CustomerId,
     IReadOnlyList<OnlineSalesOrderImportLine> Lines,
-    long ExpectedVersion);
+    long ExpectedVersion,
+    Guid? PartySiteId = null);

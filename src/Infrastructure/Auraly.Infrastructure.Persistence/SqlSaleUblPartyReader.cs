@@ -10,6 +10,7 @@ internal static class SqlSaleUblPartyReader
         SqlTransaction? transaction,
         Guid businessId,
         Guid? customerId,
+        Guid? partySiteId,
         PosSaleUblAddressContract fallback,
         CancellationToken cancellationToken)
     {
@@ -30,7 +31,9 @@ internal static class SqlSaleUblPartyReader
             OUTER APPLY(
               SELECT TOP(1) value.* FROM dbo.PartySites value
               WHERE value.PartyId=p.PartyId AND value.IsActive=1
-              ORDER BY value.IsPrimary DESC,value.CreatedAt,value.PartySiteId) site
+                AND (@PartySiteId IS NULL OR value.PartySiteId=@PartySiteId)
+              ORDER BY CASE WHEN value.PartySiteId=@PartySiteId THEN 0 ELSE 1 END,
+                       value.IsPrimary DESC,value.CreatedAt,value.PartySiteId) site
             LEFT JOIN dbo.Countries country ON country.CountryId=site.CountryId
             LEFT JOIN dbo.AdministrativeDivisions division
               ON division.AdministrativeDivisionId=site.AdministrativeDivisionId
@@ -48,6 +51,7 @@ internal static class SqlSaleUblPartyReader
             """;
         command.Parameters.AddWithValue("@CustomerId", customerId.Value);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)partySiteId ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1))
             return FinalConsumer(fallback);
@@ -102,6 +106,7 @@ public sealed class SqlPosCreditFiscalMaterialReader(SqlServerConnectionFactory 
         Guid deviceId,
         Guid businessId,
         Guid customerId,
+        Guid? partySiteId,
         int environment,
         CancellationToken cancellationToken)
     {
@@ -170,6 +175,7 @@ public sealed class SqlPosCreditFiscalMaterialReader(SqlServerConnectionFactory 
             transaction: null,
             businessId,
             customerId,
+            partySiteId,
             material.Supplier.Address,
             cancellationToken);
         return new PosCreditFiscalMaterial(

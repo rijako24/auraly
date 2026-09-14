@@ -56,7 +56,7 @@ public sealed record UpdateDraftLineRequest(
     decimal UnitPrice,
     decimal Discount,
     decimal DocumentUnitCost = 0);
-public sealed record SelectCustomerRequest(Guid? CustomerId);
+public sealed record SelectCustomerRequest(Guid? CustomerId, Guid? PartySiteId = null);
 public sealed record SaveTemporaryRequest(string Name, string? Reference, string? Observation);
 public sealed record DirectPrintReceiptRequest(
     Guid DocumentId,
@@ -967,13 +967,23 @@ public static class PosEdgeHostApplication
         });
         edge.MapGet("/customers/{customerId:guid}", async (
             Guid customerId,
+            Guid? partySiteId,
             PosCatalogStore catalog,
             CancellationToken ct) =>
         {
             var customer = await catalog.GetCustomerAsync(customerId, ct);
-            return customer is null
+            if (customer is null) return Results.NotFound();
+            var site = partySiteId is { } selectedSiteId
+                ? customer.Sites?.SingleOrDefault(value => value.PartySiteId == selectedSiteId)
+                : customer.Sites?.FirstOrDefault(value => value.IsPrimary) ?? customer.Sites?.FirstOrDefault();
+            return site is null
                 ? Results.NotFound()
-                : Results.Ok(PosCustomerView.From(customer));
+                : Results.Ok(PosCustomerView.From(customer with
+                {
+                    PartySiteId = site.PartySiteId,
+                    SiteName = site.Name,
+                    SiteAddress = site.AddressLine
+                }));
         });
         edge.MapGet("/sales", async (
             string? search,
@@ -1128,6 +1138,7 @@ public static class PosEdgeHostApplication
                     await customers.SelectAsync(
                         new DraftId(draftId),
                         request.CustomerId,
+                        request.PartySiteId,
                         ct)));
             }
             catch (KeyNotFoundException error)
@@ -1152,7 +1163,7 @@ public static class PosEdgeHostApplication
                 http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
             var result = await drafts.RemoveLineAsync(new DraftId(draftId), lineId, ct);
             if (result.Lines.Count > 0)
-                result = await pricing.RepriceAsync(result.DraftId, result.CustomerId, ct);
+                result = await pricing.RepriceAsync(result.DraftId, result.CustomerId, result.CustomerPartySiteId, ct);
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);
         });

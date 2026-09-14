@@ -5,6 +5,7 @@ CREATE TABLE [dbo].[SalesDrafts] (
     [WorkSessionId] UNIQUEIDENTIFIER NOT NULL,
     [UserId] UNIQUEIDENTIFIER NOT NULL,
     [CustomerId] UNIQUEIDENTIFIER NULL,
+    [CustomerPartySiteId] UNIQUEIDENTIFIER NULL,
     [SellerId] UNIQUEIDENTIFIER NULL,
     [SourceOrderId] UNIQUEIDENTIFIER NULL,
     [Status] NVARCHAR(24) NOT NULL,
@@ -22,6 +23,7 @@ CREATE TABLE [dbo].[SalesDrafts] (
     CONSTRAINT [FK_SalesDrafts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_SalesDrafts_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_SalesDrafts_AppUsers] FOREIGN KEY ([UserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_SalesDrafts_CustomerPartySites] FOREIGN KEY ([CustomerPartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [FK_SalesDrafts_Orders] FOREIGN KEY ([SourceOrderId]) REFERENCES [dbo].[Orders] ([OrderId]),
     CONSTRAINT [CK_SalesDrafts_Status] CHECK ([Status] IN (N'Active', N'Temporary', N'Issuing', N'Consumed', N'Deleted')),
     CONSTRAINT [CK_SalesDrafts_Version] CHECK ([Version] > 0)

@@ -167,13 +167,15 @@ public sealed record PosSaleCreditContract(
     decimal Amount,
     DateTimeOffset DueDate,
     decimal? RemainingCredit = null,
-    string? SoldByName = null);
+    string? SoldByName = null,
+    Guid? PartySiteId = null);
 
 public sealed record PosCreditValidationRequest(
     Guid BusinessId,
     Guid CustomerId,
     decimal Amount,
-    int? FiscalEnvironment = null);
+    int? FiscalEnvironment = null,
+    Guid? PartySiteId = null);
 
 public sealed record PosCreditFiscalMaterial(
     Guid FiscalIssuerConfigurationId,
@@ -240,7 +242,8 @@ public sealed record PosSaleUploadRequest(
     string SourceMode = SaleSourceModes.PosEdge,
     Guid? SourceOrderId = null,
     PosSaleCreditContract? Credit = null,
-    bool FiscalHabilitationOnly = false);
+    bool FiscalHabilitationOnly = false,
+    Guid? CustomerPartySiteId = null);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

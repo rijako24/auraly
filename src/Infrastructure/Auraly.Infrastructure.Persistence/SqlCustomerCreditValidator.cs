@@ -27,7 +27,8 @@ public sealed class SqlCustomerCreditValidator(
             request.CustomerId,
             request.Amount,
             time.GetUtcNow(),
-            cancellationToken);
+            cancellationToken,
+            request.PartySiteId);
         await transaction.CommitAsync(cancellationToken);
         return result;
     }
@@ -41,7 +42,8 @@ public sealed class SqlCustomerCreditValidator(
         Guid customerId,
         decimal amount,
         DateTimeOffset issuedAt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? partySiteId = null)
     {
         await using var command = new SqlCommand("""
             SELECT cp.IsCreditEnabled,cp.CreditLimit,COALESCE(cp.DefaultDueDays,0),
@@ -55,7 +57,11 @@ public sealed class SqlCustomerCreditValidator(
                        FROM dbo.SalesDocuments d WITH(UPDLOCK,HOLDLOCK)
                        WHERE d.CustomerId=c.CustomerId AND d.BusinessId=c.BusinessId
                          AND d.CreditAmount>0
-                         AND d.ProcessingStatus IN(N'Received',N'Processing')),0)
+                         AND d.ProcessingStatus IN(N'Received',N'Processing')),0),
+                   CAST(CASE WHEN @PartySiteId IS NOT NULL AND EXISTS(
+                       SELECT 1 FROM dbo.PartySites site
+                       WHERE site.PartySiteId=@PartySiteId AND site.PartyId=c.PartyId AND site.IsActive=1)
+                       THEN 1 ELSE 0 END AS bit)
             FROM dbo.Customers c WITH(UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.CustomerCreditProfiles cp WITH(UPDLOCK,HOLDLOCK)
               ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId
@@ -71,6 +77,8 @@ public sealed class SqlCustomerCreditValidator(
             """, connection, transaction);
         command.Parameters.AddWithValue("@CustomerId", customerId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.Add("@PartySiteId", SqlDbType.UniqueIdentifier).Value =
+            (object?)partySiteId ?? DBNull.Value;
         command.Parameters.Add("@TenantId", SqlDbType.UniqueIdentifier).Value =
             (object?)tenantId ?? DBNull.Value;
         command.Parameters.Add("@DeviceId", SqlDbType.UniqueIdentifier).Value =
@@ -79,6 +87,7 @@ public sealed class SqlCustomerCreditValidator(
         decimal? limit;
         int defaultDueDays;
         decimal outstanding;
+        bool validSite;
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             if (!await reader.ReadAsync(cancellationToken))
@@ -92,6 +101,7 @@ public sealed class SqlCustomerCreditValidator(
             limit = reader.IsDBNull(1) ? null : reader.GetDecimal(1);
             defaultDueDays = reader.GetInt32(2);
             outstanding = reader.GetDecimal(3);
+            validSite = reader.GetBoolean(4);
         }
         if (!enabled)
             return new PosCreditValidationResult(
@@ -100,6 +110,14 @@ public sealed class SqlCustomerCreditValidator(
                 null,
                 IsAllowed: false,
                 "El cliente no tiene habilitada la venta a crédito.");
+        if (partySiteId is null)
+            return new PosCreditValidationResult(
+                customerId, amount, null, IsAllowed: false,
+                "Selecciona la sede del cliente para la venta a crédito.");
+        if (!validSite)
+            return new PosCreditValidationResult(
+                customerId, amount, null, IsAllowed: false,
+                "La sede seleccionada no pertenece al cliente o está inactiva.");
         decimal? available = limit is null ? null : decimal.Max(0, limit.Value - outstanding);
         return available is not null && amount > available.Value
             ? new PosCreditValidationResult(

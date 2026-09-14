@@ -29,6 +29,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             transaction,
             scope.BusinessId,
             request.CustomerId,
+            request.PartySiteId,
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return customer;

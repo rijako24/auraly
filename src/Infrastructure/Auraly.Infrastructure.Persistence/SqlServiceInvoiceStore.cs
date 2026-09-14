@@ -74,25 +74,44 @@ public sealed class SqlServiceInvoiceStore(
             SELECT COUNT(*)
             FROM dbo.Customers customer
             JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+            JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
             WHERE customer.BusinessId=@BusinessId AND customer.IsActive=1 AND party.IsActive=1
-              AND (@Query IS NULL OR party.Identification LIKE @Like
-                   OR COALESCE(party.DisplayName,party.LegalName,
-                     LTRIM(RTRIM(CONCAT(party.FirstName,N' ',party.LastName)))) LIKE @Like);
-            SELECT customer.CustomerId,party.Identification,
+              AND (@Query IS NULL OR NOT EXISTS(
+                   SELECT 1 FROM STRING_SPLIT(@Query,N' ') term
+                   WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
+                     AND NOT (COALESCE(party.Identification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(party.DisplayName,party.LegalName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(party.FirstName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(party.LastName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.Name LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.Code LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.AddressLine LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(site.Phone,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%')));
+            SELECT customer.CustomerId,COALESCE(party.Identification,N''),
                    COALESCE(party.DisplayName,party.LegalName,
-                     LTRIM(RTRIM(CONCAT(party.FirstName,N' ',party.LastName)))),email.Value
+                     LTRIM(RTRIM(CONCAT(party.FirstName,N' ',party.LastName)))),email.Value,
+                   site.PartySiteId,site.Name,site.AddressLine
             FROM dbo.Customers customer
             JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+            JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
             OUTER APPLY(
               SELECT TOP(1) value.Value FROM dbo.PartyContacts value
               WHERE value.PartyId=party.PartyId AND value.ContactType=N'Email'
                 AND value.IsActive=1
               ORDER BY value.IsPrimary DESC,value.CreatedAt,value.PartyContactId) email
             WHERE customer.BusinessId=@BusinessId AND customer.IsActive=1 AND party.IsActive=1
-              AND (@Query IS NULL OR party.Identification LIKE @Like
-                   OR COALESCE(party.DisplayName,party.LegalName,
-                     LTRIM(RTRIM(CONCAT(party.FirstName,N' ',party.LastName)))) LIKE @Like)
-            ORDER BY 3,party.Identification
+              AND (@Query IS NULL OR NOT EXISTS(
+                   SELECT 1 FROM STRING_SPLIT(@Query,N' ') term
+                   WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
+                     AND NOT (COALESCE(party.Identification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(party.DisplayName,party.LegalName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(party.FirstName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(party.LastName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.Name LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.Code LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR site.AddressLine LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
+                              OR COALESCE(site.Phone,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%')))
+            ORDER BY 3,site.Name,site.PartySiteId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """, connection);
         AddSearch(command, request, query);
@@ -103,7 +122,8 @@ public sealed class SqlServiceInvoiceStore(
         var items = new List<ServiceInvoiceCustomerItem>();
         while (await reader.ReadAsync(cancellationToken))
             items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3)));
+                reader.IsDBNull(3) ? null : reader.GetString(3),reader.GetGuid(4),
+                reader.GetString(5),reader.GetString(6)));
         return new(items, request.Page, request.PageSize, total);
     }
 
@@ -304,9 +324,12 @@ public sealed class SqlServiceInvoiceStore(
                 throw new ServiceInvoiceValidationException(
                     "La resolución fiscal cambió durante la emisión.");
 
+            var customerPartySiteId = await ResolveCustomerSiteAsync(
+                connection, transaction, request.BusinessId, request.CustomerId,
+                request.PartySiteId, cancellationToken);
             var customer = await ReadRequiredCustomerAsync(
                 connection, transaction, request.BusinessId, request.CustomerId,
-                configuration, cancellationToken);
+                customerPartySiteId, configuration, cancellationToken);
             var lines = await BuildLinesAsync(
                 connection, transaction, request.BusinessId, request.Lines,
                 cancellationToken);
@@ -382,7 +405,8 @@ public sealed class SqlServiceInvoiceStore(
                     request.PaymentReference?.Trim()),
                 lines,
                 new PosSalePaymentContract(1, paymentMethod, paidAmount,
-                    request.PaymentReference?.Trim()));
+                    request.PaymentReference?.Trim()),
+                customerPartySiteId);
             await SqlServiceInvoiceDocumentWriter.PersistAsync(
                 connection, transaction, ids,
                 new ServiceInvoiceDocumentWrite(
@@ -467,11 +491,43 @@ public sealed class SqlServiceInvoiceStore(
             reader.GetDecimal(6), reader.GetDecimal(7), reader.GetString(8), true);
     }
 
+    private static async Task<Guid> ResolveCustomerSiteAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        Guid customerId,
+        Guid? requestedSiteId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT site.PartySiteId
+            FROM dbo.Customers customer
+            JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.IsActive=1
+            JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
+            WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+              AND customer.IsActive=1
+              AND (@PartySiteId IS NULL OR site.PartySiteId=@PartySiteId)
+            ORDER BY site.IsPrimary DESC,site.Name,site.PartySiteId;
+            """, connection, transaction);
+        Add(command, "@CustomerId", customerId);
+        Add(command, "@BusinessId", businessId);
+        Add(command, "@PartySiteId", requestedSiteId);
+        var sites = new List<Guid>(2);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken) && sites.Count < 2)
+            sites.Add(reader.GetGuid(0));
+        if (sites.Count == 1) return sites[0];
+        throw new ServiceInvoiceValidationException(sites.Count == 0
+            ? "El cliente o la sede no están disponibles para facturar."
+            : "Selecciona la sede del cliente para emitir la factura.");
+    }
+
     private static async Task<PosSaleUblPartyContract> ReadRequiredCustomerAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid businessId,
         Guid customerId,
+        Guid? partySiteId,
         SqlOnlineSalesDraftStore.CheckoutConfiguration configuration,
         CancellationToken cancellationToken)
     {
@@ -480,18 +536,22 @@ public sealed class SqlServiceInvoiceStore(
             JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
               AND customer.IsActive=1 AND party.IsActive=1
+              AND EXISTS(SELECT 1 FROM dbo.PartySites site
+                         WHERE site.PartySiteId=@PartySiteId AND site.PartyId=party.PartyId
+                           AND site.IsActive=1)
               AND NULLIF(LTRIM(RTRIM(party.Identification)),N'') IS NOT NULL;
             """, connection, transaction))
         {
             Add(existence, "@CustomerId", customerId);
             Add(existence, "@BusinessId", businessId);
+            Add(existence, "@PartySiteId", partySiteId);
             if (Convert.ToInt32(await existence.ExecuteScalarAsync(cancellationToken),
                     CultureInfo.InvariantCulture) != 1)
                 throw new ServiceInvoiceValidationException(
-                    "El cliente no existe, está inactivo o no tiene identificación fiscal.");
+                    "El cliente o la sede no están disponibles para facturar.");
         }
         return await SqlOnlineSalesDraftStore.ReadCustomerPartyAsync(
-            connection, transaction, businessId, customerId, configuration,
+            connection, transaction, businessId, customerId, partySiteId, configuration,
             cancellationToken);
     }
 

@@ -290,6 +290,7 @@ public sealed class PosCatalogSynchronizer(
         previous.DefaultDueDays == current.DefaultDueDays &&
         previous.PriceChannelValidFrom == current.PriceChannelValidFrom &&
         previous.PriceChannelValidUntil == current.PriceChannelValidUntil &&
+        (previous.Sites ?? []).SequenceEqual(current.Sites ?? []) &&
         (previous.TaxResponsibilities ?? []).SequenceEqual(
             current.TaxResponsibilities ?? [], StringComparer.Ordinal);
 

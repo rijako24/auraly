@@ -165,7 +165,15 @@ public sealed partial class SqlCatalogStore
         CASE WHEN credit.CreditLimit IS NULL THEN NULL
              WHEN credit.CreditLimit-COALESCE(balance.Outstanding,0)<0 THEN CONVERT(DECIMAL(19,4),0)
              ELSE credit.CreditLimit-COALESCE(balance.Outstanding,0) END,
-        COALESCE(credit.DefaultDueDays,0),setting.ValidFrom,setting.ValidUntil
+        COALESCE(credit.DefaultDueDays,0),setting.ValidFrom,setting.ValidUntil,
+        JSON_QUERY(COALESCE((
+          SELECT site.PartySiteId PartySiteId,site.Code Code,site.Name Name,
+                 site.AddressLine AddressLine,site.Phone Phone,site.IsPrimary IsPrimary
+          FROM dbo.PartySites site
+          WHERE site.PartyId=party.PartyId AND site.IsActive=1
+          ORDER BY site.IsPrimary DESC,site.Name,site.PartySiteId
+          FOR JSON PATH
+        ),N'[]'))
         """;
 
     private static PosCustomerPricing ReadPosCustomer(SqlDataReader reader, int offset) => new(
@@ -183,5 +191,6 @@ public sealed partial class SqlCatalogStore
         reader.IsDBNull(offset + 11) ? null : reader.GetDecimal(offset + 11),
         reader.GetInt32(offset + 12),
         reader.IsDBNull(offset + 13) ? null : reader.GetFieldValue<DateTimeOffset>(offset + 13),
-        reader.IsDBNull(offset + 14) ? null : reader.GetFieldValue<DateTimeOffset>(offset + 14));
+        reader.IsDBNull(offset + 14) ? null : reader.GetFieldValue<DateTimeOffset>(offset + 14),
+        JsonSerializer.Deserialize<PosCustomerSite[]>(reader.GetString(offset + 15)) ?? []);
 }

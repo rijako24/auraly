@@ -1653,19 +1653,22 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     IsCreditEnabled: true,
                     CreditLimit: 500_000m,
                     AvailableCredit: 500_000m,
-                    DefaultDueDays: 30),
+                    DefaultDueDays: 30,
+                    Sites: [new(Guid.NewGuid(), "PRINCIPAL", "Principal", "Calle 1", null, true)]),
                 new PosCustomerPricing(
                     tierCustomerId,
                     "4001234567",
                     "Cliente canal escalonado POS",
                     tierChannelId,
-                    true),
+                    true,
+                    Sites: [new(Guid.NewGuid(), "PRINCIPAL", "Principal", "Calle 2", null, true)]),
                 new PosCustomerPricing(
                     excludedCustomerId,
                     "5001234567",
                     "Cliente canal excluido",
                     excludedChannelId,
-                    true)
+                    true,
+                    Sites: [new(Guid.NewGuid(), "PRINCIPAL", "Principal", "Calle 3", null, true)])
             ],
             [
                 new PosWithholdingRule(

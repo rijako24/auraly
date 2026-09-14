@@ -6,7 +6,7 @@ namespace Auraly.Pos.Edge.Infrastructure;
 public sealed class PosDraftPricingService(PosCatalogStore catalog, PosDraftStore drafts)
 {
     public async Task<PosDraft> RepriceAsync(
-        DraftId draftId, Guid? customerId, CancellationToken ct = default)
+        DraftId draftId, Guid? customerId, Guid? partySiteId, CancellationToken ct = default)
     {
         var draft = await drafts.GetAsync(draftId, ct)
             ?? throw new KeyNotFoundException("The draft does not exist.");
@@ -19,6 +19,7 @@ public sealed class PosDraftPricingService(PosCatalogStore catalog, PosDraftStor
         return await drafts.AssignCustomerAndPricesAsync(
             draftId,
             customerId,
+            partySiteId,
             draft.Lines.Select(line =>
             {
                 var price = prices[line.LineId.ToString("D")];

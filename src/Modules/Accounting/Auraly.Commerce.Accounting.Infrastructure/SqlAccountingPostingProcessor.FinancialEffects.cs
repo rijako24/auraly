@@ -128,9 +128,9 @@ public sealed partial class SqlAccountingPostingProcessor
 
         await using var receivable = new SqlCommand("""
             INSERT dbo.Receivables
-              (ReceivableId,BusinessId,CustomerId,SourceDocumentId,SourceDocumentType,
+              (ReceivableId,BusinessId,CustomerId,PartySiteId,SourceDocumentId,SourceDocumentType,
                DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-            VALUES(@ReceivableId,@BusinessId,@CustomerId,@DocumentId,N'ServiceInvoice',
+            VALUES(@ReceivableId,@BusinessId,@CustomerId,@PartySiteId,@DocumentId,N'ServiceInvoice',
                @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now);
             INSERT dbo.ReceivableTransactions
               (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
@@ -142,6 +142,8 @@ public sealed partial class SqlAccountingPostingProcessor
         receivable.Parameters.AddWithValue("@TransactionId", ids.NewId());
         receivable.Parameters.AddWithValue("@BusinessId", invoice.BusinessId);
         receivable.Parameters.AddWithValue("@CustomerId", invoice.CustomerId);
+        receivable.Parameters.AddWithValue("@PartySiteId",
+            (object?)invoice.CustomerPartySiteId ?? DBNull.Value);
         receivable.Parameters.AddWithValue("@DocumentId", invoice.DocumentId);
         receivable.Parameters.AddWithValue("@Number", invoice.DocumentNumber.FullNumber);
         AddMoney(receivable, "@Amount", creditAmount);
@@ -162,10 +164,12 @@ public sealed partial class SqlAccountingPostingProcessor
     {
         await using var command = new SqlCommand("""
             INSERT dbo.Receivables
-              (ReceivableId,BusinessId,CustomerId,SourceDocumentId,SourceDocumentType,
+              (ReceivableId,BusinessId,CustomerId,PartySiteId,SourceDocumentId,SourceDocumentType,
                DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-            VALUES(@ReceivableId,@BusinessId,@CustomerId,@DocumentId,N'SalesDebitNote',
-               @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now);
+            SELECT @ReceivableId,@BusinessId,@CustomerId,document.CustomerPartySiteId,@DocumentId,N'SalesDebitNote',
+               @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now
+            FROM dbo.SalesDocuments document
+            WHERE document.DocumentId=@OriginalDocumentId AND document.BusinessId=@BusinessId;
             INSERT dbo.ReceivableTransactions
               (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
                SourceDocumentId,OccurredAt,CreatedAt)
@@ -176,6 +180,7 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
         command.Parameters.AddWithValue("@CustomerId", value.CustomerId);
         command.Parameters.AddWithValue("@DocumentId", value.DebitNoteId);
+        command.Parameters.AddWithValue("@OriginalDocumentId", value.OriginalDocumentId);
         command.Parameters.AddWithValue("@Number", value.DocumentNumber);
         AddMoney(command, "@Amount", value.TotalAmount);
         command.Parameters.AddWithValue("@DueDate", value.DueAt);
@@ -259,9 +264,9 @@ public sealed partial class SqlAccountingPostingProcessor
         {
             await using var receivable = new SqlCommand("""
                 INSERT dbo.Receivables
-                  (ReceivableId,BusinessId,CustomerId,SourceDocumentId,SourceDocumentType,
+                  (ReceivableId,BusinessId,CustomerId,PartySiteId,SourceDocumentId,SourceDocumentType,
                    DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-                VALUES(@ReceivableId,@BusinessId,@CustomerId,@DocumentId,@DocumentType,
+                VALUES(@ReceivableId,@BusinessId,@CustomerId,@PartySiteId,@DocumentId,@DocumentType,
                    @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now);
                 INSERT dbo.ReceivableTransactions
                   (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
@@ -273,6 +278,8 @@ public sealed partial class SqlAccountingPostingProcessor
             receivable.Parameters.AddWithValue("@TransactionId", ids.NewId());
             receivable.Parameters.AddWithValue("@BusinessId", sale.BusinessId);
             receivable.Parameters.AddWithValue("@CustomerId", sale.Credit.CustomerId);
+            receivable.Parameters.AddWithValue("@PartySiteId",
+                (object?)sale.Credit.PartySiteId ?? DBNull.Value);
             receivable.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
             receivable.Parameters.AddWithValue("@DocumentType", sourceDocumentType);
             receivable.Parameters.AddWithValue("@Number", sale.DocumentNumber.FullNumber);

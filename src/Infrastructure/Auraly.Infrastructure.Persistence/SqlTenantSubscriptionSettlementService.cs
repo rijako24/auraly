@@ -121,7 +121,7 @@ public sealed class SqlTenantSubscriptionSettlementService(
             var fiscalNumber = $"{configuration.FiscalPrefix}{fiscalConsecutive}";
             var customer = await SqlOnlineSalesDraftStore.ReadCustomerPartyAsync(
                 connection, transaction, source.BillingBusinessId,
-                source.BillingCustomerId, configuration, cancellationToken);
+                source.BillingCustomerId, null, configuration, cancellationToken);
             var quoteLines = JsonSerializer.Deserialize<IReadOnlyList<TenantQuoteLineDto>>(
                 source.LinesJson, Json) ?? throw new InvalidOperationException(
                     "La orden pagada no contiene líneas comerciales válidas.");

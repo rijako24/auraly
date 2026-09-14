@@ -19,6 +19,45 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Service_invoice_customer_search_returns_independent_sites_with_and_tokens()
+    {
+        var context = await SeedAsync();
+        var secondSiteId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                INSERT dbo.PartySites(
+                  PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+                  AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                SELECT @SiteId,site.PartyId,N'SECUNDARIA',N'Sede secundaria',site.CountryId,
+                  site.AdministrativeDivisionId,site.CityId,N'Dirección secundaria',0,1,
+                  @UserId,SYSDATETIMEOFFSET()
+                FROM dbo.Customers customer
+                JOIN dbo.PartySites site ON site.PartyId=customer.PartyId AND site.IsPrimary=1
+                WHERE customer.CustomerId=@CustomerId;
+                """, connection);
+            command.Parameters.AddWithValue("@SiteId", secondSiteId);
+            command.Parameters.AddWithValue("@UserId", fixture.UserId);
+            command.Parameters.AddWithValue("@CustomerId", context.CustomerId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+        using var client = fixture.CreateAdminClient(
+            ServiceInvoicePermissionCodes.Read,
+            ServiceInvoicePermissionCodes.Create,
+            ServiceInvoicePermissionCodes.Issue);
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/service-invoices/customers/search",
+            new ServiceInvoiceSearchRequest(
+                fixture.BusinessId, $"secundaria {context.CustomerIdentification}", 1, 20));
+        response.EnsureSuccessStatusCode();
+        var page = await response.Content.ReadFromJsonAsync<ServiceInvoiceCustomerPage>();
+        var match = Assert.Single(page!.Items);
+        Assert.Equal(secondSiteId, match.PartySiteId);
+        Assert.Equal("Sede secundaria", match.PartySiteName);
+    }
+
+    [Fact]
     public async Task Credit_service_invoice_preserves_receivable_without_posting_when_accounting_is_disabled()
     {
         var context = await SeedAsync();
@@ -47,7 +86,9 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
                 SELECT source.AccountingEntryRequired,job.AccountingEntryRequired,job.Status,
                   (SELECT COUNT(*) FROM dbo.Receivables WHERE SourceDocumentId=@DocumentId),
                   (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@DocumentId),
-                  (SELECT OutstandingAmount FROM dbo.Receivables WHERE SourceDocumentId=@DocumentId)
+                  (SELECT OutstandingAmount FROM dbo.Receivables WHERE SourceDocumentId=@DocumentId),
+                  (SELECT PartySiteId FROM dbo.Receivables WHERE SourceDocumentId=@DocumentId),
+                  (SELECT CustomerPartySiteId FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId)
                 FROM dbo.AccountingSourceDocuments source
                 JOIN dbo.AccountingPostingJobs job
                   ON job.SourceDocumentId=source.SourceDocumentId
@@ -63,6 +104,8 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
             Assert.Equal(1, reader.GetInt32(3));
             Assert.Equal(0, reader.GetInt32(4));
             Assert.Equal(50_000m, reader.GetDecimal(5));
+            Assert.Equal(context.CustomerSiteId, reader.GetGuid(6));
+            Assert.Equal(context.CustomerSiteId, reader.GetGuid(7));
         }
         finally
         {
@@ -323,6 +366,7 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         var taxProfileId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
         var customerPartyId = Guid.NewGuid();
+        var customerSiteId = Guid.NewGuid();
         var serviceSeriesId = Guid.NewGuid();
         var subscriptionId = Guid.NewGuid();
         var usageId = Guid.NewGuid();
@@ -347,6 +391,16 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
             INSERT dbo.Customers
               (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
             VALUES(@CustomerId,@CustomerPartyId,@BusinessId,1,1,@UserId,@Now);
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            SELECT TOP(1) @CustomerSiteId,@CustomerPartyId,N'PRINCIPAL',N'Sede principal',
+              country.CountryId,division.AdministrativeDivisionId,city.CityId,
+              N'Dirección principal',1,1,@UserId,@Now
+            FROM dbo.Countries country
+            JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+            JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+            WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1;
             INSERT dbo.PartyContacts
               (PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
             VALUES(NEWID(),@CustomerPartyId,N'Email',@Email,UPPER(@Email),1,1,@Now);
@@ -392,6 +446,7 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@TaxCode", $"IVA19-{taxProfileId:N}"[..32]);
         command.Parameters.AddWithValue("@CustomerId", customerId);
         command.Parameters.AddWithValue("@CustomerPartyId", customerPartyId);
+        command.Parameters.AddWithValue("@CustomerSiteId", customerSiteId);
         command.Parameters.AddWithValue("@ServiceSeriesId", serviceSeriesId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@Code", $"SVC-{serviceId:N}");
@@ -405,7 +460,8 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@Now", now);
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
-        return new(reader.GetGuid(0), serviceId, reader.GetGuid(1), Guid.NewGuid().ToString("N"));
+        return new(reader.GetGuid(0), serviceId, reader.GetGuid(1), Guid.NewGuid().ToString("N"),
+            customerSiteId, customerIdentification);
     }
 
     private async Task<AccountingSettingsState> SetAccountingDisabledAsync()
@@ -486,7 +542,9 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         Guid CustomerId,
         Guid ServiceId,
         Guid SubscriptionId,
-        string IdempotencyKey);
+        string IdempotencyKey,
+        Guid CustomerSiteId,
+        string CustomerIdentification);
 
     private sealed class TestIds : IAuralyIdGenerator
     {
