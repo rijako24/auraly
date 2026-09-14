@@ -105,7 +105,8 @@ punteadas alrededor del valor y recuperan el espacio amplio de firma. Las
 versiones 1 y 2 permanecen disponibles e inmutables para reproducir los formatos
 publicados originalmente.
 `work-session-closure` tiene una versión 3 activa: conserva Actividad, Totales,
-Ventas a cartera y Detalle por medio de pago, y agrega secciones independientes
+Ventas a cartera —una fila por cliente y factura con su valor financiado— y
+Detalle por medio de pago, y agrega secciones independientes
 de entradas y salidas de efectivo con cada movimiento, responsable y valor. Los
 subtotales brutos de entradas y salidas del medio `Cash` se derivan del mismo
 lote de movimientos que alimenta esas secciones, por lo que cuadran por
@@ -190,4 +191,9 @@ Auraly POS instalado, POS Edge puede imprimir directamente con `WindowsRaw` y
 usar balanza o cajón aunque la venta continúe online y el equipo no esté
 enrolado. La vista `Periféricos` ofrece la descarga del instalador completo;
 el enrolamiento posterior solo habilita el respaldo offline.
+
+La configuración de pedidos tiene un único contrato entre la web, POS Edge y
+el archivo local: `orderOutputFormat`, `orderPrinterName` y
+`orderReceiptPaperWidthMillimeters`. No se aceptan alias plurales ni rutas de
+compatibilidad; guardar y volver a abrir consume exactamente esos mismos campos.
 

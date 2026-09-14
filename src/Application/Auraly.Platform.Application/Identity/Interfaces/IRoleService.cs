@@ -6,6 +6,7 @@ namespace Auraly.Platform.Application.Identity.Interfaces;
 public interface IRoleService
 {
     Task<RoleDto> GetByIdAsync(Guid roleId, CancellationToken ct = default);
+    Task<RolePermissionWorkspaceDto> GetPermissionWorkspaceAsync(Guid roleId, CancellationToken ct = default);
     Task<IReadOnlyList<RoleDto>> GetByTenantAsync(Guid? tenantId, CancellationToken ct = default);
     Task<PagedResponse<RoleDto>> GetPagedByTenantAsync(Guid? tenantId, PagedRequest request, CancellationToken ct = default);
     Task<RoleDto> CreateAsync(Guid tenantId, CreateRoleRequest request, CancellationToken ct = default);

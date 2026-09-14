@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using System.IO.Ports;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Auraly.Contracts.Sales;
 using Auraly.Pos.Edge.Infrastructure;
 using Auraly.Pos.Printing;
@@ -124,13 +123,7 @@ public sealed record PosPrinterConfiguration(
     string? PosPrinterName = null,
     string OrderOutputFormat = PrintTemplateFormats.HalfLetter,
     string? OrderPrinterName = null,
-    int OrderReceiptPaperWidthMillimeters = 80,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? OrdersOutputFormat = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? OrdersPrinterName = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    int? OrdersReceiptPaperWidthMillimeters = null)
+    int OrderReceiptPaperWidthMillimeters = 80)
 {
     public static PosPrinterConfiguration Default { get; } =
         new(PosPrinterModes.WindowsRaw, null, 80, null,
@@ -181,17 +174,7 @@ public sealed class PosPrinterConfigurationStore(
                 return stored with
                 {
                     ReceiptMode = PosPrinterModes.WindowsRaw,
-                    OrderMode = OrderPrinterModes.WindowsPrint,
-                    OrderOutputFormat = stored.OrdersOutputFormat
-                        ?? stored.OrderOutputFormat,
-                    OrderPrinterName = Clean(stored.OrderPrinterName)
-                        ?? Clean(stored.OrdersPrinterName),
-                    OrderReceiptPaperWidthMillimeters =
-                        stored.OrdersReceiptPaperWidthMillimeters
-                        ?? stored.OrderReceiptPaperWidthMillimeters,
-                    OrdersOutputFormat = null,
-                    OrdersPrinterName = null,
-                    OrdersReceiptPaperWidthMillimeters = null
+                    OrderMode = OrderPrinterModes.WindowsPrint
                 };
             }
             catch (JsonException)
@@ -210,8 +193,7 @@ public sealed class PosPrinterConfigurationStore(
             throw new ArgumentException("La caja debe imprimir la tirilla directamente.");
         if (requested.ReceiptPaperWidthMillimeters is not (58 or 80))
             throw new ArgumentException("La tirilla debe ser de 58 u 80 mm.");
-        var orderReceiptPaperWidth = requested.OrdersReceiptPaperWidthMillimeters
-                                     ?? requested.OrderReceiptPaperWidthMillimeters;
+        var orderReceiptPaperWidth = requested.OrderReceiptPaperWidthMillimeters;
         if (orderReceiptPaperWidth is not (58 or 80))
             throw new ArgumentException("La tirilla del pedido debe ser de 58 u 80 mm.");
         var receipt = Clean(requested.ReceiptPrinterName);
@@ -221,8 +203,7 @@ public sealed class PosPrinterConfigurationStore(
             throw new ArgumentException("El modo de impresion de pedidos no es valido.");
         if (orderMode == OrderPrinterModes.BrowserPreview)
             throw new ArgumentException("La caja debe imprimir los pedidos directamente.");
-        var orderOutputFormat = requested.OrdersOutputFormat
-                                ?? requested.OrderOutputFormat;
+        var orderOutputFormat = requested.OrderOutputFormat;
         if (!IsWorkflowFormat(requested.PosOutputFormat) ||
             !IsWorkflowFormat(orderOutputFormat))
             throw new ArgumentException(
@@ -230,8 +211,7 @@ public sealed class PosPrinterConfigurationStore(
         var routes = NormalizeRoutes(requested.TemplateRoutes, receipt, letter);
         var scale = ValidateScale(requested.Scale);
         var posPrinter = Clean(requested.PosPrinterName);
-        var orderPrinter = Clean(requested.OrderPrinterName)
-                           ?? Clean(requested.OrdersPrinterName);
+        var orderPrinter = Clean(requested.OrderPrinterName);
         if (posPrinter is null) throw new ArgumentException("Selecciona la impresora de facturas.");
         if (orderPrinter is null) throw new ArgumentException("Selecciona la impresora de pedidos.");
 
@@ -246,10 +226,7 @@ public sealed class PosPrinterConfigurationStore(
             PosPrinterName = posPrinter,
             OrderOutputFormat = orderOutputFormat,
             OrderPrinterName = orderPrinter,
-            OrderReceiptPaperWidthMillimeters = orderReceiptPaperWidth,
-            OrdersOutputFormat = null,
-            OrdersPrinterName = null,
-            OrdersReceiptPaperWidthMillimeters = null
+            OrderReceiptPaperWidthMillimeters = orderReceiptPaperWidth
         };
         lock (gate)
         {

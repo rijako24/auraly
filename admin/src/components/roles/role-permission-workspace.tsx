@@ -109,20 +109,24 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
   const [hydrated, setHydrated] = useState(false);
   const [nameError, setNameError] = useState<string>();
   const sourceId = roleId ?? cloneFromId;
-  const roleQuery = useQuery({ queryKey: ["roles", sourceId], queryFn: () => rolesApi.getById(sourceId!), enabled: Boolean(sourceId) });
-  const permissionsQuery = useQuery({ queryKey: ["permissions", "catalog"], queryFn: rolesApi.getPermissionCatalog });
-  const assignedQuery = useQuery({ queryKey: ["roles", sourceId, "permissions"], queryFn: () => rolesApi.getAssignedPermissions(sourceId!), enabled: Boolean(sourceId) });
+  const workspaceQuery = useQuery({ queryKey: ["roles", sourceId, "permission-workspace"], queryFn: () => rolesApi.getPermissionWorkspace(sourceId!), enabled: Boolean(sourceId) });
+  const catalogQuery = useQuery({ queryKey: ["permissions", "catalog"], queryFn: rolesApi.getPermissionCatalog, enabled: !sourceId });
+  const sourceRole = workspaceQuery.data?.role;
+  const assignedPermissionIds = workspaceQuery.data?.assignedPermissionIds ?? [];
 
   useEffect(() => {
-    if (hydrated || permissionsQuery.isLoading || (sourceId && (roleQuery.isLoading || assignedQuery.isLoading))) return;
-    const role = roleQuery.data;
+    if (hydrated || catalogQuery.isLoading || (sourceId && workspaceQuery.isLoading)) return;
+    const role = sourceRole;
     setName(cloneFromId && role ? `${role.name} - copia` : role?.name ?? "");
     setDescription(role?.description ?? "");
-    setSelected(new Set((assignedQuery.data ?? []).map((permission) => permission.permissionId)));
+    setSelected(new Set(assignedPermissionIds));
     setHydrated(true);
-  }, [assignedQuery.data, assignedQuery.isLoading, cloneFromId, hydrated, permissionsQuery.isLoading, roleQuery.data, roleQuery.isLoading, sourceId]);
+  }, [assignedPermissionIds, catalogQuery.isLoading, cloneFromId, hydrated, sourceId, sourceRole, workspaceQuery.isLoading]);
 
-  const permissions = useMemo(() => permissionsQuery.data ?? [], [permissionsQuery.data]);
+  const permissions = useMemo(
+    () => sourceId ? workspaceQuery.data?.permissions ?? [] : catalogQuery.data ?? [],
+    [catalogQuery.data, sourceId, workspaceQuery.data?.permissions],
+  );
   const rows = useMemo(() => menuRows(), []);
   const groupedPermissions = useMemo(() => {
     const byView = new Map<string, Permission[]>();
@@ -146,7 +150,7 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
   const additional = useMemo(() => permissions.filter((permission) =>
     !groupedPermissions.groupedPermissionIds.has(permission.permissionId)),
   [groupedPermissions.groupedPermissionIds, permissions]);
-  const isSystemRole = Boolean(roleId && roleQuery.data?.isSystemRole);
+  const isSystemRole = Boolean(roleId && sourceRole?.isSystemRole);
   const identityLocked = readOnly || isSystemRole || (roleId ? !canUpdateRole : !canCreateRole);
   const permissionsLocked = readOnly || isSystemRole || !canAssignPermissions;
 
@@ -156,8 +160,8 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
       setNameError(undefined);
       let targetId = roleId;
       const normalizedDescription = description.trim() || null;
-      const identityChanged = targetId && roleQuery.data &&
-        (name.trim() !== roleQuery.data.name || normalizedDescription !== (roleQuery.data.description ?? null));
+      const identityChanged = targetId && sourceRole &&
+        (name.trim() !== sourceRole.name || normalizedDescription !== (sourceRole.description ?? null));
       if (targetId && identityChanged) {
         if (!canUpdateRole) throw new Error("No tienes permiso para cambiar el nombre o la descripción del rol.");
         await rolesApi.update(targetId, { name: name.trim(), description: normalizedDescription });
@@ -169,7 +173,7 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
           targetId = created.roleId;
         }
       }
-      const assignedIds = new Set((assignedQuery.data ?? []).map((permission) => permission.permissionId));
+      const assignedIds = new Set(assignedPermissionIds);
       const permissionsChanged = !roleId || selected.size !== assignedIds.size ||
         [...selected].some((permissionId) => !assignedIds.has(permissionId));
       if (permissionsChanged) {
@@ -196,11 +200,11 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
     if (permission) toggle(permission, checked);
   };
 
-  if (permissionsQuery.isLoading || (sourceId && (roleQuery.isLoading || assignedQuery.isLoading))) return <PageLoading cards={3} />;
-  if (permissionsQuery.isError || roleQuery.isError || assignedQuery.isError)
+  if (catalogQuery.isLoading || (sourceId && workspaceQuery.isLoading)) return <PageLoading cards={3} />;
+  if (catalogQuery.isError || workspaceQuery.isError)
     return <PageError message="No fue posible cargar el rol y su catálogo de permisos." onRetry={() => {
-      void permissionsQuery.refetch();
-      if (sourceId) { void roleQuery.refetch(); void assignedQuery.refetch(); }
+      if (sourceId) void workspaceQuery.refetch();
+      else void catalogQuery.refetch();
     }} />;
 
   return <div className="space-y-6">

@@ -27,6 +27,19 @@ public class RolesController(IRoleService roleService) : ControllerBase
         return Ok(role);
     }
 
+    [HttpGet("{roleId:guid}/permission-workspace")]
+    [PermissionAuthorize("roles.read")]
+    [PermissionAuthorize("permissions.read")]
+    public async Task<ActionResult<RolePermissionWorkspaceDto>> GetPermissionWorkspace(
+        Guid roleId,
+        CancellationToken ct)
+    {
+        var workspace = await roleService.GetPermissionWorkspaceAsync(roleId, ct);
+        if (workspace.Role.TenantId != User.GetTenantId())
+            throw new ForbiddenException("No puede administrar roles de otra organización.");
+        return Ok(workspace);
+    }
+
     [HttpPost]
     [PermissionAuthorize("roles.create")]
     public async Task<ActionResult<RoleDto>> Create([FromBody] CreateRoleRequest request, CancellationToken ct)

@@ -7,8 +7,10 @@ test("buscador abre para agregar, alinea promociones y mantiene accesibles las e
   const products=Array.from({length:8},(_,i)=>({productId:`product-${i}`,productCode:`PRD-${i}`,reference:`REF-${i}`,name:i===0?"Producto con promoción":"Producto de inventario "+i,baseUnitCode:"EA",unitPrice:i===0?9840:24000,promotionDiscount:i===0?2460:0,priceSource:i===0?"Promotion":"Public",isWeighable:false}));
   let availabilityMode:"empty"|"many"|"error"="empty";
   let availabilityRequests=0;
+  let productSearchRequests=0;
   const draft={draftId:"draft",...workspace,userId:user.userId,workSessionId:"session",status:"Active",version:1,lines:[],untaxedAmount:0,taxAmount:0,payableAmount:0};
   const writes:string[]=[];
+  const captureQuantities:number[]=[];
   await page.context().addCookies([{name:"auth_token",value:"e2e",url:baseURL!,httpOnly:true,sameSite:"Lax"}]);
   await page.addInitScript(({tenantId,businessId,warehouseId,user})=>{
     localStorage.setItem("selected_tenant_id",tenantId);localStorage.setItem("selected_business_id",businessId);
@@ -24,19 +26,24 @@ test("buscador abre para agregar, alinea promociones y mantiene accesibles las e
     else if(path.endsWith("/workspace/select"))body=workspace;
     else if(path.endsWith("/work-sessions/current"))body={workSessionId:"session"};
     else if(path.endsWith("/drafts/active"))body=draft;
-    else if(path.endsWith("/drafts/products/search"))body={items:products,hasMore:false,nextOffset:null};
+    else if(path.endsWith("/drafts/products/search")){productSearchRequests++;body={items:products,hasMore:false,nextOffset:null};}
     else if(path.endsWith("/warehouse-availability")){
       availabilityRequests++;
       if(availabilityMode==="error")return route.fulfill({status:500,contentType:"application/json",body:JSON.stringify({message:"Error de prueba"})});
       body=availabilityMode==="empty"?[]:Array.from({length:12},(_,i)=>({...workspace,warehouseId:`warehouse-${i}`,warehouseName:`Bodega ${i+1}`,quantityOnHand:10+i,isCurrentBusiness:true}));
     } else if(path.endsWith("/settlement-configuration"))body={isAccountingEnabled:false,bankAccounts:[]};
-    else if(path.endsWith("/items")){writes.push(path);body={...draft,lines:[]};}
+    else if(path.endsWith("/items")){writes.push(path);captureQuantities.push((route.request().postDataJSON() as {quantity:number}).quantity);body={...draft,lines:[]};}
     else if(path.includes("/orders"))body={items:[],totalCount:0,totalPages:0,page:1,pageSize:25};
     await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(body)});
   });
   await page.setViewportSize({width:1100,height:850});
   await page.goto("/pos");
   await expect(page.locator("#pos-scanner")).toBeEnabled();
+  await page.locator("#pos-scanner").fill("3*PRD-0");
+  await page.locator("#pos-scanner").press("Enter");
+  await expect.poll(()=>writes.length).toBe(1);
+  expect(productSearchRequests).toBe(0);
+  expect(captureQuantities).toEqual([3]);
   await page.keyboard.press("F1");
   const dialog=page.getByRole("dialog",{name:"Buscar producto",exact:true});
   await expect(dialog).toBeVisible();
@@ -63,7 +70,7 @@ test("buscador abre para agregar, alinea promociones y mantiene accesibles las e
   await expect(page.getByRole("dialog",{name:"Verificador de precios"})).toBeVisible();
   await expect(page.getByText("Flechas recorren; Tab entra al listado; Enter consulta; Esc vuelve al lector.")).toBeVisible();
   await page.keyboard.press("Enter");
-  expect(writes).toHaveLength(0);
+  expect(writes).toHaveLength(1);
   await page.keyboard.press("Escape");
   await expect(page.locator("#pos-scanner")).toBeFocused();
   availabilityMode="many";
@@ -89,6 +96,6 @@ test("buscador abre para agregar, alinea promociones y mantiene accesibles las e
   await page.setViewportSize({width:540,height:720});
   expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth)).toBe(true);
   await page.keyboard.press("Enter");
-  await expect.poll(()=>writes.length).toBe(1);
+  await expect.poll(()=>writes.length).toBe(2);
   await expect(dialog).toBeHidden();
 });

@@ -2,6 +2,12 @@ import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
 import type { AppRole, Permission, RolePermission } from "@/types/entities";
 
+export type RolePermissionWorkspace = {
+  role: AppRole;
+  permissions: Permission[];
+  assignedPermissionIds: string[];
+};
+
 export const rolesApi = {
   list: (params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<AppRole>>(
@@ -9,6 +15,8 @@ export const rolesApi = {
       withPagedDefaults(params)
     ),
   getById: (id: string) => apiClient.get<AppRole>(`/roles/${id}`),
+  getPermissionWorkspace: (id: string) =>
+    apiClient.get<RolePermissionWorkspace>(`/roles/${id}/permission-workspace`),
   create: (data: Partial<AppRole>) => apiClient.post<AppRole>("/roles", data),
   update: (id: string, data: Partial<AppRole>) =>
     apiClient.put<AppRole>(`/roles/${id}`, data),
@@ -42,8 +50,6 @@ export const rolesApi = {
   revokePermission: (roleId: string, rolePermissionId: string) =>
     apiClient.delete(`/roles/${roleId}/permissions/${rolePermissionId}`),
   getPermissionCatalog: () => apiClient.get<Permission[]>("/permissions"),
-  getAssignedPermissions: (roleId: string) =>
-    apiClient.get<Permission[]>(`/roles/${roleId}/permissions`),
   replacePermissions: (roleId: string, permissionIds: string[]) =>
     apiClient.post<void>(`/roles/${roleId}/permissions`, { permissionIds }),
 };

@@ -420,6 +420,20 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
 
 
     [Fact]
+    public async Task Capture_accepts_the_explicit_quantity_in_one_request()
+    {
+        using var response = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null, 3m));
+        response.EnsureSuccessStatusCode();
+
+        var captured = Assert.IsType<PosCaptureResult>(
+            await response.Content.ReadFromJsonAsync<PosCaptureResult>());
+        var line = Assert.Single(captured.Draft!.Lines);
+        Assert.Equal(3m, line.Quantity);
+    }
+
+    [Fact]
     public async Task Authorized_user_can_delete_the_current_sale_durably()
     {
         var capture = await Client.PostAsJsonAsync(

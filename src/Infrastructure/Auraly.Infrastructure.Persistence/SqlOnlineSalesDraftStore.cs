@@ -105,8 +105,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
             connection, transaction, state.BusinessId, state.WarehouseId,
             productId, cancellationToken);
         DemandAllowedQuantity(product.AllowsFractionalSale, quantity);
-        var totalQuantity = await ReadProductQuantityAsync(
-            connection, transaction, draftId, productId, null, cancellationToken) + quantity;
         await DemandInventoryAsync(
             connection, transaction, state, draftId, productId, null,
             quantity, cancellationToken);
@@ -1094,29 +1092,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5), reader.GetDecimal(6),
                 reader.GetDecimal(7), reader.GetString(8)));
         return result;
-    }
-
-    private static async Task<decimal> ReadProductQuantityAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        Guid draftId,
-        Guid productId,
-        Guid? excludedLineId,
-        CancellationToken ct)
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT COALESCE(SUM(Quantity),0)
-            FROM dbo.SalesDraftLines WITH (UPDLOCK,HOLDLOCK)
-            WHERE SalesDraftId=@DraftId AND ProductId=@ProductId
-              AND (@ExcludedLineId IS NULL OR SalesDraftLineId<>@ExcludedLineId);
-            """;
-        command.Parameters.AddRange([
-            P("@DraftId", draftId), P("@ProductId", productId),
-            P("@ExcludedLineId", excludedLineId)
-        ]);
-        return Convert.ToDecimal(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
     }
 
     private static async Task<OnlineSalesCustomer?> ReadCustomerAsync(

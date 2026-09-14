@@ -38,6 +38,19 @@ public class RoleService : IRoleService
         return MapToDto(role);
     }
 
+    public async Task<RolePermissionWorkspaceDto> GetPermissionWorkspaceAsync(
+        Guid roleId,
+        CancellationToken ct)
+    {
+        var role = await GetRoleAsync(roleId, includePermissions: true, ct);
+        var permissions = await _unitOfWork.Permissions.GetAllAsync(ct);
+
+        return new RolePermissionWorkspaceDto(
+            MapToDto(role),
+            permissions.Select(MapPermissionToDto).ToList(),
+            role.RolePermissions.Select(item => item.PermissionId).ToList());
+    }
+
     public async Task<IReadOnlyList<RoleDto>> GetByTenantAsync(Guid? tenantId, CancellationToken ct)
     {
         var roles = await _unitOfWork.AppRoles.GetByTenantAsync(tenantId, includeSystemRoles: true, ct);
@@ -193,4 +206,11 @@ public class RoleService : IRoleService
         role.RoleId, role.TenantId, role.Name, role.Description,
         role.IsSystemRole, role.IsActive, role.CreatedAt,
         role.UserRoles.Count, role.RolePermissions.Count);
+
+    private static PermissionDto MapPermissionToDto(Permission permission) => new(
+        permission.PermissionId,
+        permission.Module,
+        permission.Action,
+        permission.Resource,
+        permission.Description);
 }

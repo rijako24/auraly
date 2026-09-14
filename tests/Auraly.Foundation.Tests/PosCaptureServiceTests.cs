@@ -155,6 +155,98 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
+    public async Task Explicit_capture_quantity_is_priced_validated_and_persisted_once()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 3m, 10m, true, true, "Available");
+
+            var result = await service.CaptureAsync(
+                "770123",
+                scope,
+                customerId,
+                warehouseAllowsNegativeStock: false,
+                Guid.NewGuid(),
+                requestedQuantity: 3m);
+
+            Assert.True(result.Added);
+            Assert.Equal(3m, Assert.Single(result.Draft!.Lines).Quantity);
+            Assert.Equal(3m, result.CapturedProduct!.Quantity);
+            Assert.Single(availability.Requests);
+            Assert.Equal(3m, availability.Requests[0].Quantity);
+        });
+    }
+
+    [Fact]
+    public async Task Explicit_capture_quantity_selects_the_customer_volume_tier_in_the_same_command()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 3m, 10m, true, true, "Available");
+
+            var result = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid(),
+                requestedQuantity: 3m);
+
+            var line = Assert.Single(result.Draft!.Lines);
+            Assert.Equal(3m, line.Quantity);
+            Assert.Equal(70m, line.UnitPrice);
+            Assert.Equal("PriceChannel", line.PriceSource);
+            Assert.Equal(210m, result.Draft.PayableAmount, 2);
+        }, priceTiersFactory: (productId, channelId) =>
+        [
+            new(channelId, productId, 1m, 80m, "COP"),
+            new(channelId, productId, 3m, 70m, "COP")
+        ]);
+    }
+
+    [Fact]
+    public async Task Explicit_capture_quantity_activates_a_cart_promotion_without_a_customer()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, _, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 3m, 10m, true, true, "Available");
+
+            var result = await service.CaptureAsync(
+                "770123", scope, null, false, Guid.NewGuid(),
+                requestedQuantity: 3m);
+
+            var line = Assert.Single(result.Draft!.Lines);
+            Assert.Equal(3m, line.Quantity);
+            Assert.Equal("Promotion", line.PriceSource);
+            Assert.Equal(200m, result.Draft.PayableAmount, 2);
+        }, promotionsFactory: productId =>
+        [
+            new PosPromotion(
+                Guid.NewGuid(), "Buy 2 get 1", 100, false, null, null, null,
+                DateTimeOffset.UnixEpoch,
+                [new((int)PromotionItemType.Product, productId, null, 3m, null)],
+                [new((int)PromotionBenefitType.FreeItem, (int)PromotionItemType.Product,
+                    productId, null, null, null, null, 1m)])
+        ], assignCustomer: false);
+    }
+
+    [Fact]
+    public async Task Anonymous_capture_without_channel_or_promotion_uses_the_public_price()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, _, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 10m, true, true, "Available");
+
+            var result = await service.CaptureAsync(
+                "770123", scope, null, false, Guid.NewGuid());
+
+            var line = Assert.Single(result.Draft!.Lines);
+            Assert.Equal(100m, line.UnitPrice);
+            Assert.Equal("Base", line.PriceSource);
+        }, assignCustomer: false);
+    }
+
+    [Fact]
     public async Task Adding_same_product_creates_normal_price_line_without_changing_edited_lines()
     {
         await WithServiceAsync(async (service, drafts, scope, productId, customerId, availability) =>
@@ -332,7 +424,9 @@ public sealed class PosCaptureServiceTests
         Func<PosCaptureService, PosDraftStore, PosDraftScope, Guid, Guid, RecordingAvailabilityClient, Task> test,
         bool managesStock = true,
         Func<Guid, IReadOnlyCollection<PosPromotion>>? promotionsFactory = null,
-        Func<Guid, IReadOnlyCollection<PosCatalogItem>>? additionalItemsFactory = null)
+        Func<Guid, IReadOnlyCollection<PosCatalogItem>>? additionalItemsFactory = null,
+        Func<Guid, Guid, IReadOnlyCollection<PosPriceChannelTier>>? priceTiersFactory = null,
+        bool assignCustomer = true)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-capture-{Guid.NewGuid():N}.db");
         try
@@ -359,7 +453,8 @@ public sealed class PosCaptureServiceTests
             var priceChannelId = Guid.NewGuid();
             await catalog.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
                 [new(priceChannelId,"TIER","Tiered", "TieredProductPrice",null)],
-                [new(priceChannelId, productId, 1m, 80m, "COP")],
+                priceTiersFactory?.Invoke(productId, priceChannelId)
+                    ?? [new(priceChannelId, productId, 1m, 80m, "COP")],
                 [],
                 [new(customerId, "1", "Customer", priceChannelId, true)],
                 Promotions: promotionsFactory?.Invoke(productId)));
@@ -379,7 +474,8 @@ public sealed class PosCaptureServiceTests
                 new WorkSessionId(Guid.NewGuid()),
                 new UserId(Guid.NewGuid()));
             var active = await drafts.GetOrCreateActiveAsync(scope);
-            await drafts.AssignPartiesAsync(active.DraftId, customerId, null);
+            if (assignCustomer)
+                await drafts.AssignPartiesAsync(active.DraftId, customerId, null);
             await test(service, drafts, scope, productId, customerId, availability);
         }
         finally

@@ -642,7 +642,9 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         try
         {
             using var client = fixture.CreateUserClient(
-                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+                userId, CommercePermissionCodes.SalesCreate,
+                CommercePermissionCodes.SalesRestartDraft,
+                WorkSessionPermissionCodes.Open);
             var session = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenAsync(client, session.WorkSessionId);
             var captured = await MutateAsync<OnlineSalesDraft>(
@@ -666,6 +668,18 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
                 new ChangeOnlineSalesDraftQuantityRequest(2m, eligible.Version));
             Assert.Equal(20_000m, noLongerEligible.PayableAmount, 2);
             Assert.Equal("Base", Assert.Single(noLongerEligible.Lines).PriceSource);
+
+            var empty = await MutateAsync<OnlineSalesDraft>(
+                client, HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/reset",
+                new ResetOnlineSalesDraftRequest(noLongerEligible.Version));
+            var directlyEligible = await MutateAsync<OnlineSalesDraft>(
+                client, HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{empty.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest("P-E2E", 3m, empty.Version));
+            Assert.Equal(3m, Assert.Single(directlyEligible.Lines).Quantity);
+            Assert.Equal(20_000m, directlyEligible.PayableAmount, 2);
+            Assert.Equal("Promotion", directlyEligible.Lines[0].PriceSource);
         }
         finally
         {

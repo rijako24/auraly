@@ -111,16 +111,18 @@ public sealed class PosCaptureService(
         Guid? requestedCustomerId,
         bool warehouseAllowsNegativeStock,
         Guid operationId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        decimal? requestedQuantity = null)
     {
         var captured = await catalog.CaptureAsync(scannedValue, cancellationToken);
         if (captured is null)
             return new PosCaptureResult(PosCaptureStatus.NotFound, null, null, null);
+        if (requestedQuantity is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(requestedQuantity));
+        if (requestedQuantity is { } explicitQuantity)
+            captured = captured with { Quantity = explicitQuantity };
 
         var active = await drafts.GetOrCreateActiveAsync(scope, cancellationToken);
-        var totalQuantity = active.Lines
-            .Where(line => line.ProductId.Value == captured.Product.ProductId)
-            .Sum(line => line.Quantity) + captured.Quantity;
         var inventoryDemand = await InventoryDemandAsync(
             active, captured.Product, captured.Quantity, null, cancellationToken);
         var inventory = await ValidateAsync(
@@ -142,11 +144,6 @@ public sealed class PosCaptureService(
                     inventoryDemand.ExistingQuantityInSelectedUnits,
                     captured.Product.AllowsFractionalSale));
 
-        var price = await catalog.ResolvePriceAsync(
-            captured.Product.ProductId,
-            active.CustomerId,
-            totalQuantity,
-            cancellationToken);
         var updated = await drafts.AddOrIncrementLineAsync(
             scope,
             new PosDraftLineInput(
@@ -157,11 +154,11 @@ public sealed class PosCaptureService(
                 captured.Product.TaxCode,
                 captured.Product.TaxRate,
                 captured.Quantity,
-                price.BaseAmount,
-                price.Amount,
-                price.CurrencyCode,
-                price.Source,
-                price.PriceChannelId,
+                captured.Product.UnitPrice,
+                captured.Product.UnitPrice,
+                captured.Product.CurrencyCode,
+                "Base",
+                null,
                 AllowsFractionalSale: captured.Product.AllowsFractionalSale,
                 DocumentUnitCost: captured.Product.UnitCost,
                 AllowsDocumentCostOverride: !captured.Product.ManagesStock),

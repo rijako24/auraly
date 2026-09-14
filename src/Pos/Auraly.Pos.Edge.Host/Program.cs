@@ -44,7 +44,7 @@ public sealed record PosWorkstationIdentity(
     string CompanyName,
     string? CompanyLogoSource);
 
-public sealed record CaptureRequest(string Value, Guid? CustomerId);
+public sealed record CaptureRequest(string Value, Guid? CustomerId, decimal? Quantity = null);
 public sealed record QuantityRequest(decimal Quantity);
 public sealed record DiscountRequest(decimal Discount);
 public sealed record UpdateDraftLinesRequest(
@@ -1013,7 +1013,8 @@ public static class PosEdgeHostApplication
                 null,
                 context.WarehouseAllowsNegativeStock || !connection.IsConnected,
                 ids.NewId(),
-                ct);
+                ct,
+                request.Quantity);
             return result.Status switch
             {
                 PosCaptureStatus.Added => Results.Ok(result),

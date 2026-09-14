@@ -667,6 +667,9 @@ Offline agrega caída de red, duplicados, reinicio, deltas, conflictos, outbox, 
 
 #### Usuarios y permisos
 
+- abrir o duplicar un rol carga su identidad, asignaciones y catálogo mediante
+  un único workspace HTTP; el caso de uso agrega las lecturas de repositorio sin
+  convertir el catálogo y las asignaciones en consultas independientes desde la UI;
 - menú oculto;
 - acción deshabilitada;
 - API rechaza acceso directo;

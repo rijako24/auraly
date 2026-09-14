@@ -470,6 +470,10 @@ public sealed class PosConfigurationTests
             Assert.True(reloaded.Scale?.DivideBy1000);
             Assert.Equal(PrintTemplateFormats.Receipt, reloaded.PosOutputFormat);
             Assert.Equal(PrintTemplateFormats.HalfLetter, reloaded.OrderOutputFormat);
+            var serialized = File.ReadAllText(path);
+            Assert.Contains("\"OrderPrinterName\":\"Pedidos\"", serialized);
+            Assert.Contains("\"OrderReceiptPaperWidthMillimeters\":80", serialized);
+            Assert.DoesNotContain("\"Orders", serialized);
             Assert.Equal(8, reloaded.TemplateRoutes?.Count);
             Assert.All(
                 reloaded.TemplateRoutes!.Where(route =>
@@ -701,50 +705,6 @@ public sealed class PosConfigurationTests
         {
             SqliteConnection.ClearAllPools();
             if (File.Exists(path)) File.Delete(path);
-        }
-    }
-
-    [Fact]
-    public void Legacy_plural_order_printer_fields_are_migrated_and_remain_selected()
-    {
-        var directory = Path.Combine(
-            Path.GetTempPath(), "auraly-printer-legacy-" + Guid.NewGuid().ToString("N"));
-        var path = Path.Combine(directory, "settings.json");
-        try
-        {
-            Directory.CreateDirectory(directory);
-            File.WriteAllText(path, """
-                {
-                  "ReceiptMode": "WindowsRaw",
-                  "ReceiptPrinterName": "Caja",
-                  "ReceiptPaperWidthMillimeters": 80,
-                  "LetterPrinterName": "Documentos",
-                  "OrderMode": "WindowsPrint",
-                  "PosOutputFormat": "Receipt",
-                  "PosPrinterName": "Caja",
-                  "OrdersOutputFormat": "HalfLetter",
-                  "OrdersPrinterName": "EPSON TM-T20 ReceiptE4",
-                  "OrdersReceiptPaperWidthMillimeters": 58
-                }
-                """);
-            var store = new PosPrinterConfigurationStore(
-                path, Path.Combine(directory, "receipts"));
-
-            var loaded = store.Load();
-            var saved = store.Save(loaded);
-            var reopened = new PosPrinterConfigurationStore(
-                path, Path.Combine(directory, "receipts")).Load();
-
-            Assert.Equal("EPSON TM-T20 ReceiptE4", loaded.OrderPrinterName);
-            Assert.Equal(PrintTemplateFormats.HalfLetter, loaded.OrderOutputFormat);
-            Assert.Equal(58, loaded.OrderReceiptPaperWidthMillimeters);
-            Assert.Equal("EPSON TM-T20 ReceiptE4", saved.OrderPrinterName);
-            Assert.Equal("EPSON TM-T20 ReceiptE4", reopened.OrderPrinterName);
-            Assert.DoesNotContain("OrdersPrinterName", File.ReadAllText(path));
-        }
-        finally
-        {
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 

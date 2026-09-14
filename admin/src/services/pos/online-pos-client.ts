@@ -649,27 +649,28 @@ export class OnlinePosClient implements PosClient {
     return null;
   }
 
-  async capture(value: string, _customerId: string | null) {
+  async capture(value: string, _customerId: string | null, quantity?: number) {
     void _customerId;
-    return this.addProduct(value);
+    return this.addProduct(value, quantity);
   }
 
   async captureSelectedProduct(
     product: PosCatalogProduct,
     _customerId: string | null,
+    quantity?: number,
   ) {
     void _customerId;
-    return this.addProduct(product.productId);
+    return this.addProduct(product.productId, quantity);
   }
 
-  private async addProduct(selector: string) {
+  private async addProduct(selector: string, quantity = 1) {
     const draft = await this.ensureActive();
     try {
       const updated = await request<OnlineDraft>(
         `/api/commerce/v1/pos/drafts/${draft.draftId.value}/items`,
         this.mutation({
           selector,
-          quantity: 1,
+          quantity,
           expectedVersion: this.version(draft.draftId.value),
         }),
       );
@@ -692,7 +693,7 @@ export class OnlinePosClient implements PosClient {
           status: "InsufficientInventory",
           draft,
           availability: {
-            requestedQuantity: 1,
+            requestedQuantity: quantity,
             availableQuantity: available,
             isAvailable: false,
           },

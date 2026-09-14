@@ -1295,13 +1295,16 @@ export default function PosPage() {
         focusScanner();
         return;
       }
-      await captureValue(parsed.code, parsed.quantity);
+      await captureValue(
+        parsed.code,
+        value.includes("*") ? parsed.quantity : undefined,
+      );
     } finally {
       captureInFlight.current = false;
     }
   }
 
-  async function captureValue(value: string, requestedQuantity = 1): Promise<boolean> {
+  async function captureValue(value: string, requestedQuantity?: number): Promise<boolean> {
     if (!client || !value || busy) return false;
     if (!salesReady) {
       setError(
@@ -1313,71 +1316,25 @@ export default function PosPage() {
       focusScanner();
       return false;
     }
-    try {
-      const candidates = await client.searchProducts(value, 0, 1);
-      const exact = candidates.items.find(product =>
-        product.productCode.localeCompare(value, undefined, { sensitivity: "accent" }) === 0 ||
-        product.reference?.localeCompare(value, undefined, { sensitivity: "accent" }) === 0);
-      if (exact?.isWeighable) {
-        const added = await captureSelectedProduct(exact, requestedQuantity);
-        if (added) setScan("");
-        return added;
-      }
-    } catch {
-      // The normal capture path still supports offline identifiers and
-      // embedded-weight barcodes when the pre-check is unavailable.
-    }
     setBusy(true);
     setError(null);
     let quantityToFocus: string | null = null;
     try {
       const startsNewSale = !draft?.lines.length;
-      const result = await client.capture(value, draft?.customerId ?? null);
+      const result = await client.capture(
+        value,
+        draft?.customerId ?? null,
+        requestedQuantity,
+      );
       if (result.status === "Added" && result.draft) {
         clearScanRejection();
         const capturedLine = capturedLineAfterAddition(draft?.lines ?? [], result.draft.lines);
-        let confirmedDraft = result.draft;
-        if (capturedLine && requestedQuantity !== 1) {
-          const changed = await client.changeQuantity(result.draft.draftId.value, capturedLine.lineId, requestedQuantity);
-          if (changed.status !== "Added" || !changed.draft) {
-            const failure = describeCaptureFailure(changed);
-            try {
-              const rolledBack = await client.removeLine(
-                result.draft.draftId.value,
-                capturedLine.lineId,
-              );
-              setDraft(rolledBack);
-            } catch {
-              setDraft(result.draft);
-              setError("No fue posible revertir la línea después de rechazar la cantidad. Revisa la venta antes de cobrar.");
-              setMessage("Revisión manual requerida");
-              return false;
-            }
-            if (failure) {
-              setError(null);
-              setMessage(failure.message);
-              if (changed.status === "InsufficientInventory" && changed.availability) {
-                pendingShortageCapture.current = { kind: "code", code: value };
-                setQuantityShortage({
-                  lineId: null,
-                  productName: capturedLine.description,
-                  requestedQuantity,
-                  availableQuantity: changed.availability.availableQuantity,
-                  maximumLineQuantity: Math.max(0, changed.maximumQuantity ?? changed.availability.availableQuantity),
-                  allowsFractionalSale: capturedLine.allowsFractionalSale,
-                  managesInventory: true,
-                });
-              }
-            }
-            return false;
-          }
-          confirmedDraft = changed.draft;
-        }
+        const confirmedDraft = result.draft;
         setDraft(confirmedDraft);
         quantityToFocus = capturedLine?.lineId ?? null;
         setSelectedLineId(quantityToFocus);
         revealLine(quantityToFocus);
-        setMessage(`${capturedLine?.description ?? "Producto"} agregado · cantidad ${requestedQuantity.toLocaleString("es-CO")}`);
+        setMessage(`${capturedLine?.description ?? "Producto"} agregado · cantidad ${(capturedLine?.quantity ?? requestedQuantity ?? 1).toLocaleString("es-CO")}`);
         if (startsNewSale) setLastSettlement(null);
         setScan("");
         return true;
@@ -2357,9 +2314,11 @@ export default function PosPage() {
       }
       const startsNewSale = !draft?.lines.length;
       const linesBeforeCapture = draft?.lines ?? [];
+      const explicitQuantity = requestedQuantity ?? scaleWeight ?? undefined;
       const result = await client.captureSelectedProduct(
         product,
         draft?.customerId ?? null,
+        explicitQuantity,
       );
       if (result.status !== "Added" || !result.draft) {
         const failure = describeCaptureFailure(result);
@@ -2381,46 +2340,8 @@ export default function PosPage() {
         }
         return false;
       }
-      let confirmedDraft = result.draft;
+      const confirmedDraft = result.draft;
       const addedLine = capturedLineAfterAddition(linesBeforeCapture, confirmedDraft.lines);
-      const explicitQuantity = requestedQuantity ?? scaleWeight;
-      if (addedLine && explicitQuantity !== null && explicitQuantity !== undefined) {
-        const targetQuantity = Math.max(0.001, explicitQuantity);
-        const changed = await client.changeQuantity(confirmedDraft.draftId.value, addedLine.lineId, targetQuantity);
-        if (changed.status !== "Added" || !changed.draft) {
-          const failure = describeCaptureFailure(changed);
-          try {
-            const rolledBack = await client.removeLine(
-              confirmedDraft.draftId.value,
-              addedLine.lineId,
-            );
-            setDraft(rolledBack);
-          } catch {
-            setDraft(confirmedDraft);
-            setError("No fue posible revertir la línea después de rechazar la cantidad. Revisa la venta antes de cobrar.");
-            setMessage("Revisión manual requerida");
-            return false;
-          }
-          if (failure) {
-            setError(null);
-            setMessage(failure.message);
-            if (changed.status === "InsufficientInventory" && changed.availability) {
-              pendingShortageCapture.current = { kind: "product", product };
-              setQuantityShortage({
-                lineId: null,
-                productName: product.name,
-                requestedQuantity: explicitQuantity,
-                availableQuantity: changed.availability.availableQuantity,
-                maximumLineQuantity: Math.max(0, changed.maximumQuantity ?? changed.availability.availableQuantity),
-                allowsFractionalSale: product.allowsFractionalSale,
-                managesInventory: true,
-              });
-            }
-          }
-          return false;
-        }
-        confirmedDraft = changed.draft;
-      }
       setDraft(confirmedDraft);
       quantityToFocus = addedLine?.lineId ?? null;
       setSelectedLineId(quantityToFocus);

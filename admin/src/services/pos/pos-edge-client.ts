@@ -623,10 +623,11 @@ export interface PosClient {
   approval(approvalRequestId: string): Promise<PosApprovalSummary>;
   activeDraft(): Promise<PosDraft>;
   nextNumbers(documentType?: PosSaleDocumentType): Promise<PosNextNumbers | null>;
-  capture(value: string, customerId: string | null): Promise<PosCaptureResult>;
+  capture(value: string, customerId: string | null, quantity?: number): Promise<PosCaptureResult>;
   captureSelectedProduct(
     product: PosCatalogProduct,
     customerId: string | null,
+    quantity?: number,
   ): Promise<PosCaptureResult>;
   changeQuantity(draftId: string, lineId: string, quantity: number): Promise<PosCaptureResult>;
   setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
@@ -718,12 +719,6 @@ export type PosPrinterConfiguration = {
   orderReceiptPaperWidthMillimeters?: 58 | 80;
 };
 
-type CompatiblePosPrinterConfiguration = PosPrinterConfiguration & {
-  ordersOutputFormat?: PosPrintTemplateFormat;
-  ordersPrinterName?: string | null;
-  ordersReceiptPaperWidthMillimeters?: 58 | 80;
-};
-
 export type PosPrintTemplateFormat =
   | "Receipt"
   | "HalfLetter"
@@ -753,24 +748,6 @@ export type PosPrinterConfigurationView = {
 };
 
 const BROWSER_PRINTER_CONFIGURATION_KEY = "auraly.printing.configuration.v1";
-
-function normalizePrinterConfiguration(
-  configuration: CompatiblePosPrinterConfiguration,
-): PosPrinterConfiguration {
-  return {
-    ...configuration,
-    orderOutputFormat: configuration.orderOutputFormat
-      ?? configuration.ordersOutputFormat
-      ?? "HalfLetter",
-    orderPrinterName: configuration.orderPrinterName
-      ?? configuration.ordersPrinterName
-      ?? null,
-    orderReceiptPaperWidthMillimeters:
-      configuration.orderReceiptPaperWidthMillimeters
-      ?? configuration.ordersReceiptPaperWidthMillimeters
-      ?? 80,
-  };
-}
 
 export function loadBrowserPrinterConfiguration(): PosPrinterConfiguration {
   const defaults: PosPrinterConfiguration = {
@@ -872,33 +849,16 @@ export class PosEdgeClient implements PosClient {
   }
 
   printerConfiguration() {
-    return this.request<PosPrinterConfigurationView & {
-      configuration: CompatiblePosPrinterConfiguration;
-    }>(
+    return this.request<PosPrinterConfigurationView>(
       "/edge/v1/configuration/printers",
-    ).then((view) => ({
-      ...view,
-      configuration: normalizePrinterConfiguration(view.configuration),
-    }));
+    );
   }
 
   savePrinterConfiguration(configuration: PosPrinterConfiguration) {
-    const compatibleRequest: CompatiblePosPrinterConfiguration = {
-      ...configuration,
-      ordersOutputFormat: configuration.orderOutputFormat,
-      ordersPrinterName: configuration.orderPrinterName,
-      ordersReceiptPaperWidthMillimeters:
-        configuration.orderReceiptPaperWidthMillimeters,
-    };
-    return this.request<PosPrinterConfigurationView & {
-      configuration: CompatiblePosPrinterConfiguration;
-    }>(
+    return this.request<PosPrinterConfigurationView>(
       "/edge/v1/configuration/printers",
-      { method: "PUT", body: JSON.stringify(compatibleRequest) },
-    ).then((view) => ({
-      ...view,
-      configuration: normalizePrinterConfiguration(view.configuration),
-    }));
+      { method: "PUT", body: JSON.stringify(configuration) },
+    );
   }
 
   openCashDrawer() {
@@ -1201,18 +1161,19 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
-  capture(value: string, customerId: string | null) {
+  capture(value: string, customerId: string | null, quantity?: number) {
     return this.requestDomainResult<PosCaptureResult>("/edge/v1/capture", {
       method: "POST",
-      body: JSON.stringify({ value, customerId }),
+      body: JSON.stringify({ value, customerId, quantity }),
     }, [404, 409]);
   }
 
   captureSelectedProduct(
     product: PosCatalogProduct,
     customerId: string | null,
+    quantity?: number,
   ) {
-    return this.capture(product.productCode, customerId);
+    return this.capture(product.productCode, customerId, quantity);
   }
 
   changeQuantity(draftId: string, lineId: string, quantity: number) {

@@ -92,6 +92,32 @@ Los buscadores de grillas y selectores remotos usan el mismo control: texto loca
 de la caja mientras espera o consulta. `keepPreviousData` conserva la grilla y
 evita bloquear la interacción durante la búsqueda.
 
+### Camino crítico de captura
+
+La captura directa por código o lector ejecuta una sola mutación. La pantalla no
+hace una búsqueda de catálogo previa: envía selector, cliente y cantidad en el
+mismo comando y el propietario servidor resuelve producto, lista o canal,
+promociones e inventario dentro de la operación canónica. Una cantidad explícita
+como `3*CODIGO` tampoco genera una segunda mutación de línea.
+
+La búsqueda paginada queda reservada al selector visual de productos. En POS
+Edge se conserva una única consulta remota de disponibilidad cuando la bodega
+bloquea negativos, porque esa validación protege inventario central; la
+resolución final de precios sigue perteneciendo al repricing del borrador.
+
+El criterio de regresión del camino vacío es: una pulsación de Enter produce
+cero solicitudes de búsqueda y exactamente una solicitud de alta. El costo de
+recalcular las líneas existentes puede crecer con el borrador porque las reglas
+de lista y promoción dependen de la cantidad, pero no puede existir trabajo
+proporcional a productos ajenos ni viajes cliente-servidor adicionales.
+
+Medición local reproducible del endpoint Edge con
+`Selected_customer_channel_reprices_all_lines_when_accumulated_quantity_reaches_a_tier`
+y el logger HTTP detallado: 105,8 ms para la primera captura después de iniciar
+el host de prueba y 7,0 ms para la captura caliente siguiente. Estas cifras
+validan el camino local y no incluyen ni prometen la latencia de la red de una
+bodega que bloquee inventario negativo.
+
 ## Evidencia
 
 - Solución y DACPAC: 0 errores y 0 advertencias.
