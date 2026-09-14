@@ -102,6 +102,7 @@ export default function PromotionsPage() {
         searchKey="name"
         searchPlaceholder="Buscar promociones por nombre..."
         isLoading={promotionsQuery.isLoading}
+        isSearching={promotionsQuery.isFetching}
         page={page}
         pageSize={pageSize}
         pageCount={promotionsQuery.data?.totalPages ?? 0}

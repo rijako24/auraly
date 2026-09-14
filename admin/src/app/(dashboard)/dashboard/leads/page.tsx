@@ -69,7 +69,7 @@ export default function LeadsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState("");
-  const { data, isLoading, isError, refetch } = useLeads({
+  const { data, isLoading, isFetching, isError, refetch } = useLeads({
     page,
     pageSize,
     search: search || undefined,
@@ -222,6 +222,7 @@ export default function LeadsPage() {
         data={leads}
         searchKey="customerName"
         searchPlaceholder="Buscar por nombre..."
+        isSearching={isFetching}
         facetedFilters={facetedFilters}
         viewMode={viewMode}
         onViewModeChange={setViewMode}

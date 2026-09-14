@@ -45,7 +45,7 @@ export default function PaymentsPage() {
   const user = useAuthStore((s) => s.user);
   const canConfirmManual = user?.permissions?.includes("payments.confirm_manual") ?? false;
   const confirmManual = useConfirmManualPayment();
-  const { data, isLoading, isError, refetch } = usePayments({
+  const { data, isLoading, isFetching, isError, refetch } = usePayments({
     page,
     pageSize,
     search: search || undefined,
@@ -178,6 +178,7 @@ export default function PaymentsPage() {
         data={payments}
         searchKey="paymentReferenceId"
         searchPlaceholder="Buscar por referencia..."
+        isSearching={isFetching}
         facetedFilters={facetedFilters}
         enableRowSelection={false}
         page={page}

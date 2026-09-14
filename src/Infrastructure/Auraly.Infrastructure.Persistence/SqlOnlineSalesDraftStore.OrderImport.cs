@@ -19,7 +19,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         var payload = string.Join(
             "|",
             request.Lines.Select(line =>
-                $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.UnitPrice)}:{Invariant(line.DiscountAmount)}:{NormalizePriceSource(line.PriceSource)}"));
+                $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.UnitPrice)}:{Invariant(line.DiscountAmount)}:{NormalizePriceSource(line.PriceSource)}:{(line.DocumentUnitCost is { } cost ? Invariant(cost) : "current")}"));
         var requestHash = Hash(
             $"{operation}|{draftId:D}|{request.SourceOrderId:D}|{request.CustomerId:D}|{request.ExpectedVersion}|{payload}");
 
@@ -103,7 +103,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                 line.Quantity,
                 BaseUnitPrice = product.UnitPrice,
                 line.UnitPrice,
-                DocumentUnitCost = product.UnitCost,
+                DocumentUnitCost = line.DocumentUnitCost ?? product.UnitCost,
                 product.CurrencyCode,
                 PriceSource = NormalizePriceSource(line.PriceSource),
                 Discount = line.DiscountAmount,

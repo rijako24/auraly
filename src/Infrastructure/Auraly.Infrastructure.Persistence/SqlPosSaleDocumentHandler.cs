@@ -299,11 +299,11 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               WHERE business.BusinessId=@BusinessId AND settings.Status=N'Ready') THEN 1 ELSE 0 END;
             INSERT INTO dbo.SalesPayments
             (
-                DocumentId, PaymentNumber, MethodCode, Amount,
+                DocumentId, PaymentNumber, MethodCode, Amount, TenderedAmount,
                 Reference, Notes, CardFranchiseCode, ApprovalNumber, BankAccountId, RegisteredAt
             )
             SELECT
-                @DocumentId, @PaymentNumber, @MethodCode, @Amount,
+                @DocumentId, @PaymentNumber, @MethodCode, @Amount, @TenderedAmount,
                 @Reference, @Notes, @CardFranchiseCode, @ApprovalNumber, @BankAccountId, @RegisteredAt
             WHERE @MethodCode<>N'Transfer' OR
               (@AccountingEnabled=0 AND @BankAccountId IS NULL) OR
@@ -324,6 +324,10 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         command.Parameters.AddWithValue("@PaymentNumber", payment.PaymentNumber);
         command.Parameters.AddWithValue("@MethodCode", payment.MethodCode);
         AddDecimal(command, "@Amount", payment.Amount, 19, 4);
+        var tenderedAmount = command.Parameters.Add("@TenderedAmount", SqlDbType.Decimal);
+        tenderedAmount.Precision = 19;
+        tenderedAmount.Scale = 4;
+        tenderedAmount.Value = (object?)payment.TenderedAmount ?? DBNull.Value;
         command.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
         command.Parameters.AddWithValue("@Notes", (object?)payment.Notes ?? DBNull.Value);
         command.Parameters.AddWithValue("@CardFranchiseCode", (object?)payment.CardFranchiseCode ?? DBNull.Value);

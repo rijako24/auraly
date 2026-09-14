@@ -246,6 +246,10 @@ public sealed class OnlineSalesCheckoutService(
                 (payment.MethodCode != "Transfer" && (payment.BankAccountId is not null || payment.Notes is not null))))
             throw new OnlineSalesDraftValidationException(
                 "Uno de los medios de pago no es válido.");
+        if (request.Payments.Any(payment => payment.TenderedAmount is { } tendered &&
+                (payment.MethodCode != "Cash" || tendered < payment.Amount)))
+            throw new OnlineSalesDraftValidationException(
+                "El efectivo recibido debe corresponder al pago en efectivo y no puede ser menor al valor aplicado.");
         if (request.Payments.Count(payment => payment.MethodCode == "Cash") > 1)
             throw new OnlineSalesDraftValidationException(
                 "La venta admite una sola línea de efectivo.");

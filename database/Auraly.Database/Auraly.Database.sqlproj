@@ -67,6 +67,7 @@
     <Build Include="StoredProcedures\PriceChannelExclusionsList.sql" />
     <Build Include="StoredProcedures\PriceChannelExclusionSave.sql" />
     <Build Include="StoredProcedures\PriceChannelExclusionDelete.sql" />
+    <Build Include="StoredProcedures\ProductLinkedCostsPrepare.sql" />
     <Build Include="StoredProcedures\AuthenticationEmailOutboxClaim.sql" />
     <Build Include="StoredProcedures\AuthenticationInvitationRecipientGet.sql" />
     <Build Include="StoredProcedures\AuthenticationPasswordRecoveryRecipientGet.sql" />

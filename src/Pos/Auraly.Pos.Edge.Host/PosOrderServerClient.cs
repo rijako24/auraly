@@ -36,7 +36,8 @@ public sealed class PosOrderServerClient(
                     line.Quantity,
                     line.UnitPrice,
                     line.Discount,
-                    line.PriceSource)).ToArray())),
+                    line.PriceSource,
+                    line.DocumentUnitCost)).ToArray())),
             idempotencyKey,
             cancellationToken);
     }

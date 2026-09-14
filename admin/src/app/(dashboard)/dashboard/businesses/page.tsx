@@ -18,7 +18,10 @@ import { useBusinesses } from "@/hooks/use-businesses";
 
 export default function BusinessesPage() {
   const [viewMode, setViewMode] = useState<"table" | "card" | "list">("table");
-  const { data, isLoading, isError, refetch } = useBusinesses();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
+  const { data, isLoading, isFetching, isError, refetch } = useBusinesses({ page, pageSize, search });
   const businesses = data?.items ?? [];
   const columns: ColumnDef<Business>[] = useMemo(() => [
     { accessorKey: "name", header: "Sede", cell: ({ row }) => { const b = row.original; return (<div className="flex items-center gap-3"><Avatar className="h-9 w-9"><AvatarFallback className="text-xs">{getInitials(b.name)}</AvatarFallback></Avatar><span className="font-medium">{b.name}</span></div>); } },
@@ -47,8 +50,8 @@ export default function BusinessesPage() {
         <div><h1 className="text-2xl font-semibold tracking-tight">Sedes</h1><p className="text-muted-foreground">Gestiona las sedes y sus configuraciones</p></div>
         <Button asChild><Link href="/dashboard/businesses/new"><Plus className="mr-2 h-4 w-4" />Nueva sede</Link></Button>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><StatCard title="Total sedes" value={businesses.length} icon={Store} /></div>
-      <DataTable columns={columns} data={businesses} searchKey="name" searchPlaceholder="Buscar por nombre..." viewMode={viewMode} onViewModeChange={setViewMode} cardRenderer={cardRenderer} enableRowSelection={false} />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><StatCard title="Total sedes" value={data?.totalCount ?? 0} icon={Store} /></div>
+      <DataTable columns={columns} data={businesses} searchKey="name" searchPlaceholder="Buscar por nombre..." isSearching={isFetching} page={data?.page} pageSize={data?.pageSize} pageCount={data?.totalPages} totalItems={data?.totalCount} onSearch={(value) => { setSearch(value); setPage(1); }} onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }} viewMode={viewMode} onViewModeChange={setViewMode} cardRenderer={cardRenderer} enableRowSelection={false} />
     </div>
   );
 }

@@ -3,11 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight } from "lucide-react";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { tenantsApi } from "@/services/api/tenants";
@@ -35,7 +35,7 @@ export function PlatformTenantSubscriptions() {
       <CardHeader><CardTitle>Suscripciones</CardTitle><CardDescription>{result ? `${result.totalCount.toLocaleString("es-CO")} empresas` : "Consultando suscripciones…"}</CardDescription></CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground"/><Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Buscar empresa, identificador o correo" className="pl-9"/></div>
+          <ServerSearchInput className="flex-1" value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Buscar empresa, identificador o correo" />
           <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}><SelectTrigger className="sm:w-52"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Missing">Sin suscripción</SelectItem><SelectItem value="Active">Activas</SelectItem><SelectItem value="PastDue">En gracia</SelectItem><SelectItem value="Suspended">Suspendidas</SelectItem><SelectItem value="Cancelled">Canceladas</SelectItem></SelectContent></Select>
         </div>
         <div className="overflow-x-auto rounded-xl border"><Table><TableHeader><TableRow><TableHead>Tenant</TableHead><TableHead>Plan</TableHead><TableHead>Estado</TableHead><TableHead>Vigencia</TableHead><TableHead>Cupos contratados</TableHead><TableHead>Documentos usados</TableHead><TableHead>Renovación</TableHead><TableHead/></TableRow></TableHeader>

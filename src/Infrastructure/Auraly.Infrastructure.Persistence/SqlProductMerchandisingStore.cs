@@ -172,7 +172,7 @@ public sealed class SqlProductMerchandisingStore(
                     """, [P("@Id", ids.NewId()), P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@ParentId", link.ParentProductId), P("@SharesInventory", link.SharesInventory), P("@InventoryFactor", link.SharesInventory ? link.InventoryFactor : null), P("@SharesPrice", link.SharesPrice), P("@PriceFactor", link.SharesPrice ? link.PriceFactor : null), P("@AllowsConversion", link.AllowsConversion), P("@ConversionFactor", link.AllowsConversion ? link.ConversionFactor : null), P("@Now", now)], ct);
                 if (link.SharesPrice)
                     await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
-                        link.ParentProductId, productId, link.PriceFactor!.Value, user.UserId, now, ct);
+                        link.ParentProductId, productId, user.UserId, now, ct);
             }
 
             await ExecuteAsync(connection, transaction, """
@@ -215,10 +215,11 @@ public sealed class SqlProductMerchandisingStore(
                     P("@SharesPrice", child.SharesPrice), P("@PriceFactor", child.SharesPrice ? child.PriceFactor : null),
                     P("@AllowsConversion", child.AllowsConversion), P("@ConversionFactor", child.AllowsConversion ? child.ConversionFactor : null),
                     P("@Now", now)], ct);
-                if (child.SharesPrice)
-                    await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
-                        productId, child.ChildProductId, child.PriceFactor!.Value, user.UserId, now, ct);
             }
+            if (request.LinkedProducts.Any(child => child.SharesPrice))
+                await SqlLinkedProductCostPreparation.PrepareFamilyAsync(
+                    connection, transaction, user.BusinessId, productId, null, null,
+                    user.UserId, now, ct);
 
             await ExecuteAsync(connection, transaction, """
                 DECLARE @Change TABLE(CatalogChangeId BIGINT NOT NULL);

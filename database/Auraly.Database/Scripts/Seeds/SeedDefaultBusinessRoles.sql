@@ -12,11 +12,11 @@ FROM (VALUES
   (N'TenantProfile',N'Read',N'tenant.profile.read',N'Ver la información y el plan de la empresa propia'),
   (N'TenantProfile',N'Update',N'tenant.profile.update',N'Actualizar la identidad de la empresa propia'),
   (N'POS',N'CreateCustomer',N'pos.customer.create',N'Crear y seleccionar clientes desde el punto de venta'),
-  (N'POS',N'Orders',N'pos.orders',N'Consultar y recuperar pedidos desde el punto de venta'),
   (N'POS',N'ReadInventoryAvailability',N'pos.inventory.availability.read',N'Consultar existencias desde el punto de venta'),
-  (N'Sales',N'ChangePrice',N'sales.change-price',N'Editar precio y descuento de las líneas de una venta'),
+  (N'Sales',N'ChangePrice',N'sales.change-price',N'Cambiar costo permitido, margen, descuento o precio de una línea de venta'),
+  (N'Sales',N'ReadCostAndMargin',N'sales.lines.cost-margin.read',N'Ver costo y margen en la edición de líneas de venta'),
   (N'Sales',N'ChangeDescription',N'sales.lines.change-description',N'Editar la descripción de una línea de venta'),
-  (N'Sales',N'ReadCostAndMargin',N'sales.lines.cost-margin.read',N'Ver costo y margen en una línea de venta'),
+  (N'Sales',N'ProratedDiscount',N'sales.lines.prorated-discount',N'Aplicar un descuento general prorrateado entre las líneas de una venta'),
   (N'Sales',N'SellBelowCost',N'sales.below-cost',N'Confirmar ventas cuyo neto queda por debajo del costo')
 ) source(Module,Action,Resource,Description)
 WHERE NOT EXISTS(SELECT 1 FROM dbo.Permissions existing WHERE existing.Resource=source.Resource);
@@ -67,13 +67,13 @@ JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.
 WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ACCOUNTANT')
   AND NOT (
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.reprint',N'sales.lines.change-description',N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
+      N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
-      N'pos.synchronization.events.read',N'pos.inventory.availability.read')
+      N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
-      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
-      N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
+      N'sales.create',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
+      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',N'pos.workspace.change',
+      N'pos.customer.create',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
@@ -87,7 +87,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
-      AND permissionValue.Resource NOT IN(N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost')
+      AND permissionValue.Resource NOT IN(N'sales.change-price',N'sales.lines.change-description',N'sales.lines.prorated-discount',N'sales.lines.cost-margin.read',N'sales.discount',N'sales.below-cost')
       AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
                      WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
       OR permissionValue.Resource IN(
@@ -122,13 +122,13 @@ WHERE roleValue.IsActive=1
       AND (permissionValue.Resource NOT LIKE N'tenants.%' AND permissionValue.Resource NOT LIKE N'platform.%'
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.reprint',N'sales.lines.change-description',N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
+      N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
-      N'pos.synchronization.events.read',N'pos.inventory.availability.read')
+      N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
-      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
-      N'pos.customer.create',N'pos.orders',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
+      N'sales.create',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
+      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',N'pos.workspace.change',
+      N'pos.customer.create',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
@@ -142,7 +142,7 @@ WHERE roleValue.IsActive=1
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
-      AND permissionValue.Resource NOT IN(N'sales.lines.change-description',N'sales.lines.cost-margin.read',N'sales.below-cost')
+      AND permissionValue.Resource NOT IN(N'sales.change-price',N'sales.lines.change-description',N'sales.lines.prorated-discount',N'sales.lines.cost-margin.read',N'sales.discount',N'sales.below-cost')
       AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
                      WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
       OR permissionValue.Resource IN(
@@ -167,3 +167,21 @@ WHERE roleValue.IsActive=1
         N'purchasing.goods-receipts.read',N'purchasing.purchase-returns.read'))
   )
   AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing WHERE existing.RoleId=roleValue.RoleId AND existing.PermissionId=permissionValue.PermissionId);
+
+-- La edición de líneas tiene cuatro capacidades explícitas y, por decisión funcional,
+-- solamente las plantillas administradoras las reciben inicialmente.
+DELETE assignment
+FROM dbo.RolePermissions assignment
+INNER JOIN dbo.AppRoles roleValue ON roleValue.RoleId=assignment.RoleId
+INNER JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
+WHERE roleValue.NormalizedName NOT IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
+  AND permissionValue.Resource IN(
+    N'sales.change-price',N'sales.lines.cost-margin.read',N'sales.lines.change-description',N'sales.lines.prorated-discount');
+
+DELETE assignment
+FROM dbo.RolePermissions assignment
+INNER JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
+WHERE permissionValue.Resource=N'sales.discount';
+
+DELETE FROM dbo.Permissions
+WHERE Resource=N'sales.discount';

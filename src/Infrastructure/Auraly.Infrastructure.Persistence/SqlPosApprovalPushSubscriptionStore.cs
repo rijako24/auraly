@@ -77,12 +77,11 @@ public sealed class SqlPosApprovalPushSubscriptionStore(SqlServerConnectionFacto
             WHERE subscription.TenantId=@TenantId AND subscription.BusinessId=@BusinessId
               AND subscription.UserId<>@RequesterId
               AND permission.Resource IN(
-                N'pos.approvals.receive_notifications',
                 N'pos.approvals.authorize',
                 @PermissionResource)
             GROUP BY subscription.SubscriptionId,subscription.UserId,
                 subscription.Endpoint,subscription.P256dh,subscription.Auth
-            HAVING COUNT(DISTINCT permission.Resource)=3;
+            HAVING COUNT(DISTINCT permission.Resource)=2;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", request.TenantId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);

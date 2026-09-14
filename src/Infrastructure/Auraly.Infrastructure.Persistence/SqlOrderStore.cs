@@ -272,7 +272,10 @@ public sealed class SqlOrderStore(
                    COALESCE(TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
                      CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
                      '$.ReservedQuantity')),
-                     CASE WHEN @StoredStatus=2 THEN item.Quantity ELSE 0 END)
+                     CASE WHEN @StoredStatus=2 THEN item.Quantity ELSE 0 END),
+                   TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
+                     CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                     '$.DocumentUnitCost'))
             FROM dbo.OrderItems item
             LEFT JOIN dbo.Products product
               ON product.ProductId=item.ProductId AND product.TenantId=@TenantId
@@ -280,7 +283,9 @@ public sealed class SqlOrderStore(
               ON balance.BusinessId=item.BusinessId AND balance.WarehouseId=@WarehouseId
              AND balance.ProductId=item.ProductId
             WHERE item.OrderId=@OrderId AND item.BusinessId=@BusinessId
-            ORDER BY item.CreatedAt,item.OrderItemId;
+            ORDER BY COALESCE(TRY_CONVERT(INT,JSON_VALUE(
+                       CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                       '$.LinePosition')),2147483647),item.CreatedAt,item.OrderItemId;
             """;
         await using var lineCommand = new SqlCommand(lineSql, connection);
         lineCommand.Parameters.AddRange([
@@ -306,7 +311,8 @@ public sealed class SqlOrderStore(
                 lineReader.GetDecimal(10),
                 lineReader.GetBoolean(11),
                 lineReader.GetString(12),
-                lineReader.GetDecimal(13)));
+                lineReader.GetDecimal(13),
+                lineReader.IsDBNull(14) ? null : lineReader.GetDecimal(14)));
         }
 
         return new OrderDetail(
@@ -357,7 +363,11 @@ public sealed class SqlOrderStore(
             INNER JOIN dbo.Businesses business
               ON business.BusinessId=o.BusinessId AND business.TenantId=@TenantId
             WHERE o.BusinessId=@BusinessId
-            ORDER BY selected.Sequence,item.CreatedAt,item.OrderItemId;
+            ORDER BY selected.Sequence,
+                     COALESCE(TRY_CONVERT(INT,JSON_VALUE(
+                       CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                       '$.LinePosition')),2147483647),
+                     item.CreatedAt,item.OrderItemId;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddRange([

@@ -5,13 +5,12 @@ import {
   LayoutGrid,
   LayoutList,
   RotateCcw,
-  Search,
   Table2,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ServerSearchInput } from "./server-search-input";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -41,6 +40,7 @@ export interface DataTableToolbarProps {
   searchPlaceholder?: string;
   searchValue?: string;
   onSearch?: (value: string) => void;
+  isSearching?: boolean;
   facetedFilters?: FacetedFilterConfig[];
   facetedFilterValues?: Record<string, Set<string>>;
   onFacetedFilterChange?: (column: string, values: Set<string>) => void;
@@ -63,6 +63,7 @@ export function DataTableToolbar({
   searchPlaceholder = "Buscar...",
   searchValue = "",
   onSearch,
+  isSearching = false,
   facetedFilters = [],
   facetedFilterValues = {},
   onFacetedFilterChange,
@@ -100,15 +101,14 @@ export function DataTableToolbar({
     <div className={cn("flex flex-col gap-4", className)}>
       <div className="flex flex-wrap items-center gap-2">
         {searchKey && onSearch && (
-          <div className="relative min-w-0 flex-[1_1_100%] sm:max-w-sm sm:flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder={searchPlaceholder}
-              value={searchValue}
-              onChange={(e) => onSearch(e.target.value)}
-              className="h-10 pl-9 sm:h-8"
-            />
-          </div>
+          <ServerSearchInput
+            value={searchValue}
+            onSearch={onSearch}
+            isSearching={isSearching}
+            placeholder={searchPlaceholder}
+            className="flex-[1_1_100%] sm:max-w-sm sm:flex-1"
+            inputClassName="h-10 sm:h-8"
+          />
         )}
         {facetedFilters.map((filter) => (
           <DataTableFacetedFilter

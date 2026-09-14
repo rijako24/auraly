@@ -162,7 +162,6 @@ public sealed partial class PosLocalIdentityStore
     private static void ValidateSensitivePermission(string permissionResource)
     {
         if (permissionResource is not (
-            CommercePermissionCodes.SalesDiscount or
             CommercePermissionCodes.SalesChangePrice or
             CommercePermissionCodes.SalesRemoveLine or
             CommercePermissionCodes.SalesRestartDraft or

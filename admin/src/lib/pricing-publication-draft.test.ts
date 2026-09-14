@@ -9,7 +9,6 @@ import {
 } from "./pricing-publication-draft";
 
 const proposal: PriceRevisionListItem = {
-  linkedProducts: [],
   proposalId: "proposal-1",
   productId: "product-1",
   productCode: "ACEITE",

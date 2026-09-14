@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { History, Link2, PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
+import { History, PackageCheck, Send, TrendingUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { ProductPriceHistoryDialog } from "@/components/pricing/product-price-history-dialog";
@@ -13,11 +14,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
-import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { usePriceProposals, usePublishPrices, useRejectPrice } from "@/hooks/use-pricing";
+import { usePriceProposals, usePublishPendingPrices, usePublishPrices, useRejectPrice } from "@/hooks/use-pricing";
 import {
   buildPricePublicationItem,
   changeDraftMargin,
@@ -66,6 +66,7 @@ export default function PricingPage() {
     sourceDocumentId,
   });
   const publish = usePublishPrices();
+  const publishPending = usePublishPendingPrices();
   const reject = useRejectPrice();
 
   useEffect(() => {
@@ -194,6 +195,22 @@ export default function PricingPage() {
     }
   }, [drafts, publish]);
 
+  const publishAllPending = useCallback(async () => {
+    const total = query.data?.totalCount ?? 0;
+    if (!total || !window.confirm(`¿Publicar los ${total.toLocaleString("es-CO")} precios pendientes que coinciden con los filtros?`)) return;
+    try {
+      const result = await publishPending.mutateAsync({
+        search: search.trim() || undefined,
+        supplierId: supplierId === "all" ? undefined : supplierId,
+        sourceDocumentId,
+      });
+      setHiddenProposalIds(new Set());
+      toast.success(`${result.items.length.toLocaleString("es-CO")} precios publicados en una sola operación.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible publicar todos los precios pendientes.");
+    }
+  }, [publishPending, query.data?.totalCount, search, sourceDocumentId, supplierId]);
+
   const openReport = useCallback((rows: PriceRevisionListItem[]) => {
     const candidates = rows.filter(isPublishable).flatMap((row) => {
       const preparedSalePrice = draftFor(row).salePrice;
@@ -228,13 +245,6 @@ export default function PricingPage() {
         <p className="mt-1 text-xs text-muted-foreground">
           IVA de venta {formatPercent(row.original.salesTaxRate)} · {formatDateTime(row.original.createdAt)}
         </p>
-        {row.original.linkedProducts.length > 0 && <div className="mt-3 space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-foreground">
-          <p className="flex items-center gap-1.5 text-xs font-bold text-primary"><Link2 className="h-3.5 w-3.5" />Productos vinculados · se publican con el principal</p>
-          {row.original.linkedProducts.map((child) => <div key={child.productId} className="flex items-start justify-between gap-3 border-t border-primary/15 pt-2 text-xs first:border-0 first:pt-0">
-            <span className="min-w-0"><strong className="block truncate">{child.productName}</strong><span className="text-muted-foreground">{child.productCode} · factor {formatCompactNumber(child.priceFactor)}</span></span>
-            <span className="shrink-0 text-right tabular-nums"><span className="block text-muted-foreground">{formatCurrency(child.currentSalePrice)}</span><strong className="text-primary">→ {child.preparedSalePrice == null ? "Margen pendiente" : formatCurrency(child.preparedSalePrice)}</strong></span>
-          </div>)}
-        </div>}
       </div>,
     },
     {
@@ -396,16 +406,15 @@ export default function PricingPage() {
       <Summary icon={Send} label="Publicación" value="Masiva y en una operación" />
     </section>
 
+    {status === "Pending" && canPublish && canBulk && (query.data?.totalCount ?? 0) > 0 && <section className="flex flex-col justify-between gap-3 rounded-2xl border border-primary/25 bg-primary/5 p-4 sm:flex-row sm:items-center">
+      <div><p className="font-semibold">Publicar todos los pendientes filtrados</p><p className="text-sm text-muted-foreground">Procesa los {(query.data?.totalCount ?? 0).toLocaleString("es-CO")} productos preparados sin límite funcional y en una sola petición.</p></div>
+      <Button type="button" className="shrink-0" disabled={publishPending.isPending || publish.isPending} onClick={() => void publishAllPending()}>
+        <Send className="mr-2 h-4 w-4" />{publishPending.isPending ? "Publicando todo…" : "Publicar todo"}
+      </Button>
+    </section>}
+
     <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_14rem_16rem]">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          className="pl-9"
-          value={search}
-          onChange={(event) => { setSearch(event.target.value); setPage(1); }}
-          placeholder="Producto, código o proveedor"
-        />
-      </div>
+      <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Producto, código o proveedor" />
       <Select value={status} onValueChange={(value) => {
         setStatus(value as PriceProposalStatus | "Pending" | "all");
         setPage(1);
@@ -474,8 +483,4 @@ function formatPercent(value: number | null) {
   return value === null ? "Sin definir" : `${new Intl.NumberFormat("es-CO", {
     maximumFractionDigits: 4,
   }).format(value)} %`;
-}
-
-function formatCompactNumber(value: number) {
-  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 4 }).format(value);
 }

@@ -148,9 +148,14 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 
         var draft = await OpenAsync(client);
         var captured = await CaptureAsync(client, draft);
+        var tenderedAmount = captured.PayableAmount + 5_000m;
         var command = new CompleteOnlineSalesDraftRequest(
             captured.Version,
-            [new OnlineSalesPayment("Cash", captured.PayableAmount, null)]);
+            [new OnlineSalesPayment(
+                "Cash",
+                captured.PayableAmount,
+                null,
+                TenderedAmount: tenderedAmount)]);
         var key = $"checkout-{Guid.NewGuid():N}";
 
         var completed = await CompleteAsync(
@@ -185,6 +190,16 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal(1, persisted.ProcessingJobCount);
         Assert.Equal("Completed", persisted.CheckoutStatus);
         Assert.Equal("Consumed", persisted.DraftStatus);
+
+        await using (var paymentConnection = new SqlConnection(fixture.ConnectionString))
+        {
+            await paymentConnection.OpenAsync();
+            await using var paymentCommand = new SqlCommand(
+                "SELECT TenderedAmount FROM dbo.SalesPayments WHERE DocumentId=@DocumentId;",
+                paymentConnection);
+            paymentCommand.Parameters.AddWithValue("@DocumentId", completed.Receipt.DocumentId);
+            Assert.Equal(tenderedAmount, (decimal)(await paymentCommand.ExecuteScalarAsync())!);
+        }
 
         var context = new OnlineSalesDraftContext(
             fixture.BusinessId,
@@ -227,7 +242,9 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             Assert.Equal(captured.Lines[0].TaxRate, printableLine.TaxRate);
             Assert.Equal(captured.TaxAmount, printable.TaxAmount);
             Assert.Equal(captured.TaxAmount, printableLine.Tax);
-            Assert.Single(printable.Payments);
+            var printablePayment = Assert.Single(printable.Payments);
+            Assert.Equal(captured.PayableAmount, printablePayment.Amount);
+            Assert.Equal(tenderedAmount, printablePayment.TenderedAmount);
         }
         var qrUrl =
             $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/qr" +

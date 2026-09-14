@@ -18,7 +18,8 @@ public sealed record CompletePaymentRequest(
     string? CardFranchiseCode = null,
     string? ApprovalNumber = null,
     Guid? BankAccountId = null,
-    string? Notes = null);
+    string? Notes = null,
+    decimal? TenderedAmount = null);
 
 public sealed record CompleteCreditRequest(
     decimal Amount);
@@ -178,7 +179,8 @@ internal static class PosSaleHostModule
                         payment.CardFranchiseCode,
                         payment.ApprovalNumber,
                         payment.BankAccountId,
-                        payment.Notes))
+                        payment.Notes,
+                        payment.TenderedAmount))
                     .ToArray();
                 var session = sessions.Required();
                 PosSaleCreditTerms? credit = null;

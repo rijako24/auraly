@@ -46,13 +46,11 @@ test("cashier inventory availability does not expose the inventory workspace", (
     "sales.create",
     "sales.reprint",
     "pos.customer.create",
-    "pos.orders",
     "orders.read",
     "work-sessions.read",
     "work-sessions.open",
     "work-sessions.cash.manage",
     "work-sessions.cash.drawer.open",
-    "pos.synchronization.events.read",
     "pos.inventory.availability.read",
   ];
 

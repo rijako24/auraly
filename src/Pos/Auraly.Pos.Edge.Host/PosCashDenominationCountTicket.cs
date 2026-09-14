@@ -86,9 +86,7 @@ public sealed class PosCashDenominationCountTicketPrinter(
         }
         Line(stream, new string('-', columns));
         Bold(stream, Pair("Total", Money(ticket.Total), columns));
-        Line(stream, string.Empty);
-        Line(stream, string.Empty);
-        Write(stream, [0x1D, 0x56, 0x41, 0x03]);
+        Write(stream, EscPosThermalCommands.MinimumFeedAndPartialCut);
         return stream.ToArray();
     }
 

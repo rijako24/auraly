@@ -32,8 +32,9 @@ public sealed class PosApprovalWebPushService(
         PosApprovalPushSubscriptionRequest request,
         CancellationToken cancellationToken)
     {
-        if (!user.Permissions.Contains(CommercePermissionCodes.PosApprovalsReceiveNotifications))
-            throw new PosApprovalException("Forbidden", "El usuario no tiene permiso para recibir notificaciones de autorización POS.");
+        if (!user.Permissions.Contains(CommercePermissionCodes.PosApprovalsRead) ||
+            !user.Permissions.Contains(CommercePermissionCodes.PosApprovalsAuthorize))
+            throw new PosApprovalException("Forbidden", "El usuario no puede atender autorizaciones POS.");
         if (!Uri.TryCreate(request.Endpoint, UriKind.Absolute, out var endpoint) || endpoint.Scheme != Uri.UriSchemeHttps ||
             request.Endpoint.Length > 2000 || request.P256dh.Length is < 20 or > 512 || request.Auth.Length is < 8 or > 256)
             throw new PosApprovalException("InvalidPushSubscription", "La suscripción push no es válida.");

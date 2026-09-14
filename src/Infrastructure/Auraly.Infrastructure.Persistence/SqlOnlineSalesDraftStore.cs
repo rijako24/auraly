@@ -262,6 +262,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         OnlineSalesUserIdentity user,
         Guid draftId,
         IReadOnlyList<UpdateOnlineSalesDraftLineRequest> lines,
+        bool includesProratedDiscount,
         long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken)
@@ -270,7 +271,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         var payload = string.Join('|', lines
             .OrderBy(line => line.LineId)
             .Select(line => $"{line.LineId:D}:{line.Description.Trim()}:{Invariant(line.UnitPrice)}:{Invariant(line.Discount)}:{Invariant(line.DocumentUnitCost)}"));
-        var hash = Hash($"{operation}|{draftId:D}|{payload}");
+        var hash = Hash($"{operation}|{draftId:D}|{includesProratedDiscount}|{payload}");
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -302,6 +303,22 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 StringComparison.Ordinal)))
             throw new OnlineSalesDraftForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesChangeDescription}' is required.");
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesChangePrice) &&
+            lines.Any(line =>
+                line.UnitPrice != currentDraftLines[line.LineId].UnitPrice ||
+                line.Discount != currentDraftLines[line.LineId].Discount ||
+                line.DocumentUnitCost != currentDraftLines[line.LineId].DocumentUnitCost))
+            throw new OnlineSalesDraftForbiddenException(
+                $"Permission '{CommercePermissionCodes.SalesChangePrice}' is required.");
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesReadCostAndMargin) &&
+            lines.Any(line =>
+                line.DocumentUnitCost != currentDraftLines[line.LineId].DocumentUnitCost))
+            throw new OnlineSalesDraftForbiddenException(
+                $"Permission '{CommercePermissionCodes.SalesReadCostAndMargin}' is required.");
+        if (includesProratedDiscount &&
+            !user.Permissions.Contains(CommercePermissionCodes.SalesProratedDiscount))
+            throw new OnlineSalesDraftForbiddenException(
+                $"Permission '{CommercePermissionCodes.SalesProratedDiscount}' is required.");
 
         var activeByLine = activeLines.ToDictionary(line => line.LineId);
         var products = await ReadProductsAsync(
@@ -317,6 +334,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
             if (!products.TryGetValue(current.ProductId, out var product))
                 throw new OnlineSalesDraftValidationException(
                     "El producto no está disponible para este negocio.");
+            if (product.ManagesStock && line.DocumentUnitCost != current.DocumentUnitCost)
+                throw new OnlineSalesDraftValidationException(
+                    "El costo de un producto que maneja inventario no se puede cambiar en la venta.");
             if (!product.ManagesStock && line.DocumentUnitCost < 0)
                 throw new OnlineSalesDraftValidationException("El costo de la línea no puede ser negativo.");
             var documentUnitCost = product.ManagesStock

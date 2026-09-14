@@ -33,7 +33,7 @@ export function NotificationsDropdown({ className }: { className?: string }) {
     user?.permissions.includes("pos.approvals.read") &&
     user.permissions.includes("pos.approvals.authorize"),
   );
-  const canReceivePush = Boolean(user?.permissions.includes("pos.approvals.receive_notifications"));
+  const canReceivePush = canApprove;
   const canManageSubscription = Boolean(user?.permissions.includes("subscription.manage"));
   const canReadFiscalCertificateExpiry = Boolean(user?.permissions.includes("platform.fiscal_certificates.expiry.read"));
   const [dropdownOpen,setDropdownOpen]=useState(false);

@@ -398,7 +398,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 string.IsNullOrWhiteSpace(payment.CardFranchiseCode) ? null : payment.CardFranchiseCode.Trim(),
                 string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim(),
                 payment.BankAccountId,
-                string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim())).ToArray();
+                string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
+                payment.TenderedAmount)).ToArray();
         var upload = new PosSaleUploadRequest(
             user.TenantId,
             state.BusinessId,

@@ -13,7 +13,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task User_with_create_permission_can_create_an_order_without_being_a_commercial_seller()
+    public async Task User_can_create_independent_lines_for_the_same_product_at_different_prices()
     {
         var userId = Guid.NewGuid();
         var customerPartyId = Guid.NewGuid();
@@ -78,7 +78,17 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                         quantity = 1m,
                         unitPrice = 12500m,
                         discountAmount = 0m,
-                        priceSource = "Public"
+                        priceSource = "Public",
+                        documentUnitCost = 7100m
+                    },
+                    new
+                    {
+                        productId,
+                        quantity = 2m,
+                        unitPrice = 15000m,
+                        discountAmount = 1000m,
+                        priceSource = "Captured",
+                        documentUnitCost = 8200m
                     }
                 }
             });
@@ -99,6 +109,12 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             SELECT CapturedByUserId,SellerId
             FROM dbo.Orders
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+            SELECT Quantity,UnitPrice,DiscountAmount,
+                   TRY_CONVERT(decimal(19,6),JSON_VALUE(RawPayloadJson,'$.DocumentUnitCost')),
+                   TRY_CONVERT(int,JSON_VALUE(RawPayloadJson,'$.LinePosition'))
+            FROM dbo.OrderItems
+            WHERE OrderId=@OrderId AND BusinessId=@BusinessId
+            ORDER BY TRY_CONVERT(int,JSON_VALUE(RawPayloadJson,'$.LinePosition'));
             """;
         command.Parameters.AddWithValue("@OrderId", orderId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
@@ -106,6 +122,20 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         Assert.True(await reader.ReadAsync());
         Assert.Equal(userId, reader.GetGuid(0));
         Assert.True(reader.IsDBNull(1));
+        Assert.True(await reader.NextResultAsync());
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1m, reader.GetDecimal(0));
+        Assert.Equal(12500m, reader.GetDecimal(1));
+        Assert.Equal(0m, reader.GetDecimal(2));
+        Assert.Equal(7100m, reader.GetDecimal(3));
+        Assert.Equal(1, reader.GetInt32(4));
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(2m, reader.GetDecimal(0));
+        Assert.Equal(15000m, reader.GetDecimal(1));
+        Assert.Equal(1000m, reader.GetDecimal(2));
+        Assert.Equal(8200m, reader.GetDecimal(3));
+        Assert.Equal(2, reader.GetInt32(4));
+        Assert.False(await reader.ReadAsync());
     }
 
     [Fact]

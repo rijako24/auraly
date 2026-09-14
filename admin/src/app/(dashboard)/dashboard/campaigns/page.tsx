@@ -290,7 +290,7 @@ export default function CampaignsPage() {
   const [importText, setImportText] = useState("");
   const [importFilename, setImportFilename] = useState("");
 
-  const { data, isLoading, isError, refetch } = useCampaigns({
+  const { data, isLoading, isFetching, isError, refetch } = useCampaigns({
     page,
     pageSize,
     search: search || undefined,
@@ -493,6 +493,7 @@ export default function CampaignsPage() {
         data={campaigns}
         searchKey="name"
         searchPlaceholder="Buscar campaña..."
+        isSearching={isFetching}
         viewMode="table"
         cardRenderer={cardRenderer}
         enableRowSelection={false}

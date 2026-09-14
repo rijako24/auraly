@@ -170,7 +170,7 @@ group.MapPost("/{draftId:guid}/items", async (
                 approvals,
                 draftId,
                 lineId,
-                CommercePermissionCodes.SalesDiscount,
+                CommercePermissionCodes.SalesChangePrice,
                 () => service.SetDiscountAsync(
                     context.User.ToOnlineSalesUserIdentity(),
                     draftId, lineId, request, IdempotencyKey(context), ct),
@@ -181,18 +181,10 @@ group.MapPost("/{draftId:guid}/items", async (
             Guid draftId,
             UpdateOnlineSalesDraftLinesRequest request,
             OnlineSalesDraftService service,
-            PosApprovalService approvals,
             CancellationToken ct) =>
-            await Handle(() => ExecuteSensitiveAsync(
-                context,
-                approvals,
-                draftId,
-                null,
-                CommercePermissionCodes.SalesChangePrice,
-                () => service.UpdateLinesAsync(
-                    context.User.ToOnlineSalesUserIdentity(),
-                    draftId, request, IdempotencyKey(context), ct),
-                ct)));
+            await Handle(() => service.UpdateLinesAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, request, IdempotencyKey(context), ct)));
 
         group.MapPost("/{draftId:guid}/lines/{lineId:guid}/remove", async (
             HttpContext context,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isPositiveWholeSaleValue, lineDiscountPercent, lineEconomicsFromDiscount, lineEconomicsFromDiscountPercent, lineEconomicsFromFinalPrice, lineEconomicsFromMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin } from "./pos-line-editor-calculation";
+import { isPositiveWholeSaleValue, lineDiscountPercent, lineEconomicsFromDiscount, lineEconomicsFromDiscountPercent, lineEconomicsFromFinalPrice, lineEconomicsFromMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateSaleDiscount, salePriceForMargin } from "./pos-line-editor-calculation";
 
 test("keeps value and percentage discounts synchronized", () => {
   assert.equal(lineDiscountPercent(20_000, 2, 100_000), 10);
@@ -64,36 +64,25 @@ test("moves keyboard focus forward and backward with wraparound", () => {
   assert.equal(nextFocusableIndex(-1, 6, true), 5);
 });
 
-test("prorates one additional value equally per unit across all sale lines", () => {
-  const original = [
-    { lineId: "one", quantity: 1, unitPrice: 10_000 },
-    { lineId: "six", quantity: 6, unitPrice: 20_000 },
-  ];
-  const result = prorateAdditionalSaleValue(original, 7_000);
-  assert.deepEqual(result, [
-    { lineId: "one", quantity: 1, unitPrice: 11_000, allocatedValue: 1_000 },
-    { lineId: "six", quantity: 6, unitPrice: 21_000, allocatedValue: 6_000 },
-  ]);
-  assert.equal(original[0].unitPrice, 10_000);
-  assert.equal([...result, { lineId: "captured-later", quantity: 1, unitPrice: 30_000 }][2].unitPrice, 30_000);
-});
-
-test("preserves fractional quantities and the requested total within money precision", () => {
-  const result = prorateAdditionalSaleValue([
-    { lineId: "half", quantity: .5, unitPrice: 10_000 },
-    { lineId: "two", quantity: 2, unitPrice: 20_000 },
-  ], 1_000);
-  assert.ok(Math.abs(result.reduce((sum, line) => sum + line.allocatedValue, 0) - 1_000) < .00001);
-  assert.throws(() => prorateAdditionalSaleValue(result, 0));
-  assert.throws(() => prorateAdditionalSaleValue(result, -1));
-});
-
-test("the additional distributed charge accepts only positive whole values", () => {
+test("the general discount accepts only positive whole values", () => {
   assert.equal(isPositiveWholeSaleValue(1), true);
   assert.equal(isPositiveWholeSaleValue(10_000), true);
   assert.equal(isPositiveWholeSaleValue(0), false);
   assert.equal(isPositiveWholeSaleValue(-1), false);
   assert.equal(isPositiveWholeSaleValue(1.5), false);
+});
+
+test("prorates a general discount by available line value and preserves the requested total", () => {
+  const result = prorateSaleDiscount([
+    { lineId: "small", quantity: 1, unitPrice: 10_000, discount: 0 },
+    { lineId: "large", quantity: 2, unitPrice: 20_000, discount: 10_000 },
+  ], 8_000);
+  assert.deepEqual(result, [
+    { lineId: "small", quantity: 1, unitPrice: 10_000, discount: 2_000, allocatedValue: 2_000 },
+    { lineId: "large", quantity: 2, unitPrice: 20_000, discount: 16_000, allocatedValue: 6_000 },
+  ]);
+  assert.equal(result.reduce((sum, line) => sum + line.allocatedValue, 0), 8_000);
+  assert.throws(() => prorateSaleDiscount(result, 33_000));
 });
 
 test("moves through editable columns and stops at the horizontal edges", () => {

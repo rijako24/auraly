@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Barcode, CircleDollarSign, History, Images, Link2, PackagePlus, Tags, Truck } from "lucide-react";
+import { Barcode, CircleDollarSign, Images, Link2, PackagePlus, Tags, Truck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { ProductPriceHistoryDialog } from "@/components/pricing/product-price-history-dialog";
+import { ProductPublishedPriceHistory } from "@/components/pricing/product-published-price-history";
 import { ProductFormSection } from "@/components/products/product-create-workspace";
 import { ProductImageGallery } from "@/components/products/product-image-gallery";
 import { ProductInventoryByWarehouse } from "@/components/products/product-inventory-by-warehouse";
@@ -18,7 +17,6 @@ import { taxProfilesApi } from "@/services/api/tax-profiles";
 import { useAuthStore } from "@/stores/auth-store";
 
 export function ProductOverview({ product }: { product: Product }) {
-  const [historyOpen, setHistoryOpen] = useState(false);
   const canReadPriceHistory = useAuthStore((state) => state.user?.permissions.includes("pricing.history.read") ?? false);
   const detail = useQuery({ queryKey: ["catalog-product-detail", product.productId], queryFn: () => productsApi.getCatalog(product.productId) });
   const merchandising = useQuery({ queryKey: ["product-merchandising", product.productId], queryFn: () => productMerchandisingApi.get(product.productId) });
@@ -39,7 +37,6 @@ export function ProductOverview({ product }: { product: Product }) {
   if (isLoading) return <div className="space-y-5">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-44 animate-pulse rounded-2xl bg-muted" />)}</div>;
 
   return <div className="space-y-5">
-    <ProductPriceHistoryDialog productId={product.productId} productName={product.name} open={historyOpen} onOpenChange={setHistoryOpen} />
     {(detail.isError || merchandising.isError) && <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">No fue posible cargar toda la ficha del producto. Reintenta antes de editar.</div>}
 
     <ProductFormSection id="product-identity" icon={PackagePlus} title="Identidad" description="Lo que el equipo usa para encontrar y reconocer el producto.">
@@ -76,8 +73,8 @@ export function ProductOverview({ product }: { product: Product }) {
     </ProductFormSection>
 
     <ProductFormSection id="product-family" icon={Link2} title="Familia de productos" description="Presentaciones, colores o tallas vinculados a este producto.">
-      {merch?.link && <div className="rounded-xl border bg-muted/20 p-4 text-sm"><p>Producto principal: <strong>{merch.link.parentProductName}</strong></p><p className="mt-1 text-xs text-muted-foreground">Inventario {merch.link.sharesInventory ? `x ${merch.link.inventoryFactor}` : "propio"} · precio {merch.link.sharesPrice ? `x ${merch.link.priceFactor}` : "propio"} · conversión {merch.link.allowsConversion ? `x ${merch.link.conversionFactor}` : "no habilitada"}</p></div>}
-      {!merch?.link && (merch?.linkedProducts?.length ?? 0) > 0 && <div className="space-y-2">{merch!.linkedProducts.map((linked) => <div key={linked.childProductId} className="rounded-lg border bg-background p-3 text-sm"><strong>{linked.childProductName}</strong><p className="text-xs text-muted-foreground">{linked.childProductCode} · inventario {linked.sharesInventory ? `x ${linked.inventoryFactor}` : "propio"} · precio {linked.sharesPrice ? `x ${linked.priceFactor}` : "propio"} · conversión {linked.allowsConversion ? `x ${linked.conversionFactor}` : "no habilitada"}</p></div>)}</div>}
+      {merch?.link && <div className="rounded-xl border bg-muted/20 p-4 text-sm"><p>Producto principal: <strong>{merch.link.parentProductName}</strong></p><p className="mt-1 text-xs text-muted-foreground">Inventario {merch.link.sharesInventory ? `x ${merch.link.inventoryFactor}` : "propio"} · costo {merch.link.sharesPrice ? `x ${merch.link.priceFactor}` : "propio"} · conversión {merch.link.allowsConversion ? `x ${merch.link.conversionFactor}` : "no habilitada"}</p></div>}
+      {!merch?.link && (merch?.linkedProducts?.length ?? 0) > 0 && <div className="space-y-2">{merch!.linkedProducts.map((linked) => <div key={linked.childProductId} className="rounded-lg border bg-background p-3 text-sm"><strong>{linked.childProductName}</strong><p className="text-xs text-muted-foreground">{linked.childProductCode} · inventario {linked.sharesInventory ? `x ${linked.inventoryFactor}` : "propio"} · costo {linked.sharesPrice ? `x ${linked.priceFactor}` : "propio"} · conversión {linked.allowsConversion ? `x ${linked.conversionFactor}` : "no habilitada"}</p></div>)}</div>}
       {!merch?.link && (merch?.linkedProducts?.length ?? 0) === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavía no hay productos vinculados a esta familia.</div>}
       {(merch?.linkedProducts?.some((item) => item.allowsConversion) || merch?.link?.allowsConversion) && <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4"><p className="text-xs text-emerald-900/70">Merma máxima permitida en conversiones</p><p className="mt-1 font-semibold">{merch?.conversionMaximumLossPercent ?? 0} %</p></div>}
     </ProductFormSection>
@@ -87,7 +84,10 @@ export function ProductOverview({ product }: { product: Product }) {
     </ProductFormSection>
 
     <ProductFormSection id="product-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decisión explícita.">
-      {canReadPriceHistory && <div className="mb-3 flex justify-end"><Button type="button" variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History className="mr-2 h-4 w-4" />Ver kardex de precio</Button></div>}
+      {pricing.data?.isCostLinked && <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+        <strong>El costo está vinculado a {pricing.data.costSourceProductName ?? "su producto principal"}.</strong>
+        <p className="mt-1 text-xs">Se calcula con el factor {pricing.data.costFactor?.toLocaleString("es-CO") ?? "configurado"} y no se puede editar desde este producto. Su margen, precio preparado y precio público siguen siendo independientes.</p>
+      </div>}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Summary label="IVA de venta" value={salesTax ? `${salesTax.name} - ${salesTax.rate}%` : "Sin configurar"} />
         <Summary label="IVA de compra" value={purchaseTax ? `${purchaseTax.name} - ${purchaseTax.rate}%` : "Sin configurar"} />
@@ -98,6 +98,7 @@ export function ProductOverview({ product }: { product: Product }) {
         <Summary label="Tratamiento IVA compra" value={taxTreatment(info?.purchaseTaxTreatment)} />
       </div>
     </ProductFormSection>
+    {canReadPriceHistory && <ProductPublishedPriceHistory productId={product.productId} />}
     <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="La portada y las demás vistas disponibles para reconocerlo.">
       <ProductImageGallery productId={product.productId} readOnly />
     </ProductFormSection>

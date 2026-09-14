@@ -47,7 +47,9 @@ public sealed record PosWorkstationIdentity(
 public sealed record CaptureRequest(string Value, Guid? CustomerId);
 public sealed record QuantityRequest(decimal Quantity);
 public sealed record DiscountRequest(decimal Discount);
-public sealed record UpdateDraftLinesRequest(IReadOnlyList<UpdateDraftLineRequest> Lines);
+public sealed record UpdateDraftLinesRequest(
+    IReadOnlyList<UpdateDraftLineRequest> Lines,
+    bool IncludesProratedDiscount = false);
 public sealed record UpdateDraftLineRequest(
     Guid LineId,
     string Description,
@@ -673,7 +675,7 @@ public static class PosEdgeHostApplication
         {
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
-            if (user is null || !user.Permissions.Contains(PosSynchronizationPermissions.ReadEvents))
+            if (user is null)
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             return Results.Ok(events.Read(take ?? 100));
         });
@@ -1062,7 +1064,7 @@ public static class PosEdgeHostApplication
             CancellationToken ct) =>
         {
             var authorization = await authorizer.AuthorizeAsync(
-                sessions.Required(), CommercePermissionCodes.SalesDiscount, draftId, lineId,
+                sessions.Required(), CommercePermissionCodes.SalesChangePrice, draftId, lineId,
                 http.Request.Headers["X-Auraly-Approval-Id"],
                 http.Request.Headers["X-Auraly-Operation-Id"],
                 http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
@@ -1074,33 +1076,43 @@ public static class PosEdgeHostApplication
         edge.MapPut("/drafts/{draftId:guid}/lines", async (
             Guid draftId,
             UpdateDraftLinesRequest request,
-            HttpContext http,
             PosDraftStore drafts,
-            PosSensitiveActionAuthorizer authorizer,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
             var session = sessions.Required();
             var current = await drafts.GetAsync(new DraftId(draftId), ct)
                 ?? throw new KeyNotFoundException("The active sale does not exist.");
+            var currentByLine = current.Lines.ToDictionary(line => line.LineId);
+            if (request.Lines.Count != current.Lines.Count ||
+                request.Lines.Select(line => line.LineId).Distinct().Count() != request.Lines.Count ||
+                request.Lines.Any(line => !currentByLine.ContainsKey(line.LineId)))
+                return Results.BadRequest("Debes enviar exactamente todas las líneas de la venta activa.");
             if (!session.Permissions.Contains(CommercePermissionCodes.SalesChangeDescription) &&
                 request.Lines.Any(line => !string.Equals(
                     line.Description.Trim(),
-                    current.Lines.Single(existing => existing.LineId == line.LineId).Description,
+                    currentByLine[line.LineId].Description,
                     StringComparison.Ordinal)))
                 return Results.Forbid();
-            var authorization = await authorizer.AuthorizeAsync(
-                session, CommercePermissionCodes.SalesChangePrice, draftId, null,
-                http.Request.Headers["X-Auraly-Approval-Id"],
-                http.Request.Headers["X-Auraly-Operation-Id"],
-                http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
+            if (!session.Permissions.Contains(CommercePermissionCodes.SalesChangePrice) &&
+                request.Lines.Any(line =>
+                    line.UnitPrice != currentByLine[line.LineId].UnitPrice ||
+                    line.Discount != currentByLine[line.LineId].Discount ||
+                    line.DocumentUnitCost != currentByLine[line.LineId].DocumentUnitCost))
+                return Results.Forbid();
+            if (!session.Permissions.Contains(CommercePermissionCodes.SalesReadCostAndMargin) &&
+                request.Lines.Any(line =>
+                    line.DocumentUnitCost != currentByLine[line.LineId].DocumentUnitCost))
+                return Results.Forbid();
+            if (request.IncludesProratedDiscount &&
+                !session.Permissions.Contains(CommercePermissionCodes.SalesProratedDiscount))
+                return Results.Forbid();
             var result = await drafts.UpdateLinesAsync(
                 new DraftId(draftId),
                 request.Lines.Select(line => new PosDraftLineDocumentUpdate(
                     line.LineId, line.Description, line.UnitPrice, line.Discount,
                     line.DocumentUnitCost)).ToArray(),
                 ct);
-            await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);
         });
         edge.MapPut("/drafts/{draftId:guid}/customer", async (

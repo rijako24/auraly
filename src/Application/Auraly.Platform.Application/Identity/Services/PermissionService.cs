@@ -66,12 +66,12 @@ public class PermissionService : IPermissionService
     private async Task SyncSystemRolePermissionsAsync(CancellationToken ct)
     {
         var permissions = await _unitOfWork.Permissions.GetAllAsync(ct);
-        var systemRoles = await _unitOfWork.AppRoles.GetActiveSystemRolesAsync(ct);
+        var administratorRoles = await _unitOfWork.AppRoles.GetActiveAdministratorRolesAsync(ct);
 
         // IsSystemRole protects built-in roles from being edited/deleted; it does not
         // mean that every built-in operational role is an administrator. Only the
         // administrator templates are allowed to receive the complete catalog.
-        foreach (var role in systemRoles.Where(IsAdministratorRole))
+        foreach (var role in administratorRoles.Where(IsAdministratorRole))
         {
             var eligiblePermissions = permissions
                 .Where(permission => IsAllowedForAdministrator(role, permission))

@@ -370,7 +370,8 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
-            CommercePermissionCodes.SalesDiscount,
+            CommercePermissionCodes.SalesChangePrice,
+            CommercePermissionCodes.SalesReadCostAndMargin,
             CommercePermissionCodes.SalesRemoveLine,
             "orders.create",
             WorkSessionPermissionCodes.Open);

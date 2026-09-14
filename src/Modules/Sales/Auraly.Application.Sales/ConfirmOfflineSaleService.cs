@@ -127,7 +127,7 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
             authorizer.Demand(
                 command.Context.TenantId,
                 command.UserId,
-                CommercePermissionCodes.SalesDiscount);
+                CommercePermissionCodes.SalesChangePrice);
         }
 
         var invoice = new SalesInvoice(

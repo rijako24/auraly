@@ -232,7 +232,17 @@ factor/cantidad de la captura actual.
 
 ### 5.2 Edición en grilla
 
-El cajero puede, según permisos:
+**Editar líneas** siempre puede abrirse cuando la venta tiene productos. Las
+capacidades internas se autorizan por separado y las plantillas iniciales las
+asignan únicamente al administrador:
+
+- `sales.lines.change-description`: cambiar la descripción;
+- `sales.change-price`: cambiar costo documental permitido, margen, descuento
+  en valor o porcentaje y precio de venta;
+- `sales.lines.prorated-discount`: distribuir un descuento general entre todos
+  los productos.
+
+El cajero puede, según esos permisos:
 
 - cambiar cantidad;
 - cambiar unidad o empaque;
@@ -261,23 +271,24 @@ Cambiar cualquier valor recalcula inmediatamente:
 
 El servidor vuelve a calcular al confirmar.
 
-#### Distribución de un cargo adicional
+#### Distribución de un descuento general
 
-Desde **Editar líneas** se puede capturar un valor adicional para esta venta. El
-editor divide ese valor entre la suma de las cantidades y aumenta con ese importe
-el precio unitario visible de cada línea; por tanto, una línea con seis unidades
-recibe seis veces la asignación de una línea con una unidad. Los precios y totales
+Desde **Editar líneas** se puede capturar un descuento adicional para esta venta.
+El editor lo prorratea proporcionalmente al valor disponible de cada línea y lo
+suma a su descuento sin superar el valor vendible. Los precios y totales
 recalculados quedan primero en el editor y solo pasan al borrador al ejecutar
 **Aplicar cambios** o su atajo Enter.
 
 La distribución no crea un total externo, no cambia el catálogo ni modifica el
-precio maestro: actualiza directamente el precio unitario público de cada detalle
-del borrador. En modo web queda persistido en `SalesDraftLines`; en una caja
+precio maestro: actualiza directamente el descuento de cada detalle del borrador.
+En modo web queda persistido en `SalesDraftLines`; en una caja
 enrolada queda persistido en `PosDraftLines` de SQLite. Recargar la vista, reiniciar
 el proceso o capturar otro producto no revaloriza las líneas existentes. Si el
 mismo producto se captura después, se crea otra línea con su precio normal. El
-servidor conserva la autoridad de recalcular base, impuesto y total a partir del
-precio unitario de cada línea.
+servidor conserva la autoridad de validar permisos y recalcular base, impuesto y
+total. Costo y margen solo se habilitan cuando el producto no maneja inventario;
+el servidor rechaza cualquier intento de cambiar el costo de un producto que sí
+lo maneja.
 
 ### 5.3 Productos no codificados
 
@@ -534,6 +545,13 @@ La pantalla muestra siempre:
 - referencia requerida;
 - validaciones pendientes.
 
+La versión 2 de las plantillas `sales-invoice` y `sales-receipt` conserva en el
+snapshot de cada pago en efectivo el valor aplicado y `TenderedAmount`. Cuando
+este último existe, todas las representaciones (tirilla RAW, vista HTML, media
+carta/media oficio/carta y reimpresión) muestran inmediatamente después del
+total **Efectivo recibido** y **Cambio**. Los documentos históricos que no
+capturaron ese dato no inventan un valor.
+
 Reglas:
 
 - el cambio se entrega normalmente contra efectivo;
@@ -587,6 +605,16 @@ Reglas comunes:
 
 Recuperar pedidos es obligatorio en el MVP porque conecta la conversación de Auraly con el POS.
 
+Guardar un pedido conserva una fila por cada línea visible del POS, incluso si
+varias filas usan el mismo producto. Se preservan posición, cantidad, precio,
+descuento, origen del precio y costo documental; solo la reserva física se
+consolida por producto porque el inventario es una magnitud agregada. La creación
+resuelve catálogo y precios por lotes, inserta todas las líneas con `OPENJSON` y
+ejecuta una única transferencia de inventario. No se permiten consultas,
+requests ni escrituras por línea. La regresión de referencia exige respuesta en
+menos de un segundo para el escenario local de integración, sin builds ni otras
+cargas concurrentes.
+
 Cotizaciones, apartados, remisiones y domicilios deben permanecer en el modelo y la navegación bajo feature flags. Su activación comercial puede hacerse por negocio sin reescribir facturación.
 
 ---
@@ -632,6 +660,13 @@ Usuarios autorizados pueden consultar:
 - marcar “copia” cuando corresponda;
 - auditar quién reimprimió;
 - no volver a emitir ni consumir numeración.
+
+La configuración de impresora de pedidos se persiste en el nombre canónico
+singular y migra los campos plurales de instalaciones Edge anteriores. La
+impresión intenta primero el endpoint batch actual y, ante un Edge anterior que
+responda 404, obtiene el lote una vez y lo envía por la ruta de impresión legacy.
+Todas las tirillas terminan el pie `www.auralyapp.co` con solo la alimentación
+mínima requerida por el comando de corte; no agregan líneas en blanco propias.
 
 ### 12.5 Caja
 
@@ -876,6 +911,8 @@ Autorizaciones de supervisor guardan usuario autorizador; nunca solo un booleano
 - existe ayuda visible de atajos;
 - el foco se conserva;
 - permisos se validan en servidor y cliente;
+- la vista de devoluciones embebida recibe explícitamente el `BusinessId` de la
+  estación POS; la vista administrativa usa el negocio seleccionado del dashboard;
 - las funciones deshabilitadas por negocio no estorban la pantalla;
 - pedido de Auraly se convierte una sola vez;
 - reimpresión no genera una factura nueva.

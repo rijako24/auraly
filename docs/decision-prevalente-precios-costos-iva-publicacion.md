@@ -41,7 +41,7 @@ Auraly conserva ese comportamiento, pero no las cuatro escalas rígidas, los for
 
 | Concepto | Propietario | Uso |
 |---|---|---|
-| Precio costo | Pricing/Purchasing | Costo vigente con el que el negocio prepara el precio. Puede originarse en edición autorizada o en una entrada procesada. |
+| Precio costo | Pricing/Purchasing | Costo vigente con el que el negocio prepara el precio. Puede originarse en edición autorizada, en una entrada procesada o, para un producto con costo vinculado, del costo de su principal multiplicado por el factor configurado. |
 | Precio costo promedio | Inventory | Promedio móvil ponderado autoritativo del grupo de sedes que comparte precios; para una sede independiente usa solo sus bodegas. No es editable. |
 | Precio de venta | Pricing | Precio final preparado, incluido el IVA de venta, todavía no visible para facturación. |
 | Precio público | Pricing | Precio final publicado, incluido el IVA de venta, que consumen catálogo, pedidos y facturación. |
@@ -132,7 +132,7 @@ Muestra:
 
 - IVA de compra;
 - IVA de venta;
-- precio costo editable;
+- precio costo editable, salvo cuando está vinculado a un producto principal;
 - costo promedio de solo lectura, con su bodega;
 - margen editable;
 - precio de venta preparado editable;
@@ -151,6 +151,12 @@ Reglas reactivas:
 | Precio público | No editable | Nada |
 
 `Guardar precio preparado` actualiza costo, margen y `SalePrice`; jamás `PublicPrice`, catálogo u outbox.
+
+Para un vínculo con `ProductLinks.SharesPrice=1`, el nombre físico se conserva por
+compatibilidad pero la relación comparte únicamente el costo. La ficha muestra el
+costo derivado bloqueado, el producto principal y el factor. Un cambio del costo
+principal vuelve a preparar al hijo conservando su margen; los precios preparado y
+público de ambos productos se administran y publican de forma independiente.
 
 ## 6. Entrada de mercancía
 

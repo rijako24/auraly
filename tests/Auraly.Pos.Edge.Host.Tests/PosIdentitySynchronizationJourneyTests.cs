@@ -30,7 +30,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
                 "authoritative-v2", now, now.AddDays(1),
                 [new PosOfflineUserProjection(
                     userId, "admin", "Administrador Auraly",
-                    [CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesDiscount],
+                    [CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesChangePrice],
                     verifier)],
                 Cursor: 42);
             var handler = new MutableIdentityServerHandler(authoritative);
@@ -65,7 +65,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
             await synchronizer.SynchronizeAsync();
 
             var repaired = Assert.Single(await identities.ReadIdentitySummariesAsync());
-            Assert.Contains(CommercePermissionCodes.SalesDiscount, repaired.Permissions);
+            Assert.Contains(CommercePermissionCodes.SalesChangePrice, repaired.Permissions);
             Assert.False(await identities.RequiresFullSecuritySnapshotAsync());
             Assert.Equal(1, handler.RequestCount);
         }
@@ -264,7 +264,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
             handler.Snapshot = Snapshot(
                 "revision-2", now.AddMinutes(1), userId, "cashier-updated",
                 "Cajera sincronizada",
-                [CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesDiscount],
+                [CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesChangePrice],
                 verifier);
             await Assert.ThrowsAsync<HttpRequestException>(
                 () => synchronizer.SynchronizeAsync());
@@ -280,11 +280,11 @@ public sealed class PosIdentitySynchronizationJourneyTests
                 await identities.ReadIdentitySummariesAsync());
             Assert.Equal("cashier-updated", synchronized.Username);
             Assert.Equal("Cajera sincronizada", synchronized.DisplayName);
-            Assert.Contains(CommercePermissionCodes.SalesDiscount, synchronized.Permissions);
+            Assert.Contains(CommercePermissionCodes.SalesChangePrice, synchronized.Permissions);
             var reconnectedLogin = await identities.LoginAsync(
                 new PosLocalLoginRequest("cashier-updated", password));
             Assert.Equal("Cajera sincronizada", reconnectedLogin.DisplayName);
-            Assert.Contains(CommercePermissionCodes.SalesDiscount, reconnectedLogin.Permissions);
+            Assert.Contains(CommercePermissionCodes.SalesChangePrice, reconnectedLogin.Permissions);
             Assert.Contains(events.Read(), item =>
                 item.Category == "Usuario" &&
                 item.Title.Contains("Cajera sincronizada", StringComparison.Ordinal));

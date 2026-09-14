@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowDownLeft, PackageCheck, RotateCcw, Search, ShieldCheck, WalletCards } from "lucide-react";
+import { ArrowDownLeft, PackageCheck, RotateCcw, ShieldCheck, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -100,12 +101,7 @@ export default function PurchaseReturnsPage() {
     </section>
 
     <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[minmax(16rem,1fr)_11rem_11rem_auto] md:items-end">
-      <div className="relative min-w-0">
-        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input className="pl-9" value={search} onChange={(event) => {
-          setSearch(event.target.value); setPage(1);
-        }} placeholder="Entrada, factura, proveedor, bodega o producto" />
-      </div>
+      <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={list.isFetching} placeholder="Entrada, factura, proveedor, bodega o producto" />
       <div className="space-y-2"><Label>Desde</Label><DatePicker value={from} onChange={(value) => { setFrom(value); setPage(1); }} /></div>
       <div className="space-y-2"><Label>Hasta</Label><DatePicker value={to} onChange={(value) => { setTo(value); setPage(1); }} /></div>
       <Button variant={onlyAvailable ? "secondary" : "outline"} onClick={() => { setOnlyAvailable((value) => !value); setPage(1); }}>Solo con saldo</Button>

@@ -280,7 +280,7 @@ export function PosPaymentDialog({
           (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) ||
         paymentMethods.isLoading || paymentMethods.isError) return;
     await onConfirm(
-      settlement.appliedPayments.map(({ methodCode, amount, reference, cardFranchiseCode, approvalNumber, bankAccountId, notes }) => ({
+      settlement.appliedPayments.map(({ methodCode, amount, reference, cardFranchiseCode, approvalNumber, bankAccountId, notes, tenderedAmount }) => ({
         methodCode,
         amount,
         reference: reference?.trim() || null,
@@ -288,6 +288,7 @@ export function PosPaymentDialog({
         approvalNumber: approvalNumber?.trim() || null,
         bankAccountId: methodCode === "Transfer" && accountingEnabled ? bankAccountId ?? null : null,
         notes: methodCode === "Transfer" ? notes?.trim() || null : null,
+        tenderedAmount: methodCode === "Cash" ? tenderedAmount ?? null : null,
       })),
       settlement,
     );

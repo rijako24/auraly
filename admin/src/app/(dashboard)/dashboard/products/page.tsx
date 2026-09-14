@@ -108,7 +108,7 @@ export default function ProductsPage() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("details");
   const [form, setForm] = useState<ProductFormState>(emptyForm);
-  const { data, isLoading, isError, refetch } = useProducts({
+  const { data, isLoading, isFetching, isError, refetch } = useProducts({
     page,
     pageSize: 20,
     search: search || undefined,
@@ -484,6 +484,7 @@ export default function ProductsPage() {
           columns={columns}
           data={data?.items ?? []}
           isLoading={isLoading}
+          isSearching={isFetching}
           page={data?.page}
           pageSize={data?.pageSize}
           pageCount={data?.totalPages}

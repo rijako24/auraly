@@ -40,6 +40,11 @@ public sealed class SqlPricingStore(
               INNER JOIN dbo.GoodsReceipts g ON g.GoodsReceiptId=p.SourceDocumentId
               INNER JOIN dbo.Suppliers s ON s.SupplierId=g.SupplierId
               WHERE p.BusinessId=@BusinessId
+                AND NOT EXISTS(
+                  SELECT 1 FROM dbo.ProductLinks costLink
+                  WHERE costLink.BusinessId=p.BusinessId
+                    AND costLink.ChildProductId=p.ProductId
+                    AND costLink.SharesPrice=1 AND costLink.IsActive=1)
 
               UNION ALL
 
@@ -106,27 +111,13 @@ public sealed class SqlPricingStore(
               ORDER BY receipt.ReceivedAt DESC,receipt.GoodsReceiptId DESC,receiptLine.LineNumber DESC
             ) latestLandedCost
             WHERE b.TenantId=@TenantId
-              AND NOT EXISTS(
-                SELECT 1 FROM dbo.ProductLinks priceParent
-                WHERE priceParent.BusinessId=@BusinessId
-                  AND priceParent.ChildProductId=candidate.ProductId
-                  AND priceParent.SharesPrice=1 AND priceParent.IsActive=1)
               AND (@Status IS NULL OR candidate.Status=@Status
                    OR (@Status=N'Pending' AND candidate.Status IN(N'PendingReview',N'Approved')))
               AND (@SupplierId IS NULL OR candidate.SupplierId=@SupplierId)
               AND (@SourceDocumentId IS NULL OR candidate.SourceDocumentId=@SourceDocumentId)
               AND (@Search IS NULL OR candidate.ProductCode LIKE '%'+@Search+'%'
                    OR candidate.ProductName LIKE '%'+@Search+'%'
-                   OR candidate.SupplierName LIKE '%'+@Search+'%'
-                   OR EXISTS(
-                     SELECT 1 FROM dbo.ProductLinks priceChildLink
-                     INNER JOIN dbo.Products priceChild
-                       ON priceChild.ProductId=priceChildLink.ChildProductId
-                     WHERE priceChildLink.BusinessId=@BusinessId
-                       AND priceChildLink.ParentProductId=candidate.ProductId
-                       AND priceChildLink.SharesPrice=1 AND priceChildLink.IsActive=1
-                       AND (COALESCE(priceChild.ProductCode,priceChild.Sku) LIKE '%'+@Search+'%'
-                            OR priceChild.Name LIKE '%'+@Search+'%')))
+                   OR candidate.SupplierName LIKE '%'+@Search+'%')
             """;
         int total;
         await using (var count = new SqlCommand("SELECT COUNT(*) "+rows, connection))
@@ -140,56 +131,7 @@ public sealed class SqlPricingStore(
               TargetMarginPercent,SuggestedSalePrice,SalesTaxRate,EffectiveMarginAfterRounding,
               candidate.Status,candidate.CreatedAt,candidate.RowVersion,candidate.Origin,
               averageCost.AverageUnitCost,latestCost.LatestUnitCost,
-              latestLandedCost.LatestLandedUnitCost,
-              (SELECT child.ProductId,COALESCE(child.ProductCode,child.Sku,
-                        CONVERT(nvarchar(36),child.ProductId)) AS ProductCode,
-                       child.Name AS ProductName,link.PriceFactor,
-                       activePrice.Amount AS CurrentSalePrice,
-                       calculation.PreparedSalePrice,
-                       margin.TargetMarginPercent
-               FROM dbo.ProductLinks link
-               INNER JOIN dbo.Products child ON child.ProductId=link.ChildProductId
-               INNER JOIN dbo.ProductPrices activePrice
-                 ON activePrice.BusinessId=@BusinessId
-                AND activePrice.ProductId=link.ChildProductId AND activePrice.IsActive=1
-               LEFT JOIN dbo.TaxProfiles childTax ON childTax.TaxProfileId=child.TaxProfileId
-               OUTER APPLY(
-                 SELECT TOP(1) COALESCE(pending.TargetMarginPercent,
-                                        pending.EffectiveMarginPercent,
-                                        activePrice.TargetMarginPercent,
-                                        activePrice.EffectiveMarginPercent) AS TargetMarginPercent,
-                       COALESCE(pending.RoundingIncrement,activePrice.RoundingIncrement,1)
-                         AS RoundingIncrement,
-                       COALESCE(pending.RoundingMode,activePrice.RoundingMode,N'Nearest')
-                         AS RoundingMode
-                 FROM (SELECT 1 AS Anchor) source
-                 LEFT JOIN dbo.ProductPricePreparations pending
-                   ON pending.BusinessId=activePrice.BusinessId
-                  AND pending.ProductId=activePrice.ProductId
-                  AND pending.Status=N'Pending'
-                 ORDER BY pending.PreparedAt DESC,pending.ProductPricePreparationId DESC
-               ) margin
-               OUTER APPLY(
-                 SELECT CASE WHEN margin.TargetMarginPercent IS NULL
-                                   OR margin.TargetMarginPercent<0
-                                   OR margin.TargetMarginPercent>=100 THEN NULL
-                              ELSE ROUND(((candidate.ObservedUnitCost*link.PriceFactor)
-                                    /(1-(margin.TargetMarginPercent/100)))
-                                    *(1+(COALESCE(childTax.Rate,0)/100)),4) END AS RawSalePrice
-               ) raw
-               OUTER APPLY(
-                 SELECT CASE WHEN raw.RawSalePrice IS NULL THEN NULL
-                              ELSE ROUND((CASE margin.RoundingMode
-                                     WHEN N'Up' THEN CEILING(raw.RawSalePrice/margin.RoundingIncrement)
-                                     WHEN N'Down' THEN FLOOR(raw.RawSalePrice/margin.RoundingIncrement)
-                                     ELSE ROUND(raw.RawSalePrice/margin.RoundingIncrement,0)
-                                   END)*margin.RoundingIncrement,4) END AS PreparedSalePrice
-               ) calculation
-               WHERE link.BusinessId=@BusinessId
-                 AND link.ParentProductId=candidate.ProductId
-                 AND link.SharesPrice=1 AND link.IsActive=1
-               ORDER BY child.Name,child.ProductId
-               FOR JSON PATH) AS LinkedProductsJson
+              latestLandedCost.LatestLandedUnitCost
             """ + Environment.NewLine + rows + Environment.NewLine + """
             ORDER BY candidate.CreatedAt DESC,candidate.CandidateId
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
@@ -210,11 +152,7 @@ public sealed class SqlPricingStore(
                 reader.IsDBNull(15) ? null : reader.GetDecimal(15),reader.GetString(16),
                 reader.GetDateTimeOffset(17),Convert.ToBase64String(reader.GetFieldValue<byte[]>(18)),reader.GetString(19),
                 reader.IsDBNull(20) ? null : reader.GetDecimal(20),reader.IsDBNull(21) ? null : reader.GetDecimal(21),
-                reader.IsDBNull(22) ? null : reader.GetDecimal(22),
-                reader.IsDBNull(23)
-                    ? []
-                    : JsonSerializer.Deserialize<IReadOnlyList<LinkedPriceProductListItem>>(
-                        reader.GetString(23), new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? []));
+                reader.IsDBNull(22) ? null : reader.GetDecimal(22)));
         return new(items, query.Page, query.PageSize, total);
     }
     public async Task<PriceProposalSource?> GetProposalAsync(
@@ -223,7 +161,8 @@ public sealed class SqlPricingStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
-            SELECT p.PriceRevisionProposalId,p.ProductId,p.ObservedUnitCost,COALESCE(tax.Rate,0),p.Status,p.RowVersion,CAST(0 AS bit)
+            SELECT p.PriceRevisionProposalId,p.ProductId,p.ObservedUnitCost,
+              N'ObservedSupplierCost',COALESCE(tax.Rate,0),p.Status,p.RowVersion,CAST(0 AS bit)
             FROM dbo.PriceRevisionProposals p
             INNER JOIN dbo.Products x ON x.ProductId=p.ProductId
             LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=x.TaxProfileId
@@ -231,7 +170,7 @@ public sealed class SqlPricingStore(
             WHERE p.PriceRevisionProposalId=@ProposalId AND p.BusinessId=@BusinessId AND b.TenantId=@TenantId
             UNION ALL
             SELECT prepared.ProductPricePreparationId,prepared.ProductId,prepared.CostBasisAmount,
-              COALESCE(tax.Rate,0),N'Approved',prepared.RowVersion,CAST(1 AS bit)
+              prepared.CostBasisType,COALESCE(tax.Rate,0),N'Approved',prepared.RowVersion,CAST(1 AS bit)
             FROM dbo.ProductPricePreparations prepared
             INNER JOIN dbo.Products x ON x.ProductId=prepared.ProductId
             LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=x.TaxProfileId
@@ -244,9 +183,149 @@ public sealed class SqlPricingStore(
         AddScope(command, user);
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
-            ? new(reader.GetGuid(0), reader.GetGuid(1), reader.IsDBNull(2) ? null : reader.GetDecimal(2),reader.GetDecimal(3),
-                reader.GetString(4), reader.GetFieldValue<byte[]>(5),reader.GetBoolean(6))
+            ? new(reader.GetGuid(0), reader.GetGuid(1), reader.IsDBNull(2) ? null : reader.GetDecimal(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),reader.GetDecimal(4),
+                reader.GetString(5), reader.GetFieldValue<byte[]>(6),reader.GetBoolean(7))
             : null;
+    }
+
+    public async Task<IReadOnlyList<PriceProposalSource>> GetProposalsAsync(
+        PricingUserIdentity user,
+        IReadOnlyCollection<Guid> proposalIds,
+        CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            DECLARE @Ids TABLE(ProposalId UNIQUEIDENTIFIER PRIMARY KEY);
+            INSERT @Ids(ProposalId)
+            SELECT ProposalId
+            FROM OPENJSON(@ProposalIds) WITH(ProposalId UNIQUEIDENTIFIER '$');
+
+            SELECT proposal.PriceRevisionProposalId,proposal.ProductId,
+                   proposal.ObservedUnitCost,N'ObservedSupplierCost',COALESCE(tax.Rate,0),
+                   proposal.Status,proposal.RowVersion,CAST(0 AS bit)
+            FROM @Ids selected
+            INNER JOIN dbo.PriceRevisionProposals proposal
+              ON proposal.PriceRevisionProposalId=selected.ProposalId
+             AND proposal.BusinessId=@BusinessId
+            INNER JOIN dbo.Products product ON product.ProductId=proposal.ProductId
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=product.TaxProfileId
+            INNER JOIN dbo.Businesses business ON business.BusinessId=proposal.BusinessId
+                                             AND business.TenantId=@TenantId
+            WHERE NOT EXISTS(
+              SELECT 1 FROM dbo.ProductLinks costLink
+              WHERE costLink.BusinessId=proposal.BusinessId
+                AND costLink.ChildProductId=proposal.ProductId
+                AND costLink.SharesPrice=1 AND costLink.IsActive=1)
+
+            UNION ALL
+
+            SELECT preparation.ProductPricePreparationId,preparation.ProductId,
+                   preparation.CostBasisAmount,preparation.CostBasisType,COALESCE(tax.Rate,0),
+                   N'Approved',preparation.RowVersion,CAST(1 AS bit)
+            FROM @Ids selected
+            INNER JOIN dbo.ProductPricePreparations preparation
+              ON preparation.ProductPricePreparationId=selected.ProposalId
+             AND preparation.BusinessId=@BusinessId AND preparation.Status=N'Pending'
+            INNER JOIN dbo.Products product ON product.ProductId=preparation.ProductId
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=product.TaxProfileId
+            INNER JOIN dbo.Businesses business ON business.BusinessId=preparation.BusinessId
+                                             AND business.TenantId=@TenantId;
+            """, connection);
+        AddScope(command, user);
+        command.Parameters.Add("@ProposalIds", SqlDbType.NVarChar, -1).Value =
+            JsonSerializer.Serialize(proposalIds);
+        var result = new List<PriceProposalSource>(proposalIds.Count);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            result.Add(new(
+                reader.GetGuid(0),reader.GetGuid(1),
+                reader.IsDBNull(2) ? null : reader.GetDecimal(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),reader.GetDecimal(4),
+                reader.GetString(5),reader.GetFieldValue<byte[]>(6),reader.GetBoolean(7)));
+        return result;
+    }
+
+    public async Task<IReadOnlyList<PreparedPricePublication>> GetPendingPublicationsAsync(
+        PricingUserIdentity user,
+        PublishPendingPricesRequest request,
+        CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT
+              CASE WHEN proposal.PriceRevisionProposalId IS NULL
+                   THEN preparation.ProductPricePreparationId
+                   ELSE proposal.PriceRevisionProposalId END ProposalId,
+              preparation.ProductId,preparation.CostBasisAmount,
+              preparation.CostBasisType,preparation.InputMode,
+              preparation.TargetMarginPercent,preparation.PreparedAmount,
+              preparation.EffectiveMarginPercent,preparation.RoundingIncrement,
+              preparation.RoundingMode,
+              CASE WHEN proposal.PriceRevisionProposalId IS NULL
+                   THEN preparation.RowVersion ELSE proposal.RowVersion END ExpectedRowVersion,
+              CAST(CASE WHEN proposal.PriceRevisionProposalId IS NULL THEN 1 ELSE 0 END AS bit) IsManual
+            FROM dbo.ProductPricePreparations preparation
+            INNER JOIN dbo.Products product ON product.ProductId=preparation.ProductId
+            INNER JOIN dbo.Businesses business
+              ON business.BusinessId=preparation.BusinessId AND business.TenantId=@TenantId
+            LEFT JOIN dbo.PriceRevisionProposals proposal
+              ON proposal.PriceRevisionProposalId=preparation.SourceProposalId
+             AND proposal.BusinessId=preparation.BusinessId
+             AND proposal.Status IN(N'PendingReview',N'Approved')
+            OUTER APPLY(
+              SELECT TOP(1) supplier.SupplierId,supplier.Name
+              FROM dbo.SupplierProducts supplierProduct
+              INNER JOIN dbo.Suppliers supplier
+                ON supplier.SupplierId=supplierProduct.SupplierId
+               AND supplier.BusinessId=supplierProduct.BusinessId
+              WHERE supplierProduct.BusinessId=preparation.BusinessId
+                AND supplierProduct.ProductId=preparation.ProductId
+                AND supplierProduct.IsActive=1
+              ORDER BY supplierProduct.IsPrimary DESC,supplierProduct.CreatedAt DESC
+            ) productSupplier
+            LEFT JOIN dbo.GoodsReceipts receipt
+              ON receipt.GoodsReceiptId=proposal.SourceDocumentId
+             AND receipt.BusinessId=proposal.BusinessId
+            LEFT JOIN dbo.Suppliers receiptSupplier
+              ON receiptSupplier.SupplierId=receipt.SupplierId
+             AND receiptSupplier.BusinessId=receipt.BusinessId
+            WHERE preparation.BusinessId=@BusinessId
+              AND preparation.Status=N'Pending'
+              AND (proposal.PriceRevisionProposalId IS NOT NULL
+                   OR preparation.SourceProposalId IS NULL
+                      AND preparation.PreparationOrigin IN(N'Product',N'LinkedProduct',N'Migration'))
+              AND (proposal.PriceRevisionProposalId IS NULL OR NOT EXISTS(
+                SELECT 1 FROM dbo.ProductLinks costLink
+                WHERE costLink.BusinessId=preparation.BusinessId
+                  AND costLink.ChildProductId=preparation.ProductId
+                  AND costLink.SharesPrice=1 AND costLink.IsActive=1))
+              AND (@SupplierId IS NULL OR COALESCE(receiptSupplier.SupplierId,productSupplier.SupplierId)=@SupplierId)
+              AND (@SourceDocumentId IS NULL OR proposal.SourceDocumentId=@SourceDocumentId)
+              AND (@Search IS NULL
+                   OR COALESCE(product.ProductCode,product.Sku,CONVERT(nvarchar(36),product.ProductId)) LIKE N'%'+@Search+N'%'
+                   OR product.Name LIKE N'%'+@Search+N'%'
+                   OR COALESCE(receiptSupplier.Name,productSupplier.Name,N'Ajuste desde producto') LIKE N'%'+@Search+N'%')
+            ORDER BY preparation.PreparedAt DESC,preparation.ProductPricePreparationId;
+            """, connection);
+        AddScope(command, user);
+        command.Parameters.Add("@Search", SqlDbType.NVarChar, 120).Value =
+            (object?)request.Search ?? DBNull.Value;
+        command.Parameters.AddWithValue("@SupplierId", (object?)request.SupplierId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@SourceDocumentId", (object?)request.SourceDocumentId ?? DBNull.Value);
+        var result = new List<PreparedPricePublication>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            result.Add(new(
+                reader.GetGuid(0),reader.GetGuid(1),
+                reader.IsDBNull(2) ? null : reader.GetDecimal(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetDecimal(5),reader.GetDecimal(6),
+                reader.IsDBNull(7) ? null : reader.GetDecimal(7),reader.GetDecimal(8),
+                reader.GetString(9),reader.GetFieldValue<byte[]>(10),reader.GetBoolean(11)));
+        return result;
     }
 
     public async Task ReviewAsync(
@@ -470,132 +549,12 @@ public sealed class SqlPricingStore(
         await connection.OpenAsync(ct);
         await using var transaction =
             (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-        var published = new List<PublishedPrice>(values.Count);
-        long highestCursor = 0;
         try
         {
-            await EnsureOnlyPriceParentsArePublishedAsync(
-                connection, transaction, user, values, ct);
-            var targetBusinessIds = await TargetBusinessIdsAsync(
-                connection, transaction, user, ct);
-            foreach (var value in values)
-            {
-                await ValidateProposalAsync(connection, transaction, user, value, ct);
-                var priceId = ids.NewId();
-                var notificationId = ids.NewId();
-                await using var command = new SqlCommand("""
-                    DECLARE @SharesPrices BIT,@TenantIdForBusiness UNIQUEIDENTIFIER;
-                    SELECT @SharesPrices=SharesProductPrices,@TenantIdForBusiness=TenantId
-                    FROM dbo.Businesses WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId;
-                    DECLARE @Targets TABLE(BusinessId UNIQUEIDENTIFIER PRIMARY KEY,PreviousSalePrice DECIMAL(19,4));
-                    INSERT @Targets
-                    SELECT business.BusinessId,price.Amount
-                    FROM dbo.Businesses business
-                    INNER JOIN dbo.ProductPrices price WITH(UPDLOCK,HOLDLOCK)
-                      ON price.BusinessId=business.BusinessId AND price.ProductId=@ProductId AND price.IsActive=1
-                    WHERE (@SharesPrices=1 AND business.TenantId=@TenantIdForBusiness
-                           AND business.SharesProductPrices=1 AND business.IsActive=1)
-                       OR (@SharesPrices=0 AND business.BusinessId=@BusinessId);
-                    IF NOT EXISTS(SELECT 1 FROM @Targets WHERE BusinessId=@BusinessId)
-                      THROW 51601,'The active product price no longer exists.',1;
-
-                    UPDATE price
-                    SET IsActive=0,ValidUntil=@Now
-                    FROM dbo.ProductPrices price INNER JOIN @Targets target ON target.BusinessId=price.BusinessId
-                    WHERE price.ProductId=@ProductId AND price.IsActive=1;
-
-                    INSERT dbo.ProductPrices
-                      (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
-                       CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,
-                       InputMode,RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt,PublishedByUserId,PublishedAt)
-                    SELECT
-                      CASE WHEN target.BusinessId=@BusinessId THEN @ProductPriceId ELSE NEWID() END,
-                      target.BusinessId,@ProductId,@SalePrice,@SalePrice,N'COP',
-                       @CostBasisType,@CostBasis,@TargetMargin,@EffectiveMargin,
-                       @InputMode,@RoundingIncrement,@RoundingMode,@Now,1,@Now,@UserId,@Now
-                    FROM @Targets target;
-                    IF @IsManual=0
-                    BEGIN
-                      UPDATE proposal
-                      SET Status=N'Published',ReviewedByUserId=@UserId,ReviewedAt=@Now,
-                          TargetMarginPercent=@TargetMargin,SuggestedSalePrice=@SalePrice,
-                          RoundedSuggestedSalePrice=@SalePrice,EffectiveMarginAfterRounding=@EffectiveMargin,
-                          LastInputMode=@InputMode
-                      FROM dbo.PriceRevisionProposals proposal
-                      INNER JOIN @Targets target ON target.BusinessId=proposal.BusinessId
-                      WHERE proposal.ProductId=@ProductId
-                        AND proposal.Status IN(N'PendingReview',N'Approved');
-                    END
-
-                    UPDATE preparation
-                    SET Status=N'Published',PublishedAt=@Now
-                    FROM dbo.ProductPricePreparations preparation
-                    INNER JOIN @Targets target ON target.BusinessId=preparation.BusinessId
-                    WHERE preparation.ProductId=@ProductId AND preparation.Status=N'Pending';
-
-                    DECLARE @Change TABLE(CatalogChangeId BIGINT NOT NULL,BusinessId UNIQUEIDENTIFIER NOT NULL);
-                    INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
-                      OUTPUT inserted.CatalogChangeId,inserted.BusinessId INTO @Change
-                      SELECT BusinessId,@ProductId,N'Upsert',@Now FROM @Targets;
-                    INSERT dbo.PosSynchronizationOutboxMessages
-                      (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-                    SELECT CASE WHEN BusinessId=@BusinessId THEN @NotificationId ELSE NEWID() END,
-                           BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
-
-                    INSERT dbo.PricePublicationAudits
-                      (PricePublicationAuditId,BusinessId,ProductId,ProductPriceId,
-                       ProposalId,PublicationOrigin,PreviousSalePrice,PublishedSalePrice,CostBasisAmount,
-                       EffectiveMarginPercent,InputMode,PublishedByUserId,PublishedAt)
-                    SELECT CASE WHEN target.BusinessId=@BusinessId THEN @AuditId ELSE NEWID() END,
-                           target.BusinessId,@ProductId,price.ProductPriceId,
-                           CASE WHEN target.BusinessId=@BusinessId THEN @AuditProposalId ELSE NULL END,
-                           @PublicationOrigin,target.PreviousSalePrice,@SalePrice,@CostBasis,
-                           @EffectiveMargin,@InputMode,@UserId,@Now
-                    FROM @Targets target
-                    INNER JOIN dbo.ProductPrices price ON price.BusinessId=target.BusinessId
-                      AND price.ProductId=@ProductId AND price.IsActive=1;
-
-                    SELECT MAX(CatalogChangeId) FROM @Change;
-                    """, connection, transaction);
-                AddScope(command, user);
-                command.Parameters.AddWithValue("@ProductPriceId", priceId);
-                command.Parameters.AddWithValue("@AuditId", ids.NewId());
-                command.Parameters.AddWithValue("@NotificationId", notificationId);
-                command.Parameters.AddWithValue("@ProposalId", value.ProposalId);
-                command.Parameters.AddWithValue("@IsManual", value.IsManual);
-                command.Parameters.Add("@AuditProposalId", SqlDbType.UniqueIdentifier).Value =
-                    value.IsManual ? DBNull.Value : value.ProposalId;
-                command.Parameters.AddWithValue("@PublicationOrigin", value.IsManual ? "Manual" : "ReceiptProposal");
-                command.Parameters.AddWithValue("@ProductId", value.ProductId);
-                command.Parameters.Add("@CostBasis", SqlDbType.Decimal).Value =
-                    (object?)value.CostBasisAmount ?? DBNull.Value;
-                command.Parameters["@CostBasis"].Precision = 19;
-                command.Parameters["@CostBasis"].Scale = 4;
-                command.Parameters.AddWithValue("@CostBasisType", value.IsManual ? "Manual" : "ObservedSupplierCost");
-                command.Parameters.AddWithValue("@TargetMargin", (object?)value.TargetMarginPercent ?? DBNull.Value);
-                command.Parameters.AddWithValue("@EffectiveMargin", (object?)value.EffectiveMarginPercent ?? DBNull.Value);
-                command.Parameters.AddWithValue("@InputMode", value.InputMode);
-                command.Parameters.AddWithValue("@RoundingIncrement", value.RoundingIncrement);
-                command.Parameters.AddWithValue("@RoundingMode", value.RoundingMode);
-                command.Parameters.AddWithValue("@SalePrice", value.SalePrice);
-                command.Parameters.AddWithValue("@Now", now);
-                command.Parameters.Add("@RowVersion", SqlDbType.Timestamp).Value = value.ExpectedRowVersion;
-                var cursor = Convert.ToInt64(await command.ExecuteScalarAsync(ct));
-                highestCursor = Math.Max(highestCursor, cursor);
-                published.Add(new(priceId, value.ProposalId, value.ProductId,
-                    value.SalePrice, value.EffectiveMarginPercent, cursor, now));
-                var linked = await PublishLinkedPricesAsync(
-                    connection,
-                    transaction,
-                    user,
-                    value,
-                    now,
-                    ct);
-                published.AddRange(linked);
-                if (linked.Count > 0) highestCursor = Math.Max(highestCursor, linked.Max(item => item.CatalogCursor));
-            }
+            var result = await PublishBatchAsync(
+                connection, transaction, user, values, now, ct);
             await transaction.CommitAsync(ct);
-            return new(new(published, highestCursor), targetBusinessIds);
+            return result;
         }
         catch (SqlException exception) when (exception.Number is 51600 or 51601 or 2601 or 2627)
         {
@@ -609,138 +568,123 @@ public sealed class SqlPricingStore(
         }
     }
 
-    private static async Task EnsureOnlyPriceParentsArePublishedAsync(
+    private static async Task<PricePublicationStoreResult> PublishBatchAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         PricingUserIdentity user,
         IReadOnlyList<PreparedPricePublication> values,
-        CancellationToken ct)
-    {
-        await using var command = new SqlCommand("""
-            IF EXISTS(
-              SELECT 1
-              FROM OPENJSON(@ProductIds) WITH(ProductId UNIQUEIDENTIFIER '$') selected
-              INNER JOIN dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
-                ON link.BusinessId=@BusinessId AND link.ChildProductId=selected.ProductId
-               AND link.SharesPrice=1 AND link.IsActive=1)
-              THROW 51601,'Los productos vinculados se publican únicamente desde su producto principal.',1;
-            """, connection, transaction);
-        command.Parameters.AddWithValue(
-            "@ProductIds",
-            JsonSerializer.Serialize(values.Select(value => value.ProductId)));
-        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-        await command.ExecuteNonQueryAsync(ct);
-    }
-
-    private static async Task<IReadOnlyList<PublishedPrice>> PublishLinkedPricesAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        PricingUserIdentity user,
-        PreparedPricePublication source,
         DateTimeOffset now,
         CancellationToken ct)
     {
         await using var command = new SqlCommand("""
-            DECLARE @SharesPrices BIT;
-            SELECT @SharesPrices=SharesProductPrices
+            CREATE TABLE #Batch(
+              Ordinal INT NOT NULL PRIMARY KEY,
+              ProposalId UNIQUEIDENTIFIER NOT NULL UNIQUE,
+              ProductId UNIQUEIDENTIFIER NOT NULL UNIQUE,
+              CostBasisAmount DECIMAL(19,6) NULL,
+              CostBasisType NVARCHAR(32) NULL,
+              InputMode NVARCHAR(16) NOT NULL,
+              TargetMarginPercent DECIMAL(9,6) NULL,
+              SalePrice DECIMAL(19,4) NOT NULL,
+              EffectiveMarginPercent DECIMAL(9,6) NULL,
+              RoundingIncrement DECIMAL(19,4) NOT NULL,
+              RoundingMode NVARCHAR(16) NOT NULL,
+              ExpectedRowVersion BINARY(8) NOT NULL,
+              IsManual BIT NOT NULL);
+
+            INSERT #Batch
+            SELECT CONVERT(INT,source.[key]),value.ProposalId,value.ProductId,
+                   value.CostBasisAmount,value.CostBasisType,value.InputMode,
+                   value.TargetMarginPercent,value.SalePrice,
+                   value.EffectiveMarginPercent,value.RoundingIncrement,
+                   value.RoundingMode,CONVERT(BINARY(8),value.ExpectedRowVersion,2),
+                   value.IsManual
+            FROM OPENJSON(@BatchJson) source
+            CROSS APPLY OPENJSON(source.value) WITH(
+              ProposalId UNIQUEIDENTIFIER '$.ProposalId',
+              ProductId UNIQUEIDENTIFIER '$.ProductId',
+              CostBasisAmount DECIMAL(19,6) '$.CostBasisAmount',
+              CostBasisType NVARCHAR(32) '$.CostBasisType',
+              InputMode NVARCHAR(16) '$.InputMode',
+              TargetMarginPercent DECIMAL(9,6) '$.TargetMarginPercent',
+              SalePrice DECIMAL(19,4) '$.SalePrice',
+              EffectiveMarginPercent DECIMAL(9,6) '$.EffectiveMarginPercent',
+              RoundingIncrement DECIMAL(19,4) '$.RoundingIncrement',
+              RoundingMode NVARCHAR(16) '$.RoundingMode',
+              ExpectedRowVersion VARCHAR(16) '$.ExpectedRowVersion',
+              IsManual BIT '$.IsManual') value;
+
+            IF EXISTS(
+              SELECT 1 FROM #Batch batch
+              LEFT JOIN dbo.ProductPricePreparations preparation WITH(UPDLOCK,HOLDLOCK)
+                ON batch.IsManual=1
+               AND preparation.ProductPricePreparationId=batch.ProposalId
+               AND preparation.ProductId=batch.ProductId
+               AND preparation.BusinessId=@BusinessId
+               AND preparation.RowVersion=batch.ExpectedRowVersion
+               AND preparation.Status=N'Pending'
+              LEFT JOIN dbo.PriceRevisionProposals proposal WITH(UPDLOCK,HOLDLOCK)
+                ON batch.IsManual=0
+               AND proposal.PriceRevisionProposalId=batch.ProposalId
+               AND proposal.ProductId=batch.ProductId
+               AND proposal.BusinessId=@BusinessId
+               AND proposal.RowVersion=batch.ExpectedRowVersion
+               AND proposal.Status IN(N'PendingReview',N'Approved')
+              WHERE (batch.IsManual=1 AND preparation.ProductPricePreparationId IS NULL)
+                 OR (batch.IsManual=0 AND proposal.PriceRevisionProposalId IS NULL))
+              THROW 51600,'Uno o más precios preparados cambiaron o ya fueron publicados.',1;
+
+            DECLARE @SharesPrices BIT,@ScopeTenantId UNIQUEIDENTIFIER;
+            SELECT @SharesPrices=SharesProductPrices,@ScopeTenantId=TenantId
             FROM dbo.Businesses WITH(UPDLOCK,HOLDLOCK)
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
 
-            DECLARE @Links TABLE(
-              ProductId UNIQUEIDENTIFIER PRIMARY KEY,
-              PriceFactor DECIMAL(19,6) NOT NULL);
-            INSERT @Links(ProductId,PriceFactor)
-            SELECT ChildProductId,PriceFactor
-            FROM dbo.ProductLinks WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND ParentProductId=@SourceProductId
-              AND SharesPrice=1 AND IsActive=1;
-
-            IF EXISTS(SELECT 1 FROM @Links) AND (@SourceCost IS NULL OR @SourceCost<=0)
-              THROW 51600,'El producto principal necesita un costo válido para publicar sus productos vinculados.',1;
-
-            DECLARE @Candidates TABLE(
+            CREATE TABLE #Targets(
+              Ordinal INT NOT NULL,
               BusinessId UNIQUEIDENTIFIER NOT NULL,
+              ProposalId UNIQUEIDENTIFIER NOT NULL,
               ProductId UNIQUEIDENTIFIER NOT NULL,
-              PreviousSalePrice DECIMAL(19,4) NOT NULL,
               ProductPriceId UNIQUEIDENTIFIER NOT NULL,
-              CostBasis DECIMAL(19,6) NOT NULL,
-              TargetMargin DECIMAL(9,6) NULL,
-              TaxRate DECIMAL(9,6) NOT NULL,
-              RoundingIncrement DECIMAL(19,4) NOT NULL,
-              RoundingMode NVARCHAR(16) NOT NULL,
-              PRIMARY KEY(BusinessId,ProductId));
-            INSERT @Candidates
-            SELECT price.BusinessId,link.ProductId,price.Amount,NEWID(),
-                   ROUND(@SourceCost*link.PriceFactor,6),
-                   COALESCE(preparation.TargetMarginPercent,preparation.EffectiveMarginPercent,
-                            price.TargetMarginPercent,price.EffectiveMarginPercent),
-                   COALESCE(tax.Rate,0),
-                   COALESCE(preparation.RoundingIncrement,price.RoundingIncrement,1),
-                   COALESCE(preparation.RoundingMode,price.RoundingMode,N'Nearest')
-            FROM @Links link
-            INNER JOIN dbo.ProductPrices price WITH(UPDLOCK,HOLDLOCK)
-              ON price.ProductId=link.ProductId AND price.IsActive=1
-            INNER JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
-            INNER JOIN dbo.Products product
-              ON product.ProductId=link.ProductId AND product.TenantId=@TenantId
-            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=product.TaxProfileId
-            OUTER APPLY (
-              SELECT TOP(1) pending.TargetMarginPercent,pending.EffectiveMarginPercent,
-                pending.RoundingIncrement,pending.RoundingMode
-              FROM dbo.ProductPricePreparations pending WITH(UPDLOCK,HOLDLOCK)
-              WHERE pending.BusinessId=price.BusinessId AND pending.ProductId=price.ProductId
-                AND pending.Status=N'Pending'
-              ORDER BY pending.PreparedAt DESC,pending.ProductPricePreparationId DESC) preparation
-            WHERE (@SharesPrices=1 AND target.TenantId=@TenantId
-                   AND target.SharesProductPrices=1 AND target.IsActive=1)
-               OR (@SharesPrices=0 AND target.BusinessId=@BusinessId);
-
-            IF EXISTS(
-              SELECT 1 FROM @Links link
-              WHERE NOT EXISTS(
-                SELECT 1 FROM @Candidates candidate
-                WHERE candidate.BusinessId=@BusinessId AND candidate.ProductId=link.ProductId))
-              THROW 51600,'Un producto vinculado no tiene un precio activo para publicar.',1;
-            IF EXISTS(
-              SELECT 1 FROM @Candidates
-              WHERE TargetMargin IS NULL OR TargetMargin<0 OR TargetMargin>=100
-                 OR RoundingIncrement<=0 OR RoundingMode NOT IN(N'Nearest',N'Up',N'Down'))
-              THROW 51600,'Un producto vinculado necesita un margen y redondeo válidos para publicar su precio.',1;
-
-            DECLARE @Targets TABLE(
-              BusinessId UNIQUEIDENTIFIER NOT NULL,
-              ProductId UNIQUEIDENTIFIER NOT NULL,
               PreviousSalePrice DECIMAL(19,4) NOT NULL,
-              ProductPriceId UNIQUEIDENTIFIER NOT NULL,
-              CostBasis DECIMAL(19,6) NOT NULL,
-              TargetMargin DECIMAL(9,6) NOT NULL,
+              CostBasisAmount DECIMAL(19,6) NULL,
+              CostBasisType NVARCHAR(32) NULL,
+              InputMode NVARCHAR(16) NOT NULL,
+              TargetMarginPercent DECIMAL(9,6) NULL,
               SalePrice DECIMAL(19,4) NOT NULL,
-              EffectiveMargin DECIMAL(9,6) NULL,
+              EffectiveMarginPercent DECIMAL(9,6) NULL,
               RoundingIncrement DECIMAL(19,4) NOT NULL,
               RoundingMode NVARCHAR(16) NOT NULL,
+              IsManual BIT NOT NULL,
               PRIMARY KEY(BusinessId,ProductId));
-            INSERT @Targets
-            SELECT candidate.BusinessId,candidate.ProductId,candidate.PreviousSalePrice,
-                   candidate.ProductPriceId,candidate.CostBasis,candidate.TargetMargin,
-                   rounded.SalePrice,
-                   ROUND(100-(100*candidate.CostBasis/
-                     (rounded.SalePrice/(1+(candidate.TaxRate/100)))),6),
-                   candidate.RoundingIncrement,candidate.RoundingMode
-            FROM @Candidates candidate
-            CROSS APPLY (
-              SELECT ROUND((candidate.CostBasis/(1-(candidate.TargetMargin/100)))
-                       *(1+(candidate.TaxRate/100)),4) AS RawSalePrice) raw
-            CROSS APPLY (
-              SELECT ROUND((CASE candidate.RoundingMode
-                       WHEN N'Up' THEN CEILING(raw.RawSalePrice/candidate.RoundingIncrement)
-                       WHEN N'Down' THEN FLOOR(raw.RawSalePrice/candidate.RoundingIncrement)
-                       ELSE ROUND(raw.RawSalePrice/candidate.RoundingIncrement,0)
-                     END)*candidate.RoundingIncrement,4) AS SalePrice) rounded;
 
-            UPDATE price SET IsActive=0,ValidUntil=@Now
+            INSERT #Targets
+            SELECT batch.Ordinal,business.BusinessId,batch.ProposalId,batch.ProductId,
+                   NEWID(),price.Amount,batch.CostBasisAmount,batch.CostBasisType,
+                   batch.InputMode,batch.TargetMarginPercent,batch.SalePrice,
+                   batch.EffectiveMarginPercent,batch.RoundingIncrement,
+                   batch.RoundingMode,batch.IsManual
+            FROM #Batch batch
+            INNER JOIN dbo.Businesses business
+              ON (@SharesPrices=1 AND business.TenantId=@ScopeTenantId
+                  AND business.SharesProductPrices=1 AND business.IsActive=1)
+               OR (@SharesPrices=0 AND business.BusinessId=@BusinessId)
+            INNER JOIN dbo.ProductPrices price WITH(UPDLOCK,HOLDLOCK)
+              ON price.BusinessId=business.BusinessId
+             AND price.ProductId=batch.ProductId AND price.IsActive=1;
+
+            IF EXISTS(
+              SELECT 1 FROM #Batch batch
+              WHERE NOT EXISTS(
+                SELECT 1 FROM #Targets target
+                WHERE target.BusinessId=@BusinessId
+                  AND target.ProductId=batch.ProductId))
+              THROW 51601,'Uno o más productos ya no tienen un precio base activo.',1;
+
+            UPDATE price
+            SET IsActive=0,ValidUntil=@Now
             FROM dbo.ProductPrices price
-            INNER JOIN @Targets target
-              ON target.BusinessId=price.BusinessId AND target.ProductId=price.ProductId
+            INNER JOIN #Targets target ON target.BusinessId=price.BusinessId
+                                      AND target.ProductId=price.ProductId
             WHERE price.IsActive=1;
 
             INSERT dbo.ProductPrices
@@ -749,80 +693,105 @@ public sealed class SqlPricingStore(
                InputMode,RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt,
                PublishedByUserId,PublishedAt)
             SELECT ProductPriceId,BusinessId,ProductId,SalePrice,SalePrice,N'COP',
-                   N'LinkedProduct',CostBasis,TargetMargin,EffectiveMargin,N'Margin',
-                   RoundingIncrement,RoundingMode,@Now,1,@Now,@UserId,@Now
-            FROM @Targets;
-
-            UPDATE preparation SET Status=N'Superseded',SupersededAt=@Now
-            FROM dbo.ProductPricePreparations preparation
-            INNER JOIN @Targets target
-              ON target.BusinessId=preparation.BusinessId AND target.ProductId=preparation.ProductId
-            WHERE preparation.Status=N'Pending';
-            INSERT dbo.ProductPricePreparations
-              (ProductPricePreparationId,BusinessId,ProductId,SourceProductId,
-               PreparationOrigin,PublicAmountSnapshot,PreparedAmount,CostBasisType,
-               CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,
-               RoundingIncrement,RoundingMode,Status,PreparedByUserId,PreparedAt,PublishedAt)
-            SELECT NEWID(),BusinessId,ProductId,@SourceProductId,N'LinkedProduct',
-                   PreviousSalePrice,SalePrice,N'LinkedProduct',CostBasis,TargetMargin,
-                   EffectiveMargin,N'Margin',RoundingIncrement,RoundingMode,N'Published',
-                   @UserId,@Now,@Now
-            FROM @Targets;
+                   CostBasisType,CostBasisAmount,TargetMarginPercent,
+                   EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,
+                   @Now,1,@Now,@UserId,@Now
+            FROM #Targets;
 
             UPDATE proposal
             SET Status=N'Published',ReviewedByUserId=@UserId,ReviewedAt=@Now,
-                TargetMarginPercent=target.TargetMargin,SuggestedSalePrice=target.SalePrice,
+                TargetMarginPercent=target.TargetMarginPercent,
+                SuggestedSalePrice=target.SalePrice,
                 RoundedSuggestedSalePrice=target.SalePrice,
-                EffectiveMarginAfterRounding=target.EffectiveMargin,LastInputMode=N'Margin'
+                EffectiveMarginAfterRounding=target.EffectiveMarginPercent,
+                LastInputMode=target.InputMode
             FROM dbo.PriceRevisionProposals proposal
-            INNER JOIN @Targets target
-              ON target.BusinessId=proposal.BusinessId AND target.ProductId=proposal.ProductId
+            INNER JOIN #Targets target ON target.BusinessId=proposal.BusinessId
+                                      AND target.ProductId=proposal.ProductId
+                                      AND target.IsManual=0
             WHERE proposal.Status IN(N'PendingReview',N'Approved');
 
-            DECLARE @Changes TABLE(
+            UPDATE preparation
+            SET Status=N'Published',PublishedAt=@Now
+            FROM dbo.ProductPricePreparations preparation
+            INNER JOIN #Targets target ON target.BusinessId=preparation.BusinessId
+                                      AND target.ProductId=preparation.ProductId
+            WHERE preparation.Status=N'Pending';
+
+            CREATE TABLE #Changes(
               CatalogChangeId BIGINT NOT NULL,
               BusinessId UNIQUEIDENTIFIER NOT NULL,
-              ProductId UNIQUEIDENTIFIER NOT NULL);
+              ProductId UNIQUEIDENTIFIER NOT NULL,
+              PRIMARY KEY(BusinessId,ProductId));
             INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
-              OUTPUT inserted.CatalogChangeId,inserted.BusinessId,inserted.ProductId INTO @Changes
-              SELECT BusinessId,ProductId,N'Upsert',@Now FROM @Targets;
+              OUTPUT inserted.CatalogChangeId,inserted.BusinessId,inserted.ProductId
+                INTO #Changes
+              SELECT BusinessId,ProductId,N'Upsert',@Now FROM #Targets;
+
             INSERT dbo.PosSynchronizationOutboxMessages
               (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-            SELECT NEWID(),BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Changes;
+            SELECT NEWID(),BusinessId,N'Catalog',MAX(CatalogChangeId),@Now
+            FROM #Changes
+            GROUP BY BusinessId;
 
             INSERT dbo.PricePublicationAudits
               (PricePublicationAuditId,BusinessId,ProductId,ProductPriceId,ProposalId,
                PublicationOrigin,PreviousSalePrice,PublishedSalePrice,CostBasisAmount,
                EffectiveMarginPercent,InputMode,PublishedByUserId,PublishedAt)
-            SELECT NEWID(),BusinessId,ProductId,ProductPriceId,NULL,N'LinkedProduct',
-                   PreviousSalePrice,SalePrice,CostBasis,EffectiveMargin,N'Margin',@UserId,@Now
-            FROM @Targets;
+            SELECT NEWID(),target.BusinessId,target.ProductId,target.ProductPriceId,
+                   CASE WHEN target.BusinessId=@BusinessId AND target.IsManual=0
+                        THEN target.ProposalId ELSE NULL END,
+                   CASE WHEN target.IsManual=0 THEN N'ReceiptProposal'
+                        WHEN target.CostBasisType=N'LinkedProduct' THEN N'LinkedProduct'
+                        ELSE N'Manual' END,
+                   target.PreviousSalePrice,target.SalePrice,target.CostBasisAmount,
+                   target.EffectiveMarginPercent,target.InputMode,@UserId,@Now
+            FROM #Targets target;
 
-            SELECT target.ProductPriceId,@SourceProposalId,target.ProductId,target.SalePrice,
-                   target.EffectiveMargin,change.CatalogChangeId,@Now
-            FROM @Targets target
-            INNER JOIN @Changes change ON change.BusinessId=target.BusinessId
-              AND change.ProductId=target.ProductId
+            SELECT target.ProductPriceId,target.ProposalId,target.ProductId,
+                   target.SalePrice,target.EffectiveMarginPercent,
+                   change.CatalogChangeId,@Now
+            FROM #Targets target
+            INNER JOIN #Changes change ON change.BusinessId=target.BusinessId
+                                      AND change.ProductId=target.ProductId
             WHERE target.BusinessId=@BusinessId
-            ORDER BY target.ProductId;
+            ORDER BY target.Ordinal;
+
+            SELECT COALESCE(MAX(CatalogChangeId),0) FROM #Changes;
+            SELECT DISTINCT BusinessId FROM #Targets ORDER BY BusinessId;
             """, connection, transaction);
         AddScope(command, user);
-        command.Parameters.AddWithValue("@SourceProductId", source.ProductId);
-        command.Parameters.AddWithValue("@SourceProposalId", source.ProposalId);
-        command.Parameters.Add("@SourceCost", SqlDbType.Decimal).Value =
-            (object?)source.CostBasisAmount ?? DBNull.Value;
-        command.Parameters["@SourceCost"].Precision = 19;
-        command.Parameters["@SourceCost"].Scale = 6;
         command.Parameters.AddWithValue("@Now", now);
+        command.Parameters.Add("@BatchJson", SqlDbType.NVarChar, -1).Value =
+            JsonSerializer.Serialize(values.Select(value => new
+            {
+                value.ProposalId,
+                value.ProductId,
+                value.CostBasisAmount,
+                value.CostBasisType,
+                value.InputMode,
+                value.TargetMarginPercent,
+                value.SalePrice,
+                value.EffectiveMarginPercent,
+                value.RoundingIncrement,
+                value.RoundingMode,
+                ExpectedRowVersion = Convert.ToHexString(value.ExpectedRowVersion),
+                value.IsManual
+            }));
 
-        var result = new List<PublishedPrice>();
+        var published = new List<PublishedPrice>(values.Count);
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
-            result.Add(new(
-                reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-                reader.GetDecimal(3), reader.IsDBNull(4) ? null : reader.GetDecimal(4),
-                reader.GetInt64(5), reader.GetDateTimeOffset(6)));
-        return result;
+            published.Add(new(
+                reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),reader.GetDecimal(3),
+                reader.IsDBNull(4) ? null : reader.GetDecimal(4),reader.GetInt64(5),
+                reader.GetDateTimeOffset(6)));
+        await reader.NextResultAsync(ct);
+        var highestCursor = await reader.ReadAsync(ct) ? reader.GetInt64(0) : 0;
+        await reader.NextResultAsync(ct);
+        var businessIds = new List<Guid>();
+        while (await reader.ReadAsync(ct)) businessIds.Add(reader.GetGuid(0));
+        return new(new(published, highestCursor), businessIds);
     }
 
     public async Task<ProductPricingContext?> GetProductContextAsync(
@@ -833,16 +802,25 @@ public sealed class SqlPricingStore(
         await using var command = new SqlCommand("""
             SELECT x.ProductId,x.Name,COALESCE(preparation.PreparedAmount,price.Amount,0),
               COALESCE(price.Amount,0),
-              COALESCE(preparation.CostBasisAmount,cost.LatestUnitCost,price.CostBasisAmount),
-              CASE WHEN preparation.ProductPricePreparationId IS NOT NULL THEN preparation.CostBasisType
+              CASE WHEN costLink.ProductLinkId IS NOT NULL
+                     THEN ROUND(parentCost.CostBasisAmount*costLink.PriceFactor,6)
+                   ELSE COALESCE(preparation.CostBasisAmount,cost.LatestUnitCost,price.CostBasisAmount) END,
+              CASE WHEN costLink.ProductLinkId IS NOT NULL THEN N'LinkedProduct'
+                   WHEN preparation.ProductPricePreparationId IS NOT NULL THEN preparation.CostBasisType
                    WHEN cost.LatestUnitCost IS NOT NULL THEN N'ObservedSupplierCost'
                    ELSE price.CostBasisType END,
               COALESCE(preparation.EffectiveMarginPercent,price.EffectiveMarginPercent),COALESCE(tax.Rate,0),
               COALESCE(preparation.RoundingIncrement,price.RoundingIncrement,1),
-              COALESCE(preparation.RoundingMode,price.RoundingMode,N'Nearest')
+              COALESCE(preparation.RoundingMode,price.RoundingMode,N'Nearest'),
+              CASE WHEN costLink.ProductLinkId IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END,
+              costLink.ParentProductId,costParent.Name,costLink.PriceFactor
             FROM dbo.Products x
             INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
             LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=x.TaxProfileId
+            LEFT JOIN dbo.ProductLinks costLink
+              ON costLink.BusinessId=@BusinessId AND costLink.ChildProductId=x.ProductId
+             AND costLink.SharesPrice=1 AND costLink.IsActive=1
+            LEFT JOIN dbo.Products costParent ON costParent.ProductId=costLink.ParentProductId
             OUTER APPLY (
               SELECT TOP(1) p.Amount,p.PreparedAmount,p.CostBasisAmount,p.CostBasisType,p.EffectiveMarginPercent,p.RoundingIncrement,p.RoundingMode
               FROM dbo.ProductPrices p
@@ -873,6 +851,34 @@ public sealed class SqlPricingStore(
               ORDER BY CASE WHEN association.IsPrimary=1 AND association.IsActive=1 THEN 0 ELSE 1 END,
                 latest.ObservedAt DESC,latest.SupplierId
             ) cost
+            OUTER APPLY (
+              SELECT COALESCE(parentPreparation.CostBasisAmount,
+                              parentLatest.LatestUnitCost,
+                              parentPrice.CostBasisAmount) CostBasisAmount
+              FROM (SELECT 1 AS Anchor) source
+              OUTER APPLY (
+                SELECT TOP(1) value.CostBasisAmount
+                FROM dbo.ProductPricePreparations value
+                WHERE value.BusinessId=@BusinessId
+                  AND value.ProductId=costLink.ParentProductId
+                  AND value.Status=N'Pending'
+                ORDER BY value.PreparedAt DESC,value.ProductPricePreparationId DESC
+              ) parentPreparation
+              OUTER APPLY (
+                SELECT TOP(1) value.LatestUnitCost
+                FROM dbo.SupplierProductLatestCosts value
+                WHERE value.BusinessId=@BusinessId
+                  AND value.ProductId=costLink.ParentProductId
+                ORDER BY value.ObservedAt DESC,value.SupplierId
+              ) parentLatest
+              OUTER APPLY (
+                SELECT TOP(1) value.CostBasisAmount
+                FROM dbo.ProductPrices value
+                WHERE value.BusinessId=@BusinessId
+                  AND value.ProductId=costLink.ParentProductId AND value.IsActive=1
+                ORDER BY value.ValidFrom DESC,value.ProductPriceId
+              ) parentPrice
+            ) parentCost
             WHERE x.ProductId=@ProductId AND b.TenantId=@TenantId
               AND (x.TenantId=@TenantId OR (x.TenantId IS NULL AND x.BusinessId=@BusinessId));
             """, connection);
@@ -884,7 +890,10 @@ public sealed class SqlPricingStore(
                 reader.IsDBNull(4) ? null : reader.GetDecimal(4),
                 reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetDecimal(6),reader.GetDecimal(7),
-                reader.GetDecimal(8),reader.GetString(9))
+                reader.GetDecimal(8),reader.GetString(9),reader.GetBoolean(10),
+                reader.IsDBNull(11) ? null : reader.GetGuid(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetDecimal(13))
             : null;
     }
 
@@ -906,6 +915,15 @@ public sealed class SqlPricingStore(
                   WHERE x.ProductId=@ProductId AND b.TenantId=@TenantId
                     AND (x.TenantId=@TenantId OR (x.TenantId IS NULL AND x.BusinessId=@BusinessId)))
                   THROW 51600,'The product is outside the authenticated business.',1;
+
+                DECLARE @CostParentProductId UNIQUEIDENTIFIER;
+                SELECT @CostParentProductId=link.ParentProductId
+                FROM dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
+                WHERE link.BusinessId=@BusinessId AND link.ChildProductId=@ProductId
+                  AND link.SharesPrice=1 AND link.IsActive=1;
+                IF @CostParentProductId IS NOT NULL
+                  AND ISNULL(@CostBasisType,N'')<>N'LinkedProduct'
+                  THROW 51600,'El costo del producto vinculado depende del producto principal y no se puede editar.',1;
 
                 DECLARE @SharesPrices BIT,@ScopeTenantId UNIQUEIDENTIFIER;
                 SELECT @SharesPrices=SharesProductPrices,@ScopeTenantId=TenantId
@@ -946,9 +964,20 @@ public sealed class SqlPricingStore(
                        @RoundingIncrement,@RoundingMode,N'Pending',@UserId,@Now
                 FROM @Targets target;
 
-                SELECT ProductPricePreparationId,PreparedAmount,PublicAmountSnapshot
+                IF @CostParentProductId IS NULL
+                  EXEC dbo.ProductLinkedCostsPrepare
+                    @BusinessId=@BusinessId,@ParentProductId=@ProductId,
+                    @ParentCost=@CostBasis,@ChildProductId=NULL,@UserId=@UserId,@Now=@Now;
+                ELSE
+                  EXEC dbo.ProductLinkedCostsPrepare
+                    @BusinessId=@BusinessId,@ParentProductId=@CostParentProductId,
+                    @ParentCost=NULL,@ChildProductId=@ProductId,@UserId=@UserId,@Now=@Now;
+
+                SELECT TOP(1) ProductPricePreparationId,PreparedAmount,PublicAmountSnapshot,
+                       CostBasisAmount,EffectiveMarginPercent
                 FROM dbo.ProductPricePreparations
-                WHERE ProductPricePreparationId=@ProductPriceId AND BusinessId=@BusinessId;
+                WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND Status=N'Pending'
+                ORDER BY PreparedAt DESC,ProductPricePreparationId DESC;
                 """, connection, transaction);
             AddScope(command, user);
             command.Parameters.AddWithValue("@ProductId", value.ProductId);
@@ -962,17 +991,25 @@ public sealed class SqlPricingStore(
             command.Parameters.AddWithValue("@RoundingMode", value.RoundingMode);
             command.Parameters.AddWithValue("@PreparedAmount", value.SalePrice);
             command.Parameters.AddWithValue("@Now", now);
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            await reader.ReadAsync(ct);
-            var priceId = reader.GetGuid(0);
-            var preparedAmount = reader.GetDecimal(1);
-            var publicAmount = reader.GetDecimal(2);
-            await reader.CloseAsync();
+            Guid priceId;
+            decimal preparedAmount;
+            decimal publicAmount;
+            decimal? costBasisAmount;
+            decimal? effectiveMarginPercent;
+            await using (var reader = await command.ExecuteReaderAsync(ct))
+            {
+                await reader.ReadAsync(ct);
+                priceId = reader.GetGuid(0);
+                preparedAmount = reader.GetDecimal(1);
+                publicAmount = reader.GetDecimal(2);
+                costBasisAmount = reader.IsDBNull(3) ? null : reader.GetDecimal(3);
+                effectiveMarginPercent = reader.IsDBNull(4) ? null : reader.GetDecimal(4);
+            }
             await transaction.CommitAsync(ct);
             return new(priceId,value.ProductId,preparedAmount,publicAmount,
-                value.CostBasisAmount,value.EffectiveMarginPercent,now);
+                costBasisAmount,effectiveMarginPercent,now);
         }
-        catch (SqlException exception) when (exception.Number is 51600 or 2601 or 2627)
+        catch (SqlException exception) when (exception.Number is 51020 or 51600 or 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
             throw new PricingConflictException(exception.Message);
@@ -1060,29 +1097,6 @@ public sealed class SqlPricingStore(
                 reader.IsDBNull(17) ? null : reader.GetGuid(17),reader.GetString(18),
                 reader.GetDateTimeOffset(19)));
         return items;
-    }
-
-    private static async Task<IReadOnlyList<Guid>> TargetBusinessIdsAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        PricingUserIdentity user,
-        CancellationToken ct)
-    {
-        await using var command = new SqlCommand("""
-            DECLARE @SharesPrices BIT;
-            SELECT @SharesPrices=SharesProductPrices
-            FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
-            SELECT BusinessId
-            FROM dbo.Businesses
-            WHERE IsActive=1 AND TenantId=@TenantId
-              AND ((@SharesPrices=1 AND SharesProductPrices=1) OR BusinessId=@BusinessId)
-            ORDER BY BusinessId;
-            """, connection, transaction);
-        AddScope(command, user);
-        var values = new List<Guid>();
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct)) values.Add(reader.GetGuid(0));
-        return values;
     }
 
     public async Task<PriceChannelReportSource?> GetChannelReportSourceAsync(

@@ -5,6 +5,7 @@ export type PosPaymentSettlement = {
   received: number;
   missing: number;
   change: number;
+  cashTendered: number;
   hasNonCashExcess: boolean;
   hasDuplicateCash: boolean;
   appliedPayments: PosPaymentInput[];
@@ -96,7 +97,7 @@ export function calculatePaymentSettlement(
       if (payment.methodCode !== "Cash") return payment;
       const amount = round(Math.min(payment.amount, remainingCash));
       remainingCash = round(remainingCash - amount);
-      return { ...payment, amount };
+      return { ...payment, amount, tenderedAmount: payment.amount };
     })
     .filter((payment) => payment.amount > tolerance);
 
@@ -105,6 +106,7 @@ export function calculatePaymentSettlement(
     received,
     missing,
     change,
+    cashTendered,
     hasNonCashExcess,
     hasDuplicateCash,
     appliedPayments,

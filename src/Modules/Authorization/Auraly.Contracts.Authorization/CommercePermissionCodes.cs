@@ -6,10 +6,10 @@ public static class CommercePermissionCodes
     public const string CatalogWrite = "catalog.write";
     public const string EnrolledDevicesEnroll = "pos.devices.enroll";
     public const string SalesCreate = "sales.create";
-    public const string SalesDiscount = "sales.discount";
     public const string SalesChangePrice = "sales.change-price";
-    public const string SalesChangeDescription = "sales.lines.change-description";
     public const string SalesReadCostAndMargin = "sales.lines.cost-margin.read";
+    public const string SalesChangeDescription = "sales.lines.change-description";
+    public const string SalesProratedDiscount = "sales.lines.prorated-discount";
     public const string SalesBelowCost = "sales.below-cost";
     public const string SalesReprint = "sales.reprint";
     public const string SalesRemoveLine = "sales.lines.remove";
@@ -17,7 +17,6 @@ public static class CommercePermissionCodes
     public const string SalesDeletePausedDraft = "sales.drafts.paused.delete";
     public const string PosApprovalsAuthorize = "pos.approvals.authorize";
     public const string PosApprovalsRead = "pos.approvals.read";
-    public const string PosApprovalsReceiveNotifications = "pos.approvals.receive_notifications";
     public const string PosApprovalsManageCredential = "pos.approvals.manage_credential";
     public const string PosWorkspaceChange = "pos.workspace.change";
     public const string SalesReturn = "sales.return";

@@ -1547,11 +1547,10 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     userId,
                     "cashier",
                     "Cajera de prueba",
-                    ["sales.create", "sales.discount", "sales.reprint", "sales.void",
+                    ["sales.create", "sales.change-price", "sales.lines.cost-margin.read", "sales.reprint", "sales.void",
                         CommercePermissionCodes.SalesRemoveLine,
                         CommercePermissionCodes.SalesRestartDraft,
                         CommercePermissionCodes.SalesDeletePausedDraft,
-                        PosSynchronizationPermissions.ReadEvents,
                         Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close],
                     password)
             ]));

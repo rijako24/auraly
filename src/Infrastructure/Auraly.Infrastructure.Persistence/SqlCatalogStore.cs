@@ -242,7 +242,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             if (request.Link is { SharesPrice: true } linkedCost)
                 await SqlLinkedProductCostPreparation.PrepareAsync(
                     connection, transaction, user.BusinessId, linkedCost.ParentProductId,
-                    productId, linkedCost.PriceFactor!.Value, user.UserId, now, ct);
+                    productId, user.UserId, now, ct);
 
             if (request.Scale is not null)
             {
@@ -353,10 +353,11 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@SharesPrice", child.SharesPrice), P("@PriceFactor", child.SharesPrice ? child.PriceFactor : null),
                     P("@AllowsConversion", child.AllowsConversion), P("@ConversionFactor", child.AllowsConversion ? child.ConversionFactor : null),
                     P("@Now", now)], ct);
-                if (child.SharesPrice)
-                    await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
-                        productId, child.ChildProductId, child.PriceFactor!.Value, user.UserId, now, ct);
             }
+            if ((request.LinkedProducts ?? []).Any(child => child.SharesPrice))
+                await SqlLinkedProductCostPreparation.PrepareFamilyAsync(
+                    connection, transaction, user.BusinessId, productId, null, null,
+                    user.UserId, now, ct);
 
             foreach (var alias in request.Aliases ?? [])
             {

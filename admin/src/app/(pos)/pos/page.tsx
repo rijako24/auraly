@@ -215,7 +215,6 @@ export default function PosPage() {
   const skipQuantityBlur = useRef<string | null>(null);
   const closureOperationId = useRef<string | null>(null);
   const closureAuthorization = useRef<PosSensitiveAuthorization | null>(null);
-  const discountAuthorization = useRef<PosSensitiveAuthorization | null>(null);
   const lineRemovalAuthorization = useRef<PosSensitiveAuthorization | null>(null);
   const restartAuthorization = useRef<PosSensitiveAuthorization | null>(null);
   const temporaryRemovalAuthorization = useRef<PosSensitiveAuthorization | null>(null);
@@ -1050,8 +1049,6 @@ export default function PosPage() {
   const activePosPermissions = client?.mode === "edge" ? edgePermissions : permissions;
   const canOpenCashDrawer = activePosPermissions
     .includes("work-sessions.cash.drawer.open");
-  const canReadSynchronizationEvents = (client?.mode === "edge" ? edgePermissions : permissions)
-    .includes("pos.synchronization.events.read");
   const canReadProductAvailability = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.inventory.availability.read");
 
@@ -1272,14 +1269,14 @@ export default function PosPage() {
   useEffect(() => {
     const openSynchronizationEvents = (event: KeyboardEvent) => {
       if (!event.ctrlKey || event.altKey || event.shiftKey || event.key.toLowerCase() !== "l") return;
-      if (!canReadSynchronizationEvents || !client) return;
+      if (!client) return;
       event.preventDefault();
       event.stopPropagation();
       setSynchronizationEventsOpen(true);
     };
     window.addEventListener("keydown", openSynchronizationEvents, true);
     return () => window.removeEventListener("keydown", openSynchronizationEvents, true);
-  }, [canReadSynchronizationEvents, client]);
+  }, [client]);
 
   async function capture(event: FormEvent) {
     event.preventDefault();
@@ -1612,19 +1609,7 @@ export default function PosPage() {
 
   async function openDiscount() {
     if (!draft?.lines.length || busy) return;
-    try {
-      await authorizeSensitiveEntry(
-        "sales.change-price",
-        null,
-        { action: "OpenLineEditor", lineCount: draft.lines.length },
-        async (authorization) => {
-          discountAuthorization.current = authorization;
-          setDiscountOpen(true);
-        },
-      );
-    } catch (caught) {
-      showError(caught);
-    }
+    setDiscountOpen(true);
   }
 
   async function closeSalesSession() {
@@ -1872,23 +1857,14 @@ export default function PosPage() {
     }
   }
 
-  async function applyLineEdits(lines: PosDraftLineUpdate[]) {
+  async function applyLineEdits(lines: PosDraftLineUpdate[], includesProratedDiscount: boolean) {
     if (!client || !draft || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await authorizeSensitiveConfirmation(
-        "sales.change-price",
-        null,
-        { action: "ConfirmLineEditor", lineCount: lines.length },
-        discountAuthorization.current,
-        async (authorization) => {
-          setDraft(await client.updateLines(draft.draftId.value, lines, authorization));
-          discountAuthorization.current = null;
-          setDiscountOpen(false);
-          setMessage("Cambios aplicados solamente a esta venta");
-        },
-      );
+      setDraft(await client.updateLines(draft.draftId.value, lines, includesProratedDiscount));
+      setDiscountOpen(false);
+      setMessage("Cambios aplicados solamente a esta venta");
     } catch (caught) {
       showError(caught);
     } finally {
@@ -3546,7 +3522,7 @@ export default function PosPage() {
               aria-label="Cerrar devoluciones"><X className="h-5 w-5" /></button>
           </header>
           <main className="min-h-0 flex-1 overflow-auto p-5">
-            <SalesReturnWorkspace embedded onCashRefundConfirmed={openCashDrawer} />
+            <SalesReturnWorkspace embedded businessId={workstation.businessId} onCashRefundConfirmed={openCashDrawer} />
           </main>
         </div>
       )}
@@ -3708,10 +3684,11 @@ export default function PosPage() {
         busy={busy}
         canEditDescription={activePosPermissions.includes("sales.lines.change-description")}
         canReadCostAndMargin={activePosPermissions.includes("sales.lines.cost-margin.read")}
+        canEditCommercialValues={activePosPermissions.includes("sales.change-price")}
+        canApplyProratedDiscount={activePosPermissions.includes("sales.lines.prorated-discount")}
         onConfirm={applyLineEdits}
         onCancel={() => {
           setDiscountOpen(false);
-          discountAuthorization.current = null;
           focusScanner();
         }}
       />}
@@ -3778,7 +3755,7 @@ export default function PosPage() {
           }}
         />
       )}
-      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} serverConnected={serverConnected} pushConnected={pushConnected} canSynchronize inProgress={synchronization.inProgress} pendingCount={synchronization.pendingCount} failed={synchronization.failed} error={synchronization.error} onSynchronize={synchronizeNow} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
+      {synchronizationEventsOpen && client && <PosSynchronizationEventsDialog open client={client} serverConnected={serverConnected} pushConnected={pushConnected} canSynchronize inProgress={synchronization.inProgress} pendingCount={synchronization.pendingCount} failed={synchronization.failed} error={synchronization.error} onSynchronize={synchronizeNow} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
 
       {quantityShortage && <PosQuantityAvailabilityDialog
         value={quantityShortage}

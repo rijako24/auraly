@@ -3,12 +3,12 @@
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, CheckCircle2, Link2, RefreshCw, Search, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Link2, RefreshCw, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   useExternalCustomers,
@@ -121,15 +121,7 @@ export default function ExternalCustomerImportsPage() {
     </header>
 
     <section className="grid gap-3 rounded-2xl border bg-card p-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
-      <label className="relative">
-        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          className="pl-9"
-          value={search}
-          onChange={(event) => { setSearch(event.target.value); setPage(1); }}
-          placeholder="Nombre, teléfono o identificador externo"
-        />
-      </label>
+      <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Nombre, teléfono o identificador externo" />
       <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}>
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>

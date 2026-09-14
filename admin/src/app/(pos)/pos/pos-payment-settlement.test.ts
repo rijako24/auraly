@@ -97,10 +97,11 @@ describe("calculatePaymentSettlement", () => {
 
     assert.equal(result.isValid, true);
     assert.equal(result.received, 60);
+    assert.equal(result.cashTendered, 60);
     assert.equal(result.change, 5);
     assert.equal(shouldShowCashChange(result), true);
     assert.deepEqual(result.appliedPayments, [
-      { methodCode: "Cash", amount: 55, reference: null },
+      { methodCode: "Cash", amount: 55, reference: null, tenderedAmount: 60 },
     ]);
   });
 
@@ -113,7 +114,7 @@ describe("calculatePaymentSettlement", () => {
     assert.equal(result.isValid, true);
     assert.equal(result.change, 5);
     assert.deepEqual(result.appliedPayments, [
-      { methodCode: "Cash", amount: 15, reference: null },
+      { methodCode: "Cash", amount: 15, reference: null, tenderedAmount: 20 },
       { methodCode: "DebitCard", amount: 40, reference: "AUTH-1" },
     ]);
   });

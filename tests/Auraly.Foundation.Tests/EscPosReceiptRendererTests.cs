@@ -66,7 +66,10 @@ public sealed class EscPosReceiptRendererTests
         Assert.Equal(new byte[] { 0x1B, 0x40, 0x1B, 0x61, 0x01 }, bytes.Take(5).ToArray());
         Assert.Contains("\u001bE\u0001Total", printable);
         Assert.Contains("www.auralyapp.co", printable);
-        Assert.Equal(new byte[] { 0x1D, 0x56, 0x41, 0x03 }, bytes.TakeLast(4).ToArray());
+        var expectedTail = Encoding.ASCII.GetBytes("www.auralyapp.co\n")
+            .Concat(EscPosThermalCommands.MinimumFeedAndPartialCut.ToArray())
+            .ToArray();
+        Assert.Equal(expectedTail, bytes.TakeLast(expectedTail.Length).ToArray());
     }
 
     [Fact]
@@ -137,10 +140,11 @@ public sealed class EscPosReceiptRendererTests
         var receipt = Receipt();
 
         var html = new HtmlReceiptPreviewRenderer().Render(receipt);
+        var esc = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(receipt));
 
         Assert.Contains("<title>Comercializadora Uno VTA01-00000042</title>", html);
         Assert.Contains("data-auraly-report=\"sales-invoice\"", html);
-        Assert.Contains("data-auraly-report-version=\"1\"", html);
+        Assert.Contains("data-auraly-report-version=\"2\"", html);
         Assert.Contains("font: 12px/1.35", html);
         Assert.Contains("font-size: 12px", html);
         Assert.Contains("Comercializadora Uno", html);
@@ -159,6 +163,14 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("class=\"rule summary\"", html);
         Assert.Contains("IVA 19%", html);
         Assert.Contains("Medios de pago", html);
+        Assert.Contains("Efectivo recibido", html);
+        Assert.Contains("20.000", html);
+        Assert.Contains("Cambio", html);
+        Assert.Contains("5.125", html);
+        Assert.Contains("Efectivo recibido", esc);
+        Assert.Contains("$ 20.000", esc);
+        Assert.Contains("Cambio", esc);
+        Assert.Contains("$ 5.125", esc);
         Assert.Contains("Factura emitida por Auraly", html);
         Assert.Contains("www.auralyapp.co", html);
         Assert.DoesNotContain("body { text-transform: uppercase", html);
@@ -244,7 +256,7 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("Comprobante de venta", html);
         Assert.Contains("CVI03-00000042", html);
         Assert.Contains("data-auraly-report=\"sales-receipt\"", html);
-        Assert.Contains("data-auraly-report-version=\"1\"", html);
+        Assert.Contains("data-auraly-report-version=\"2\"", html);
         Assert.Contains("font: 11px/1.35", html);
         Assert.Contains("font-size: 12px", html);
         Assert.DoesNotContain("Número DIAN", html);
@@ -252,6 +264,7 @@ public sealed class EscPosReceiptRendererTests
         Assert.DoesNotContain("<svg", html);
         Assert.Contains("Comprobante emitido por Auraly", html);
         Assert.DoesNotContain("Factura emitida por Auraly", html);
+        AssertMinimalThermalTail(new EscPosReceiptRenderer().Render(receipt));
     }
 
     [Fact]
@@ -286,7 +299,7 @@ public sealed class EscPosReceiptRendererTests
         Assert.Equal(2, html.Split("VTA01-00000999").Length - 1);
         Assert.Equal(2, html.Split("Cliente prueba").Length - 1);
         Assert.Equal(2, html.Split("data-auraly-report=\"sales-invoice\"").Length - 1);
-        Assert.Equal(2, html.Split("data-auraly-report-version=\"1\"").Length - 1);
+        Assert.Equal(2, html.Split("data-auraly-report-version=\"2\"").Length - 1);
         Assert.Contains(".platform strong { color: #065f5b; font-size: 1.15em; }", html);
         Assert.Contains("data:image/svg+xml;base64", html);
         Assert.Contains("Impuestos por tarifa", html);
@@ -407,7 +420,7 @@ public sealed class EscPosReceiptRendererTests
 
         Assert.Contains("Comprobante de venta", html);
         Assert.Contains("data-auraly-report=\"sales-receipt\"", html);
-        Assert.Contains("data-auraly-report-version=\"1\"", html);
+        Assert.Contains("data-auraly-report-version=\"2\"", html);
         Assert.Contains("Representación gráfica del comprobante de venta", html);
         Assert.Contains("Comprobante emitido por Auraly", html);
         Assert.DoesNotContain("Factura electrónica de venta", html);
@@ -435,7 +448,7 @@ public sealed class EscPosReceiptRendererTests
             ],
             Payments =
             [
-                new OnlineSalesPayment("Cash", 12_000m, null),
+                new OnlineSalesPayment("Cash", 12_000m, null, TenderedAmount: 14_000m),
                 new OnlineSalesPayment("Transfer", 15_850m, "TRX-1")
             ],
             UntaxedAmount = 25_000m,
@@ -452,6 +465,10 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("15.000", html);
         Assert.Contains("Efectivo", html);
         Assert.Contains("Transferencia", html);
+        Assert.Equal(1, html.Split("Efectivo recibido").Length - 1);
+        Assert.Equal(1, html.Split("14.000").Length - 1);
+        Assert.Equal(1, html.Split("Cambio").Length - 1);
+        Assert.Contains("2.000", html);
     }
 
     [Fact]
@@ -475,6 +492,15 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("data-auraly-report=\"order\"", html);
         Assert.Contains("Cliente pedido", html);
         Assert.Contains("Producto &amp; prueba", html);
+        AssertMinimalThermalTail(new EscPosReceiptRenderer().Render(receipt));
+    }
+
+    private static void AssertMinimalThermalTail(byte[] bytes)
+    {
+        var expectedTail = Encoding.ASCII.GetBytes("www.auralyapp.co\n")
+            .Concat(EscPosThermalCommands.MinimumFeedAndPartialCut.ToArray())
+            .ToArray();
+        Assert.Equal(expectedTail, bytes.TakeLast(expectedTail.Length).ToArray());
     }
 
     [Theory]
@@ -507,7 +533,7 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("PED-0000042", value);
         Assert.Contains("Total", value);
         Assert.Contains("Comprobante emitido por Auraly", value);
-        Assert.Contains("www.auralyapp.com", value);
+        Assert.Contains("www.auralyapp.co", value);
         Assert.DoesNotContain("FE-NOT-ALLOWED", value);
         Assert.DoesNotContain("CUFE", value);
         Assert.DoesNotContain("Impuestos por tarifa", value);
@@ -527,7 +553,7 @@ public sealed class EscPosReceiptRendererTests
             "222222222",
             [new OnlineSalesReceiptLine(
                 "P-001", "Producto", 2m, 10_000m, 0m, 3_800m, 23_800m, "01", 19m)],
-            [new OnlineSalesPayment("Cash", 10_000m, null), new OnlineSalesPayment("Transfer", 13_800m, "TRX-1")],
+            [new OnlineSalesPayment("Cash", 10_000m, null, TenderedAmount: 12_000m), new OnlineSalesPayment("Transfer", 13_800m, "TRX-1")],
             20_000m,
             3_800m,
             23_800m,
@@ -556,7 +582,7 @@ public sealed class EscPosReceiptRendererTests
                 14_875m,
                 "01",
                 19m)],
-            [new OfflineSalePayment("Cash", 14_875m)],
+            [new OfflineSalePayment("Cash", 14_875m, TenderedAmount: 20_000m)],
             12_500m,
             2_375m,
             14_875m,

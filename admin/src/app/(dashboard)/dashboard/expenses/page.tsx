@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useState } from "react";
-import { FilePlus2, Loader2, ReceiptText, Search, Settings2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { FilePlus2, Loader2, ReceiptText, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTablePagination } from "@/components/tables/data-table-pagination";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { Button } from "@/components/ui/button";
@@ -28,15 +29,14 @@ export default function ExpensesPage() {
   const [loading,setLoading]=useState(false),[creating,setCreating]=useState(false),[configuring,setConfiguring]=useState(false);
   const [page,setPage]=useState(1),[pageSize,setPageSize]=useState(25),[search,setSearch]=useState("");
   const [accountingDocumentId,setAccountingDocumentId]=useState<string>();
-  const deferredSearch=useDeferredValue(search.trim());
-  const load=useCallback(async()=>{setLoading(true);try{const [nextOptions,nextReport]=await Promise.all([expensesApi.options(),expensesApi.list({page,pageSize,search:deferredSearch||undefined})]);setOptions(nextOptions);setReport(nextReport)}catch(error){toast.error(error instanceof Error?error.message:"No fue posible cargar los gastos.")}finally{setLoading(false)}},[page,pageSize,deferredSearch]);
+  const load=useCallback(async()=>{setLoading(true);try{const [nextOptions,nextReport]=await Promise.all([expensesApi.options(),expensesApi.list({page,pageSize,search:search.trim()||undefined})]);setOptions(nextOptions);setReport(nextReport)}catch(error){toast.error(error instanceof Error?error.message:"No fue posible cargar los gastos.")}finally{setLoading(false)}},[page,pageSize,search]);
   useEffect(()=>{if(businessId)void load()},[businessId,load]);
   if(!businessId)return <Card><CardContent className="p-8 text-center text-muted-foreground">Selecciona una sede para consultar sus gastos.</CardContent></Card>;
   return <div className="space-y-6">
     <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between"><div><p className="text-sm font-medium text-emerald-600">Operación y contabilidad</p><h1 className="text-3xl font-bold tracking-tight">Gastos</h1><p className="mt-1 text-muted-foreground">Registra el soporte; Auraly calcula retenciones, la cuenta por pagar y la contabilización.</p></div><div className="flex flex-wrap gap-2">{permissions.has("expenses.configure")&&<Button variant="outline" onClick={()=>setConfiguring(true)}><Settings2 className="mr-2 h-4 w-4"/>Conceptos</Button>}{permissions.has("expenses.create")&&<Button onClick={()=>setCreating(true)}><FilePlus2 className="mr-2 h-4 w-4"/>Nuevo gasto</Button>}</div></header>
     <div className="grid gap-4 sm:grid-cols-3"><Metric label="Gasto bruto" value={report?.grossTotal??0}/><Metric label="Retenciones" value={report?.withholdingTotal??0}/><Metric label="Por pagar" value={report?.netPayableTotal??0}/></div>
     <Card><CardHeader><CardTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5 text-primary"/>Documentos registrados</CardTitle><CardDescription>La búsqueda y la paginación consultan siempre al servidor.</CardDescription></CardHeader><CardContent>
-      <label className="relative mb-4 block"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/><Input className="pl-9" value={search} onChange={event=>{setSearch(event.target.value);setPage(1)}} placeholder="Documento, proveedor o concepto"/></label>
+      <ServerSearchInput className="mb-4" value={search} onSearch={value=>{setSearch(value);setPage(1)}} isSearching={loading} placeholder="Documento, proveedor o concepto"/>
       {loading?<p className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Cargando…</p>:<div className="overflow-x-auto rounded-xl border"><table className="w-full text-sm"><thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground"><tr>{["Documento","Proveedor","Concepto","Bruto","Retención","Por pagar","Estado"].map(label=><th key={label} className={`p-3 font-semibold ${["Bruto","Retención","Por pagar"].includes(label)?"text-right":"text-left"}`}>{label}</th>)}</tr></thead><tbody>{report?.items.map(item=><tr onClick={()=>setAccountingDocumentId(item.expenseId)} key={item.expenseId} className="cursor-pointer border-t transition hover:bg-muted/40"><td className="p-3"><b>{item.documentNumber}</b><small className="block text-muted-foreground">Ref. {item.supplierDocumentNumber}</small></td><td className="p-3">{item.supplierName}</td><td className="p-3">{item.conceptName}</td><td className="p-3 text-right">{money.format(item.grossAmount)}</td><td className="p-3 text-right">{money.format(item.withholdingAmount)}</td><td className="p-3 text-right font-bold">{money.format(item.netPayable)}</td><td className="p-3">{businessStatusLabel(item.status)}</td></tr>)}</tbody></table>{!report?.items.length&&<p className="p-8 text-center text-muted-foreground">Todavía no hay gastos registrados.</p>}</div>}
       <DataTablePagination pageIndex={Math.max(0,(report?.page??page)-1)} pageSize={report?.pageSize??pageSize} pageCount={report?.totalPages??0} totalItems={report?.totalCount??0} onPageChange={index=>setPage(index+1)} onPageSizeChange={size=>{setPageSize(size);setPage(1)}}/>
     </CardContent></Card>

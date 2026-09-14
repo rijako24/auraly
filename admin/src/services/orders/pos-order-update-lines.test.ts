@@ -11,6 +11,7 @@ test("preserves the recovered order price and discount when building update line
       unitPrice: 12_500,
       discount: 2_500,
       priceSource: "PriceChannel",
+      documentUnitCost: 7_250,
     },
   ]);
 
@@ -21,6 +22,7 @@ test("preserves the recovered order price and discount when building update line
       unitPrice: 12_500,
       discountAmount: 2_500,
       priceSource: "PriceChannel",
+      documentUnitCost: 7_250,
     },
   ]);
 });
@@ -33,6 +35,7 @@ test("builds the complete replacement from only the lines that remain in the rec
       unitPrice: 8_000,
       discount: 1_000,
       priceSource: "Promotion",
+      documentUnitCost: 4_100,
     },
     {
       productId: { value: "new-product" },
@@ -40,6 +43,7 @@ test("builds the complete replacement from only the lines that remain in the rec
       unitPrice: 4_500,
       discount: 0,
       priceSource: "Base",
+      documentUnitCost: 2_250,
     },
   ]);
 
@@ -50,6 +54,7 @@ test("builds the complete replacement from only the lines that remain in the rec
       unitPrice: 8_000,
       discountAmount: 1_000,
       priceSource: "Promotion",
+      documentUnitCost: 4_100,
     },
     {
       productId: "new-product",
@@ -57,6 +62,7 @@ test("builds the complete replacement from only the lines that remain in the rec
       unitPrice: 4_500,
       discountAmount: 0,
       priceSource: "Base",
+      documentUnitCost: 2_250,
     },
   ]);
   assert.equal(lines.some((line) => line.productId === "removed-product"), false);

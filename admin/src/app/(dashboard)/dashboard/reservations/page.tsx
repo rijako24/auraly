@@ -24,7 +24,10 @@ export default function ReservationsPage() {
   const [viewMode, setViewMode] = useState<"table" | "card" | "list">("table");
   const [startDate, setStartDate] = useState(todayInputValue);
   const [endDate, setEndDate] = useState(todayInputValue);
-  const { data, isLoading, isError, refetch } = useReservations({ startDate: `${startDate}T00:00:00`, endDate: `${endDate}T23:59:59`, page: 1, pageSize: 100 });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
+  const { data, isLoading, isFetching, isError, refetch } = useReservations({ startDate: `${startDate}T00:00:00`, endDate: `${endDate}T23:59:59`, page, pageSize, search });
   const reservations = useMemo(() => data?.items ?? [], [data?.items]);
 
   const stats = useMemo(() => ({
@@ -100,7 +103,7 @@ export default function ReservationsPage() {
         <StatCard title="Confirmadas" value={stats.confirmed} icon={CheckCircle} />
         <StatCard title="Completadas" value={stats.completed} icon={User} />
       </div>
-      <DataTable columns={columns} data={reservations} searchKey="reservationId" searchPlaceholder="Buscar por ID..." facetedFilters={facetedFilters} viewMode={viewMode} onViewModeChange={setViewMode} cardRenderer={cardRenderer} enableRowSelection={false} />
+      <DataTable columns={columns} data={reservations} searchKey="reservationId" searchPlaceholder="Buscar por ID..." isSearching={isFetching} page={data?.page} pageSize={data?.pageSize} pageCount={data?.totalPages} totalItems={data?.totalCount} onSearch={(value) => { setSearch(value); setPage(1); }} onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }} facetedFilters={facetedFilters} viewMode={viewMode} onViewModeChange={setViewMode} cardRenderer={cardRenderer} enableRowSelection={false} />
     </div>
   );
 }

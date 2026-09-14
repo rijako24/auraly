@@ -29,17 +29,6 @@ export interface PriceRevisionListItem {
   averageUnitCost?: number | null;
   latestUnitCost?: number | null;
   latestLandedUnitCost?: number | null;
-  linkedProducts: LinkedPriceProductListItem[];
-}
-
-export interface LinkedPriceProductListItem {
-  productId: string;
-  productCode: string;
-  productName: string;
-  priceFactor: number;
-  currentSalePrice: number;
-  preparedSalePrice: number | null;
-  targetMarginPercent: number | null;
 }
 
 export interface PriceRevisionPage {
@@ -87,6 +76,10 @@ export interface ProductPricingContext {
   salesTaxRate: number;
   roundingIncrement: number;
   roundingMode: PricingRoundingMode;
+  isCostLinked: boolean;
+  costSourceProductId: string | null;
+  costSourceProductName: string | null;
+  costFactor: number | null;
 }
 
 export interface PublishProductPriceRequest {
@@ -142,6 +135,12 @@ export interface PublishPricesResult {
   catalogCursor: number;
 }
 
+export interface PublishPendingPricesRequest {
+  search?: string;
+  supplierId?: string;
+  sourceDocumentId?: string;
+}
+
 export const pricingApi = {
   list: (params: {
     page: number;
@@ -162,6 +161,8 @@ export const pricingApi = {
     }),
   publish: (items: PublishPriceItem[]) =>
     apiClient.post<PublishPricesResult>("/commerce/v1/pricing/publish", { items }),
+  publishPending: (request: PublishPendingPricesRequest) =>
+    apiClient.post<PublishPricesResult>("/commerce/v1/pricing/publish-pending", request),
   getProductContext: (productId: string) =>
     apiClient.get<ProductPricingContext>(`/commerce/v1/pricing/products/${productId}/context`),
   savePreparedProduct: (productId: string, request: PublishProductPriceRequest) =>

@@ -47,11 +47,13 @@ public class AppRoleRepository : IAppRoleRepository
         return await query.OrderBy(r => r.Name).ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<AppRole>> GetActiveSystemRolesAsync(CancellationToken ct = default) =>
+    public async Task<IReadOnlyList<AppRole>> GetActiveAdministratorRolesAsync(CancellationToken ct = default) =>
         await _context.AppRoles
             .Include(r => r.Tenant)
             .Include(r => r.RolePermissions)
-            .Where(r => r.IsSystemRole && r.IsActive)
+            .Where(r => r.IsActive &&
+                (r.NormalizedName == "ADMINISTRATOR" ||
+                 r.NormalizedName == "TENANTADMINISTRATOR"))
             .OrderBy(r => r.Name)
             .ToListAsync(ct);
 

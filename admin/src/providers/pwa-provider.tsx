@@ -37,7 +37,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     return()=>{active=false;window.removeEventListener("online",connected);window.removeEventListener("offline",disconnected);window.removeEventListener("focus",synchronize);window.removeEventListener(SELLER_ORDER_SYNC_REQUEST_EVENT,synchronize);document.removeEventListener("visibilitychange",visible)};
   },[cloudWorkspaceActive,userId]);
   useEffect(()=>{
-    if(!cloudWorkspaceActive||!isAuthenticated||!businessId||!permissions.includes("pos.approvals.receive_notifications")||typeof Notification==="undefined"||Notification.permission!=="granted")return;
+    if(!cloudWorkspaceActive||!isAuthenticated||!businessId||!permissions.includes("pos.approvals.read")||!permissions.includes("pos.approvals.authorize")||typeof Notification==="undefined"||Notification.permission!=="granted")return;
     void ensurePosApprovalPushSubscription().catch(()=>undefined);
   },[cloudWorkspaceActive,isAuthenticated,businessId,permissions]);
   useEffect(()=>{

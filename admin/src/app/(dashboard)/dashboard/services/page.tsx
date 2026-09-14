@@ -87,6 +87,7 @@ export default function ServicesPage() {
         searchKey="serviceName"
         searchPlaceholder="Buscar en todos los servicios..."
         isLoading={query.isLoading}
+        isSearching={query.isFetching}
         page={page}
         pageSize={pageSize}
         pageCount={query.data?.totalPages ?? 0}

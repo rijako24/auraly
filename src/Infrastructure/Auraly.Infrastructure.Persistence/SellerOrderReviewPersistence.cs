@@ -9,15 +9,17 @@ public sealed record EditableSellerOrder(
     int Status,
     Guid WarehouseId,
     Guid OrdersWarehouseId,
-    IReadOnlyDictionary<Guid, EditableSellerOrderLine> Lines);
+    IReadOnlyList<EditableSellerOrderLine> Lines);
 
 public sealed record EditableSellerOrderLine(
+    int Position,
     Guid ProductId,
     decimal Quantity,
     decimal ReservedQuantity,
     decimal UnitPrice,
     decimal DiscountAmount,
     string PriceSource,
+    decimal? DocumentUnitCost,
     bool ManageStock);
 
 public sealed record SellerOrderReplacementLine(
@@ -54,7 +56,7 @@ public static class SellerOrderReviewPersistence
         int status;
         Guid warehouseId;
         Guid ordersWarehouseId;
-        var lines = new Dictionary<Guid, EditableSellerOrderLine>();
+        var lines = new List<EditableSellerOrderLine>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1) || reader.IsDBNull(3) || reader.IsDBNull(4))
@@ -69,14 +71,16 @@ public static class SellerOrderReviewPersistence
             while (await reader.ReadAsync(cancellationToken))
             {
                 var line = new EditableSellerOrderLine(
-                    reader.GetGuid(0),
-                    reader.GetDecimal(1),
+                    reader.GetInt32(0),
+                    reader.GetGuid(1),
                     reader.GetDecimal(2),
                     reader.GetDecimal(3),
                     reader.GetDecimal(4),
-                    reader.GetString(5),
-                    reader.GetBoolean(6));
-                lines[line.ProductId] = line;
+                    reader.GetDecimal(5),
+                    reader.GetString(6),
+                    reader.IsDBNull(7) ? null : reader.GetDecimal(7),
+                    reader.GetBoolean(8));
+                lines.Add(line);
             }
         }
         return new EditableSellerOrder(number, customerId, status, warehouseId, ordersWarehouseId, lines);

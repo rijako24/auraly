@@ -207,12 +207,27 @@ producto crea una versión inmutable en `ProductPricePreparations`.
 Esta tabla es simultáneamente el estado pendiente y el kardex de preparaciones;
 no existe un segundo borrador ni una auditoría duplicada de preparación.
 
-Una relación de productos agrupa la preparación y publicación únicamente cuando
-`ProductLinks.SharesPrice=1`: la vista muestra solo el producto principal como
-seleccionable, presenta sus hijos de precio como información y los publica en la
-misma transacción. Compartir inventario (`SharesInventory`) o permitir conversión
-(`AllowsConversion`) sin compartir precio no agrupa la vista ni la publicación;
-cada producto conserva su preparación y publicación independientes.
+`ProductLinks.SharesPrice=1` conserva su nombre físico por compatibilidad, pero su
+semántica funcional es exclusivamente **vincular costo**. El costo base del producto
+vinculado es siempre el costo vigente o preparado del producto principal multiplicado
+por `PriceFactor`; no se puede editar desde el hijo. Cada cambio del costo principal
+reemplaza en la misma transacción la preparación pendiente de sus hijos de costo,
+conservando el margen y redondeo propios de cada hijo para recalcular su precio
+preparado.
+
+La relación no agrupa precios ni publicaciones. En **Precios y rentabilidad**, padre
+e hijos aparecen como filas seleccionables independientes y cada uno conserva su
+precio preparado y público, margen, historial, aprobación y publicación. Publicar
+uno nunca publica ni bloquea al otro. `SharesInventory` y `AllowsConversion` tampoco
+agrupan esa vista.
+
+La publicación masiva no tiene un límite funcional de cantidad. La UI envía una sola
+solicitud con toda la selección y Pricing carga el conjunto en un comando, lo valida
+y lo publica de forma set-based en una única transacción SQL. No se invoca el endpoint
+individual ni se ejecuta una consulta o una transacción por producto. El escenario de
+rendimiento de referencia es una selección de 6.000 preparaciones con un request HTTP,
+dos comandos SQL (carga y publicación) y una sola transacción; la medición se ejecuta
+sin builds o suites concurrentes.
 
 Al publicar, si la sede tiene `SharesProductPrices=1`, se crea una versión
 publicada, un cambio de catálogo y un mensaje de outbox para cada sede activa del
@@ -305,6 +320,11 @@ La sección comercial de producto mostrará:
 - fecha/usuario de publicación;
 - historial;
 - propuestas pendientes.
+
+Cuando el costo está vinculado, la ficha muestra el costo derivado en solo lectura,
+el producto principal y el factor aplicado. El servidor rechaza cualquier intento de
+sobrescribir ese costo desde el hijo. Margen, redondeo, precio preparado y precio
+público siguen siendo editables y publicables de forma independiente.
 
 Desde la ficha, un usuario con permiso puede publicar directamente un precio manual. Debe pasar por el mismo servicio de publicación, auditoría, cambio de catálogo y notificación que la revisión masiva.
 
@@ -424,6 +444,11 @@ Ver costos y publicar precios son permisos distintos. El cajero recibe únicamen
 - entrada cambia costo observado y promedio, no precio publicado;
 - propuesta idempotente por entrada/línea/producto;
 - publicación individual y masiva;
+- publicación masiva de más de 100 productos y escenario reproducible de 6.000 sin
+  llamadas ni comandos por producto;
+- producto hijo de costo visible y bloqueado con principal y factor;
+- cambio de costo principal vuelve a preparar los hijos conservando sus márgenes;
+- publicación de padre e hijo totalmente independiente;
 - concurrencia de dos publicaciones del mismo producto;
 - versión anterior cerrada y una sola activa;
 - auditoría y permisos;

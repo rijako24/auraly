@@ -126,9 +126,10 @@ public sealed class HtmlReceiptPreviewRenderer
         var netPayable = receipt.WithholdingTotal > 0
             ? receipt.NetPayableAmount
             : receipt.PayableAmount;
+        var cashTender = CashTender(receipt.Payments);
         var summary = isOrder
             ? $"<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div><hr class=\"rule summary\">"
-            : $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Subtotal", Money(receipt.UntaxedAmount))}{Pair("Total impuestos", Money(receipt.TaxAmount))}{withholdings}<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div><hr class=\"rule summary\"><div class=\"section-title\">Medios de pago</div>{payments}<hr class=\"rule\">";
+            : $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Subtotal", Money(receipt.UntaxedAmount))}{Pair("Total impuestos", Money(receipt.TaxAmount))}{withholdings}<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div>{cashTender}<hr class=\"rule summary\"><div class=\"section-title\">Medios de pago</div>{payments}<hr class=\"rule\">";
 
         var companyName = Encode(receipt.CompanyName ?? string.Empty);
         var scope = Scope(receipt.BusinessName);
@@ -223,7 +224,7 @@ public sealed class HtmlReceiptPreviewRenderer
                 <hr class="rule">
                 {{summary}}
                 {{fiscalFooter}}
-                <footer class="platform-footer">{{issuedBy}}<br><strong>{{(isOrder ? "www.auralyapp.com" : "www.auralyapp.co")}}</strong></footer>
+                <footer class="platform-footer">{{issuedBy}}<br><strong>www.auralyapp.co</strong></footer>
               </main>
               <script>
                 window.addEventListener("load", () => window.setTimeout(() => window.print(), 250));
@@ -253,6 +254,16 @@ public sealed class HtmlReceiptPreviewRenderer
 
     private static string Pair(string label, string value) =>
         $"<div class=\"pair\"><span>{Encode(label)}</span><strong>{value}</strong></div>";
+
+    private static string CashTender(IReadOnlyCollection<OfflineSalePayment> payments)
+    {
+        var cash = payments.SingleOrDefault(payment =>
+            payment.MethodCode == "Cash" && payment.TenderedAmount.HasValue);
+        return cash?.TenderedAmount is not { } tendered
+            ? string.Empty
+            : Pair("Efectivo recibido", Money(tendered)) +
+              Pair("Cambio", Money(Math.Max(0, tendered - cash.Amount)));
+    }
 
     private static string Scope(string? businessName)
     {

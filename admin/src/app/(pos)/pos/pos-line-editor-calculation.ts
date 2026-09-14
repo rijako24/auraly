@@ -115,21 +115,40 @@ export type ProratableSaleLine = {
   unitPrice: number;
 };
 
-export function prorateAdditionalSaleValue(
-  lines: readonly ProratableSaleLine[],
-  additionalValue: number,
-): Array<ProratableSaleLine & { allocatedValue: number }> {
-  if (!Number.isFinite(additionalValue) || additionalValue <= 0)
-    throw new Error("El valor adicional debe ser mayor que cero.");
-  if (!lines.length || lines.some(line => !Number.isFinite(line.quantity) || line.quantity <= 0))
-    throw new Error("Todas las líneas deben tener una cantidad válida.");
-  const totalQuantity = lines.reduce((sum, line) => sum + line.quantity, 0);
-  const unitIncrement = additionalValue / totalQuantity;
-  return lines.map(line => ({
-    ...line,
-    unitPrice: round(line.unitPrice + unitIncrement, 6),
-    allocatedValue: round(unitIncrement * line.quantity, 6),
-  }));
+export type ProratableDiscountLine = ProratableSaleLine & { discount: number };
+
+export function prorateSaleDiscount(
+  lines: readonly ProratableDiscountLine[],
+  discountValue: number,
+): Array<ProratableDiscountLine & { allocatedValue: number }> {
+  if (!Number.isFinite(discountValue) || discountValue <= 0)
+    throw new Error("El descuento debe ser mayor que cero.");
+  if (!lines.length || lines.some(line =>
+    !Number.isFinite(line.quantity) || line.quantity <= 0 ||
+    !Number.isFinite(line.unitPrice) || line.unitPrice < 0 ||
+    !Number.isFinite(line.discount) || line.discount < 0))
+    throw new Error("Todas las líneas deben tener valores válidos.");
+  const available = lines.map(line =>
+    round(Math.max(0, line.quantity * line.unitPrice - line.discount), 6));
+  const totalAvailable = round(available.reduce((sum, value) => sum + value, 0), 6);
+  if (discountValue > totalAvailable)
+    throw new Error("El descuento no puede superar el valor disponible de la venta.");
+
+  const lastEligible = available.reduce((last, value, index) => value > 0 ? index : last, -1);
+  let allocated = 0;
+  return lines.map((line, index) => {
+    const allocation = index === lastEligible
+      ? round(discountValue - allocated, 6)
+      : index > lastEligible || available[index] === 0
+        ? 0
+        : round(discountValue * available[index] / totalAvailable, 6);
+    allocated = round(allocated + allocation, 6);
+    return {
+      ...line,
+      discount: round(line.discount + allocation, 6),
+      allocatedValue: allocation,
+    };
+  });
 }
 
 export function isPositiveWholeSaleValue(value: number): boolean {

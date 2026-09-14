@@ -75,7 +75,8 @@ public sealed record OrderLine(
     decimal QuantityOnHand = 0m,
     bool ManageStock = false,
     string PriceSource = "Captured",
-    decimal ReservedQuantity = 0m);
+    decimal ReservedQuantity = 0m,
+    decimal? DocumentUnitCost = null);
 
 public sealed record OrderDetail(
     Guid OrderId,
@@ -148,7 +149,8 @@ public sealed record PosSaveOrderLine(
     decimal Quantity,
     decimal UnitPrice,
     decimal DiscountAmount,
-    string PriceSource);
+    string PriceSource,
+    decimal? DocumentUnitCost = null);
 
 public sealed record PosSaveOrderRequest(
     Guid UserId,

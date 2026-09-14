@@ -92,6 +92,7 @@ public interface IOnlineSalesDraftStore
         OnlineSalesUserIdentity user,
         Guid draftId,
         IReadOnlyList<UpdateOnlineSalesDraftLineRequest> lines,
+        bool includesProratedDiscount,
         long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken);
@@ -234,7 +235,8 @@ public sealed class OnlineSalesDraftService(
             throw new OnlineSalesDraftValidationException(
                 "Cada línea debe tener un identificador único, una descripción y valores no negativos.");
         return await drafts.UpdateLinesAsync(
-            user, draftId, request.Lines, request.ExpectedVersion,
+            user, draftId, request.Lines, request.IncludesProratedDiscount,
+            request.ExpectedVersion,
             idempotencyKey, cancellationToken);
     }
 

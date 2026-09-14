@@ -166,6 +166,11 @@ public sealed class SqlReceivablesStore(
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(25*attempt),timeProvider,token);
             }
+            catch(SqlException exception) when(exception.Number==1205)
+            {
+                throw new ReceivablesConflictException(
+                    "El saldo cambió mientras se registraba el pago. Recarga la cartera e inténtalo de nuevo.");
+            }
         }
     }
 

@@ -87,6 +87,11 @@ referencia, código de barras e identificador alterno. Clientes se pueden
 encontrar por identificación o nombre. Todos los resultados quedan limitados al
 `BusinessId` validado.
 
+Los buscadores de grillas y selectores remotos usan el mismo control: texto local,
+300 ms de debounce, una sola consulta con el término confirmado y spinner dentro
+de la caja mientras espera o consulta. `keepPreviousData` conserva la grilla y
+evita bloquear la interacción durante la búsqueda.
+
 ## Evidencia
 
 - Solución y DACPAC: 0 errores y 0 advertencias.
@@ -102,6 +107,19 @@ encontrar por identificación o nombre. Todos los resultados quedan limitados al
   operación exactas.
 - Idempotencia y concurrencia optimista evitan dobles efectos.
 - Cliente, lista, descuento, cantidad y eliminación recorren API y SQL Server.
+- Abrir **Editar líneas** no exige permiso. Descripción usa
+  `sales.lines.change-description`; costo documental permitido, margen,
+  descuentos y precio usan `sales.change-price`; el descuento general prorrateado
+  usa `sales.lines.prorated-discount`. Las tres capacidades se validan en servidor
+  y solo pertenecen inicialmente al administrador.
+- El costo de una línea con inventario permanece inmutable. Costo y margen solo
+  se editan en productos que no manejan inventario.
+- `sales.lines.cost-margin.read` controla únicamente la lectura: sin él se
+  conservan las cajas del editor con guiones para no alterar el diseño. La edición
+  de costo o margen exige además `sales.change-price` y que la línea no maneje
+  inventario.
+- La vista de devoluciones abierta desde POS usa el negocio de la estación como
+  contexto explícito; no depende del estado del selector del dashboard.
 - Una bodega que bloquea negativos impide captura sin existencia.
 - Usuario sin permiso recibe solicitud de autorización en acciones sensibles y un
   contexto ajeno recibe `403`.

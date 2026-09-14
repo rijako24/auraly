@@ -103,7 +103,7 @@ y regresión sin agregar texto técnico a la tirilla.
 sede en el encabezado, separan al responsable como dato propio, usan reglas
 punteadas alrededor del valor y recuperan el espacio amplio de firma. Las
 versiones 1 y 2 permanecen disponibles e inmutables para reproducir los formatos
-publicados originalmente. Las plantillas de venta continúan en versión 1.
+publicados originalmente.
 `work-session-closure` tiene una versión 3 activa: conserva Actividad, Totales,
 Ventas a cartera y Detalle por medio de pago, y agrega secciones independientes
 de entradas y salidas de efectivo con cada movimiento, responsable y valor. Los
@@ -120,6 +120,12 @@ mismo formato e impresora del perfil `Facturas`. Se entrega siempre después de
 la factura como un segundo trabajo físico: primero termina y corta la factura y
 después imprime y corta el comprobante. La secuencia aplica a tirilla de 58/80
 mm, media carta, media oficio y carta.
+
+La versión 2 activa de `sales-invoice` y `sales-receipt` conserva el contenido
+de la versión 1 y agrega, cuando el pago en efectivo registró un valor entregado,
+`Efectivo recibido` y `Cambio` inmediatamente después del total. La versión 1
+permanece disponible e inmutable para reimpresiones históricas y nunca inventa
+un valor recibido a partir del importe aplicado.
 
 La definición HTML de cierre vive únicamente en `Auraly.Pos.Printing`.
 Servidor, navegador y POS Edge consumen esa misma plantilla; TypeScript solo

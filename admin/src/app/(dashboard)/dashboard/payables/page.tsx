@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CalendarClock, Landmark, Plus, ReceiptText, Search, WalletCards } from "lucide-react";
+import { AlertTriangle, CalendarClock, Landmark, Plus, ReceiptText, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { useConfirmSupplierPayment, usePayableDetail, usePayables } from "@/hooks/use-payables";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { payablesApi, type PayableDetail, type PayableListItem, type PayableStatus } from "@/services/api/payables";
 import { DataTable } from "@/components/tables/data-table";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -166,10 +167,7 @@ export default function PayablesPage() {
       </section>
 
       <section className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_13rem_12rem]">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} className="pl-9" placeholder="Documento, proveedor o identificación" />
-        </div>
+        <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Documento, proveedor o identificación" />
         <Select value={status} onValueChange={(value) => { setStatus(value as PayableStatus | "all"); setPage(1); }}>
           <SelectTrigger><SelectValue placeholder="Todos los estados" /></SelectTrigger>
           <SelectContent>

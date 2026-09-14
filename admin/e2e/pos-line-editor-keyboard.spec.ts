@@ -7,8 +7,9 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   const permissions = [
     "pos.sales.create",
     "sales.change-price",
-    "sales.lines.change-description",
     "sales.lines.cost-margin.read",
+    "sales.lines.change-description",
+    "sales.lines.prorated-discount",
   ];
   const user = {
     userId: "44444444-4444-4444-4444-444444444444",

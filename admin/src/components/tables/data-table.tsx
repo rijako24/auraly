@@ -42,6 +42,7 @@ export interface DataTableProps<TData, TValue> {
   searchKey?: string;
   searchPlaceholder?: string;
   isLoading?: boolean;
+  isSearching?: boolean;
   page?: number;
   pageSize?: number;
   pageCount?: number;
@@ -70,6 +71,7 @@ export function DataTable<TData, TValue>({
   searchKey,
   searchPlaceholder = "Buscar...",
   isLoading = false,
+  isSearching = false,
   page,
   pageSize,
   pageCount: controlledPageCount,
@@ -204,13 +206,13 @@ export function DataTable<TData, TValue>({
 
   const handleSearch = (value: string) => {
     setSearchValue(value);
-    onSearch?.(value);
-    if (onPaginationChange) {
-      const nextPageSize = pagination.pageSize;
-      setPagination((old) => old.pageIndex === 0 ? old : { ...old, pageIndex: 0 });
-      onPaginationChange(1, nextPageSize);
-    }
-    if (!onSearch && searchKey) {
+    if (onSearch) {
+      onSearch(value);
+      if (onPaginationChange) {
+        setPagination((old) => old.pageIndex === 0 ? old : { ...old, pageIndex: 0 });
+        onPaginationChange(1, pagination.pageSize);
+      }
+    } else if (searchKey) {
       table.getColumn(searchKey)?.setFilterValue(value);
     }
   };
@@ -252,6 +254,7 @@ export function DataTable<TData, TValue>({
         searchPlaceholder={searchPlaceholder}
         searchValue={searchValue}
         onSearch={handleSearch}
+        isSearching={Boolean(onSearch) && isSearching}
         facetedFilters={facetedFilters}
         facetedFilterValues={facetedFilterValues}
         onFacetedFilterChange={handleFacetedFilterChange}

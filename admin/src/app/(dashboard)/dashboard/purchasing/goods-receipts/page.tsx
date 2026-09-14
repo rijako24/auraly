@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
@@ -230,12 +231,7 @@ export default function GoodsReceiptsPage() {
     </section>
 
     <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_14rem]">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input className="pl-9" value={search}
-          onChange={(event) => { setSearch(event.target.value); setPage(1); }}
-          placeholder="Documento, proveedor, factura o bodega" />
-      </div>
+      <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={list.isFetching} placeholder="Documento, proveedor, factura o bodega" />
       <Select value={status} onValueChange={(value) => {
         setStatus(value as GoodsReceiptStatus | "all"); setPage(1);
       }}>

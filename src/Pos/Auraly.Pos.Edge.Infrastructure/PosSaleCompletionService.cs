@@ -237,6 +237,10 @@ public sealed class PosSaleCompletionService(
                 (command.Credit?.Amount ?? 0m) != withholding.NetAmount)
             throw new InvalidOperationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
+        if (command.Payments.Any(payment => payment.TenderedAmount is { } tendered &&
+                (payment.MethodCode != "Cash" || tendered < payment.Amount)))
+            throw new InvalidOperationException(
+                "El efectivo recibido debe corresponder al pago en efectivo y no puede ser menor al valor aplicado.");
         var customer = draft.CustomerId is null || catalog is null
             ? null
             : await catalog.GetCustomerAsync(draft.CustomerId.Value, ct);
@@ -321,7 +325,8 @@ public sealed class PosSaleCompletionService(
                 payment.CardFranchiseCode,
                 payment.ApprovalNumber,
                 payment.BankAccountId,
-                payment.Notes))
+                payment.Notes,
+                payment.TenderedAmount))
                 .Concat(immutable.Credit is null
                     ? []
                     : [new OfflineSalePayment("Credit", immutable.Credit.Amount)])
@@ -422,7 +427,8 @@ public sealed class PosSaleCompletionService(
                 payment.CardFranchiseCode,
                 payment.ApprovalNumber,
                 payment.BankAccountId,
-                payment.Notes)).ToArray(),
+                payment.Notes,
+                payment.TenderedAmount)).ToArray(),
             immutable.CommercialSnapshot.UntaxedAmount,
             immutable.CommercialSnapshot.TaxAmount,
             immutable.CommercialSnapshot.PayableAmount,

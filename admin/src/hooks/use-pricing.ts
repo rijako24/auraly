@@ -51,6 +51,10 @@ export const useRejectPrice = () =>
 
 export const usePublishPrices = () =>
   usePricingMutation((items: PublishPriceItem[]) => pricingApi.publish(items));
+
+export const usePublishPendingPrices = () =>
+  usePricingMutation((request: import("@/services/api/pricing").PublishPendingPricesRequest) =>
+    pricingApi.publishPending(request));
 export function useProductPricingContext(productId?: string) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({

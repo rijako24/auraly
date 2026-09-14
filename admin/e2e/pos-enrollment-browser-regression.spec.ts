@@ -127,7 +127,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
           userId: completed ? userId : null,
           workSessionId: workSessionOpened ? workSessionId : null,
           deviceId: redeemed ? "77777777-7777-7777-7777-777777777777" : null,
-          permissions: completed ? ["sales.create", "pos.synchronization.events.read"] : [],
+          permissions: completed ? ["sales.create"] : [],
           fiscalReady: false,
           fiscalWarnings: [],
           dianQuotaAvailable: null,
@@ -245,7 +245,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
       userId,
       username: "admin",
       displayName: "Admin Prueba",
-      permissions: ["sales.create", "pos.synchronization.events.read"],
+      permissions: ["sales.create"],
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
       token: "local-user-session",
     };

@@ -6,11 +6,12 @@ namespace Auraly.Application.Pricing;
 
 public sealed record PriceProposalSource(
     Guid ProposalId, Guid ProductId, decimal? ObservedUnitCost,
-    decimal SalesTaxRate, string Status, byte[] RowVersion, bool IsManual);
+    string? CostBasisType, decimal SalesTaxRate, string Status,
+    byte[] RowVersion, bool IsManual);
 
 public sealed record PreparedPricePublication(
     Guid ProposalId, Guid ProductId, decimal? CostBasisAmount,
-    string InputMode, decimal? TargetMarginPercent, decimal SalePrice,
+    string? CostBasisType, string InputMode, decimal? TargetMarginPercent, decimal SalePrice,
     decimal? EffectiveMarginPercent, decimal RoundingIncrement,
     string RoundingMode, byte[] ExpectedRowVersion, bool IsManual);
 
@@ -41,6 +42,10 @@ public interface IPricingStore
 {
     Task<PriceRevisionPage> ListAsync(PricingUserIdentity user, PriceRevisionQuery query, CancellationToken ct);
     Task<PriceProposalSource?> GetProposalAsync(PricingUserIdentity user, Guid proposalId, CancellationToken ct);
+    Task<IReadOnlyList<PriceProposalSource>> GetProposalsAsync(
+        PricingUserIdentity user, IReadOnlyCollection<Guid> proposalIds, CancellationToken ct);
+    Task<IReadOnlyList<PreparedPricePublication>> GetPendingPublicationsAsync(
+        PricingUserIdentity user, PublishPendingPricesRequest request, CancellationToken ct);
     Task ReviewAsync(PricingUserIdentity user, Guid proposalId, PriceCalculationResult calculation, byte[] expectedRowVersion, CancellationToken ct);
     Task RejectAsync(PricingUserIdentity user, Guid proposalId, byte[] expectedRowVersion, string? reason, CancellationToken ct);
     Task<PricePublicationStoreResult> PublishAsync(PricingUserIdentity user, IReadOnlyList<PreparedPricePublication> values, DateTimeOffset now, CancellationToken ct);
@@ -101,13 +106,18 @@ public sealed class PricingService(
         if (request.Items is null || request.Items.Count == 0)
             throw new PricingValidationException("At least one proposal is required.");
         if (request.Items.Count > 1) Require(user, PricingPermissionCodes.BulkPublish);
-        if (request.Items.Count > 100 || request.Items.Select(x => x.ProposalId).Distinct().Count() != request.Items.Count)
+        if (request.Items.Select(x => x.ProposalId).Distinct().Count() != request.Items.Count)
             throw new PricingValidationException("The publication batch is invalid.");
 
+        var sources = await store.GetProposalsAsync(
+            user, request.Items.Select(item => item.ProposalId).ToArray(), ct);
+        if (sources.Count != request.Items.Count)
+            throw new PricingNotFoundException("One or more price proposals were not found.");
+        var sourcesById = sources.ToDictionary(source => source.ProposalId);
         var prepared = new List<PreparedPricePublication>(request.Items.Count);
         foreach (var item in request.Items)
         {
-            var source = await RequiredProposalAsync(user, item.ProposalId, ct);
+            var source = sourcesById[item.ProposalId];
             EnsureReviewable(source);
             var expected = DecodeToken(item.ConcurrencyToken);
             if (!source.RowVersion.AsSpan().SequenceEqual(expected))
@@ -117,11 +127,35 @@ public sealed class PricingService(
                 item.RoundingIncrement, item.RoundingMode);
             prepared.Add(new(
                 source.ProposalId, source.ProductId, source.ObservedUnitCost,
-                result.InputMode, result.TargetMarginPercent, result.RoundedSalePrice,
+                source.CostBasisType, result.InputMode, result.TargetMarginPercent, result.RoundedSalePrice,
                 result.EffectiveMarginPercent, result.RoundingIncrement,
                 result.RoundingMode, expected, source.IsManual));
         }
 
+        return await PublishPreparedAsync(user, prepared, ct);
+    }
+
+    public async Task<PublishPricesResult> PublishPendingAsync(
+        PricingUserIdentity user,
+        PublishPendingPricesRequest request,
+        CancellationToken ct)
+    {
+        Require(user, PricingPermissionCodes.PublishPrices);
+        Require(user, PricingPermissionCodes.BulkPublish);
+        Require(user, PricingPermissionCodes.ReadCostBasis);
+        var prepared = await store.GetPendingPublicationsAsync(
+            user, request with { Search = Normalize(request.Search, 120) }, ct);
+        if (prepared.Count == 0)
+            throw new PricingValidationException(
+                "No hay precios pendientes que coincidan con los filtros actuales.");
+        return await PublishPreparedAsync(user, prepared, ct);
+    }
+
+    private async Task<PublishPricesResult> PublishPreparedAsync(
+        PricingUserIdentity user,
+        IReadOnlyList<PreparedPricePublication> prepared,
+        CancellationToken ct)
+    {
         var outcome = await store.PublishAsync(user, prepared, timeProvider.GetUtcNow(), ct);
         foreach (var businessId in outcome.TargetBusinessIds)
             await synchronization.DispatchPendingAsync(user.TenantId, businessId, CancellationToken.None);
@@ -143,14 +177,22 @@ public sealed class PricingService(
         Require(user, PricingPermissionCodes.ReadCostBasis);
         var context = await store.GetProductContextAsync(user, productId, ct)
             ?? throw new PricingNotFoundException("Product was not found.");
-        if (request.CostBasisAmount is <= 0m)
+        if (!context.IsCostLinked && request.CostBasisAmount is <= 0m)
             throw new PricingValidationException("The manual cost must be greater than zero.");
+        if (context.IsCostLinked && request.CostBasisAmount is { } requestedCost
+            && requestedCost != context.CostBasisAmount)
+            throw new PricingValidationException(
+                "El costo del producto vinculado depende del producto principal y no se puede editar.");
 
-        var costBasis = request.CostBasisAmount ?? context.CostBasisAmount;
+        var costBasis = context.IsCostLinked
+            ? context.CostBasisAmount
+            : request.CostBasisAmount ?? context.CostBasisAmount;
         if (costBasis is null && request.InputMode == PriceInputModes.Margin)
             throw new PricingValidationException("A cost is required to calculate a margin.");
 
-        var costBasisType = request.CostBasisAmount.HasValue
+        var costBasisType = context.IsCostLinked
+            ? "LinkedProduct"
+            : request.CostBasisAmount.HasValue
             ? "Manual"
             : context.CostBasisOrigin;
         var calculation = CalculateForOptionalCost(

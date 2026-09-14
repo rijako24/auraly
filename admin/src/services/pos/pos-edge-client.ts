@@ -241,6 +241,7 @@ export type PosPaymentInput = {
   approvalNumber?: string | null;
   bankAccountId?: string | null;
   notes?: string | null;
+  tenderedAmount?: number | null;
 };
 
 export type PosSaleSettlement = {
@@ -629,7 +630,7 @@ export interface PosClient {
   ): Promise<PosCaptureResult>;
   changeQuantity(draftId: string, lineId: string, quantity: number): Promise<PosCaptureResult>;
   setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
-  updateLines(draftId: string, lines: PosDraftLineUpdate[], authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
+  updateLines(draftId: string, lines: PosDraftLineUpdate[], includesProratedDiscount?: boolean): Promise<PosDraft>;
   selectCustomer(draftId: string, customerId: string | null): Promise<PosCustomerSelection>;
   removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   cancelDraft(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
@@ -717,6 +718,12 @@ export type PosPrinterConfiguration = {
   orderReceiptPaperWidthMillimeters?: 58 | 80;
 };
 
+type CompatiblePosPrinterConfiguration = PosPrinterConfiguration & {
+  ordersOutputFormat?: PosPrintTemplateFormat;
+  ordersPrinterName?: string | null;
+  ordersReceiptPaperWidthMillimeters?: 58 | 80;
+};
+
 export type PosPrintTemplateFormat =
   | "Receipt"
   | "HalfLetter"
@@ -746,6 +753,24 @@ export type PosPrinterConfigurationView = {
 };
 
 const BROWSER_PRINTER_CONFIGURATION_KEY = "auraly.printing.configuration.v1";
+
+function normalizePrinterConfiguration(
+  configuration: CompatiblePosPrinterConfiguration,
+): PosPrinterConfiguration {
+  return {
+    ...configuration,
+    orderOutputFormat: configuration.orderOutputFormat
+      ?? configuration.ordersOutputFormat
+      ?? "HalfLetter",
+    orderPrinterName: configuration.orderPrinterName
+      ?? configuration.ordersPrinterName
+      ?? null,
+    orderReceiptPaperWidthMillimeters:
+      configuration.orderReceiptPaperWidthMillimeters
+      ?? configuration.ordersReceiptPaperWidthMillimeters
+      ?? 80,
+  };
+}
 
 export function loadBrowserPrinterConfiguration(): PosPrinterConfiguration {
   const defaults: PosPrinterConfiguration = {
@@ -847,16 +872,33 @@ export class PosEdgeClient implements PosClient {
   }
 
   printerConfiguration() {
-    return this.request<PosPrinterConfigurationView>(
+    return this.request<PosPrinterConfigurationView & {
+      configuration: CompatiblePosPrinterConfiguration;
+    }>(
       "/edge/v1/configuration/printers",
-    );
+    ).then((view) => ({
+      ...view,
+      configuration: normalizePrinterConfiguration(view.configuration),
+    }));
   }
 
   savePrinterConfiguration(configuration: PosPrinterConfiguration) {
-    return this.request<PosPrinterConfigurationView>(
+    const compatibleRequest: CompatiblePosPrinterConfiguration = {
+      ...configuration,
+      ordersOutputFormat: configuration.orderOutputFormat,
+      ordersPrinterName: configuration.orderPrinterName,
+      ordersReceiptPaperWidthMillimeters:
+        configuration.orderReceiptPaperWidthMillimeters,
+    };
+    return this.request<PosPrinterConfigurationView & {
+      configuration: CompatiblePosPrinterConfiguration;
+    }>(
       "/edge/v1/configuration/printers",
-      { method: "PUT", body: JSON.stringify(configuration) },
-    );
+      { method: "PUT", body: JSON.stringify(compatibleRequest) },
+    ).then((view) => ({
+      ...view,
+      configuration: normalizePrinterConfiguration(view.configuration),
+    }));
   }
 
   openCashDrawer() {
@@ -1328,11 +1370,10 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
-  updateLines(draftId: string, lines: PosDraftLineUpdate[], authorization?: PosSensitiveAuthorization) {
+  updateLines(draftId: string, lines: PosDraftLineUpdate[], includesProratedDiscount = false) {
     return this.request<PosDraft>(`/edge/v1/drafts/${draftId}/lines`, {
       method: "PUT",
-      body: JSON.stringify({ lines }),
-      headers: sensitiveHeaders(authorization),
+      body: JSON.stringify({ lines, includesProratedDiscount }),
     });
   }
 
@@ -1389,6 +1430,23 @@ export class PosEdgeClient implements PosClient {
     return this.request<{ printedCount: number }>("/edge/v1/orders/print", {
       method: "POST",
       body: JSON.stringify({ orderIds }),
+    });
+  }
+
+  printLegacyOrderReceipt(
+    receipt: PosPrintableReceipt,
+    branding?: TenantBranding | null,
+  ) {
+    return this.requestVoid("/edge/v1/print/receipt?workflow=orders", {
+      method: "POST",
+      body: JSON.stringify({
+        ...receipt,
+        // Edge versions before the dedicated order endpoint only accepted sale
+        // document types. The orders workflow still routes to its own printer.
+        documentType: "SalesReceipt",
+        companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName ?? null,
+        companyLogoSource: branding?.logoUrl ?? receipt.companyLogoSource ?? null,
+      }),
     });
   }
 

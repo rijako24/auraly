@@ -17,7 +17,8 @@ public static class SellerOrdersApi
         decimal Quantity,
         decimal? UnitPrice = null,
         decimal DiscountAmount = 0m,
-        string? PriceSource = null);
+        string? PriceSource = null,
+        decimal? DocumentUnitCost = null);
     public sealed record UpdateSellerOrderRequest(Guid CustomerId, string? Notes, string IdempotencyKey, IReadOnlyCollection<SellerOrderLineInput> Lines,
         Guid? WorkSessionId = null);
     public sealed record CreateSellerOrderRequest(Guid BusinessId, Guid WarehouseId, Guid CustomerId,
@@ -90,18 +91,19 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             if(editable.Status!=5)
             {
                 var unchanged=requested.Length==editable.Lines.Count&&requested.All(input=>
-                    editable.Lines.TryGetValue(input.ProductId,out var original)&&input.Quantity==original.Quantity);
+                    editable.Lines.SingleOrDefault(original=>original.Position==input.Position) is { } original
+                    && input.ProductId==original.ProductId && input.Quantity==original.Quantity);
                 if(!unchanged)
                     throw new SellerOrderConflictException("El permiso de revisión solo permite resolver pedidos con faltantes de inventario.");
-                var replayTotal=editable.Lines.Values.Sum(line=>decimal.Round(line.Quantity*line.UnitPrice-line.DiscountAmount,2,MidpointRounding.AwayFromZero));
+                var replayTotal=editable.Lines.Sum(line=>decimal.Round(line.Quantity*line.UnitPrice-line.DiscountAmount,2,MidpointRounding.AwayFromZero));
                 await transaction.CommitAsync(token);
                 return new(orderId,editable.Number,"Confirmed",replayTotal,false,[]);
             }
-            if(requested.Any(input=>!editable.Lines.ContainsKey(input.ProductId)))
+            if(requested.Any(input=>editable.Lines.All(original=>original.Position!=input.Position||original.ProductId!=input.ProductId)))
                 throw new SellerOrderConflictException("Durante la revisión no se pueden agregar productos nuevos.");
-            foreach(var original in editable.Lines.Values)
+            foreach(var original in editable.Lines)
             {
-                var submitted=requested.SingleOrDefault(input=>input.ProductId==original.ProductId);
+                var submitted=requested.SingleOrDefault(input=>input.Position==original.Position);
                 var hasShortage=original.ManageStock&&original.ReservedQuantity<original.Quantity;
                 if(!hasShortage&&(submitted is null||submitted.Quantity!=original.Quantity))
                     throw new SellerOrderConflictException("Solo se pueden ajustar o eliminar los productos con existencia pendiente.");
@@ -114,32 +116,34 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         {
             var context=await LoadContextAsync(connection,transaction,actor,actor.BusinessId,warehouseId,customerId,null,token);
             if(context.OrdersWarehouseId!=ordersWarehouseId)throw new SellerOrderConflictException("El cliente seleccionado no comparte la bodega de pedidos configurada para este pedido.");
-            var factsInput=requested.Concat(editable.Lines.Values
+            var factsInput=requested.Concat(editable.Lines
                 .Where(original=>requested.All(input=>input.ProductId!=original.ProductId))
-                .Select(original=>new SellerOrdersApi.SellerOrderLineInput(
-                    original.ProductId,original.Quantity,original.UnitPrice,
-                    original.DiscountAmount,original.PriceSource)))
+                .Select(original=>new NormalizedOrderLine(
+                    DeterministicGuid($"seller-order-edit-original:{original.Position}:{original.ProductId:N}"),
+                    original.Position,original.ProductId,original.Quantity,original.UnitPrice,
+                    original.DiscountAmount,original.PriceSource,
+                    original.DocumentUnitCost)))
                 .ToArray();
             var resolvedLines=await ResolveProductFactsAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,factsInput,token);
             foreach(var input in requested)
             {
                 var line=resolvedLines[input.ProductId];
-                editable.Lines.TryGetValue(input.ProductId,out var original);
+                var original=editable.Lines.SingleOrDefault(value=>value.Position==input.Position);
                 var preserveCommercialValues=!canFullyEdit&&original is not null;
                 var unitPrice=preserveCommercialValues?original!.UnitPrice:input.UnitPrice!.Value;
                 var discountAmount=preserveCommercialValues?original!.DiscountAmount:input.DiscountAmount;
                 var priceSource=preserveCommercialValues?original!.PriceSource:NormalizePriceSource(input.PriceSource);
                 var gross=decimal.Round(unitPrice*input.Quantity,2,MidpointRounding.AwayFromZero);
                 if(discountAmount>gross)throw new SellerOrderValidationException($"El descuento de {line.Code} supera el valor bruto de la línea.");
-                lines.Add(line with{UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position});
+                lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position,DocumentUnitCost=preserveCommercialValues?original!.DocumentUnitCost:input.DocumentUnitCost});
             }
-            var previousDemand=InventoryDemandResolver.Resolve(editable.Lines.Values
+            var previousDemand=InventoryDemandResolver.Resolve(editable.Lines
                 .Where(line=>line.ReservedQuantity>0)
                 .Select(line=>
                 {
                     var fact=resolvedLines[line.ProductId];
                     return new InventoryDemandLine(
-                        line.ProductId,line.ProductId,fact.InventoryProductId,fact.InventoryFactor,
+                        DeterministicGuid($"seller-order-edit-demand:{line.Position}:{line.ProductId:N}"),line.ProductId,fact.InventoryProductId,fact.InventoryFactor,
                         line.ReservedQuantity,fact.ManageStock);
                 })).ToDictionary(value=>value.InventoryProductId);
             var availableAfterRelease=resolvedLines.Values
@@ -149,13 +153,13 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                     (previousDemand.GetValueOrDefault(group.Key)?.RequiredInventoryQuantity??0m));
             var allocations=InventoryDemandResolver.AllocateWholeLines(
                 lines.Select(line=>new InventoryDemandLine(
-                    line.ProductId,line.ProductId,line.InventoryProductId,line.InventoryFactor,
+                    DeterministicGuid($"seller-order-edit-allocation:{line.Position}:{line.ProductId:N}"),line.ProductId,line.InventoryProductId,line.InventoryFactor,
                     line.Quantity,line.ManageStock)),availableAfterRelease);
-            var allocationByProduct=allocations.ToDictionary(value=>value.Line.ProductId);
+            var allocationByPosition=allocations.Select((value,index)=>(value,index)).ToDictionary(value=>value.index+1,value=>value.value);
             var warnings=new List<string>();
             lines=lines.Select(line=>
             {
-                var allocation=allocationByProduct[line.ProductId];
+                var allocation=allocationByPosition[line.Position];
                 var canReserve=context.SourceWarehouseAllowsNegativeStock||allocation.CanReserve;
                 if(line.ManageStock&&!canReserve)
                     warnings.Add($"{line.Code}: solicitadas {line.Quantity:N3}, disponibles {InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,line.InventoryFactor):N3}.");
@@ -164,16 +168,16 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var review=warnings.Count>0;
             var total=lines.Sum(line=>line.LineTotal);
             var reservations=lines.Where(line=>line.ManageStock&&line.CanReserve)
-                .Select(line=>new{Key=line.ProductId,Quantity=line.Quantity}).ToArray();
-            var releases=editable.Lines.Values.Where(line=>line.ReservedQuantity>0)
-                .Select(line=>new{Key=line.ProductId,Quantity=line.ReservedQuantity}).ToArray();
+                .GroupBy(line=>line.ProductId).Select(group=>new{Key=group.Key,Quantity=group.Sum(line=>line.Quantity)}).ToArray();
+            var releases=editable.Lines.Where(line=>line.ReservedQuantity>0)
+                .GroupBy(line=>line.ProductId).Select(group=>new{Key=group.Key,Quantity=group.Sum(line=>line.ReservedQuantity)}).ToArray();
             var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.DispatchTransfer,"inventory.system-warehouses.use"});
             var key=request.IdempotencyKey.Trim();
             if(releases.Length>0)await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
             if(reservations.Length>0)await TransferAsync(identity,$"seller-order-edit-reserve:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-reserve:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Nueva reserva del pedido {number}",reservations.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
             await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,customerId,context.Name,context.Identification,context.Email,context.Phone,context.Address,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
                 review?5:2,review?"StockReview":"InventoryTransferAccepted",review,
-                lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m}))).ToArray(),
+                lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,line.DocumentUnitCost,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m,LinePosition=line.Position}))).ToArray(),
                 actor.UserId,request.WorkSessionId,token);
             var reportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
             await transaction.CommitAsync(token);
@@ -247,25 +251,26 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 {
                     var fact=resolvedLines[input.ProductId];
                     return new InventoryDemandLine(
-                        input.ProductId,input.ProductId,fact.InventoryProductId,
+                        input.LineId,input.ProductId,fact.InventoryProductId,
                         fact.InventoryFactor,input.Quantity,fact.ManageStock);
                 }),
                 resolvedLines.Values
                     .GroupBy(line=>line.InventoryProductId)
                     .ToDictionary(group=>group.Key,group=>group.First().Available));
-            var allocationByProduct=allocations.ToDictionary(value=>value.Line.ProductId);
+            var allocationByLine=allocations.ToDictionary(value=>value.Line.LineId);
             var missingPrices=requested.Where(line=>line.UnitPrice is null).ToArray();
             var legacyPrices=missingPrices.Length==0
                 ? new Dictionary<string,CommercePriceResolution>()
                 : await SqlOnlineSalesDraftStore.ResolveCommercePricesAsync(
                     connection,transaction,request.BusinessId,request.WarehouseId,request.CustomerId,
                     missingPrices.Select(input=>new CommercePriceRequest(
-                        input.ProductId.ToString("D"),input.ProductId,input.Quantity)).ToArray(),token);
+                        input.LineId.ToString("D"),input.ProductId,input.Quantity)).ToArray(),token,
+                    independentLines:true);
             foreach(var input in requested)
             {
                 var line=resolvedLines[input.ProductId];
                 var legacyPrice=input.UnitPrice is null
-                    ? legacyPrices[input.ProductId.ToString("D")]
+                    ? legacyPrices[input.LineId.ToString("D")]
                     : null;
                 var unitPrice=input.UnitPrice??legacyPrice!.UnitPrice;
                 var priceSource=input.UnitPrice is null
@@ -276,21 +281,21 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                     throw new SellerOrderValidationException($"El descuento de {line.Code} supera el valor bruto de la línea.");
                 if(input.UnitPrice is null)
                     warnings.Add($"{line.Code}: el cliente anterior no envió el precio capturado; revisa el valor antes de confirmar.");
-                var allocation=allocationByProduct[input.ProductId];
+                var allocation=allocationByLine[input.LineId];
                 var canReserve=context.SourceWarehouseAllowsNegativeStock||allocation.CanReserve;
                 if(line.ManageStock&&!canReserve)
                     warnings.Add($"{line.Code}: solicitadas {input.Quantity:N3}, disponibles {InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,line.InventoryFactor):N3}.");
-                lines.Add(line with{UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=input.DiscountAmount,Position=++position,CanReserve=canReserve});
+                lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=input.DiscountAmount,Position=++position,CanReserve=canReserve,DocumentUnitCost=input.DocumentUnitCost});
             }
             var review=warnings.Count>0;var number=$"PED-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString("N")[..8].ToUpperInvariant()}";
             var total=lines.Sum(line=>line.LineTotal);
             var reservationTransferId=DeterministicGuid($"seller-order-transfer:{orderId:N}");
             var reservableLines=lines.Where(line=>line.ManageStock&&line.CanReserve).ToArray();
             var confirmedExternalStatus=reservableLines.Length>0?"InventoryTransferProcessed":"Confirmed";
-            var persistedLines=lines.Select(line=>{var lineTotal=line.LineTotal;var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);var reservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m;return new{productId=line.ProductId,code=line.Code,name=line.Name,unitCode=line.UnitCode,quantity=line.Quantity,unitPrice=line.UnitPrice,discountAmount=line.DiscountAmount,taxAmount=tax,lineTotal,rawPayloadJson=JsonSerializer.Serialize(new{line.PriceSource,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=reservedQuantity})};});
+            var persistedLines=lines.Select(line=>{var lineTotal=line.LineTotal;var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);var reservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m;return new{productId=line.ProductId,code=line.Code,name=line.Name,unitCode=line.UnitCode,quantity=line.Quantity,unitPrice=line.UnitPrice,discountAmount=line.DiscountAmount,taxAmount=tax,lineTotal,rawPayloadJson=JsonSerializer.Serialize(new{line.PriceSource,line.DocumentUnitCost,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=reservedQuantity,LinePosition=line.Position})};});
             await using(var insert=Procedure("dbo.SellerOrderCreate",connection,transaction))
             {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@WarehouseId",request.WarehouseId),P("@OrdersWarehouseId",context.OrdersWarehouseId),P("@ReservationTransferId",reservationTransferId),P("@RouteId",request.RouteId),P("@RouteStopId",request.RouteStopId),P("@PartySiteId",request.PartySiteId),P("@CapturedByUserId",actor.UserId),P("@CapturedOffline",request.CapturedOffline),P("@RequiresStockReview",review),P("@Status",review?5:2),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":confirmedExternalStatus),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
-            var stockLines=reservableLines.Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();
+            var stockLines=reservableLines.GroupBy(line=>line.ProductId).Select((group,index)=>new WarehouseTransferLineRequest(index+1,group.Key,group.Sum(line=>line.Quantity))).ToArray();
             if(stockLines.Length>0)
             {
                 var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.DispatchTransfer,"inventory.system-warehouses.use"});
@@ -324,16 +329,17 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
 
     private static async Task<IReadOnlyDictionary<Guid,OrderLine>> ResolveProductFactsAsync(
         SqlConnection connection,SqlTransaction transaction,Guid businessId,Guid warehouseId,
-        Guid customerId,IReadOnlyCollection<SellerOrdersApi.SellerOrderLineInput> inputs,
+        Guid customerId,IReadOnlyCollection<NormalizedOrderLine> inputs,
         CancellationToken token)
     {
         var lines=new Dictionary<Guid,OrderLine>();
-        var inputByProductId=inputs.ToDictionary(input=>input.ProductId);
+        var inputByProductId=inputs.GroupBy(input=>input.ProductId)
+            .ToDictionary(group=>group.Key,group=>group.First());
         await using(var command=Procedure("dbo.SellerOrderProductResolve",connection,transaction))
         {
             command.Parameters.AddRange([
                 P("@BusinessId",businessId),P("@WarehouseId",warehouseId),P("@CustomerId",customerId),
-                P("@LinesJson",JsonSerializer.Serialize(inputs.Select(input=>new{productId=input.ProductId,quantity=input.Quantity}))) ]);
+                P("@LinesJson",JsonSerializer.Serialize(inputs.GroupBy(input=>input.ProductId).Select(group=>new{productId=group.Key,quantity=group.Sum(input=>input.Quantity)}))) ]);
             await using var reader=await command.ExecuteReaderAsync(token);
             while(await reader.ReadAsync(token))
             {
@@ -351,17 +357,12 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 $"Los productos {string.Join(", ",unresolved.Select(value=>value.ToString("D")))} no están activos o no tienen precio publicado.");
         return lines;
     }
-    private static SellerOrdersApi.SellerOrderLineInput[] NormalizeOrderLines(IReadOnlyCollection<SellerOrdersApi.SellerOrderLineInput> lines)
+    private static NormalizedOrderLine[] NormalizeOrderLines(IReadOnlyCollection<SellerOrdersApi.SellerOrderLineInput> lines)
     {
-        var result=new List<SellerOrdersApi.SellerOrderLineInput>();
-        foreach(var group in lines.GroupBy(line=>line.ProductId))
-        {
-            var prices=group.Where(line=>line.UnitPrice.HasValue).Select(line=>line.UnitPrice!.Value).Distinct().ToArray();
-            if(prices.Length>1)throw new SellerOrderValidationException("Un mismo producto no puede guardarse con precios unitarios diferentes.");
-            var priceSources=group.Select(line=>NormalizePriceSource(line.PriceSource)).Distinct(StringComparer.Ordinal).ToArray();
-            result.Add(new(group.Key,group.Sum(line=>line.Quantity),prices.Length==0?null:prices[0],group.Sum(line=>line.DiscountAmount),priceSources.Length==1?priceSources[0]:"Captured"));
-        }
-        return result.ToArray();
+        return lines.Select((line,index)=>new NormalizedOrderLine(
+            DeterministicGuid($"seller-order-line:{index+1}:{line.ProductId:N}"),
+            index+1,line.ProductId,line.Quantity,line.UnitPrice,line.DiscountAmount,
+            NormalizePriceSource(line.PriceSource),line.DocumentUnitCost)).ToArray();
     }
     private static string NormalizePriceSource(string? value)=>value switch
     {
@@ -376,10 +377,13 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     private static SqlParameter Money(string name,decimal value)=>new(name,SqlDbType.Decimal){Precision=19,Scale=4,Value=value};
     private static SqlCommand Procedure(string name,SqlConnection connection,SqlTransaction? transaction=null)=>new(name,connection,transaction){CommandType=CommandType.StoredProcedure};
     private sealed record CustomerContext(string Name,string? Identification,string? Email,string? Phone,string Address,Guid OrdersWarehouseId,bool SourceWarehouseAllowsNegativeStock);
-    private sealed record OrderLine(Guid ProductId,string Code,string Name,string UnitCode,decimal Quantity,decimal UnitPrice,string PriceSource,decimal Available,bool ManageStock,decimal TaxRate,int Position,decimal DiscountAmount=0m,Guid InventoryProductId=default,decimal InventoryFactor=1m,bool CanReserve=false)
+    private sealed record OrderLine(Guid ProductId,string Code,string Name,string UnitCode,decimal Quantity,decimal UnitPrice,string PriceSource,decimal Available,bool ManageStock,decimal TaxRate,int Position,decimal DiscountAmount=0m,Guid InventoryProductId=default,decimal InventoryFactor=1m,bool CanReserve=false,decimal? DocumentUnitCost=null)
     {
         public decimal LineTotal=>decimal.Round(UnitPrice*Quantity-DiscountAmount,2,MidpointRounding.AwayFromZero);
     }
+    private sealed record NormalizedOrderLine(
+        Guid LineId,int Position,Guid ProductId,decimal Quantity,decimal? UnitPrice,
+        decimal DiscountAmount,string PriceSource,decimal? DocumentUnitCost);
     private sealed record SellerCatalogCandidate(
         Guid ProductId,string ProductCode,string Name,string UnitCode,
         decimal QuantityOnHand,bool ManageStock);

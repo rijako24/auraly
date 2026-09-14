@@ -9,7 +9,8 @@ public sealed record OnlineSalesPayment(
     string? CardFranchiseCode = null,
     string? ApprovalNumber = null,
     Guid? BankAccountId = null,
-    string? Notes = null);
+    string? Notes = null,
+    decimal? TenderedAmount = null);
 
 public sealed record OnlineSalesCreditTerms(
     decimal Amount);

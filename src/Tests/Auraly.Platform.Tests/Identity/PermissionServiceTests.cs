@@ -44,7 +44,7 @@ public sealed class PermissionServiceTests
             .ReturnsAsync(true);
         unitOfWork.Setup(x => x.Permissions.GetAllAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([permission]);
-        unitOfWork.Setup(x => x.AppRoles.GetActiveSystemRolesAsync(It.IsAny<CancellationToken>()))
+        unitOfWork.Setup(x => x.AppRoles.GetActiveAdministratorRolesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([administrator, transporter]);
 
         IReadOnlyList<RolePermission>? assignments = null;
@@ -71,7 +71,7 @@ public sealed class PermissionServiceTests
         var agentPermission = Permission("agents.read");
         var reservationPermission = Permission("reservations.read");
         var platformAdministrator = Administrator("@auraly");
-        var tenantAdministrator = Administrator("@cliente");
+        var tenantAdministrator = Administrator("@cliente", isSystemRole: false);
 
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(x => x.Permissions).Returns(Mock.Of<IPermissionRepository>());
@@ -84,7 +84,7 @@ public sealed class PermissionServiceTests
                 tenantPermission, tenantManagement, platformManagement,
                 agentPermission, reservationPermission
             ]);
-        unitOfWork.Setup(x => x.AppRoles.GetActiveSystemRolesAsync(It.IsAny<CancellationToken>()))
+        unitOfWork.Setup(x => x.AppRoles.GetActiveAdministratorRolesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([platformAdministrator, tenantAdministrator]);
 
         var assignments = new List<RolePermission>();
@@ -113,7 +113,7 @@ public sealed class PermissionServiceTests
         Resource = resource
     };
 
-    private static AppRole Administrator(string tenantKey)
+    private static AppRole Administrator(string tenantKey, bool isSystemRole = true)
     {
         var tenant = new Tenant();
         typeof(Tenant).GetProperty(nameof(Tenant.TenantKey))!.SetValue(tenant, tenantKey);
@@ -123,7 +123,7 @@ public sealed class PermissionServiceTests
             Name = "Administrador",
             NormalizedName = "ADMINISTRATOR",
             IsActive = true,
-            IsSystemRole = true,
+            IsSystemRole = isSystemRole,
             Tenant = tenant
         };
     }

@@ -971,15 +971,13 @@ export class OnlinePosClient implements PosClient {
     );
   }
 
-  async updateLines(draftId: string, lines: PosDraftLineUpdate[], authorization?: PosSensitiveAuthorization) {
+  async updateLines(draftId: string, lines: PosDraftLineUpdate[], includesProratedDiscount = false) {
     return this.mapDraft(
       await request<OnlineDraft>(
         `/api/commerce/v1/pos/drafts/${draftId}/lines`,
         this.mutation(
-          { lines, expectedVersion: this.version(draftId) },
+          { lines, expectedVersion: this.version(draftId), includesProratedDiscount },
           "PUT",
-          authorization?.operationId,
-          authorization?.approvalRequestId,
         ),
       ),
     );
@@ -1131,8 +1129,23 @@ export class OnlinePosClient implements PosClient {
   }
 
   async printOrders(orderIds: string[]): Promise<{ printedCount: number }> {
-    if (this.edgeSessionToken)
-      return this.localEdge().printOrders(orderIds);
+    if (this.edgeSessionToken) {
+      try {
+        return await this.localEdge().printOrders(orderIds);
+      } catch (error) {
+        if (!(error instanceof PosEdgeError) || error.status !== 404) throw error;
+
+        // Keep deployed Edge installations compatible while they update to the
+        // dedicated batch endpoint. Fetch once from the server, then send each
+        // rendered order to the legacy orders printer route.
+        const documents = await loadCommerceOrderPrintBatch(orderIds);
+        const receipts = documents.map((order) => toPrintableOrder(order, this.context));
+        const branding = await tenantsApi.getBranding().catch(() => null);
+        const edge = this.localEdge();
+        await Promise.all(receipts.map((receipt) => edge.printLegacyOrderReceipt(receipt, branding)));
+        return { printedCount: receipts.length };
+      }
+    }
     const preview = openHalfLetterPrintPreview();
     try {
       const documents = await loadCommerceOrderPrintBatch(orderIds);
@@ -1374,6 +1387,7 @@ export async function renderReceiptsReceipt(
       receiptLineMarkup(line, currency)).join("");
     const taxes = receiptTaxTableRows(receipt, currency);
     const payments = receiptPaymentRows(receipt, currency, "div");
+    const cashTender = receiptCashTenderRows(receipt, currency, "div");
     const withholdings = receiptWithholdingRows(receipt, currency, "div");
     const withholdingTotals = receipt.withholdingTotal > 0
       ? `<div><span>Total bruto</span><b>${currency.format(receipt.payableAmount)}</b></div><h3>Retenciones</h3>${withholdings}<div><span>Total retenciones</span><b>-${currency.format(receipt.withholdingTotal)}</b></div>`
@@ -1384,8 +1398,8 @@ export async function renderReceiptsReceipt(
     const ticketHeader = `${presentation.isInvoice ? "" : `<h2>${presentation.title}</h2>`}<div class="ticket-number">N.º de ticket: <b>${escapeHtml(presentation.displayNumber)}</b></div>`;
     const summary = presentation.isOrder
       ? `<section class="totals"><div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div></section>`
-      : `<section class="totals"><h3>Impuestos por tarifa</h3><table class="tax-table"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>${taxes}</tbody></table><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div><h3 class="payment-title">Medios de pago</h3>${payments}</section>`;
-    return `<article><header>${brand}${ticketHeader}<div>${presentation.issuedAt}</div>${location ? `<p class="scope">${escapeHtml(location)}</p>` : ""}</header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div></section>${lines}${summary}${presentation.isInvoice && receipt.cufe ? `<p class="cufe"><b>CUFE</b><br>${escapeHtml(receipt.cufe)}</p>` : ""}${qr}<footer>${presentation.issuedBy}<br><b>${presentation.isOrder ? "www.auralyapp.com" : "www.auralyapp.co"}</b></footer></article>`;
+      : `<section class="totals"><h3>Impuestos por tarifa</h3><table class="tax-table"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>${taxes}</tbody></table><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div>${cashTender}<h3 class="payment-title">Medios de pago</h3>${payments}</section>`;
+    return `<article data-auraly-report="${presentation.templateCode}" data-auraly-report-version="${presentation.templateVersion}"><header>${brand}${ticketHeader}<div>${presentation.issuedAt}</div>${location ? `<p class="scope">${escapeHtml(location)}</p>` : ""}</header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div></section>${lines}${summary}${presentation.isInvoice && receipt.cufe ? `<p class="cufe"><b>CUFE</b><br>${escapeHtml(receipt.cufe)}</p>` : ""}${qr}<footer>${presentation.issuedBy}<br><b>www.auralyapp.co</b></footer></article>`;
   }).join("");
   preview.document.open();
   preview.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Comprobantes de venta</title><style>@page{size:${paperWidth}mm auto;margin:4mm}*{box-sizing:border-box}${posReceiptTypographyCss}body{width:${bodyWidth}mm;margin:0 auto;color:#111;font:12px/1.35 ui-monospace,Consolas,monospace}article{page-break-after:always}article:last-child{page-break-after:auto}header{border-bottom:1px dashed #555;padding-bottom:8px}header>*+*{margin-top:4px}.brand-logo{display:block;max-width:48mm;max-height:18mm;margin:0 auto 3mm;object-fit:contain}.brand-name{margin:0;font:800 20px/1.2 Arial,sans-serif;text-transform:uppercase}h2{margin:4px 0 0;font-size:13px;text-transform:uppercase}.ticket-number{font-size:12px}.scope{margin:3px 0 0;color:#444}.meta{padding:8px 0;border-bottom:1px dashed #555}.totals{padding:8px 0}.meta div,.totals div,.line div{display:flex;justify-content:space-between;gap:10px}.meta b,.totals b,.line b{font-variant-numeric:tabular-nums;text-align:right}.line{padding:8px 0;border-bottom:1px dashed #aaa}.line>b{display:block;text-align:left}.discount{color:#7c2d12;font-size:11px}.tax-table{width:100%;border-collapse:collapse;margin:4px 0}.tax-table th{padding:3px 0;border-bottom:1px solid #777;text-align:right;font-size:10px}.tax-table th:first-child,.tax-table td:first-child{text-align:left}.tax-table td{padding:3px 0;text-align:right;font-variant-numeric:tabular-nums}.total{margin-top:7px;padding:6px 0;border-top:2px dashed #111;border-bottom:2px dashed #111;font-size:18px;font-weight:900}.payment-title{margin-top:8px}.cufe{padding-top:8px;border-top:1px dashed #555;overflow-wrap:anywhere;font-size:9px}.qr{display:block;width:42mm;height:42mm;margin:9px auto 4px}footer{padding-top:7px;text-align:center}h3{margin:5px 0 4px;font-size:11px;text-transform:uppercase}</style></head><body>${documents}<script>addEventListener('load',()=>setTimeout(()=>window.print(),150));</script></body></html>`);
@@ -1448,6 +1462,7 @@ export async function renderReceiptsHalfLetter(
       : "";
     const taxes = receiptTaxRows(receipt, currency, "div");
     const payments = receiptPaymentRows(receipt, currency, "div");
+    const cashTender = receiptCashTenderRows(receipt, currency, "div");
     const withholdings = receiptWithholdingRows(receipt, currency, "div");
     const withholdingTotals = receipt.withholdingTotal > 0
       ? `${withholdings}<div><span>Total retenciones</span><b>-${currency.format(receipt.withholdingTotal)}</b></div>`
@@ -1456,8 +1471,8 @@ export async function renderReceiptsHalfLetter(
     const issuedAt = presentation.issuedAt;
     const bottom = presentation.isOrder
       ? `<section class="bottom"><div><small>Detalle del pedido · copia cliente / control</small></div><div class="totals"><div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div></div></section>`
-      : `<section class="bottom"><div>${cufe}<section class="breakdowns"><div class="breakdown"><b>Impuestos por tarifa</b>${taxes}</div><div class="breakdown"><b>Medios de pago</b>${payments}</div></section><small>Representación gráfica · copia cliente / control</small></div><div class="totals"><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div><div><span>Total bruto</span><b>${currency.format(receipt.payableAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total a pagar</span><b>${currency.format(netPayable)}</b></div>${qr}</div></section>`;
-    const copy = `<article class="document"><div class="document-content"><header><div>${brand}<h2>${presentation.title}</h2></div><div class="right"><span>N.º de ticket</span><br><b>${escapeHtml(receipt.documentNumber)}</b><br>${issuedAt}</div></header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>${fiscal}</section><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Total</th></tr></thead><tbody>${rows}</tbody></table>${bottom}<footer><span>${presentation.representationName}</span><span class="platform">${presentation.issuedBy} · <b>${presentation.isOrder ? "www.auralyapp.com" : "www.auralyapp.co"}</b><br>Emitido: ${issuedAt}</span><span class="page">Página 1 de 1</span></footer></div></article>`;
+      : `<section class="bottom"><div>${cufe}<section class="breakdowns"><div class="breakdown"><b>Impuestos por tarifa</b>${taxes}</div><div class="breakdown"><b>Medios de pago</b>${payments}</div></section><small>Representación gráfica · copia cliente / control</small></div><div class="totals"><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div><div><span>Total bruto</span><b>${currency.format(receipt.payableAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total a pagar</span><b>${currency.format(netPayable)}</b></div>${cashTender}${qr}</div></section>`;
+    const copy = `<article class="document" data-auraly-report="${presentation.templateCode}" data-auraly-report-version="${presentation.templateVersion}"><div class="document-content"><header><div>${brand}<h2>${presentation.title}</h2></div><div class="right"><span>N.º de ticket</span><br><b>${escapeHtml(receipt.documentNumber)}</b><br>${issuedAt}</div></header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>${fiscal}</section><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Total</th></tr></thead><tbody>${rows}</tbody></table>${bottom}<footer><span>${presentation.representationName}</span><span class="platform">${presentation.issuedBy} · <b>www.auralyapp.co</b><br>Emitido: ${issuedAt}</span><span class="page">Página 1 de 1</span></footer></div></article>`;
     const sheetClass = format === "Letter"
       ? "letter"
       : format === "HalfLegal" ? "half half-oficio" : "half half-letter";
@@ -1521,6 +1536,14 @@ function receiptPaymentRows(receipt: PosPrintableReceipt, currency: Intl.NumberF
   return receipt.payments.map(payment => `<${element}><span>${escapeHtml(paymentMethodName(payment.methodCode))}</span><b>${currency.format(payment.amount)}</b></${element}>`).join("");
 }
 
+function receiptCashTenderRows(receipt: PosPrintableReceipt, currency: Intl.NumberFormat, element: "div") {
+  const cash = receipt.payments.find(payment =>
+    payment.methodCode === "Cash" && payment.tenderedAmount != null);
+  if (!cash || cash.tenderedAmount == null) return "";
+  const change = Math.max(0, cash.tenderedAmount - cash.amount);
+  return `<${element}><span>Efectivo recibido</span><b>${currency.format(cash.tenderedAmount)}</b></${element}><${element}><span>Cambio</span><b>${currency.format(change)}</b></${element}>`;
+}
+
 function receiptWithholdingRows(receipt: PosPrintableReceipt, currency: Intl.NumberFormat, element: "div") {
   return (receipt.withholdings ?? []).map(withholding =>
     `<${element}><span>Ret. ${escapeHtml(withholding.name)} (${withholding.rate.toLocaleString("es-CO", { maximumFractionDigits: 4 })}%)</span><b>-${currency.format(withholding.amount)}</b></${element}>`,
@@ -1556,5 +1579,7 @@ function salesPrintPresentation(receipt: PosPrintableReceipt) {
     netPayable: receipt.withholdingTotal > 0
       ? receipt.netPayableAmount
       : receipt.payableAmount,
+    templateCode: isOrder ? "order" : isInvoice ? "sales-invoice" : "sales-receipt",
+    templateVersion: isOrder ? 1 : 2,
   };
 }

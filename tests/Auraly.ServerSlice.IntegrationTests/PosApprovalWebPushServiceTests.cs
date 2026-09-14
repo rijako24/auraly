@@ -106,7 +106,7 @@ public sealed class PosApprovalWebPushServiceTests
         Guid.NewGuid(),
         Guid.NewGuid(),
         null,
-        CommercePermissionCodes.SalesDiscount,
+        CommercePermissionCodes.SalesChangePrice,
         Guid.NewGuid(),
         "Cajero prueba",
         "{\"action\":\"Discount\"}",

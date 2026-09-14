@@ -218,7 +218,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         const string sql = """
             SELECT inventoryProduct.ManageStock,pp.Amount,lc.LatestUnitCost,
                    COALESCE(tax.Rate,0),tenant.InventoryCostBasis,pp.TargetMarginPercent,
-                   COALESCE(pp.RoundingIncrement,1),COALESCE(pp.RoundingMode,N'Nearest')
+                   COALESCE(pp.RoundingIncrement,1),COALESCE(pp.RoundingMode,N'Nearest'),
+                   costLink.ParentProductId
             FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Warehouses w WITH (UPDLOCK,HOLDLOCK)
               ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
@@ -238,6 +239,9 @@ public sealed class SqlGoodsReceiptDocumentHandler(
               ON pp.ProductId=p.ProductId AND pp.BusinessId=@BusinessId AND pp.IsActive=1
             LEFT JOIN dbo.SupplierProductLatestCosts lc WITH (UPDLOCK,HOLDLOCK)
               ON lc.BusinessId=@BusinessId AND lc.SupplierId=@SupplierId AND lc.ProductId=p.ProductId
+            LEFT JOIN dbo.ProductLinks costLink WITH (UPDLOCK,HOLDLOCK)
+              ON costLink.BusinessId=@BusinessId AND costLink.ChildProductId=p.ProductId
+             AND costLink.SharesPrice=1 AND costLink.IsActive=1
             WHERE p.ProductId=@ProductId
               AND (p.TenantId=business.TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
             """;
@@ -256,7 +260,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             reader.GetDecimal(1),
             reader.IsDBNull(2) ? null : reader.GetDecimal(2),
             reader.GetDecimal(3),reader.GetString(4),reader.IsDBNull(5) ? null : reader.GetDecimal(5),
-            reader.GetDecimal(6),reader.GetString(7));
+            reader.GetDecimal(6),reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetGuid(8));
     }
 
     private Task<InventoryLedgerPostingResult> ApplyInventoryReceiptAsync(
@@ -348,6 +353,15 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         ReceiptLineState state,
         CancellationToken cancellationToken)
     {
+        var now = timeProvider.GetUtcNow();
+        if (state.CostParentProductId is Guid costParentProductId)
+        {
+            await SqlLinkedProductCostPreparation.PrepareFamilyAsync(
+                session.Connection, session.Transaction, receipt.BusinessId,
+                costParentProductId, null, line.ProductId, receipt.ConfirmedByUserId,
+                now, cancellationToken);
+            return;
+        }
         if (state.TargetMarginPercent is null or <= 0 or >= 100)
             throw new InvalidOperationException("The product requires a valid target margin before receiving merchandise.");
         var currentMargin = observedCost <= 0 ? null : PriceMargin.CalculateMarginPercentFromGross(
@@ -432,8 +446,11 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         command.Parameters.AddWithValue("@RoundingIncrement", state.RoundingIncrement);
         command.Parameters.AddWithValue("@RoundingMode", state.RoundingMode);
         command.Parameters.AddWithValue("@UserId", receipt.ConfirmedByUserId);
-        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await SqlLinkedProductCostPreparation.PrepareFamilyAsync(
+            session.Connection, session.Transaction, receipt.BusinessId, line.ProductId,
+            observedCost, null, receipt.ConfirmedByUserId, now, cancellationToken);
     }
 
     private async Task InsertOutboxAsync(
@@ -496,5 +513,6 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         string PriceFormationCostBasis,
         decimal? TargetMarginPercent,
         decimal RoundingIncrement,
-        string RoundingMode);
+        string RoundingMode,
+        Guid? CostParentProductId);
 }

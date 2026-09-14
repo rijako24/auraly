@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.IO.Ports;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Auraly.Contracts.Sales;
 using Auraly.Pos.Edge.Infrastructure;
 using Auraly.Pos.Printing;
@@ -123,7 +124,13 @@ public sealed record PosPrinterConfiguration(
     string? PosPrinterName = null,
     string OrderOutputFormat = PrintTemplateFormats.HalfLetter,
     string? OrderPrinterName = null,
-    int OrderReceiptPaperWidthMillimeters = 80)
+    int OrderReceiptPaperWidthMillimeters = 80,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? OrdersOutputFormat = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? OrdersPrinterName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    int? OrdersReceiptPaperWidthMillimeters = null)
 {
     public static PosPrinterConfiguration Default { get; } =
         new(PosPrinterModes.WindowsRaw, null, 80, null,
@@ -174,7 +181,17 @@ public sealed class PosPrinterConfigurationStore(
                 return stored with
                 {
                     ReceiptMode = PosPrinterModes.WindowsRaw,
-                    OrderMode = OrderPrinterModes.WindowsPrint
+                    OrderMode = OrderPrinterModes.WindowsPrint,
+                    OrderOutputFormat = stored.OrdersOutputFormat
+                        ?? stored.OrderOutputFormat,
+                    OrderPrinterName = Clean(stored.OrderPrinterName)
+                        ?? Clean(stored.OrdersPrinterName),
+                    OrderReceiptPaperWidthMillimeters =
+                        stored.OrdersReceiptPaperWidthMillimeters
+                        ?? stored.OrderReceiptPaperWidthMillimeters,
+                    OrdersOutputFormat = null,
+                    OrdersPrinterName = null,
+                    OrdersReceiptPaperWidthMillimeters = null
                 };
             }
             catch (JsonException)
@@ -193,7 +210,9 @@ public sealed class PosPrinterConfigurationStore(
             throw new ArgumentException("La caja debe imprimir la tirilla directamente.");
         if (requested.ReceiptPaperWidthMillimeters is not (58 or 80))
             throw new ArgumentException("La tirilla debe ser de 58 u 80 mm.");
-        if (requested.OrderReceiptPaperWidthMillimeters is not (58 or 80))
+        var orderReceiptPaperWidth = requested.OrdersReceiptPaperWidthMillimeters
+                                     ?? requested.OrderReceiptPaperWidthMillimeters;
+        if (orderReceiptPaperWidth is not (58 or 80))
             throw new ArgumentException("La tirilla del pedido debe ser de 58 u 80 mm.");
         var receipt = Clean(requested.ReceiptPrinterName);
         var letter = Clean(requested.LetterPrinterName);
@@ -202,14 +221,17 @@ public sealed class PosPrinterConfigurationStore(
             throw new ArgumentException("El modo de impresion de pedidos no es valido.");
         if (orderMode == OrderPrinterModes.BrowserPreview)
             throw new ArgumentException("La caja debe imprimir los pedidos directamente.");
+        var orderOutputFormat = requested.OrdersOutputFormat
+                                ?? requested.OrderOutputFormat;
         if (!IsWorkflowFormat(requested.PosOutputFormat) ||
-            !IsWorkflowFormat(requested.OrderOutputFormat))
+            !IsWorkflowFormat(orderOutputFormat))
             throw new ArgumentException(
                 "El formato debe ser tirilla, media carta, media oficio o carta.");
         var routes = NormalizeRoutes(requested.TemplateRoutes, receipt, letter);
         var scale = ValidateScale(requested.Scale);
         var posPrinter = Clean(requested.PosPrinterName);
-        var orderPrinter = Clean(requested.OrderPrinterName);
+        var orderPrinter = Clean(requested.OrderPrinterName)
+                           ?? Clean(requested.OrdersPrinterName);
         if (posPrinter is null) throw new ArgumentException("Selecciona la impresora de facturas.");
         if (orderPrinter is null) throw new ArgumentException("Selecciona la impresora de pedidos.");
 
@@ -222,7 +244,12 @@ public sealed class PosPrinterConfigurationStore(
             TemplateRoutes = routes,
             Scale = scale,
             PosPrinterName = posPrinter,
-            OrderPrinterName = orderPrinter
+            OrderOutputFormat = orderOutputFormat,
+            OrderPrinterName = orderPrinter,
+            OrderReceiptPaperWidthMillimeters = orderReceiptPaperWidth,
+            OrdersOutputFormat = null,
+            OrdersPrinterName = null,
+            OrdersReceiptPaperWidthMillimeters = null
         };
         lock (gate)
         {
@@ -409,7 +436,9 @@ public sealed class ConfigurableOrderDocumentPrinter(
                 receipt.Payments.Select(payment =>
                     new Auraly.Contracts.Sales.OnlineSalesPayment(
                         payment.MethodCode, payment.Amount, payment.Reference,
-                        payment.CardFranchiseCode, payment.ApprovalNumber)).ToArray(),
+                        payment.CardFranchiseCode, payment.ApprovalNumber,
+                        payment.BankAccountId, payment.Notes,
+                        payment.TenderedAmount)).ToArray(),
                 receipt.UntaxedAmount,
                 receipt.TaxAmount,
                 receipt.PayableAmount,
@@ -681,7 +710,8 @@ public sealed class ConfigurablePosReceiptPrinter(
                 receipt.Payments.Select(payment => new OfflineSalePayment(
                     payment.MethodCode, payment.Amount, payment.Reference,
                     payment.CardFranchiseCode, payment.ApprovalNumber,
-                    payment.BankAccountId, payment.Notes)).ToArray(),
+                    payment.BankAccountId, payment.Notes,
+                    payment.TenderedAmount)).ToArray(),
                 receipt.UntaxedAmount,
                 receipt.TaxAmount,
                 receipt.PayableAmount,

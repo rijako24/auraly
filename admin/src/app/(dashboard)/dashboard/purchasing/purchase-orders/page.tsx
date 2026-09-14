@@ -2,9 +2,10 @@
 
 import { useEffect,useMemo,useRef,useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Plus,Search,Trash2 } from "lucide-react";
+import { Plus,Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
 import { SupplierProductPicker } from "@/components/products/supplier-product-picker";
@@ -56,7 +57,7 @@ export default function PurchaseOrdersPage(){
   const confirmed=()=>{if(localDraftKey&&draftOrigin==="local")localStorage.removeItem(localDraftKey);setDraft(undefined)};
   const discard=()=>{if(localDraftKey&&draftOrigin==="local")localStorage.removeItem(localDraftKey);setDraft(undefined)};
   return <div className="space-y-6"><header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-medium text-primary">Compras</p><h1 className="text-3xl font-semibold">Órdenes de compra</h1><p className="text-muted-foreground">Planea el abastecimiento con inventario, pedidos en camino y rotación persistida por bodega.</p></div>{permissions.has("purchasing.purchase-orders.create")&&<Button onClick={newOrder}><Plus className="mr-2 h-4 w-4"/>Nueva orden</Button>}</header>
-    <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[1fr_15rem]"><div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/><Input className="pl-9" value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} placeholder="Número o proveedor"/></div><Select value={status} onValueChange={v=>setStatus(v as PurchaseOrderStatus|"all")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem>{Object.entries(labels).map(([value,label])=><SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></section>
+    <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[1fr_15rem]"><ServerSearchInput value={search} onSearch={value=>{setSearch(value);setPage(1)}} isSearching={list.isFetching} placeholder="Número o proveedor"/><Select value={status} onValueChange={v=>setStatus(v as PurchaseOrderStatus|"all")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem>{Object.entries(labels).map(([value,label])=><SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></section>
     <DataTable columns={columns} data={list.data?.items??[]} isLoading={list.isLoading} page={list.data?.page} pageSize={25} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} onPaginationChange={setPage} onRowClick={open} enableRowSelection={false}/>
     {draft&&businessId&&<OrderEditor draft={draft} businessId={businessId} onChange={rememberDraft} onClose={()=>setDraft(undefined)} onDiscard={discard} onConfirmed={confirmed}/>} {detail&&<OrderDetail detail={detail} canClose={permissions.has("purchasing.purchase-orders.close")} onClose={()=>setDetail(undefined)} onRefresh={async()=>setDetail(await purchaseOrdersApi.get(detail.purchaseOrderId))}/>}</div>;
 }

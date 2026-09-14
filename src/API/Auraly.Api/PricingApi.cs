@@ -48,6 +48,12 @@ public static class PricingApi
             await ExecuteAsync(() => service.PublishAsync(
                 context.User.ToPricingIdentity(), request, ct), Results.Ok));
 
+        group.MapPost("/publish-pending", async (
+            HttpContext context, PublishPendingPricesRequest request,
+            PricingService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.PublishPendingAsync(
+                context.User.ToPricingIdentity(), request, ct), Results.Ok));
+
         group.MapGet("/products/{productId:guid}/context", async (
             HttpContext context, Guid productId, PricingService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.GetProductContextAsync(

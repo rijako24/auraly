@@ -6,6 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { HandCoins, Landmark, PackageCheck, ReceiptText, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,7 +29,7 @@ const DEFAULT_VISIBLE_PRODUCT_LINES = 10;
 const PRODUCT_GRID_HEADER_HEIGHT_REM = 3;
 const PRODUCT_GRID_LINE_HEIGHT_REM = 4.25;
 
-export function SalesReturnWorkspace({ embedded = false, onCashRefundConfirmed }: { embedded?: boolean; onCashRefundConfirmed?: () => void | Promise<void> }) {
+export function SalesReturnWorkspace({ embedded = false, businessId, onCashRefundConfirmed }: { embedded?: boolean; businessId?: string; onCashRefundConfirmed?: () => void | Promise<void> }) {
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canCreate = permissions.has("sales.returns.create");
   const canConfirm = permissions.has("sales.returns.confirm");
@@ -45,7 +46,7 @@ export function SalesReturnWorkspace({ embedded = false, onCashRefundConfirmed }
     customer: customer.trim() || undefined,
     from: from || undefined, to: to || undefined,
     withAvailableQuantity: onlyAvailable || undefined,
-  });
+  }, businessId);
 
   const columns = useMemo<ColumnDef<ReturnableSaleListItem>[]>(() => [
     { accessorKey: "documentNumber", header: "Factura", cell: ({ row }) => <div><p className="font-semibold">{row.original.documentNumber}</p><p className="text-xs text-muted-foreground">DIAN {row.original.fiscalNumber}</p></div> },
@@ -66,20 +67,21 @@ export function SalesReturnWorkspace({ embedded = false, onCashRefundConfirmed }
     {!embedded && <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-sm font-medium text-primary">Ventas</p><h1 className="text-3xl font-semibold tracking-tight">Devoluciones de venta</h1><p className="mt-1 max-w-3xl text-muted-foreground">Busca la factura original. Auraly conserva sus precios e impuestos y compensa inventario, efectivo o cartera sin modificar la venta.</p></div><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DVT</Badge></header>}
     {!embedded && <section className="grid gap-3 md:grid-cols-3"><Summary icon={ReceiptText} label="Facturas encontradas" value={String(list.data?.totalCount ?? 0)} /><Summary icon={PackageCheck} label="Inventario" value="Reingreso obligatorio" /><Summary icon={HandCoins} label="Cómo devolver" value="Efectivo, cartera, banco o tarjeta" /></section>}
     <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-2 xl:grid-cols-[minmax(15rem,1fr)_minmax(13rem,.8fr)_11rem_11rem_auto] md:items-end">
-      <div className="relative min-w-0"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Factura, CUFE o producto" /></div>
-      <div className="space-y-2"><Label>Cliente</Label><Input value={customer} onChange={(event) => { setCustomer(event.target.value); setPage(1); }} placeholder="Nombre o identificación" /></div>
+      <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={list.isFetching} placeholder="Factura, CUFE o producto" />
+      <div className="space-y-2"><Label>Cliente</Label><ServerSearchInput value={customer} onSearch={(value) => { setCustomer(value); setPage(1); }} isSearching={list.isFetching} placeholder="Nombre o identificación" /></div>
       <div className="space-y-2"><Label>Desde</Label><DatePicker value={from} onChange={(value) => { setFrom(value); setPage(1); }} /></div>
       <div className="space-y-2"><Label>Hasta</Label><DatePicker value={to} onChange={(value) => { setTo(value); setPage(1); }} /></div>
       <Button variant={onlyAvailable ? "secondary" : "outline"} onClick={() => { setOnlyAvailable((value) => !value); setPage(1); }}>Solo con saldo</Button>
     </section>
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={list.data?.page} pageSize={list.data?.pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }} onRowClick={canCreate ? open : undefined} />
-    <SalesReturnEditor key={selected?.documentId ?? "none"} sale={selected} open={!!selected} canConfirm={canConfirm} onCashRefundConfirmed={onCashRefundConfirmed} onClose={() => setSelected(undefined)} />
+    <SalesReturnEditor key={selected?.documentId ?? "none"} sale={selected} open={!!selected} businessId={businessId} canConfirm={canConfirm} onCashRefundConfirmed={onCashRefundConfirmed} onClose={() => setSelected(undefined)} />
   </div>;
 }
 
-function SalesReturnEditor({ sale, open, canConfirm, onCashRefundConfirmed, onClose }: { sale?: ReturnableSale; open: boolean; canConfirm: boolean; onCashRefundConfirmed?: () => void | Promise<void>; onClose: () => void }) {
-  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const confirm = useConfirmSalesReturn();
+function SalesReturnEditor({ sale, open, businessId: businessIdOverride, canConfirm, onCashRefundConfirmed, onClose }: { sale?: ReturnableSale; open: boolean; businessId?: string; canConfirm: boolean; onCashRefundConfirmed?: () => void | Promise<void>; onClose: () => void }) {
+  const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const businessId = businessIdOverride || selectedBusinessId;
+  const confirm = useConfirmSalesReturn(businessId);
   const reasonsQuery = useQuery({queryKey:["business-reasons","SalesReturn"],queryFn:()=>inventoryApi.businessReasons("SalesReturn"),enabled:open});
   const [reasonCode, setReasonCode] = useState("");
   const [notes, setNotes] = useState("");

@@ -5,11 +5,6 @@ using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Pos.Edge.Host;
 
-public static class PosSynchronizationPermissions
-{
-    public const string ReadEvents = "pos.synchronization.events.read";
-}
-
 public sealed record PosSynchronizationEvent(
     long Sequence,
     DateTimeOffset OccurredAt,

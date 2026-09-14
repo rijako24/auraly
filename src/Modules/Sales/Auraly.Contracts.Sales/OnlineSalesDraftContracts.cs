@@ -22,7 +22,8 @@ public sealed record SetOnlineSalesDraftDiscountRequest(
 
 public sealed record UpdateOnlineSalesDraftLinesRequest(
     IReadOnlyList<UpdateOnlineSalesDraftLineRequest> Lines,
-    long ExpectedVersion);
+    long ExpectedVersion,
+    bool IncludesProratedDiscount = false);
 
 public sealed record UpdateOnlineSalesDraftLineRequest(
     Guid LineId,

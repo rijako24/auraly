@@ -25,7 +25,10 @@ import { useEmployees } from "@/hooks/use-employees";
 
 export default function EmployeesPage() {
   const [viewMode, setViewMode] = useState<"table" | "card" | "list">("table");
-  const { data, isLoading, isError, refetch } = useEmployees();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
+  const { data, isLoading, isFetching, isError, refetch } = useEmployees({ page, pageSize, search });
   const employees = data?.items ?? [];
 
   const columns: ColumnDef<Employee>[] = useMemo(
@@ -149,6 +152,13 @@ export default function EmployeesPage() {
         data={employees}
         searchKey="name"
         searchPlaceholder="Buscar por nombre..."
+        isSearching={isFetching}
+        page={data?.page}
+        pageSize={data?.pageSize}
+        pageCount={data?.totalPages}
+        totalItems={data?.totalCount}
+        onSearch={(value) => { setSearch(value); setPage(1); }}
+        onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         cardRenderer={cardRenderer}

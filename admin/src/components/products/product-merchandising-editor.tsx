@@ -355,7 +355,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
       </div></Block>
 
       <div>
-        <Block id="product-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. Cada producto conserva su inventario y precio, salvo que elijas compartirlos.">
+        <Block id="product-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. El inventario puede compartirse y el costo puede derivarse; cada producto conserva sus precios propios.">
           {form.link ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             <p className="font-semibold">Este producto está vinculado a {form.link.parentProductName}</p>
             <p className="mt-1 text-xs">Esta relacion permite encontrar todas las opciones de la familia. El inventario solo se bloquea cuando se comparte con el producto principal.</p>

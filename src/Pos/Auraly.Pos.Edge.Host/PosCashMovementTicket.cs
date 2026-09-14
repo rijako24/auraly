@@ -80,8 +80,7 @@ public sealed class PosCashMovementTicketPrinter(
         BoldLine(stream, Pair("Valor", Money(ticket.Amount), columns));
         for (var line = 0; line < 6; line++) Line(stream, string.Empty);
         Line(stream, "Firma: ______________________");
-        Line(stream, string.Empty);
-        Write(stream, [0x1D, 0x56, 0x41, 0x03]);
+        Write(stream, EscPosThermalCommands.MinimumFeedAndPartialCut);
         return stream.ToArray();
     }
 

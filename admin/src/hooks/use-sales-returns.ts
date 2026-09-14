@@ -3,6 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { salesReturnsApi, type ConfirmSalesReturnRequest } from "@/services/api/sales-returns";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { resolveSalesReturnBusinessId } from "@/lib/sales-return-business-context";
 
 export function useReturnableSales(params: {
   page: number;
@@ -12,8 +13,9 @@ export function useReturnableSales(params: {
   from?: string;
   to?: string;
   withAvailableQuantity?: boolean;
-}) {
-  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+}, businessIdOverride?: string | null) {
+  const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const businessId = resolveSalesReturnBusinessId(businessIdOverride, selectedBusinessId);
   return useQuery({
     queryKey: ["returnable-sales", businessId, params],
     queryFn: () => salesReturnsApi.listSales(params),
@@ -22,8 +24,9 @@ export function useReturnableSales(params: {
   });
 }
 
-export function useConfirmSalesReturn() {
-  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+export function useConfirmSalesReturn(businessIdOverride?: string | null) {
+  const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const businessId = resolveSalesReturnBusinessId(businessIdOverride, selectedBusinessId);
   const client = useQueryClient();
   return useMutation({
     mutationFn: (request: ConfirmSalesReturnRequest) => salesReturnsApi.confirm(request),

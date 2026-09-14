@@ -1,5 +1,5 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Eye, Pencil, UserX } from "lucide-react";
@@ -15,7 +15,10 @@ import { formatDateTime, getInitials } from "@/lib/utils";
 import { useUsers } from "@/hooks/use-users";
 
 export default function UsersPage() {
-  const { data, isLoading, isError, refetch } = useUsers();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
+  const { data, isLoading, isFetching, isError, refetch } = useUsers({ page, pageSize, search });
   const users = data?.items ?? [];
   const columns: ColumnDef<AppUser>[] = useMemo(() => [
     { accessorKey: "firstName", header: "Usuario", cell: ({ row }) => { const u = row.original; const fullName = `${u.firstName} ${u.lastName}`; return (<div className="flex items-center gap-3"><Avatar className="h-9 w-9"><AvatarFallback className="text-xs">{getInitials(fullName)}</AvatarFallback></Avatar><div><span className="font-medium">{fullName}</span><p className="text-xs text-muted-foreground">{u.username}</p></div></div>); } },
@@ -36,7 +39,7 @@ export default function UsersPage() {
         <div><h1 className="text-2xl font-semibold tracking-tight">Usuarios</h1><p className="text-muted-foreground">Gestiona los usuarios y sus permisos</p></div>
         <Button asChild><Link href="/dashboard/users/new"><Plus className="mr-2 h-4 w-4" />Nuevo Usuario</Link></Button>
       </div>
-      <DataTable columns={columns} data={users} searchKey="email" searchPlaceholder="Buscar por email o nombre..." enableRowSelection={false} />
+      <DataTable columns={columns} data={users} searchKey="email" searchPlaceholder="Buscar por email o nombre..." isSearching={isFetching} page={data?.page} pageSize={data?.pageSize} pageCount={data?.totalPages} totalItems={data?.totalCount} onSearch={(value) => { setSearch(value); setPage(1); }} onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }} enableRowSelection={false} />
     </div>
   );
 }

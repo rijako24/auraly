@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Auraly.Contracts.Authentication;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Orders;
 using Microsoft.Data.SqlClient;
@@ -203,16 +204,28 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(3, state.OnlineSalesDocumentSeries);
         Assert.Equal(14, await CountDefaultDocumentSeriesAsync(
             result.TenantId, result.BusinessId));
-        Assert.True(await RoleHasPermissionAsync(
+        Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "SUPERVISOR", "pos.approvals.receive_notifications"));
         Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.approvals.receive_notifications"));
-        Assert.True(await RoleHasPermissionAsync(
+        Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.synchronization.events.read"));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.inventory.availability.read"));
-        Assert.True(await RoleHasPermissionAsync(
+        Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "sales.lines.change-description"));
+        Assert.False(await RoleHasPermissionAsync(
+            result.TenantId, "SUPERVISOR", CommercePermissionCodes.SalesChangePrice));
+        Assert.False(await RoleHasPermissionAsync(
+            result.TenantId, "SUPERVISOR", CommercePermissionCodes.SalesReadCostAndMargin));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "ADMINISTRATOR", CommercePermissionCodes.SalesChangeDescription));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "ADMINISTRATOR", CommercePermissionCodes.SalesChangePrice));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "ADMINISTRATOR", CommercePermissionCodes.SalesReadCostAndMargin));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "ADMINISTRATOR", CommercePermissionCodes.SalesProratedDiscount));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", OrderPermissionCodes.Review));
         Assert.True(await RoleHasPermissionAsync(

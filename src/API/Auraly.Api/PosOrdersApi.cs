@@ -91,7 +91,8 @@ public static class PosOrdersApi
                         line.Quantity,
                         line.UnitPrice,
                         line.DiscountAmount,
-                        line.PriceSource)).ToArray();
+                        line.PriceSource,
+                        line.DocumentUnitCost)).ToArray();
                 SellerOrdersApi.SellerOrderResult result;
                 if (request.OrderId is Guid orderId)
                 {

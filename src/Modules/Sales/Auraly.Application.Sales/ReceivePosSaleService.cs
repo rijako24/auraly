@@ -254,6 +254,9 @@ public sealed class ReceivePosSaleService(
                 "The immutable sale withholding snapshot does not reconcile.");
         if (request.Payments.Any(payment => payment.Amount <= 0) ||
             request.Payments.Select(payment => payment.PaymentNumber).Distinct().Count() != request.Payments.Count ||
+            request.Payments.Count(payment => payment.MethodCode == "Cash") > 1 ||
+            request.Payments.Any(payment => payment.TenderedAmount is { } tendered &&
+                (payment.MethodCode != "Cash" || tendered < payment.Amount)) ||
             request.Payments.Any(payment =>
                 payment.Reference?.Length > 160 || payment.Notes?.Length > 500 ||
                 payment.CardFranchiseCode?.Length > 64 || payment.ApprovalNumber?.Length > 100 ||

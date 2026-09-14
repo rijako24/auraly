@@ -82,7 +82,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             CommercePermissionCodes.SalesCreate,
             CommercePermissionCodes.SalesRemoveLine,
             CommercePermissionCodes.SalesRestartDraft,
-            CommercePermissionCodes.SalesDiscount,
+            CommercePermissionCodes.SalesChangePrice,
             CommercePermissionCodes.PosApprovalsRead,
             CommercePermissionCodes.PosApprovalsAuthorize,
             CommercePermissionCodes.PosApprovalsManageCredential);
@@ -251,7 +251,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         using var supervisor = fixture.CreateUserClient(
             supervisorId,
             CommercePermissionCodes.SalesCreate,
-            CommercePermissionCodes.SalesDiscount,
+            CommercePermissionCodes.SalesChangePrice,
             CommercePermissionCodes.PosApprovalsRead,
             CommercePermissionCodes.PosApprovalsAuthorize,
             CommercePermissionCodes.PosApprovalsManageCredential);
@@ -265,7 +265,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/approvals/",
             new CreatePosApprovalRequest(
                 fixture.BusinessId, null, fixture.WorkSessionId,
-                draftId, lineId, CommercePermissionCodes.SalesDiscount,
+                draftId, lineId, CommercePermissionCodes.SalesChangePrice,
                 "{\"action\":\"Discount\"}")))
             .Content.ReadFromJsonAsync<PosApprovalRequestView>();
         Assert.NotNull(created);
@@ -297,7 +297,6 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
     [Theory]
     [InlineData(CommercePermissionCodes.SalesRemoveLine, "RemoveLine")]
     [InlineData(CommercePermissionCodes.SalesRestartDraft, "RestartSale")]
-    [InlineData(CommercePermissionCodes.SalesDiscount, "Discount")]
     [InlineData(CommercePermissionCodes.SalesChangePrice, "ChangePrice")]
     [InlineData("work-sessions.close", "CloseWorkSession")]
     [InlineData(CommercePermissionCodes.EnrolledDevicesEnroll, "EnrollPosDevice")]
@@ -370,7 +369,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Push_subscription_requires_receive_permission_and_pending_keeps_each_register_separate()
+    public async Task Push_subscription_is_derived_from_approval_permissions_and_pending_keeps_each_register_separate()
     {
         var supervisorId = Guid.NewGuid();
         await SeedSupervisorAsync(supervisorId);
@@ -380,11 +379,10 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             p256dh = Convert.ToBase64String(RandomNumberGenerator.GetBytes(65)),
             auth = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16))
         };
-        using var withoutReceive = fixture.CreateUserClient(
+        using var withoutAuthorize = fixture.CreateUserClient(
             supervisorId,
-            CommercePermissionCodes.PosApprovalsRead,
-            CommercePermissionCodes.PosApprovalsAuthorize);
-        using var forbidden = await withoutReceive.PutAsJsonAsync(
+            CommercePermissionCodes.PosApprovalsRead);
+        using var forbidden = await withoutAuthorize.PutAsJsonAsync(
             "/api/commerce/v1/pos/approvals/push/subscription", subscription);
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
 
@@ -392,8 +390,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             supervisorId,
             CommercePermissionCodes.SalesRestartDraft,
             CommercePermissionCodes.PosApprovalsRead,
-            CommercePermissionCodes.PosApprovalsAuthorize,
-            CommercePermissionCodes.PosApprovalsReceiveNotifications);
+            CommercePermissionCodes.PosApprovalsAuthorize);
         using var subscribed = await supervisor.PutAsJsonAsync(
             "/api/commerce/v1/pos/approvals/push/subscription", subscription);
         Assert.Equal(HttpStatusCode.NoContent, subscribed.StatusCode);
@@ -407,7 +404,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         var second = await (await requester.PostAsJsonAsync(
             "/api/commerce/v1/pos/approvals/",
             new CreatePosApprovalRequest(fixture.BusinessId, fixture.DeniedDeviceId, fixture.WorkSessionId,
-                Guid.NewGuid(), null, CommercePermissionCodes.SalesDiscount, "{\"action\":\"Discount\",\"register\":\"Caja B\"}")))
+                Guid.NewGuid(), null, CommercePermissionCodes.SalesChangePrice, "{\"action\":\"Discount\",\"register\":\"Caja B\"}")))
             .Content.ReadFromJsonAsync<PosApprovalRequestView>();
 
         var pending = await supervisor.GetFromJsonAsync<List<PosApprovalRequestView>>(
@@ -533,7 +530,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
                 "/api/commerce/v1/pos/approvals/",
                 new CreatePosApprovalRequest(
                     fixture.BusinessId, null, null, Guid.NewGuid(), null,
-                    CommercePermissionCodes.SalesDiscount,
+                    CommercePermissionCodes.SalesChangePrice,
                     "{\"action\":\"Discount\"}"));
             response.EnsureSuccessStatusCode();
             return (await response.Content.ReadFromJsonAsync<PosApprovalRequestView>())!;
@@ -581,9 +578,9 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
             SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
             FROM dbo.Permissions WHERE Resource IN(
-              N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.remove',N'sales.drafts.restart',
+              N'sales.create',N'sales.change-price',N'sales.lines.remove',N'sales.drafts.restart',
               N'work-sessions.close',N'pos.devices.enroll',
-              N'pos.approvals.read',N'pos.approvals.authorize',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential');
+              N'pos.approvals.read',N'pos.approvals.authorize',N'pos.approvals.manage_credential');
             """;
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);

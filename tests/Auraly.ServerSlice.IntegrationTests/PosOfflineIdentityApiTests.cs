@@ -104,7 +104,7 @@ public sealed class PosOfflineIdentityApiTests(ServerSliceFixture fixture)
             SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
             FROM dbo.Permissions
             WHERE Resource IN (
-                N'sales.create',N'sales.discount',N'sales.reprint',N'sales.void');
+                N'sales.create',N'sales.change-price',N'sales.reprint',N'sales.void');
             """;
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();

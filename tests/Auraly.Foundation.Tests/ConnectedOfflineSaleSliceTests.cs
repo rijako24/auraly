@@ -70,7 +70,7 @@ public sealed class ConnectedOfflineSaleSliceTests
         var permissionSet = new UserPermissionSet(
             tenantId,
             userId,
-            [CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesDiscount]);
+            [CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesChangePrice]);
         var authorizer = new PermissionAuthorizer(new FixedPermissionProvider(permissionSet));
         var service = new ConfirmOfflineSaleService(authorizer);
 

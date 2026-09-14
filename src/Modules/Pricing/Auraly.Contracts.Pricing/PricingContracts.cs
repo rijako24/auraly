@@ -102,17 +102,7 @@ public sealed record PriceRevisionListItem(
     string Origin,
     decimal? AverageUnitCost,
     decimal? LatestUnitCost,
-    decimal? LatestLandedUnitCost,
-    IReadOnlyList<LinkedPriceProductListItem> LinkedProducts);
-
-public sealed record LinkedPriceProductListItem(
-    Guid ProductId,
-    string ProductCode,
-    string ProductName,
-    decimal PriceFactor,
-    decimal CurrentSalePrice,
-    decimal? PreparedSalePrice,
-    decimal? TargetMarginPercent);
+    decimal? LatestLandedUnitCost);
 
 public sealed record PriceRevisionPage(
     IReadOnlyList<PriceRevisionListItem> Items,
@@ -143,6 +133,11 @@ public sealed record PublishPriceItem(
 
 public sealed record PublishPricesRequest(IReadOnlyList<PublishPriceItem> Items);
 
+public sealed record PublishPendingPricesRequest(
+    string? Search,
+    Guid? SupplierId,
+    Guid? SourceDocumentId);
+
 public sealed record ProductPricingContext(
     Guid ProductId,
     string ProductName,
@@ -153,7 +148,11 @@ public sealed record ProductPricingContext(
     decimal? CurrentMarginPercent,
     decimal SalesTaxRate,
     decimal RoundingIncrement,
-    string RoundingMode);
+    string RoundingMode,
+    bool IsCostLinked,
+    Guid? CostSourceProductId,
+    string? CostSourceProductName,
+    decimal? CostFactor);
 
 public sealed record PublishProductPriceRequest(
     string InputMode,

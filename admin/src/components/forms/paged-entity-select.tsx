@@ -98,7 +98,12 @@ export function PagedEntitySelect<T>({
     </PopoverTrigger>
     <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
       <Command shouldFilter={false}>
-        <CommandInput value={search} onValueChange={setSearch} placeholder={searchPlaceholder}/>
+        <CommandInput
+          value={search}
+          onValueChange={setSearch}
+          placeholder={searchPlaceholder}
+          isLoading={search.trim() !== debouncedSearch || query.isFetching}
+        />
         <CommandList onScroll={onScroll}>
           {query.isLoading && <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Buscando…</div>}
           {query.isError && <div className="p-4 text-sm text-destructive">No fue posible consultar. <button className="underline" onClick={() => void query.refetch()}>Reintentar</button></div>}

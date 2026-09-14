@@ -1,5 +1,5 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -17,7 +17,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlatformBillingPolicyCard } from "@/components/tenants/platform-billing-policy-card";
 
 export default function TenantsPage() {
-  const { data, isLoading, isError, refetch } = useTenants();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
+  const { data, isLoading, isFetching, isError, refetch } = useTenants({ page, pageSize, search });
   const router = useRouter();
   const canCreateTenant = useAuthStore((state) => state.user?.permissions.includes("tenants.create") ?? false);
   const canManageBillingPolicy = useAuthStore((state) => state.user?.permissions.includes("tenants.billing.policy.manage") ?? false);
@@ -47,7 +50,7 @@ export default function TenantsPage() {
         <div><h1 className="text-2xl font-semibold tracking-tight">Empresas</h1><p className="text-muted-foreground">Gestiona las empresas que usan la plataforma</p></div>
         {canCreateTenant && <Button asChild><Link href="/dashboard/tenants/new"><Plus className="mr-2 h-4 w-4" />Nueva empresa</Link></Button>}
       </div>
-      {canManageBillingPolicy ? <Tabs defaultValue="tenants" className="space-y-5"><TabsList><TabsTrigger value="tenants">Empresas</TabsTrigger><TabsTrigger value="billing">Política de cobranza</TabsTrigger></TabsList><TabsContent value="tenants"><DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} /></TabsContent><TabsContent value="billing"><PlatformBillingPolicyCard/></TabsContent></Tabs> : <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} />}
+      {canManageBillingPolicy ? <Tabs defaultValue="tenants" className="space-y-5"><TabsList><TabsTrigger value="tenants">Empresas</TabsTrigger><TabsTrigger value="billing">Política de cobranza</TabsTrigger></TabsList><TabsContent value="tenants"><DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." isSearching={isFetching} page={data?.page} pageSize={data?.pageSize} pageCount={data?.totalPages} totalItems={data?.totalCount} onSearch={(value) => { setSearch(value); setPage(1); }} onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }} enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} /></TabsContent><TabsContent value="billing"><PlatformBillingPolicyCard/></TabsContent></Tabs> : <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." isSearching={isFetching} page={data?.page} pageSize={data?.pageSize} pageCount={data?.totalPages} totalItems={data?.totalCount} onSearch={(value) => { setSearch(value); setPage(1); }} onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }} enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} />}
     </div>
   );
 }

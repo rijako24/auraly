@@ -17,13 +17,22 @@ import { PageLoading } from "@/components/ui/page-loading";
 import { useRoles } from "@/hooks/use-roles";
 import { formatDate } from "@/lib/utils";
 import { rolesApi } from "@/services/api/roles";
+import { useAuthStore } from "@/stores/auth-store";
 import type { AppRole } from "@/types/entities";
 
 type Workspace = { mode: "create" | "view" | "edit" | "clone"; role?: AppRole };
 
 export default function RolesPage() {
-  const { data, isLoading, isError, refetch } = useRoles({ page: 1, pageSize: 500 });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
+  const { data, isLoading, isFetching, isError, refetch } = useRoles({ page, pageSize, search });
   const queryClient = useQueryClient();
+  const permissionValues = useAuthStore((state) => state.user?.permissions ?? []);
+  const canCreate = permissionValues.includes("roles.create");
+  const canUpdate = permissionValues.includes("roles.update");
+  const canDelete = permissionValues.includes("roles.delete");
+  const canAssignPermissions = permissionValues.includes("roles.assign_permissions");
   const [workspace, setWorkspace] = useState<Workspace>();
   const [deleteTarget, setDeleteTarget] = useState<AppRole>();
   const roles = data?.items ?? [];
@@ -47,20 +56,20 @@ export default function RolesPage() {
       const role = row.original;
       return <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8" onClick={(event) => event.stopPropagation()}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
         <DropdownMenuItem onClick={() => open("view", role)}><Eye className="mr-2 h-4 w-4" />Ver permisos</DropdownMenuItem>
-        {!role.isSystemRole && <DropdownMenuItem onClick={() => open("edit", role)}><Pencil className="mr-2 h-4 w-4" />Editar</DropdownMenuItem>}
-        <DropdownMenuItem onClick={() => open("clone", role)}><Copy className="mr-2 h-4 w-4" />Duplicar</DropdownMenuItem>
-        {!role.isSystemRole && <DropdownMenuItem className="text-destructive" onClick={() => setDeleteTarget(role)}><Trash2 className="mr-2 h-4 w-4" />Eliminar</DropdownMenuItem>}
+        {!role.isSystemRole && (canUpdate || canAssignPermissions) && <DropdownMenuItem onClick={() => open("edit", role)}><Pencil className="mr-2 h-4 w-4" />Editar</DropdownMenuItem>}
+        {canCreate && <DropdownMenuItem onClick={() => open("clone", role)}><Copy className="mr-2 h-4 w-4" />Duplicar</DropdownMenuItem>}
+        {!role.isSystemRole && canDelete && <DropdownMenuItem className="text-destructive" onClick={() => setDeleteTarget(role)}><Trash2 className="mr-2 h-4 w-4" />Eliminar</DropdownMenuItem>}
       </DropdownMenuContent></DropdownMenu>;
     } },
-  ], []);
+  ], [canAssignPermissions, canCreate, canDelete, canUpdate]);
 
   if (isLoading) return <PageLoading cards={0} />;
   if (isError) return <PageError onRetry={refetch} />;
 
   return <div className="space-y-6">
-    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-medium text-primary">Seguridad por funciones</p><h1 className="text-3xl font-semibold tracking-tight">Roles y permisos</h1><p className="mt-1 max-w-3xl text-muted-foreground">Controla qué menús ve cada rol y exactamente qué acciones puede ejecutar dentro de cada pantalla.</p></div><Button onClick={() => open("create")}><Plus className="mr-2 h-4 w-4" />Nuevo rol</Button></header>
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-medium text-primary">Seguridad por funciones</p><h1 className="text-3xl font-semibold tracking-tight">Roles y permisos</h1><p className="mt-1 max-w-3xl text-muted-foreground">Controla qué menús ve cada rol y exactamente qué acciones puede ejecutar dentro de cada pantalla.</p></div><Button disabled={!canCreate} onClick={() => open("create")}><Plus className="mr-2 h-4 w-4" />Nuevo rol</Button></header>
     <div className="rounded-2xl border bg-gradient-to-r from-slate-950 to-teal-950 p-5 text-white"><div className="flex items-start gap-4"><span className="rounded-2xl bg-white/10 p-3 text-teal-200"><ShieldCheck className="h-6 w-6" /></span><div><h2 className="font-semibold">Permisos organizados como trabaja Auraly</h2><p className="mt-1 text-sm text-slate-300">Abre un rol para ver sus vistas. Cada vista despliega sus acciones reales: consultar, crear, editar, confirmar, anular, autorizar y las demás capacidades disponibles.</p></div></div></div>
-    <DataTable columns={columns} data={roles} searchKey="name" searchPlaceholder="Buscar rol" enableRowSelection={false} onRowClick={(role) => open("view", role)} />
+    <DataTable columns={columns} data={roles} searchKey="name" searchPlaceholder="Buscar rol" isSearching={isFetching} page={data?.page} pageSize={data?.pageSize} pageCount={data?.totalPages} totalItems={data?.totalCount} onSearch={(value) => { setSearch(value); setPage(1); }} onPaginationChange={(nextPage, nextPageSize) => { setPage(nextPage); setPageSize(nextPageSize); }} enableRowSelection={false} onRowClick={(role) => open(!role.isSystemRole && (canUpdate || canAssignPermissions) ? "edit" : "view", role)} />
 
     <Dialog open={Boolean(workspace)} onOpenChange={(value) => !value && setWorkspace(undefined)}><DialogContent className="max-h-[94vh] max-w-[min(96vw,1400px)] overflow-y-auto p-6">
       {workspace && <RolePermissionWorkspace key={`${workspace.mode}-${workspace.role?.roleId ?? "new"}`} roleId={workspace.mode === "view" || workspace.mode === "edit" ? workspace.role?.roleId : undefined} cloneFromId={workspace.mode === "clone" ? workspace.role?.roleId : undefined} embedded readOnly={workspace.mode === "view"} onClose={() => setWorkspace(undefined)} onSaved={() => setWorkspace(undefined)} />}

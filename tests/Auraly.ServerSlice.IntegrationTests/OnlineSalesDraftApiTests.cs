@@ -143,6 +143,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.SalesCreate,
             CommercePermissionCodes.SalesChangePrice,
+            CommercePermissionCodes.SalesReadCostAndMargin,
             CommercePermissionCodes.SalesChangeDescription,
             CommercePermissionCodes.SalesRestartDraft);
         var opened = await OpenAsync(client, new(
@@ -170,6 +171,31 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         var line = Assert.Single(captured!.Lines);
         Assert.True(line.AllowsDocumentCostOverride);
         Assert.Equal(4_000m, line.DocumentUnitCost);
+
+        using var unauthorizedProration = Mutation(
+            HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
+            new UpdateOnlineSalesDraftLinesRequest(
+                [new(line.LineId, line.Description, 12_000m, 2_000m, 4_500m)],
+                captured.Version,
+                IncludesProratedDiscount: true),
+            Guid.NewGuid().ToString("D"));
+        using var unauthorizedProrationResponse = await client.SendAsync(unauthorizedProration);
+        Assert.Equal(HttpStatusCode.Forbidden, unauthorizedProrationResponse.StatusCode);
+
+        using var priceOnlyClient = fixture.CreateAdminClient(
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesChangePrice,
+            CommercePermissionCodes.SalesChangeDescription);
+        using var hiddenCostChange = Mutation(
+            HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
+            new UpdateOnlineSalesDraftLinesRequest(
+                [new(line.LineId, line.Description, line.UnitPrice, line.Discount, 4_500m)],
+                captured.Version),
+            Guid.NewGuid().ToString("D"));
+        using var hiddenCostChangeResponse = await priceOnlyClient.SendAsync(hiddenCostChange);
+        Assert.Equal(HttpStatusCode.Forbidden, hiddenCostChangeResponse.StatusCode);
 
         using var update = Mutation(
             HttpMethod.Put,
@@ -248,6 +274,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.SalesCreate,
             CommercePermissionCodes.SalesChangePrice,
+            CommercePermissionCodes.SalesReadCostAndMargin,
             CommercePermissionCodes.SalesRestartDraft);
         var opened = await OpenAsync(client, new(
             fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));
@@ -289,15 +316,14 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
                 captured.Version),
             Guid.NewGuid().ToString("D"));
         using var updateResponse = await client.SendAsync(update);
-        updateResponse.EnsureSuccessStatusCode();
-        var changed = await updateResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>()
-            ?? throw new InvalidOperationException("The update lines response was empty.");
-        Assert.Equal(line.DocumentUnitCost, Assert.Single(changed.Lines).DocumentUnitCost);
+        Assert.Equal(HttpStatusCode.BadRequest, updateResponse.StatusCode);
+        Assert.Contains("maneja inventario", await updateResponse.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
 
         using var cleanup = Mutation(
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{changed.DraftId:D}/reset",
-            new ResetOnlineSalesDraftRequest(changed.Version),
+            $"/api/commerce/v1/pos/drafts/{captured.DraftId:D}/reset",
+            new ResetOnlineSalesDraftRequest(captured.Version),
             Guid.NewGuid().ToString("D"));
         using var cleanupResponse = await client.SendAsync(cleanup);
         cleanupResponse.EnsureSuccessStatusCode();

@@ -2,7 +2,7 @@ import { apiClient } from "./client";
 
 export type SellerCatalogItem={productId:string;productCode:string;name:string;unitCode:string;unitPrice:number;priceSource:string;quantityOnHand:number;manageStock:boolean};
 export type SellerCatalogPage={items:SellerCatalogItem[];hasMore:boolean;nextOffset:number|null};
-export type SellerOrderLineRequest={productId:string;quantity:number;unitPrice:number;discountAmount:number;priceSource:string};
+export type SellerOrderLineRequest={productId:string;quantity:number;unitPrice:number;discountAmount:number;priceSource:string;documentUnitCost?:number|null};
 export type SellerOrderRequest={businessId:string;warehouseId:string;customerId:string;partySiteId:string|null;routeId:string|null;routeStopId:string|null;capturedOffline:boolean;notes:string|null;idempotencyKey:string;lines:SellerOrderLineRequest[]};
 export type SellerOrderResult={orderId:string;orderNumber:string;status:"Confirmed"|"InReview";total:number;requiresReview:boolean;warnings:string[]};
 

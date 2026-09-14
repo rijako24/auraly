@@ -51,7 +51,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   const previousSalesTaxRate = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!context.data || initialDraft) return;
+    if (!context.data || (initialDraft && !context.data.isCostLinked)) return;
     const loadedCost = context.data.costBasisAmount;
     const loadedMargin = context.data.currentMarginPercent
       ?? (loadedCost === null
@@ -71,10 +71,10 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
     setDirty(false);
   }, [context.data, initialDraft]);
   useEffect(() => {
-    if (!initialDraft) return;
+    if (!initialDraft || context.data?.isCostLinked) return;
     setCost(initialDraft.cost);setSalePrice(initialDraft.salePrice);setMargin(initialDraft.margin);setIncrement(initialDraft.increment);setRoundingMode(initialDraft.roundingMode);setLastEdited(initialDraft.lastEdited);setDirty(true);
     previousSalesTaxRate.current = initialDraft.salesTaxRate ?? 0;
-  }, [initialDraft]);
+  }, [context.data?.isCostLinked, initialDraft]);
 
   const effectiveSalesTaxRate = salesTaxRateOverride ?? context.data?.salesTaxRate ?? 0;
   const publicSalePrice = context.data?.publicSalePrice;
@@ -108,6 +108,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   }, [context.data, cost, effectiveSalesTaxRate, margin, salePrice]);
 
   function change(field: ProductPricingField, raw: string) {
+    if (field === "cost" && context.data?.isCostLinked) return;
     setLastEdited(field);
     setDirty(true);
     if (field === "cost") setCost(raw);
@@ -157,7 +158,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
           salePrice: savesBySalePrice ? resolvedSale : null,
           roundingIncrement: resolvedIncrement,
           roundingMode,
-          costBasisAmount: resolvedCost,
+          costBasisAmount: context.data?.isCostLinked ? null : resolvedCost,
         },
       });
       setDirty(false);
@@ -197,7 +198,9 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
       if (dirty) await save();
     },
   }), [dirty, publicSalePrice, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, save, savesBySalePrice, valid]);
-  const costOrigin = context.data?.costBasisOrigin === "ObservedSupplierCost"
+  const costOrigin = context.data?.isCostLinked
+    ? `Vinculado a ${context.data.costSourceProductName ?? "producto principal"} × ${context.data.costFactor?.toLocaleString("es-CO") ?? "factor"}`
+    : context.data?.costBasisOrigin === "ObservedSupplierCost"
     ? "Último proveedor"
     : context.data?.costBasisOrigin === "Manual" ? "Costo manual" : "Sin costo registrado";
 
@@ -221,8 +224,9 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
     <div className={`space-y-5 ${embedded ? "" : "p-5"}`}>
       <section>
         <div className="mb-3"><h4 className="font-semibold">Datos para calcular el precio</h4><p className="text-xs text-muted-foreground">Costo y margen determinan primero el precio antes de IVA.</p></div>
+        {context.data.isCostLinked && <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><strong>Costo vinculado y bloqueado.</strong> Cambia automáticamente cuando cambia el costo de {context.data.costSourceProductName ?? "su producto principal"}; el margen y los precios de este producto se preparan y publican por separado.</div>}
         <div className="grid gap-4 lg:grid-cols-2">
-          <PriceInput label="Costo base *" helper={costOrigin} kind="currency" value={cost} onChange={(value) => change("cost", value)} />
+          <PriceInput label="Costo base *" helper={costOrigin} kind="currency" value={cost} disabled={context.data.isCostLinked} onChange={(value) => change("cost", value)} />
           <PriceInput label="Margen sobre el precio antes de IVA *" helper="Puede ser 0 %" kind="percent" value={margin} onChange={(value) => change("margin", value)} />
         </div>
       </section>
@@ -301,8 +305,8 @@ function FormulaOperator({ value }: { value: string }) {
   return <div className="flex min-w-12 items-center justify-center rounded-lg px-1 py-2 text-center text-xs font-bold text-emerald-800">{value}</div>;
 }
 
-function PriceInput({ label, helper, kind, value, onChange, emphasized = false }: { label: string; helper: string; kind: "currency" | "percent"; value: string; onChange: (value: string) => void; emphasized?: boolean }) {
-  return <div className={`rounded-xl border p-4 ${emphasized ? "border-primary/40 bg-background" : "bg-background"}`}><div className="mb-3 flex items-start justify-between gap-2"><Label>{label}</Label><span className="text-xs text-muted-foreground">{helper}</span></div><FormattedNumberInput className="h-12 text-lg font-semibold" kind={kind} value={value} onValueChange={(next) => onChange(next === null ? "" : next.toString())} /></div>;
+function PriceInput({ label, helper, kind, value, onChange, emphasized = false, disabled = false }: { label: string; helper: string; kind: "currency" | "percent"; value: string; onChange: (value: string) => void; emphasized?: boolean; disabled?: boolean }) {
+  return <div className={`rounded-xl border p-4 ${emphasized ? "border-primary/40 bg-background" : "bg-background"}`}><div className="mb-3 flex items-start justify-between gap-2"><Label>{label}</Label><span className="text-xs text-muted-foreground">{helper}</span></div><FormattedNumberInput className="h-12 text-lg font-semibold" kind={kind} value={value} disabled={disabled} onValueChange={(next) => onChange(next === null ? "" : next.toString())} /></div>;
 }
 
 function PricingState({ label, error = false }: { label: string; error?: boolean }) {

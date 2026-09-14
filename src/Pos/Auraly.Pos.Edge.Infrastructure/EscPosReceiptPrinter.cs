@@ -20,7 +20,6 @@ public sealed class EscPosReceiptRenderer
     private static readonly byte[] BoldOff = [0x1B, 0x45, 0x00];
     private static readonly byte[] DoubleHeight = [0x1D, 0x21, 0x10];
     private static readonly byte[] NormalSize = [0x1D, 0x21, 0x00];
-    private static readonly byte[] Cut = [0x1D, 0x56, 0x41, 0x03];
 
     public byte[] Render(PosReceipt receipt)
     {
@@ -106,6 +105,7 @@ public sealed class EscPosReceiptRenderer
             columns));
         if (!isOrder)
         {
+            WriteCashTender(stream, receipt.Payments, columns);
             WriteBoldLine(stream, "Medios de pago");
             foreach (var payment in receipt.Payments)
                 WriteBoldLine(stream, Pair(PaymentName(payment.MethodCode), Money(payment.Amount), columns));
@@ -123,11 +123,22 @@ public sealed class EscPosReceiptRenderer
         WriteBoldLine(stream, isFiscal
             ? "Factura emitida por Auraly"
             : "Comprobante emitido por Auraly");
-        WriteLine(stream, isOrder ? "www.auralyapp.com" : "www.auralyapp.co");
-        WriteLine(stream, string.Empty);
-        WriteLine(stream, string.Empty);
-        Write(stream, Cut);
+        WriteLine(stream, "www.auralyapp.co");
+        Write(stream, EscPosThermalCommands.MinimumFeedAndPartialCut);
         return stream.ToArray();
+    }
+
+    private static void WriteCashTender(
+        Stream stream,
+        IReadOnlyCollection<OfflineSalePayment> payments,
+        int columns)
+    {
+        var cash = payments.SingleOrDefault(payment =>
+            payment.MethodCode == "Cash" && payment.TenderedAmount.HasValue);
+        if (cash?.TenderedAmount is not { } tendered) return;
+
+        WriteBoldLine(stream, Pair("Efectivo recibido", Money(tendered), columns));
+        WriteBoldLine(stream, Pair("Cambio", Money(Math.Max(0, tendered - cash.Amount)), columns));
     }
 
     private static string Pair(string label, string value, int columns)

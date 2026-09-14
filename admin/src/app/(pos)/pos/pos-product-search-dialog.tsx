@@ -120,12 +120,6 @@ export function PosProductSearchDialog({
     availabilityController.current?.abort();
     availabilityController.current = null;
     setAvailabilityLookup(null);
-    window.requestAnimationFrame(() => {
-      setSelected(0);
-      const target = resultElements.current.get(0);
-      target?.focus({ preventScroll: true });
-      target?.scrollIntoView({ block: "nearest" });
-    });
   }, []);
 
   useEffect(() => {
