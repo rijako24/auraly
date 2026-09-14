@@ -15,3 +15,7 @@ export function isWorkspacePolicySynchronizationMessage(raw: string) {
     return false;
   }
 }
+
+export function shouldReconnectWorkspacePolicy(status?: number) {
+  return status !== 401 && status !== 403;
+}

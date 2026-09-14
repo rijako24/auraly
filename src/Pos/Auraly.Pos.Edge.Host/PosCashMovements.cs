@@ -124,28 +124,52 @@ public sealed class PosCashMovementStore(
         Guid workSessionId,
         CancellationToken cancellationToken = default)
     {
+        var details = await ReadWorkSessionDetailsAsync(
+            workSessionId, "Usuario", cancellationToken);
+        return details.Sum(value => value.Direction == CashMovementDirections.In
+            ? value.Amount
+            : -value.Amount);
+    }
+
+    public async Task<IReadOnlyList<WorkSessionCashMovementDetail>> ReadWorkSessionDetailsAsync(
+        Guid workSessionId,
+        string responsibleName,
+        CancellationToken cancellationToken = default)
+    {
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT o.Payload,r.Direction
+            SELECT o.DocumentId,o.Payload,r.Payload
             FROM PosCashMovements o
             JOIN PosCashMovementReasons r
-              ON r.ReasonId=json_extract(o.Payload,'$.movement.reasonId');
+              ON r.ReasonId=json_extract(o.Payload,'$.movement.reasonId')
+            WHERE json_extract(o.Payload,'$.movement.workSessionId')=$session
+            ORDER BY json_extract(o.Payload,'$.movement.occurredAt'),o.DocumentId;
             """;
-        decimal total = 0;
+        command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
+        var details = new List<WorkSessionCashMovementDetail>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             var value = JsonSerializer.Deserialize<DeviceCashMovementRequest>(
-                reader.GetString(0), Json)
+                reader.GetString(1), Json)
                 ?? throw new InvalidDataException("Un movimiento local de caja no es válido.");
-            if (value.Movement.WorkSessionId != workSessionId) continue;
-            total += reader.GetString(1) == CashMovementDirections.In
-                ? value.Movement.Amount
-                : -value.Movement.Amount;
+            var reason = JsonSerializer.Deserialize<CashMovementReasonView>(
+                reader.GetString(2), Json)
+                ?? throw new InvalidDataException("Un motivo local de caja no es válido.");
+            details.Add(new WorkSessionCashMovementDetail(
+                Guid.Parse(reader.GetString(0)),
+                reason.Direction,
+                $"MOV-{reader.GetString(0)[..8].ToUpperInvariant()}",
+                reason.Name,
+                value.Movement.Amount,
+                value.Movement.OccurredAt,
+                responsibleName,
+                value.Movement.Reference,
+                value.Movement.Notes));
         }
-        return total;
+        return details;
     }
 
     public async Task<PosCashMovementSynchronizationStatus> ReadOutboxStatusAsync(

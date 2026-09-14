@@ -212,11 +212,15 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.inventory.availability.read"));
         Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "sales.lines.change-description"));
+        Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", OrderPermissionCodes.Review));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", OrderPermissionCodes.Create));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", OrderPermissionCodes.Update));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", OrderPermissionCodes.Invoice));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SELLER", OrderPermissionCodes.Create));
         Assert.True(await RoleHasPermissionAsync(

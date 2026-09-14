@@ -208,7 +208,11 @@ internal static class PosSaleHostModule
                     credit = new PosSaleCreditTerms(
                         customerId,
                         request.Credit.Amount,
-                        dueDate);
+                        dueDate,
+                        validation.AvailableCredit is null
+                            ? null
+                            : Math.Max(0m,
+                                validation.AvailableCredit.Value - request.Credit.Amount));
                     if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
                     {
                         var fiscal = fiscalRuntime.Current
@@ -242,7 +246,8 @@ internal static class PosSaleHostModule
                         ublSnapshot,
                         request.DocumentType,
                         session.Permissions.ToHashSet(StringComparer.Ordinal),
-                        credit),
+                        credit,
+                        session.DisplayName),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
                 if (!result.PrintedDirectly && !string.IsNullOrWhiteSpace(result.PrintError))

@@ -461,8 +461,13 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             }));
         using var client = AuthenticatedClient(factory);
 
+        var recoveryTimer = Stopwatch.StartNew();
         using var recover = await client.PostAsync($"/edge/v1/orders/{orderId:D}/recover", null);
+        recoveryTimer.Stop();
         recover.EnsureSuccessStatusCode();
+        Assert.True(
+            recoveryTimer.Elapsed < TimeSpan.FromSeconds(1),
+            $"Recovery took {recoveryTimer.Elapsed}.");
         var recovered = Assert.IsType<PosDraft>(await recover.Content.ReadFromJsonAsync<PosDraft>());
         Assert.Equal(orderId, recovered.SourceOrderId);
 
@@ -647,26 +652,75 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Saving_a_new_order_clears_the_local_draft_without_reloading_it_from_the_server()
+    public async Task Saving_a_new_order_uses_the_device_server_route_and_clears_the_local_draft_once()
     {
-        var capture = await Client.PostAsJsonAsync(
+        var handler = new SaveOrderHandler();
+        using var factory = _factory!.WithWebHostBuilder(webHost =>
+            webHost.ConfigureServices(services =>
+            {
+                services.RemoveAll<HttpClient>();
+                services.AddSingleton(new HttpClient(handler)
+                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
+            }));
+        using var client = AuthenticatedClient(factory);
+        var capture = await client.PostAsJsonAsync(
             "/edge/v1/capture",
             new CaptureRequest("770123", null));
         capture.EnsureSuccessStatusCode();
         var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
         Assert.Single(captured!.Draft!.Lines);
 
-        // The test server transport is deliberately unavailable. Once the browser has received the
-        // successful cloud order result, local cleanup must not perform another WAN request.
-        var completed = await Client.PostAsJsonAsync(
-            $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/complete-order",
-            new CompleteOnlineSalesOrderDraftRequest(Guid.NewGuid(), 0));
+        var drafts = factory.Services.GetRequiredService<PosDraftStore>();
+        var withCustomer = await drafts.AssignPartiesAsync(
+            captured.Draft.DraftId, Guid.NewGuid(), null);
+        var timer = Stopwatch.StartNew();
+        var completed = await client.PostAsJsonAsync(
+            "/edge/v1/orders/save",
+            new SavePosOrderRequest(withCustomer.DraftId.Value));
+        timer.Stop();
 
         completed.EnsureSuccessStatusCode();
-        var next = await completed.Content.ReadFromJsonAsync<PosDraft>();
-        Assert.NotNull(next);
-        Assert.Empty(next!.Lines);
-        Assert.NotEqual(captured.Draft.DraftId, next.DraftId);
+        var saved = await completed.Content.ReadFromJsonAsync<SaveOrderEnvelope>();
+        Assert.NotNull(saved);
+        Assert.Empty(saved!.NextDraft.Lines);
+        Assert.NotEqual(captured.Draft.DraftId, saved.NextDraft.DraftId);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("/api/pos/v1/orders/save", handler.Path);
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(1), $"Save took {timer.Elapsed}.");
+    }
+
+    [Fact]
+    public async Task Failed_server_order_save_keeps_the_complete_local_draft_for_retry()
+    {
+        var handler = new SaveOrderHandler(fail: true);
+        using var factory = _factory!.WithWebHostBuilder(webHost =>
+            webHost.ConfigureServices(services =>
+            {
+                services.RemoveAll<HttpClient>();
+                services.AddSingleton(new HttpClient(handler)
+                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
+            }));
+        using var client = AuthenticatedClient(factory);
+        using var capture = await client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        capture.EnsureSuccessStatusCode();
+        var captured = Assert.IsType<PosCaptureResult>(
+            await capture.Content.ReadFromJsonAsync<PosCaptureResult>());
+        var drafts = factory.Services.GetRequiredService<PosDraftStore>();
+        var withCustomer = await drafts.AssignPartiesAsync(
+            captured.Draft!.DraftId, Guid.NewGuid(), null);
+
+        using var failed = await client.PostAsJsonAsync(
+            "/edge/v1/orders/save",
+            new SavePosOrderRequest(withCustomer.DraftId.Value));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+        var preserved = await drafts.GetAsync(withCustomer.DraftId);
+        Assert.NotNull(preserved);
+        Assert.Single(preserved.Lines);
+        Assert.Equal(PosDraftStatus.Active, preserved.Status);
+        Assert.Equal(1, handler.Calls);
     }
 
     [Fact]
@@ -688,9 +742,11 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         recover.EnsureSuccessStatusCode();
         var recovered = Assert.IsType<PosDraft>(await recover.Content.ReadFromJsonAsync<PosDraft>());
 
+        var drafts = factory.Services.GetRequiredService<PosDraftStore>();
+        await drafts.AssignPartiesAsync(recovered.DraftId, Guid.NewGuid(), null);
         using var completed = await client.PostAsJsonAsync(
-            $"/edge/v1/drafts/{recovered.DraftId.Value:D}/complete-order",
-            new CompleteOnlineSalesOrderDraftRequest(orderId, 0));
+            "/edge/v1/orders/save",
+            new SavePosOrderRequest(recovered.DraftId.Value));
 
         completed.EnsureSuccessStatusCode();
         Assert.Equal(0, handler.ReleaseCalls);
@@ -1040,6 +1096,45 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     [Fact]
     public async Task Cashier_can_close_and_print_the_work_session_while_server_is_offline()
     {
+        using var currentSessionResponse = await Client.PostAsync(
+            "/edge/v1/work-sessions/current", null);
+        currentSessionResponse.EnsureSuccessStatusCode();
+        var currentSession = await currentSessionResponse.Content
+            .ReadFromJsonAsync<PosLocalUserSession>();
+        Assert.NotNull(currentSession);
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var runtime = scope.ServiceProvider.GetRequiredService<PosEdgeRuntimeContext>();
+            var cashStore = scope.ServiceProvider.GetRequiredService<PosCashMovementStore>();
+            var cashEntryReasonId = Guid.NewGuid();
+            var cashExitReasonId = Guid.NewGuid();
+            await cashStore.ReplaceReasonsAsync(
+                runtime.BusinessId.Value,
+                [
+                    new CashMovementReasonView(
+                        cashEntryReasonId, runtime.BusinessId.Value, "BASE", "Base de caja",
+                        CashMovementDirections.In, "CashOverShort", null, null,
+                        "110505", "Caja general", true, true, true),
+                    new CashMovementReasonView(
+                        cashExitReasonId, runtime.BusinessId.Value, "GASTO", "Gasto de caja",
+                        CashMovementDirections.Out, "CashOverShort", null, null,
+                        "110505", "Caja general", true, true, true)
+                ]);
+
+            using var entry = await Client.PostAsJsonAsync(
+                "/edge/v1/cash-movements",
+                new QueueLocalCashMovementRequest(
+                    Guid.NewGuid(), cashEntryReasonId, 5_000m, DateTimeOffset.UtcNow,
+                    "BASE-LOCAL", "Entrada local", null));
+            entry.EnsureSuccessStatusCode();
+            using var exit = await Client.PostAsJsonAsync(
+                "/edge/v1/cash-movements",
+                new QueueLocalCashMovementRequest(
+                    Guid.NewGuid(), cashExitReasonId, 1_250m, DateTimeOffset.UtcNow,
+                    "GASTO-LOCAL", "Salida local", null));
+            exit.EnsureSuccessStatusCode();
+        }
+
         var capture = await Client.PostAsJsonAsync(
             "/edge/v1/capture",
             new CaptureRequest("770123", null));
@@ -1073,10 +1168,26 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             .ReadFromJsonAsync<AuthorizedWorkSessionClosurePreview>();
         Assert.NotNull(preview);
         Assert.Equal(total, preview.Preview.TotalSales);
-        Assert.Equal(cashAmount, preview.Preview.ExpectedCash);
+        Assert.Equal(3_750m, preview.Preview.TotalOther);
+        Assert.Equal(cashAmount + 3_750m, preview.Preview.ExpectedCash);
+        var cashTotal = preview.Preview.PaymentTotals
+            .Single(value => value.PaymentMethodCode == "Cash");
+        Assert.Equal(cashAmount + 3_750m, cashTotal.NetAmount);
+        Assert.Equal(5_000m, cashTotal.CashEntryAmount);
+        Assert.Equal(1_250m, cashTotal.CashExitAmount);
+        var cashMovementDetails = Assert.IsAssignableFrom<
+            IReadOnlyList<WorkSessionCashMovementDetail>>(preview.Preview.CashMovements);
+        Assert.Equal(2, cashMovementDetails.Count);
         Assert.Equal(
-            cashAmount,
-            preview.Preview.PaymentTotals.Single(value => value.PaymentMethodCode == "Cash").NetAmount);
+            5_000m,
+            cashMovementDetails
+                .Where(value => value.Direction == CashMovementDirections.In)
+                .Sum(value => value.Amount));
+        Assert.Equal(
+            1_250m,
+            cashMovementDetails
+                .Where(value => value.Direction == CashMovementDirections.Out)
+                .Sum(value => value.Amount));
         Assert.Equal(
             cardAmount,
             preview.Preview.PaymentTotals.Single(value => value.PaymentMethodCode == "Card").NetAmount);
@@ -1092,9 +1203,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var closeRequest = new CloseLocalWorkSessionRequest(
             operationId,
             preview.AuthorizationToken,
-            cashAmount,
+            cashAmount + 3_750m,
             [
-                new WorkSessionPaymentCount("Cash", cashAmount),
+                new WorkSessionPaymentCount("Cash", cashAmount + 3_750m),
                 new WorkSessionPaymentCount("Card", cardAmount),
                 new WorkSessionPaymentCount("Transfer", transferAmount)
             ],
@@ -1336,6 +1447,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             var health = await client.GetFromJsonAsync<JsonElement>("/edge/v1/health");
 
             Assert.True(health.GetProperty("initialEnrollmentSessionAvailable").GetBoolean());
+            Assert.Equal(2, health.GetProperty("preparationCompletedSteps").GetInt32());
+            Assert.Equal(3, health.GetProperty("preparationTotalSteps").GetInt32());
         }
         finally
         {
@@ -1641,6 +1754,36 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                 new HttpRequestException("Auraly Server is offline."));
     }
 
+    private sealed class SaveOrderHandler(bool fail = false) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        public string? Path { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (!path.EndsWith("/orders/save", StringComparison.Ordinal))
+                return Task.FromResult(Json(HttpStatusCode.NotFound, new { detail = "Not part of this test." }));
+            Calls++;
+            Path = path;
+            if (fail)
+                return Task.FromResult(Json(
+                    HttpStatusCode.ServiceUnavailable,
+                    new { detail = "Auraly Server no pudo guardar el pedido." }));
+            return Task.FromResult(Json(HttpStatusCode.OK, new PosSaveOrderResponse(
+                Guid.NewGuid(), "PED-LOCAL-1", "Confirmed", 100m, false, [])));
+        }
+
+        private static HttpResponseMessage Json<T>(HttpStatusCode status, T body) => new(status)
+        {
+            Content = JsonContent.Create(body)
+        };
+    }
+
+    private sealed record SaveOrderEnvelope(PosSaveOrderResponse Order, PosDraft NextDraft);
+
     private sealed class RecoveredOrderHandler(
         Guid orderId,
         Guid productId,
@@ -1669,6 +1812,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     100m, 0m, 100m, null, null, DateTimeOffset.UtcNow, true, null, null,
                     [new OrderLine(Guid.NewGuid(), productId, "P-1", "P-1", "Product",
                         "EA", 1m, 100m, 0m, 100m)], Guid.NewGuid())));
+            if (request.Method == HttpMethod.Post && path.EndsWith("/orders/save", StringComparison.Ordinal))
+                return Task.FromResult(Json(HttpStatusCode.OK, new PosSaveOrderResponse(
+                    orderId, "PED-EDGE-1", "Confirmed", 100m, false, [])));
             if (request.Method == HttpMethod.Post &&
                 path.EndsWith($"/orders/{orderId:D}/cancel", StringComparison.Ordinal))
             {

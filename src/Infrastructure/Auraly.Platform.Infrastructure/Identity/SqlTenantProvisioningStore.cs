@@ -190,7 +190,7 @@ public sealed class SqlTenantProvisioningStore(
                 SELECT NEWID(),@CashierRoleId,PermissionId,@Now
                 FROM dbo.Permissions
                 WHERE Resource IN(
-                  N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',
+                  N'sales.create',N'sales.reprint',N'sales.lines.change-description',N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
                   N'pos.synchronization.events.read',N'pos.inventory.availability.read');
 
                 INSERT dbo.TenantUserInvitations

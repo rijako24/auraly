@@ -11,6 +11,36 @@ public sealed class PosOrderServerClient(
     PosDeviceCredentials credentials,
     PosEdgeRuntimeContext runtime)
 {
+    public Task<PosSaveOrderResponse> SaveAsync(
+        PosLocalUserSession session,
+        PosDraft draft,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        if (draft.CustomerId is not Guid customerId)
+            throw new InvalidOperationException("Selecciona un cliente antes de guardar el pedido.");
+        return SendAsync<PosSaveOrderResponse>(
+            HttpMethod.Post,
+            "/api/pos/v1/orders/save",
+            JsonContent.Create(new PosSaveOrderRequest(
+                session.UserId,
+                runtime.BusinessId.Value,
+                runtime.WarehouseId.Value,
+                session.WorkSessionId,
+                customerId,
+                draft.SourceOrderId,
+                draft.Observation,
+                idempotencyKey,
+                draft.Lines.Select(line => new PosSaveOrderLine(
+                    line.ProductId.Value,
+                    line.Quantity,
+                    line.UnitPrice,
+                    line.Discount,
+                    line.PriceSource)).ToArray())),
+            idempotencyKey,
+            cancellationToken);
+    }
+
     public Task<OrderPage> PageAsync(
         PosLocalUserSession session,
         string query,

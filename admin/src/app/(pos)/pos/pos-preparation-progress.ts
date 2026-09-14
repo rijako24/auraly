@@ -48,8 +48,11 @@ export function posPreparationView(
 
   const completed = Math.max(0, health.preparationCompletedSteps ?? 0);
   const totalSteps = Math.max(0, health.preparationTotalSteps ?? 0);
+  const currentStepProgress = health.preparationStage === "Catalog"
+    ? Math.min(100, Math.max(0, health.catalogProgressPercent ?? 0)) / 100
+    : 0;
   const overallProgress = totalSteps > 0
-    ? Math.min(100, Math.floor(completed * 100 / totalSteps))
+    ? Math.min(100, Math.floor((completed + currentStepProgress) * 100 / totalSteps))
     : null;
   const activeStages = (health.synchronizationStages ?? []).join(", ");
 

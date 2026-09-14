@@ -4,6 +4,7 @@ using Auraly.Contracts.WorkSessions;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
+using Auraly.Pos.Printing;
 using Microsoft.Data.Sqlite;
 using System.IO.Ports;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -168,7 +169,8 @@ public sealed class PosConfigurationTests
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
                 rendered,
-                documents);
+                documents,
+                new CreditSaleAcknowledgementRenderer());
 
             var receipt = Receipt();
             await printer.PrintAsync(receipt);
@@ -266,7 +268,8 @@ public sealed class PosConfigurationTests
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
                 rendered,
-                documents);
+                documents,
+                new CreditSaleAcknowledgementRenderer());
 
             var receipt = Receipt();
             await printer.PrintSalesDocumentsAsync([new OnlineSalesReceipt(
@@ -328,7 +331,8 @@ public sealed class PosConfigurationTests
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
                 rendered,
-                documents);
+                documents,
+                new CreditSaleAcknowledgementRenderer());
             var first = Receipt() with
             {
                 DocumentType = "Order",
@@ -395,7 +399,8 @@ public sealed class PosConfigurationTests
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
                 rendered,
-                documents);
+                documents,
+                new CreditSaleAcknowledgementRenderer());
 
             var receipt = Receipt();
             await printer.PrintAsync(receipt);
@@ -608,7 +613,8 @@ public sealed class PosConfigurationTests
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
                 rendered,
-                documents);
+                documents,
+                new CreditSaleAcknowledgementRenderer());
             var receipt = Receipt();
 
             await receiptPrinter.PrintAsync(receipt);
@@ -888,6 +894,110 @@ public sealed class PosConfigurationTests
         null,
         80,
         PosSaleDocumentTypes.Receipt);
+
+    [Fact]
+    public async Task Credit_sale_prints_invoice_then_acknowledgement_as_two_independent_jobs()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-credit-print-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw,
+                "Factura",
+                80,
+                "Factura",
+                PosPrinterName: "Impresora facturas",
+                PosOutputFormat: PrintTemplateFormats.Receipt,
+                OrderPrinterName: "Impresora pedidos"));
+            var rendered = new RecordingRenderedPrintJob();
+            var documents = new ConfigurableOrderDocumentPrinter(
+                store, new HalfLetterDocumentRenderer(), rendered);
+            var printer = new ConfigurablePosReceiptPrinter(
+                store,
+                new EscPosReceiptRenderer(),
+                new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(),
+                rendered,
+                documents,
+                new CreditSaleAcknowledgementRenderer());
+            var receipt = Receipt() with
+            {
+                CreditAcknowledgement =
+                    CreditSaleAcknowledgementRendererTests.Acknowledgement()
+            };
+
+            await printer.PrintAsync(receipt);
+
+            Assert.Equal(2, rendered.Documents.Count);
+            Assert.DoesNotContain("credit-sale-acknowledgement", rendered.Documents[0]);
+            Assert.Contains("credit-sale-acknowledgement", rendered.Documents[1]);
+            Assert.Equal(
+                ["Impresora facturas", "Impresora facturas"],
+                rendered.PrinterNames);
+            Assert.Equal([80, 80], rendered.PaperWidths);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(PrintTemplateFormats.HalfLetter)]
+    [InlineData(PrintTemplateFormats.HalfLegal)]
+    [InlineData(PrintTemplateFormats.Letter)]
+    public async Task Credit_sale_sheet_formats_print_invoice_then_acknowledgement_on_same_printer(
+        string outputFormat)
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-credit-sheet-print-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw,
+                "Factura",
+                80,
+                "Factura",
+                PosPrinterName: "Impresora documentos",
+                PosOutputFormat: outputFormat,
+                OrderPrinterName: "Impresora pedidos"));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurablePosReceiptPrinter(
+                store,
+                new EscPosReceiptRenderer(),
+                new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(),
+                rendered,
+                new ConfigurableOrderDocumentPrinter(
+                    store, new HalfLetterDocumentRenderer(), rendered),
+                new CreditSaleAcknowledgementRenderer());
+
+            await printer.PrintAsync(Receipt() with
+            {
+                CreditAcknowledgement =
+                    CreditSaleAcknowledgementRendererTests.Acknowledgement()
+            });
+
+            Assert.Equal(2, rendered.Documents.Count);
+            Assert.DoesNotContain("credit-sale-acknowledgement", rendered.Documents[0]);
+            Assert.Contains("credit-sale-acknowledgement", rendered.Documents[1]);
+            Assert.Equal(
+                ["Impresora documentos", "Impresora documentos"],
+                rendered.PrinterNames);
+            Assert.Equal([null, null], rendered.PaperWidths);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
 
     private static int CountOccurrences(string source, string value)
     {

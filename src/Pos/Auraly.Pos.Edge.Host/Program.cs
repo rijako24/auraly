@@ -74,7 +74,8 @@ public sealed record DirectPrintReceiptRequest(
     string? CompanyLogoSource = null,
     string? CustomerName = null,
     string? BusinessName = null,
-    string? WarehouseName = null);
+    string? WarehouseName = null,
+    CreditSaleAcknowledgement? CreditAcknowledgement = null);
 
 public static class PosEdgeHostApplication
 {
@@ -797,8 +798,9 @@ public static class PosEdgeHostApplication
                             ? "CatalogStarting"
                             : "Finalizing",
                 preparationCompletedSteps = (identityReady ? 1 : 0) +
-                    (catalogStatus.Status == "Ready" ? 1 : 0),
-                preparationTotalSteps = 2,
+                    (catalogStatus.Status == "Ready" ? 1 : 0) +
+                    (user is not null ? 1 : 0),
+                preparationTotalSteps = 3,
                 preparationCanResume = catalogStatus.Status == "Bootstrapping",
                 synchronizationStages = syncStatus.ActiveStages,
                 failedSynchronizationStage = syncStatus.FailedStage,
@@ -1176,29 +1178,6 @@ public static class PosEdgeHostApplication
             var result = await drafts.GetOrCreateActiveAsync(context.ScopeFor(user), ct);
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);
-        });
-        edge.MapPost("/drafts/{draftId:guid}/complete-order", async (
-            Guid draftId,
-            CompleteOnlineSalesOrderDraftRequest request,
-            PosDraftStore drafts,
-            PosEdgeRuntimeContext context,
-            PosLocalSessionAccessor sessions,
-            CancellationToken ct) =>
-        {
-            var user = sessions.Required();
-            var draft = await drafts.GetAsync(new DraftId(draftId), ct)
-                ?? throw new KeyNotFoundException("La venta activa no existe.");
-            if (request.OrderId == Guid.Empty ||
-                (draft.SourceOrderId.HasValue && draft.SourceOrderId != request.OrderId))
-                throw new InvalidOperationException(
-                    "La venta solo se puede limpiar automáticamente después de guardar su pedido.");
-
-            // The cloud create/update request already returned the canonical OrderId. Re-reading the
-            // complete order here added a second WAN round trip to every installed POS save and did
-            // not make clearing this device's own local draft safer. A recovered order remains bound
-            // to its original id above; new orders only clear local state after cloud success.
-            await drafts.CancelAsync(new DraftId(draftId), ct);
-            return Results.Ok(await drafts.GetOrCreateActiveAsync(context.ScopeFor(user), ct));
         });
         edge.MapPost("/drafts/{draftId:guid}/temporary", async (
             Guid draftId,

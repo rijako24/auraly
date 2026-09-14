@@ -11,6 +11,40 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PosOrderServerClientTests
 {
     [Fact]
+    public async Task Saving_an_enrolled_pos_order_uses_one_device_authenticated_server_request()
+    {
+        var handler = new SaveHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test") };
+        var deviceId = Guid.NewGuid();
+        var client = Client(http, deviceId);
+        var session = Session();
+        var draft = new PosDraft(
+            new DraftId(Guid.NewGuid()),
+            new PosDraftScope(
+                new BusinessId(Guid.NewGuid()),
+                new WarehouseId(Guid.NewGuid()),
+                new DeviceId(deviceId),
+                new WorkSessionId(session.WorkSessionId),
+                new UserId(session.UserId)),
+            Guid.NewGuid(), null, PosDraftStatus.Active, null, null, null,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            [new PosDraftLine(
+                Guid.NewGuid(), new ProductId(Guid.NewGuid()), "P-1", "Producto", "EA",
+                "01", 19m, 2m, 100m, 90m, "COP", "Captured", null, 10m, null,
+                false, 50m, false, 1)]);
+
+        var result = await client.SaveAsync(session, draft, "pos-order-draft", default);
+
+        Assert.Equal("Confirmed", result.Status);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("/api/pos/v1/orders/save", handler.Path);
+        Assert.Equal(deviceId.ToString("D"), handler.DeviceId);
+        Assert.Equal("pos-order-draft", handler.IdempotencyKey);
+        Assert.Equal(draft.CustomerId, handler.Payload!.CustomerId);
+        Assert.Equal(90m, Assert.Single(handler.Payload.Lines).UnitPrice);
+    }
+
+    [Fact]
     public async Task Order_print_uses_the_device_authenticated_post_endpoint()
     {
         var orderId = Guid.NewGuid();
@@ -129,6 +163,31 @@ public sealed class PosOrderServerClientTests
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = JsonContent.Create(Array.Empty<OrderPrintDocument>())
+            };
+        }
+    }
+
+    private sealed class SaveHandler : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        public string? Path { get; private set; }
+        public string? DeviceId { get; private set; }
+        public string? IdempotencyKey { get; private set; }
+        public PosSaveOrderRequest? Payload { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            Path = request.RequestUri!.AbsolutePath;
+            DeviceId = request.Headers.GetValues("X-Auraly-Device-Id").Single();
+            IdempotencyKey = request.Headers.GetValues("Idempotency-Key").Single();
+            Payload = await request.Content!.ReadFromJsonAsync<PosSaveOrderRequest>(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new PosSaveOrderResponse(
+                    Guid.NewGuid(), "PED-1", "Confirmed", 170m, false, []))
             };
         }
     }

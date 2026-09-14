@@ -3,6 +3,7 @@ import test from "node:test";
 import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import {
   installedPosLaunchDestination,
+  shouldAutoActivateRememberedWorkspace,
   shouldUseEnrolledPosRuntime,
   usesEnrolledPosRuntime,
   workspaceActivationMode,
@@ -71,6 +72,11 @@ test("an unenrolled installation opens the same shared Auraly login", () => {
     "/login",
   );
   assert.equal(installedPosLaunchDestination(null), "/login");
+});
+
+test("an unenrolled installed runtime always presents the enrollment choice", () => {
+  assert.equal(shouldAutoActivateRememberedWorkspace(true), false);
+  assert.equal(shouldAutoActivateRememberedWorkspace(false), true);
 });
 
 test("enrollment is the single owner of installed runtime selection", () => {

@@ -1,7 +1,9 @@
 using System.Runtime.InteropServices;
 using System.IO.Ports;
 using System.Text.Json;
+using Auraly.Contracts.Sales;
 using Auraly.Pos.Edge.Infrastructure;
+using Auraly.Pos.Printing;
 
 namespace Auraly.Pos.Edge.Host;
 
@@ -429,20 +431,27 @@ public sealed class ConfigurablePosReceiptPrinter(
     IReceiptPreviewLauncher preview,
     IWindowsRenderedPrintJob renderedPrintJob,
     ConfigurableOrderDocumentPrinter orderDocumentPrinter,
+    CreditSaleAcknowledgementRenderer creditAcknowledgementRenderer,
     PosWorkstationIdentity? workstation = null) : IPosReceiptPrinter
 {
-    public Task PrintAsync(
+    public async Task PrintAsync(
         PosReceipt receipt,
         CancellationToken cancellationToken = default)
     {
         var configuration = settings.Load();
+        receipt = PrepareReceipt(receipt);
         if (configuration.PosOutputFormat != PrintTemplateFormats.Receipt)
-            return orderDocumentPrinter.PrintAsync(
+            await orderDocumentPrinter.PrintAsync(
                 receipt,
                 configuration.PosPrinterName,
                 configuration.PosOutputFormat,
                 cancellationToken);
-        return PrintReceiptAsync(receipt, cancellationToken);
+        else
+            await PrintReceiptAsync(receipt, cancellationToken);
+
+        if (receipt.CreditAcknowledgement is not null)
+            await PrintCreditAcknowledgementAsync(
+                PrepareCreditAcknowledgement(receipt), configuration, cancellationToken);
     }
 
     public Task PrintReceiptAsync(
@@ -503,6 +512,16 @@ public sealed class ConfigurablePosReceiptPrinter(
         CancellationToken cancellationToken = default)
     {
         if (receipts.Count == 0) return;
+        if (receipts.Any(receipt => receipt.CreditAcknowledgement is not null))
+        {
+            // Each credit sale intentionally produces two physical jobs so the
+            // invoice cuts before its independently signed acknowledgement.
+            foreach (var receipt in receipts)
+                await PrintAsync(
+                    ToPosReceipt(receipt, settings.Load().ReceiptPaperWidthMillimeters),
+                    cancellationToken);
+            return;
+        }
         var configuration = settings.Load();
         if (configuration.PosOutputFormat != PrintTemplateFormats.Receipt)
         {
@@ -568,6 +587,82 @@ public sealed class ConfigurablePosReceiptPrinter(
             : receipt.WarehouseName
     };
 
+    private CreditSaleAcknowledgement PrepareCreditAcknowledgement(
+        PosReceipt receipt)
+    {
+        var value = receipt.CreditAcknowledgement
+            ?? throw new InvalidOperationException(
+                "La venta no contiene una constancia de crédito.");
+        return value with
+        {
+            CompanyName = string.IsNullOrWhiteSpace(value.CompanyName)
+                ? receipt.CompanyName
+                : value.CompanyName,
+            CompanyLogoSource = string.IsNullOrWhiteSpace(value.CompanyLogoSource)
+                ? receipt.CompanyLogoSource
+                : value.CompanyLogoSource,
+            BusinessName = string.IsNullOrWhiteSpace(value.BusinessName)
+                ? receipt.BusinessName
+                : value.BusinessName,
+            WarehouseName = string.IsNullOrWhiteSpace(value.WarehouseName)
+                ? receipt.WarehouseName
+                : value.WarehouseName
+        };
+    }
+
+    private async Task PrintCreditAcknowledgementAsync(
+        CreditSaleAcknowledgement value,
+        PosPrinterConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        var format = configuration.PosOutputFormat;
+        var paperWidth = format == PrintTemplateFormats.Receipt
+            ? configuration.ReceiptPaperWidthMillimeters
+            : (int?)null;
+        var printerName = configuration.PosPrinterName;
+        var html = creditAcknowledgementRenderer.Render(
+            value, format, configuration.ReceiptPaperWidthMillimeters);
+        var directory = Path.Combine(
+            settings.ReceiptOutputDirectory,
+            "ventas-credito",
+            format.ToLowerInvariant());
+
+        if (format == PrintTemplateFormats.Receipt
+                ? configuration.ReceiptMode == PosPrinterModes.WindowsRaw
+                : configuration.OrderMode == OrderPrinterModes.WindowsPrint)
+        {
+            if (string.IsNullOrWhiteSpace(printerName))
+                throw new InvalidOperationException(
+                    "Configura la impresora de facturas para imprimir la constancia de crédito.");
+            await renderedPrintJob.PrintAsync(
+                printerName,
+                $"Credito-{value.DocumentNumber}",
+                html,
+                directory,
+                paperWidth,
+                cancellationToken);
+            return;
+        }
+
+        Directory.CreateDirectory(directory);
+        var target = Path.Combine(
+            directory, $"Credito-{value.DocumentId:N}-{Guid.NewGuid():N}.html");
+        await File.WriteAllTextAsync(
+            target, html, new System.Text.UTF8Encoding(false), cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (format == PrintTemplateFormats.Receipt &&
+            configuration.ReceiptMode == PosPrinterModes.File)
+            return;
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException(
+                "La vista previa local de la constancia de crédito requiere Windows.");
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = Path.GetFullPath(target),
+            UseShellExecute = true
+        });
+    }
+
     private static PosReceipt ToPosReceipt(
         Auraly.Contracts.Sales.OnlineSalesReceipt receipt,
         int paperWidthMillimeters) =>
@@ -596,7 +691,10 @@ public sealed class ConfigurablePosReceiptPrinter(
                 receipt.DocumentType,
                 receipt.CompanyName,
                 receipt.CompanyLogoSource,
-                CustomerName: receipt.CustomerName);
+                CustomerName: receipt.CustomerName,
+                BusinessName: receipt.CreditAcknowledgement?.BusinessName,
+                WarehouseName: receipt.CreditAcknowledgement?.WarehouseName,
+                CreditAcknowledgement: receipt.CreditAcknowledgement);
 }
 
 public sealed class RenderedWindowsReceiptPrinter(

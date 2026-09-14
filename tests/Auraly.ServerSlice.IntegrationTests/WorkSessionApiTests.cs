@@ -256,6 +256,21 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(160_000m, secondPreview.TotalOther);
         Assert.Equal(80_000m, firstPreview.ExpectedCash);
         Assert.Equal(80_000m, secondPreview.ExpectedCash);
+        foreach (var preview in new[] { firstPreview, secondPreview })
+        {
+            var cash = Assert.Single(preview.PaymentTotals,
+                value => value.PaymentMethodCode == "Cash");
+            Assert.Equal(100_000m, cash.CashEntryAmount);
+            Assert.Equal(20_000m, cash.CashExitAmount);
+            Assert.Equal(cash.CashEntryAmount,
+                preview.CashMovements!
+                    .Where(value => value.Direction == CashMovementDirections.In)
+                    .Sum(value => value.Amount));
+            Assert.Equal(cash.CashExitAmount,
+                preview.CashMovements!
+                    .Where(value => value.Direction == CashMovementDirections.Out)
+                    .Sum(value => value.Amount));
+        }
     }
 
     [Fact]
@@ -330,7 +345,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 new WorkSessionPaymentCount("Card", 0m),
                 new WorkSessionPaymentCount("Transfer", 0m)
             ]));
-        Assert.Equal(2, closure.ReceiptTemplateVersion);
+        Assert.Equal(3, closure.ReceiptTemplateVersion);
         Assert.Equal(closure.CreditSalesAmount, closure.CreditSales!.Sum(item => item.Amount));
 
         using var receiptResponse = await client.PostAsJsonAsync(
@@ -340,7 +355,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var receipt = await receiptResponse.Content
             .ReadFromJsonAsync<WorkSessionClosureReceiptView>();
         Assert.NotNull(receipt);
-        Assert.Contains("data-auraly-report-version=\"2\"", receipt.Html);
+        Assert.Contains("data-auraly-report-version=\"3\"", receipt.Html);
         Assert.Contains("Cliente cartera exacta", receipt.Html);
         Assert.Contains("CVI-CARTERA-1", receipt.Html);
         Assert.Contains("Total cartera", receipt.Html);
@@ -393,6 +408,14 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             Assert.NotNull(preview);
             Assert.Equal(35_000m, preview.TotalOther);
             Assert.Equal(35_000m, preview.ExpectedCash);
+            var previewCash = Assert.Single(preview.PaymentTotals,
+                value => value.PaymentMethodCode == "Cash");
+            Assert.Equal(35_000m, previewCash.CashEntryAmount);
+            Assert.Equal(0m, previewCash.CashExitAmount);
+            var previewMovement = Assert.Single(preview.CashMovements!);
+            Assert.Equal(documentId, previewMovement.DocumentId);
+            Assert.Equal("Ingreso pendiente de proyección", previewMovement.Reference);
+            Assert.Equal(35_000m, previewMovement.Amount);
 
             var closure = await CloseAsync(
                 client,
@@ -402,6 +425,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             Assert.Equal(35_000m, closure.TotalOther);
             Assert.Equal(35_000m, closure.ExpectedCash);
             Assert.Equal(35_000m, closure.CountedCash);
+            Assert.Equal(35_000m,
+                Assert.Single(closure.CashMovements!).Amount);
         }
         finally
         {

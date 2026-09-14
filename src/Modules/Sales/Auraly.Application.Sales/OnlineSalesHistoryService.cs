@@ -100,6 +100,8 @@ public static class OnlineSalesReceiptMapper
     {
         ArgumentNullException.ThrowIfNull(request);
         var snapshot = request.CommercialSnapshot;
+        var customerName = request.UblSnapshot?.Customer.RegistrationName
+            ?? "Consumidor final";
         var productCodes = request.UblSnapshot?.Lines
             .ToDictionary(line => line.LineNumber, line => line.ProductCode)
             ?? [];
@@ -138,9 +140,20 @@ public static class OnlineSalesReceiptMapper
             request.FiscalSnapshot?.Cufe,
             request.FiscalSnapshot?.QrPayload,
             fiscalStatus,
-            request.UblSnapshot?.Customer.RegistrationName ?? "Consumidor final",
+            customerName,
             WithholdingTotal: snapshot.Withholding?.WithholdingTotal ?? 0m,
             NetPayableAmount: snapshot.Withholding?.NetAmount ?? snapshot.PayableAmount,
-            Withholdings: snapshot.Withholding?.Lines);
+            Withholdings: snapshot.Withholding?.Lines,
+            CreditAcknowledgement: request.Credit is null
+                ? null
+                : new CreditSaleAcknowledgement(
+                    request.DocumentId,
+                    request.DocumentNumber.FullNumber,
+                    snapshot.IssuedAt,
+                    customerName,
+                    snapshot.CustomerIdentification,
+                    request.Credit.Amount,
+                    request.Credit.RemainingCredit,
+                    request.Credit.SoldByName ?? "Usuario"));
     }
 }

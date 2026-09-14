@@ -164,7 +164,9 @@ public sealed record PosSaleUblSnapshotContract(
 public sealed record PosSaleCreditContract(
     Guid CustomerId,
     decimal Amount,
-    DateTimeOffset DueDate);
+    DateTimeOffset DueDate,
+    decimal? RemainingCredit = null,
+    string? SoldByName = null);
 
 public sealed record PosCreditValidationRequest(
     Guid BusinessId,

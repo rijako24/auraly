@@ -149,7 +149,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user
-            ? async (orders, documentType) => {
+            ? async (orders, documentType, paymentMethodCode) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
@@ -160,13 +160,14 @@ export default function OrdersPage() {
                 );
                 const response = await client.invoiceOrders(
                   orders.map((order) => order.orderId),
-                  "Cash",
+                  paymentMethodCode,
                   documentType,
                 );
                 return {
                   completedCount: response.completedCount,
                   failedCount: response.failedCount,
                   printError: response.printError,
+                  creditValidationIssues: response.creditValidationIssues,
                 };
               }
             : undefined

@@ -6,7 +6,8 @@ namespace Auraly.Application.Sales;
 public sealed record OnlineSalesUserIdentity(
     Guid UserId,
     Guid TenantId,
-    IReadOnlySet<string> Permissions);
+    IReadOnlySet<string> Permissions,
+    string UserName = "Usuario");
 
 public interface IOnlineSalesDraftStore
 {

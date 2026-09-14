@@ -3,6 +3,7 @@ using Auraly.Application.Authorization;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
+using Auraly.Pos.Printing;
 using QRCoder;
 
 namespace Auraly.Api;
@@ -318,6 +319,30 @@ group.MapPost("/{draftId:guid}/items", async (
                     draftId, request, IdempotencyKey(context), ct),
                 ct)));
 
+        group.MapPost("/sales/credit-acknowledgement/render", (
+            CreditSaleAcknowledgementRenderRequest request) =>
+        {
+            try
+            {
+                var renderer = new CreditSaleAcknowledgementRenderer();
+                return Results.Ok(new CreditSaleAcknowledgementRenderResponse(
+                    request.Acknowledgements.Select(acknowledgement =>
+                        renderer.Render(
+                            acknowledgement,
+                            request.Format,
+                            request.ReceiptPaperWidthMillimeters)).ToArray()));
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or InvalidOperationException)
+            {
+                return Results.ValidationProblem(
+                    new Dictionary<string, string[]>
+                    {
+                        [nameof(request.Acknowledgements)] = [exception.Message]
+                    });
+            }
+        });
+
         group.MapPost("/{draftId:guid}/complete-order", async (
             HttpContext context,
             Guid draftId,
@@ -493,7 +518,10 @@ public static class OnlineSalesDraftClaimsPrincipalExtensions
             RequiredGuid(principal, Auraly.Contracts.Authentication.AuthenticationDefaults.IdentityTenantIdClaim),
             principal.FindAll("permission")
                 .Select(claim => claim.Value)
-                .ToHashSet(StringComparer.Ordinal));
+                .ToHashSet(StringComparer.Ordinal),
+            principal.FindFirstValue(ClaimTypes.Name)
+                ?? principal.Identity?.Name
+                ?? "Usuario");
 
     private static Guid RequiredGuid(
         ClaimsPrincipal principal,

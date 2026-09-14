@@ -73,7 +73,10 @@ import { cashMovementTicketHtml, printCashMovementTicket } from "./pos-cash-move
 import { receiptBrandMarkup } from "./pos-receipt-brand";
 import { receiptLineMarkup } from "./pos-receipt-line-markup";
 import { posReceiptTypographyCss } from "./pos-receipt-style";
-import { isWorkspacePolicySynchronizationMessage } from "./pos-workspace-synchronization";
+import {
+  isWorkspacePolicySynchronizationMessage,
+  shouldReconnectWorkspacePolicy,
+} from "./pos-workspace-synchronization";
 
 export type SalesWorkspaceOption = {
   businessId: string;
@@ -371,10 +374,11 @@ export class OnlinePosClient implements PosClient {
           if (stopped || socket !== current) return;
           reconnectTimer = window.setTimeout(() => void connect(), 1_000);
         });
-      } catch {
+      } catch (caught) {
         socket?.close();
         socket = null;
-        if (!stopped)
+        const status = caught instanceof PosEdgeError ? caught.status : undefined;
+        if (!stopped && shouldReconnectWorkspacePolicy(status))
           reconnectTimer = window.setTimeout(() => void connect(), 2_000);
       }
     };
@@ -416,6 +420,11 @@ export class OnlinePosClient implements PosClient {
     const format = workflow === "order-tickets"
       ? configuration.orderOutputFormat ?? "HalfLetter"
       : configuration.posOutputFormat ?? "Receipt";
+    const acknowledgements = receipts.flatMap((receipt) =>
+      receipt.creditAcknowledgement ? [receipt.creditAcknowledgement] : []);
+    const invoicePrintCompleted = acknowledgements.length > 0
+      ? waitForBrowserPrint(browserPreview)
+      : null;
     if (format !== "Receipt")
       await renderReceiptsHalfLetter(browserPreview, receipts, this.scope(), format);
     else
@@ -423,6 +432,31 @@ export class OnlinePosClient implements PosClient {
         workflow === "order-tickets"
           ? configuration.orderReceiptPaperWidthMillimeters ?? 80
           : configuration.receiptPaperWidthMillimeters);
+    if (invoicePrintCompleted) await invoicePrintCompleted;
+    if (acknowledgements.length > 0 && workflow === "pos") {
+      const rendered = await request<{ htmlDocuments: string[] }>(
+        "/api/commerce/v1/pos/drafts/sales/credit-acknowledgement/render",
+        this.post({
+          acknowledgements: acknowledgements.map((value) => ({
+            ...value,
+            companyName: value.companyName ?? receipts[0]?.companyName ?? null,
+            companyLogoSource: value.companyLogoSource ?? receipts[0]?.companyLogoSource ?? null,
+            businessName: value.businessName ?? this.context.businessName,
+            warehouseName: value.warehouseName ?? this.context.warehouseName,
+          })),
+          format,
+          receiptPaperWidthMillimeters: configuration.receiptPaperWidthMillimeters,
+        }),
+      );
+      for (let index = 0; index < rendered.htmlDocuments.length; index += 1) {
+        const preview = openHalfLetterPrintPreview();
+        const completed = index < rendered.htmlDocuments.length - 1
+          ? waitForBrowserPrint(preview)
+          : null;
+        renderServerPrintDocument(preview, rendered.htmlDocuments[index]);
+        if (completed) await completed;
+      }
+    }
   }
 
   async health() {
@@ -1077,6 +1111,10 @@ export class OnlinePosClient implements PosClient {
       paymentNotes: paymentNotes ?? null,
       documentType,
     });
+    if (response.creditValidationIssues?.length) {
+      closePrintPreview(browserPreview);
+      return response;
+    }
     try {
       const receipts = orderReceiptsFromEmission(response.results);
       await this.printDirect(receipts, receipts.length > 0, "pos", browserPreview);
@@ -1273,6 +1311,24 @@ export function closePrintPreview(preview: Window | null): void {
     return;
   }
   preview.close();
+}
+
+function waitForBrowserPrint(preview: Window | null): Promise<void> {
+  if (!preview)
+    return Promise.reject(new Error("El navegador bloqueó la vista previa de impresión."));
+  return new Promise((resolve) =>
+    preview.addEventListener("afterprint", () => resolve(), { once: true }));
+}
+
+function renderServerPrintDocument(preview: Window | null, html: string): void {
+  if (!preview)
+    throw new Error("El navegador bloqueó la vista previa de impresión.");
+  preview.document.open();
+  preview.document.write(html.replace(
+    "</body>",
+    "<script>addEventListener('load',()=>setTimeout(()=>window.print(),150));</script></body>",
+  ));
+  preview.document.close();
 }
 
 export async function renderInvoiceOrdersReceipt(

@@ -232,6 +232,40 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
+    public async Task Linked_inventory_shortage_reports_only_the_quantity_still_available_for_the_selected_child()
+    {
+        Guid childId = Guid.Empty;
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 10m, true, true, "Available");
+            Assert.True((await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid())).Added);
+
+            availability.Response = new(
+                childId, scope.WarehouseId.Value, 3m, 2.5m, true, false, "Insufficient");
+            var child = await service.CaptureAsync(
+                "770124", scope, customerId, false, Guid.NewGuid());
+
+            Assert.Equal(PosCaptureStatus.InsufficientInventory, child.Status);
+            Assert.Equal(3m, availability.Requests[^1].Quantity);
+            Assert.Equal(0m, child.MaximumQuantity);
+        }, additionalItemsFactory: productId =>
+        {
+            childId = Guid.NewGuid();
+            return
+            [
+                new PosCatalogItem(
+                    childId, "P-2", "REF-2", "Child", "EA", "VAT19", 19m,
+                    60m, "COP", IsActive: true, IsWeighable: false,
+                    AllowsFractionalSale: false, Scale: null, Barcodes: ["770124"],
+                    Identifiers: [], UnitCost: 0m, ManagesStock: false,
+                    InventoryProductId: productId, InventoryFactor: 0.5m)
+            ];
+        });
+    }
+
+    [Fact]
     public async Task Third_captured_unit_activates_buy_two_get_one_and_reprices_the_open_draft()
     {
         await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>

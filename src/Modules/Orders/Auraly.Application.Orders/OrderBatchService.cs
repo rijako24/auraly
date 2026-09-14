@@ -41,6 +41,7 @@ public sealed class OrderBatchService(
     private static readonly HashSet<string> PaymentMethods =
     [
         "Cash",
+        "Credit",
         "DebitCard",
         "CreditCard",
         "Transfer"
@@ -54,6 +55,35 @@ public sealed class OrderBatchService(
     {
         Validate(actor, request, idempotencyKey);
         var normalizedOrders = request.OrderIds.Distinct().ToArray();
+        var identity = new OnlineSalesUserIdentity(
+            actor.UserId,
+            actor.TenantId,
+            actor.Permissions);
+        if (request.PaymentMethodCode == "Credit")
+        {
+            var creditIssues = await checkout.ValidateOrderCreditBatchAsync(
+                identity,
+                actor.BusinessId,
+                normalizedOrders,
+                cancellationToken);
+            if (creditIssues.Count > 0)
+                return new InvoiceOrdersResponse(
+                    Guid.Empty,
+                    "CreditRejected",
+                    normalizedOrders.Length,
+                    0,
+                    0,
+                    false,
+                    [],
+                    CreditValidationIssues: creditIssues.Select(issue =>
+                        new OrderCreditValidationIssue(
+                            issue.CustomerId,
+                            issue.CustomerName,
+                            issue.CustomerIdentification,
+                            issue.RequestedAmount,
+                            issue.AvailableCredit,
+                            issue.Reason)).ToArray());
+        }
         var hash = RequestHash(request, normalizedOrders);
         var lease = await batches.BeginAsync(
             actor,
@@ -64,10 +94,6 @@ public sealed class OrderBatchService(
         if (lease.Replay is not null)
             return lease.Replay with { IsReplay = true };
 
-        var identity = new OnlineSalesUserIdentity(
-            actor.UserId,
-            actor.TenantId,
-            actor.Permissions);
         var preparedOrders = new Dictionary<Guid, OrderDetail>();
         var preparationFailures = new Dictionary<Guid, string>();
         foreach (var orderId in normalizedOrders)
@@ -165,12 +191,14 @@ public sealed class OrderBatchService(
                         "La venta activa contiene otro pedido pendiente de completar.");
                 }
 
-                var paymentMethod = order.PaymentStatus == "Confirmed"
+                var paidOrder = order.PaymentStatus == "Confirmed";
+                var paymentMethod = paidOrder
                     ? "Transfer"
                     : request.PaymentMethodCode;
-                var paymentReference = order.PaymentStatus == "Confirmed"
+                var paymentReference = paidOrder
                     ? $"Pago confirmado del pedido {order.OrderNumber}"
                     : request.PaymentReference;
+                var creditSale = paymentMethod == "Credit";
                 var documentType = request.DocumentType;
                 if (order.CustomerId is not null &&
                     request.DocumentType == PosSaleDocumentTypes.Receipt)
@@ -192,14 +220,19 @@ public sealed class OrderBatchService(
                     draft.DraftId,
                     new CompleteOnlineSalesDraftRequest(
                         draft.Version,
-                        [
-                            new OnlineSalesPayment(
-                                paymentMethod,
-                                draft.PayableAmount,
-                                paymentReference,
-                                BankAccountId: request.BankAccountId,
-                                Notes: request.PaymentNotes)
-                        ],
+                        creditSale
+                            ? []
+                            : [
+                                new OnlineSalesPayment(
+                                    paymentMethod,
+                                    draft.PayableAmount,
+                                    paymentReference,
+                                    BankAccountId: request.BankAccountId,
+                                    Notes: request.PaymentNotes)
+                            ],
+                        Credit: creditSale
+                            ? new OnlineSalesCreditTerms(draft.PayableAmount)
+                            : null,
                         DocumentType: documentType),
                     OperationKey(lease.OperationId, orderId, "invoice"),
                     cancellationToken);
@@ -339,6 +372,10 @@ public sealed class OrderBatchService(
              !string.IsNullOrWhiteSpace(request.PaymentNotes)))
             throw new OrderValidationException(
                 "La cuenta bancaria y la nota solo aplican a transferencias.");
+        if (request.PaymentMethodCode == "Credit" &&
+            !string.IsNullOrWhiteSpace(request.PaymentReference))
+            throw new OrderValidationException(
+                "La venta a crédito no admite una referencia de pago.");
         if (actor.WorkSessionId is not null && actor.WorkSessionId != request.WorkSessionId)
             throw new OrderForbiddenException(
                 "La sesión solicitada no coincide con el dispositivo autenticado.");

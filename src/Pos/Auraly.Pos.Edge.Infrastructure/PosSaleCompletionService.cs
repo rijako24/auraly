@@ -48,7 +48,8 @@ public sealed record PosReceipt(
     IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null,
     string? CustomerName = null,
     string? BusinessName = null,
-    string? WarehouseName = null);
+    string? WarehouseName = null,
+    CreditSaleAcknowledgement? CreditAcknowledgement = null);
 
 public interface IPosReceiptPrinter
 {
@@ -69,12 +70,14 @@ public sealed record CompletePosSaleCommand(
     PosSaleUblSnapshotContract? UblSnapshot = null,
     string DocumentType = PosSaleDocumentTypes.Invoice,
     IReadOnlySet<string>? Permissions = null,
-    PosSaleCreditTerms? Credit = null);
+    PosSaleCreditTerms? Credit = null,
+    string SoldByName = "Usuario");
 
 public sealed record PosSaleCreditTerms(
     Guid CustomerId,
     decimal Amount,
-    DateTimeOffset DueDate);
+    DateTimeOffset DueDate,
+    decimal? RemainingCredit = null);
 
 public sealed record CompletePosSaleResult(
     PosEdgeIssueResult IssuedSale,
@@ -287,7 +290,9 @@ public sealed class PosSaleCompletionService(
                 command.Credit is null ? null : new PosSaleCreditContract(
                     command.Credit.CustomerId,
                     command.Credit.Amount,
-                    command.Credit.DueDate),
+                    command.Credit.DueDate,
+                    command.Credit.RemainingCredit,
+                    command.SoldByName),
                 customer?.Name),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
@@ -331,7 +336,10 @@ public sealed class PosSaleCompletionService(
             WithholdingTotal: immutable.CommercialSnapshot.Withholding?.WithholdingTotal ?? 0m,
             NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
             Withholdings: immutable.CommercialSnapshot.Withholding?.Lines,
-            CustomerName: customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification);
+            CustomerName: customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification,
+            CreditAcknowledgement: CreditAcknowledgement(
+                immutable,
+                customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification));
 
         // Issuance owns the sale lifecycle. Printing is a post-effect and must
         // never keep an already issued sale or its next draft in limbo.
@@ -425,7 +433,12 @@ public sealed class PosSaleCompletionService(
             WithholdingTotal: immutable.CommercialSnapshot.Withholding?.WithholdingTotal ?? 0m,
             NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
             Withholdings: immutable.CommercialSnapshot.Withholding?.Lines,
-            CustomerName: immutable.CommercialSnapshot.CustomerIdentification);
+            CustomerName: immutable.UblSnapshot?.Customer.RegistrationName
+                ?? immutable.CommercialSnapshot.CustomerIdentification,
+            CreditAcknowledgement: CreditAcknowledgement(
+                immutable,
+                immutable.UblSnapshot?.Customer.RegistrationName
+                    ?? immutable.CommercialSnapshot.CustomerIdentification));
 
         await printer.PrintAsync(payload, ct);
         await sales.RecordReprintAsync(
@@ -434,6 +447,20 @@ public sealed class PosSaleCompletionService(
             timeProvider?.GetUtcNow() ?? DateTimeOffset.UtcNow,
             ct);
     }
+
+    private static CreditSaleAcknowledgement? CreditAcknowledgement(
+        PosSaleUploadRequest immutable,
+        string customerName) => immutable.Credit is null
+        ? null
+        : new CreditSaleAcknowledgement(
+            immutable.DocumentId,
+            immutable.DocumentNumber.FullNumber,
+            immutable.CommercialSnapshot.IssuedAt,
+            customerName,
+            immutable.CommercialSnapshot.CustomerIdentification,
+            immutable.Credit.Amount,
+            immutable.Credit.RemainingCredit,
+            immutable.Credit.SoldByName ?? "Usuario");
 
     public async Task<WithholdingCalculationSnapshot> PreviewSettlementAsync(
         DraftId draftId,

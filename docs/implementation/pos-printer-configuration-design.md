@@ -104,12 +104,22 @@ sede en el encabezado, separan al responsable como dato propio, usan reglas
 punteadas alrededor del valor y recuperan el espacio amplio de firma. Las
 versiones 1 y 2 permanecen disponibles e inmutables para reproducir los formatos
 publicados originalmente. Las plantillas de venta continúan en versión 1.
-`work-session-closure` tiene una versión 2 activa: presenta Actividad, Totales,
-Ventas a cartera y Detalle por medio de pago en ese orden; congela el cliente,
-documento y valor de cada venta a cartera; ordena tarjeta, transferencia y
-efectivo; y muestra el resultado de cada medio contado como `SOBRANTE`,
-`FALTANTE` o `CUADRA` dentro del mismo recuadro. La versión 1 permanece
-disponible para reimpresiones históricas.
+`work-session-closure` tiene una versión 3 activa: conserva Actividad, Totales,
+Ventas a cartera y Detalle por medio de pago, y agrega secciones independientes
+de entradas y salidas de efectivo con cada movimiento, responsable y valor. Los
+subtotales brutos de entradas y salidas del medio `Cash` se derivan del mismo
+lote de movimientos que alimenta esas secciones, por lo que cuadran por
+construcción sin agregar una guarda que pueda impedir el cierre. Las versiones 1 y 2
+permanecen disponibles e inmutables para reimpresiones históricas.
+
+`credit-sale-acknowledgement` es la plantilla canónica del comprobante de
+cartera que firma el cliente. Se deriva del mismo resultado transaccional de la
+validación de crédito —sin una segunda consulta— y congela factura, cliente,
+identificación, valor financiado, cupo restante, usuario, fecha y hora. Usa el
+mismo formato e impresora del perfil `Facturas`. Se entrega siempre después de
+la factura como un segundo trabajo físico: primero termina y corta la factura y
+después imprime y corta el comprobante. La secuencia aplica a tirilla de 58/80
+mm, media carta, media oficio y carta.
 
 La definición HTML de cierre vive únicamente en `Auraly.Pos.Printing`.
 Servidor, navegador y POS Edge consumen esa misma plantilla; TypeScript solo
@@ -156,7 +166,10 @@ comparar ambos transportes y los cuatro formatos antes de publicar.
 - apertura de vista previa;
 - impresión directa de documentos renderizados y comandos ESC/POS periféricos;
 - reimpresión por F6 desde el snapshot original;
+- comprobante de cartera separado para ventas a crédito, usando la misma
+  configuración de Facturas y un segundo trabajo de impresión;
 - tirilla de conteo de denominaciones con usuario, hora, cantidades, subtotales y total;
+- cierre con detalle conciliado y totalizado de entradas y salidas de efectivo;
 - pruebas del contenido y escritura atómica.
 
 ## Siguiente incremento de configuración

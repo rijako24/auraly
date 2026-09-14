@@ -644,12 +644,19 @@ public sealed class PosEdgeSaleStore
         CancellationToken cancellationToken = default)
     {
         await using var context = new PosEdgeDbContext(_options);
-        var payloads = await context.IssuedSales.AsNoTracking()
-            .Select(row => row.FiscalSnapshotJson)
+        var payloads = await (
+                from sale in context.IssuedSales.AsNoTracking()
+                join outbox in context.Outbox.AsNoTracking()
+                    on sale.DocumentId equals outbox.DocumentId
+                where outbox.WorkSessionId == workSessionId &&
+                      outbox.Type != PosOutboxMessageTypes.WorkSessionOpened &&
+                      outbox.Type != PosOutboxMessageTypes.CashMovement &&
+                      outbox.Type != PosOutboxMessageTypes.WorkSessionClosure &&
+                      outbox.Type != PosOutboxMessageTypes.CustomerCreated
+                select sale.FiscalSnapshotJson)
             .ToArrayAsync(cancellationToken);
         return payloads
             .Select(PosSaleContractSerializer.Deserialize)
-            .Where(value => value.WorkSessionId == workSessionId)
             .OrderBy(value => value.CommercialSnapshot.IssuedAt)
             .Select(value => new PosLocalWorkSessionSale(
                 value.CommercialSnapshot.IssuedAt,

@@ -159,7 +159,8 @@ public sealed class PosSaleCompletionServiceTests
                 credit: new PosSaleCreditTerms(
                     customerId,
                     10_000m,
-                    fixture.IssuedAt.AddDays(30)));
+                    fixture.IssuedAt.AddDays(30),
+                    40_000m));
 
             var pending = Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
             var upload = PosSaleContractSerializer.Deserialize(pending.Payload);
@@ -167,9 +168,13 @@ public sealed class PosSaleCompletionServiceTests
             Assert.NotNull(upload.Credit);
             Assert.Equal(customerId, upload.Credit.CustomerId);
             Assert.Equal(10_000m, upload.Credit.Amount);
+            Assert.Equal(40_000m, upload.Credit.RemainingCredit);
             var receiptCredit = Assert.Single(result.Receipt.Payments);
             Assert.Equal("Credit", receiptCredit.MethodCode);
             Assert.Equal(10_000m, receiptCredit.Amount);
+            Assert.NotNull(result.Receipt.CreditAcknowledgement);
+            Assert.Equal(40_000m,
+                result.Receipt.CreditAcknowledgement.RemainingCredit);
         });
     }
 

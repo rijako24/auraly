@@ -83,12 +83,25 @@ public sealed record WorkSessionPaymentTotal(
     decimal NetAmount,
     decimal? CountedAmount = null,
     decimal? Difference = null,
-    bool RequiresCount = false);
+    bool RequiresCount = false,
+    decimal CashEntryAmount = 0,
+    decimal CashExitAmount = 0);
 
 public sealed record WorkSessionCreditSale(
     string CustomerName,
     string DocumentNumber,
     decimal Amount);
+
+public sealed record WorkSessionCashMovementDetail(
+    Guid DocumentId,
+    string Direction,
+    string DocumentNumber,
+    string ReasonName,
+    decimal Amount,
+    DateTimeOffset OccurredAt,
+    string ResponsibleName,
+    string? Reference = null,
+    string? Notes = null);
 
 public sealed record WorkSessionClosureView(
     Guid WorkSessionClosureId,
@@ -116,7 +129,8 @@ public sealed record WorkSessionClosureView(
     decimal CreditSalesAmount = 0,
     long ReturnCount = 0,
     IReadOnlyList<WorkSessionCreditSale>? CreditSales = null,
-    int ReceiptTemplateVersion = 1);
+    int ReceiptTemplateVersion = 1,
+    IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null);
 
 public sealed record WorkSessionClosureReceiptRequest(
     string? CompanyName = null,
@@ -145,7 +159,8 @@ public sealed record WorkSessionClosurePreviewView(
     int CreditSalesCount = 0,
     decimal CreditSalesAmount = 0,
     long ReturnCount = 0,
-    IReadOnlyList<WorkSessionCreditSale>? CreditSales = null);
+    IReadOnlyList<WorkSessionCreditSale>? CreditSales = null,
+    IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null);
 
 public sealed record WorkSessionCashDifferencePayload(
     Guid WorkSessionClosureId,

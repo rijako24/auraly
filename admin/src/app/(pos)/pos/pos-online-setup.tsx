@@ -155,7 +155,7 @@ function PreparationPanel({ value }: { value: PosSetupPreparation }) {
     "No fue posible terminar la preparación de esta caja.",
   );
   const failed = Boolean(error);
-  const visibleProgress = view.resourceProgress ?? view.overallProgress;
+  const visibleProgress = view.overallProgress;
   const currentResource = value.message ?? view.currentResource;
 
   return <div aria-live="polite" className="relative flex min-h-[31rem] flex-col justify-center">

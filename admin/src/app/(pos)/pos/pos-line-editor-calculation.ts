@@ -21,44 +21,85 @@ export function salePriceForMargin(
   return round(netUnit * (1 + taxRate / 100) / (1 - discountPercent / 100), 6);
 }
 
-export function lineEconomicsAfterPriceChange(
+export type ReactiveLineEconomics = {
+  finalUnitPrice: number;
+  documentUnitPrice: number;
+  discount: number;
+  discountPercent: number;
+  marginPercent: number;
+};
+
+export function lineEconomicsFromFinalPrice(
   unitCost: number,
   quantity: number,
-  previousSalePriceWithTax: number,
-  previousDiscountWithTax: number,
-  nextSalePriceWithTax: number,
+  referenceUnitPriceWithTax: number,
+  finalUnitPriceWithTax: number,
   taxRate: number,
-): { discount: number; discountPercent: number; marginPercent: number } {
-  const discountPercent = lineDiscountPercent(
-    previousDiscountWithTax,
-    quantity,
-    previousSalePriceWithTax,
-  );
-  const discount = round(
-    Math.max(0, quantity * nextSalePriceWithTax) * discountPercent / 100,
-    6,
-  );
+): ReactiveLineEconomics {
+  const finalUnitPrice = round(Math.max(0, finalUnitPriceWithTax), 6);
+  const documentUnitPrice = round(Math.max(referenceUnitPriceWithTax, finalUnitPrice), 6);
+  const discount = round(Math.max(0, quantity * (documentUnitPrice - finalUnitPrice)), 6);
   return {
+    finalUnitPrice,
+    documentUnitPrice,
     discount,
-    discountPercent,
+    discountPercent: lineDiscountPercent(discount, quantity, documentUnitPrice),
+    marginPercent: lineMarginPercent(unitCost, quantity, documentUnitPrice, discount, taxRate),
+  };
+}
+
+export function lineEconomicsFromDiscount(
+  unitCost: number,
+  quantity: number,
+  referenceUnitPriceWithTax: number,
+  discountWithTax: number,
+  taxRate: number,
+): ReactiveLineEconomics {
+  const discount = round(Math.max(0, discountWithTax), 6);
+  const finalUnitPrice = quantity <= 0
+    ? 0
+    : round(referenceUnitPriceWithTax - discount / quantity, 6);
+  return {
+    finalUnitPrice,
+    documentUnitPrice: referenceUnitPriceWithTax,
+    discount,
+    discountPercent: lineDiscountPercent(discount, quantity, referenceUnitPriceWithTax),
     marginPercent: lineMarginPercent(
-      unitCost,
-      quantity,
-      nextSalePriceWithTax,
-      discount,
-      taxRate,
+      unitCost, quantity, referenceUnitPriceWithTax, discount, taxRate,
     ),
   };
 }
 
-export function lineEconomicsForMargin(
-  unitCost: number, marginPercent: number, taxRate: number,
-): { unitPrice: number; discount: number; discountPercent: number } {
-  return {
-    unitPrice: salePriceForMargin(unitCost, marginPercent, 0, taxRate),
-    discount: 0,
-    discountPercent: 0,
-  };
+export function lineEconomicsFromDiscountPercent(
+  unitCost: number,
+  quantity: number,
+  referenceUnitPriceWithTax: number,
+  discountPercent: number,
+  taxRate: number,
+): ReactiveLineEconomics {
+  return lineEconomicsFromDiscount(
+    unitCost,
+    quantity,
+    referenceUnitPriceWithTax,
+    quantity * referenceUnitPriceWithTax * discountPercent / 100,
+    taxRate,
+  );
+}
+
+export function lineEconomicsFromMargin(
+  unitCost: number,
+  quantity: number,
+  referenceUnitPriceWithTax: number,
+  marginPercent: number,
+  taxRate: number,
+): ReactiveLineEconomics {
+  return lineEconomicsFromFinalPrice(
+    unitCost,
+    quantity,
+    referenceUnitPriceWithTax,
+    salePriceForMargin(unitCost, marginPercent, 0, taxRate),
+    taxRate,
+  );
 }
 
 export function nextFocusableIndex(currentIndex: number, length: number, backwards: boolean): number {

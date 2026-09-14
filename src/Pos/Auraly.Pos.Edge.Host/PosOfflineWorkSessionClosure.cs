@@ -247,14 +247,18 @@ public sealed class PosOfflineWorkSessionClosureService(
     {
         var localSales = await sales.ReadWorkSessionSalesAsync(
             session.WorkSessionId, cancellationToken);
-        var otherCash = await cashMovements.ReadWorkSessionNetCashAsync(
-            session.WorkSessionId, cancellationToken);
+        var cashMovementDetails = await cashMovements.ReadWorkSessionDetailsAsync(
+            session.WorkSessionId, session.DisplayName, cancellationToken);
         var openedAt = await identities.WorkSessionOpenedAtAsync(
             session.WorkSessionId, cancellationToken);
         var lastActivity = localSales.Count == 0
             ? openedAt
             : localSales.Max(value => value.IssuedAt);
-        var totals = PaymentTotals(localSales, otherCash, null);
+        var totals = PaymentTotals(localSales, cashMovementDetails, null);
+        var netCashMovements = cashMovementDetails.Sum(movement =>
+            movement.Direction == CashMovementDirections.In
+                ? movement.Amount
+                : -movement.Amount);
         var creditSales = localSales
             .Where(value => value.CreditAmount > 0)
             .Select(value => new WorkSessionCreditSale(
@@ -274,15 +278,16 @@ public sealed class PosOfflineWorkSessionClosureService(
             lastActivity,
             localSales.Sum(value => value.Total),
             0,
-            otherCash,
-            localSales.Sum(value => value.Total) + otherCash,
+            netCashMovements,
+            localSales.Sum(value => value.Total) + netCashMovements,
             totals.Single(value => value.PaymentMethodCode == "Cash").NetAmount,
             totals,
             localSales.Count,
             localSales.Count(value => value.CreditAmount > 0),
             localSales.Sum(value => value.CreditAmount),
             0,
-            creditSales);
+            creditSales,
+            cashMovementDetails);
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -294,10 +299,7 @@ public sealed class PosOfflineWorkSessionClosureService(
     {
         var preview = await PreviewAsync(session, cancellationToken);
         var closedAt = timeProvider.GetUtcNow();
-        var totals = PaymentTotals(
-            await sales.ReadWorkSessionSalesAsync(session.WorkSessionId, cancellationToken),
-            preview.TotalOther,
-            input.PaymentCounts);
+        var totals = ApplyCounts(preview.PaymentTotals, input.PaymentCounts);
         var countedCash = totals.Single(value => value.PaymentMethodCode == "Cash").CountedAmount
             ?? input.CountedCash;
         var closure = new WorkSessionClosureView(
@@ -326,7 +328,8 @@ public sealed class PosOfflineWorkSessionClosureService(
             preview.CreditSalesAmount,
             preview.ReturnCount,
             preview.CreditSales,
-            PosPrintTemplateCatalog.WorkSessionClosure.Version);
+            PosPrintTemplateCatalog.WorkSessionClosure.Version,
+            preview.CashMovements);
         var queued = await store.QueueAsync(
             new PosQueuedWorkSessionClosure(
                 input.OperationId,
@@ -360,7 +363,7 @@ public sealed class PosOfflineWorkSessionClosureService(
 
     private static IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals(
         IReadOnlyList<PosLocalWorkSessionSale> sales,
-        decimal otherCash,
+        IReadOnlyList<WorkSessionCashMovementDetail> cashMovements,
         IReadOnlyList<WorkSessionPaymentCount>? counts)
     {
         var amounts = sales.SelectMany(value => value.Payments)
@@ -382,7 +385,10 @@ public sealed class PosOfflineWorkSessionClosureService(
             .Select(value =>
             {
                 var other = value.Key.Equals("Cash", StringComparison.OrdinalIgnoreCase)
-                    ? otherCash
+                    ? cashMovements.Sum(movement =>
+                        movement.Direction == CashMovementDirections.In
+                            ? movement.Amount
+                            : -movement.Amount)
                     : 0;
                 var net = value.Value + other;
                 var manual = RequiresManualCount(value.Key);
@@ -391,9 +397,41 @@ public sealed class PosOfflineWorkSessionClosureService(
                     value.Key, value.Value, 0, other, net,
                     manual && hasCount ? countedAmount : null,
                     manual && hasCount ? countedAmount - net : null,
-                    manual);
+                    manual,
+                    value.Key.Equals("Cash", StringComparison.OrdinalIgnoreCase)
+                        ? cashMovements.Where(movement =>
+                            movement.Direction == CashMovementDirections.In)
+                            .Sum(movement => movement.Amount)
+                        : 0,
+                    value.Key.Equals("Cash", StringComparison.OrdinalIgnoreCase)
+                        ? cashMovements.Where(movement =>
+                            movement.Direction == CashMovementDirections.Out)
+                            .Sum(movement => movement.Amount)
+                        : 0);
             })
             .ToArray();
+    }
+
+    private static IReadOnlyList<WorkSessionPaymentTotal> ApplyCounts(
+        IReadOnlyList<WorkSessionPaymentTotal> totals,
+        IReadOnlyList<WorkSessionPaymentCount> counts)
+    {
+        var counted = counts
+            .GroupBy(value => value.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Sum(value => value.CountedAmount),
+                StringComparer.OrdinalIgnoreCase);
+        return totals.Select(total =>
+        {
+            var hasCount = counted.TryGetValue(
+                total.PaymentMethodCode, out var countedAmount);
+            return total with
+            {
+                CountedAmount = total.RequiresCount && hasCount ? countedAmount : null,
+                Difference = total.RequiresCount && hasCount
+                    ? countedAmount - total.NetAmount
+                    : null
+            };
+        }).ToArray();
     }
 
     private static int PaymentOrder(string code) => code switch

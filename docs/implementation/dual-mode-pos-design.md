@@ -119,6 +119,31 @@ temporales, captura, cobro y emisión.
 - `PosEdgeClient` llama al host local.
 - `OnlinePosClient` llama a la API mediante el BFF autenticado.
 
+Navegar a Facturación/POS es una navegación normal dentro de la sesión ya
+autenticada. El montaje de la pantalla no ejecuta login, no reemplaza ni invalida
+la sesión y no descarga usuarios, permisos o catálogo. Solamente el formulario
+de acceso crea una nueva sesión local y reemplaza la anterior. La apertura o
+reanudación del turno operativo local es responsabilidad del host y no constituye
+una segunda autenticación.
+
+En una caja enrolada la UI no sincroniza datos. Lee las proyecciones locales y
+envía comandos al host; el sincronizador local es el único propietario de las
+subidas y bajadas de snapshots. Sus fallos y reintentos se exponen en Ctrl+L.
+La vista previa y la confirmación del cierre se construyen exclusivamente con
+las ventas, movimientos y sesión persistidos en SQLite para el turno local; no
+consultan Auraly Server ni vuelven a leer el lote al confirmar. El cierre ya
+congelado se encola y el sincronizador lo sube después. En web no enrolada, el
+cierre consulta directamente las tablas canónicas de SQL Server dentro de una
+transacción consistente, sin usar caché de navegador ni proyecciones locales.
+Los comandos que por contrato son síncronos con servidor —guardar/actualizar un
+pedido y las validaciones autoritativas de inventario restringido o saldo de
+cartera— también pasan por el host con credencial del dispositivo, nunca por el
+BFF ni por la cookie web del navegador instalado.
+
+Captura, precio e inventario resuelven únicamente el producto o familia de
+inventario afectada. Las familias y colecciones se cargan y procesan por lote;
+quedan prohibidas las consultas por línea, por producto ya presente o por render.
+
 El indicador visible expresa conectividad con Auraly Server. “POS Edge” permanece
 como detalle técnico y no se muestra al cajero.
 

@@ -65,6 +65,10 @@ La reserva y la liberación nunca se fragmentan por producto:
 
 Una selección produce una factura independiente por pedido. La operación completa tiene idempotencia durable, conserva progreso y devuelve resultado por pedido. Un pago ya confirmado por el pedido se registra como transferencia; de lo contrario se usa el medio seleccionado. Nunca se fusionan pedidos en una sola factura.
 
+La vista ofrece únicamente `Efectivo` y `Crédito`. `Efectivo` entra directamente al lote. Para `Crédito`, el mismo `POST /api/commerce/v1/orders/invoice` ejecuta primero una validación agrupada de todos los clientes y del valor acumulado de sus pedidos; es una sola consulta SQL para la selección completa. Si un cliente no tiene crédito habilitado o el valor agregado supera su cupo disponible, la respuesta identifica los clientes rechazados y no crea operación, borrador, liberación de inventario, factura ni cartera. Si todos cumplen, los pedidos se emiten uno por uno con idempotencia independiente.
+
+La prevalidación masiva no reemplaza la validación transaccional. Cada pedido a crédito envía `OnlineSalesCreditTerms` al checkout de ventas existente, que vuelve a validar el saldo bajo bloqueo y genera la cuenta por cobrar por el canal canónico. No existe un writer ni una ruta de cartera específica para pedidos.
+
 ## Seguridad
 
 Permisos mínimos: `orders.read`, `orders.recover`, `orders.invoice`, `orders.cancel` y `orders.override-pricing`. Facturar también exige `sales.create`.

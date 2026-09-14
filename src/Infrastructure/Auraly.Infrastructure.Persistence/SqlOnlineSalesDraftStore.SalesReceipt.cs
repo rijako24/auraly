@@ -91,7 +91,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
         var now = settlement.Context.OccurredAt;
-        var creditDueDate = await ResolveCreditDueDateAsync(
+        var creditValidation = await ValidateCreditAsync(
             connection,
             transaction,
             state.BusinessId,
@@ -145,7 +145,12 @@ public sealed partial class SqlOnlineSalesDraftStore
                 new PosSaleCreditContract(
                     state.CustomerId.Value,
                     request.Credit.Amount,
-                    creditDueDate!.Value));
+                    creditValidation!.DueDate!.Value,
+                    creditValidation.AvailableCredit is null
+                        ? null
+                        : Math.Max(0m,
+                            creditValidation.AvailableCredit.Value - request.Credit.Amount),
+                    user.UserName));
 
         await ReleaseOrderInventoryAsync(connection, transaction, user, state, ct);
 

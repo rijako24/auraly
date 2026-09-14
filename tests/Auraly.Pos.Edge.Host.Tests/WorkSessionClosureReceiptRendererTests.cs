@@ -51,6 +51,42 @@ public sealed class WorkSessionClosureReceiptRendererTests
     }
 
     [Fact]
+    public void Version_three_details_entries_and_exits_and_reconciles_each_cash_total()
+    {
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(Closure(3));
+
+        Assert.Contains("data-auraly-report-version=\"3\"", html);
+        var entries = Section(html, "Entradas de dinero", "Salidas de dinero");
+        Assert.Contains("Ingreso adicional", entries);
+        Assert.Contains("MOV-ENTRADA", entries);
+        Assert.Contains("Cajero", entries);
+        Assert.Contains("Total", entries);
+        Assert.Contains("$ 7", entries);
+        var exits = Section(html, "Salidas de dinero", "Detalle por medio de pago");
+        Assert.Contains("Compra menor", exits);
+        Assert.Contains("MOV-SALIDA", exits);
+        Assert.Contains("$ 2", exits);
+    }
+
+    [Fact]
+    public void Version_three_never_blocks_printing_and_totals_the_rendered_detail()
+    {
+        var closure = Closure(3) with
+        {
+            PaymentTotals = Closure(3).PaymentTotals.Select(total =>
+                total.PaymentMethodCode == "Cash"
+                    ? total with { CashEntryAmount = 8m }
+                    : total).ToArray()
+        };
+
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(closure);
+
+        var entries = Section(html, "Entradas de dinero", "Salidas de dinero");
+        Assert.Contains("$ 7", entries);
+        Assert.DoesNotContain("$ 8", entries);
+    }
+
+    [Fact]
     public void Version_one_remains_available_for_historical_reprints()
     {
         var html = WorkSessionClosureReceiptRenderer.RenderHtml(Closure(1));
@@ -76,19 +112,30 @@ public sealed class WorkSessionClosureReceiptRendererTests
     private static WorkSessionClosureView Closure(int version)
     {
         var now = new DateTimeOffset(2026, 8, 23, 15, 0, 0, TimeSpan.Zero);
+        var cashMovements = version < 3
+            ? null
+            : new WorkSessionCashMovementDetail[]
+            {
+                new(Guid.NewGuid(), "In", "MOV-ENTRADA", "Ingreso adicional",
+                    7m, now.AddHours(-2), "Cajero", "REF-1"),
+                new(Guid.NewGuid(), "Out", "MOV-SALIDA", "Compra menor",
+                    2m, now.AddHours(-1), "Cajero")
+            };
         return new WorkSessionClosureView(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Sede principal",
             Guid.NewGuid(), "Bodega principal", Guid.NewGuid(), "Cajero",
             null, now.AddHours(-8), now, 165m, 10m, 5m, 160m, 95m,
             95m, 0m, "Conteo de prueba",
             [
-                new WorkSessionPaymentTotal("Cash", 100m, 10m, 5m, 95m, 95m, 0m, true),
+                new WorkSessionPaymentTotal("Cash", 100m, 10m, 5m, 95m, 95m, 0m, true,
+                    version < 3 ? 0m : 7m, version < 3 ? 0m : 2m),
                 new WorkSessionPaymentTotal("Transfer", 40m, 0m, 0m, 40m, 35m, -5m, true),
                 new WorkSessionPaymentTotal("Card", 25m, 0m, 0m, 25m, 30m, 5m, true)
             ],
             3, 1, 25m, 0,
             [new WorkSessionCreditSale("Cliente Uno", "FV-10", 25m)],
-            version);
+            version,
+            cashMovements);
     }
 
     private static int Count(string value, string fragment) =>

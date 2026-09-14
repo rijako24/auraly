@@ -18,6 +18,7 @@ public static class WorkSessionClosureReceiptRenderer
         {
             1 => RenderV1(value, companyName, companyLogoSource, paperWidthMillimeters),
             2 => RenderV2(value, companyName, companyLogoSource, paperWidthMillimeters),
+            3 => RenderV3(value, companyName, companyLogoSource, paperWidthMillimeters),
             _ => throw new InvalidOperationException(
                 $"La versión {value.ReceiptTemplateVersion} de la tirilla de cierre no está disponible.")
         };
@@ -100,6 +101,56 @@ public static class WorkSessionClosureReceiptRenderer
         return DocumentV2(body, paperWidthMillimeters);
     }
 
+    private static string RenderV3(
+        WorkSessionClosureView value,
+        string? companyName,
+        string? companyLogoSource,
+        int paperWidthMillimeters)
+    {
+        var details = value.CashMovements ?? [];
+        var entries = details
+            .Where(item => item.Direction == CashMovementDirections.In)
+            .ToArray();
+        var exits = details
+            .Where(item => item.Direction == CashMovementDirections.Out)
+            .ToArray();
+
+        var sections = CashMovementSection("Entradas de dinero", entries,
+                           entries.Sum(item => item.Amount))
+                       + CashMovementSection("Salidas de dinero", exits,
+                           exits.Sum(item => item.Amount));
+        return RenderV2(value, companyName, companyLogoSource, paperWidthMillimeters)
+            .Replace(
+                "<h2 class=\"section-title\">Detalle por medio de pago</h2>",
+                sections + "<h2 class=\"section-title\">Detalle por medio de pago</h2>",
+                StringComparison.Ordinal)
+            .Replace(
+                "</style>",
+                ".cash-movement td:first-child{width:72%}.cash-movement small{display:block;color:#555;font-size:9px}.cash-empty{color:#666}</style>",
+                StringComparison.Ordinal)
+            .Replace(
+                $"data-auraly-report-version=\"{PosPrintTemplateCatalog.WorkSessionClosureV2.Version}\"",
+                $"data-auraly-report-version=\"{PosPrintTemplateCatalog.WorkSessionClosure.Version}\"",
+                StringComparison.Ordinal);
+    }
+
+    private static string CashMovementSection(
+        string title,
+        IReadOnlyList<WorkSessionCashMovementDetail> details,
+        decimal total)
+    {
+        var rows = details.Count == 0
+            ? "<tr class=\"cash-empty\"><td>Sin movimientos</td><td>$ 0</td></tr>"
+            : string.Join(string.Empty, details.Select(detail =>
+            {
+                var reference = string.IsNullOrWhiteSpace(detail.Reference)
+                    ? string.Empty
+                    : $" · {Encode(detail.Reference)}";
+                return $"<tr class=\"cash-movement\"><td><strong>{Encode(detail.ReasonName)}</strong><small>{Encode(detail.DocumentNumber)} · {Date(detail.OccurredAt)} · {Encode(detail.ResponsibleName)}{reference}</small></td><td>{Money(detail.Amount)}</td></tr>";
+            }));
+        return $"<h2 class=\"section-title\">{Encode(title)}</h2><table class=\"rows cash-movements\"><tbody>{rows}</tbody><tfoot><tr><th>Total</th><th>{Money(total)}</th></tr></tfoot></table>";
+    }
+
     private static string DocumentV1(string body, int paperWidthMillimeters) => $$"""
 <!doctype html><html lang="es" data-auraly-report="{{PosPrintTemplateCatalog.WorkSessionClosureV1.Code}}" data-auraly-report-version="1"><head><meta charset="utf-8"><title>Cierre de sesión de venta</title>
 <style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters}}mm;font:11px/1.35 ui-monospace,Consolas,monospace;color:#111;margin:0;padding:5mm 3mm 2mm 2mm}.brand-logo{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:9px}h1{font:800 19px/1.2 Arial,sans-serif;margin:3px 0;text-transform:uppercase}header h2{font-size:12px;margin:7px 0 4px;text-transform:uppercase}.scope{margin:3px 0}.section-title{font-size:11px;margin:13px 0 6px;padding-bottom:4px;border-bottom:1px dashed #777;text-transform:uppercase}.session-details{text-align:left;font-size:11px;line-height:1.5;margin-top:10px}.rows{width:100%;border-collapse:collapse;margin:0}.rows td{padding:3px 1px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums}.rows td:first-child{width:64%;text-align:left}.count-row td{font-size:12px;font-weight:800}.payment{border-bottom:1px dashed #aaa;padding:5px 0}.payment h3{font-size:11px;margin:2px 0 4px;text-transform:uppercase}.payment-details span{display:flex;justify-content:space-between;gap:8px;width:100%;padding:2px 1px}.payment-details span>strong{font-variant-numeric:tabular-nums;text-align:right}.difference{display:flex;justify-content:space-between;font-size:16px;border:2px solid #111;padding:8px;margin-top:12px;font-weight:800}.note{margin-top:9px;padding:6px;border:1px dashed #777}.platform-footer{margin-top:10px;text-align:center;font:700 12px/1.4 Arial,sans-serif}</style></head><body>
@@ -107,7 +158,7 @@ public static class WorkSessionClosureReceiptRenderer
 """;
 
     private static string DocumentV2(string body, int paperWidthMillimeters) => $$"""
-<!doctype html><html lang="es" data-auraly-report="{{PosPrintTemplateCatalog.WorkSessionClosure.Code}}" data-auraly-report-version="2"><head><meta charset="utf-8"><title>Cierre de sesión de venta</title>
+<!doctype html><html lang="es" data-auraly-report="{{PosPrintTemplateCatalog.WorkSessionClosureV2.Code}}" data-auraly-report-version="2"><head><meta charset="utf-8"><title>Cierre de sesión de venta</title>
 <style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters}}mm;font:11px/1.35 ui-monospace,Consolas,monospace;color:#111;margin:0;padding:5mm 3mm 2mm 2mm}.brand-logo{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:9px}h1{font:800 19px/1.2 Arial,sans-serif;margin:3px 0;text-transform:uppercase}header h2{font-size:12px;margin:7px 0 4px;text-transform:uppercase}.scope{margin:3px 0}.section-title{font-size:11px;margin:13px 0 6px;padding-bottom:4px;border-bottom:1px dashed #777;text-transform:uppercase}.session-details{text-align:left;font-size:11px;line-height:1.5;margin-top:10px}.rows{width:100%;border-collapse:collapse;margin:0}.rows td,.rows th{padding:3px 1px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums}.rows td:first-child,.rows th:first-child{width:64%;text-align:left}.rows tfoot th{border-top:1px dashed #777;padding-top:5px}.credit-sales small{display:block;font-weight:400}.count-row td{font-size:12px;font-weight:800}.payment{border-bottom:1px dashed #aaa;padding:7px 0}.payment h3{font-size:11px;margin:2px 0 4px;text-transform:uppercase}.payment-details span{display:flex;justify-content:space-between;gap:8px;width:100%;padding:2px 1px}.payment-details span>strong{font-variant-numeric:tabular-nums;text-align:right}.difference{display:flex;justify-content:space-between;font-size:15px;border:2px solid #111;padding:7px;margin-top:7px;font-weight:800}.note{margin-top:9px;padding:6px;border:1px dashed #777}.platform-footer{margin-top:10px;text-align:center;font:700 12px/1.4 Arial,sans-serif}</style></head><body>
 {{body}}<footer class="platform-footer">www.auralyapp.co</footer></body></html>
 """;
@@ -156,9 +207,17 @@ public static class WorkSessionClosureReceiptRenderer
     private static bool IsCash(string code) =>
         code.Equals("Cash", StringComparison.OrdinalIgnoreCase);
     private static decimal CashEntries(WorkSessionClosureView value) =>
-        value.PaymentTotals.Sum(payment => Math.Max(0, payment.OtherAmount));
+        value.CashMovements is not null
+            ? value.CashMovements
+                .Where(movement => movement.Direction == CashMovementDirections.In)
+                .Sum(movement => movement.Amount)
+            : value.PaymentTotals.Sum(payment => Math.Max(0, payment.OtherAmount));
     private static decimal CashExits(WorkSessionClosureView value) =>
-        value.PaymentTotals.Sum(payment => Math.Abs(Math.Min(0, payment.OtherAmount)));
+        value.CashMovements is not null
+            ? value.CashMovements
+                .Where(movement => movement.Direction == CashMovementDirections.Out)
+                .Sum(movement => movement.Amount)
+            : value.PaymentTotals.Sum(payment => Math.Abs(Math.Min(0, payment.OtherAmount)));
     private static string Location(WorkSessionClosureView value) => value.WarehouseName is null
         ? value.BusinessName
         : $"{value.BusinessName} · {value.WarehouseName}";

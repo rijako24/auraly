@@ -1393,7 +1393,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
 
             INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
             SELECT NEWID(),@RoleId,PermissionId,SYSDATETIMEOFFSET()
-            FROM dbo.Permissions WHERE Resource=N'orders.read';
+            FROM dbo.Permissions WHERE Resource IN(N'orders.read',N'orders.create');
 
             INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
             VALUES(NEWID(),@UserId,@RoleId,@BusinessId,SYSDATETIMEOFFSET());
@@ -1415,6 +1415,21 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             using var allowed = await client.GetAsync(
                 $"/api/pos/v1/orders?userId={fixture.UserId:D}&businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&workSessionId={fixture.WorkSessionId:D}&page=1&pageSize=50");
             Assert.Equal(System.Net.HttpStatusCode.OK, allowed.StatusCode);
+
+            using var saveRoute = await client.PostAsJsonAsync(
+                "/api/pos/v1/orders/save",
+                new PosSaveOrderRequest(
+                    fixture.UserId,
+                    fixture.BusinessId,
+                    fixture.WarehouseId,
+                    fixture.WorkSessionId,
+                    Guid.NewGuid(),
+                    null,
+                    null,
+                    $"pos-route-{Guid.NewGuid():N}",
+                    []));
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, saveRoute.StatusCode);
+            Assert.NotEqual(System.Net.HttpStatusCode.Forbidden, saveRoute.StatusCode);
 
             using var printRoute = await client.PostAsJsonAsync(
                 "/api/pos/v1/orders/print-batch",

@@ -116,6 +116,15 @@ export type InvoiceOrderResult = {
   receipt?: PosPrintableReceipt | null;
 };
 
+export type OrderCreditValidationIssue = {
+  customerId: string | null;
+  customerName: string;
+  customerIdentification: string | null;
+  requestedAmount: number;
+  availableCredit: number | null;
+  reason: string;
+};
+
 export type InvoiceOrdersResponse = {
   operationId: string;
   status: string;
@@ -126,6 +135,7 @@ export type InvoiceOrdersResponse = {
   results: InvoiceOrderResult[];
   printStatus?: "Sent" | "Failed" | "NotRequired" | null;
   printError?: string | null;
+  creditValidationIssues?: OrderCreditValidationIssue[] | null;
 };
 
 export type RecoverOrderResult = {

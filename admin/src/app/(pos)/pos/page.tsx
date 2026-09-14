@@ -122,7 +122,11 @@ import { capturePosFunctionShortcut, isPosCashDrawerShortcut, POS_ACTION_SHORTCU
 import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
-import { shouldUseEnrolledPosRuntime, workspaceActivationMode } from "@/services/pos/pos-launch-session";
+import {
+  shouldAutoActivateRememberedWorkspace,
+  shouldUseEnrolledPosRuntime,
+  workspaceActivationMode,
+} from "@/services/pos/pos-launch-session";
 import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
 import type { PosPreparationHealth } from "./pos-preparation-progress";
 import { posPublicError } from "./pos-public-error";
@@ -247,6 +251,7 @@ export default function PosPage() {
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupNotice, setSetupNotice] = useState<string | null>(null);
   const [preparationActive, setPreparationActive] = useState(false);
+  const preparationActiveRef = useRef(false);
   const [preparationSelection, setPreparationSelection] = useState<{
     option: SalesWorkspaceOption;
     documentType: PosSaleDocumentType;
@@ -262,6 +267,10 @@ export default function PosPage() {
     value: string;
   }>({ phase: "idle", value: "" });
   const [quantityShortage, setQuantityShortage] = useState<PosQuantityShortage | null>(null);
+  const pendingShortageCapture = useRef<
+    { kind: "code"; code: string } | { kind: "product"; product: PosCatalogProduct } | null
+  >(null);
+  const saveOrderAfterCustomerSelection = useRef(false);
   const [productSearchFocusRequest, setProductSearchFocusRequest] = useState(0);
   const [productAvailabilityRequest, setProductAvailabilityRequest] = useState(0);
   const [paymentFocusRequest, setPaymentFocusRequest] = useState(0);
@@ -627,6 +636,7 @@ export default function PosPage() {
           setWorkspaceChanging(true);
           return;
         }
+        if (!shouldAutoActivateRememberedWorkspace(Boolean(edgeToken))) return;
         const remembered = rememberedSalesWorkspaceKey();
         const selected = available.find(
           (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
@@ -775,7 +785,13 @@ export default function PosPage() {
           return;
         }
         if (active && client.mode === "edge") {
+          if (preparationActiveRef.current && health.status === "Ready") {
+            // Keep the terminal checkpoint visible before opening the POS.
+            await new Promise((resolve) => window.setTimeout(resolve, 350));
+          }
+          if (!active) return;
           setEdgeLoginState(null);
+          preparationActiveRef.current = false;
           setPreparationActive(false);
           setSetupNotice(null);
           setSetupError(null);
@@ -989,6 +1005,7 @@ export default function PosPage() {
   const saveOrder = useCallback(async () => {
     if (!client || !draft?.lines.length || busy) return;
     if (!draft.customerId) {
+      saveOrderAfterCustomerSelection.current = true;
       setError("Selecciona un cliente antes de guardar el pedido.");
       setMessage("El pedido necesita cliente");
       setCustomerSearchOpen(true);
@@ -1270,6 +1287,7 @@ export default function PosPage() {
     captureInFlight.current = true;
     const value = scan.trim();
     if (value) setScan("");
+    pendingShortageCapture.current = null;
     setQuantityShortage(null);
     try {
       const parsed = parsePosBarcodeCapture(value);
@@ -1341,6 +1359,18 @@ export default function PosPage() {
             if (failure) {
               setError(null);
               setMessage(failure.message);
+              if (changed.status === "InsufficientInventory" && changed.availability) {
+                pendingShortageCapture.current = { kind: "code", code: value };
+                setQuantityShortage({
+                  lineId: null,
+                  productName: capturedLine.description,
+                  requestedQuantity,
+                  availableQuantity: changed.availability.availableQuantity,
+                  maximumLineQuantity: Math.max(0, changed.maximumQuantity ?? changed.availability.availableQuantity),
+                  allowsFractionalSale: capturedLine.allowsFractionalSale,
+                  managesInventory: true,
+                });
+              }
             }
             return false;
           }
@@ -1364,6 +1394,18 @@ export default function PosPage() {
         if (failure) {
           setError(null);
           setMessage(failure.message);
+          if (result.status === "InsufficientInventory" && result.availability) {
+            pendingShortageCapture.current = { kind: "code", code: value };
+            setQuantityShortage({
+              lineId: null,
+              productName: result.capturedProduct?.product.name ?? value,
+              requestedQuantity: result.availability.requestedQuantity,
+              availableQuantity: result.availability.availableQuantity,
+              maximumLineQuantity: Math.max(0, result.maximumQuantity ?? result.availability.availableQuantity),
+              allowsFractionalSale: result.capturedProduct?.product.allowsFractionalSale ?? false,
+              managesInventory: true,
+            });
+          }
         }
       }
       return false;
@@ -1410,7 +1452,10 @@ export default function PosPage() {
               productName: confirmed.description,
               requestedQuantity: quantity,
               availableQuantity: result.availability.availableQuantity,
-              maximumLineQuantity: Math.max(0, result.availability.availableQuantity - otherQuantity),
+              maximumLineQuantity: Math.max(
+                0,
+                result.maximumQuantity ?? result.availability.availableQuantity - otherQuantity,
+              ),
               allowsFractionalSale: confirmed.allowsFractionalSale,
               managesInventory: true,
             });
@@ -1865,6 +1910,21 @@ export default function PosPage() {
       setDraft(selection.draft);
       setSelectedCustomer(selection.customer);
       setCustomerSearchOpen(false);
+      const continueSavingOrder = saveOrderAfterCustomerSelection.current && Boolean(selection.customer);
+      saveOrderAfterCustomerSelection.current = false;
+      if (continueSavingOrder) {
+        const wasRecovered = Boolean(selection.draft.sourceOrderId);
+        const saved = await client.saveOrder(selection.draft);
+        setDraft(saved.nextDraft);
+        setSelectedCustomer(null);
+        setSelectedLineId(null);
+        setScan("");
+        setLastSettlement(null);
+        setSidePanel("orders");
+        setOrdersRefreshVersion((current) => current + 1);
+        setMessage(`${saved.order.orderNumber} ${wasRecovered ? "actualizado" : "guardado"}; inventario reservado en Pedidos`);
+        return;
+      }
       setMessage(
         selection.customer
           ? `${selection.customer.name} seleccionado; precios recalculados`
@@ -2330,6 +2390,18 @@ export default function PosPage() {
         if (failure) {
           setError(null);
           setMessage(failure.message);
+          if (result.status === "InsufficientInventory" && result.availability) {
+            pendingShortageCapture.current = { kind: "product", product };
+            setQuantityShortage({
+              lineId: null,
+              productName: product.name,
+              requestedQuantity: result.availability.requestedQuantity,
+              availableQuantity: result.availability.availableQuantity,
+              maximumLineQuantity: Math.max(0, result.maximumQuantity ?? result.availability.availableQuantity),
+              allowsFractionalSale: product.allowsFractionalSale,
+              managesInventory: true,
+            });
+          }
         }
         return false;
       }
@@ -2356,6 +2428,18 @@ export default function PosPage() {
           if (failure) {
             setError(null);
             setMessage(failure.message);
+            if (changed.status === "InsufficientInventory" && changed.availability) {
+              pendingShortageCapture.current = { kind: "product", product };
+              setQuantityShortage({
+                lineId: null,
+                productName: product.name,
+                requestedQuantity: explicitQuantity,
+                availableQuantity: changed.availability.availableQuantity,
+                maximumLineQuantity: Math.max(0, changed.maximumQuantity ?? changed.availability.availableQuantity),
+                allowsFractionalSale: product.allowsFractionalSale,
+                managesInventory: true,
+              });
+            }
           }
           return false;
         }
@@ -2514,6 +2598,7 @@ export default function PosPage() {
     authorization?: PosSensitiveAuthorization,
   ) {
     if (!edgeEnrollmentToken) return;
+    preparationActiveRef.current = true;
     setPreparationActive(true);
     setPreparationSelection({ option, documentType: initialDocumentType });
     setSetupError(null);
@@ -2530,13 +2615,13 @@ export default function PosPage() {
       setSetupNotice("Guardando la identidad segura de la caja…");
       await redeemPosEnrollment(edgeEnrollmentToken, enrollment);
       setSetupNotice("Reiniciando el servicio local y preparando usuarios, permisos y catálogo…");
-      await waitForRedeemedPosEdge(edgeEnrollmentToken);
       const edgeClient = new PosEdgeClient(edgeEnrollmentToken, readEdgeUserSession());
+      setEdgeLoginState("preparing");
+      setClient(edgeClient);
+      await waitForRedeemedPosEdge(edgeEnrollmentToken);
       const health = await edgeClient.health();
       setPreparationHealth(health);
-      setEdgeLoginState("preparing");
       setSetupNotice(null);
-      setClient(edgeClient);
     } catch (caught) {
       const message = caught instanceof Error
         ? caught.message
@@ -3390,10 +3475,10 @@ export default function PosPage() {
                 loadDetail={(orderId) => client!.order(orderId)}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={(orders) => client!.printOrders(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
-                    "Cash",
+                    paymentMethodCode,
                     documentType,
                   )
                 }
@@ -3438,10 +3523,10 @@ export default function PosPage() {
               loadDetail={(orderId) => client.order(orderId)}
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={(orders) => client.printOrders(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
-                  "Cash",
+                  paymentMethodCode,
                   documentType,
                 )
               }
@@ -3496,6 +3581,7 @@ export default function PosPage() {
           onSearch={searchCustomers}
           onSelect={selectCustomer}
           onCancel={() => {
+            saveOrderAfterCustomerSelection.current = false;
             setCustomerSearchOpen(false);
             focusScanner();
           }}
@@ -3699,13 +3785,20 @@ export default function PosPage() {
         busy={busy}
         onConfirm={async (quantity) => {
           const { lineId } = quantityShortage;
+          const pendingCapture = pendingShortageCapture.current;
+          pendingShortageCapture.current = null;
           setQuantityShortage(null);
           if (lineId) await changeQuantity(lineId, quantity, false);
+          else if (pendingCapture?.kind === "product")
+            await captureSelectedProduct(pendingCapture.product, quantity);
+          else if (pendingCapture?.kind === "code")
+            await captureValue(pendingCapture.code, quantity);
           if (productSearchOpen) focusProductSearch();
           else focusScanner();
         }}
         onCancel={() => {
           const lineId = quantityShortage.lineId;
+          pendingShortageCapture.current = null;
           setQuantityShortage(null);
           if (!lineId) {
             if (productSearchOpen) focusProductSearch();

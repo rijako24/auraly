@@ -32,6 +32,28 @@ public sealed record OnlineSalesReceiptLine(
     string TaxCode = "01",
     decimal TaxRate = 0);
 
+public sealed record CreditSaleAcknowledgement(
+    Guid DocumentId,
+    string DocumentNumber,
+    DateTimeOffset IssuedAt,
+    string CustomerName,
+    string CustomerIdentification,
+    decimal CreditAmount,
+    decimal? RemainingCredit,
+    string SoldByName,
+    string? CompanyName = null,
+    string? CompanyLogoSource = null,
+    string? BusinessName = null,
+    string? WarehouseName = null);
+
+public sealed record CreditSaleAcknowledgementRenderRequest(
+    IReadOnlyList<CreditSaleAcknowledgement> Acknowledgements,
+    string Format,
+    int ReceiptPaperWidthMillimeters = 80);
+
+public sealed record CreditSaleAcknowledgementRenderResponse(
+    IReadOnlyList<string> HtmlDocuments);
+
 public sealed record OnlineSalesReceipt(
     Guid DocumentId,
     string DocumentType,
@@ -52,7 +74,8 @@ public sealed record OnlineSalesReceipt(
     string? CompanyLogoSource = null,
     decimal WithholdingTotal = 0m,
     decimal NetPayableAmount = 0m,
-    IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null);
+    IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null,
+    CreditSaleAcknowledgement? CreditAcknowledgement = null);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

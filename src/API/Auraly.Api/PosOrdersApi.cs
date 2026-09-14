@@ -64,6 +64,74 @@ public static class PosOrdersApi
                 return await orders.GetAsync(actor, orderId, ct);
             }));
 
+        group.MapPost("/save", async (
+            HttpContext context,
+            PosSaveOrderRequest request,
+            SellerOrderWriter writer,
+            IPosOrderActorResolver actors,
+            CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var orderActor = await actors.ResolveAsync(
+                    context.User.ToPosDeviceIdentity(),
+                    new PosOrderExecutionContext(
+                        request.UserId,
+                        request.BusinessId,
+                        request.WarehouseId,
+                        request.WorkSessionId),
+                    ct);
+                var actor = new SellerOrderActor(
+                    orderActor.UserId,
+                    orderActor.TenantId,
+                    orderActor.BusinessId,
+                    orderActor.Permissions);
+                var lines = request.Lines.Select(line =>
+                    new SellerOrdersApi.SellerOrderLineInput(
+                        line.ProductId,
+                        line.Quantity,
+                        line.UnitPrice,
+                        line.DiscountAmount,
+                        line.PriceSource)).ToArray();
+                SellerOrdersApi.SellerOrderResult result;
+                if (request.OrderId is Guid orderId)
+                {
+                    result = await writer.UpdateReviewAsync(
+                        actor,
+                        orderId,
+                        new SellerOrdersApi.UpdateSellerOrderRequest(
+                            request.CustomerId,
+                            request.Notes,
+                            request.IdempotencyKey,
+                            lines,
+                            request.WorkSessionId),
+                        ct);
+                }
+                else
+                {
+                    result = await writer.CreateAsync(
+                        actor,
+                        new SellerOrdersApi.CreateSellerOrderRequest(
+                            request.BusinessId,
+                            request.WarehouseId,
+                            request.CustomerId,
+                            null,
+                            null,
+                            null,
+                            false,
+                            request.Notes,
+                            request.IdempotencyKey,
+                            lines),
+                        ct);
+                }
+                return new PosSaveOrderResponse(
+                    result.OrderId,
+                    result.OrderNumber,
+                    result.Status,
+                    result.Total,
+                    result.RequiresReview,
+                    result.Warnings);
+            }));
+
         group.MapPost("/print-batch", async (
             HttpContext context,
             PosPrintOrdersRequest request,
@@ -288,6 +356,18 @@ public static class PosOrdersApi
                 error.Message,
                 statusCode: StatusCodes.Status409Conflict,
                 title: "OrderInventoryConflict");
+        }
+        catch (SellerOrderForbiddenException error)
+        {
+            return Results.Problem(error.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (SellerOrderValidationException error)
+        {
+            return Results.Problem(error.Message, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (SellerOrderConflictException error)
+        {
+            return Results.Problem(error.Message, statusCode: StatusCodes.Status409Conflict);
         }
     }
 }

@@ -4,7 +4,6 @@ import type {
   CommerceOrderPage,
   InvoiceOrdersResponse,
 } from "@/services/orders/commerce-orders-client";
-import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
 import type { TenantBranding } from "@/services/api/tenants";
 import { printWorkSessionClosure } from "./pos-work-session-close";
@@ -211,6 +210,7 @@ export type PosCaptureResult = {
     availableQuantity: number;
     isAvailable: boolean;
   } | null;
+  maximumQuantity?: number | null;
 };
 
 export type PosFiscalNumberPreview = {
@@ -314,6 +314,20 @@ export type PosPrintableReceipt = {
   }> | null;
   businessName?: string | null;
   warehouseName?: string | null;
+  creditAcknowledgement?: {
+    documentId: string;
+    documentNumber: string;
+    issuedAt: string;
+    customerName: string;
+    customerIdentification: string;
+    creditAmount: number;
+    remainingCredit: number | null;
+    soldByName: string;
+    companyName?: string | null;
+    companyLogoSource?: string | null;
+    businessName?: string | null;
+    warehouseName?: string | null;
+  } | null;
 };
 
 export type PosCompleteSaleResult = {
@@ -419,6 +433,8 @@ export type PosWorkSessionPaymentTotal = {
   countedAmount: number | null;
   difference: number | null;
   requiresCount: boolean;
+  cashEntryAmount?: number;
+  cashExitAmount?: number;
 };
 
 export type PosInventoryIssue = {
@@ -481,6 +497,17 @@ export type PosWorkSessionClosure = {
   note: string | null;
   paymentTotals: PosWorkSessionPaymentTotal[];
   receiptTemplateVersion?: number;
+  cashMovements?: Array<{
+    documentId: string;
+    direction: "In" | "Out";
+    documentNumber: string;
+    reasonName: string;
+    amount: number;
+    occurredAt: string;
+    responsibleName: string;
+    reference: string | null;
+    notes: string | null;
+  }> | null;
 };
 
 export type PosWorkSessionClosurePreview = Omit<
@@ -1327,34 +1354,13 @@ export class PosEdgeClient implements PosClient {
   }
 
   async saveOrder(draft: PosDraft) {
-    const health = this.latestHealth ?? await this.health();
-    if (!health.serverConnected || !health.workSessionId)
-      throw new Error("Guardar el pedido requiere conexión con Auraly.");
-    const order = await savePosDraftAsOrder(
+    return this.request<{ order: SellerOrderResult; nextDraft: PosDraft }>(
+      "/edge/v1/orders/save",
       {
-        businessId: health.businessId,
-        warehouseId: health.warehouseId,
-        workSessionId: health.workSessionId,
+        method: "POST",
+        body: JSON.stringify({ draftId: draft.draftId.value }),
       },
-      draft,
-      `pos-order-${draft.draftId.value}`,
     );
-    try {
-      return {
-        order,
-        nextDraft: await this.request<PosDraft>(
-          `/edge/v1/drafts/${draft.draftId.value}/complete-order`,
-          {
-            method: "POST",
-            body: JSON.stringify({ orderId: order.orderId }),
-          },
-        ),
-      };
-    } catch (cleanupError) {
-      if (draft.sourceOrderId)
-        await this.releaseRecoveredOrder(draft.sourceOrderId).catch(() => undefined);
-      throw new Error(`El pedido ${order.orderNumber} se guardó, pero no fue posible limpiar la venta activa: ${cleanupError instanceof Error ? cleanupError.message : "error desconocido"}`);
-    }
   }
 
   invoiceOrders(

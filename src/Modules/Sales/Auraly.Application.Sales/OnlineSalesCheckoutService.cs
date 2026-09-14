@@ -24,6 +24,14 @@ public sealed record PreparedOnlineSaleSettlement(
     OnlineSaleSettlementContext Context,
     WithholdingCalculationSnapshot Withholding);
 
+public sealed record OnlineOrderCreditValidationIssue(
+    Guid? CustomerId,
+    string CustomerName,
+    string? CustomerIdentification,
+    decimal RequestedAmount,
+    decimal? AvailableCredit,
+    string Reason);
+
 public interface IOnlineSaleWithholdingCalculator
 {
     Task<WithholdingCalculationSnapshot> CalculateAsync(
@@ -44,6 +52,12 @@ public interface IOnlineSalesCheckoutStore
         Guid businessId,
         Guid orderId,
         Guid destinationWarehouseId,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<OnlineOrderCreditValidationIssue>> ValidateOrderCreditBatchAsync(
+        OnlineSalesUserIdentity user,
+        Guid businessId,
+        IReadOnlyCollection<Guid> orderIds,
         CancellationToken cancellationToken);
 
     Task<OnlineSalesFiscalKeyContext> ResolveFiscalKeyContextAsync(
@@ -96,6 +110,22 @@ public sealed class OnlineSalesCheckoutService(
                 "El pedido y la bodega de venta son obligatorios.");
         return checkouts.PrepareSourceOrderInventoryAsync(
             user, businessId, orderId, destinationWarehouseId, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<OnlineOrderCreditValidationIssue>> ValidateOrderCreditBatchAsync(
+        OnlineSalesUserIdentity user,
+        Guid businessId,
+        IReadOnlyCollection<Guid> orderIds,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ArgumentNullException.ThrowIfNull(orderIds);
+        if (businessId == Guid.Empty || orderIds.Count is < 1 or > 50 ||
+            orderIds.Any(orderId => orderId == Guid.Empty))
+            throw new OnlineSalesDraftValidationException(
+                "Selecciona entre 1 y 50 pedidos válidos para validar el crédito.");
+        return checkouts.ValidateOrderCreditBatchAsync(
+            user, businessId, orderIds, cancellationToken);
     }
 
     public async Task<CompleteOnlineSalesDraftResponse> CompleteAsync(

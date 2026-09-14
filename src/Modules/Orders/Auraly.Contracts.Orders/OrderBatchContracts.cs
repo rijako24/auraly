@@ -22,6 +22,14 @@ public sealed record InvoiceOrderResult(
     string? Error,
     OnlineSalesReceipt? Receipt = null);
 
+public sealed record OrderCreditValidationIssue(
+    Guid? CustomerId,
+    string CustomerName,
+    string? CustomerIdentification,
+    decimal RequestedAmount,
+    decimal? AvailableCredit,
+    string Reason);
+
 public sealed record InvoiceOrdersResponse(
     Guid OperationId,
     string Status,
@@ -31,4 +39,5 @@ public sealed record InvoiceOrdersResponse(
     bool IsReplay,
     IReadOnlyList<InvoiceOrderResult> Results,
     string? PrintStatus = null,
-    string? PrintError = null);
+    string? PrintError = null,
+    IReadOnlyList<OrderCreditValidationIssue>? CreditValidationIssues = null);

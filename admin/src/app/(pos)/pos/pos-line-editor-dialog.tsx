@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "./pos-money-input";
-import { isPositiveWholeSaleValue, lineEconomicsAfterPriceChange, lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, type GridDirection } from "./pos-line-editor-calculation";
+import { isPositiveWholeSaleValue, lineEconomicsFromDiscount, lineEconomicsFromDiscountPercent, lineEconomicsFromFinalPrice, lineEconomicsFromMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, type GridDirection, type ReactiveLineEconomics } from "./pos-line-editor-calculation";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 type EditableLine = {
@@ -21,6 +21,8 @@ type EditableLine = {
   description: string;
   unitCost: string;
   margin: string;
+  referenceUnitPrice: number;
+  documentUnitPrice: number;
   unitPrice: string;
   discount: string;
 };
@@ -59,7 +61,7 @@ export function PosLineEditorDialog({
   const parsed = useMemo(() => drafts.map((line) => ({
     lineId: line.lineId,
     description: line.description.trim(),
-    unitPrice: exclusive(parseMoneyDraft(line.unitPrice), line.taxRate),
+    unitPrice: exclusive(line.documentUnitPrice, line.taxRate),
     discount: exclusive(parseMoneyDraft(line.discount), line.taxRate),
     documentUnitCost: parseMoneyDraft(line.unitCost),
   })), [drafts]);
@@ -68,7 +70,8 @@ export function PosLineEditorDialog({
     Number.isFinite(line.unitPrice) && line.unitPrice >= 0 &&
     Number.isFinite(line.documentUnitCost) && line.documentUnitCost >= 0 &&
     Number.isFinite(line.discount) && line.discount >= 0 &&
-    line.discount <= drafts[index].quantity * line.unitPrice);
+    line.discount <= drafts[index].quantity * line.unitPrice &&
+    parseMoneyDraft(drafts[index].unitPrice) >= 0);
 
   const change = (lineId: string, patch: Partial<EditableLine>) =>
     setDrafts((current) => current.map((line) => line.lineId === lineId ? { ...line, ...patch } : line));
@@ -77,40 +80,51 @@ export function PosLineEditorDialog({
     const currentPrice = parseMoneyDraft(line.unitPrice);
     const currentDiscount = parseMoneyDraft(line.discount);
     const currentCost = parseMoneyDraft(line.unitCost);
-    let price = currentPrice, discount = currentDiscount, cost = currentCost;
+    let cost = currentCost;
     let margin = Number(line.margin.replace(",", ".")) || 0;
+    let economics: ReactiveLineEconomics;
     if (field === "cost") cost = parseMoneyDraft(raw);
     if (field === "price") {
-      price = parseMoneyDraft(raw);
-      discount = lineEconomicsAfterPriceChange(
-        cost,
-        line.quantity,
-        currentPrice,
-        currentDiscount,
-        price,
-        line.taxRate,
-      ).discount;
-    }
-    if (field === "discount") discount = parseMoneyDraft(raw);
-    if (field === "percentage") {
+      economics = lineEconomicsFromFinalPrice(
+        cost, line.quantity, line.referenceUnitPrice, parseMoneyDraft(raw), line.taxRate,
+      );
+    } else if (field === "discount") {
+      economics = lineEconomicsFromDiscount(
+        cost, line.quantity, line.referenceUnitPrice, parseMoneyDraft(raw), line.taxRate,
+      );
+    } else if (field === "percentage") {
       const value = Number(raw.replace(",", "."));
       if (!Number.isFinite(value) || value < 0 || value > 100) return;
-      discount = line.quantity * price * value / 100;
-    }
-    if (field === "margin") {
+      economics = lineEconomicsFromDiscountPercent(
+        cost, line.quantity, line.referenceUnitPrice, value, line.taxRate,
+      );
+    } else if (field === "margin") {
       const value = Number(raw.replace(",", "."));
       if (!Number.isFinite(value) || value >= 100) return;
       margin = value;
-      const economics = lineEconomicsForMargin(cost, margin, line.taxRate);
-      price = economics.unitPrice;
-      discount = economics.discount;
+      economics = lineEconomicsFromMargin(
+        cost, line.quantity, line.referenceUnitPrice, margin, line.taxRate,
+      );
     } else {
-      margin = lineMarginPercent(cost, line.quantity, price, discount, line.taxRate);
+      economics = {
+        finalUnitPrice: currentPrice,
+        documentUnitPrice: line.documentUnitPrice,
+        discount: currentDiscount,
+        discountPercent: line.documentUnitPrice <= 0
+          ? 0
+          : currentDiscount / (line.quantity * line.documentUnitPrice) * 100,
+        marginPercent: lineMarginPercent(
+        cost, line.quantity, line.documentUnitPrice, currentDiscount, line.taxRate,
+        ),
+      };
+      margin = economics.marginPercent;
     }
+    if (field !== "margin") margin = economics.marginPercent;
     change(line.lineId, {
       unitCost: formatMoneyValue(cost),
-      unitPrice: formatMoneyValue(price),
-      discount: formatMoneyValue(discount),
+      unitPrice: formatMoneyValue(economics.finalUnitPrice),
+      documentUnitPrice: economics.documentUnitPrice,
+      discount: formatMoneyValue(economics.discount),
       margin: decimalDraft(margin),
     });
   };
@@ -151,20 +165,14 @@ export function PosLineEditorDialog({
     ).map(line => [line.lineId, line]));
     setDrafts(current => current.map(line => {
       const allocation = allocations.get(line.lineId)!;
-      const currentPrice = parseMoneyDraft(line.unitPrice);
-      const currentDiscount = parseMoneyDraft(line.discount);
       const cost = parseMoneyDraft(line.unitCost);
-      const economics = lineEconomicsAfterPriceChange(
-        cost,
-        line.quantity,
-        currentPrice,
-        currentDiscount,
-        allocation.unitPrice,
-        line.taxRate,
+      const economics = lineEconomicsFromFinalPrice(
+        cost, line.quantity, line.referenceUnitPrice, allocation.unitPrice, line.taxRate,
       );
       return {
         ...line,
-        unitPrice: preciseMoneyDraft(allocation.unitPrice),
+        unitPrice: preciseMoneyDraft(economics.finalUnitPrice),
+        documentUnitPrice: economics.documentUnitPrice,
         discount: preciseMoneyDraft(economics.discount),
         margin: decimalDraft(economics.marginPercent),
       };
@@ -202,8 +210,8 @@ export function PosLineEditorDialog({
         {drafts.map((line, index) => {
           const price = parseMoneyDraft(line.unitPrice);
           const discount = parseMoneyDraft(line.discount);
-          const total = Math.max(0, line.quantity * price - discount);
-          const invalidDiscount = discount > line.quantity * price;
+          const total = Math.max(0, line.quantity * price);
+          const invalidDiscount = discount > line.quantity * line.documentUnitPrice;
           return <article key={line.lineId} className="overflow-hidden rounded-2xl border bg-white shadow-sm">
             <div className="flex items-center justify-between gap-3 border-b bg-slate-50 px-4 py-3"><div><p className="text-xs font-bold uppercase tracking-wide text-teal-700">Línea {index + 1} · {line.productCode}</p><p className="text-xs text-slate-500">Cantidad: {line.quantity}</p></div><strong className="tabular-nums text-slate-950">{formatMoneyValue(total)}</strong></div>
             <div className="grid gap-x-4 gap-y-3 p-4 sm:grid-cols-2 xl:grid-cols-[minmax(240px,2fr)_repeat(5,minmax(120px,1fr))]">
@@ -211,7 +219,7 @@ export function PosLineEditorDialog({
               {canReadCostAndMargin&&<label className="space-y-1.5 text-sm font-semibold text-slate-700">Costo<input data-editor-row={index} data-editor-column={1} inputMode="decimal" disabled={!line.allowsDocumentCostOverride} value={line.unitCost} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"cost",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/>{!line.allowsDocumentCostOverride&&<span className="block text-xs font-normal text-slate-500">Definido por inventario.</span>}</label>}
               {canReadCostAndMargin&&<label className="space-y-1.5 text-sm font-semibold text-slate-700">Margen %<input data-editor-row={index} data-editor-column={2} inputMode="decimal" disabled={!line.allowsDocumentCostOverride} value={line.margin} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"margin",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/>{!line.allowsDocumentCostOverride&&<span className="block text-xs font-normal text-slate-500">Definido por inventario.</span>}</label>}
               <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento<input data-editor-row={index} data-editor-column={3} ref={(element)=>{discountInputs.current[index]=element;}} inputMode="decimal" value={line.discount} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"discount",event.target.value)} className={`h-11 w-full rounded-xl border bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none focus:ring-4 ${invalidDiscount?"border-red-500 focus:ring-red-500/10":"border-slate-300 focus:border-teal-600 focus:ring-teal-600/10"}`}/>{invalidDiscount&&<span className="block text-xs font-normal text-red-700">No puede superar el valor de la línea.</span>}</label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento %<input data-editor-row={index} data-editor-column={4} inputMode="decimal" value={percentage(discount, line.quantity * price)} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"percentage",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento %<input data-editor-row={index} data-editor-column={4} inputMode="decimal" value={percentage(discount, line.quantity * line.documentUnitPrice)} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"percentage",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
               <label className="space-y-1.5 text-sm font-semibold text-slate-700">Precio de venta<input data-editor-row={index} data-editor-column={5} inputMode="decimal" value={line.unitPrice} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"price",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
             </div>
           </article>;
@@ -249,6 +257,9 @@ function focusEditorControl(target: HTMLInputElement | HTMLButtonElement | null 
 }
 
 function toEditable(line: PosDraftLine): EditableLine {
+  const referenceUnitPrice = inclusive(line.unitPrice, line.taxRate);
+  const discount = inclusive(line.discount, line.taxRate);
+  const finalUnitPrice = Math.max(0, referenceUnitPrice - discount / line.quantity);
   return {
     lineId: line.lineId,
     productCode: line.productCode,
@@ -257,9 +268,11 @@ function toEditable(line: PosDraftLine): EditableLine {
     allowsDocumentCostOverride: line.allowsDocumentCostOverride,
     description: line.description,
     unitCost: formatMoneyValue(line.documentUnitCost),
-    unitPrice: formatMoneyValue(inclusive(line.unitPrice, line.taxRate)),
-    discount: formatMoneyValue(inclusive(line.discount, line.taxRate)),
-    margin: decimalDraft(lineMarginPercent(line.documentUnitCost, line.quantity, inclusive(line.unitPrice, line.taxRate), inclusive(line.discount, line.taxRate), line.taxRate)),
+    referenceUnitPrice,
+    documentUnitPrice: referenceUnitPrice,
+    unitPrice: formatMoneyValue(finalUnitPrice),
+    discount: formatMoneyValue(discount),
+    margin: decimalDraft(lineMarginPercent(line.documentUnitCost, line.quantity, referenceUnitPrice, discount, line.taxRate)),
   };
 }
 

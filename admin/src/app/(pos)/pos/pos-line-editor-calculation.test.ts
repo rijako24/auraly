@@ -1,24 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isPositiveWholeSaleValue, lineDiscountPercent, lineEconomicsAfterPriceChange, lineEconomicsForMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin } from "./pos-line-editor-calculation";
+import { isPositiveWholeSaleValue, lineDiscountPercent, lineEconomicsFromDiscount, lineEconomicsFromDiscountPercent, lineEconomicsFromFinalPrice, lineEconomicsFromMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateAdditionalSaleValue, salePriceForMargin } from "./pos-line-editor-calculation";
 
 test("keeps value and percentage discounts synchronized", () => {
   assert.equal(lineDiscountPercent(20_000, 2, 100_000), 10);
-});
-
-test("changing sale price preserves the discount percentage and recalculates value and margin", () => {
-  assert.deepEqual(
-    lineEconomicsAfterPriceChange(50_000, 2, 100_000, 20_000, 120_000, 0),
-    { discount: 24_000, discountPercent: 10, marginPercent: 53.7037 },
-  );
-});
-
-test("distributed price increments recalculate discount value for fractional quantities", () => {
-  assert.deepEqual(
-    lineEconomicsAfterPriceChange(4_000, 0.5, 10_000, 500, 12_000, 0),
-    { discount: 600, discountPercent: 10, marginPercent: 62.963 },
-  );
 });
 
 test("calculates margin from the net untaxed sale", () => {
@@ -29,11 +15,44 @@ test("recalculates sale price from margin while preserving discount percentage",
   assert.equal(salePriceForMargin(50_000, 50, 10, 19), 132_222.222222);
 });
 
-test("editing margin clears both discount representations and recalculates price", () => {
-  assert.deepEqual(lineEconomicsForMargin(50_000, 50, 19), {
-    unitPrice: 119_000,
+test("a lower final price creates a discount even when the original discount was zero", () => {
+  assert.deepEqual(
+    lineEconomicsFromFinalPrice(50_000, 2, 100_000, 80_000, 0),
+    {
+      finalUnitPrice: 80_000,
+      documentUnitPrice: 100_000,
+      discount: 40_000,
+      discountPercent: 20,
+      marginPercent: 37.5,
+    },
+  );
+});
+
+test("discount value percentage final price and margin remain mutually reactive", () => {
+  const byValue = lineEconomicsFromDiscount(50_000, 2, 100_000, 30_000, 0);
+  const byPercent = lineEconomicsFromDiscountPercent(50_000, 2, 100_000, 15, 0);
+  assert.deepEqual(byPercent, byValue);
+  assert.equal(byValue.finalUnitPrice, 85_000);
+  assert.equal(byValue.marginPercent, 41.1765);
+});
+
+test("changing margin derives final price and its discount against the reference price", () => {
+  assert.deepEqual(lineEconomicsFromMargin(50_000, 2, 120_000, 50, 0), {
+    finalUnitPrice: 100_000,
+    documentUnitPrice: 120_000,
+    discount: 40_000,
+    discountPercent: 16.6667,
+    marginPercent: 50,
+  });
+});
+
+test("raising final price never produces a negative discount", () => {
+  assert.deepEqual(lineEconomicsFromFinalPrice(50_000, 1, 100_000, 130_000, 0), {
+    finalUnitPrice: 130_000,
+    documentUnitPrice: 130_000,
     discount: 0,
     discountPercent: 0,
+    marginPercent: 61.5385,
   });
 });
 

@@ -2,6 +2,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Pos.Edge.Infrastructure;
+using Auraly.Pos.Printing;
 
 namespace Auraly.Pos.Edge.Host;
 
@@ -15,6 +16,7 @@ internal static class PosPeripheralModule
         services.AddSingleton<EscPosReceiptRenderer>();
         services.AddSingleton<HtmlReceiptPreviewRenderer>();
         services.AddSingleton<HalfLetterDocumentRenderer>();
+        services.AddSingleton<CreditSaleAcknowledgementRenderer>();
         services.AddSingleton<IWindowsRawPrintJob>(SystemWindowsRawPrintJob.Instance);
         services.AddSingleton<IWindowsRenderedPrintJob, SystemWindowsRenderedPrintJob>();
         services.AddSingleton<IReceiptPreviewLauncher, ShellReceiptPreviewLauncher>();
@@ -126,7 +128,8 @@ internal static class PosPeripheralModule
                     request.CompanyLogoSource,
                     CustomerName: request.CustomerName,
                     BusinessName: request.BusinessName,
-                    WarehouseName: request.WarehouseName);
+                    WarehouseName: request.WarehouseName,
+                    CreditAcknowledgement: request.CreditAcknowledgement);
                 if (orderTicketWorkflow)
                     await printer.PrintOrderAsync(receipt, ct);
                 else

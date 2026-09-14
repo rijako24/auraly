@@ -13,14 +13,30 @@ test("shows real catalog counts and percentage", () => {
     catalogProgressPercent: 25,
     preparationStage: "Catalog",
     preparationCompletedSteps: 1,
-    preparationTotalSteps: 2,
+    preparationTotalSteps: 3,
     preparationCanResume: true,
   });
 
   assert.equal(view.resourceProgress, 25);
-  assert.equal(view.overallProgress, 50);
+  assert.equal(view.overallProgress, 41);
   assert.equal(view.processedLabel, "500 de 2.000 productos");
   assert.match(view.resumeLabel, /Reintentar/);
+});
+
+test("advances monotonically through catalog work and reaches one hundred", () => {
+  const progress = [0, 25, 80, 100].map((catalogProgressPercent) => posPreparationView({
+    serverConnected: true,
+    identityReady: true,
+    catalogStatus: catalogProgressPercent === 100 ? "Ready" : "Bootstrapping",
+    catalogProcessedProducts: catalogProgressPercent,
+    catalogTotalProducts: 100,
+    catalogProgressPercent,
+    preparationStage: catalogProgressPercent === 100 ? "Finalizing" : "Catalog",
+    preparationCompletedSteps: catalogProgressPercent === 100 ? 3 : 1,
+    preparationTotalSteps: 3,
+  }).overallProgress);
+
+  assert.deepEqual(progress, [33, 41, 60, 100]);
 });
 
 test("shows the reason and offers a manual retry after automatic retries fail", () => {

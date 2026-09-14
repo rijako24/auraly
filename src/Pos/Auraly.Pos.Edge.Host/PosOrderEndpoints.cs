@@ -113,6 +113,30 @@ public static class PosOrderEndpoints
             Results.Ok(await recovery.RecoverAsync(
                 sessions.Required(), orderId, ct)));
 
+        edge.MapPost("/orders/save", async (
+            SavePosOrderRequest request,
+            PosOrderServerClient server,
+            PosDraftStore drafts,
+            PosEdgeRuntimeContext context,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            var session = sessions.Required();
+            var draft = await drafts.GetAsync(new DraftId(request.DraftId), ct)
+                ?? throw new KeyNotFoundException("La venta activa no existe.");
+            if (draft.Scope.UserId.Value != session.UserId ||
+                draft.Scope.WorkSessionId.Value != session.WorkSessionId)
+                throw new InvalidOperationException("La venta no pertenece a la sesión local activa.");
+            var result = await server.SaveAsync(
+                session,
+                draft,
+                $"pos-order-{draft.DraftId.Value:D}-{draft.UpdatedAt.UtcTicks}",
+                ct);
+            await drafts.CancelAsync(draft.DraftId, ct);
+            var nextDraft = await drafts.GetOrCreateActiveAsync(context.ScopeFor(session), ct);
+            return Results.Ok(new { order = result, nextDraft });
+        });
+
         edge.MapPost("/orders/{orderId:guid}/claim", async (
             Guid orderId,
             PosOrderServerClient server,
@@ -187,6 +211,8 @@ public static class PosOrderEndpoints
                 request.DocumentType,
                 request.IdempotencyKey,
                 ct);
+            if (response.CreditValidationIssues is { Count: > 0 })
+                return Results.Ok(response with { PrintStatus = "NotRequired" });
             try
             {
                 var receipts = response.Results
@@ -229,3 +255,4 @@ public sealed record InvoicePosOrdersRequest(
     string DocumentType = "SalesInvoice");
 
 public sealed record PrintPosOrdersRequest(IReadOnlyCollection<Guid> OrderIds);
+public sealed record SavePosOrderRequest(Guid DraftId);

@@ -23,7 +23,8 @@ public sealed record PosCaptureResult(
     string Status,
     PosDraft? Draft,
     CapturedCatalogProduct? CapturedProduct,
-    InventoryAvailabilityResponse? Availability)
+    InventoryAvailabilityResponse? Availability,
+    decimal? MaximumQuantity = null)
 {
     public bool Added => Status == PosCaptureStatus.Added;
 }
@@ -131,7 +132,15 @@ public sealed class PosCaptureService(
             operationId,
             cancellationToken);
         if (inventory.Status != PosCaptureStatus.Added)
-            return new PosCaptureResult(inventory.Status, active, captured, inventory.Response);
+            return new PosCaptureResult(
+                inventory.Status,
+                active,
+                captured,
+                inventory.Response,
+                MaximumSelectableQuantity(
+                    inventory.Response,
+                    inventoryDemand.ExistingQuantityInSelectedUnits,
+                    captured.Product.AllowsFractionalSale));
 
         var price = await catalog.ResolvePriceAsync(
             captured.Product.ProductId,
@@ -189,7 +198,15 @@ public sealed class PosCaptureService(
             operationId,
             cancellationToken);
         if (inventory.Status != PosCaptureStatus.Added)
-            return new PosCaptureResult(inventory.Status, current, null, inventory.Response);
+            return new PosCaptureResult(
+                inventory.Status,
+                current,
+                null,
+                inventory.Response,
+                MaximumSelectableQuantity(
+                    inventory.Response,
+                    inventoryDemand.ExistingQuantityInSelectedUnits,
+                    product.AllowsFractionalSale));
         var updated = await drafts.SetQuantityAsync(
             draftId,
             lineId,
@@ -199,7 +216,7 @@ public sealed class PosCaptureService(
         return new PosCaptureResult(PosCaptureStatus.Added, updated, null, inventory.Response);
     }
 
-    private async Task<(decimal QuantityInSelectedUnits, bool ValidationRequired)> InventoryDemandAsync(
+    private async Task<InventoryDemand> InventoryDemandAsync(
         PosDraft draft,
         PosCatalogItem selectedProduct,
         decimal selectedQuantity,
@@ -213,20 +230,40 @@ public sealed class PosCaptureService(
         var family = await catalog.InventoryFamilyAsync(inventoryProductId, cancellationToken);
         var validationRequired = selectedProduct.ManagesStock ||
             inventoryProductId != selectedProduct.ProductId || family.Count > 1;
-        var demandLines = draft.Lines
+        var existingDemandLines = draft.Lines
             .Where(line => line.LineId != excludedLineId && family.ContainsKey(line.ProductId.Value))
             .Select(line => new InventoryDemandLine(
                 line.LineId, line.ProductId.Value, inventoryProductId,
                 family[line.ProductId.Value], line.Quantity, validationRequired))
+            .ToArray();
+        var demandLines = existingDemandLines
             .Append(new InventoryDemandLine(
                 Guid.Empty, selectedProduct.ProductId, inventoryProductId,
                 selectedFactor, selectedQuantity, validationRequired));
         var demand = InventoryDemandResolver.Resolve(demandLines).SingleOrDefault();
-        return (
+        var existingDemand = InventoryDemandResolver.Resolve(existingDemandLines).SingleOrDefault();
+        return new InventoryDemand(
             demand is null ? selectedQuantity : InventoryDemandResolver.InProductUnits(
                 demand.RequiredInventoryQuantity, selectedFactor),
+            existingDemand is null ? 0m : InventoryDemandResolver.InProductUnits(
+                existingDemand.RequiredInventoryQuantity, selectedFactor),
             validationRequired);
     }
+
+    private static decimal? MaximumSelectableQuantity(
+        InventoryAvailabilityResponse? response,
+        decimal existingQuantityInSelectedUnits,
+        bool allowsFractionalSale)
+    {
+        if (response is null) return null;
+        var maximum = Math.Max(0m, response.AvailableQuantity - existingQuantityInSelectedUnits);
+        return allowsFractionalSale ? maximum : decimal.Truncate(maximum);
+    }
+
+    private sealed record InventoryDemand(
+        decimal QuantityInSelectedUnits,
+        decimal ExistingQuantityInSelectedUnits,
+        bool ValidationRequired);
 
     private async Task<(string Status, InventoryAvailabilityResponse? Response)> ValidateAsync(
         Guid productId,
