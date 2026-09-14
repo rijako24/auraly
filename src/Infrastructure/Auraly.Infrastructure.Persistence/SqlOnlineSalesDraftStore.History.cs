@@ -56,12 +56,14 @@ public sealed partial class SqlOnlineSalesDraftStore
         command.CommandText = """
             SELECT d.DocumentId,d.DocumentNumber,d.FiscalNumber,d.IssuedAt,
                    d.PayableAmount,d.CustomerIdentification,d.FiscalStatus,
-                   snapshot.SnapshotJson
+                   payload.PayloadJson
             FROM dbo.SalesDocuments d
-            JOIN dbo.FiscalSnapshots snapshot
-              ON snapshot.DocumentId=d.DocumentId
+            JOIN dbo.DocumentProcessingPayloads payload
+              ON payload.DocumentId=d.DocumentId
+             AND payload.DocumentType=d.DocumentType
+             AND payload.BusinessId=d.BusinessId
             WHERE d.BusinessId=@BusinessId AND d.WorkSessionId=@WorkSessionId
-              AND ISNULL(JSON_VALUE(snapshot.SnapshotJson,'$.fiscalHabilitationOnly'),N'false')<>N'true'
+              AND ISNULL(JSON_VALUE(payload.PayloadJson,'$.fiscalHabilitationOnly'),N'false')<>N'true'
               AND (@Search=N'' OR d.DocumentNumber LIKE @Contains
                    OR d.FiscalNumber LIKE @Contains
                    OR d.CufeReceived LIKE @Contains
@@ -90,13 +92,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.GetGuid(0),
                     payload.CommercialSnapshot.DocumentType,
                     reader.GetString(1),
-                    reader.GetString(2),
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
                     reader.GetDateTimeOffset(3),
                     reader.GetDecimal(4),
                     reader.GetString(5),
                     payload.UblSnapshot?.Customer.RegistrationName
                         ?? "Consumidor final",
-                    reader.GetString(6)));
+                    reader.IsDBNull(6) ? null : reader.GetString(6)));
             }
         }
         var hasMore = items.Count > request.Take;
@@ -130,14 +132,16 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT snapshot.SnapshotJson,document.FiscalStatus
+            SELECT payload.PayloadJson,document.FiscalStatus
             FROM dbo.SalesDocuments document
-            JOIN dbo.FiscalSnapshots snapshot
-              ON snapshot.DocumentId=document.DocumentId
+            JOIN dbo.DocumentProcessingPayloads payload
+              ON payload.DocumentId=document.DocumentId
+             AND payload.DocumentType=document.DocumentType
+             AND payload.BusinessId=document.BusinessId
             WHERE document.DocumentId=@DocumentId
               AND document.BusinessId=@BusinessId
               AND document.WorkSessionId=@WorkSessionId
-              AND ISNULL(JSON_VALUE(snapshot.SnapshotJson,'$.fiscalHabilitationOnly'),N'false')<>N'true';
+              AND ISNULL(JSON_VALUE(payload.PayloadJson,'$.fiscalHabilitationOnly'),N'false')<>N'true';
             """;
         command.Parameters.AddRange([
             P("@DocumentId", documentId),
@@ -151,7 +155,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             if (await reader.ReadAsync(cancellationToken))
                 result = new(
                     PosSaleContractSerializer.Deserialize(reader.GetString(0)),
-                    reader.GetString(1));
+                    reader.IsDBNull(1) ? null : reader.GetString(1));
         }
         await transaction.CommitAsync(cancellationToken);
         return result;

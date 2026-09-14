@@ -14,7 +14,8 @@ public sealed record FiscalSubmissionWorkItem(
     Guid? TestSetId,
     byte[] SignedXml,
     string? TrackId,
-    bool HasUnresolvedSendAttempt);
+    bool HasUnresolvedSendAttempt,
+    int ArtifactVersion = 1);
 
 public sealed record FiscalSubmissionAttempt(
     Guid AttemptId,
@@ -100,6 +101,7 @@ public sealed class FiscalSubmissionPackageBuilder
             contentSha256 = Convert.ToHexString(SHA256.HashData(zip)).ToLowerInvariant(),
             testSetId = work.TestSetId,
             work.TrackId,
+            work.ArtifactVersion,
             correlationId
         };
         return JsonSerializer.SerializeToUtf8Bytes(value);

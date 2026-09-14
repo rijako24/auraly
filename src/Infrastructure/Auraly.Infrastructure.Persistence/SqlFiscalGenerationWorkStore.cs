@@ -113,14 +113,16 @@ public sealed class SqlFiscalGenerationWorkStore(
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
+        var artifactVersion = await NextGenerationArtifactVersionAsync(
+            connection, transaction, work.DocumentId, cancellationToken);
         await InsertArtifactAsync(connection, transaction, work.DocumentId,
             FiscalArtifactTypeCodes.UnsignedXml, artifacts.UnsignedXml,
             artifacts.UnsignedSha256Hex, $"{work.FiscalNumber}.xml",
-            artifacts, artifacts.GeneratedAt, cancellationToken);
+            artifacts, artifactVersion, artifacts.GeneratedAt, cancellationToken);
         await InsertArtifactAsync(connection, transaction, work.DocumentId,
             FiscalArtifactTypeCodes.SignedXml, artifacts.SignedXml,
             artifacts.SignedSha256Hex, $"{work.FiscalNumber}-signed.xml",
-            artifacts, artifacts.SignedAt, cancellationToken);
+            artifacts, artifactVersion, artifacts.SignedAt, cancellationToken);
         const string sql = """
             UPDATE dbo.FiscalDocumentProcesses
             SET Status=@Status, GeneratedAt=@GeneratedAt, SignedAt=@SignedAt,
@@ -236,7 +238,14 @@ public sealed class SqlFiscalGenerationWorkStore(
                    a.AuthorizationNumber, a.ValidFrom, a.ValidUntil,
                    fs.Prefix, a.AuthorizedRangeStart, a.AuthorizedRangeEnd,
                    debit.SnapshotJson,support.SnapshotJson,
-                   payrollDocument.SourceSnapshotJson,serviceSnapshot.SnapshotJson
+                   payrollDocument.SourceSnapshotJson,serviceSnapshot.SnapshotJson,
+                   legalProfile.EntityType,legalProfile.LegalName,
+                   legalProfile.Email,legalProfile.Phone,
+                   CONVERT(bit,CASE WHEN EXISTS(
+                     SELECT 1 FROM dbo.FiscalArtifacts existingArtifact
+                     WHERE existingArtifact.DocumentId=p.DocumentId
+                       AND existingArtifact.ArtifactType=N'SignedXml')
+                     THEN 1 ELSE 0 END)
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId
             LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
@@ -251,6 +260,10 @@ public sealed class SqlFiscalGenerationWorkStore(
             INNER JOIN dbo.FiscalIssuerConfigurations c
                 ON c.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
                AND c.BusinessId=p.BusinessId
+            INNER JOIN dbo.Businesses configuredBusiness
+                ON configuredBusiness.BusinessId=c.BusinessId
+            INNER JOIN dbo.TenantLegalProfiles legalProfile
+                ON legalProfile.TenantId=configuredBusiness.TenantId
             LEFT JOIN dbo.FiscalAuthorizations a
                 ON a.FiscalAuthorizationId=d.FiscalAuthorizationId
                AND a.BusinessId=p.BusinessId
@@ -295,7 +308,8 @@ public sealed class SqlFiscalGenerationWorkStore(
                 reader.GetString(19), reader.GetString(20)),
             reader.GetString(21), reader.GetString(22), reader.GetByte(23),
             reader.GetString(24), reader.GetString(25), reader.GetString(26),
-            reader.GetString(27), reader.GetString(28));
+            reader.GetString(27), reader.GetString(28), reader.GetString(39),
+            reader.GetString(40), reader.GetString(41), reader.GetString(42));
         FiscalAuthorizationWorkConfiguration? authorization = null;
         if (!reader.IsDBNull(29))
             authorization = new FiscalAuthorizationWorkConfiguration(
@@ -309,12 +323,12 @@ public sealed class SqlFiscalGenerationWorkStore(
                 supportDocument.Authorization.Number, supportDocument.Authorization.ValidFrom,
                 supportDocument.Authorization.ValidUntil, supportDocument.Authorization.Prefix,
                 supportDocument.Authorization.RangeStart, supportDocument.Authorization.RangeEnd)),
-            supportDocument, electronicPayroll, serviceInvoice);
+            supportDocument, electronicPayroll, serviceInvoice, reader.GetBoolean(43));
     }
 
     private async Task InsertArtifactAsync(SqlConnection connection, SqlTransaction transaction,
         Guid documentId, string type, byte[] content, string hashHex, string fileName,
-        FiscalGeneratedArtifacts metadata, DateTimeOffset createdAt,
+        FiscalGeneratedArtifacts metadata, int artifactVersion, DateTimeOffset createdAt,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -322,13 +336,14 @@ public sealed class SqlFiscalGenerationWorkStore(
             (FiscalArtifactId,DocumentId,ArtifactType,ArtifactVersion,Content,ContentHash,
              ContentType,FileName,TechnicalAnnexVersion,GeneratorVersion,CreatedAt)
             VALUES
-            (@Id,@DocumentId,@Type,1,@Content,@Hash,'application/xml',@FileName,
+            (@Id,@DocumentId,@Type,@ArtifactVersion,@Content,@Hash,'application/xml',@FileName,
              @Annex,@Generator,@CreatedAt);
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@Id", ids.NewId());
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@Type", type);
+        command.Parameters.AddWithValue("@ArtifactVersion", artifactVersion);
         command.Parameters.Add("@Content", SqlDbType.VarBinary, -1).Value=content;
         command.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value=Convert.FromHexString(hashHex);
         command.Parameters.AddWithValue("@FileName", fileName);
@@ -336,6 +351,25 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@Generator", metadata.GeneratorVersion);
         command.Parameters.AddWithValue("@CreatedAt", createdAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<int> NextGenerationArtifactVersionAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT ISNULL(MAX(ArtifactVersion),0)+1
+            FROM dbo.FiscalArtifacts WITH (UPDLOCK,HOLDLOCK)
+            WHERE DocumentId=@DocumentId
+              AND ArtifactType IN(@UnsignedXml,@SignedXml);
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@UnsignedXml", FiscalArtifactTypeCodes.UnsignedXml);
+        command.Parameters.AddWithValue("@SignedXml", FiscalArtifactTypeCodes.SignedXml);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     private static void ValidateHash(byte[] content, string expected)

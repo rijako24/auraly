@@ -121,6 +121,57 @@ public sealed class DianInvoiceUblTests
     }
 
     [Fact]
+    public void Named_natural_person_emits_the_required_dian_identification_group()
+    {
+        var invoice = CreateInvoice() with
+        {
+            Customer = CreateInvoice().Customer with
+            {
+                Identification = "1065648633",
+                IdentificationTypeCode = "13",
+                RegistrationName = "KEVIN RAMIREZ GRANADOS",
+                TradeName = "KEVIN RAMIREZ GRANADOS",
+                TaxSchemeId = "01",
+                TaxSchemeName = "IVA"
+            }
+        };
+
+        var built = new DianInvoiceUblBuilder().Build(invoice);
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var customer = document.Descendants(
+            DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
+        var identification = customer
+            .Descendants(DianUblNamespaces.Cac + "PartyIdentification")
+            .Elements(DianUblNamespaces.Cbc + "ID").Single();
+
+        Assert.Equal("1065648633", identification.Value);
+        Assert.Equal("13", identification.Attribute("schemeName")?.Value);
+        Assert.Null(identification.Attribute("schemeID"));
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+    }
+
+    [Fact]
+    public void Validator_rejects_internal_alphabetic_identification_codes()
+    {
+        var built = new DianInvoiceUblBuilder().Build(CreateInvoice());
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var customer = document.Descendants(
+            DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
+        foreach (var identification in customer.Descendants()
+                     .Where(element => element.Name == DianUblNamespaces.Cbc + "CompanyID" ||
+                                       element.Name == DianUblNamespaces.Cbc + "ID" &&
+                                       element.Parent?.Name == DianUblNamespaces.Cac + "PartyIdentification"))
+            identification.SetAttributeValue("schemeName", "CC");
+
+        var result = new DianSchemaValidator().Validate(
+            Encoding.UTF8.GetBytes(document.ToString(SaveOptions.DisableFormatting)));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Contains("FAK48", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Validator_rejects_the_legacy_reversed_provider_identification_attributes()
     {
         var built = new DianInvoiceUblBuilder().Build(CreateInvoice());

@@ -276,6 +276,23 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             "Principal",
             null);
 
+        using (var onlinePos = fixture.CreateAdminClient(
+                   PartyPermissionCodes.PosCustomerCreate))
+        {
+            var onlineCountries = await onlinePos.GetFromJsonAsync<IReadOnlyCollection<CountryItem>>(
+                "/api/commerce/v1/masters/geography/countries");
+            Assert.Contains(onlineCountries!, item => item.CountryId == countryId);
+
+            using var onlineCreate = await onlinePos.PostAsJsonAsync(
+                "/api/commerce/v1/customers",
+                request with
+                {
+                    OperationId = Guid.NewGuid(),
+                    Party = request.Party with { Identification = "55667780" }
+                });
+            Assert.Equal(HttpStatusCode.Created, onlineCreate.StatusCode);
+        }
+
         using var denied = fixture.CreateClient();
         denied.DefaultRequestHeaders.Add("X-Auraly-Device-Id", fixture.DeniedDeviceId.ToString("D"));
         denied.DefaultRequestHeaders.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeniedDeviceSecret);

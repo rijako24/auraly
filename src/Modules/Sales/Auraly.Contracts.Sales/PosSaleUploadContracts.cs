@@ -192,6 +192,19 @@ public sealed record PosCreditValidationResult(
 
 public static class PosSaleFiscalMappings
 {
+    public static string? DianIdentificationTypeCode(string identificationTypeCode) =>
+        identificationTypeCode.Trim().ToUpperInvariant() switch
+        {
+            "CC" or "13" => "13",
+            "CE" or "22" => "22",
+            "TI" or "12" => "12",
+            "NIT" or "31" => "31",
+            "PA" or "41" => "41",
+            "DE" or "42" => "42",
+            "PPT" or "48" => "48",
+            _ => null
+        };
+
     public static string? PaymentMeansCode(string methodCode) => methodCode switch
     {
         "Cash" => "10",

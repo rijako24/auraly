@@ -46,7 +46,7 @@ public class RolesController(IRoleService roleService) : ControllerBase
     {
         if (request.TenantId.HasValue && request.TenantId.Value != User.GetTenantId())
             throw new ForbiddenException("No puede crear roles para otra organización.");
-        var result = await roleService.CreateAsync(User.GetTenantId(), request, ct);
+        var result = await roleService.CreateAsync(User.GetTenantId(), request, User.GetUserId(), ct);
         return CreatedAtAction(nameof(GetById), new { roleId = result.RoleId }, result);
     }
 
@@ -55,7 +55,7 @@ public class RolesController(IRoleService roleService) : ControllerBase
     public async Task<ActionResult<RoleDto>> Update(Guid roleId, [FromBody] UpdateRoleRequest request, CancellationToken ct)
     {
         await GetScopedRoleAsync(roleId, ct);
-        return Ok(await roleService.UpdateAsync(roleId, request, ct));
+        return Ok(await roleService.UpdateAsync(roleId, request, User.GetUserId(), ct));
     }
 
     [HttpDelete("{roleId:guid}")]

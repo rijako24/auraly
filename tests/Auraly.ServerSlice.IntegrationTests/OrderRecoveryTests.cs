@@ -6,11 +6,14 @@ using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
+using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
+public sealed class OrderRecoveryTests(
+    ServerSliceFixture fixture,
+    ITestOutputHelper output)
 {
     [Fact]
     public async Task User_can_create_independent_lines_for_the_same_product_at_different_prices()
@@ -93,6 +96,9 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 }
             });
         stopwatch.Stop();
+        output.WriteLine(
+            "Actualizar pedido sin cambios de reserva: {0:N0} ms.",
+            stopwatch.Elapsed.TotalMilliseconds);
 
         Assert.True(response.IsSuccessStatusCode,
             $"El pedido respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
@@ -345,8 +351,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(userId,
             OrderPermissionCodes.Read, OrderPermissionCodes.Create, OrderPermissionCodes.Update,
             OrderPermissionCodes.Recover, OrderPermissionCodes.Cancel,
-            CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesRestartDraft,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate, CommercePermissionCodes.SalesRestartDraft);
         using var create = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
         {
             businessId = fixture.BusinessId,
@@ -518,6 +523,27 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             await client.GetFromJsonAsync<OrderDetail>($"/api/commerce/v1/orders/{orderId:D}"));
         Assert.Equal(2, expandedDetail.Lines.Count);
         Assert.Contains(expandedDetail.Lines, line => line.ProductId == secondProductId && line.Quantity == 1m);
+
+        var noInventoryChangeKey = Guid.NewGuid().ToString("N");
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        using var noInventoryChange = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/seller-orders/{orderId:D}", new
+            {
+                customerId,
+                notes = "Edición de datos sin cambio de reserva",
+                idempotencyKey = noInventoryChangeKey,
+                lines = new[]
+                {
+                    new { productId = firstProductId, quantity = 6m, unitPrice = 1111m, discountAmount = 0m, priceSource = "PriceChannel" },
+                    new { productId = secondProductId, quantity = 1m, unitPrice = 2222m, discountAmount = 0m, priceSource = "Promotion" },
+                },
+            });
+        stopwatch.Stop();
+        noInventoryChange.EnsureSuccessStatusCode();
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"Actualizar un pedido sin cambios de reserva tomó {stopwatch.Elapsed.TotalMilliseconds:N0} ms.");
+        Assert.Equal(0, await CountInventoryOperationsAsync(noInventoryChangeKey));
 
         using var createForRemoval = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
         {
@@ -1060,8 +1086,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             CommercePermissionCodes.SalesCreate,
             OrderPermissionCodes.Read,
             OrderPermissionCodes.Recover,
-            OrderPermissionCodes.Update,
-            WorkSessionPermissionCodes.Open);
+            OrderPermissionCodes.Update);
         using (var filteredResponse = await client.GetAsync(
                    $"/api/commerce/v1/orders?page=1&pageSize=20&sellerId={sellerId:D}&customerId={customerId:D}"))
         {
@@ -1223,8 +1248,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 userId,
                 CommercePermissionCodes.SalesCreate,
                 OrderPermissionCodes.Read,
-                OrderPermissionCodes.Recover,
-                WorkSessionPermissionCodes.Open);
+                OrderPermissionCodes.Recover);
             var workSession = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
             using var request = new HttpRequestMessage(
@@ -1351,8 +1375,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             userId,
             CommercePermissionCodes.SalesCreate,
             OrderPermissionCodes.Read,
-            OrderPermissionCodes.Recover,
-            WorkSessionPermissionCodes.Open);
+            OrderPermissionCodes.Recover);
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
 
@@ -1382,8 +1405,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             replacementUserId,
             CommercePermissionCodes.SalesCreate,
             OrderPermissionCodes.Read,
-            OrderPermissionCodes.Recover,
-            WorkSessionPermissionCodes.Open);
+            OrderPermissionCodes.Recover);
         var replacementSession = await fixture.OpenWorkSessionAsync(replacementClient);
         var replacementDraft = await OpenDraftAsync(
             replacementClient,
@@ -1547,6 +1569,17 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             result.Add(reader.GetGuid(0));
         return result.ToArray();
     }
+
+    private Task<int> CountInventoryOperationsAsync(string idempotencyKey) =>
+        ScalarAsync<int>(
+            """
+            SELECT COUNT(*)
+            FROM dbo.InventoryOperations
+            WHERE BusinessId=@BusinessId
+              AND IdempotencyKey LIKE N'%:' + @IdempotencyKey;
+            """,
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@IdempotencyKey", idempotencyKey));
 
     private async Task ExecuteAsync(
         string sql,

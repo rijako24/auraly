@@ -801,6 +801,21 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Null(printed.FiscalNumber);
         Assert.Null(printed.Cufe);
         Assert.Null(printed.QrPayload);
+
+        var sales = await Client.GetFromJsonAsync<SaleSearchPageContract>(
+            $"/edge/v1/sales?search={result.IssuedSale.DocumentNumber}&skip=0&take=50");
+        var found = Assert.Single(sales!.Items);
+        Assert.Equal(result.IssuedSale.DocumentId, found.DocumentId);
+        Assert.Equal(PosSaleDocumentTypes.Receipt, found.DocumentType);
+        Assert.Equal(result.IssuedSale.DocumentNumber, found.DocumentNumber);
+        Assert.Null(found.FiscalNumber);
+
+        var reprint = await Client.PostAsync(
+            $"/edge/v1/sales/{result.IssuedSale.DocumentId.Value:D}/reprint",
+            null);
+        Assert.Equal(HttpStatusCode.NoContent, reprint.StatusCode);
+        Assert.Equal(2, _printer.Receipts.Count);
+        Assert.Equal(PosSaleDocumentTypes.Receipt, _printer.Receipts[1].DocumentType);
     }
 
     [Fact]

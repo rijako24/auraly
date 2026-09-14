@@ -706,9 +706,14 @@ public sealed class SqlGoodsReceiptStore(
         if (reader.IsDBNull(14) || Enumerable.Range(17, 7).Any(reader.IsDBNull))
             throw new PurchasingValidationException(
                 "El proveedor necesita tipo de identificación y una sede principal con dirección DIAN completa para generar el documento soporte.");
+        var sourceIdentificationType = reader.GetString(14);
+        var dianIdentificationType =
+            PosSaleFiscalMappings.DianIdentificationTypeCode(sourceIdentificationType)
+            ?? throw new PurchasingValidationException(
+                $"El tipo de identificación '{sourceIdentificationType}' del proveedor no tiene equivalencia DIAN.");
         var seller = new PosSaleUblPartyContract(
             reader.GetString(12), reader.IsDBNull(13) ? "0" : reader.GetString(13),
-            reader.GetString(14),
+            dianIdentificationType,
             reader.GetString(11) == "Organization" ? "1" : "2",
             reader.GetString(15), reader.GetString(16), "R-99-PN", "01", "IVA",
             new PosSaleUblAddressContract(

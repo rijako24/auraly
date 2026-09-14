@@ -6,6 +6,7 @@ import {
   ArrowUpFromLine,
   Banknote,
   Barcode,
+  Calculator,
   CheckCircle2,
   Clock3,
   ClipboardList,
@@ -87,6 +88,7 @@ import {
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
 import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
+import { PosCashDenominationDialog } from "./pos-cash-denomination-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDesktopUpdater } from "./pos-desktop-updater";
@@ -118,7 +120,7 @@ import {
   removingLastRecoveredOrderLineCancelsOrder,
 } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
-import { capturePosFunctionShortcut, isPosCashDrawerShortcut, POS_ACTION_SHORTCUTS } from "./pos-function-shortcut";
+import { capturePosFunctionShortcut, isPosCashDrawerShortcut, isPosDenominationCalculatorShortcut, POS_ACTION_SHORTCUTS } from "./pos-function-shortcut";
 import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
@@ -346,6 +348,7 @@ export default function PosPage() {
   const [documentTypeOpen, setDocumentTypeOpen] = useState(false);
   const [cashMovementDirection, setCashMovementDirection] =
     useState<PosCashMovementDirection | null>(null);
+  const [denominationCalculatorOpen, setDenominationCalculatorOpen] = useState(false);
   const [closurePreview, setClosurePreview] =
     useState<PosAuthorizedClosurePreview | null>(null);
   const [closureAttempt, setClosureAttempt] = useState<{
@@ -635,8 +638,8 @@ export default function PosPage() {
           setWorkspaceChanging(true);
           return;
         }
-        if (!shouldAutoActivateRememberedWorkspace(Boolean(edgeToken))) return;
         const remembered = rememberedSalesWorkspaceKey();
+        if (!shouldAutoActivateRememberedWorkspace(remembered)) return;
         const selected = available.find(
           (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
         );
@@ -1072,6 +1075,7 @@ export default function PosPage() {
       returnsOpen ||
       documentTypeOpen ||
       cashMovementDirection ||
+      denominationCalculatorOpen ||
       closurePreview
     ) return;
     const canOpenSessionAction =
@@ -1083,6 +1087,7 @@ export default function PosPage() {
         !customerSearchOpen &&
         !discountOpen &&
         !printerOpen &&
+        !denominationCalculatorOpen &&
         !closurePreview &&
         !confirmation;
     if (event.ctrlKey || event.altKey || event.shiftKey) return;
@@ -1233,6 +1238,7 @@ export default function PosPage() {
         !customerSearchOpen &&
         !discountOpen &&
         !printerOpen &&
+        !denominationCalculatorOpen &&
         !closurePreview &&
         !confirmation &&
         !invoiceSearchOpen &&
@@ -1254,6 +1260,7 @@ export default function PosPage() {
     closurePreview,
     confirmation,
     customerSearchOpen,
+    denominationCalculatorOpen,
     discountOpen,
     documentTypeOpen,
     invoiceSearchOpen,
@@ -1277,6 +1284,49 @@ export default function PosPage() {
     window.addEventListener("keydown", openSynchronizationEvents, true);
     return () => window.removeEventListener("keydown", openSynchronizationEvents, true);
   }, [client]);
+
+  useEffect(() => {
+    const openDenominationCalculator = (event: KeyboardEvent) => {
+      if (!isPosDenominationCalculatorShortcut(event) || !client) return;
+      const canOpen =
+        !busy &&
+        !temporaryOpen &&
+        !paymentOpen &&
+        !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
+        !printerOpen &&
+        !denominationCalculatorOpen &&
+        !closurePreview &&
+        !confirmation &&
+        !invoiceSearchOpen &&
+        !returnsOpen &&
+        !documentTypeOpen &&
+        !cashMovementDirection;
+      if (!canOpen) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setDenominationCalculatorOpen(true);
+    };
+    window.addEventListener("keydown", openDenominationCalculator, true);
+    return () => window.removeEventListener("keydown", openDenominationCalculator, true);
+  }, [
+    busy,
+    cashMovementDirection,
+    client,
+    closurePreview,
+    confirmation,
+    customerSearchOpen,
+    denominationCalculatorOpen,
+    discountOpen,
+    documentTypeOpen,
+    invoiceSearchOpen,
+    paymentOpen,
+    printerOpen,
+    productSearchOpen,
+    returnsOpen,
+    temporaryOpen,
+  ]);
 
   async function capture(event: FormEvent) {
     event.preventDefault();
@@ -2705,6 +2755,18 @@ export default function PosPage() {
               <ArrowUpFromLine className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Salida de dinero</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setDenominationCalculatorOpen(true)}
+              disabled={busy}
+              title="Calculadora de denominaciones (Ctrl+D)"
+              aria-keyshortcuts="Control+D"
+              className="flex h-8 items-center gap-1.5 rounded-full border border-teal-300/20 px-3 text-xs font-semibold text-teal-100 transition hover:bg-teal-300/10 hover:text-white disabled:opacity-40"
+            >
+              <Calculator className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Denominaciones</span>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+D</kbd>
+            </button>
           </div>
           {client.mode === "edge" && (
             <button
@@ -3504,7 +3566,6 @@ export default function PosPage() {
 
       {closurePreview && (
         <PosCashClosureDialog
-          client={client}
           value={closurePreview}
           busy={busy}
           submitted={Boolean(closureAttempt)}
@@ -3516,6 +3577,18 @@ export default function PosPage() {
             focusScanner();
           }}
           onConfirm={confirmSalesSessionClosure}
+        />
+      )}
+
+      {denominationCalculatorOpen && client && (
+        <PosCashDenominationDialog
+          client={client}
+          businessName={workstation.businessName}
+          userName={workstation.userDisplayName}
+          onClose={() => {
+            setDenominationCalculatorOpen(false);
+            focusScanner();
+          }}
         />
       )}
 

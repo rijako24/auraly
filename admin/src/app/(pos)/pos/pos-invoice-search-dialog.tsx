@@ -155,7 +155,7 @@ export function PosInvoiceSearchDialog({
               <span className="min-w-0">
                 <span className="flex items-center gap-2"><span className="font-bold text-slate-950">{sale.documentNumber}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600">{sale.documentType === "SalesReceipt" ? "Comprobante POS" : "Factura"}</span></span>
                 <span className="mt-0.5 block truncate text-xs text-slate-500">
-                  DIAN {sale.fiscalNumber} · {sale.customerName} · {sale.customerIdentification}
+                  {sale.fiscalNumber ? `DIAN ${sale.fiscalNumber} · ` : ""}{sale.customerName} · {sale.customerIdentification}
                 </span>
               </span>
               <span className="hidden text-sm text-slate-600 sm:block">

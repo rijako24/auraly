@@ -60,10 +60,19 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
 
 - Venta: unicidad por `BusinessId + DocumentId`, clave idempotente y numeración fiscal.
 - Generación: lease con `UPDLOCK`, `READPAST`, `ROWLOCK` y `RowVersion`.
-- Artefactos: un tipo/versión por documento; SHA-256 persistido.
+- Artefactos: un tipo/versión por documento; SHA-256 persistido. Una corrección
+  manual de un documento `DianRejected` conserva el `DocumentId`, número fiscal,
+  CUFE y snapshot comercial, regenera XML, firma y ZIP en la siguiente versión y
+  conserva los artefactos y el intento rechazado como historial. La nueva firma
+  conserva la fecha/hora fiscal original para cumplir `FAD09e`; el instante real
+  de regeneración permanece separado en `GeneratedAt` y en la versión del artefacto.
 - Envío: intento y solicitud sanitizada se guardan antes de llamar a DIAN.
 - ZIP: se genera una vez de forma determinística y se reutiliza.
 - Resultado: aceptación/rechazo publica un solo evento de outbox.
+- Rechazo DIAN: el reintento autorizado vuelve a `PendingGeneration`, elimina la
+  clave de seguimiento terminal anterior y normaliza únicamente la proyección UBL
+  exigida por el anexo (por ejemplo, códigos DIAN y grupos obligatorios). No vuelve
+  a ejecutar checkout, inventario, pago ni contabilidad y no consume consecutivo.
 - Timeout con `TrackId`: pasa a consulta, no crea otro documento.
 - Timeout ambiguo sin `TrackId`: queda `PendingDianResult` para intervención/consulta; la retransmisión automática queda bloqueada.
 - POS: el cursor solo avanza después de persistir la página; reiniciar no pierde venta, estado ni outbox.

@@ -14,7 +14,11 @@ public sealed record FiscalIssuerWorkConfiguration(
     string TaxSchemeName, string IdentificationTypeCode, PosSaleUblAddressContract Address,
     string SoftwareId, string SoftwarePinSecretReference, int Environment,
     string CertificateProvider, string CertificateKeyReference, string CertificateThumbprint,
-    string TechnicalAnnexVersion, string GeneratorVersion);
+    string TechnicalAnnexVersion, string GeneratorVersion,
+    string? LegalProfileOrganizationType = null,
+    string? LegalProfileName = null,
+    string? LegalProfileEmail = null,
+    string? LegalProfileTelephone = null);
 
 public sealed record FiscalAuthorizationWorkConfiguration(
     string Number, DateOnly ValidFrom, DateOnly ValidUntil, string Prefix,
@@ -28,7 +32,8 @@ public sealed record FiscalGenerationWorkItem(
     FiscalIssuerWorkConfiguration Issuer, FiscalAuthorizationWorkConfiguration? Authorization,
     PurchaseSupportFiscalSnapshot? SupportDocument = null,
     ElectronicPayrollSnapshot? ElectronicPayroll = null,
-    ServiceInvoiceSnapshot? ServiceInvoice = null);
+    ServiceInvoiceSnapshot? ServiceInvoice = null,
+    bool IsCorrection = false);
 
 public sealed record FiscalGeneratedArtifacts(
     byte[] UnsignedXml, string UnsignedSha256Hex, byte[] SignedXml, string SignedSha256Hex,
@@ -98,11 +103,17 @@ public sealed class FiscalGenerationWorker(
             }
 
             var generatedAt = timeProvider.GetUtcNow();
+            var signingTime = work.IsCorrection &&
+                              work.FiscalDocumentType == FiscalDocumentTypeCodes.Invoice
+                ? work.Sale?.FiscalSnapshot?.IssuedAt
+                  ?? work.ServiceInvoice?.FiscalSnapshot.IssuedAt
+                  ?? generatedAt
+                : generatedAt;
             var signed = await signer.SignAsync(new FiscalSigningRequest(
                 work.BusinessId, work.Issuer.SupplierTaxId, unsigned.Xml,
                 new FiscalCertificateReference(work.BusinessId, work.Issuer.CertificateProvider,
                     work.Issuer.CertificateKeyReference, work.Issuer.CertificateThumbprint),
-                generatedAt), cancellationToken);
+                signingTime), cancellationToken);
             await store.CompleteAsync(work, new FiscalGeneratedArtifacts(
                 unsigned.Xml, unsigned.Sha256Hex, signed.SignedXml, signed.Sha256Hex,
                 generated.UniqueCode, generated.QrPayload,
@@ -212,7 +223,7 @@ public sealed class FiscalGenerationWorker(
                 ubl.Authorization.RangeStart, ubl.Authorization.RangeEnd),
             new DianSoftware(ubl.Supplier.Identification, ubl.Supplier.CheckDigit,
                 ubl.SoftwareIdentificationCode, pin),
-            Party(ubl.Supplier), Party(ubl.Customer), lines, taxes,
+            SupplierParty(ubl.Supplier, work), Party(ubl.Customer), lines, taxes,
             new DianPayment(ubl.PaymentFormCode, ubl.PaymentMeansCode, ubl.DueDate,
                 ubl.PaymentReference),
             sale.FiscalSnapshot.UntaxedAmount, sale.FiscalSnapshot.UntaxedAmount,
@@ -290,7 +301,7 @@ public sealed class FiscalGenerationWorker(
                 ubl.Authorization.ValidUntil, ubl.Authorization.Prefix,
                 ubl.Authorization.RangeStart, ubl.Authorization.RangeEnd),
             new DianSoftware(ubl.Supplier.Identification, ubl.Supplier.CheckDigit,
-                ubl.SoftwareIdentificationCode, pin), Party(ubl.Supplier), Party(ubl.Customer),
+                ubl.SoftwareIdentificationCode, pin), SupplierParty(ubl.Supplier, work), Party(ubl.Customer),
             lines, taxes, new DianPayment(ubl.PaymentFormCode, ubl.PaymentMeansCode,
                 ubl.DueDate, ubl.PaymentReference), snapshot.UntaxedAmount,
             snapshot.UntaxedAmount, snapshot.UntaxedAmount + snapshot.TaxAmount,
@@ -678,10 +689,38 @@ public sealed class FiscalGenerationWorker(
 
 
     private static DianParty Party(PosSaleUblPartyContract value) => new(
-        value.Identification, value.CheckDigit, value.IdentificationTypeCode,
+        value.Identification, value.CheckDigit, DianIdentificationTypeCode(value.IdentificationTypeCode),
         value.OrganizationTypeCode, value.RegistrationName, value.TradeName,
         value.TaxResponsibilityCode, value.TaxSchemeId, value.TaxSchemeName,
         Address(value.Address), value.Email, value.Telephone);
+
+    private static DianParty SupplierParty(
+        PosSaleUblPartyContract value,
+        FiscalGenerationWorkItem work)
+    {
+        var frozen = Party(value);
+        if (!work.IsCorrection) return frozen;
+
+        var issuer = work.Issuer;
+        return frozen with
+        {
+            OrganizationTypeCode = issuer.LegalProfileOrganizationType == "NaturalPerson" ? "2" : "1",
+            RegistrationName = string.IsNullOrWhiteSpace(issuer.LegalProfileName)
+                ? frozen.RegistrationName
+                : issuer.LegalProfileName.Trim(),
+            Email = string.IsNullOrWhiteSpace(issuer.LegalProfileEmail)
+                ? frozen.Email
+                : issuer.LegalProfileEmail.Trim(),
+            Telephone = string.IsNullOrWhiteSpace(issuer.LegalProfileTelephone)
+                ? frozen.Telephone
+                : issuer.LegalProfileTelephone.Trim()
+        };
+    }
+
+    private static string DianIdentificationTypeCode(string value) =>
+        PosSaleFiscalMappings.DianIdentificationTypeCode(value)
+        ?? throw new FiscalSnapshotDataException(
+            $"Identification type '{value}' has no DIAN equivalence.");
 
     private static DianAddress Address(PosSaleUblAddressContract value) => new(
         value.MunicipalityCode, value.CityName, value.DepartmentName, value.DepartmentCode,

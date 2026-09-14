@@ -101,7 +101,7 @@ public sealed class WorkSessionService(
         OpenWorkSessionRequest request,
         CancellationToken cancellationToken = default)
     {
-        Demand(identity, WorkSessionPermissionCodes.Open);
+        ValidateUserIdentity(identity);
         ValidateOpen(request);
         if (identity.BusinessId != request.BusinessId)
             throw new WorkSessionForbiddenException(
@@ -473,13 +473,18 @@ public sealed class WorkSessionService(
 
     private static void Demand(WorkSessionIdentity identity, string permission)
     {
+        ValidateUserIdentity(identity);
+        if (!identity.Permissions.Contains(permission))
+            throw new WorkSessionForbiddenException(
+                $"Permission '{permission}' is required.");
+    }
+
+    private static void ValidateUserIdentity(WorkSessionIdentity identity)
+    {
         ArgumentNullException.ThrowIfNull(identity);
         if (identity.UserId == Guid.Empty || identity.TenantId == Guid.Empty)
             throw new WorkSessionForbiddenException(
                 "The authenticated user context is incomplete.");
-        if (!identity.Permissions.Contains(permission))
-            throw new WorkSessionForbiddenException(
-                $"Permission '{permission}' is required.");
     }
 
     private static void ValidateDeviceIdentity(WorkSessionIdentity identity)

@@ -67,7 +67,8 @@ public static class SellerOrdersApi
 public sealed record SellerOrderActor(Guid UserId,Guid TenantId,Guid BusinessId,IReadOnlySet<string> Permissions);
 
 public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,SqlInventoryOperationStore inventory,
-    SalesReportingProcessingCoordinator reporting,SqlSellerOrderReportingJobWriter reportingJobs)
+    SalesReportingProcessingCoordinator reporting,SqlSellerOrderReportingJobWriter reportingJobs,
+    ILogger<SellerOrderWriter> logger)
 {
     public async Task<SellerOrdersApi.SellerOrderResult> UpdateReviewAsync(SellerOrderActor actor, Guid orderId,
         SellerOrdersApi.UpdateSellerOrderRequest request,CancellationToken token)
@@ -78,11 +79,14 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             throw new SellerOrderForbiddenException("Permission 'orders.update' or 'orders.review' is required.");
         if(orderId==Guid.Empty||request.CustomerId==Guid.Empty||string.IsNullOrWhiteSpace(request.IdempotencyKey)||request.Lines.Count is <1 or >500||request.Lines.Any(line=>line.ProductId==Guid.Empty||line.Quantity<=0||line.UnitPrice is null or <=0||line.DiscountAmount<0)||request.Notes?.Length>1000)
             throw new SellerOrderValidationException("El pedido requiere productos, cantidades y una clave de actualización válidos.");
+        var timing=System.Diagnostics.Stopwatch.StartNew();
         await using var connection=connections.Create();
         await connection.OpenAsync(token);
+        var openedAt=timing.ElapsedMilliseconds;
         await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);
         var editable=await SellerOrderReviewPersistence.FindEditableAsync(connection,transaction,orderId,actor.BusinessId,actor.UserId,request.WorkSessionId,token)
             ?? throw new SellerOrderConflictException("El pedido no existe, no te pertenece, ya fue facturado o no conserva su configuración de bodega.");
+        var editableAt=timing.ElapsedMilliseconds;
         if(editable.Status is not (2 or 5))throw new SellerOrderConflictException("Solo se puede editar un pedido disponible o en revisión que todavía no haya sido facturado.");
         var number=editable.Number;var customerId=request.CustomerId;var warehouseId=editable.WarehouseId;var ordersWarehouseId=editable.OrdersWarehouseId;
         var requested=NormalizeOrderLines(request.Lines);
@@ -114,7 +118,34 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         var lines=new List<OrderLine>();var position=0;
         try
         {
+            var metadataOnly=editable.Status==2
+                && editable.Lines.All(original=>!original.ManageStock||original.ReservedQuantity==original.Quantity)
+                && customerId==editable.CustomerId
+                && requested.Length==editable.Lines.Count
+                && requested.All(input=>editable.Lines.SingleOrDefault(original=>original.Position==input.Position) is { } original
+                    && input.ProductId==original.ProductId
+                    && input.Quantity==original.Quantity
+                    && input.UnitPrice==original.UnitPrice
+                    && input.DiscountAmount==original.DiscountAmount
+                    && input.PriceSource==original.PriceSource
+                    && input.DocumentUnitCost==original.DocumentUnitCost);
+            if(metadataOnly)
+            {
+                await SellerOrderReviewPersistence.UpdateMetadataAsync(connection,transaction,orderId,actor.BusinessId,request.Notes,actor.UserId,request.WorkSessionId,token);
+                var metadataUpdatedAt=timing.ElapsedMilliseconds;
+                var metadataReportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
+                var metadataReportingAt=timing.ElapsedMilliseconds;
+                await transaction.CommitAsync(token);
+                var metadataCommittedAt=timing.ElapsedMilliseconds;
+                await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token,metadataReportingVersion);
+                var metadataTotal=editable.Lines.Sum(line=>decimal.Round(line.Quantity*line.UnitPrice-line.DiscountAmount,2,MidpointRounding.AwayFromZero));
+                logger.LogInformation(
+                    "Seller order {OrderId} metadata updated in {ElapsedMs} ms (open {OpenMs}, editable {EditableMs}, update {UpdateMs}, reporting {ReportingMs}, commit {CommitMs}).",
+                    orderId,timing.ElapsedMilliseconds,openedAt,editableAt-openedAt,metadataUpdatedAt-editableAt,metadataReportingAt-metadataUpdatedAt,metadataCommittedAt-metadataReportingAt);
+                return new(orderId,number,editable.Status==5?"InReview":"Confirmed",metadataTotal,editable.Status==5,editable.Status==5?["Requiere revisión de inventario."]:[]);
+            }
             var context=await LoadContextAsync(connection,transaction,actor,actor.BusinessId,warehouseId,customerId,null,token);
+            var contextAt=timing.ElapsedMilliseconds;
             if(context.OrdersWarehouseId!=ordersWarehouseId)throw new SellerOrderConflictException("El cliente seleccionado no comparte la bodega de pedidos configurada para este pedido.");
             var factsInput=requested.Concat(editable.Lines
                 .Where(original=>requested.All(input=>input.ProductId!=original.ProductId))
@@ -125,6 +156,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                     original.DocumentUnitCost)))
                 .ToArray();
             var resolvedLines=await ResolveProductFactsAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,factsInput,token);
+            var factsAt=timing.ElapsedMilliseconds;
             foreach(var input in requested)
             {
                 var line=resolvedLines[input.ProductId];
@@ -167,21 +199,38 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             }).ToList();
             var review=warnings.Count>0;
             var total=lines.Sum(line=>line.LineTotal);
-            var reservations=lines.Where(line=>line.ManageStock&&line.CanReserve)
-                .GroupBy(line=>line.ProductId).Select(group=>new{Key=group.Key,Quantity=group.Sum(line=>line.Quantity)}).ToArray();
-            var releases=editable.Lines.Where(line=>line.ReservedQuantity>0)
-                .GroupBy(line=>line.ProductId).Select(group=>new{Key=group.Key,Quantity=group.Sum(line=>line.ReservedQuantity)}).ToArray();
+            var desiredReservations=lines.Where(line=>line.ManageStock&&line.CanReserve)
+                .GroupBy(line=>line.ProductId)
+                .ToDictionary(group=>group.Key,group=>group.Sum(line=>line.Quantity));
+            var previousReservations=editable.Lines.Where(line=>line.ReservedQuantity>0)
+                .GroupBy(line=>line.ProductId)
+                .ToDictionary(group=>group.Key,group=>group.Sum(line=>line.ReservedQuantity));
+            var changedProducts=desiredReservations.Keys.Concat(previousReservations.Keys).Distinct().ToArray();
+            var releases=changedProducts
+                .Select(productId=>(Key:productId,Quantity:previousReservations.GetValueOrDefault(productId)-desiredReservations.GetValueOrDefault(productId)))
+                .Where(line=>line.Quantity>0)
+                .ToArray();
+            var reservations=changedProducts
+                .Select(productId=>(Key:productId,Quantity:desiredReservations.GetValueOrDefault(productId)-previousReservations.GetValueOrDefault(productId)))
+                .Where(line=>line.Quantity>0)
+                .ToArray();
             var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.DispatchTransfer,"inventory.system-warehouses.use"});
             var key=request.IdempotencyKey.Trim();
-            if(releases.Length>0)await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
-            if(reservations.Length>0)await TransferAsync(identity,$"seller-order-edit-reserve:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-reserve:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Nueva reserva del pedido {number}",reservations.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
+            if(releases.Length>0)await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases,connection,transaction,token);
+            if(reservations.Length>0)await TransferAsync(identity,$"seller-order-edit-reserve:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-reserve:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Nueva reserva del pedido {number}",reservations,connection,transaction,token);
             await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,customerId,context.Name,context.Identification,context.Email,context.Phone,context.Address,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
                 review?5:2,review?"StockReview":"InventoryTransferAccepted",review,
                 lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,line.DocumentUnitCost,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m,LinePosition=line.Position}))).ToArray(),
                 actor.UserId,request.WorkSessionId,token);
+            var replacedAt=timing.ElapsedMilliseconds;
             var reportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
+            var reportingAt=timing.ElapsedMilliseconds;
             await transaction.CommitAsync(token);
+            var committedAt=timing.ElapsedMilliseconds;
             await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token,reportingVersion);
+            logger.LogInformation(
+                "Seller order {OrderId} updated in {ElapsedMs} ms (open {OpenMs}, editable {EditableMs}, context {ContextMs}, facts {FactsMs}, replace {ReplaceMs}, reporting {ReportingMs}, commit {CommitMs}).",
+                orderId,timing.ElapsedMilliseconds,openedAt,editableAt-openedAt,contextAt-editableAt,factsAt-contextAt,replacedAt-factsAt,reportingAt-replacedAt,committedAt-reportingAt);
             return new(orderId,number,review?"InReview":"Confirmed",total,review,warnings);
         }
         catch(Exception error)

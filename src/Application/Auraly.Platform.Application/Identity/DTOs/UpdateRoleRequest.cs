@@ -1,3 +1,6 @@
 namespace Auraly.Platform.Application.Identity.DTOs;
 
-public record UpdateRoleRequest(string? Name, string? Description);
+public record UpdateRoleRequest(
+    string? Name,
+    string? Description,
+    IReadOnlyList<Guid>? PermissionIds = null);

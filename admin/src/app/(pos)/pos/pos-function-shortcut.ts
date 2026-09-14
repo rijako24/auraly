@@ -59,6 +59,18 @@ export function isPosCashDrawerShortcut(event: PosCashDrawerKeyboardEvent): bool
   );
 }
 
+export function isPosDenominationCalculatorShortcut(
+  event: PosCashDrawerKeyboardEvent,
+): boolean {
+  return (
+    event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    !event.metaKey &&
+    event.key.toLowerCase() === "d"
+  );
+}
+
 export function capturePosFunctionShortcut(
   event: PosFunctionKeyboardEvent,
   onShortcut: (shortcut: string) => void,

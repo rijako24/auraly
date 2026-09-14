@@ -175,12 +175,12 @@ public sealed record OnlineSalesIssuedSale(
     Guid DocumentId,
     string DocumentType,
     string DocumentNumber,
-    string FiscalNumber,
+    string? FiscalNumber,
     DateTimeOffset IssuedAt,
     decimal Total,
     string CustomerIdentification,
     string CustomerName,
-    string FiscalStatus);
+    string? FiscalStatus);
 
 public sealed record OnlineSalesIssuedSalePage(
     IReadOnlyList<OnlineSalesIssuedSale> Items,

@@ -9,17 +9,11 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Concurrent_open_requests_resume_the_same_work_session()
+    public async Task Opening_or_resuming_the_own_session_is_a_system_action_without_a_permission()
     {
         var userId = await CreateUserAsync("work-session-concurrent");
-        using var firstClient = fixture.CreateUserClient(
-            userId,
-            WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open);
-        using var secondClient = fixture.CreateUserClient(
-            userId,
-            WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open);
+        using var firstClient = fixture.CreateUserClient(userId);
+        using var secondClient = fixture.CreateUserClient(userId);
         var command = new OpenWorkSessionRequest(
             fixture.BusinessId,
             fixture.WarehouseId,
@@ -55,8 +49,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         }
         using var client = fixture.CreateUserClient(
             userId,
-            WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open);
+            WorkSessionPermissionCodes.Read);
 
         var first = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
@@ -135,8 +128,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         }
         using var client = fixture.CreateUserClient(
             userId,
-            WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open);
+            WorkSessionPermissionCodes.Read);
         client.DefaultRequestHeaders.Add("X-Tenant-Id", activeTenantId.ToString("D"));
 
         using var response = await client.GetAsync(
@@ -167,8 +159,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("work-session-device-attach");
         using var client = fixture.CreateUserClient(
             userId,
-            WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open);
+            WorkSessionPermissionCodes.Read);
 
         var openedOnline = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
@@ -205,8 +196,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     {
         var userId = await CreateUserAsync("work-session-scope");
         using var client = fixture.CreateUserClient(
-            userId,
-            WorkSessionPermissionCodes.Open);
+            userId);
 
         using (var otherBusiness = await client.PostAsJsonAsync(
                    "/api/commerce/v1/work-sessions/current",
@@ -229,12 +219,10 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var firstClient = fixture.CreateUserClient(
             firstUserId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close);
         using var secondClient = fixture.CreateUserClient(
             secondUserId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close);
         var command = new OpenWorkSessionRequest(
             fixture.BusinessId,
@@ -280,7 +268,6 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close);
         var opened = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId,
@@ -317,7 +304,6 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close);
         var opened = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
@@ -368,7 +354,6 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ManageCash);
         var opened = await OpenAsync(client, new OpenWorkSessionRequest(
@@ -441,8 +426,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("work-session-supervised-close");
         using var client = fixture.CreateUserClient(
             userId,
-            WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open);
+            WorkSessionPermissionCodes.Read);
         var opened = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId,
             fixture.WarehouseId,
@@ -467,7 +451,6 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var cashier = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close);
         var opened = await OpenAsync(cashier, new OpenWorkSessionRequest(
             fixture.BusinessId,
@@ -497,7 +480,6 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var administrator = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.CloseWithPausedSales);
         var closure = await CloseAsync(
@@ -515,7 +497,6 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close);
 
         using (var empty = await client.GetAsync(
@@ -644,7 +625,6 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
             WorkSessionPermissionCodes.ReconcileClosures);

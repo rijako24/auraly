@@ -94,7 +94,7 @@ public sealed class DianDebitNoteUblBuilder
         new(Cac + element,
             E(Cbc, "AdditionalAccountID", party.OrganizationTypeCode),
             new XElement(Cac + "Party",
-                IsFinalConsumer(party)
+                RequiresPartyIdentification(party)
                     ? new XElement(Cac + "PartyIdentification",
                         Identification(Cbc + "ID", party.Identification,
                             party.CheckDigit, party.IdentificationTypeCode))
@@ -160,8 +160,8 @@ public sealed class DianDebitNoteUblBuilder
     private static XElement Identification(XName name, string value, string check, string type) =>
         new(name, Agency(), type == "31" ? new XAttribute("schemeID", check) : null,
             new XAttribute("schemeName", type), value);
-    private static bool IsFinalConsumer(DianParty party) =>
-        party.Identification == "222222222222" && party.IdentificationTypeCode == "13";
+    private static bool RequiresPartyIdentification(DianParty party) =>
+        party.OrganizationTypeCode == "2";
     private static XElement ProviderId(
         XName name,
         string value,

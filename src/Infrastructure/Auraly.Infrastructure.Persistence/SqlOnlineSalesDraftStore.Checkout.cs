@@ -707,8 +707,13 @@ public sealed partial class SqlOnlineSalesDraftStore
               issuer.DepartmentCode,issuer.DepartmentName,
               issuer.CountryCode,issuer.CountryName,
               issuer.SoftwareIdentificationCode,
-              a.AuthorizedRangeStart,a.AuthorizedRangeEnd
+              a.AuthorizedRangeStart,a.AuthorizedRangeEnd,
+              profile.EntityType,profile.Email,profile.Phone
             FROM dbo.DocumentSeries ds WITH (UPDLOCK,HOLDLOCK)
+            JOIN dbo.Businesses business
+              ON business.BusinessId=ds.BusinessId AND business.IsActive=1
+            JOIN dbo.TenantLegalProfiles profile
+              ON profile.TenantId=business.TenantId
             JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
               ON fs.BusinessId=ds.BusinessId AND fs.DeviceId IS NULL
              AND fs.EmitterKind=N'Server'
@@ -743,7 +748,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 reader.GetString(12),
                 reader.GetString(19),
                 reader.GetString(25),
-                "1",
+                reader.GetString(36) == "NaturalPerson" ? "2" : "1",
                 reader.GetString(20),
                 reader.IsDBNull(21) ? reader.GetString(20) : reader.GetString(21),
                 reader.GetString(22),
@@ -756,7 +761,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.GetString(29),
                     reader.GetString(26),
                     reader.GetString(31),
-                    reader.GetString(32)));
+                    reader.GetString(32)),
+                reader.GetString(37),
+                reader.GetString(38));
             rows.Add(new CheckoutConfiguration(
                 reader.GetGuid(0),
                 reader.GetString(1),

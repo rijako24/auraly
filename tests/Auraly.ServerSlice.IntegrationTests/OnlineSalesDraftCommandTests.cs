@@ -223,7 +223,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new("@BusinessId", fixture.BusinessId), new("@ProductId", fixture.ProductId));
 
         using var client = fixture.CreateUserClient(
-            userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open,
+            userId, CommercePermissionCodes.SalesCreate,
             "promotions.read");
         using var listResponse = await client.GetAsync(
             $"/api/v1/businesses/{fixture.BusinessId:D}/promotions?page=1&pageSize=100");
@@ -373,8 +373,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             CommercePermissionCodes.SalesChangePrice,
             CommercePermissionCodes.SalesReadCostAndMargin,
             CommercePermissionCodes.SalesRemoveLine,
-            "orders.create",
-            WorkSessionPermissionCodes.Open);
+            "orders.create");
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await OpenAsync(client, workSession.WorkSessionId);
         var context = new OnlineSalesDraftContext(
@@ -643,8 +642,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         {
             using var client = fixture.CreateUserClient(
                 userId, CommercePermissionCodes.SalesCreate,
-                CommercePermissionCodes.SalesRestartDraft,
-                WorkSessionPermissionCodes.Open);
+                CommercePermissionCodes.SalesRestartDraft);
             var session = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenAsync(client, session.WorkSessionId);
             var captured = await MutateAsync<OnlineSalesDraft>(
@@ -715,8 +713,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         {
             using var client = fixture.CreateUserClient(
                 userId,
-                CommercePermissionCodes.SalesCreate,
-                WorkSessionPermissionCodes.Open);
+                CommercePermissionCodes.SalesCreate);
             var workSession = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenAsync(client, workSession.WorkSessionId);
             var captured = await MutateAsync<OnlineSalesDraft>(
@@ -796,7 +793,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         try
         {
             using var client = fixture.CreateUserClient(
-                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+                userId, CommercePermissionCodes.SalesCreate);
             var workSession = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenAsync(client, workSession.WorkSessionId);
             var withChild = await MutateAsync<OnlineSalesDraft>(
@@ -855,7 +852,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         try
         {
             using var client = fixture.CreateUserClient(
-                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+                userId, CommercePermissionCodes.SalesCreate);
             var workSession = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenAsync(client, workSession.WorkSessionId);
             var captured = await MutateAsync<OnlineSalesDraft>(
@@ -916,7 +913,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         try
         {
             using var client = fixture.CreateUserClient(
-                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+                userId, CommercePermissionCodes.SalesCreate);
             var workSession = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenAsync(client, workSession.WorkSessionId);
             var captured = await MutateAsync<OnlineSalesDraft>(
@@ -963,7 +960,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         try
         {
             using var client = fixture.CreateUserClient(
-                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+                userId, CommercePermissionCodes.SalesCreate);
             var workSession = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenAsync(client, workSession.WorkSessionId);
             using var rejectedRequest = Mutation(

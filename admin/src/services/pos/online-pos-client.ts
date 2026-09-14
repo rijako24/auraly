@@ -184,12 +184,12 @@ type OnlineIssuedSalePage = {
     documentId: string;
     documentType: PosSaleDocumentType;
     documentNumber: string;
-    fiscalNumber: string;
+    fiscalNumber: string | null;
     issuedAt: string;
     total: number;
     customerIdentification: string;
     customerName: string;
-    fiscalStatus: string;
+    fiscalStatus: string | null;
   }>;
   hasMore: boolean;
   nextOffset: number | null;

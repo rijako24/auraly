@@ -87,11 +87,18 @@ con el editor de producto que la consuma.
 
 ## POS Edge
 
-La búsqueda offline continúa usando el catálogo SQLite ya sincronizado. La
-creación de un cliente requiere conexión porque debe resolver identidad global y
-evitar duplicados. Tras crear, POS Edge descarga la proyección actualizada antes
-de devolver el cliente a facturación. Reiniciar el proceso conserva las facturas,
-series y outbox existentes porque no se reemplaza la base local.
+La instalación no decide el flujo: un equipo instalado sin enrolar usa la API web
+autenticada para geografía y creación rápida. El permiso `pos.customer.create`
+autoriza ese caso de uso y la lectura estrictamente necesaria de país, división y
+ciudad, pero no permite administrar los maestros.
+
+Un equipo enrolado descarga la jerarquía geográfica durante la preparación y la
+conserva en SQLite junto al catálogo operativo. Puede reservar el cliente y
+encolarlo localmente sin conexión; al sincronizar, la API ejecuta el mismo caso de
+uso canónico de Party/Customer, con identidad global, aislamiento por Business e
+idempotencia. SQLite aporta durabilidad y lectura offline, no reglas de negocio
+paralelas ni otra fuente de verdad. Reiniciar el proceso conserva ventas, clientes
+pendientes, series y outbox porque no se reemplaza la base local.
 
 ## Alcance pendiente deliberado
 

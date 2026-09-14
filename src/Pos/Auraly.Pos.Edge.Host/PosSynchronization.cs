@@ -156,6 +156,11 @@ internal sealed class PosSynchronizationWork(
                     async () =>
                     {
                         await catalog.SynchronizeAsync(cancellationToken);
+                        if (initialPreparation)
+                        {
+                            await customerDirectory.RefreshGeographyAsync(cancellationToken);
+                            await cashMovements.RefreshReasonsAsync(cancellationToken);
+                        }
                     }));
             }
             if (!initialPreparation && trigger.HasFlag(PosSynchronizationTrigger.Configuration))

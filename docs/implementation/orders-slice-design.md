@@ -61,6 +61,15 @@ La reserva y la liberación nunca se fragmentan por producto:
   crea `TransferOut`/`TransferIn` por línea y rechaza un pedido que no haya sido
   liberado por el flujo anterior.
 
+Una edición reemplaza el detalle pero mueve inventario por diferencia agregada:
+si una cantidad no cambia no crea traslados; los aumentos producen como máximo
+una transferencia multilínea `VEN -> PED` y las disminuciones como máximo una
+`PED -> VEN`, dentro de la misma transacción. El presupuesto del endpoint de
+actualización es menor a un segundo para una edición sin cambio de reserva. Si
+el pedido confirmado conserva la misma identidad comercial, líneas y reservas,
+el writer actualiza únicamente los metadatos y su trabajo durable de reportería;
+no vuelve a resolver catálogo, disponibilidad ni reemplaza el detalle.
+
 ### Facturar varios
 
 Una selección produce una factura independiente por pedido. La operación completa tiene idempotencia durable, conserva progreso y devuelve resultado por pedido. Un pago ya confirmado por el pedido se registra como transferencia; de lo contrario se usa el medio seleccionado. Nunca se fusionan pedidos en una sola factura.

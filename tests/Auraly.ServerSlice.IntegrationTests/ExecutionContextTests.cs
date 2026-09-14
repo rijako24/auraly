@@ -55,7 +55,7 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
         try
         {
             using var client = fixture.CreateAdminClientWithBusinessHeader(
-                businessId, "work-sessions.open", "work-sessions.read");
+                businessId, "work-sessions.read");
             client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString("D"));
 
             using var response = await client.PostAsJsonAsync(
@@ -286,7 +286,7 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
             INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
             SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
             FROM dbo.Permissions
-            WHERE Resource IN (N'work-sessions.open',N'work-sessions.read');
+            WHERE Resource=N'work-sessions.read';
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);

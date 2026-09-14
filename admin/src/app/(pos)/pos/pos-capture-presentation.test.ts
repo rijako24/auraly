@@ -6,6 +6,7 @@ import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } fr
 import {
   capturePosFunctionShortcut,
   isPosCashDrawerShortcut,
+  isPosDenominationCalculatorShortcut,
   POS_ACTION_SHORTCUTS,
   resolvePosFunctionShortcut,
 } from "./pos-function-shortcut";
@@ -122,5 +123,20 @@ test("abre el cajón únicamente con Control+A", () => {
   }), false);
   assert.equal(isPosCashDrawerShortcut({
     key: "a", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false,
+  }), false);
+});
+
+test("abre la calculadora de denominaciones únicamente con Control+D", () => {
+  assert.equal(isPosDenominationCalculatorShortcut({
+    key: "d", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false,
+  }), true);
+  assert.equal(isPosDenominationCalculatorShortcut({
+    key: "D", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false,
+  }), true);
+  assert.equal(isPosDenominationCalculatorShortcut({
+    key: "d", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
+  }), false);
+  assert.equal(isPosDenominationCalculatorShortcut({
+    key: "d", ctrlKey: true, altKey: true, shiftKey: false, metaKey: false,
   }), false);
 });

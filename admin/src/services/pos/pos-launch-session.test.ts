@@ -74,9 +74,9 @@ test("an unenrolled installation opens the same shared Auraly login", () => {
   assert.equal(installedPosLaunchDestination(null), "/login");
 });
 
-test("an unenrolled installed runtime always presents the enrollment choice", () => {
-  assert.equal(shouldAutoActivateRememberedWorkspace(true), false);
-  assert.equal(shouldAutoActivateRememberedWorkspace(false), true);
+test("an unenrolled installation resumes its remembered online workspace", () => {
+  assert.equal(shouldAutoActivateRememberedWorkspace(null), false);
+  assert.equal(shouldAutoActivateRememberedWorkspace("business-a:warehouse-a"), true);
 });
 
 test("enrollment is the single owner of installed runtime selection", () => {

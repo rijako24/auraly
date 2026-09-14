@@ -91,7 +91,7 @@ export type PosIssuedSaleSummary = {
   documentId: { value: string };
   documentType: PosSaleDocumentType;
   documentNumber: string;
-  fiscalNumber: string;
+  fiscalNumber: string | null;
   issuedAt: string;
   total: number;
   customerIdentification: string;

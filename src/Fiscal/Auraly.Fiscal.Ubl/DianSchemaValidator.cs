@@ -93,6 +93,7 @@ public sealed class DianSchemaValidator
         ValidateProvider(document, Sts + "ProviderID", null, null, errors);
         ValidateProvider(document, Sts + "AuthorizationProviderID", "800197268", "4", errors);
         ValidateNitIdentifications(document, errors);
+        ValidatePartyIdentifications(document, errors);
         ValidateFinalConsumer(document, errors);
         ValidateCountryLanguage(document, errors);
         ValidateTaxResponsibilityListNames(document, errors);
@@ -323,6 +324,41 @@ public sealed class DianSchemaValidator
         var taxScheme = taxParty?.Element(Cac + "TaxScheme");
         RequireValue(taxScheme?.Element(Cbc + "ID"), "ZZ", "FAK40 TaxScheme/ID", errors);
         RequireValue(taxScheme?.Element(Cbc + "Name"), "No aplica", "FAK41 TaxScheme/Name", errors);
+    }
+
+    private static void ValidatePartyIdentifications(XDocument document, List<string> errors)
+    {
+        foreach (var partyElementName in new[]
+                 {
+                     "AccountingSupplierParty",
+                     "AccountingCustomerParty"
+                 })
+        {
+            foreach (var account in document.Descendants(Cac + partyElementName))
+            {
+                var organizationType = account.Element(Cbc + "AdditionalAccountID")?.Value.Trim();
+                var party = account.Element(Cac + "Party");
+                var partyIdentification = party?
+                    .Element(Cac + "PartyIdentification")?
+                    .Element(Cbc + "ID");
+                if (string.Equals(organizationType, "2", StringComparison.Ordinal) &&
+                    string.IsNullOrWhiteSpace(partyIdentification?.Value))
+                    errors.Add(
+                        $"Error: FAK61/FAK62 {partyElementName}/PartyIdentification es obligatorio cuando AdditionalAccountID es '2'.");
+
+                var identifications = party?.Descendants(Cbc + "CompanyID").ToList() ?? [];
+                if (partyIdentification is not null)
+                    identifications.Add(partyIdentification);
+                foreach (var identification in identifications)
+                {
+                    var typeCode = identification.Attribute("schemeName")?.Value;
+                    if (string.IsNullOrWhiteSpace(typeCode) ||
+                        typeCode.Any(character => !char.IsAsciiDigit(character)))
+                        errors.Add(
+                            $"Error: FAK48 {partyElementName}/@schemeName debe usar un código numérico de identificación DIAN.");
+                }
+            }
+        }
     }
 
     private static void RequireValue(XElement? element, string expected, string field, List<string> errors)

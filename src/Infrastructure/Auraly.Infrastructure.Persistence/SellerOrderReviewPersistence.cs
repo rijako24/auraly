@@ -86,6 +86,27 @@ public static class SellerOrderReviewPersistence
         return new EditableSellerOrder(number, customerId, status, warehouseId, ordersWarehouseId, lines);
     }
 
+    public static async Task UpdateMetadataAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid orderId,
+        Guid businessId,
+        string? notes,
+        Guid userId,
+        Guid? workSessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = Procedure("dbo.SellerOrderMetadataUpdate", connection, transaction);
+        command.Parameters.AddRange([
+            Parameter("@OrderId", orderId),
+            Parameter("@BusinessId", businessId),
+            Parameter("@Notes", notes),
+            Parameter("@UserId", userId),
+            Parameter("@WorkSessionId", workSessionId)
+        ]);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public static async Task ReplaceAsync(
         SqlConnection connection,
         SqlTransaction transaction,

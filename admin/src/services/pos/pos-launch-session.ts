@@ -35,7 +35,7 @@ export function installedPosLaunchDestination(health: PosLaunchHealth | null) {
 }
 
 export function shouldAutoActivateRememberedWorkspace(
-  installedRuntimeAvailable: boolean,
+  rememberedWorkspaceKey: string | null,
 ) {
-  return !installedRuntimeAvailable;
+  return Boolean(rememberedWorkspaceKey);
 }

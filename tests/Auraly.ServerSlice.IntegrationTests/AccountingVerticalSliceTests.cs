@@ -888,7 +888,6 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             TaxationPermissionCodes.ViewWithholdingRules,
             TaxationPermissionCodes.ManageWithholdingRules,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ManageCash,
             WorkSessionPermissionCodes.ReadCashDifferences);
@@ -950,7 +949,6 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using (var cashier = fixture.CreateUserClient(
                    cashierId,
                    WorkSessionPermissionCodes.Read,
-                   WorkSessionPermissionCodes.Open,
                    WorkSessionPermissionCodes.Close,
                    WorkSessionPermissionCodes.ManageCash,
                    WorkSessionPermissionCodes.ReadCashDifferences))

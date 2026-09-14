@@ -63,6 +63,22 @@ public sealed class FiscalGenerationWorkerTests
         Assert.Equal(FiscalDocumentStatusCodes.MissingMandatoryFiscalData, store.FinalStatus);
         Assert.Contains("tax rate differs", store.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public async Task Dian_rejected_invoice_correction_preserves_the_original_fiscal_signing_date()
+    {
+        var work = CreateWork() with { IsCorrection = true };
+        var store = new TestStore(work);
+        var worker = CreateWorker(store);
+
+        Assert.True(await worker.ProcessAsync(
+            work.BusinessId, work.DocumentId, "worker-a"));
+
+        var artifacts = Assert.IsType<FiscalGeneratedArtifacts>(store.Completed);
+        Assert.Equal(work.Sale!.FiscalSnapshot!.IssuedAt, artifacts.SignedAt);
+        Assert.NotEqual(artifacts.GeneratedAt, artifacts.SignedAt);
+    }
+
     private static FiscalGenerationWorker CreateWorker(TestStore store) => new(
         store, new TestPinProvider(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
         new DianDebitNoteUblBuilder(), new DianSchemaValidator(),

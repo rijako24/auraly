@@ -41,6 +41,13 @@ public sealed class DianCreditNoteUblTests
             .Elements(DianUblNamespaces.Cbc + "CompanyID").Single();
         Assert.Equal("13", customerIdentification.Attribute("schemeName")?.Value);
         Assert.Null(customerIdentification.Attribute("schemeID"));
+        var customerPartyIdentification = xml
+            .Descendants(DianUblNamespaces.Cac + "AccountingCustomerParty").Single()
+            .Descendants(DianUblNamespaces.Cac + "PartyIdentification")
+            .Elements(DianUblNamespaces.Cbc + "ID").Single();
+        Assert.Equal("8355990", customerPartyIdentification.Value);
+        Assert.Equal("13", customerPartyIdentification.Attribute("schemeName")?.Value);
+        Assert.Null(customerPartyIdentification.Attribute("schemeID"));
     }
 
     [Fact]

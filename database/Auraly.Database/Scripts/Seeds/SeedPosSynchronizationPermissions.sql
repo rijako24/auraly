@@ -43,9 +43,9 @@ DELETE assignment
 FROM dbo.RolePermissions assignment
 INNER JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
 WHERE permissionValue.Resource IN(
-    N'pos.synchronization.events.read',N'pos.approvals.receive_notifications',N'pos.orders');
+    N'pos.identity.sync',N'pos.synchronization.events.read',N'pos.approvals.receive_notifications',N'pos.orders');
 
 DELETE FROM dbo.Permissions
 WHERE Resource IN(
-    N'pos.synchronization.events.read',N'pos.approvals.receive_notifications',N'pos.orders');
+    N'pos.identity.sync',N'pos.synchronization.events.read',N'pos.approvals.receive_notifications',N'pos.orders');
 GO

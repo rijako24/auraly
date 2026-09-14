@@ -31,8 +31,12 @@ snapshot JSON con SHA-256 y se verifica antes de cada lectura.
 Los permisos efectivos son:
 
 - `work-sessions.read`
-- `work-sessions.open`
 - `work-sessions.close`
+
+Abrir o recuperar la sesión propia es una acción obligatoria del sistema para
+todo usuario autenticado dentro de su negocio; no se publica ni se evalúa como
+permiso configurable. La sincronización de identidad mínima de un POS enrolado
+sigue la misma regla y tampoco forma parte del catálogo de permisos de roles.
 
 La venta existente ya conecta cada pago procesado con la `WorkSession` mediante
 `WorkSessionMovements`; sus pruebas siguen comprobando una sola venta, un solo

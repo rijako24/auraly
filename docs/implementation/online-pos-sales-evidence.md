@@ -24,7 +24,7 @@ Una venta online siempre pertenece a una caja real.
 6. Al cobrar, el servidor toma ambos consecutivos de forma atómica, congela el snapshot fiscal, calcula CUFE/QR y procesa venta, inventario, pago, caja, impuestos y outbox una sola vez.
 7. La clave idempotente del checkout es estable por borrador y el BFF la conserva.
 8. La respuesta contiene el siguiente borrador vacío; la pantalla queda lista para otra venta.
-9. La representación de 80 mm se construye desde el snapshot recibido del servidor. La reimpresión busca el documento por numeración y usa el mismo snapshot.
+9. La representación de 80 mm se construye desde el snapshot recibido del servidor. La búsqueda y reimpresión usan `DocumentProcessingPayloads`, el payload inmutable común a facturas y comprobantes; no exigen un `FiscalSnapshot` que un comprobante comercial no debe tener.
 10. El QR se entrega como SVG autenticado y validado contra negocio, sede y caja.
 
 ## Conectividad
@@ -64,7 +64,7 @@ Resultados:
 - Next.js 14.2.21: build correcto; ruta `/pos` generada.
 - DACPAC: 0 errores y 0 advertencias.
 
-Las pruebas cubren emisión online, dos cajeros concurrentes en la misma caja, idempotencia, inventario, pago, movimiento de caja, impuestos, historial, recibo exacto, QR, autorización por caja, reimpresión y rechazo SQL de rangos fiscales solapados.
+Las pruebas cubren emisión online, dos cajeros concurrentes en la misma caja, idempotencia, inventario, pago, movimiento de caja, impuestos, historial de facturas y comprobantes, recibo exacto, QR, autorización por caja, reimpresión de ambos tipos documentales y rechazo SQL de rangos fiscales solapados.
 
 ## Validación conectada adicional
 

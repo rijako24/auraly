@@ -32,7 +32,7 @@ const permissionScopes: Record<string, string[]> = {
   "/dashboard/products/pricing": ["pricing."],
   "/dashboard/products/price-segments": ["pricing.segments."],
   "/dashboard/promotions": ["promotions."],
-  "/pos": ["sales.create", "sales.change-price", "sales.below-cost", "sales.reprint", "sales.lines.", "sales.drafts.", "sales.void", "pos.", "work-sessions.open", "work-sessions.read", "work-sessions.close", "work-sessions.cash.", "enrolled_devices.", "fiscal.pos."],
+  "/pos": ["sales.create", "sales.change-price", "sales.below-cost", "sales.reprint", "sales.lines.", "sales.drafts.", "sales.void", "pos.", "work-sessions.read", "work-sessions.close", "work-sessions.cash.", "enrolled_devices.", "fiscal.pos."],
   "/dashboard/inventory": ["inventory."],
   "/dashboard/purchasing/goods-receipts": ["purchasing.goods-receipts."],
   "/dashboard/purchasing/purchase-orders": ["purchasing.purchase-orders."],
@@ -101,7 +101,6 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
   const actorPermissions = useAuthStore((state) => state.user?.permissions ?? []);
   const canCreateRole = actorPermissions.includes("roles.create");
   const canUpdateRole = actorPermissions.includes("roles.update");
-  const canAssignPermissions = actorPermissions.includes("roles.assign_permissions");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -112,7 +111,10 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
   const workspaceQuery = useQuery({ queryKey: ["roles", sourceId, "permission-workspace"], queryFn: () => rolesApi.getPermissionWorkspace(sourceId!), enabled: Boolean(sourceId) });
   const catalogQuery = useQuery({ queryKey: ["permissions", "catalog"], queryFn: rolesApi.getPermissionCatalog, enabled: !sourceId });
   const sourceRole = workspaceQuery.data?.role;
-  const assignedPermissionIds = workspaceQuery.data?.assignedPermissionIds ?? [];
+  const assignedPermissionIds = useMemo(
+    () => workspaceQuery.data?.assignedPermissionIds ?? [],
+    [workspaceQuery.data?.assignedPermissionIds],
+  );
 
   useEffect(() => {
     if (hydrated || catalogQuery.isLoading || (sourceId && workspaceQuery.isLoading)) return;
@@ -152,35 +154,31 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
   [groupedPermissions.groupedPermissionIds, permissions]);
   const isSystemRole = Boolean(roleId && sourceRole?.isSystemRole);
   const identityLocked = readOnly || isSystemRole || (roleId ? !canUpdateRole : !canCreateRole);
-  const permissionsLocked = readOnly || isSystemRole || !canAssignPermissions;
+  const permissionsLocked = readOnly || isSystemRole || (roleId ? !canUpdateRole : !canCreateRole);
 
   const save = useMutation({
     mutationFn: async () => {
       if (!name.trim()) { setNameError("Este campo es requerido"); throw new Error("Revisa el campo resaltado."); }
       setNameError(undefined);
-      let targetId = roleId;
       const normalizedDescription = description.trim() || null;
-      const identityChanged = targetId && sourceRole &&
-        (name.trim() !== sourceRole.name || normalizedDescription !== (sourceRole.description ?? null));
-      if (targetId && identityChanged) {
+      const permissionIds = [...selected];
+      if (roleId) {
         if (!canUpdateRole) throw new Error("No tienes permiso para cambiar el nombre o la descripción del rol.");
-        await rolesApi.update(targetId, { name: name.trim(), description: normalizedDescription });
+        await rolesApi.update(roleId, {
+          name: name.trim(),
+          description: normalizedDescription,
+          permissionIds,
+        });
+        return roleId;
       }
-      else {
-        if (!targetId) {
-          if (!canCreateRole) throw new Error("No tienes permiso para crear roles.");
-          const created = await rolesApi.create({ tenantId, name: name.trim(), description: normalizedDescription });
-          targetId = created.roleId;
-        }
-      }
-      const assignedIds = new Set(assignedPermissionIds);
-      const permissionsChanged = !roleId || selected.size !== assignedIds.size ||
-        [...selected].some((permissionId) => !assignedIds.has(permissionId));
-      if (permissionsChanged) {
-        if (!canAssignPermissions) throw new Error("No tienes permiso para asignar permisos a roles.");
-        await rolesApi.replacePermissions(targetId!, [...selected]);
-      }
-      return targetId!;
+      if (!canCreateRole) throw new Error("No tienes permiso para crear roles.");
+      const created = await rolesApi.create({
+        tenantId,
+        name: name.trim(),
+        description: normalizedDescription,
+        permissionIds,
+      });
+      return created.roleId;
     },
     onSuccess: async (id) => {
       await queryClient.invalidateQueries({ queryKey: ["roles"] });
@@ -212,7 +210,7 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
       <div className="min-w-0 flex-1"><h1 className="text-2xl font-semibold tracking-tight">{roleId ? "Configurar rol" : cloneFromId ? "Duplicar rol" : "Nuevo rol"}</h1><p className="text-muted-foreground">Define primero qué aparece en el menú y luego qué acciones permite cada vista.</p></div>
       {roleId && !cloneFromId && !embedded && <Button variant="outline" disabled><Copy className="mr-2 h-4 w-4" />Duplicar desde la lista</Button>}
       {onClose && <Button variant="outline" onClick={onClose}>Cerrar</Button>}
-      {!readOnly && !isSystemRole && (canCreateRole || canUpdateRole || canAssignPermissions) && <Button disabled={save.isPending} onClick={() => save.mutate()}><Save className="mr-2 h-4 w-4" />Guardar rol</Button>}
+      {!readOnly && !isSystemRole && (roleId ? canUpdateRole : canCreateRole) && <Button disabled={save.isPending} onClick={() => save.mutate()}><Save className="mr-2 h-4 w-4" />Guardar rol</Button>}
     </header>
     {isSystemRole && <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">Este rol es administrado por el sistema y es de solo lectura. El Administrador recibe automáticamente todos los permisos de su empresa, excepto los exclusivos de plataforma.</div>}
     <Card><CardHeader><CardTitle>Identidad del rol</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="space-y-2"><Label htmlFor="role-name">Nombre <span className="text-destructive">*</span></Label><Input id="role-name" aria-invalid={Boolean(nameError)} className={nameError ? "border-destructive ring-1 ring-destructive/20" : ""} value={name} onChange={(event) => { setName(event.target.value); if (event.target.value.trim()) setNameError(undefined); }} disabled={identityLocked} placeholder="Ej. Coordinador de inventario" />{nameError && <p className="text-sm text-destructive">{nameError}</p>}</div><div className="space-y-2"><Label htmlFor="role-description">Descripción</Label><Textarea id="role-description" value={description} onChange={(event) => setDescription(event.target.value)} disabled={identityLocked} rows={2} /></div></CardContent></Card>

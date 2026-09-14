@@ -51,10 +51,15 @@ internal static class SqlSaleUblPartyReader
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1))
             return FinalConsumer(fallback);
+        var sourceIdentificationType = reader.IsDBNull(3) ? "13" : reader.GetString(3);
+        var dianIdentificationType =
+            PosSaleFiscalMappings.DianIdentificationTypeCode(sourceIdentificationType)
+            ?? throw new InvalidOperationException(
+                $"El tipo de identificación '{sourceIdentificationType}' no tiene equivalencia DIAN.");
         return new PosSaleUblPartyContract(
             reader.GetString(1),
             reader.IsDBNull(2) ? "0" : reader.GetString(2),
-            reader.IsDBNull(3) ? "13" : reader.GetString(3),
+            dianIdentificationType,
             reader.GetString(0) == "Organization" ? "1" : "2",
             reader.IsDBNull(4) ? "Consumidor final" : reader.GetString(4),
             reader.IsDBNull(5)
@@ -111,9 +116,11 @@ public sealed class SqlPosCreditFiscalMaterialReader(SqlServerConnectionFactory 
               issuer.TaxSchemeId,issuer.TaxSchemeName,issuer.AddressLine,
               issuer.CityCode,issuer.CityName,issuer.DepartmentCode,
               issuer.DepartmentName,issuer.CountryCode,issuer.CountryName,
-              issuer.SoftwareIdentificationCode
+              issuer.SoftwareIdentificationCode,
+              profile.EntityType,profile.Email,profile.Phone
             FROM dbo.FiscalIssuerConfigurations issuer
             JOIN dbo.Businesses business ON business.BusinessId=issuer.BusinessId
+            JOIN dbo.TenantLegalProfiles profile ON profile.TenantId=business.TenantId
             WHERE issuer.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND issuer.Environment=@Environment AND issuer.IsActive=1
               AND business.IsActive=1
@@ -135,7 +142,7 @@ public sealed class SqlPosCreditFiscalMaterialReader(SqlServerConnectionFactory 
                     reader.GetString(1),
                     reader.GetString(2),
                     reader.GetString(3),
-                    "1",
+                    reader.GetString(17) == "NaturalPerson" ? "2" : "1",
                     reader.GetString(4),
                     reader.IsDBNull(5) ? reader.GetString(4) : reader.GetString(5),
                     reader.GetString(6),
@@ -148,7 +155,9 @@ public sealed class SqlPosCreditFiscalMaterialReader(SqlServerConnectionFactory 
                         reader.GetString(12),
                         reader.GetString(9),
                         reader.GetString(14),
-                        reader.GetString(15)));
+                        reader.GetString(15)),
+                    reader.GetString(18),
+                    reader.GetString(19));
                 rows.Add((reader.GetGuid(0), reader.GetString(16), supplier));
             }
         }

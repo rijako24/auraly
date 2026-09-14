@@ -24,8 +24,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("habilitation-only");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
         client.Timeout = TimeSpan.FromSeconds(60);
 
         var captured = await CaptureAsync(client, await OpenAsync(client));
@@ -137,13 +136,74 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Checkout_maps_a_named_natural_person_to_the_required_dian_identification()
+    {
+        var userId = await CreateUserAsync("natural-person-dian");
+        var customerId = await CreateNaturalPersonCustomerAsync(userId);
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate);
+
+        var draft = await OpenAsync(client);
+        using (var select = new HttpRequestMessage(
+                   HttpMethod.Put,
+                   $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
+               {
+                   Content = JsonContent.Create(
+                       new SelectOnlineSalesDraftCustomerRequest(customerId, draft.Version))
+               })
+        {
+            select.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var selectedResponse = await client.SendAsync(select);
+            selectedResponse.EnsureSuccessStatusCode();
+            var selection = await selectedResponse.Content
+                .ReadFromJsonAsync<OnlineSalesCustomerSelection>();
+            Assert.NotNull(selection);
+            draft = selection.Draft;
+        }
+
+        var captured = await CaptureAsync(client, draft);
+        var completed = await CompleteAsync(
+            client,
+            captured.DraftId,
+            new CompleteOnlineSalesDraftRequest(
+                captured.Version,
+                [new OnlineSalesPayment("Cash", captured.PayableAmount, null)]),
+            $"natural-person-dian-{Guid.NewGuid():N}");
+
+        using (var scope = fixture.CreateScope())
+        {
+            var worker = scope.ServiceProvider.GetRequiredService<FiscalGenerationWorker>();
+            Assert.True(await worker.ProcessAsync(
+                fixture.BusinessId,
+                completed.Receipt.DocumentId,
+                $"natural-person-dian-{Guid.NewGuid():N}"));
+        }
+
+        var unsigned = await ReadFiscalArtifactAsync(
+            completed.Receipt.DocumentId,
+            FiscalArtifactTypeCodes.UnsignedXml);
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(unsigned));
+        var customer = xml.Descendants(
+            DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
+        Assert.Equal("2", customer.Element(
+            DianUblNamespaces.Cbc + "AdditionalAccountID")?.Value);
+        var identification = customer
+            .Descendants(DianUblNamespaces.Cac + "PartyIdentification")
+            .Elements(DianUblNamespaces.Cbc + "ID").Single();
+        Assert.Equal("1065648633", identification.Value);
+        Assert.Equal("13", identification.Attribute("schemeName")?.Value);
+        Assert.Null(identification.Attribute("schemeID"));
+        Assert.True(new DianSchemaValidator().Validate(unsigned).IsValid);
+    }
+
+    [Fact]
     public async Task Online_checkout_uses_the_server_series_and_processes_once()
     {
         var userId = await CreateUserAsync("checkout");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
         client.Timeout = TimeSpan.FromSeconds(60);
 
         var draft = await OpenAsync(client);
@@ -326,7 +386,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         {
             var userId = await CreateUserAsync("promotion-snapshot");
             using var client = fixture.CreateUserClient(
-                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+                userId, CommercePermissionCodes.SalesCreate);
             var captured = await CaptureAsync(client, await OpenAsync(client));
             var completed = await CompleteAsync(
                 client,
@@ -362,7 +422,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences);
         client.Timeout = TimeSpan.FromSeconds(60);
@@ -419,8 +478,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("receipt");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
         client.Timeout = TimeSpan.FromSeconds(60);
 
         var captured = await CaptureAsync(client, await OpenAsync(client));
@@ -439,6 +497,37 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Null(completed.Receipt.QrPayload);
         Assert.Equal("CommercialAccepted", completed.Receipt.FiscalStatus);
         Assert.Equal(captured.PayableAmount, completed.Receipt.PayableAmount);
+
+        var search = await SearchAsync(
+            client,
+            captured.WorkSessionId,
+            completed.Receipt.DocumentNumber);
+        var issuedReceipt = Assert.Single(search.Items);
+        Assert.Equal(completed.Receipt.DocumentId, issuedReceipt.DocumentId);
+        Assert.Equal(PosSaleDocumentTypes.Receipt, issuedReceipt.DocumentType);
+        Assert.Equal(completed.Receipt.DocumentNumber, issuedReceipt.DocumentNumber);
+        Assert.Null(issuedReceipt.FiscalNumber);
+        Assert.Null(issuedReceipt.FiscalStatus);
+
+        var context = new OnlineSalesDraftContext(
+            fixture.BusinessId,
+            fixture.WarehouseId,
+            captured.WorkSessionId);
+        using (var receiptResponse = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/receipt",
+                   context))
+        {
+            receiptResponse.EnsureSuccessStatusCode();
+            var printable = await receiptResponse.Content
+                .ReadFromJsonAsync<OnlineSalesReceipt>();
+            Assert.NotNull(printable);
+            Assert.Equal(completed.Receipt.DocumentId, printable.DocumentId);
+            Assert.Equal(PosSaleDocumentTypes.Receipt, printable.DocumentType);
+            Assert.Equal(completed.Receipt.DocumentNumber, printable.DocumentNumber);
+            Assert.Null(printable.FiscalNumber);
+            Assert.Null(printable.Cufe);
+            Assert.Null(printable.QrPayload);
+        }
 
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
@@ -502,8 +591,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("no-fiscal");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
         client.Timeout = TimeSpan.FromSeconds(60);
         var captured = await CaptureAsync(client, await OpenAsync(client));
         var payment = new OnlineSalesPayment("Cash", captured.PayableAmount, null);
@@ -558,8 +646,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var customerId = await CreateElectronicInvoiceCustomerAsync(userId);
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
 
         var draft = await OpenAsync(client);
         using (var select = new HttpRequestMessage(
@@ -624,7 +711,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         }
 
         using var client = fixture.CreateUserClient(
-            userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+            userId, CommercePermissionCodes.SalesCreate);
         var draft = await OpenAsync(client);
         using (var select = new HttpRequestMessage(
                    HttpMethod.Put, $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
@@ -671,12 +758,10 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var secondUserId = await CreateUserAsync("parallel-b");
         using var firstClient = fixture.CreateUserClient(
             firstUserId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
         using var secondClient = fixture.CreateUserClient(
             secondUserId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
         firstClient.Timeout = TimeSpan.FromSeconds(90);
         secondClient.Timeout = TimeSpan.FromSeconds(90);
 
@@ -752,8 +837,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("credit");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
         var captured = await CaptureAsync(client, await OpenAsync(client));
         var before = await ReadCursorValuesAsync();
         using var request = Mutation(
@@ -795,6 +879,35 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 
     private Task<Guid> CreateElectronicInvoiceCustomerAsync(Guid userId) =>
         CreateCustomerAsync(userId, true, "Cliente factura requerida");
+
+    private async Task<Guid> CreateNaturalPersonCustomerAsync(Guid userId)
+    {
+        var partyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.Parties(
+              PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,Identification,
+              NormalizedIdentification,DisplayName,FirstName,LastName,
+              CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @PartyId,@TenantId,N'NaturalPerson',
+              (SELECT TOP (1) CountryId FROM dbo.Countries WHERE Code=N'CO'),N'CC',N'1065648633',
+              N'1065648633',N'KEVIN RAMIREZ GRANADOS',N'KEVIN',N'RAMIREZ GRANADOS',
+              N'Complete',1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(
+              CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+              IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+            """,
+            new("@PartyId", partyId),
+            new("@CustomerId", customerId),
+            new("@TenantId", fixture.TenantId),
+            new("@BusinessId", fixture.BusinessId),
+            new("@UserId", userId));
+        return customerId;
+    }
 
     private async Task<Guid> CreateCustomerAsync(
         Guid userId,

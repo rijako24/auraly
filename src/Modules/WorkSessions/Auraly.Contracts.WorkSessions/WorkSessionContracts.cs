@@ -7,7 +7,6 @@ namespace Auraly.Contracts.WorkSessions;
 public static class WorkSessionPermissionCodes
 {
     public const string Read = "work-sessions.read";
-    public const string Open = "work-sessions.open";
     public const string Close = "work-sessions.close";
     public const string CloseWithPausedSales = "work-sessions.close-with-paused-sales";
     public const string ManageCash = "work-sessions.cash.manage";

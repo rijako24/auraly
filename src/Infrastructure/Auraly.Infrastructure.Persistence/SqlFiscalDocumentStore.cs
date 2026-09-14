@@ -68,10 +68,16 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
     {
         const string sql = """
             UPDATE p WITH (UPDLOCK, ROWLOCK)
-            SET Status = CASE WHEN p.TrackId IS NULL THEN @PendingGeneration ELSE @PendingResult END,
+            SET Status = CASE
+                  WHEN p.Status=@DianRejected THEN @PendingGeneration
+                  WHEN p.TrackId IS NULL THEN @PendingGeneration
+                  ELSE @PendingResult END,
                 NextAttemptAt = @RequestedAt,
                 LockedAt = NULL,
                 LockedBy = NULL,
+                TrackId = CASE WHEN p.Status=@DianRejected THEN NULL ELSE p.TrackId END,
+                CorrelationId = CASE WHEN p.Status=@DianRejected THEN NULL ELSE p.CorrelationId END,
+                CompletedAt = CASE WHEN p.Status=@DianRejected THEN NULL ELSE p.CompletedAt END,
                 LastErrorCode = NULL,
                 LastErrorMessage = NULL,
                 UpdatedAt = @RequestedAt
@@ -80,7 +86,8 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
             WHERE p.DocumentId = @DocumentId
               AND p.BusinessId = @BusinessId
               AND fd.BusinessId = @BusinessId
-              AND p.Status IN (@SchemaFailed, @SignatureFailed, @RetryScheduled, @PermanentFailure);
+              AND p.Status IN (@SchemaFailed, @SignatureFailed, @RetryScheduled,
+                               @PermanentFailure, @DianRejected);
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -96,6 +103,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
             command.Parameters.AddWithValue("@SignatureFailed", FiscalDocumentStatusCodes.SignatureFailed);
             command.Parameters.AddWithValue("@RetryScheduled", FiscalDocumentStatusCodes.RetryScheduled);
             command.Parameters.AddWithValue("@PermanentFailure", FiscalDocumentStatusCodes.PermanentFailure);
+            command.Parameters.AddWithValue("@DianRejected", FiscalDocumentStatusCodes.DianRejected);
             var changed = await command.ExecuteNonQueryAsync(cancellationToken);
             if (changed == 0)
             {

@@ -23,7 +23,6 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var (customerId, userId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open,
             ReceivablesPermissionCodes.Read,
             ReceivablesPermissionCodes.ManageCredit,
             ReceivablesPermissionCodes.RegisterPayment,
@@ -170,8 +169,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     {
         var (customerId, userId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
-            CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesCreate);
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await CaptureAsync(client, await OpenDraftAsync(client, workSession.WorkSessionId));
         var selection = await SelectCustomerAsync(client, draft, customerId);
@@ -197,7 +195,6 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var (customerId, userId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open,
             ReceivablesPermissionCodes.ManageCredit);
         using (var profile = await client.PutAsJsonAsync(
                    $"/api/commerce/v1/customers/{customerId:D}/credit",
@@ -285,7 +282,6 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var (customerId, userId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open,
             ReceivablesPermissionCodes.Read,
             ReceivablesPermissionCodes.ManageCredit,
             ReceivablesPermissionCodes.RegisterPayment);
@@ -433,7 +429,6 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var (customerId, userId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
-            WorkSessionPermissionCodes.Open,
             ReceivablesPermissionCodes.ManageCredit,
             SalesReturnPermissionCodes.Read,
             ReceivablesPermissionCodes.RegisterPayment,

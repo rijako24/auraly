@@ -15,11 +15,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { workSessionDifferencesApi, type ClosurePaymentVerification, type ReconcileClosureRequest, type WorkSessionClosure } from "@/services/api/work-session-differences";
-import { referenceOptionsApi } from "@/services/api/reference-options";
 import { tenantsApi } from "@/services/api/tenants";
 import { PosCashClosureDialog } from "@/app/(pos)/pos/pos-cash-closure-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession, type PosAuthorizedClosurePreview, type PosWorkSessionPaymentCount } from "@/services/pos/pos-edge-client";
-import { cashDenominationCountHtml, formatWorkSessionCountInput, normalizeWorkSessionCountInput, printCashDenominationCount, printWorkSessionClosure, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
+import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, printWorkSessionClosure, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
 import { useAuthStore } from "@/stores/auth-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -27,17 +26,6 @@ const isoDate = (value: Date) => value.toISOString().slice(0, 10);
 const result = (difference: number | null) => difference == null ? "Sin conteo" : difference > 0 ? `Sobrante ${money.format(difference)}` : difference < 0 ? `Faltante ${money.format(Math.abs(difference))}` : "Cuadra";
 const accountingStatusLabels: Record<string, string> = { AccountingDisabled: "No requiere asiento", AccountingPendingConfiguration: "Falta configuración contable", NotRequired: "No requiere asiento", Pending: "Pendiente de contabilizar", Processing: "Contabilizando", Posted: "Contabilizado", Failed: "Error contable" };
 const accountingStatusName = (value: string) => accountingStatusLabels[value] ?? "Pendiente de contabilizar";
-const referenceOptionsClient = {
-  mode: "online" as const,
-  referenceOptions: referenceOptionsApi.list,
-  printCashDenominationCount: async (ticket: Parameters<PosEdgeClient["printCashDenominationCount"]>[0]) => {
-    const edgeToken = readEdgeTokenFromLaunch();
-    if (edgeToken)
-      return new PosEdgeClient(edgeToken, readEdgeUserSession()).printCashDenominationCount(ticket);
-    return printCashDenominationCount(cashDenominationCountHtml(ticket));
-  },
-};
-
 export default function CashClosuresPage() {
   const today = useMemo(() => new Date(), []);
   const monthStart = useMemo(() => new Date(today.getFullYear(), today.getMonth(), 1), [today]);
@@ -150,7 +138,7 @@ function ActiveWorkSessionPanel({ lastClosedAt }: { lastClosedAt: string | null 
         {canClose ? <Button className="h-12 px-6" disabled={busy} onClick={() => void openClosure()}>{busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Preparando…</> : "Cerrar sesión ahora"}</Button> : <p className="max-w-48 text-sm text-muted-foreground">No tienes permiso para cerrar esta sesión.</p>}
       </CardContent>
     </Card>
-    {preview && <PosCashClosureDialog client={referenceOptionsClient} value={preview} busy={busy} submitted={submitted} onClose={() => { if (!busy) { setPreview(null); setSubmitted(false); operationId.current = null; } }} onConfirm={close} />}
+    {preview && <PosCashClosureDialog value={preview} busy={busy} submitted={submitted} onClose={() => { if (!busy) { setPreview(null); setSubmitted(false); operationId.current = null; } }} onConfirm={close} />}
   </>;
 }
 

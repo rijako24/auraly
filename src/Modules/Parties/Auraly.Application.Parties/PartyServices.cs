@@ -55,7 +55,10 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     public Task<CustomerDetail> CreateCustomerAsync(
         PartyActorIdentity actor, CreateCustomerRequest request, CancellationToken ct)
     {
-        RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.CustomerCreate);
+        RequireUserOrEnrolledDevice(
+            actor,
+            PartyPermissionCodes.CustomerCreate,
+            PartyPermissionCodes.PosCustomerCreate);
         if (request.BusinessId != actor.BusinessId)
             throw new PartyForbiddenException("The customer business does not match the authenticated identity.");
         ValidateParty(request.Party);
@@ -209,7 +212,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
 
     internal static void RequireUserOrEnrolledDevice(
         PartyActorIdentity actor,
-        string userPermission)
+        params string[] userPermissions)
     {
         if (actor.IsDevice)
         {
@@ -219,7 +222,9 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
                     "The enrolled POS device context is incomplete.");
             return;
         }
-        Require(actor, userPermission);
+        if (!userPermissions.Any(actor.Permissions.Contains))
+            throw new PartyForbiddenException(
+                $"One of the permissions '{string.Join("', '", userPermissions)}' is required.");
     }
 }
 

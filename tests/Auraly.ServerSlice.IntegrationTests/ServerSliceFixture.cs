@@ -831,6 +831,22 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@BusinessId, @TenantId, N'Auraly', N'Integration test billing business',
              N'Bogota', N'3000000000', @BusinessEmail, N'https://auraly.test', 1, SYSUTCDATETIME());
 
+            INSERT dbo.TenantLegalProfiles(
+              TenantId,LegalName,TradeName,Nit,NormalizedNit,VerificationDigit,
+              EntityType,IdentificationTypeCode,CountryId,AdministrativeDivisionId,
+              CityId,Address,Phone,Email,TaxResponsibilities,PrimaryBusinessId,CreatedAt)
+            SELECT @TenantId,N'EMISOR MAESTRO',N'EMISOR MAESTRO',@SupplierTaxId,
+                   @SupplierTaxId,N'0',N'Organization',N'NIT',country.CountryId,
+                   division.AdministrativeDivisionId,city.CityId,N'CL 1 2 3',
+                   N'3000000000',@BusinessEmail,N'R-99-PN',@BusinessId,SYSDATETIMEOFFSET()
+            FROM dbo.Countries country
+            JOIN dbo.AdministrativeDivisions division
+              ON division.CountryId=country.CountryId AND division.Code=N'11'
+            JOIN dbo.Cities city
+              ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+             AND city.Code=N'11001'
+            WHERE country.Code=N'CO';
+
             INSERT dbo.AppUsers
               (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
                FirstName,LastName,IsActive,CreatedAt)

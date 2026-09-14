@@ -68,7 +68,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
   AND NOT (
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+      N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
@@ -76,7 +76,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       N'pos.customer.create',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+      N'work-sessions.read',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',
@@ -123,7 +123,7 @@ WHERE roleValue.IsActive=1
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+      N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
@@ -131,7 +131,7 @@ WHERE roleValue.IsActive=1
       N'pos.customer.create',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+      N'work-sessions.read',N'work-sessions.close',N'work-sessions.close-with-paused-sales',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',

@@ -52,7 +52,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
                      WHERE x.DocumentId=p.DocumentId
                        AND x.Operation IN (@SendTestOperation,@SendProductionOperation,@SendPayrollOperation)
                        AND x.CompletedAt IS NULL
-                   ) THEN 1 ELSE 0 END)
+                   ) THEN 1 ELSE 0 END),a.ArtifactVersion
             FROM @Document selected
             INNER JOIN dbo.FiscalDocumentProcesses p ON p.DocumentId=selected.DocumentId
             INNER JOIN dbo.FiscalDocuments d ON d.DocumentId=p.DocumentId
@@ -60,8 +60,11 @@ public sealed class SqlFiscalSubmissionWorkStore(
               ON c.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
             LEFT JOIN payroll.ElectronicDocuments payrollDocument
               ON payrollDocument.FiscalDocumentId=p.DocumentId
-            INNER JOIN dbo.FiscalArtifacts a
-              ON a.DocumentId=p.DocumentId AND a.ArtifactType=@SignedXml
+            CROSS APPLY(
+              SELECT TOP(1) artifact.Content,artifact.ArtifactVersion
+              FROM dbo.FiscalArtifacts artifact
+              WHERE artifact.DocumentId=p.DocumentId AND artifact.ArtifactType=@SignedXml
+              ORDER BY artifact.ArtifactVersion DESC) a
             WHERE p.LockedBy=@WorkerId;
             """;
         await using var connection = connections.Create();
@@ -94,7 +97,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
                 reader.IsDBNull(4) ? null : reader.GetGuid(4),
                 (byte[])reader[5],
                 reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.GetBoolean(7));
+                reader.GetBoolean(7),
+                reader.GetInt32(8));
         }
         await reader.DisposeAsync();
         await transaction.CommitAsync(cancellationToken);
@@ -176,7 +180,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
         else
         {
             zip = await LoadSubmissionZipAsync(
-                connection, transaction, work.DocumentId, cancellationToken);
+                connection, transaction, work.DocumentId, work.ArtifactVersion,
+                cancellationToken);
         }
 
         var requestArtifactId = await InsertArtifactAsync(
@@ -494,14 +499,15 @@ public sealed class SqlFiscalSubmissionWorkStore(
     {
         const string exists = """
             SELECT COUNT(*) FROM dbo.FiscalArtifacts WITH (UPDLOCK,HOLDLOCK)
-            WHERE DocumentId=@DocumentId AND ArtifactType=@Type AND ArtifactVersion=1;
+            WHERE DocumentId=@DocumentId AND ArtifactType=@Type AND ArtifactVersion=@Version;
             """;
         await using var command = new SqlCommand(exists, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", work.DocumentId);
         command.Parameters.AddWithValue("@Type", FiscalArtifactTypeCodes.SubmissionZip);
+        command.Parameters.AddWithValue("@Version", work.ArtifactVersion);
         if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 0)
             await InsertArtifactAsync(connection, transaction, work.DocumentId,
-                FiscalArtifactTypeCodes.SubmissionZip, 1, content, "application/zip",
+                FiscalArtifactTypeCodes.SubmissionZip, work.ArtifactVersion, content, "application/zip",
                 $"{work.FiscalNumber}.zip", createdAt, cancellationToken);
     }
 
@@ -509,15 +515,17 @@ public sealed class SqlFiscalSubmissionWorkStore(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid documentId,
+        int artifactVersion,
         CancellationToken cancellationToken)
     {
         const string sql = """
             SELECT Content FROM dbo.FiscalArtifacts
-            WHERE DocumentId=@DocumentId AND ArtifactType=@Type AND ArtifactVersion=1;
+            WHERE DocumentId=@DocumentId AND ArtifactType=@Type AND ArtifactVersion=@Version;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@Type", FiscalArtifactTypeCodes.SubmissionZip);
+        command.Parameters.AddWithValue("@Version", artifactVersion);
         return await command.ExecuteScalarAsync(cancellationToken) as byte[]
             ?? throw new InvalidOperationException("The durable DIAN submission ZIP is missing.");
     }

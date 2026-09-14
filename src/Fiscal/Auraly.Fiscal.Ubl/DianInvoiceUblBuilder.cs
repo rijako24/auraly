@@ -112,7 +112,7 @@ public sealed class DianInvoiceUblBuilder
         new(Cac + name,
             E(Cbc, "AdditionalAccountID", party.OrganizationTypeCode),
             new XElement(Cac + "Party",
-                IsFinalConsumer(party)
+                RequiresPartyIdentification(party)
                     ? new XElement(Cac + "PartyIdentification",
                         Identification(Cbc + "ID", party.Identification, party.CheckDigit,
                             party.IdentificationTypeCode))
@@ -195,8 +195,8 @@ public sealed class DianInvoiceUblBuilder
         new(name, AgencyAttributes(),
             typeCode == "31" ? new XAttribute("schemeID", checkDigit) : null,
             new XAttribute("schemeName", typeCode), value);
-    private static bool IsFinalConsumer(DianParty party) =>
-        party.Identification == "222222222222" && party.IdentificationTypeCode == "13";
+    private static bool RequiresPartyIdentification(DianParty party) =>
+        party.OrganizationTypeCode == "2";
     private static XElement ProviderIdentification(
         XName name,
         string value,

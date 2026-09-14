@@ -5,7 +5,7 @@ namespace Auraly.Application.Sales;
 
 public sealed record StoredOnlineSalesReceipt(
     PosSaleUploadRequest Request,
-    string FiscalStatus);
+    string? FiscalStatus);
 
 public interface IOnlineSalesHistoryStore
 {
@@ -96,7 +96,7 @@ public static class OnlineSalesReceiptMapper
 {
     public static OnlineSalesReceipt From(
         PosSaleUploadRequest request,
-        string fiscalStatus)
+        string? fiscalStatus)
     {
         ArgumentNullException.ThrowIfNull(request);
         var snapshot = request.CommercialSnapshot;

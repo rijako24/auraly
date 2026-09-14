@@ -652,7 +652,7 @@ export function OrdersWorkspace({
                     className={`group grid gap-3 px-3 py-3 transition hover:bg-teal-50/40 ${
                       compact
                         ? "grid-cols-[1fr_auto]"
-                        : "md:grid-cols-[auto_minmax(190px,1.2fr)_minmax(170px,1fr)_110px_130px_auto] md:items-center"
+                        : "grid-cols-[auto_minmax(0,1fr)_auto] xl:grid-cols-[auto_minmax(190px,1.2fr)_minmax(170px,1fr)_110px_130px_auto] xl:items-center"
                     }`}
                   >
                     {!compact && (
@@ -675,10 +675,10 @@ export function OrdersWorkspace({
                     <button
                       type="button"
                       onClick={() => void showDetail(order.orderId)}
-                      className="min-w-0 text-left"
+                      className="min-w-0 overflow-hidden text-left"
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-bold text-teal-800">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-mono text-sm font-bold text-teal-800" title={order.orderNumber}>
                           {order.orderNumber}
                         </span>
                         <OrderStatus availability={availability} />
@@ -689,8 +689,8 @@ export function OrdersWorkspace({
                       </p>
                     </button>
                     {!compact && (
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">
+                      <div className="col-start-2 min-w-0 xl:col-auto">
+                        <p className="truncate text-sm font-semibold text-slate-900" title={order.customerName || "Consumidor final"}>
                           {order.customerName || "Consumidor final"}
                         </p>
                         <p className="truncate text-xs text-slate-500">
@@ -699,7 +699,7 @@ export function OrdersWorkspace({
                       </div>
                     )}
                     {!compact && (
-                      <p className="text-sm font-bold tabular-nums text-slate-950">
+                      <p className="col-start-2 truncate text-sm font-bold tabular-nums text-slate-950 xl:col-auto">
                         {money.format(order.total)}
                       </p>
                     )}
@@ -707,21 +707,23 @@ export function OrdersWorkspace({
                       <button
                         type="button"
                         onClick={() => void showDetail(order.orderId)}
-                        className="flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        className="hidden h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 xl:flex"
                       >
                         <FileText className="h-4 w-4" />
                         Detalle
                       </button>
                     )}
-                    <div className="flex items-center justify-end gap-1.5">
+                    <div className={`${compact ? "" : "col-start-3 row-start-1 self-start xl:col-auto xl:row-auto xl:self-auto"} flex shrink-0 items-center justify-end gap-1.5`}>
                       <button
                         type="button"
                         disabled={!availability.canRecover || !onRecover || working}
                         onClick={() => void recover(order)}
-                        className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 px-3 text-sm font-bold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex h-9 min-w-9 items-center justify-center gap-2 rounded-lg bg-teal-50 px-2 text-sm font-bold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
+                        title={`${availability.actionLabel} ${order.orderNumber}`}
+                        aria-label={`${availability.actionLabel} ${order.orderNumber}`}
                       >
                         <RotateCcw className="h-4 w-4" />
-                        {availability.actionLabel}
+                        <span className="hidden sm:inline">{availability.actionLabel}</span>
                       </button>
                       {onCancelOrder && ["Available", "InReview"].includes(order.status) && (
                         <button

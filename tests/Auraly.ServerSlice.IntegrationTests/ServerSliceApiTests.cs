@@ -267,6 +267,69 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(FiscalProcessingStage.Generation, signal.Stage);
         Assert.NotEqual(Guid.Empty, signal.SignalId);
     }
+
+    [Fact]
+    public async Task Dian_rejected_invoice_retry_regenerates_the_same_fiscal_document()
+    {
+        fixture.DrainFiscalSignals();
+        var request = fixture.CreateValidRequest(152);
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(request))
+        using (var response = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        fixture.DrainFiscalSignals();
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE dbo.FiscalDocumentProcesses
+                SET Status=N'DianRejected',TrackId=N'rejected-track',
+                    CorrelationId=N'rejected-correlation',CompletedAt=SYSDATETIMEOFFSET()
+                WHERE DocumentId=@DocumentId;
+                UPDATE dbo.FiscalDocuments SET FiscalStatus=N'DianRejected'
+                WHERE DocumentId=@DocumentId;
+                UPDATE dbo.SalesDocuments SET FiscalStatus=N'DianRejected'
+                WHERE DocumentId=@DocumentId;
+                """;
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            Assert.Equal(3, await command.ExecuteNonQueryAsync());
+        }
+
+        using var retry = fixture.CreateAdminClient(FiscalPermissionCodes.Retry);
+        using var retryResponse = await retry.PostAsync(
+            $"/api/commerce/v1/fiscal/documents/{request.DocumentId}/retry", null);
+        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        var retried = await retryResponse.Content.ReadFromJsonAsync<FiscalDocumentView>();
+        Assert.NotNull(retried);
+        Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration, retried.Status);
+        Assert.Equal(request.FiscalSnapshot!.FiscalNumber, retried.DianNumber);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*)
+                FROM dbo.FiscalDocumentProcesses process
+                JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=process.DocumentId
+                WHERE process.DocumentId=@DocumentId
+                  AND process.Status=N'PendingGeneration'
+                  AND process.TrackId IS NULL
+                  AND process.CorrelationId IS NULL
+                  AND process.CompletedAt IS NULL
+                  AND fiscal.FiscalNumber=@FiscalNumber;
+                """;
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            command.Parameters.AddWithValue("@FiscalNumber", request.FiscalSnapshot.FiscalNumber);
+            Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        }
+        Assert.Equal(1, await fixture.CountAsync("SalesDocuments", request.DocumentId));
+        Assert.Equal(FiscalProcessingStage.Generation,
+            Assert.Single(fixture.DrainFiscalSignals()).Signal.Stage);
+    }
+
     [Fact]
     public async Task Device_authentication_and_authenticated_context_are_enforced()
     {

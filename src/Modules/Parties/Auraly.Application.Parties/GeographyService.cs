@@ -9,28 +9,28 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
     public Task<IReadOnlyCollection<CountryItem>> CountriesAsync(
         PartyActorIdentity actor, bool includeInactive, CancellationToken ct)
     {
-        PartyService.RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.GeographyRead);
+        DemandReadForCustomerWorkflow(actor);
         return store.CountriesAsync(includeInactive, ct);
     }
 
     public Task<IReadOnlyCollection<AdministrativeDivisionItem>> DivisionsAsync(
         PartyActorIdentity actor, Guid countryId, bool includeInactive, CancellationToken ct)
     {
-        PartyService.RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.GeographyRead);
+        DemandReadForCustomerWorkflow(actor);
         return store.DivisionsAsync(countryId, includeInactive, ct);
     }
 
     public Task<IReadOnlyCollection<CityItem>> CitiesAsync(
         PartyActorIdentity actor, Guid divisionId, bool includeInactive, CancellationToken ct)
     {
-        PartyService.RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.GeographyRead);
+        DemandReadForCustomerWorkflow(actor);
         return store.CitiesAsync(divisionId, includeInactive, ct);
     }
 
     public Task<IReadOnlyCollection<GeographyHierarchyItem>> HierarchyAsync(
         PartyActorIdentity actor, bool includeInactive, CancellationToken ct)
     {
-        PartyService.RequireUserOrEnrolledDevice(actor, PartyPermissionCodes.GeographyRead);
+        DemandReadForCustomerWorkflow(actor);
         return store.GeographyHierarchyAsync(includeInactive, ct);
     }
 
@@ -92,6 +92,13 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
 
         Validate(normalizedCode, name);
     }
+
+    private static void DemandReadForCustomerWorkflow(PartyActorIdentity actor) =>
+        PartyService.RequireUserOrEnrolledDevice(
+            actor,
+            PartyPermissionCodes.GeographyRead,
+            PartyPermissionCodes.CustomerCreate,
+            PartyPermissionCodes.PosCustomerCreate);
 
     private static void Validate(string code, string name)
     {

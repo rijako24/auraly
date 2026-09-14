@@ -11,7 +11,6 @@ DECLARE @WorkSessionPermissions TABLE
 INSERT @WorkSessionPermissions ([Module],[Action],[Resource],[Description])
 VALUES
     (N'WorkSessions',N'Read',N'work-sessions.read',N'Consultar la sesión de trabajo propia'),
-    (N'WorkSessions',N'Open',N'work-sessions.open',N'Abrir o recuperar la sesión de trabajo propia'),
     (N'WorkSessions',N'Close',N'work-sessions.close',N'Cerrar y conciliar la sesión de trabajo propia'),
     (N'WorkSessions',N'CloseWithPausedSales',N'work-sessions.close-with-paused-sales',N'Cerrar la sesión de trabajo cuando conserva ventas pausadas'),
     (N'WorkSessions',N'ReadDifferences',N'work-sessions.differences.read',N'Consultar cierres y sus diferencias por medio de pago'),
@@ -29,7 +28,6 @@ FROM dbo.AppRoles r
 JOIN dbo.Permissions p ON p.Resource IN
 (
     N'work-sessions.read',
-    N'work-sessions.open',
     N'work-sessions.close',
     N'work-sessions.close-with-paused-sales',
     N'work-sessions.differences.read',
@@ -42,6 +40,16 @@ WHERE r.IsActive=1
       SELECT 1 FROM dbo.RolePermissions rp
       WHERE rp.RoleId=r.RoleId AND rp.PermissionId=p.PermissionId
   );
+
+DELETE assignment
+FROM dbo.RolePermissions assignment
+INNER JOIN dbo.Permissions permissionValue
+    ON permissionValue.PermissionId=assignment.PermissionId
+WHERE permissionValue.Resource=N'work-sessions.open';
+
+DELETE FROM dbo.Permissions
+WHERE Resource=N'work-sessions.open';
+
 INSERT dbo.Permissions
     (PermissionId,Module,Action,Resource,Description,CreatedAt)
 SELECT NEWID(),N'WorkSessions',v.Action,v.Resource,v.Description,SYSUTCDATETIME()

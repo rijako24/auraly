@@ -205,8 +205,7 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
-            CommercePermissionCodes.SalesRestartDraft,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesRestartDraft);
         client.Timeout = TimeSpan.FromSeconds(15);
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var context = new OnlineSalesDraftContext(
@@ -262,8 +261,7 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         using var restarted = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
-            CommercePermissionCodes.SalesRestartDraft,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesRestartDraft);
         restarted.Timeout = TimeSpan.FromSeconds(15);
         var reopened = await OpenAsync(restarted, context);
         Assert.Equal(next.DraftId, reopened.DraftId);
@@ -372,8 +370,7 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
             userId,
             CommercePermissionCodes.SalesCreate,
             CommercePermissionCodes.SalesRestartDraft,
-            CommercePermissionCodes.SalesDeletePausedDraft,
-            WorkSessionPermissionCodes.Open);
+            CommercePermissionCodes.SalesDeletePausedDraft);
         var stillActive = await MutateAsync<OnlineSalesDraft>(
             privileged,
             $"/api/commerce/v1/pos/drafts/temporaries/{savedAgain.DraftId:D}/remove",

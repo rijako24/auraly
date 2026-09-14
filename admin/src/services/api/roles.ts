@@ -8,6 +8,13 @@ export type RolePermissionWorkspace = {
   assignedPermissionIds: string[];
 };
 
+export type SaveRoleRequest = {
+  tenantId?: string | null;
+  name: string;
+  description: string | null;
+  permissionIds: string[];
+};
+
 export const rolesApi = {
   list: (params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<AppRole>>(
@@ -17,8 +24,8 @@ export const rolesApi = {
   getById: (id: string) => apiClient.get<AppRole>(`/roles/${id}`),
   getPermissionWorkspace: (id: string) =>
     apiClient.get<RolePermissionWorkspace>(`/roles/${id}/permission-workspace`),
-  create: (data: Partial<AppRole>) => apiClient.post<AppRole>("/roles", data),
-  update: (id: string, data: Partial<AppRole>) =>
+  create: (data: SaveRoleRequest) => apiClient.post<AppRole>("/roles", data),
+  update: (id: string, data: Omit<SaveRoleRequest, "tenantId">) =>
     apiClient.put<AppRole>(`/roles/${id}`, data),
   delete: (id: string) => apiClient.delete(`/roles/${id}`),
 
