@@ -1,6 +1,9 @@
-"use client";
+import type { Metadata } from "next";
 
-import { cn } from "@/lib/utils";
+export const metadata: Metadata = {
+  title: "Auraly | Facturación, operación e inteligencia para tu empresa",
+  description: "Conecta facturación electrónica, inventario, contabilidad, nómina, pedidos online y offline, entregas, recaudos y agentes de IA en una sola plataforma.",
+};
 
 export default function LandingLayout({
   children,
@@ -8,7 +11,7 @@ export default function LandingLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn("min-h-screen bg-background")}>
+    <div className="min-h-screen bg-background">
       {children}
     </div>
   );

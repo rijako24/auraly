@@ -193,6 +193,53 @@ body.dashboard-shell { overflow: hidden; }
   100% { transform: rotate(360deg) scale(.96); }
 }
 
+@keyframes landing-slide-in {
+  from { opacity: 0; transform: translateY(12px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes landing-slide-progress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes landing-aurora-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(2rem, 1.25rem, 0) scale(1.08); }
+}
+
+@keyframes landing-chart-rise {
+  from { transform: scaleY(.08); opacity: .25; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+@keyframes landing-reveal {
+  from { opacity: .15; transform: translateY(42px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes landing-float-slow {
+  0%, 100% { transform: translateY(-4px); }
+  50% { transform: translateY(8px); }
+}
+
+.landing-grid {
+  background-image: linear-gradient(rgba(166, 241, 234, .055) 1px, transparent 1px), linear-gradient(90deg, rgba(166, 241, 234, .055) 1px, transparent 1px);
+  background-size: 54px 54px;
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, transparent 88%);
+  mask-image: linear-gradient(to bottom, black 0%, transparent 88%);
+}
+.landing-product-shell { perspective: 1200px; }
+.landing-slide-in { animation: landing-slide-in .65s cubic-bezier(.2,.8,.2,1) both; }
+.landing-slide-progress { animation: landing-slide-progress 5.2s linear both; }
+.landing-aurora { animation: landing-aurora-drift 11s ease-in-out infinite; }
+.landing-aurora-b { animation-delay: -5.5s; }
+.landing-chart-bar { animation: landing-chart-rise .8s cubic-bezier(.2,.8,.2,1) both; transform-origin: bottom; }
+.landing-reveal { animation: landing-reveal 1s linear both; animation-timeline: view(); animation-range: entry 5% cover 32%; }
+.landing-float-slow { animation: landing-float-slow 5.5s ease-in-out infinite; }
+.landing-pillar::after { content: ""; position: absolute; inset: 0; background: linear-gradient(120deg, transparent 28%, rgba(255,255,255,.16) 50%, transparent 72%); transform: translateX(-120%); transition: transform .8s ease; }
+.landing-pillar:hover::after { transform: translateX(120%); }
+
 .landing-float { animation: landing-float 6s ease-in-out infinite; }
 .landing-orbit { animation: landing-orbit 18s linear infinite; }
 .landing-scene { scroll-margin-top: 6rem; }
@@ -225,7 +272,7 @@ body.dashboard-shell { overflow: hidden; }
   .auraly-setup-loader-stage { animation: none; display: none; }
   .auraly-setup-loader-stage:first-child { display: inline; opacity: 1; }
   .pos-scan-rejected { animation: none; }
-  .landing-float, .landing-orbit { animation: none; }
+  .landing-float, .landing-orbit, .landing-slide-in, .landing-slide-progress, .landing-aurora, .landing-chart-bar, .landing-reveal, .landing-float-slow { animation: none; }
   .landing-scene { position: relative !important; top: auto !important; }
 }
 

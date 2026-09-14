@@ -5,26 +5,13 @@ import Image from "next/image";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
-  ArrowRight,
-  BarChart3,
   Bot,
-  CalendarCheck,
   Check,
   ChevronRight,
-  Clock3,
-  CreditCard,
-  Calculator,
-  FileCheck2,
-  Landmark,
-  MonitorSmartphone,
-  ReceiptText,
-  Gauge,
   HandCoins,
   LifeBuoy,
   Menu,
-  MessageCircle,
   RefreshCcw,
-  ShieldCheck,
   Sparkles,
   X,
 } from "lucide-react";
@@ -34,7 +21,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import {
   Accordion,
@@ -42,9 +28,10 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useTenantCommercialCatalog } from "@/components/tenants/tenant-commercial-plan-step";
 import { cn } from "@/lib/utils";
+import { ProductHero } from "@/components/landing/product-hero";
+import { PlatformShowcase } from "@/components/landing/platform-showcase";
 
 const PLANS = [
   {
@@ -107,21 +94,6 @@ const OPERATIONS_PLAN_COPY: Record<string, { tagline: string; hint: string }> = 
 
 const cop = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-const PRODUCT_SCENES = [
-  { icon: MonitorSmartphone, number: "01", kicker: "Punto de venta", title: "Vende rápido. Auraly mantiene el control.", text: "Caja online u offline, inventario, pedidos, devoluciones y cierres conectados con una sola operación.", metric: "Una venta, un inventario", accent: "from-[#69D9D0] to-[#1A5860]" },
-  { icon: ReceiptText, number: "02", kicker: "Facturación electrónica", title: "De la caja a la DIAN, sin saltos manuales.", text: "Resoluciones por equipo, numeración segura, validación de vigencia y trazabilidad fiscal en cada documento.", metric: "Numeración protegida", accent: "from-cyan-300 to-blue-700" },
-  { icon: Calculator, number: "03", kicker: "Contabilidad", title: "Cada movimiento explica sus números.", text: "Ventas, compras, inventario, cartera y gastos alimentan la contabilidad con reglas auditables.", metric: "Contabilidad conectada", accent: "from-amber-300 to-orange-600" },
-  { icon: Landmark, number: "04", kicker: "Nómina", title: "Personas, novedades y pago en el mismo contexto.", text: "Administra empleados, periodos y documentos de nómina sin perder el aislamiento de tu empresa.", metric: "Equipo al día", accent: "from-violet-300 to-fuchsia-700" },
-  { icon: Bot, number: "05", kicker: "Agentes de IA", title: "Tu operación también conversa y vende 24/7.", text: "Agentes configurables atienden, cotizan, agendan, cobran y escalan con datos reales del negocio.", metric: "IA que sí opera", accent: "from-emerald-300 to-teal-700" },
-] as const;
-
-const OUTCOMES = [
-  { icon: Clock3, title: "Atiende 24/7", text: "Responde al instante fuera de horario, baja tiempos de espera y mantiene conversaciones activas cuando tu equipo no esta conectado." },
-  { icon: CalendarCheck, title: "Agenda demos y citas", text: "Consulta disponibilidad, captura datos clave y lleva al cliente al siguiente paso sin romper el flujo de WhatsApp." },
-  { icon: CreditCard, title: "Maximiza ventas", text: "Califica leads, recomienda servicios, recupera conversaciones y activa pagos o seguimientos para mejorar conversion." },
-  { icon: BarChart3, title: "Aprende del negocio", text: "Usa catalogo, politicas, preguntas frecuentes, tono de marca e integraciones para responder con contexto real." },
-];
-
 const AGENTS = [
   {
     name: "Agente de Agenda",
@@ -173,12 +145,6 @@ const AGENTS = [
   },
 ];
 
-const DIFFERENTIATORS = [
-  ["Problema claro", "AURALY resuelve chats perdidos, respuestas lentas, leads sin seguimiento, agendas manuales y equipos saturados por tareas repetitivas."],
-  ["Configurable de punta a punta", "Aly adapta tono, servicios, objeciones, horarios, reglas de agenda, datos a capturar, plantillas y escalamiento humano."],
-  ["Operacion medible", "Cada conversacion deja historial, estado, consumo y contexto para optimizar ventas, soporte y recuperacion."],
-];
-
 const DEFAULT_WHATSAPP_CONTACT_NUMBER = "573117324418";
 const WHATSAPP_CONTACT_NUMBER =
   process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_NUMBER || DEFAULT_WHATSAPP_CONTACT_NUMBER;
@@ -196,20 +162,24 @@ type DemoForm = {
 type DemoFormErrors = Partial<Record<keyof DemoForm, string>>;
 const FAQ = [
   {
-    q: "Como funcionan los creditos?",
-    a: "Los creditos representan uso operativo del agente. Una respuesta simple suele consumir 1 credito; acciones avanzadas como agenda, cotizacion, pagos, audio o documentos pueden consumir mas.",
+    q: "¿La facturación electrónica está conectada con inventario y contabilidad?",
+    a: "Sí. La operación parte del mismo documento: Auraly mantiene la trazabilidad fiscal, actualiza el inventario cuando corresponde y lleva los movimientos hacia los procesos financieros y contables configurados.",
   },
   {
-    q: "Que pasa cuando se llega al limite?",
-    a: "El tablero muestra alertas de consumo para que puedas renovar, ampliar creditos o ajustar la operacion antes de afectar tus conversaciones.",
+    q: "¿La app de pedidos funciona sin Internet?",
+    a: "Sí. El vendedor prepara su teléfono con rutas, clientes, pedidos, precios y existencias. Puede trabajar en modo local y los pendientes se sincronizan cuando vuelve la conexión.",
   },
   {
-    q: "WhatsApp marketing esta incluido?",
-    a: "No. La atencion entrante esta contemplada en el uso del plan; campanas, reactivaciones y plantillas de marketing se cobran aparte para proteger tu margen y evitar sorpresas.",
+    q: "¿Qué registra el transportador durante la ruta?",
+    a: "Puede confirmar entregas completas o parciales, novedades, devoluciones, efectivo, consignaciones, créditos, gastos y evidencias. Al finalizar, el cierre consolida lo recaudado y cualquier diferencia.",
   },
   {
-    q: "Puedo cambiar de plan?",
-    a: "Si. El plan activo conserva sus limites del periodo actual y los cambios aplican de forma controlada en el siguiente ciclo o al activar una ampliacion.",
+    q: "¿Qué información pueden consultar los agentes de IA?",
+    a: "Los agentes trabajan con la información y las acciones autorizadas para cada caso. Pueden atender conversaciones y consultar datos reales del software sin convertirse en la fuente de verdad de inventario, dinero o permisos.",
+  },
+  {
+    q: "¿Puedo ampliar el plan cuando crezca mi operación?",
+    a: "Sí. Puedes ampliar usuarios, cajas, documentos DIAN, empleados de nómina y capacidad de agentes según las necesidades de tu empresa.",
   },
 ];
 
@@ -294,37 +264,38 @@ export default function LandingPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f7f8f2] text-[#151515]">
-      <header className="sticky top-0 z-50 border-b border-black/10 bg-[#f7f8f2]/90 backdrop-blur">
-        <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
+    <main className="min-h-screen bg-[#f3f7f5] text-[#151515]">
+      <header className="sticky top-0 z-50 border-b border-white/10 bg-[#051518]/90 text-white shadow-[0_8px_30px_rgba(3,20,23,.18)] backdrop-blur-xl">
+        <nav className="mx-auto flex h-[4.5rem] max-w-[90rem] items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link href="/" className="flex items-center gap-2 text-xl font-semibold">
-            <AuralyLogo className="[&>span]:text-[#151515]" />
+            <AuralyLogo className="[&>span]:text-white" priority />
           </Link>
-          <div className="hidden items-center gap-8 md:flex">
-            <a href="#servicios" className="text-sm font-medium text-black/65 hover:text-black">Servicios</a>
-            <a href="#facturacion" className="text-sm font-medium text-black/65 hover:text-black">Facturación electrónica</a>
-            <a href="#agentes" className="text-sm font-medium text-black/65 hover:text-black">Agentes</a>
-            <a href="#planes" className="text-sm font-medium text-black/65 hover:text-black">Planes</a>
-            <a href="#faq" className="text-sm font-medium text-black/65 hover:text-black">FAQ</a>
+          <div className="hidden items-center gap-6 lg:flex xl:gap-8">
+            <a href="#plataforma" className="text-sm font-medium text-white/60 transition hover:text-white">Plataforma</a>
+            <a href="#facturacion" className="text-sm font-medium text-white/60 transition hover:text-white">Facturación electrónica</a>
+            <a href="#pedidos" className="text-sm font-medium text-white/60 transition hover:text-white">Pedidos</a>
+            <a href="#transporte" className="text-sm font-medium text-white/60 transition hover:text-white">Transportador</a>
+            <a href="#agentes" className="text-sm font-medium text-white/60 transition hover:text-white">Agentes</a>
+            <a href="#planes" className="text-sm font-medium text-white/60 transition hover:text-white">Planes</a>
           </div>
           <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <Button variant="ghost" asChild><Link href="/login">Entrar</Link></Button>
-            <Button asChild className="hidden bg-[#151515] text-white hover:bg-black sm:inline-flex"><a href="#demo">Solicitar demo</a></Button>
-            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileMenuOpen((v) => !v)} aria-label={mobileMenuOpen ? "Cerrar menú" : "Abrir menú"}>
+            <Button variant="ghost" asChild className="rounded-full text-white hover:bg-white/10 hover:text-white"><Link href="/login">Entrar</Link></Button>
+            <Button asChild className="hidden rounded-full bg-[#69d9d0] px-5 text-[#041417] shadow-[0_10px_28px_rgba(105,217,208,.16)] hover:bg-[#8be8e1] sm:inline-flex"><a href="#demo">Solicitar demo</a></Button>
+            <Button variant="ghost" size="icon" className="rounded-full text-white hover:bg-white/10 hover:text-white lg:hidden" onClick={() => setMobileMenuOpen((v) => !v)} aria-label={mobileMenuOpen ? "Cerrar menú" : "Abrir menú"}>
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>
           </div>
         </nav>
         {mobileMenuOpen && (
-          <div className="border-t border-black/10 px-4 py-4 md:hidden">
-            <div className="mx-auto flex max-w-7xl flex-col gap-3 text-sm">
-              <a href="#servicios" onClick={() => setMobileMenuOpen(false)}>Servicios</a>
+          <div className="border-t border-white/10 bg-[#051518] px-4 py-5 lg:hidden">
+            <div className="mx-auto flex max-w-[90rem] flex-col gap-4 text-sm text-white/75">
+              <a href="#plataforma" onClick={() => setMobileMenuOpen(false)}>Plataforma</a>
               <a href="#facturacion" onClick={() => setMobileMenuOpen(false)}>Facturación electrónica</a>
+              <a href="#pedidos" onClick={() => setMobileMenuOpen(false)}>Pedidos</a>
+              <a href="#transporte" onClick={() => setMobileMenuOpen(false)}>Transportador</a>
               <a href="#agentes" onClick={() => setMobileMenuOpen(false)}>Agentes</a>
               <a href="#planes" onClick={() => setMobileMenuOpen(false)}>Planes</a>
-              <a href="#faq" onClick={() => setMobileMenuOpen(false)}>FAQ</a>
-              <Button asChild className="mt-2 bg-[#151515] text-white hover:bg-black sm:hidden">
+              <Button asChild className="mt-2 rounded-full bg-[#69d9d0] text-[#041417] hover:bg-[#8be8e1] sm:hidden">
                 <a href="#demo" onClick={() => setMobileMenuOpen(false)}>Solicitar demo</a>
               </Button>
             </div>
@@ -332,166 +303,9 @@ export default function LandingPage() {
         )}
       </header>
 
-      <section className="bg-[#f7f8f2]">
-        <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-7xl items-center gap-10 px-4 py-10 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="max-w-3xl">
-          <Badge className="mb-5 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Tu empresa, conectada de punta a punta</Badge>
-          <h1 className="text-5xl font-semibold leading-[1.02] tracking-normal sm:text-6xl lg:text-7xl">
-            Factura, opera y crece con una inteligencia que entiende tu negocio.
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-black/70">
-            POS, facturación electrónica, contabilidad, nómina y agentes de IA trabajan sobre la misma verdad. Menos tareas separadas; más control para decidir y vender.
-          </p>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <Button size="lg" asChild className="bg-[#151515] text-white hover:bg-black">
-              <a href="#demo">Solicitar demo <ArrowRight className="ml-2 h-4 w-4" /></a>
-            </Button>
-            <Button size="lg" variant="outline" asChild className="border-black/20 bg-white text-[#151515] hover:bg-white/90">
-              <a href="#planes">Ver planes</a>
-            </Button>
-          </div>
-          <div className="mt-8 grid max-w-2xl gap-3 sm:grid-cols-3">
-            {["Facturación DIAN", "Operación y finanzas", "Agentes de IA 24/7"].map((item) => (
-              <div key={item} className="flex items-center gap-2 text-sm text-black/70"><Check className="h-4 w-4 text-[#1A5860]" />{item}</div>
-            ))}
-          </div>
-        </div>
+      <ProductHero />
 
-        <div className="relative">
-          <div className="absolute -left-6 top-8 hidden h-24 w-24 rounded-full bg-[#69D9D0] md:block" />
-          <div className="relative overflow-hidden rounded-lg border border-black/10 bg-[#151515] p-5 text-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <div>
-                <p className="text-sm text-white/55">Pipeline de hoy</p>
-                <p className="text-2xl font-semibold">47 conversaciones activas</p>
-              </div>
-              <Badge className="bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">+38% cierres</Badge>
-            </div>
-            <div className="mt-5 space-y-3">
-              {[
-                ["Cliente", "Hola, tienen agenda para manana?"],
-                ["AURALY", "Si. Tengo 10:30 a.m. y 3:00 p.m. Tambien puedo enviarte el link de pago para separar."],
-                ["Cliente", "La de 3 esta bien"],
-                ["AURALY", "Perfecto. Te envio el resumen y el pago seguro para confirmar tu cupo."],
-              ].map(([sender, text], index) => (
-                <div key={`${sender}-${index}`} className={cn("max-w-[86%] rounded-lg px-4 py-3 text-sm", sender === "AURALY" ? "ml-auto bg-[#69D9D0] text-[#07161A]" : "bg-white/10 text-white")}>
-                  <p className="mb-1 text-xs opacity-65">{sender}</p>
-                  <p>{text}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-5 grid gap-3 rounded-lg bg-white p-4 text-black sm:grid-cols-3">
-              <div><p className="text-xs text-black/55">Credito usado</p><p className="font-semibold">8.420 / 10k</p></div>
-              <div><p className="text-xs text-black/55">Uso</p><p className="font-semibold">84%</p></div>
-              <div><p className="text-xs text-black/55">Estado</p><p className="font-semibold text-[#1A5860]">Activo</p></div>
-              <div className="sm:col-span-3"><Progress value={84} /></div>
-            </div>
-          </div>
-        </div>
-        </div>
-      </section>
-
-      <section id="servicios" className="relative overflow-clip bg-[#07161A] py-24 text-white">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(105,217,208,.2),transparent_32%),radial-gradient(circle_at_88%_72%,rgba(42,122,130,.25),transparent_34%)]" />
-        <div className="relative mx-auto max-w-7xl px-4">
-          <div className="max-w-3xl">
-            <p className="text-xs font-bold uppercase tracking-[.26em] text-[#69D9D0]">Una plataforma. Cinco escenas.</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-.04em] sm:text-6xl">Desplázate por una operación que por fin habla el mismo idioma.</h2>
-          </div>
-          <div className="mt-16 space-y-7">
-            {PRODUCT_SCENES.map((scene, index) => {
-              const Icon = scene.icon;
-              return <article id={index === 1 ? "facturacion" : undefined} key={scene.number} className="landing-scene group sticky overflow-hidden rounded-[2rem] border border-white/10 bg-[#0F2C33]/90 p-6 shadow-[0_35px_100px_rgba(0,0,0,.32)] backdrop-blur-xl sm:p-10" style={{ top: `${84 + index * 14}px` }}>
-                <div className="grid min-h-[58vh] items-center gap-10 lg:grid-cols-[.85fr_1.15fr]">
-                  <div>
-                    <div className="flex items-center gap-3 text-sm text-[#A6F1EA]"><span className="font-mono">{scene.number}</span><span className="h-px w-12 bg-[#69D9D0]/50"/><span className="font-semibold uppercase tracking-[.18em]">{scene.kicker}</span></div>
-                    <h3 className="mt-7 text-4xl font-semibold leading-tight tracking-[-.035em] sm:text-5xl">{scene.title}</h3>
-                    <p className="mt-5 max-w-xl text-lg leading-8 text-white/65">{scene.text}</p>
-                    <div className="mt-9 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm"><FileCheck2 className="h-4 w-4 text-[#69D9D0]"/>{scene.metric}</div>
-                  </div>
-                  <div className="relative mx-auto aspect-square w-full max-w-lg">
-                    <div className={cn("landing-orbit absolute inset-[8%] rounded-full bg-gradient-to-br opacity-25 blur-2xl", scene.accent)} />
-                    <div className="absolute inset-[14%] rounded-full border border-white/10" />
-                    <div className="landing-float absolute inset-[25%] grid place-items-center rounded-[2.5rem] border border-white/15 bg-white/[.08] shadow-2xl backdrop-blur-xl">
-                      <Icon className="h-24 w-24 text-[#A6F1EA] sm:h-32 sm:w-32" strokeWidth={1.15}/>
-                    </div>
-                    {["top-4 left-1/2", "bottom-8 right-3", "bottom-12 left-2"].map((position, dot) => <span key={position} className={cn("absolute h-3 w-3 rounded-full bg-[#69D9D0] shadow-[0_0_25px_#69D9D0]", position)} style={{ animationDelay: `${dot * 350}ms` }}/>) }
-                  </div>
-                </div>
-              </article>;
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section id="producto" className="border-y border-black/10 bg-white py-20">
-        <div className="mx-auto max-w-7xl px-4">
-          <div className="max-w-2xl">
-            <Badge variant="outline" className="mb-4 border-[#1A5860]/30 bg-white text-[#1A5860] hover:bg-white">Empleados digitales configurables</Badge>
-            <h2 className="text-3xl font-semibold sm:text-5xl">No es un chatbot generico. Es un empleado digital entrenado para operar ventas, agenda, soporte y seguimiento.</h2>
-          </div>
-          <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {OUTCOMES.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Card key={item.title} className="rounded-lg border-black/10 bg-white text-[#151515]">
-                  <CardHeader>
-                    <Icon className="h-6 w-6 text-[#1A5860]" />
-                    <CardTitle className="text-lg">{item.title}</CardTitle>
-                  </CardHeader>
-                  <CardContent className="text-sm leading-6 text-black/65">{item.text}</CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-[#f7f8f2] py-20">
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 lg:grid-cols-[0.9fr_1.1fr]">
-        <div>
-            <Badge className="mb-4 bg-[#151515] text-white">Control de margen</Badge>
-          <h2 className="text-3xl font-semibold sm:text-5xl">Automatizacion con numeros claros, no una caja negra.</h2>
-          <p className="mt-5 text-lg leading-8 text-black/70">
-            El cliente ve una medicion simple. Tu administras costo real por IA, WhatsApp, herramientas e integraciones. Si el negocio llega al limite, el agente se pausa antes de gastar mas.
-          </p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {[
-            [Sparkles, "IA", "Tokens de entrada y salida medidos por turno."],
-            [MessageCircle, "Canales", "WhatsApp entrante, secuencias y plantillas separadas."],
-            [Gauge, "Uso", "Creditos y porcentaje visibles para el cliente."],
-            [ShieldCheck, "Margen", "Costo variable maximo por plan y periodo."],
-          ].map(([Icon, title, text]) => {
-            const LucideIcon = Icon as typeof Sparkles;
-            return (
-              <div key={String(title)} className="rounded-lg border border-black/10 bg-white p-5">
-                <LucideIcon className="mb-4 h-6 w-6 text-[#1A5860]" />
-                <h3 className="font-semibold">{String(title)}</h3>
-                <p className="mt-2 text-sm leading-6 text-black/65">{String(text)}</p>
-              </div>
-            );
-          })}
-        </div>
-        </div>
-      </section>
-
-      <section className="bg-[#151515] py-20 text-white">
-        <div className="mx-auto max-w-7xl px-4">
-          <div className="max-w-2xl">
-            <Badge className="mb-4 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Diferente a un builder generico</Badge>
-            <h2 className="text-3xl font-semibold sm:text-5xl">AURALY se enfoca en operar conversaciones que terminan en accion.</h2>
-          </div>
-          <div className="mt-10 grid gap-4 md:grid-cols-3">
-            {DIFFERENTIATORS.map(([title, text]) => (
-              <div key={title} className="rounded-lg border border-white/10 bg-white/[0.04] p-6">
-                <h3 className="text-lg font-semibold">{title}</h3>
-                <p className="mt-3 text-sm leading-6 text-white/65">{text}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      <PlatformShowcase />
 
       <section id="agentes" className="bg-[#06090B] py-20 text-white">
         <div className="mx-auto max-w-7xl px-4">
@@ -546,6 +360,29 @@ export default function LandingPage() {
               );
             })}
           </div>
+          <div id="planes-agentes" className="mt-8 rounded-[2rem] border border-[#69D9D0]/20 bg-[#0f2c33]/70 p-5 sm:p-7">
+            <Accordion type="single" collapsible>
+              <AccordionItem value="precios-agentes" className="border-0">
+                <AccordionTrigger className="rounded-2xl px-1 py-2 text-left text-white hover:no-underline">
+                  <span className="flex items-center gap-4">
+                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#69D9D0] text-[#07161A]"><Bot className="h-5 w-5" /></span>
+                    <span><strong className="block text-base">Ver planes y precios de agentes</strong><small className="mt-1 block font-normal text-white/55">Oferta independiente de los planes de facturación y POS.</small></span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="pt-6">
+                  <div className="mb-5 rounded-2xl border border-[#69D9D0]/20 bg-[#69D9D0]/10 p-4 text-sm leading-6 text-[#d7fffb]">
+                    Estos valores corresponden únicamente a agentes de IA, créditos de conversación, almacenamiento y líneas de WhatsApp. No son los precios de facturación, POS, inventario, contabilidad o nómina.
+                  </div>
+                  <div className="grid auto-rows-fr gap-4 min-[560px]:grid-cols-2 xl:grid-cols-4">
+                    {PLANS.map((plan) => <Card key={plan.name} className={cn("flex h-full flex-col rounded-2xl border-white/10 bg-white/[.06] text-white", plan.highlight && "border-[#69D9D0] bg-[#123a42]")}>
+                      <CardHeader><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#69D9D0]">Plan de agentes de IA</p><div className="flex items-center justify-between gap-2"><CardTitle>IA {plan.name}</CardTitle>{plan.highlight && <Badge className="bg-[#69D9D0] text-[#07161A]">Recomendado</Badge>}</div><p className="pt-3 text-3xl font-semibold">{plan.price === "A medida" ? plan.price : `$${plan.price}`}</p>{plan.price !== "A medida" && <p className="text-xs text-white/45">COP / mes · solo agentes</p>}</CardHeader>
+                      <CardContent className="flex flex-1 flex-col gap-5"><p className="min-h-12 text-sm leading-6 text-white/60">{plan.hint}</p><Separator className="bg-white/10"/><div className="text-sm"><strong className="text-[#69D9D0]">{plan.credits}</strong> créditos mensuales<p className="mt-1 text-white/55">{plan.capacity}</p></div><ul className="space-y-3 text-sm">{plan.features.map(feature => <li key={feature} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-[#69D9D0]"/>{feature}</li>)}</ul><Button asChild className="mt-auto w-full bg-[#69D9D0] text-[#07161A] hover:bg-[#7CE3DB]"><a href="#demo">Cotizar agentes <ChevronRight className="ml-1 h-4 w-4"/></a></Button></CardContent>
+                    </Card>)}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </div>
         </div>
       </section>
 
@@ -559,7 +396,7 @@ export default function LandingPage() {
             <p className="max-w-md text-sm leading-6 text-black/65">POS, facturación electrónica, contabilidad y nómina con capacidad visible y ampliaciones sin sorpresas.</p>
           </div>
           {operationsCatalog.isLoading && <div className="mt-10 rounded-2xl border border-black/10 bg-white p-8 text-center text-black/60">Cargando planes vigentes…</div>}
-          {operationsCatalog.isError && <div role="alert" className="mt-10 rounded-2xl border border-red-200 bg-red-50 p-6 text-red-800">No fue posible consultar los planes en este momento.</div>}
+          {operationsCatalog.isError && <div role="alert" className="mt-10 grid gap-5 overflow-hidden rounded-[2rem] bg-[#0b292d] p-6 text-white sm:grid-cols-[1fr_auto] sm:items-center sm:p-8"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-[#69D9D0]">Capacidad a tu medida</p><h3 className="mt-2 text-2xl font-semibold">Encuentra el plan correcto con nuestro equipo.</h3><p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">Te ayudamos a calcular usuarios, cajas, documentos DIAN y empleados de nómina según tu operación real.</p></div><Button asChild className="rounded-full bg-[#69D9D0] px-6 text-[#07161A] hover:bg-[#8be8e1]"><a href="#demo">Consultar planes</a></Button></div>}
           <div className="mt-10 grid auto-rows-fr items-stretch gap-4 min-[560px]:grid-cols-2 xl:grid-cols-5">
             {operationsCatalog.data?.plans.map((plan) => {
               const copy = OPERATIONS_PLAN_COPY[plan.code] ?? { tagline: "Plan Auraly", hint: "Capacidad configurable para tu operación." };
@@ -610,61 +447,52 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section id="planes-ia" className="border-t border-white/10 bg-[#06090B] py-20 text-white">
-        <div className="mx-auto max-w-7xl px-4">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div><Badge className="mb-4 bg-[#69D9D0] text-[#07161A]">Planes de agentes de IA</Badge><h2 className="text-3xl font-semibold sm:text-5xl">Créditos y capacidad para conversaciones reales.</h2></div>
-            <p className="max-w-md text-sm leading-6 text-white/60">Conserva la oferta de agentes, almacenamiento y líneas de WhatsApp; escala según el volumen de atención.</p>
-          </div>
-          <div className="mt-10 grid auto-rows-fr gap-4 min-[560px]:grid-cols-2 xl:grid-cols-4">
-            {PLANS.map((plan) => <Card key={plan.name} className={cn("flex h-full flex-col rounded-2xl border-white/10 bg-white/[.06] text-white", plan.highlight && "border-[#69D9D0] bg-[#0F2C33]")}>
-              <CardHeader><div className="flex items-center justify-between gap-2"><CardTitle>{plan.name}</CardTitle>{plan.highlight && <Badge className="bg-[#69D9D0] text-[#07161A]">Recomendado</Badge>}</div><p className="pt-4 text-4xl font-semibold">{plan.price === "A medida" ? plan.price : `$${plan.price}`}</p>{plan.price !== "A medida" && <p className="text-sm text-white/50">COP / mes</p>}</CardHeader>
-              <CardContent className="flex flex-1 flex-col gap-5"><p className="min-h-12 text-sm leading-6 text-white/60">{plan.hint}</p><Separator className="bg-white/10"/><div className="text-sm"><strong className="text-[#69D9D0]">{plan.credits}</strong> créditos mensuales<p className="mt-1 text-white/55">{plan.capacity}</p></div><ul className="space-y-3 text-sm">{plan.features.map(feature => <li key={feature} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-[#69D9D0]"/>{feature}</li>)}</ul><Button asChild className="mt-auto w-full bg-[#69D9D0] text-[#07161A] hover:bg-[#7CE3DB]"><a href="#demo">Solicitar demo <ChevronRight className="ml-1 h-4 w-4"/></a></Button></CardContent>
-            </Card>)}
-          </div>
-        </div>
-      </section>
-
-      <section id="faq" className="bg-[#151515] py-20 text-white">
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 lg:grid-cols-[0.8fr_1.2fr]">
+      <section id="faq" className="bg-[#0a2529] py-24 text-white sm:py-32">
+        <div className="mx-auto grid max-w-[90rem] gap-12 px-4 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
         <div>
-          <Badge className="mb-4 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Preguntas frecuentes</Badge>
-          <h2 className="text-3xl font-semibold sm:text-5xl">Creditos simples para el cliente, costos controlados para ti.</h2>
+          <Badge className="mb-5 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Preguntas frecuentes</Badge>
+          <h2 className="text-balance text-4xl font-semibold leading-[1] tracking-[-.05em] sm:text-6xl">Lo que necesitas saber antes de verlo en vivo.</h2>
         </div>
         <Accordion type="single" collapsible className="w-full">
           {FAQ.map((item) => (
             <AccordionItem key={item.q} value={item.q} className="border-white/20">
-              <AccordionTrigger className="text-white hover:text-[#69D9D0]">{item.q}</AccordionTrigger>
-              <AccordionContent className="text-white/65">{item.a}</AccordionContent>
+              <AccordionTrigger className="py-6 text-left text-base text-white hover:text-[#69D9D0] sm:text-lg">{item.q}</AccordionTrigger>
+              <AccordionContent className="max-w-2xl pb-6 text-base leading-7 text-white/60">{item.a}</AccordionContent>
             </AccordionItem>
           ))}
         </Accordion>
         </div>
       </section>
 
-      <section id="demo" className="border-t border-black/10 bg-white py-20">
-        <div className="mx-auto grid max-w-7xl gap-8 px-4 lg:grid-cols-[1fr_0.8fr] lg:items-center">
+      <section id="demo" className="scroll-mt-20 overflow-hidden border-t border-black/10 bg-[#69d9d0] py-24 sm:py-32">
+        <div className="mx-auto grid max-w-[90rem] gap-10 px-4 sm:px-6 lg:grid-cols-[1fr_0.78fr] lg:items-center lg:px-8">
           <div>
-            <Sparkles className="mb-5 h-8 w-8 text-[#1A5860]" />
-            <h2 className="text-3xl font-semibold sm:text-5xl">Revisemos tu flujo actual de WhatsApp.</h2>
-            <p className="mt-4 max-w-2xl text-lg text-black/65">Dejanos tus datos y te escribimos por WhatsApp para revisar tu flujo, detectar oportunidades y agendar una demo en vivo de AURALY.</p>
+            <span className="mb-6 grid h-12 w-12 place-items-center rounded-2xl bg-[#062126] text-[#69d9d0]"><Sparkles className="h-6 w-6" /></span>
+            <p className="text-xs font-bold uppercase tracking-[.22em] text-[#0e6564]">Una demo. Tu operación.</p>
+            <h2 className="mt-4 max-w-3xl text-balance text-4xl font-semibold leading-[.98] tracking-[-.055em] text-[#041719] sm:text-6xl">Mira cómo se vería todo tu negocio conectado.</h2>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-[#164d50]">Déjanos tus datos. Te escribimos por WhatsApp para entender tu operación y mostrarte Auraly con los procesos que realmente te importan.</p>
           </div>
-          <form onSubmit={submit} noValidate className="grid gap-3 rounded-lg border border-black/10 bg-[#f7f8f2] p-4">
-            <div className="grid gap-3 sm:grid-cols-2">
+          <form onSubmit={submit} noValidate className="grid gap-4 rounded-[2rem] border border-white/45 bg-white/90 p-5 shadow-[0_30px_80px_rgba(4,33,38,.18)] backdrop-blur sm:p-7">
+            <div><p className="text-lg font-semibold text-[#0b292d]">Agenda tu demo</p><p className="mt-1 text-sm text-[#61777a]">Cuatro datos y empezamos la conversación.</p></div>
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
-                <Input value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="Nombre" required aria-required="true" aria-invalid={Boolean(errors.name)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <label htmlFor="demo-name" className="text-xs font-semibold text-[#35575a]">Nombre</label>
+                <Input id="demo-name" value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="Tu nombre" required aria-required="true" aria-invalid={Boolean(errors.name)} className="h-11 bg-white text-[#151515] placeholder:text-black/35" />
                 {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
               </div>
               <div className="space-y-1">
-                <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo requerido" required aria-required="true" aria-invalid={Boolean(errors.email)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <label htmlFor="demo-email" className="text-xs font-semibold text-[#35575a]">Correo</label>
+                <Input id="demo-email" type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="nombre@empresa.com" required aria-required="true" aria-invalid={Boolean(errors.email)} className="h-11 bg-white text-[#151515] placeholder:text-black/35" />
                 {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
               </div>
               <div className="space-y-1">
-                <Input value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Empresa" required aria-required="true" aria-invalid={Boolean(errors.company)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <label htmlFor="demo-company" className="text-xs font-semibold text-[#35575a]">Empresa</label>
+                <Input id="demo-company" value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Nombre de tu empresa" required aria-required="true" aria-invalid={Boolean(errors.company)} className="h-11 bg-white text-[#151515] placeholder:text-black/35" />
                 {errors.company && <p className="text-xs text-destructive">{errors.company}</p>}
               </div>
               <div className="space-y-1">
-                <Input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="WhatsApp" required aria-required="true" aria-invalid={Boolean(errors.phone)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <label htmlFor="demo-phone" className="text-xs font-semibold text-[#35575a]">WhatsApp</label>
+                <Input id="demo-phone" value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="Número de contacto" required aria-required="true" aria-invalid={Boolean(errors.phone)} className="h-11 bg-white text-[#151515] placeholder:text-black/35" />
                 {errors.phone && <p className="text-xs text-destructive">{errors.phone}</p>}
               </div>
             </div>
@@ -673,22 +501,24 @@ export default function LandingPage() {
                 {statusMessage}
               </p>
             )}
-            <Button type="submit" disabled={status === "loading"} className="bg-[#151515] text-white hover:bg-black">
+            <Button type="submit" disabled={status === "loading"} className="h-12 rounded-full bg-[#061c1f] text-white hover:bg-[#0d3438]">
               {status === "loading" ? "Enviando..." : "Solicitar demo"}
             </Button>
           </form>
         </div>
       </section>
 
-      <footer className="border-t border-black/10 py-10">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 text-sm text-black/60 sm:flex-row sm:items-center sm:justify-between">
-          <p>AURALY. Intelligence Amplified. Imagination Realized.</p>
-          <div className="flex gap-4">
-            <a href="#servicios">Servicios</a>
+      <footer className="border-t border-white/10 bg-[#051518] py-10 text-white">
+        <div className="mx-auto flex max-w-[90rem] flex-col gap-5 px-4 text-sm text-white/55 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+          <AuralyLogo className="[&>span]:text-white" />
+          <p>Tu operación conectada de punta a punta.</p>
+          <div className="flex flex-wrap gap-4">
+            <a href="#plataforma">Plataforma</a>
             <a href="#facturacion">Facturación</a>
+            <a href="#pedidos">Pedidos</a>
+            <a href="#transporte">Transportador</a>
             <a href="#agentes">Agentes</a>
             <a href="#planes">Planes</a>
-            <a href="#faq">FAQ</a>
           </div>
         </div>
       </footer>
@@ -699,11 +529,21 @@ export default function LandingPage() {
           target="_blank"
           rel="noreferrer"
           aria-label="Abrir WhatsApp con Aly"
-          className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-2xl shadow-black/25 transition hover:bg-[#1EBE57] focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:ring-offset-2"
+          className="group fixed bottom-5 right-5 z-50 flex h-14 items-center justify-center gap-2 rounded-full bg-[#25D366] px-4 text-white shadow-2xl shadow-black/25 transition hover:-translate-y-1 hover:bg-[#1EBE57] hover:shadow-[0_18px_45px_rgba(37,211,102,.35)] focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:ring-offset-2"
         >
-          <MessageCircle className="h-6 w-6" />
+          <WhatsAppIcon className="h-6 w-6" />
+          <span className="hidden pr-1 text-sm font-bold sm:inline">Hablemos por WhatsApp</span>
         </a>
       )}
     </main>
+  );
+}
+
+function WhatsAppIcon({ className }: { className?: string }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M20.5 11.7a8.5 8.5 0 0 1-12.7 7.4L3 20.5l1.5-4.6A8.5 8.5 0 1 1 20.5 11.7Z" fill="currentColor" />
+      <path d="M8.25 7.7c.2-.45.4-.46.68-.47h.58c.18 0 .38.05.48.34.12.34.48 1.18.52 1.27.05.09.08.2.02.32-.06.13-.1.2-.2.3-.09.12-.2.25-.28.33-.1.1-.2.21-.08.42.11.21.5.82 1.08 1.33.74.66 1.36.86 1.57.96.21.1.33.08.45-.05.13-.15.55-.64.7-.86.14-.21.28-.18.47-.1.2.07 1.23.58 1.44.69.21.1.35.15.4.24.05.08.05.5-.12.98-.17.48-1  .92-1.38.98-.36.06-.83.09-1.34-.08-.31-.1-.72-.23-1.24-.45-.22-.09-.96-.36-1.65-.96-.58-.5-1.83-1.71-2.13-2.95-.3-1.24.02-1.85.13-2.08Z" fill="#25D366" />
+    </svg>
   );
 }
