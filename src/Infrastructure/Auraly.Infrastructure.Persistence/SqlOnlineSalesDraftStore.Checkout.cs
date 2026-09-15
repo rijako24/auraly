@@ -51,7 +51,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT TOP(2) a.AuthorizationNumber,a.TechnicalKeyVersion,a.Environment
+            SELECT TOP(2) a.FiscalAuthorizationId,a.AuthorizationNumber,
+                   a.TechnicalKeyVersion,a.Environment
             FROM dbo.SalesDrafts d
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
             JOIN dbo.WorkSessions ws
@@ -91,9 +92,10 @@ public sealed partial class SqlOnlineSalesDraftStore
                 new FiscalKeyReference(
                     user.TenantId,
                     Guid.Empty,
-                    reader.GetString(0),
+                    reader.GetGuid(0),
                     reader.GetString(1),
-                    (FiscalEnvironment)reader.GetByte(2))));
+                    reader.GetString(2),
+                    (FiscalEnvironment)reader.GetByte(3))));
         }
         if (rows.Count != 1)
             throw new OnlineSalesDraftValidationException(

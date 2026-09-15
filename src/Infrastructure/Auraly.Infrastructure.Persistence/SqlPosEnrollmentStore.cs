@@ -157,7 +157,8 @@ public sealed class SqlPosEnrollmentStore(
             ? null
             : await technicalKeys.ResolveAsync(
                 new FiscalKeyReference(
-                    data.TenantId, data.BusinessId, data.AuthorizationNumber!,
+                    data.TenantId, data.BusinessId, data.FiscalAuthorizationId!.Value,
+                    data.AuthorizationNumber!,
                     data.TechnicalKeyVersion!, (FiscalEnvironment)data.Environment!.Value),
                 cancellationToken);
         if (data.FiscalSeriesId is not null && material is null)

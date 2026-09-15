@@ -31,6 +31,7 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             new FiscalKeyReference(
                 request.TenantId,
                 request.BusinessId,
+                snapshot.FiscalAuthorizationId,
                 snapshot.AuthorizationNumber,
                 snapshot.TechnicalKeyVersion,
                 environment),

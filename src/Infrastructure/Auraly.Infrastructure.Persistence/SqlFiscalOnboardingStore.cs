@@ -551,10 +551,12 @@ public sealed class SqlFiscalOnboardingStore(
 
             DECLARE @AuthorizationNumber nvarchar(64),@Prefix nvarchar(16),
                     @RangeStart bigint,@RangeEnd bigint,@ValidFrom date,@ValidUntil date,
-                    @SupplierTaxId nvarchar(32),@AuthorizationId uniqueidentifier=@NewAuthorizationId;
+                    @ProtectedTechnicalKey varbinary(max),@SupplierTaxId nvarchar(32),
+                    @AuthorizationId uniqueidentifier=@NewAuthorizationId;
             SELECT @AuthorizationNumber=AuthorizationNumber,@Prefix=Prefix,
                    @RangeStart=RangeStart,@RangeEnd=RangeEnd,
-                   @ValidFrom=ValidFrom,@ValidUntil=ValidUntil
+                   @ValidFrom=ValidFrom,@ValidUntil=ValidUntil,
+                   @ProtectedTechnicalKey=ProtectedTechnicalKey
             FROM fiscal.DianNumberingRanges WITH(UPDLOCK,HOLDLOCK)
             WHERE DianNumberingRangeId=@RangeId AND TenantId=@TenantId
               AND AssignedBusinessId IS NULL
@@ -580,6 +582,11 @@ public sealed class SqlFiscalOnboardingStore(
                 AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
             VALUES(@AuthorizationId,@BusinessId,@RangeId,@AuthorizationNumber,@SupplierTaxId,1,
                    @QrUrl,N'cuds-sha384',@ValidFrom,@ValidUntil,@RangeStart,@RangeEnd,1,@Now);
+            INSERT dbo.FiscalTechnicalKeySecrets(
+                FiscalTechnicalKeySecretId,BusinessId,FiscalAuthorizationId,TechnicalKeyVersion,
+                Environment,ProtectedValue,CreatedAt,UpdatedAt)
+            VALUES(@TechnicalKeySecretId,@BusinessId,@AuthorizationId,N'cuds-sha384',
+                   1,@ProtectedTechnicalKey,@Now,@Now);
             INSERT dbo.FiscalSeries(
                 SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
                 DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
@@ -597,6 +604,7 @@ public sealed class SqlFiscalOnboardingStore(
         Add(command, "@UserId", userId);
         Add(command, "@RangeId", dianNumberingRangeId);
         Add(command, "@NewAuthorizationId", ids.NewId());
+        Add(command, "@TechnicalKeySecretId", ids.NewId());
         Add(command, "@SeriesId", ids.NewId());
         Add(command, "@QrUrl", QrValidationUrl);
         Add(command, "@Now", timeProvider.GetUtcNow());

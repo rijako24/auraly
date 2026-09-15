@@ -204,7 +204,8 @@ public sealed class SqlFiscalDeviceSeriesStore(
         foreach (var row in rows)
         {
             var material = await technicalKeys.ResolveAsync(
-                new FiscalKeyReference(tenantId, businessId, row.AuthorizationNumber,
+                new FiscalKeyReference(tenantId, businessId, row.FiscalAuthorizationId,
+                    row.AuthorizationNumber,
                     row.TechnicalKeyVersion, (FiscalEnvironment)row.Environment),
                 cancellationToken)
                 ?? throw new FiscalConfigurationValidationException(

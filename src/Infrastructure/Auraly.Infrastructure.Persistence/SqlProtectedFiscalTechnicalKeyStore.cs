@@ -26,6 +26,7 @@ public sealed class SqlProtectedFiscalTechnicalKeyStore(
              AND s.BusinessId=a.BusinessId
              AND s.TechnicalKeyVersion=@Version AND s.Environment=@Environment
             WHERE b.TenantId=@TenantId AND a.BusinessId=@BusinessId
+              AND a.FiscalAuthorizationId=@AuthorizationId
               AND a.AuthorizationNumber=@AuthorizationNumber
               AND a.TechnicalKeyVersion=@Version AND a.Environment=@Environment
               AND a.IsActive=1;
@@ -35,6 +36,7 @@ public sealed class SqlProtectedFiscalTechnicalKeyStore(
         await using var command = new SqlCommand(sql, connection);
         Add(command, "@TenantId", reference.TenantId);
         Add(command, "@BusinessId", reference.BusinessId);
+        Add(command, "@AuthorizationId", reference.FiscalAuthorizationId);
         Add(command, "@AuthorizationNumber", reference.AuthorizationNumber);
         Add(command, "@Version", reference.TechnicalKeyVersion);
         Add(command, "@Environment", (int)reference.Environment);

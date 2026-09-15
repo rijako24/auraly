@@ -196,6 +196,7 @@ public sealed class SqlTenantSubscriptionSettlementService(
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
             SELECT TOP(2) billingTenant.TenantId,billing.BusinessId,
+                   fiscalAuthorization.FiscalAuthorizationId,
                    fiscalAuthorization.AuthorizationNumber,
                    fiscalAuthorization.TechnicalKeyVersion,fiscalAuthorization.Environment
             FROM dbo.PaymentTransactions payment
@@ -225,8 +226,9 @@ public sealed class SqlTenantSubscriptionSettlementService(
         var rows = new List<FiscalKeyReference>(2);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            rows.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
-                reader.GetString(3), (FiscalEnvironment)reader.GetByte(4)));
+            rows.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+                reader.GetString(3), reader.GetString(4),
+                (FiscalEnvironment)reader.GetByte(5)));
         return rows.Count == 1 ? rows[0] : throw new InvalidOperationException(
             rows.Count == 0
                 ? "Auraly no tiene una resolución online activa y vigente para facturar el pago."

@@ -6,6 +6,7 @@ namespace Auraly.Contracts.Fiscal;
 public sealed record FiscalKeyReference(
     Guid TenantId,
     Guid BusinessId,
+    Guid FiscalAuthorizationId,
     string AuthorizationNumber,
     string TechnicalKeyVersion,
     FiscalEnvironment Environment);

@@ -60,6 +60,6 @@ por el motor; no reconstruye identidad fiscal ni numeración desde maestros.
 - Una recepción de factura del proveedor o comprobante interno nunca crea un proceso DIAN.
 - Un documento soporte sin emisor, resolución o serie vigente falla explícitamente antes de confirmar.
 - Los workers siempre generan desde el snapshot fiscal inmutable, no desde maestros mutables.
-- La resolución de documento soporte se reserva para una sola sede y no comparte cursor con ventas.
+- Cada rango DIAN de documento soporte se reserva para una sola sede y no comparte cursor con ventas. DIAN puede devolver varios prefijos/rangos bajo el mismo número de resolución; esos rangos pueden alimentar series independientes de venta y documento soporte sin compartir consecutivo.
 - Una devolución de documento soporte genera una sola nota de ajuste tipo 95,
   validada con XSD, firmada y referenciada al CUDS original.
