@@ -174,6 +174,38 @@ public sealed class SqlPosSaleServerStore(
         CancellationToken cancellationToken) =>
         RecoverFiscalIntegrityConflictCoreAsync(command, 0, cancellationToken);
 
+    public async Task<StoredFiscalIntegrityConflict?> LoadFiscalIntegrityConflictAsync(
+        Guid businessId,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT d.IdempotencyKey,s.SnapshotJson
+            FROM dbo.SalesDocuments d
+            INNER JOIN dbo.FiscalSnapshots s ON s.DocumentId=d.DocumentId
+            INNER JOIN dbo.FiscalDocumentProcesses p
+              ON p.DocumentId=d.DocumentId AND p.BusinessId=d.BusinessId
+            WHERE d.BusinessId=@BusinessId
+              AND d.DocumentId=@DocumentId
+              AND d.ProcessingStatus=N'Blocked'
+              AND d.FiscalStatus=@FiscalIntegrityConflict
+              AND s.IntegrityStatus=@FiscalIntegrityConflict
+              AND p.Status=@FiscalIntegrityConflict;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue(
+            "@FiscalIntegrityConflict",
+            FiscalDocumentStatusCodes.FiscalIntegrityConflict);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new StoredFiscalIntegrityConflict(reader.GetString(0), reader.GetString(1))
+            : null;
+    }
+
     private async Task<StoredPosSale> RecoverFiscalIntegrityConflictCoreAsync(
         StorePosSaleReceptionCommand command,
         int deadlockAttempt,

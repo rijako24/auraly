@@ -40,6 +40,10 @@ public sealed record StorePosSaleReceptionCommand(
     FiscalSnapshotVerificationResult Verification,
     DateTimeOffset ReceivedAt);
 
+public sealed record StoredFiscalIntegrityConflict(
+    string IdempotencyKey,
+    string SnapshotJson);
+
 public interface IPosSaleServerStore
 {
     Task<PosSaleContextValidation> ValidateContextAsync(
@@ -58,6 +62,11 @@ public interface IPosSaleServerStore
 
     Task<StoredPosSale> RecoverFiscalIntegrityConflictAsync(
         StorePosSaleReceptionCommand command,
+        CancellationToken cancellationToken);
+
+    Task<StoredFiscalIntegrityConflict?> LoadFiscalIntegrityConflictAsync(
+        Guid businessId,
+        Guid documentId,
         CancellationToken cancellationToken);
 }
 
@@ -141,6 +150,39 @@ public sealed class ReceivePosSaleService(
         return await ReceiveCoreAsync(
             idempotencyKey, request, validateDeviceContext: false,
             lookupExisting: isCheckoutReplay, cancellationToken);
+    }
+
+    public async Task<bool> RecoverStoredFiscalIntegrityConflictAsync(
+        Guid businessId,
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var conflict = await store.LoadFiscalIntegrityConflictAsync(
+            businessId, documentId, cancellationToken);
+        if (conflict is null) return false;
+
+        PosSaleUploadRequest request;
+        try
+        {
+            request = PosSaleContractSerializer.Deserialize(conflict.SnapshotJson);
+        }
+        catch (Exception exception) when (exception is ArgumentException or System.Text.Json.JsonException)
+        {
+            throw new PosSaleInvalidException(
+                $"The stored fiscal snapshot cannot be recovered: {exception.Message}");
+        }
+
+        if (request.BusinessId != businessId || request.DocumentId != documentId)
+            throw new PosSaleInvalidException(
+                "The stored fiscal snapshot differs from the requested document context.");
+
+        var response = await ReceiveCoreAsync(
+            conflict.IdempotencyKey,
+            request,
+            validateDeviceContext: true,
+            lookupExisting: true,
+            cancellationToken);
+        return response.Status != PosSaleRemoteStatuses.FiscalIntegrityConflict;
     }
 
     private async Task<PosSaleUploadResponse> ReceiveCoreAsync(

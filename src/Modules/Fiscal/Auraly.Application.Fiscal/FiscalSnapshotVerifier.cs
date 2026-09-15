@@ -164,7 +164,7 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             var untaxed = decimal.Round(
                 (line.Quantity * line.UnitPrice) - line.DiscountAmount,
                 2,
-                MidpointRounding.AwayFromZero);
+                MidpointRounding.ToEven);
             if (untaxed != line.UntaxedAmount ||
                 line.LineTotal != line.UntaxedAmount + line.TaxAmount)
             {

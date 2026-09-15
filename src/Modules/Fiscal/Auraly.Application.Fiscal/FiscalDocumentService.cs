@@ -10,6 +10,14 @@ public sealed record FiscalUserIdentity(
 public sealed class FiscalForbiddenException(string message) : Exception(message);
 public sealed class FiscalOperationException(string message) : Exception(message);
 
+public interface IFiscalIntegrityConflictRecovery
+{
+    Task<bool> RecoverAsync(
+        Guid businessId,
+        Guid documentId,
+        CancellationToken cancellationToken);
+}
+
 public interface IFiscalDocumentStore
 {
     Task<FiscalDocumentView?> GetAsync(Guid businessId, Guid documentId, CancellationToken cancellationToken);
@@ -20,7 +28,8 @@ public interface IFiscalDocumentStore
 public sealed class FiscalDocumentService(
     IFiscalDocumentStore store,
     TimeProvider timeProvider,
-    FiscalProcessingCoordinator processing)
+    FiscalProcessingCoordinator processing,
+    IFiscalIntegrityConflictRecovery integrityConflictRecovery)
 {
     public Task<FiscalDocumentView?> GetAsync(
         FiscalUserIdentity user,
@@ -50,6 +59,19 @@ public sealed class FiscalDocumentService(
         CancellationToken cancellationToken = default)
     {
         Demand(user, FiscalPermissionCodes.Retry);
+        var current = await store.GetAsync(user.BusinessId, documentId, cancellationToken);
+        if (current is null) return null;
+        if (current.Status == FiscalDocumentStatusCodes.FiscalIntegrityConflict)
+        {
+            if (!await integrityConflictRecovery.RecoverAsync(
+                    user.BusinessId, documentId, cancellationToken))
+                throw new FiscalOperationException(
+                    "The fiscal integrity conflict could not be recovered from its immutable snapshot.");
+            return await store.GetAsync(user.BusinessId, documentId, cancellationToken)
+                ?? throw new FiscalOperationException(
+                    "The recovered fiscal document could not be loaded.");
+        }
+
         var document = await store.RetryAsync(
             user.BusinessId,
             documentId,

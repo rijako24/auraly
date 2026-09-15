@@ -5,6 +5,7 @@ using Auraly.Application.Fiscal;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Fiscal.Core;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
@@ -458,6 +459,112 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
             CancellationToken.None);
         Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("DocumentProcessingPayloads", request.DocumentId));
+    }
+
+    [Fact]
+    public async Task Fiscal_retry_recovers_a_previously_blocked_valid_snapshot_through_the_canonical_ingress()
+    {
+        fixture.DrainDocumentSignals();
+        var request = fixture.CreateValidRequest(7_125);
+        var idempotencyKey = $"recover-integrity-{request.DocumentId:N}";
+        using (var scope = fixture.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<IPosSaleServerStore>();
+            var verifier = scope.ServiceProvider.GetRequiredService<IFiscalSnapshotVerifier>();
+            var validVerification = await verifier.VerifyAsync(request, CancellationToken.None);
+            Assert.True(validVerification.IsVerified, validVerification.ConflictReason);
+            await store.StoreReceptionAsync(
+                new StorePosSaleReceptionCommand(
+                    request,
+                    idempotencyKey,
+                    PosSaleContractSerializer.Serialize(request),
+                    PosSaleContractSerializer.Hash(request),
+                    validVerification with
+                    {
+                        IsVerified = false,
+                        ConflictReason = "Simulated verifier defect"
+                    },
+                    DateTimeOffset.UtcNow),
+                CancellationToken.None);
+        }
+
+        using var client = fixture.CreateAdminClient(FiscalPermissionCodes.Retry);
+        using var response = await client.PostAsync(
+            $"/api/commerce/v1/fiscal/documents/{request.DocumentId}/retry", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var recovered = await response.Content.ReadFromJsonAsync<FiscalDocumentView>();
+        Assert.NotNull(recovered);
+        Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration, recovered.Status);
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingPayloads", request.DocumentId));
+        var signal = Assert.Single(fixture.DrainDocumentSignals());
+        Assert.Equal(request.DocumentId, signal.DocumentId);
+        Assert.Equal(request.BusinessId, signal.BusinessId);
+    }
+
+    [Fact]
+    public async Task Fiscal_verifier_accepts_the_pos_rounding_rule_at_an_exact_midpoint()
+    {
+        var request = fixture.CreateValidRequest(7_124);
+        var snapshot = request.FiscalSnapshot
+            ?? throw new InvalidOperationException("The test requires a fiscal snapshot.");
+        const decimal untaxed = .02m;
+        const decimal tax = 0m;
+        const decimal payable = .02m;
+        var line = request.Lines.Single() with
+        {
+            Quantity = 1m,
+            UnitPrice = .025m,
+            DiscountAmount = 0m,
+            TaxAmount = tax,
+            UntaxedAmount = untaxed,
+            LineTotal = payable,
+            TaxRate = 0m
+        };
+        var calculated = CufeCalculator.Calculate(
+            new CufeInput(
+                snapshot.FiscalNumber,
+                snapshot.IssuedAt,
+                untaxed,
+                payable,
+                ServerSliceFixture.SupplierTaxId,
+                snapshot.CustomerIdentification,
+                new FiscalTechnicalKey(
+                    ServerSliceFixture.TechnicalKeyValue,
+                    ServerSliceFixture.TechnicalKeyVersion),
+                FiscalEnvironment.Test,
+                [new FiscalTaxAmount(line.TaxCode, tax)]),
+            ServerSliceFixture.QrValidationUrl);
+        request = request with
+        {
+            Lines = [line],
+            Payments = [new PosSalePaymentContract(1, "Cash", payable, null)],
+            CommercialSnapshot = request.CommercialSnapshot with
+            {
+                Taxes = [new PosSaleTaxContract(line.TaxCode, tax)],
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                PayableAmount = payable
+            },
+            FiscalSnapshot = snapshot with
+            {
+                Taxes = [new PosSaleTaxContract(line.TaxCode, tax)],
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                PayableAmount = payable,
+                Cufe = calculated.Cufe,
+                QrPayload = calculated.QrPayload
+            }
+        };
+
+        using var scope = fixture.CreateScope();
+        var verifier = scope.ServiceProvider.GetRequiredService<IFiscalSnapshotVerifier>();
+
+        var verification = await verifier.VerifyAsync(request, CancellationToken.None);
+
+        Assert.True(verification.IsVerified, verification.ConflictReason);
+        Assert.Equal(calculated.Cufe, verification.CufeCalculated);
     }
 
     private static PosSaleUploadRequest Mutate(PosSaleUploadRequest request, string mutation)
