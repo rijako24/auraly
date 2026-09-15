@@ -346,7 +346,9 @@ public sealed class PosArchitectureTests
         Assert.Contains("ordersExpanded && client", page, StringComparison.Ordinal);
         Assert.Contains("{ordersCount}", page, StringComparison.Ordinal);
         Assert.Contains("setSelectedCustomer(recoveredCustomer)", page, StringComparison.Ordinal);
-        Assert.Contains("setMessage(\"Los pedidos se consultan", page, StringComparison.Ordinal);
+        Assert.Contains("loadPage={loadCommerceOrders}", page, StringComparison.Ordinal);
+        Assert.Contains("loadDetail={loadCommerceOrder}", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("setMessage(\"Los pedidos se consultan", page, StringComparison.Ordinal);
     }
 
     [Fact]
