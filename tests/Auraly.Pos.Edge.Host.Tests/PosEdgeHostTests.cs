@@ -601,12 +601,12 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Equal("VTA03-00000002", result.NextDocumentNumber.FullNumber);
         Assert.NotNull(result.NextFiscalNumber);
         Assert.Equal("FV2", result.NextFiscalNumber.FullNumber);
-        Assert.Single(_printer.Receipts);
-        Assert.Equal(result.IssuedSale.DocumentNumber, _printer.Receipts.Single().DocumentNumber);
-        Assert.Equal(result.IssuedSale.FiscalNumber, _printer.Receipts.Single().FiscalNumber);
-        Assert.Equal(result.IssuedSale.Cufe, _printer.Receipts.Single().Cufe);
+        Assert.Empty(_printer.Receipts);
+        Assert.Equal(result.IssuedSale.DocumentNumber, result.Receipt.DocumentNumber);
+        Assert.Equal(result.IssuedSale.FiscalNumber, result.Receipt.FiscalNumber);
+        Assert.Equal(result.IssuedSale.Cufe, result.Receipt.Cufe);
         Assert.NotNull(result.IssuedSale.Cufe);
-        Assert.Contains(result.IssuedSale.Cufe, _printer.Receipts.Single().QrPayload);
+        Assert.Contains(result.IssuedSale.Cufe, result.Receipt.QrPayload);
         var localFiscal = await Client.GetFromJsonAsync<PosLocalFiscalStatus>(
             $"/edge/v1/sales/{result.IssuedSale.DocumentId.Value:D}/fiscal-status");
         Assert.NotNull(localFiscal);
@@ -628,8 +628,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.True(
             reprint.StatusCode == HttpStatusCode.NoContent,
             await reprint.Content.ReadAsStringAsync());
-        Assert.Equal(2, _printer.Receipts.Count);
-        var reprinted = _printer.Receipts[1];
+        Assert.Single(_printer.Receipts);
+        var reprinted = _printer.Receipts[0];
         Assert.Equal(result.IssuedSale.DocumentNumber, reprinted.DocumentNumber);
         Assert.Equal(result.IssuedSale.FiscalNumber, reprinted.FiscalNumber);
         Assert.Equal(result.IssuedSale.Cufe, reprinted.Cufe);
@@ -798,11 +798,11 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Null(result.IssuedSale.QrPayload);
         Assert.Null(result.NextFiscalNumber);
         Assert.Equal("CVI03-00000002", result.NextDocumentNumber.FullNumber);
-        var printed = Assert.Single(_printer.Receipts);
-        Assert.Equal(PosSaleDocumentTypes.Receipt, printed.DocumentType);
-        Assert.Null(printed.FiscalNumber);
-        Assert.Null(printed.Cufe);
-        Assert.Null(printed.QrPayload);
+        Assert.Empty(_printer.Receipts);
+        Assert.Equal(PosSaleDocumentTypes.Receipt, result.Receipt.DocumentType);
+        Assert.Null(result.Receipt.FiscalNumber);
+        Assert.Null(result.Receipt.Cufe);
+        Assert.Null(result.Receipt.QrPayload);
 
         var sales = await Client.GetFromJsonAsync<SaleSearchPageContract>(
             $"/edge/v1/sales?search={result.IssuedSale.DocumentNumber}&skip=0&take=50");
@@ -816,8 +816,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             $"/edge/v1/sales/{result.IssuedSale.DocumentId.Value:D}/reprint",
             null);
         Assert.Equal(HttpStatusCode.NoContent, reprint.StatusCode);
-        Assert.Equal(2, _printer.Receipts.Count);
-        Assert.Equal(PosSaleDocumentTypes.Receipt, _printer.Receipts[1].DocumentType);
+        Assert.Single(_printer.Receipts);
+        Assert.Equal(PosSaleDocumentTypes.Receipt, _printer.Receipts[0].DocumentType);
     }
 
     [Fact]
@@ -862,10 +862,10 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Single(completed.Receipt.Withholdings!);
         Assert.Equal(settlement.NetAmount, Assert.Single(completed.Receipt.Payments).Amount);
 
-        var printed = Assert.Single(_printer.Receipts);
-        Assert.Equal(settlement.WithholdingTotal, printed.WithholdingTotal);
-        Assert.Equal(settlement.NetAmount, printed.NetPayableAmount);
-        var rendered = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(printed));
+        Assert.Empty(_printer.Receipts);
+        Assert.Equal(settlement.WithholdingTotal, completed.Receipt.WithholdingTotal);
+        Assert.Equal(settlement.NetAmount, completed.Receipt.NetPayableAmount);
+        var rendered = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(completed.Receipt));
         Assert.Contains("Total retenciones", rendered);
         Assert.Contains("Total", rendered);
 
@@ -880,15 +880,13 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Direct_print_failure_does_not_fail_or_leave_the_sale_active()
+    public async Task Completion_returns_the_next_draft_without_waiting_for_direct_print()
     {
         var capture = await Client.PostAsJsonAsync(
             "/edge/v1/capture",
             new CaptureRequest("770123", null));
         capture.EnsureSuccessStatusCode();
         var draft = (await capture.Content.ReadFromJsonAsync<PosCaptureResult>())!.Draft!;
-        _printer.FailuresRemaining = 1;
-
         var completed = await Client.PostAsJsonAsync(
             $"/edge/v1/drafts/{draft.DraftId.Value:D}/complete",
             new CompleteDraftRequest(
@@ -900,7 +898,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var result = await completed.Content.ReadFromJsonAsync<CompletePosSaleResult>();
         Assert.NotNull(result);
         Assert.False(result.PrintedDirectly);
-        Assert.Contains("impresora", result.PrintError, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(result.PrintError);
         Assert.Equal(result.IssuedSale.DocumentId, result.Receipt.DocumentId);
         Assert.Empty(result.NextDraft.Lines);
         Assert.Empty(_printer.Receipts);

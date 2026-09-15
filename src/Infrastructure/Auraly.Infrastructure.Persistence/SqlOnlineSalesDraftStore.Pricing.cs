@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Contracts.Catalog;
 using Auraly.Domain.Pricing;
 using Auraly.Platform.Domain.Enums;
@@ -111,12 +112,10 @@ public sealed partial class SqlOnlineSalesDraftStore
             .Select(line =>
             {
                 var price = prices[line.LineId.ToString("D")];
-                var unitPrice = decimal.Round(
-                    TaxExclusive(price.ReferenceUnitPrice, line.TaxRate), 2,
-                    MidpointRounding.AwayFromZero);
-                var targetNet = decimal.Round(
-                    TaxExclusive(price.LineTotal, line.TaxRate), 2,
-                    MidpointRounding.AwayFromZero);
+                var unitPrice = MonetaryRounding.RoundLineAmount(
+                    TaxExclusive(price.ReferenceUnitPrice, line.TaxRate));
+                var targetNet = MonetaryRounding.RoundLineAmount(
+                    TaxExclusive(price.LineTotal, line.TaxRate));
                 return new
                 {
                     line.LineId,
@@ -125,9 +124,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                     price.Input.CurrencyCode,
                     price.PriceSource,
                     price.PriceChannelId,
-                    PromotionDiscount = decimal.Round(
-                        Math.Max(0, line.Quantity * unitPrice - targetNet), 2,
-                        MidpointRounding.AwayFromZero)
+                    PromotionDiscount = MonetaryRounding.RoundLineAmount(
+                        Math.Max(0, line.Quantity * unitPrice - targetNet))
                 };
             })
             .ToArray();

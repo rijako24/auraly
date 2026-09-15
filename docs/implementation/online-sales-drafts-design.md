@@ -69,6 +69,19 @@ La captura acepta código de barras, código interno, `Sku`, referencia e
 identificadores alternos. En cada línea se congela código, descripción, unidad,
 impuesto, precio base, precio aplicado, moneda y origen.
 
+Dentro de `SalesDraftLines`, precio aplicado y descuentos se almacenan sin IVA;
+los campos `Net`, `Tax` y `Total` exponen la composición vigente. Esta semántica
+interna no cruza al agregado de Pedidos: al guardar o actualizar un pedido, el
+adaptador online reconstruye el precio público unitario y el descuento público
+desde la tarifa y el total de la línea. Al recuperar un pedido realiza la
+conversión inversa con la tarifa vigente, preservando su total bruto.
+
+Al completar una venta, la respuesta autoritativa instala inmediatamente el
+`nextDraft` vacío y retira de la interfaz cliente, líneas, pagos y pedido de
+origen. La impresión consume en paralelo el comprobante emitido: no prolonga el
+lease del pedido, no bloquea el borrador siguiente y un fallo de impresión se
+reporta como tal sin reinterpretar la emisión confirmada.
+
 La resolución usa, en orden:
 
 1. lista de precios exclusiva del cliente y su escala por cantidad;

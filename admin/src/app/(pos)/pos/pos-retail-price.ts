@@ -1,17 +1,17 @@
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
 
-/**
- * Auraly's published price is already the final retail price, including the
- * applicable tax. Tax bases are derived from it only for fiscal breakdowns.
- */
 export function calculateRetailUnitPrice(
-  publishedUnitPrice: number,
+  unitPrice: number,
+  taxRate = 0,
+  taxExclusive = false,
 ): number {
-  if (!Number.isFinite(publishedUnitPrice)) {
+  if (!Number.isFinite(unitPrice) || !Number.isFinite(taxRate)) {
     return 0;
   }
 
-  return roundMoney(publishedUnitPrice);
+  return roundMoney(
+    taxExclusive ? unitPrice * (1 + taxRate / 100) : unitPrice,
+  );
 }
 
 export function calculateReceiptRetailUnitPrice(

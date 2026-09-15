@@ -363,6 +363,7 @@ export type PosCompleteSaleResult = {
   receipt?: PosPrintableReceipt;
   printPreviewOpened?: boolean;
   printedDirectly?: boolean;
+  printCompletion?: Promise<void>;
   printError?: string | null;
 };
 
@@ -685,6 +686,7 @@ export interface PosClient {
     bankAccountId?: string | null,
     paymentNotes?: string | null,
     printAfterInvoice?: boolean,
+    idempotencyKey?: string,
   ): Promise<InvoiceOrdersResponse>;
   printOrders(orderIds: string[]): Promise<{ printedCount: number }>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
@@ -1292,7 +1294,7 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
-  completeSale(
+  async completeSale(
     draftId: string,
     customerIdentification: string | null,
     payments: PosPaymentInput[],
@@ -1303,22 +1305,32 @@ export class PosEdgeClient implements PosClient {
     if (fiscalHabilitationOnly)
       return Promise.reject(new PosEdgeError(
         "La habilitación DIAN requiere conexión con Auraly Server.", 409));
-    return this.request<PosEdgeCompleteSaleResult>(
+    const result = await this.request<PosEdgeCompleteSaleResult>(
       `/edge/v1/drafts/${draftId}/complete`,
       {
         method: "POST",
         body: JSON.stringify({ customerIdentification, payments, documentType, credit }),
       },
-    ).then((result) => ({
+    );
+    const receipt: PosPrintableReceipt = {
+      ...result.receipt,
+      documentId: result.receipt.documentId.value,
+      customerName: result.receipt.customerName || result.receipt.customerIdentification,
+      fiscalStatus: result.receipt.fiscalStatus || "LocallyIssuedPendingSync",
+    };
+    const printCompletion = result.printedDirectly
+      ? undefined
+      : new Promise<void>((resolve, reject) => {
+          window.setTimeout(() => {
+            void this.printReceipt(receipt, null, "pos").then(resolve, reject);
+          }, 0);
+        });
+    return {
       ...result,
-      receipt: {
-        ...result.receipt,
-        documentId: result.receipt.documentId.value,
-        customerName: result.receipt.customerName || result.receipt.customerIdentification,
-        fiscalStatus: result.receipt.fiscalStatus || "LocallyIssuedPendingSync",
-      },
-      printPreviewOpened: result.printedDirectly === false,
-    } satisfies PosCompleteSaleResult));
+      receipt,
+      printPreviewOpened: false,
+      printCompletion,
+    } satisfies PosCompleteSaleResult;
   }
 
   searchIssuedSales(search = "", skip = 0, take = 50) {
@@ -1406,6 +1418,7 @@ export class PosEdgeClient implements PosClient {
     bankAccountId?: string | null,
     paymentNotes?: string | null,
     printAfterInvoice = true,
+    idempotencyKey = crypto.randomUUID(),
   ) {
     return this.request<InvoiceOrdersResponse>("/edge/v1/orders/invoice", {
       method: "POST",
@@ -1415,9 +1428,9 @@ export class PosEdgeClient implements PosClient {
         paymentReference: paymentReference ?? null,
         bankAccountId: bankAccountId ?? null,
         paymentNotes: paymentNotes ?? null,
+        idempotencyKey,
         printAfterInvoice,
         documentType,
-        idempotencyKey: crypto.randomUUID(),
       }),
     });
   }

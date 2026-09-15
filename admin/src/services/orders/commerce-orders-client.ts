@@ -234,12 +234,12 @@ export function invoiceCommerceOrders(request: {
   bankAccountId?: string | null;
   paymentNotes?: string | null;
   documentType?: "SalesInvoice" | "SalesReceipt";
-}) {
+}, idempotencyKey = crypto.randomUUID()) {
   return orderRequest<InvoiceOrdersResponse>(
     "/api/commerce/v1/orders/invoice",
     {
       method: "POST",
-      headers: { "Idempotency-Key": crypto.randomUUID() },
+      headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(request),
     },
   );

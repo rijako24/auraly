@@ -32,7 +32,7 @@ public sealed class PosOrderServerClientTests
             [new PosDraftLine(
                 Guid.NewGuid(), new ProductId(Guid.NewGuid()), "P-1", "Producto", "EA",
                 "01", 19m, 2m, 100m, 90m, "COP", "Captured", null, 10m, null,
-                false, 50m, false, 1)],
+                false, 50m, false, 1, PromotionDiscount: 5m)],
             CustomerPartySiteId: partySiteId);
 
         var result = await client.SaveAsync(session, draft, "pos-order-draft", default);
@@ -45,6 +45,7 @@ public sealed class PosOrderServerClientTests
         Assert.Equal(draft.CustomerId, handler.Payload!.CustomerId);
         Assert.Equal(partySiteId, handler.Payload.PartySiteId);
         Assert.Equal(90m, Assert.Single(handler.Payload.Lines).UnitPrice);
+        Assert.Equal(15m, Assert.Single(handler.Payload.Lines).DiscountAmount);
     }
 
     [Fact]

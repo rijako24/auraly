@@ -995,8 +995,18 @@ export class OnlinePosClient implements PosClient {
         }, "POST", `online-sale-${draftId}`),
       );
       const nextDraft = this.mapDraft(result.nextDraft);
-      if (!fiscalHabilitationOnly)
-        await this.printDirect([result.receipt], !result.isDuplicate, "pos", browserPreview);
+      const printCompletion = fiscalHabilitationOnly
+        ? undefined
+        : new Promise<void>((resolve, reject) => {
+            window.setTimeout(() => {
+              void this.printDirect(
+                [result.receipt],
+                !result.isDuplicate,
+                "pos",
+                browserPreview,
+              ).then(resolve, reject);
+            }, 0);
+          });
       return {
         issuedSale: {
           documentId: { value: result.receipt.documentId },
@@ -1014,6 +1024,7 @@ export class OnlinePosClient implements PosClient {
         receipt: result.receipt,
         printPreviewOpened: printRoute === "browser",
         printedDirectly: printRoute === "installed-app",
+        printCompletion,
       } satisfies PosCompleteSaleResult;
     } catch (error) {
       closePrintPreview(browserPreview);
@@ -1210,6 +1221,7 @@ export class OnlinePosClient implements PosClient {
     bankAccountId?: string | null,
     paymentNotes?: string | null,
     printAfterInvoice = true,
+    idempotencyKey = crypto.randomUUID(),
   ): Promise<InvoiceOrdersResponse> {
     const printRoute = printAfterInvoice
       ? resolvePosOrderPrintRoute(this.edgeSessionToken)
@@ -1227,7 +1239,7 @@ export class OnlinePosClient implements PosClient {
       bankAccountId: bankAccountId ?? null,
       paymentNotes: paymentNotes ?? null,
       documentType,
-    });
+    }, idempotencyKey);
     if (response.creditValidationIssues?.length) {
       closePrintPreview(browserPreview);
       return response;

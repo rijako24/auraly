@@ -23,7 +23,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -87,6 +87,7 @@ type OrdersWorkspaceProps = {
     documentType: "SalesInvoice" | "SalesReceipt",
     paymentMethodCode: "Cash" | "Credit",
     printAfterInvoice: boolean,
+    idempotencyKey: string,
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -121,7 +122,7 @@ export function OrdersWorkspace({
   compact = false,
   connected = true,
   showHeader = true,
-  initialStatus = "All",
+  initialStatus = "Available",
   loadPage,
   loadDetail,
   onRecover,
@@ -164,6 +165,8 @@ export function OrdersWorkspace({
     "SalesInvoice",
   );
   const [paymentMethodCode, setPaymentMethodCode] = useState<"Cash" | "Credit">("Cash");
+  const requestedPaymentMethodCodeRef = useRef<"Cash" | "Credit">("Cash");
+  const invoiceAttemptRef = useRef<{ fingerprint: string; key: string } | null>(null);
   const [creditValidationIssues, setCreditValidationIssues] = useState<OrderCreditValidationIssue[]>([]);
   const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
   const pageSize = compact ? 8 : 20;
@@ -328,17 +331,39 @@ export function OrdersWorkspace({
       await refresh();
       return;
     }
+    const requestedPaymentMethodCode = requestedPaymentMethodCodeRef.current;
+    const fingerprint = JSON.stringify({
+      orderIds: available.map((order) => order.orderId).sort(),
+      documentType,
+      paymentMethodCode: requestedPaymentMethodCode,
+      printAfterInvoice,
+    });
+    if (invoiceAttemptRef.current?.fingerprint !== fingerprint) {
+      invoiceAttemptRef.current = { fingerprint, key: crypto.randomUUID() };
+    }
+    const idempotencyKey = invoiceAttemptRef.current.key;
     setWorking(true);
     setError(null);
     setNotice(null);
-    setInvoiceProgress({ total: available.length, processed: 0, completed: 0, failed: 0, current: "Preparando lote", events: [] });
+    setInvoiceProgress({
+      total: available.length,
+      processed: 0,
+      completed: 0,
+      failed: 0,
+      current: requestedPaymentMethodCode === "Credit"
+        ? "Preparando lote a crédito"
+        : "Preparando lote en efectivo",
+      events: [],
+    });
     try {
       const result = await onInvoiceSelected(
         available,
         documentType,
-        paymentMethodCode,
+        requestedPaymentMethodCode,
         printAfterInvoice,
+        idempotencyKey,
       );
+      invoiceAttemptRef.current = null;
       if (result.creditValidationIssues?.length) {
         setCreditValidationIssues(result.creditValidationIssues);
         setInvoiceProgress(null);
@@ -618,13 +643,21 @@ export function OrdersWorkspace({
                 )}
                 <div className="grid h-9 grid-cols-2 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Condición de pago">
                   <button type="button" aria-pressed={paymentMethodCode === "Cash"}
-                    onClick={() => setPaymentMethodCode("Cash")}
-                    className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition ${paymentMethodCode === "Cash" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
+                    disabled={working || selectingAll}
+                    onClick={() => {
+                      requestedPaymentMethodCodeRef.current = "Cash";
+                      setPaymentMethodCode("Cash");
+                    }}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Cash" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
                     <Banknote className="h-3.5 w-3.5" />Efectivo
                   </button>
                   <button type="button" aria-pressed={paymentMethodCode === "Credit"}
-                    onClick={() => setPaymentMethodCode("Credit")}
-                    className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition ${paymentMethodCode === "Credit" ? "bg-amber-500 text-amber-950" : "text-slate-600 hover:bg-slate-50"}`}>
+                    disabled={working || selectingAll}
+                    onClick={() => {
+                      requestedPaymentMethodCodeRef.current = "Credit";
+                      setPaymentMethodCode("Credit");
+                    }}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Credit" ? "bg-amber-500 text-amber-950" : "text-slate-600 hover:bg-slate-50"}`}>
                     <CreditCard className="h-3.5 w-3.5" />Crédito
                   </button>
                 </div>
@@ -651,8 +684,12 @@ export function OrdersWorkspace({
                     <Receipt className="mr-2 h-4 w-4" />
                   )}
                   {documentType === "SalesInvoice"
-                    ? "Facturar seleccionados"
-                    : "Emitir comprobantes"} ({selectedOrders.length})
+                    ? paymentMethodCode === "Credit"
+                      ? "Facturar a crédito"
+                      : "Facturar en efectivo"
+                    : paymentMethodCode === "Credit"
+                      ? "Emitir a crédito"
+                      : "Emitir en efectivo"} ({selectedOrders.length})
                 </Button>
               </div>
             </div>

@@ -2,6 +2,7 @@ using System.Data;
 using System.Globalization;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Money;
 using Microsoft.Data.Sqlite;
 
 namespace Auraly.Pos.Edge.Infrastructure;
@@ -71,7 +72,7 @@ public sealed record PosDraftLine(
     public decimal Tax => Total - Net;
 
     private static decimal Round(decimal value) =>
-        decimal.Round(value, 2, MidpointRounding.ToEven);
+        MonetaryRounding.RoundLineAmount(value);
 }
 
 public sealed record PosDraft(

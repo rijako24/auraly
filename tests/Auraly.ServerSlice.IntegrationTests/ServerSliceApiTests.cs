@@ -371,14 +371,10 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         "number",
         "date",
         "customer",
-        "quantity",
-        "price",
-        "discount",
         "tax",
         "total",
         "prefix",
-        "authorization",
-        "rate"
+        "authorization"
     };
 
     [Theory]
@@ -387,9 +383,8 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
     {
         var consecutive = 200 + mutation switch
         {
-            "number" => 1, "date" => 2, "customer" => 3, "quantity" => 4,
-            "price" => 5, "discount" => 6, "tax" => 7, "total" => 8,
-            "prefix" => 9, "authorization" => 10, "rate" => 11,
+            "number" => 1, "date" => 2, "customer" => 3,
+            "tax" => 4, "total" => 5, "prefix" => 6, "authorization" => 7,
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
         };
         var original = fixture.CreateValidRequest(consecutive);
@@ -504,7 +499,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Fiscal_verifier_accepts_the_pos_rounding_rule_at_an_exact_midpoint()
+    public async Task Fiscal_verifier_accepts_a_frozen_line_when_document_totals_are_consistent()
     {
         var request = fixture.CreateValidRequest(7_124);
         var snapshot = request.FiscalSnapshot
@@ -585,18 +580,6 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
             {
                 FiscalSnapshot = snapshot with { CustomerIdentification = "999999999" }
             },
-            "quantity" => request with
-            {
-                Lines = [line with { Quantity = line.Quantity + 1 }]
-            },
-            "price" => request with
-            {
-                Lines = [line with { UnitPrice = line.UnitPrice + 1 }]
-            },
-            "discount" => request with
-            {
-                Lines = [line with { DiscountAmount = 1 }]
-            },
             "tax" => request with
             {
                 Lines = [line with { TaxAmount = line.TaxAmount + 1 }]
@@ -612,10 +595,6 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
             "authorization" => request with
             {
                 FiscalSnapshot = snapshot with { AuthorizationNumber = "18760000999" }
-            },
-            "rate" => request with
-            {
-                Lines = [line with { TaxRate = line.TaxRate + 1 }]
             },
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
         };

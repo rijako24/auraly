@@ -570,14 +570,6 @@ public sealed partial class SqlOnlineSalesDraftStore
               AND business.TenantId=@TenantId
               AND receipt.Status IN (N'Prepared',@Status);
 
-            UPDATE draft
-            SET Status=N'Consumed',ConsumedAt=@Now,UpdatedAt=@Now
-            FROM dbo.SalesDrafts draft
-            JOIN dbo.Businesses business ON business.BusinessId=draft.BusinessId
-            WHERE draft.SalesDraftId=@DraftId AND draft.UserId=@UserId
-              AND business.TenantId=@TenantId AND @Status=N'Completed'
-              AND draft.Status IN (N'Issuing',N'Consumed');
-
             INSERT dbo.OrderInvoiceLinks(
               OrderInvoiceLinkId,BusinessId,OrderId,DocumentId,OperationId,CreatedAt)
             SELECT
@@ -595,8 +587,20 @@ public sealed partial class SqlOnlineSalesDraftStore
             SET ReleasedAt=@Now
             FROM dbo.OrderClaims claim
             JOIN dbo.SalesDrafts draft ON draft.SourceOrderId=claim.OrderId
-            WHERE draft.SalesDraftId=@DraftId AND @Status=N'Completed'
+            WHERE draft.SalesDraftId=@DraftId
               AND claim.ReleasedAt IS NULL;
+
+            UPDATE draft
+            SET Status=CASE WHEN @Status=N'Completed' THEN N'Consumed' ELSE N'Deleted' END,
+                SourceOrderId=CASE WHEN @Status=N'Completed' THEN SourceOrderId ELSE NULL END,
+                ConsumedAt=CASE WHEN @Status=N'Completed' THEN @Now ELSE NULL END,
+                DeletedAt=CASE WHEN @Status=N'FiscalConflict' THEN @Now ELSE NULL END,
+                UpdatedAt=@Now
+            FROM dbo.SalesDrafts draft
+            JOIN dbo.Businesses business ON business.BusinessId=draft.BusinessId
+            WHERE draft.SalesDraftId=@DraftId AND draft.UserId=@UserId
+              AND business.TenantId=@TenantId
+              AND draft.Status IN (N'Issuing',N'Consumed');
             """;
         command.Parameters.AddRange([
             P("@Status", status),

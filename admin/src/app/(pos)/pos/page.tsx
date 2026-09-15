@@ -904,7 +904,7 @@ export default function PosPage() {
   }, [busy, client, draft, edgeReady, focusScanner, showError]);
 
   useEffect(() => {
-    if (!client || !draft?.sourceOrderId) return;
+    if (!client || !draft?.sourceOrderId || busy) return;
     const orderId = draft.sourceOrderId;
     const handleRenewalFailure = (caught: unknown) => {
       setError(caught instanceof Error
@@ -918,7 +918,7 @@ export default function PosPage() {
         await client.renewRecoveredOrder(orderId);
         if (!stopped) timer = window.setTimeout(renewAndSchedule, 4 * 60 * 1000);
       } catch (caught) {
-        handleRenewalFailure(caught);
+        if (!stopped) handleRenewalFailure(caught);
       }
     }, 4 * 60 * 1000);
     const releaseOnPageExit = () => {
@@ -930,7 +930,7 @@ export default function PosPage() {
       window.clearTimeout(timer);
       window.removeEventListener("pagehide", releaseOnPageExit);
     };
-  }, [client, draft?.sourceOrderId]);
+  }, [busy, client, draft?.sourceOrderId]);
 
   protectedActionHandlers.current = {
     discount: openDiscount,
@@ -2147,33 +2147,8 @@ export default function PosPage() {
         checkout.credit,
         habilitationMode,
       );
-      if (client.mode === "edge" && result.printedDirectly)
+      if (client.mode === "edge" && (result.printedDirectly || result.printCompletion))
         closePrintPreview(localPrintPreview);
-      let fallbackPrintError: string | null = null;
-      if (
-        client.mode === "edge" &&
-        result.printedDirectly === false &&
-        result.receipt
-      ) {
-        try {
-          await renderReceiptsReceipt(
-            localPrintPreview,
-            [result.receipt],
-            {
-              businessId: workstation.businessId,
-              businessName: workstation.businessName,
-              warehouseId: workstation.warehouseId,
-              warehouseName: workstation.warehouseName,
-              workSessionId: workstation.workSessionId ?? "",
-            },
-          );
-        } catch (printFailure) {
-          closePrintPreview(localPrintPreview);
-          fallbackPrintError = printFailure instanceof Error
-            ? printFailure.message
-            : "No fue posible mostrar el diálogo de impresión.";
-        }
-      }
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
       setLastSettlement({
@@ -2188,11 +2163,41 @@ export default function PosPage() {
       setError(null);
       setPaymentOpen(false);
       setSaleSettlement(null);
+
+      const printAfterCompletedSale = async () => {
+        try {
+          if (result.printCompletion) {
+            await result.printCompletion;
+          } else if (
+            client.mode === "edge" &&
+            result.printedDirectly === false &&
+            result.receipt
+          ) {
+            await renderReceiptsReceipt(
+              localPrintPreview,
+              [result.receipt],
+              {
+                businessId: workstation.businessId,
+                businessName: workstation.businessName,
+                warehouseId: workstation.warehouseId,
+                warehouseName: workstation.warehouseName,
+                workSessionId: workstation.workSessionId ?? "",
+              },
+            );
+          }
+        } catch (printFailure) {
+          closePrintPreview(localPrintPreview);
+          const detail = printFailure instanceof Error
+            ? printFailure.message
+            : "No fue posible imprimir la venta.";
+          setError(`La venta quedó registrada. ${detail}`);
+        }
+      };
+      window.setTimeout(() => void printAfterCompletedSale(), 0);
+
       const issuedLabel = result.printedDirectly
         ? "emitida e impresa directamente"
-        : fallbackPrintError
-          ? "emitida; quedó pendiente imprimirla"
-          : "emitida; se abrió el diálogo de impresión";
+        : "emitida; impresión enviada";
       setMessage(
         habilitationMode
           ? `${result.issuedSale.documentNumber} enviado únicamente a habilitación DIAN. No registró venta, inventario ni contabilidad.`
@@ -2207,8 +2212,6 @@ export default function PosPage() {
           router.push("/dashboard/settings/fiscal?habilitationSubmitted=1");
         }, 900);
       }
-      if (fallbackPrintError)
-        setError(`La venta quedó registrada. ${fallbackPrintError}`);
     } catch (caught) {
       closePrintPreview(localPrintPreview);
       showError(caught);
@@ -2477,6 +2480,7 @@ export default function PosPage() {
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
     printAfterInvoice: boolean,
+    idempotencyKey: string,
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
   ) {
     if (!client) throw new Error("El punto de venta no está disponible.");
@@ -2488,6 +2492,7 @@ export default function PosPage() {
       transfer?.bankAccountId,
       transfer?.notes,
       printAfterInvoice,
+      idempotencyKey,
     );
     setMessage(
       (result.printError ? result.printError + " · " : "") +
@@ -3180,7 +3185,11 @@ export default function PosPage() {
                         />
                       </td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-700">
-                        {money.format(calculateRetailUnitPrice(line.unitPrice))}
+                        {money.format(calculateRetailUnitPrice(
+                          line.unitPrice,
+                          line.taxRate,
+                          client.mode === "online",
+                        ))}
                       </td>
                       <td className="px-3 py-3 text-right text-base font-bold tabular-nums text-slate-950">
                         {money.format(line.total)}
@@ -3468,12 +3477,13 @@ export default function PosPage() {
                 loadDetail={(orderId) => client!.order(orderId)}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={(orders) => client!.printOrders(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     paymentMethodCode,
                     documentType,
                     printAfterInvoice,
+                    idempotencyKey,
                   )
                 }
                 onConfigurePrinting={() => setPrinterOpen(true)}
@@ -3518,12 +3528,13 @@ export default function PosPage() {
               loadDetail={(orderId) => client.order(orderId)}
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={(orders) => client.printOrders(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
                   documentType,
                   printAfterInvoice,
+                  idempotencyKey,
                 )
               }
               onConfigurePrinting={() => setPrinterOpen(true)}

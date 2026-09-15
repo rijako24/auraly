@@ -3,17 +3,31 @@ type PosOrderDraftLine = {
   quantity: number;
   unitPrice: number;
   discount: number;
+  promotionDiscount?: number;
+  taxRate: number;
+  total: number;
   priceSource: string;
   documentUnitCost: number;
 };
 
 export function buildPosOrderUpdateLines(lines: PosOrderDraftLine[]) {
-  return lines.map((line) => ({
-    productId: line.productId.value,
-    quantity: line.quantity,
-    unitPrice: line.unitPrice,
-    discountAmount: line.discount,
-    priceSource: line.priceSource,
-    documentUnitCost: line.documentUnitCost,
-  }));
+  return lines.map((line) => {
+    const publicUnitPrice = money(
+      line.unitPrice * (1 + line.taxRate / 100),
+    );
+    const publicGross = money(publicUnitPrice * line.quantity);
+
+    return {
+      productId: line.productId.value,
+      quantity: line.quantity,
+      unitPrice: publicUnitPrice,
+      discountAmount: money(publicGross - line.total),
+      priceSource: line.priceSource,
+      documentUnitCost: line.documentUnitCost,
+    };
+  });
+}
+
+function money(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }

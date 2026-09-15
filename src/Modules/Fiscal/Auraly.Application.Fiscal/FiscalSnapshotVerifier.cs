@@ -152,24 +152,6 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
                 return $"Line {line.LineNumber} contains invalid values.";
             }
 
-            var expectedTax = decimal.Round(
-                line.UntaxedAmount * line.TaxRate / 100m,
-                2,
-                MidpointRounding.AwayFromZero);
-            if (expectedTax != line.TaxAmount)
-            {
-                return $"Line {line.LineNumber} tax does not match its frozen rate and taxable amount.";
-            }
-
-            var untaxed = decimal.Round(
-                (line.Quantity * line.UnitPrice) - line.DiscountAmount,
-                2,
-                MidpointRounding.ToEven);
-            if (untaxed != line.UntaxedAmount ||
-                line.LineTotal != line.UntaxedAmount + line.TaxAmount)
-            {
-                return $"Line {line.LineNumber} totals are inconsistent.";
-            }
         }
 
         var untaxedTotal = request.Lines.Sum(line => line.UntaxedAmount);

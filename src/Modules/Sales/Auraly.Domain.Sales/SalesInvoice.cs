@@ -1,5 +1,6 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Domain.Documents;
+using Auraly.BuildingBlocks.Domain.Money;
 
 namespace Auraly.Domain.Sales;
 
@@ -20,7 +21,8 @@ public sealed record SalesInvoiceLine(
     decimal Discount,
     decimal Tax)
 {
-    public decimal Subtotal => decimal.Round((Quantity * UnitPrice) - Discount, 2, MidpointRounding.ToEven);
+    public decimal Subtotal => MonetaryRounding.RoundLineAmount(
+        (Quantity * UnitPrice) - Discount);
     public decimal Total => Subtotal + Tax;
 }
 

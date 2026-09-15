@@ -83,6 +83,7 @@ public sealed class OrderRecoveryService(
                         line.Quantity,
                         line.UnitPrice,
                         line.DiscountAmount,
+                        line.LineTotal,
                         line.PriceSource,
                         line.DocumentUnitCost)).ToArray(),
                     request.ExpectedDraftVersion,

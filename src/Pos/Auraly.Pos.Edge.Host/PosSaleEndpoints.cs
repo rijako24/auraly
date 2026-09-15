@@ -166,7 +166,6 @@ internal static class PosSaleHostModule
             PosDraftStore drafts,
             PosCreditServerClient creditServer,
             PosLocalSessionAccessor sessions,
-            ILogger<PosSaleCompletionService> logger,
             CancellationToken ct) =>
         {
             try
@@ -253,11 +252,6 @@ internal static class PosSaleHostModule
                         session.DisplayName),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
-                if (!result.PrintedDirectly && !string.IsNullOrWhiteSpace(result.PrintError))
-                    logger.LogWarning(
-                        "Sale {DocumentId} was issued but direct printing failed: {PrintError}",
-                        result.IssuedSale.DocumentId.Value,
-                        result.PrintError);
                 // The sale is already durably issued at this point. Every completed
                 // sale opens the local drawer, including offline sales. A disconnected
                 // drawer must not turn a successful sale into a 409.

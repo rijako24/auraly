@@ -1498,12 +1498,12 @@ public sealed class OrderRecoveryTests(
             var recovered = await OpenDraftAsync(client, workSession.WorkSessionId);
             var line = Assert.Single(recovered.Lines);
             Assert.Equal(2m, line.Quantity);
-            Assert.Equal(7_777m, line.UnitPrice);
-            Assert.Equal(777m, line.Discount);
+            Assert.Equal(7_406.67m, line.UnitPrice);
+            Assert.Equal(740.01m, line.Discount);
             Assert.Equal("Promotion", line.PriceSource);
             Assert.Equal(5m, line.TaxRate);
-            Assert.Equal(738.85m, line.Tax);
-            Assert.Equal(15_515.85m, recovered.PayableAmount);
+            Assert.Equal(703.67m, line.Tax);
+            Assert.Equal(14_777m, recovered.PayableAmount);
 
             using var quantityRequest = new HttpRequestMessage(
                 HttpMethod.Put,

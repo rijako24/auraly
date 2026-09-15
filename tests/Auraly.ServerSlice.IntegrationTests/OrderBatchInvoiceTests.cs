@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
 using Auraly.Application.Orders;
+using Auraly.Application.Sales;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -836,6 +838,91 @@ public sealed class OrderBatchInvoiceTests(
         }
         return await response.Content.ReadFromJsonAsync<InvoiceOrdersResponse>()
             ?? throw new InvalidOperationException("Empty batch response.");
+    }
+
+    [Fact]
+    public async Task Fiscal_conflict_releases_order_and_discards_issuing_draft()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        var draftId = Guid.NewGuid();
+        var nextDraftId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = connection.CreateCommand();
+            seed.CommandText = """
+                INSERT dbo.SalesDrafts(
+                  SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,Status,Version,
+                  SourceOrderId,CreatedAt,UpdatedAt)
+                VALUES
+                  (@DraftId,@BusinessId,@WarehouseId,@WorkSessionId,@UserId,N'Issuing',3,
+                   @OrderId,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET()),
+                  (@NextDraftId,@BusinessId,@WarehouseId,@WorkSessionId,@UserId,N'Active',1,
+                   NULL,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+
+                INSERT dbo.OrderClaims(
+                  OrderClaimId,BusinessId,WarehouseId,OrderId,WorkSessionId,UserId,
+                  ClaimedAt,ExpiresAt)
+                VALUES(NEWID(),@BusinessId,@WarehouseId,@OrderId,@WorkSessionId,@UserId,
+                       SYSDATETIMEOFFSET(),DATEADD(minute,10,SYSDATETIMEOFFSET()));
+
+                INSERT dbo.OnlineSalesCheckoutReceipts(
+                  OnlineSalesCheckoutReceiptId,BusinessId,SalesDraftId,NextSalesDraftId,
+                  IdempotencyKey,RequestHash,DocumentId,PayloadJson,Status,CreatedAt)
+                VALUES(NEWID(),@BusinessId,@DraftId,@NextDraftId,
+                       @Key,REPLICATE('0',64),@DocumentId,N'{}',N'Prepared',SYSDATETIMEOFFSET());
+                """;
+            seed.Parameters.AddWithValue("@DraftId", draftId);
+            seed.Parameters.AddWithValue("@NextDraftId", nextDraftId);
+            seed.Parameters.AddWithValue("@DocumentId", documentId);
+            seed.Parameters.AddWithValue("@OrderId", orderId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            seed.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+            seed.Parameters.AddWithValue("@UserId", userId);
+            seed.Parameters.AddWithValue("@Key", $"fiscal-conflict-{Guid.NewGuid():N}");
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        using (var scope = fixture.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<IOnlineSalesCheckoutStore>();
+            await store.MarkResultAsync(
+                new OnlineSalesUserIdentity(userId, fixture.TenantId, new HashSet<string>()),
+                draftId,
+                documentId,
+                "FiscalConflict",
+                CancellationToken.None);
+        }
+
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT draft.Status,draft.SourceOrderId,draft.DeletedAt,receipt.Status,claim.ReleasedAt,
+                   nextDraft.Status
+            FROM dbo.SalesDrafts draft
+            JOIN dbo.OnlineSalesCheckoutReceipts receipt ON receipt.SalesDraftId=draft.SalesDraftId
+            JOIN dbo.OrderClaims claim ON claim.OrderId=@OrderId
+            JOIN dbo.SalesDrafts nextDraft ON nextDraft.SalesDraftId=receipt.NextSalesDraftId
+            WHERE draft.SalesDraftId=@DraftId;
+            """;
+        verify.Parameters.AddWithValue("@OrderId", orderId);
+        verify.Parameters.AddWithValue("@DraftId", draftId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("Deleted", reader.GetString(0));
+        Assert.True(reader.IsDBNull(1));
+        Assert.False(reader.IsDBNull(2));
+        Assert.Equal("FiscalConflict", reader.GetString(3));
+        Assert.False(reader.IsDBNull(4));
+        Assert.Equal("Active", reader.GetString(5));
     }
 
     private async Task SeedAsync(

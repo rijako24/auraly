@@ -3,8 +3,9 @@ namespace Auraly.Contracts.Sales;
 public sealed record OnlineSalesOrderImportLine(
     Guid ProductId,
     decimal Quantity,
-    decimal UnitPrice,
-    decimal DiscountAmount,
+    decimal PublicUnitPrice,
+    decimal PublicDiscountAmount,
+    decimal PublicLineTotal,
     string PriceSource = "Order",
     decimal? DocumentUnitCost = null);
 

@@ -6,6 +6,7 @@ using System.Text.Json;
 using Auraly.Application.Sales;
 using Auraly.Application.Inventory;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.Authorization;
 using Auraly.Application.Orders;
@@ -1306,9 +1307,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             var price = reader.GetDecimal(10);
             var discount = reader.GetDecimal(13);
             var promotionDiscount = reader.GetDecimal(17);
-            var net = decimal.Round(
-                quantity * price - discount - promotionDiscount, 2,
-                MidpointRounding.AwayFromZero);
+            var net = MonetaryRounding.RoundLineAmount(
+                quantity * price - discount - promotionDiscount);
             var tax = decimal.Round(
                 net * reader.GetDecimal(7) / 100m, 2,
                 MidpointRounding.AwayFromZero);

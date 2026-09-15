@@ -46,7 +46,7 @@ public sealed class PosSaleCompletionServiceTests
         });
     }
     [Fact]
-    public async Task Successful_print_clears_sale_and_previews_the_next_number()
+    public async Task Successful_completion_clears_sale_before_printing_and_previews_the_next_number()
     {
         await WithFixtureAsync(async fixture =>
         {
@@ -64,9 +64,9 @@ public sealed class PosSaleCompletionServiceTests
 
             Assert.Equal("VTA03-00000100", result.IssuedSale.DocumentNumber);
             Assert.Equal("FV100", result.IssuedSale.FiscalNumber);
-            Assert.Equal(result.IssuedSale.Cufe, fixture.Printer.Receipts.Single().Cufe);
-            Assert.Equal(result.IssuedSale.QrPayload, fixture.Printer.Receipts.Single().QrPayload);
-            Assert.Contains("NumFac: FV100", fixture.Printer.Receipts.Single().QrPayload);
+            Assert.False(result.PrintedDirectly);
+            Assert.Null(result.PrintError);
+            Assert.Empty(fixture.Printer.Receipts);
             Assert.Equal(PosDraftStatus.Consumed, (await fixture.Drafts.GetAsync(draft.DraftId))!.Status);
             Assert.NotEqual(draft.DraftId, result.NextDraft.DraftId);
             Assert.Empty(result.NextDraft.Lines);
@@ -83,14 +83,12 @@ public sealed class PosSaleCompletionServiceTests
         await WithFixtureAsync(async fixture =>
         {
             var draft = await fixture.AddLineAsync();
-            fixture.Printer.Fail = true;
-
             var issued = await fixture.CompleteAsync(draft.DraftId);
 
             var afterFailure = await fixture.Drafts.GetAsync(draft.DraftId);
             Assert.Equal(PosDraftStatus.Consumed, afterFailure!.Status);
             Assert.False(issued.PrintedDirectly);
-            Assert.Contains("printer", issued.PrintError, StringComparison.OrdinalIgnoreCase);
+            Assert.Null(issued.PrintError);
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 fixture.Drafts.SetQuantityAsync(
                     draft.DraftId,
@@ -102,6 +100,12 @@ public sealed class PosSaleCompletionServiceTests
                 (await fixture.Sales.PreviewNextFiscalNumberAsync(
                     fixture.Scope.DeviceId,
                     fixture.IssuedAt)).FullNumber);
+
+            fixture.Printer.Fail = true;
+            await Assert.ThrowsAsync<IOException>(() =>
+                new PosSaleCompletionService(
+                    fixture.Drafts, fixture.Issuance, fixture.Sales, fixture.Printer)
+                    .ReprintAsync(issued.IssuedSale.DocumentId, fixture.Scope.UserId, 80));
 
             fixture.Printer.Fail = false;
             await new PosSaleCompletionService(

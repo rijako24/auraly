@@ -1,5 +1,6 @@
 using System.Data;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
@@ -19,7 +20,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         var payload = string.Join(
             "|",
             request.Lines.Select(line =>
-                $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.UnitPrice)}:{Invariant(line.DiscountAmount)}:{NormalizePriceSource(line.PriceSource)}:{(line.DocumentUnitCost is { } cost ? Invariant(cost) : "current")}"));
+                $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.PublicUnitPrice)}:{Invariant(line.PublicDiscountAmount)}:{Invariant(line.PublicLineTotal)}:{NormalizePriceSource(line.PriceSource)}:{(line.DocumentUnitCost is { } cost ? Invariant(cost) : "current")}"));
         var requestHash = Hash(
             $"{operation}|{draftId:D}|{request.SourceOrderId:D}|{request.CustomerId:D}|{request.PartySiteId:D}|{request.ExpectedVersion}|{payload}");
 
@@ -85,6 +86,12 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
             if (!products.TryGetValue(line.ProductId, out var product))
                 throw new OnlineSalesDraftValidationException(
                     "El producto no está disponible para este negocio.");
+            var unitPrice = Money(TaxExclusive(line.PublicUnitPrice, product.TaxRate));
+            var targetNetLineTotal = Money(
+                TaxExclusive(line.PublicLineTotal, product.TaxRate));
+            if (Money(line.Quantity * unitPrice) < targetNetLineTotal)
+                unitPrice = MoneyCeiling(targetNetLineTotal / line.Quantity);
+            var discount = Money(line.Quantity * unitPrice - targetNetLineTotal);
             return new
             {
                 LineId = ids.NewId(),
@@ -96,11 +103,11 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                 product.TaxRate,
                 line.Quantity,
                 BaseUnitPrice = product.UnitPrice,
-                line.UnitPrice,
+                UnitPrice = unitPrice,
                 DocumentUnitCost = line.DocumentUnitCost ?? product.UnitCost,
                 product.CurrencyCode,
                 PriceSource = NormalizePriceSource(line.PriceSource),
-                Discount = line.DiscountAmount,
+                Discount = discount,
                 Position = index + 1
             };
         }).ToArray();
@@ -192,6 +199,12 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
 
     private static string NormalizePriceSource(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "Order" : value.Trim();
+
+    private static decimal Money(decimal value) =>
+        MonetaryRounding.RoundLineAmount(value);
+
+    private static decimal MoneyCeiling(decimal value) =>
+        MonetaryRounding.CeilingLineUnitPrice(value);
 
     private static async Task DemandOrderAsync(
         SqlConnection connection,

@@ -162,10 +162,17 @@ no consulta el catálogo completo ni agrega viajes a base; en pedidos evita reso
 la configuración una vez por producto.
 
 Recuperar una venta pausada o un pedido es una operación de hidratación: copia
-cantidad, precio, descuento y origen comercial tal como quedaron guardados, sin
+cantidad, precio público, descuento público, total y origen comercial tal como
+quedaron guardados, sin
 invocar el resolver. No existe una guarda posterior. La siguiente mutación normal
 —agregar o eliminar, cambiar cantidad o seleccionar otro cliente— vuelve a usar el
 resolver canónico sobre el borrador vigente, igual que cualquier venta nueva.
+
+El contrato de Pedidos siempre usa valores públicos incluidos impuestos. POS
+Edge ya conserva esa representación. El borrador online usa valores netos
+internamente y convierte en su frontera de entrada/salida; por eso una tarifa de
+IVA distinta puede cambiar la separación entre base e impuesto al recuperar,
+pero nunca el total público pactado del pedido.
 
 La paridad offline significa mismo resultado con el mismo snapshot de catálogo,
 canales, promociones y hora efectiva. Sin conexión no puede incluir cambios del
@@ -225,6 +232,10 @@ producción. No se puede afirmar paridad online si el estado vive solo en React.
 - Auraly POS instalado sin enrolar: vende online y usa periféricos locales.
 - Aplicación enrolada con Internet: opera mediante Edge y sincroniza de inmediato.
 - Aplicación enrolada sin Internet: Edge continúa con los recursos provisionados.
+- En todos los modos, una emisión confirmada instala y muestra de inmediato el
+  siguiente borrador vacío. La impresión es un efecto posterior independiente:
+  navegador, aplicación instalada enrolada o no enrolada usan el comprobante ya
+  emitido y un fallo del periférico no reactiva ni conserva la venta anterior.
 - La cartera siempre consulta el validador canónico de SQL Server: desde navegador
   se invoca dentro del checkout y desde Edge conectado mediante el endpoint
   autenticado del dispositivo. Sin servidor, Edge rechaza el crédito antes de

@@ -27,10 +27,15 @@ Cuando el emisor aplica ajuste al peso, el snapshot comercial y el fiscal congel
 el mismo valor. El UBL publica `PayableRoundingAmount` y valida que el total a pagar
 sea total con impuestos más dicho ajuste; cero se omite. El motor nunca inventa un
 ajuste durante la generación ni modifica bases o impuestos para forzar el balance.
-Los importes monetarios por línea usan la misma regla canónica del POS y del dominio
-de ventas: dos decimales con `MidpointRounding.ToEven`. El verificador fiscal debe
-recalcular con esa regla exacta para que un midpoint legítimo no produzca un conflicto
-de integridad falso.
+Los productores de importes monetarios por línea —POS, recuperación de pedidos y
+dominio de ventas— usan una sola regla canónica: dos decimales con
+`MidpointRounding.ToEven`, expuesta por `MonetaryRounding.RoundLineAmount`. El
+verificador fiscal no reconstruye cada línea a partir de cantidad y precio: valida su
+estructura y concilia los totales congelados del documento contra la suma de sus
+detalles y resúmenes tributarios. Cuando un checkout online detecta un conflicto real,
+conserva el documento y
+su snapshot bloqueados como evidencia, descarta el borrador `Issuing`, libera el
+pedido y mantiene el siguiente borrador limpio para una reemisión explícita.
 
 La prueba SQL modifica nombres maestros después de recibir la venta y demuestra que el UBL conserva los datos históricos. Si falta un dato obligatorio, el proceso pasa a `MissingMandatoryFiscalData`; el servidor no inventa ni corrige silenciosamente la factura emitida.
 

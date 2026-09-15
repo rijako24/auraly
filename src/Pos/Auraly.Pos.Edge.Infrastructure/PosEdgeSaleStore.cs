@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
@@ -1034,14 +1035,10 @@ public sealed class PosEdgeSaleStore
                 line.UnitPrice,
                 line.TotalDiscount,
                 line.TaxAmount,
-                decimal.Round(
-                    (line.Quantity * line.UnitPrice) - line.TotalDiscount,
-                    2,
-                    MidpointRounding.ToEven),
-                decimal.Round(
-                    (line.Quantity * line.UnitPrice) - line.TotalDiscount,
-                    2,
-                    MidpointRounding.ToEven) + line.TaxAmount,
+                MonetaryRounding.RoundLineAmount(
+                    (line.Quantity * line.UnitPrice) - line.TotalDiscount),
+                MonetaryRounding.RoundLineAmount(
+                    (line.Quantity * line.UnitPrice) - line.TotalDiscount) + line.TaxAmount,
                 line.Product.TaxRate,
                 line.DocumentUnitCost,
                 line.PromotionDiscount))

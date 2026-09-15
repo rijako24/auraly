@@ -4,7 +4,9 @@
 
 La fuente canónica es el pedido que ya crea el bot en `dbo.Orders` y `dbo.OrderItems`. No se creó un segundo maestro de pedidos ni una copia específica para POS. El dashboard, la facturación web y POS Edge consultan y procesan los mismos registros.
 
-Un pedido es comercial y no tributario. Guarda producto, cantidad, precio pactado, descuento y total comercial, pero no guarda IVA, tarifa tributaria, CUFE, resolución ni numeración fiscal. Al convertirlo en factura se consulta la configuración vigente del producto y se construye entonces el snapshot fiscal inmutable.
+Un pedido es comercial y no tributario. Guarda producto, cantidad, **precio público pactado incluido IVA**, descuento público y total comercial bruto. No congela el perfil ni la tarifa tributaria, la base gravable, CUFE, resolución o numeración fiscal. Al convertirlo en factura se consulta la configuración vigente del producto, se descompone el total público en base e impuesto y se construye entonces el snapshot fiscal inmutable.
+
+`OrderItems.UnitPrice`, `OrderItems.DiscountAmount`, `OrderItems.LineTotal` y `Orders.Total` usan siempre esa semántica pública/bruta, sin importar si el productor fue bot, captura de vendedor, POS online o POS Edge. El borrador online conserva importes netos para su cálculo interno; su adaptador los convierte a públicos al crear o actualizar el pedido. La recuperación hace la conversión inversa con el IVA vigente y conserva el total bruto pactado. POS Edge ya opera con precios públicos y los transporta sin conversión.
 
 ## Alcance y aislamiento
 
@@ -47,10 +49,12 @@ Las consultas son paginadas en servidor y combinan número, cliente, producto, e
 1. La caja reclama temporalmente el pedido.
 2. Obtiene el detalle desde Auraly Server.
 3. Resuelve cada producto contra el catálogo vigente.
-4. Conserva cantidad, precio y descuento del pedido.
+4. Conserva cantidad, precio público, descuento público y total bruto del pedido.
 5. Toma impuesto y configuración vendible actuales al construir la venta.
 6. Importa todas las líneas de forma atómica; nunca deja media venta visible.
 7. Impide mezclarlo con productos o con otro pedido ya presente.
+
+Recuperar es una hidratación, no una reprificación: el cambio de tarifa vigente redistribuye base e impuesto, pero no incrementa ni reduce el total público del pedido.
 
 En POS Edge el borrador queda en SQLite. Al emitir, `SourceOrderId` viaja dentro
 de la outbox durable. El servidor vincula el pedido en la transacción operacional

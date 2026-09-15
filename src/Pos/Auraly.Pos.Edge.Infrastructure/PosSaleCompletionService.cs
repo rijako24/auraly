@@ -362,27 +362,14 @@ public sealed class PosSaleCompletionService(
                 command.IssuedAt,
                 ct)
             : null;
-        var printedDirectly = false;
-        string? printError = null;
-        try
-        {
-            await printer.PrintAsync(payload, ct);
-            printedDirectly = true;
-        }
-        catch (Exception exception) when (
-            exception is not OperationCanceledException || !ct.IsCancellationRequested)
-        {
-            printError = exception.Message;
-        }
-
         return new CompletePosSaleResult(
             issued,
             nextDraft,
             nextDocumentNumber,
             nextFiscalNumber,
             payload,
-            printedDirectly,
-            printError);
+            PrintedDirectly: false,
+            PrintError: null);
     }
     private static decimal ExclusiveFromPublished(decimal amount, decimal taxRate) =>
         taxRate == 0m

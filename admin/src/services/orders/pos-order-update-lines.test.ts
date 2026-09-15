@@ -3,13 +3,15 @@ import test from "node:test";
 
 import { buildPosOrderUpdateLines } from "./pos-order-update-lines";
 
-test("preserves the recovered order price and discount when building update lines", () => {
+test("converts the online net line back to the public price when building an order", () => {
   const lines = buildPosOrderUpdateLines([
     {
       productId: { value: "product-1" },
-      quantity: 3,
-      unitPrice: 12_500,
-      discount: 2_500,
+      quantity: 1,
+      unitPrice: 1_765.55,
+      discount: 0,
+      taxRate: 19,
+      total: 2_101,
       priceSource: "PriceChannel",
       documentUnitCost: 7_250,
     },
@@ -18,9 +20,9 @@ test("preserves the recovered order price and discount when building update line
   assert.deepEqual(lines, [
     {
       productId: "product-1",
-      quantity: 3,
-      unitPrice: 12_500,
-      discountAmount: 2_500,
+      quantity: 1,
+      unitPrice: 2_101,
+      discountAmount: 0,
       priceSource: "PriceChannel",
       documentUnitCost: 7_250,
     },
@@ -34,6 +36,9 @@ test("builds the complete replacement from only the lines that remain in the rec
       quantity: 7,
       unitPrice: 8_000,
       discount: 1_000,
+      promotionDiscount: 500,
+      taxRate: 0,
+      total: 54_500,
       priceSource: "Promotion",
       documentUnitCost: 4_100,
     },
@@ -42,6 +47,8 @@ test("builds the complete replacement from only the lines that remain in the rec
       quantity: 2,
       unitPrice: 4_500,
       discount: 0,
+      taxRate: 0,
+      total: 9_000,
       priceSource: "Base",
       documentUnitCost: 2_250,
     },
@@ -52,7 +59,7 @@ test("builds the complete replacement from only the lines that remain in the rec
       productId: "kept-product",
       quantity: 7,
       unitPrice: 8_000,
-      discountAmount: 1_000,
+      discountAmount: 1_500,
       priceSource: "Promotion",
       documentUnitCost: 4_100,
     },
