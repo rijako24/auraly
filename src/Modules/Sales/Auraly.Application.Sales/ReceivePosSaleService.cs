@@ -114,7 +114,8 @@ public sealed class ReceivePosSaleService(
             };
         }
         return await ReceiveCoreAsync(
-            idempotencyKey, request, validateDeviceContext: true, cancellationToken);
+            idempotencyKey, request, validateDeviceContext: true,
+            lookupExisting: true, cancellationToken);
     }
 
     public async Task<PosSaleUploadResponse> ReceiveOnlineAsync(
@@ -123,38 +124,43 @@ public sealed class ReceivePosSaleService(
         PosSaleUploadRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(user);
-        ArgumentNullException.ThrowIfNull(request);
-        ValidateIdempotencyKey(idempotencyKey);
-        if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate) ||
-            request.TenantId != user.TenantId ||
-            request.SoldByUserId != user.UserId ||
-            request.DeviceId != Guid.Empty ||
-            !string.Equals(
-                request.SourceMode,
-                SaleSourceModes.Online,
-                StringComparison.Ordinal))
-            throw new PosSaleForbiddenException(
-                "The prepared online sale differs from the authenticated user context.");
+        ValidateOnlineRequest(user, idempotencyKey, request);
         return await ReceiveCoreAsync(
-            idempotencyKey, request, validateDeviceContext: false, cancellationToken);
+            idempotencyKey, request, validateDeviceContext: false,
+            lookupExisting: true, cancellationToken);
+    }
+
+    public async Task<PosSaleUploadResponse> ReceivePreparedOnlineAsync(
+        OnlineSalesUserIdentity user,
+        string idempotencyKey,
+        PosSaleUploadRequest request,
+        bool isCheckoutReplay,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateOnlineRequest(user, idempotencyKey, request);
+        return await ReceiveCoreAsync(
+            idempotencyKey, request, validateDeviceContext: false,
+            lookupExisting: isCheckoutReplay, cancellationToken);
     }
 
     private async Task<PosSaleUploadResponse> ReceiveCoreAsync(
         string idempotencyKey,
         PosSaleUploadRequest request,
         bool validateDeviceContext,
+        bool lookupExisting,
         CancellationToken cancellationToken)
     {
         ValidateDocumentNumber(request);
         ValidateSettlement(request);
         var snapshotJson = PosSaleContractSerializer.Serialize(request);
         var payloadHash = PosSaleContractSerializer.Hash(request);
-        var existing = await store.FindAsync(
-            request.BusinessId,
-            request.DocumentId,
-            idempotencyKey,
-            cancellationToken);
+        var existing = lookupExisting
+            ? await store.FindAsync(
+                request.BusinessId,
+                request.DocumentId,
+                idempotencyKey,
+                cancellationToken)
+            : null;
         if (existing is not null)
         {
             EnsureSameRequest(existing, request.DocumentId, idempotencyKey, payloadHash);
@@ -203,18 +209,27 @@ public sealed class ReceivePosSaleService(
                 request.CommercialSnapshot.DocumentType,
                 EconomicEffectsEnabled: !request.FiscalHabilitationOnly),
             cancellationToken);
+        return ToResponse(stored, isDuplicate: existing is not null);
+    }
 
-        var completed = await store.FindAsync(
-                request.BusinessId,
-                request.DocumentId,
-                idempotencyKey,
-                cancellationToken)
-            ?? throw new InvalidOperationException(
-                "The processed sale could not be read back.");
-        EnsureSameRequest(completed, request.DocumentId, idempotencyKey, payloadHash);
-        return ToResponse(
-            completed,
-            isDuplicate: existing is not null);
+    private static void ValidateOnlineRequest(
+        OnlineSalesUserIdentity user,
+        string idempotencyKey,
+        PosSaleUploadRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(request);
+        ValidateIdempotencyKey(idempotencyKey);
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate) ||
+            request.TenantId != user.TenantId ||
+            request.SoldByUserId != user.UserId ||
+            request.DeviceId != Guid.Empty ||
+            !string.Equals(
+                request.SourceMode,
+                SaleSourceModes.Online,
+                StringComparison.Ordinal))
+            throw new PosSaleForbiddenException(
+                "The prepared online sale differs from the authenticated user context.");
     }
 
     private static void ValidateIdempotencyKey(string idempotencyKey)

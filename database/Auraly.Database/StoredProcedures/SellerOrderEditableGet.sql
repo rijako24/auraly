@@ -6,7 +6,7 @@ CREATE PROCEDURE [dbo].[SellerOrderEditableGet]
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT o.ExternalDocumentNumber,o.CustomerId,o.Status,
+    SELECT o.ExternalDocumentNumber,o.CustomerId,o.PartySiteId,o.Status,
            COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
            COALESCE(o.OrdersWarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.ordersWarehouseId')))
     FROM dbo.Orders o WITH(UPDLOCK,HOLDLOCK)

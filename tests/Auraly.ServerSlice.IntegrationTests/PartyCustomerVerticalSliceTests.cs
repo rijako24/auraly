@@ -195,6 +195,32 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(detailed);
         Assert.Equal(2, detailed.Sites.Count);
 
+        var enrolledSnapshotPath = Path.Combine(
+            Path.GetTempPath(), $"auraly-customer-sites-sync-{Guid.NewGuid():N}.db");
+        try
+        {
+            var enrolledStore = new PosCatalogStore($"Data Source={enrolledSnapshotPath}");
+            var synchronization = new PosCatalogSynchronizer(
+                fixture.CreateClient(), enrolledStore,
+                new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret),
+                new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId));
+            await synchronization.SynchronizeAsync();
+            var synchronizedSites = (await enrolledStore.SearchCustomersAsync("Ada Cliente"))
+                .Where(item => item.CustomerId == created.CustomerId)
+                .ToArray();
+            Assert.Equal(2, synchronizedSites.Length);
+            Assert.All(synchronizedSites, item => Assert.NotNull(item.PartySiteId));
+            Assert.Equal(
+                detailed.Sites.Select(site => site.PartySiteId).Order().ToArray(),
+                synchronizedSites.Select(site => site.PartySiteId!.Value).Order().ToArray());
+            Assert.All(synchronizedSites, item => Assert.NotEqual(Guid.Empty, item.PartySiteId!.Value));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(enrolledSnapshotPath)) File.Delete(enrolledSnapshotPath);
+        }
+
         var page = await admin.GetFromJsonAsync<CustomerPage>(
             "/api/commerce/v1/customers?page=1&pageSize=10&search=123456");
         Assert.NotNull(page);

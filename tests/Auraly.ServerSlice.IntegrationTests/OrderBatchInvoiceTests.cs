@@ -1,13 +1,17 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using Auraly.Application.Orders;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Microsoft.Data.SqlClient;
+using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
+public sealed class OrderBatchInvoiceTests(
+    ServerSliceFixture fixture,
+    ITestOutputHelper output)
 {
     [Fact]
     public async Task Accepted_order_finishes_processing_after_its_work_session_closes()
@@ -113,6 +117,8 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Selected_orders_create_independent_invoices_exactly_once()
     {
+        await WarmCashInvoicePathAsync();
+
         var userId = Guid.NewGuid();
         var firstOrderId = Guid.NewGuid();
         var secondOrderId = Guid.NewGuid();
@@ -139,9 +145,11 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         // canonical sales engine consumes each document.
         fixture.PauseDocumentProcessing();
         InvoiceOrdersResponse first;
+        var timing = Stopwatch.StartNew();
         try
         {
             first = await InvoiceAsync(client, command, idempotencyKey);
+            timing.Stop();
             var queued = fixture.DrainDocumentSignals();
             Assert.True(
                 queued.Count == 2,
@@ -159,6 +167,14 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal("Completed", first.Status);
         Assert.Equal(2, first.CompletedCount);
         Assert.Equal(0, first.FailedCount);
+        Assert.True(
+            timing.Elapsed < TimeSpan.FromSeconds(first.CompletedCount),
+            $"El lote en efectivo promedió " +
+            $"{timing.Elapsed.TotalMilliseconds / first.CompletedCount:N0} ms por factura.");
+        output.WriteLine(
+            "Facturación masiva en efectivo: {0:N0} ms por factura ({1} documentos).",
+            timing.Elapsed.TotalMilliseconds / first.CompletedCount,
+            first.CompletedCount);
         Assert.False(first.IsReplay);
         Assert.Equal(2, first.Results.Count);
         Assert.All(first.Results, result =>
@@ -223,6 +239,49 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal(0, reader.GetInt32(5));
     }
 
+    private async Task WarmCashInvoicePathAsync()
+    {
+        var userId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        var firstOrderId = Guid.NewGuid();
+        var secondOrderId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, firstOrderId, secondOrderId);
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var command = new InvoiceOrdersRequest(
+            workSessionId,
+            fixture.WarehouseId,
+            userId,
+            [firstOrderId, secondOrderId],
+            "Cash",
+            null);
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var response = await InvoiceAsync(client, command, $"warm-cash-{Guid.NewGuid():N}");
+            Assert.True(
+                string.Equals("Completed", response.Status, StringComparison.Ordinal),
+                $"Warm cash batch ended as {response.Status}: " +
+                string.Join(" | ", response.Results.Select(result =>
+                    $"{result.OrderNumber}: {result.Error ?? result.Status}")));
+            Assert.Equal(2, response.CompletedCount);
+            var queued = fixture.DrainDocumentSignals();
+            Assert.Equal(2, queued.Count);
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in queued)
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+        }
+    }
+
     [Fact]
     public async Task Sales_receipt_is_returned_with_order_emission_without_a_fiscal_lookup()
     {
@@ -276,7 +335,7 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Sales_receipt_uses_sales_warehouse_after_releasing_exact_reserved_stock()
+    public async Task Sales_receipt_consumes_exact_PED_reservation_without_releasing_stock()
     {
         var userId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
@@ -355,35 +414,41 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                 SELECT
                   orders.ExternalStatus,
                   orders.ReleaseTransferId,
-                  ordersBalance.QuantityOnHand,
-                  salesBalance.QuantityOnHand,
+                  COALESCE(ordersBalance.QuantityOnHand,0),
+                  COALESCE(salesBalance.QuantityOnHand,0),
                   (SELECT COUNT(*) FROM dbo.OrderInvoiceLinks link
                    WHERE link.OrderId=@OrderId),
                   (SELECT COUNT(*) FROM dbo.InventoryMovements movement
-                   WHERE movement.DocumentId=orders.ReleaseTransferId
-                     AND movement.DocumentType=N'WarehouseTransfer')
+                   WHERE movement.DocumentId=@DocumentId
+                     AND movement.WarehouseId=orders.OrdersWarehouseId
+                     AND movement.MovementType=N'Sale'),
+                  (SELECT COUNT(*) FROM dbo.InventoryMovements movement
+                   WHERE movement.DocumentType=N'WarehouseTransfer'
+                     AND movement.DocumentId=orders.ReleaseTransferId)
                 FROM dbo.Orders orders
-                JOIN dbo.InventoryBalances ordersBalance
+                LEFT JOIN dbo.InventoryBalances ordersBalance
                   ON ordersBalance.BusinessId=orders.BusinessId
                  AND ordersBalance.WarehouseId=orders.OrdersWarehouseId
                  AND ordersBalance.ProductId=@ProductId
-                JOIN dbo.InventoryBalances salesBalance
+                LEFT JOIN dbo.InventoryBalances salesBalance
                   ON salesBalance.BusinessId=orders.BusinessId
                  AND salesBalance.WarehouseId=@WarehouseId
                  AND salesBalance.ProductId=@ProductId
                 WHERE orders.OrderId=@OrderId;
                 """;
             verify.Parameters.AddWithValue("@OrderId", orderId);
+            verify.Parameters.AddWithValue("@DocumentId", result.DocumentId!.Value);
             verify.Parameters.AddWithValue("@ProductId", fixture.ProductId);
             verify.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
             await using var reader = await verify.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
             Assert.Equal("InventoryConsumedByInvoice", reader.GetString(0));
-            Assert.False(reader.IsDBNull(1));
+            Assert.True(reader.IsDBNull(1));
             Assert.Equal(0m, reader.GetDecimal(2));
             Assert.Equal(0m, reader.GetDecimal(3));
             Assert.Equal(1, reader.GetInt32(4));
-            Assert.Equal(2, reader.GetInt32(5));
+            Assert.Equal(1, reader.GetInt32(5));
+            Assert.Equal(0, reader.GetInt32(6));
         }
         finally
         {
@@ -439,10 +504,14 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                 WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
 
                 INSERT dbo.Parties(
-                  PartyId,TenantId,PartyType,DisplayName,LegalName,
+                  PartyId,TenantId,PartyType,IdentificationCountryId,
+                  IdentificationTypeCode,Identification,NormalizedIdentification,
+                  DisplayName,LegalName,
                   CompletionStatus,IsActive,CreatedBy,CreatedAt)
                 VALUES(
-                  @PartyId,@TenantId,N'Organization',N'Cliente crédito lote',
+                  @PartyId,@TenantId,N'Organization',@CountryId,
+                  N'31',N'900123456',N'900123456',
+                  N'Cliente crédito lote',
                   N'Cliente crédito lote',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Customers(
@@ -503,7 +572,6 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                 client,
                 command,
                 $"credit-order-{Guid.NewGuid():N}");
-
             Assert.Equal("Completed", response.Status);
             Assert.Equal(1, response.CompletedCount);
             Assert.Equal(0, response.FailedCount);

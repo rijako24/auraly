@@ -79,6 +79,7 @@ public sealed class DianCreditNoteUblTests
                     6000m, 1000m, 5000m,
                     [new DianTax("01", "IVA", 5000m, 950m, 19m)])
             ],
+            LineExtensionAmount = 6000m,
             DiscountAmount = 1000m,
             OriginalInvoice = new DianInvoiceReference(
                 "DS1", originalCuds, new DateOnly(2026, 7, 31))
@@ -99,7 +100,10 @@ public sealed class DianCreditNoteUblTests
             DianUblNamespaces.Cbc + "UUID")?.Attribute("schemeName")?.Value);
         var monetary = xml.Descendants(
             DianUblNamespaces.Cac + "LegalMonetaryTotal").Single();
-        Assert.Null(monetary.Element(DianUblNamespaces.Cbc + "AllowanceTotalAmount"));
+        Assert.Equal("6000.00", monetary.Element(
+            DianUblNamespaces.Cbc + "LineExtensionAmount")?.Value);
+        Assert.Equal("1000.00", monetary.Element(
+            DianUblNamespaces.Cbc + "AllowanceTotalAmount")?.Value);
         Assert.Equal("16.67", xml.Descendants(
             DianUblNamespaces.Cbc + "MultiplierFactorNumeric").Single().Value);
         var validation = new DianSchemaValidator().Validate(built.Xml);

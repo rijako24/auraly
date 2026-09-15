@@ -182,7 +182,9 @@ public sealed class PosDraftStoreTests
             var active = await store.AddOrIncrementLineAsync(
                 scope,
                 Line(quantity: 2m) with { Discount = 500m });
-            await store.AssignPartiesAsync(active.DraftId, customerId, sellerId);
+            var customerPartySiteId = Guid.NewGuid();
+            await store.AssignPartiesAsync(
+                active.DraftId, customerId, sellerId, customerPartySiteId);
             var temporary = await store.SaveTemporaryAsync(
                 active.DraftId,
                 "Mesa 4",
@@ -200,6 +202,7 @@ public sealed class PosDraftStoreTests
             var recovered = await reopened.RecoverTemporaryAsync(temporary.DraftId, scope);
             Assert.Equal(PosDraftStatus.Active, recovered.Status);
             Assert.Equal(customerId, recovered.CustomerId);
+            Assert.Equal(customerPartySiteId, recovered.CustomerPartySiteId);
             Assert.Equal(sellerId, recovered.SellerId);
             Assert.Equal(500m, recovered.Lines.Single().Discount);
             Assert.Equal(19_500m, recovered.PayableAmount);

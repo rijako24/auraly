@@ -2,6 +2,7 @@ CREATE PROCEDURE [dbo].[SellerOrderReplace]
     @OrderId UNIQUEIDENTIFIER,
     @BusinessId UNIQUEIDENTIFIER,
     @CustomerId UNIQUEIDENTIFIER,
+    @PartySiteId UNIQUEIDENTIFIER,
     @CustomerName NVARCHAR(150),
     @CustomerIdentification NVARCHAR(80) = NULL,
     @CustomerEmail NVARCHAR(200) = NULL,
@@ -28,7 +29,7 @@ BEGIN
         DiscountAmount DECIMAL(19,4) '$.discountAmount') j;
 
     UPDATE dbo.Orders
-    SET CustomerId=@CustomerId,CustomerNameSnapshot=@CustomerName,
+    SET CustomerId=@CustomerId,PartySiteId=@PartySiteId,CustomerNameSnapshot=@CustomerName,
         CustomerDocumentSnapshot=@CustomerIdentification,CustomerEmailSnapshot=@CustomerEmail,
         CustomerPhoneSnapshot=@CustomerPhone,DeliveryAddressSnapshot=@CustomerAddress,
         Notes=@Notes,Subtotal=@Subtotal,DiscountTotal=@DiscountTotal,Total=@Total,

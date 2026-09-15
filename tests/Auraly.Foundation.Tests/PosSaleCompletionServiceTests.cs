@@ -151,7 +151,8 @@ public sealed class PosSaleCompletionServiceTests
             draft = await fixture.Drafts.AssignPartiesAsync(
                 draft.DraftId,
                 customerId,
-                sellerId: null);
+                sellerId: null,
+                customerPartySiteId: Guid.NewGuid());
 
             var result = await fixture.CompleteAsync(
                 draft.DraftId,
@@ -188,7 +189,8 @@ public sealed class PosSaleCompletionServiceTests
             draft = await fixture.Drafts.AssignPartiesAsync(
                 draft.DraftId,
                 customerId,
-                sellerId: null);
+                sellerId: null,
+                customerPartySiteId: Guid.NewGuid());
 
             var dueDate = fixture.IssuedAt.AddDays(30);
             var result = await fixture.CompleteAsync(

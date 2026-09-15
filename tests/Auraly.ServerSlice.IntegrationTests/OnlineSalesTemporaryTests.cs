@@ -173,8 +173,22 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         var userId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         await ExecuteAsync(
             """
+            DECLARE @CountryId UNIQUEIDENTIFIER,
+                    @DivisionId UNIQUEIDENTIFIER,
+                    @CityId UNIQUEIDENTIFIER;
+            SELECT TOP(1)
+              @CountryId=country.CountryId,
+              @DivisionId=division.AdministrativeDivisionId,
+              @CityId=city.CityId
+            FROM dbo.Cities city
+            JOIN dbo.AdministrativeDivisions division
+              ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+            JOIN dbo.Countries country ON country.CountryId=division.CountryId
+            WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+
             INSERT dbo.AppUsers(
               UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
               FirstName,LastName,IsActive,CreatedAt)
@@ -191,6 +205,12 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
               CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
             VALUES(
               @CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+              CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+              @DivisionId,@CityId,N'Calle espera 1',1,1,@UserId,SYSDATETIMEOFFSET());
             """,
             new("@UserId", userId),
             new("@TenantId", fixture.TenantId),
@@ -200,6 +220,7 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
             new("@NormalizedEmail", $"WAIT-{userId:N}@TEST.LOCAL"),
             new("@PartyId", partyId),
             new("@CustomerId", customerId),
+            new("@PartySiteId", partySiteId),
             new("@BusinessId", fixture.BusinessId));
 
         using var client = fixture.CreateUserClient(

@@ -21,9 +21,12 @@ function order(index: number): CommerceOrderListItem {
     lineCount: 1,
     createdAt: new Date(2026, 8, 2).toISOString(),
     canInvoice: true,
-    invoiceDocumentId: null,
-    claim: null,
-  };
+  invoiceDocumentId: null,
+  claim: null,
+  customerId: "customer-1",
+  partySiteId: "site-1",
+  partySiteName: "Sede principal",
+};
 }
 
 test("seleccionar todos conserva los pedidos que no están en la página visible", async () => {

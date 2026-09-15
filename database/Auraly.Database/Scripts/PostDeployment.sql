@@ -150,6 +150,8 @@ GO
 GO
 :r .\Migrations\BackfillOrderSalesWarehouses.sql
 :r .\Migrations\BackfillOrderCommercialAttribution.sql
+:r .\Migrations\20260914_BackfillReportingPartySites.sql
+:r .\Migrations\20260915_AllowCreditRejectedOrderBatchStatus.sql
 GO
 
 PRINT 'Post-deployment scripts executed successfully.';

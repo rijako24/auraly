@@ -18,6 +18,7 @@ type EditableLine = {
   quantity: number;
   taxRate: number;
   allowsDocumentCostOverride: boolean;
+  originalDocumentUnitCost: number;
   description: string;
   unitCost: string;
   margin: string;
@@ -68,7 +69,9 @@ export function PosLineEditorDialog({
     description: line.description.trim(),
     unitPrice: exclusive(line.documentUnitPrice, line.taxRate),
     discount: exclusive(parseMoneyDraft(line.discount), line.taxRate),
-    documentUnitCost: parseMoneyDraft(line.unitCost),
+    documentUnitCost: line.allowsDocumentCostOverride
+      ? parseMoneyDraft(line.unitCost)
+      : line.originalDocumentUnitCost,
   })), [drafts]);
   const valid = parsed.every((line, index) =>
     Boolean(line.description) &&
@@ -275,6 +278,7 @@ function toEditable(line: PosDraftLine): EditableLine {
     quantity: line.quantity,
     taxRate: line.taxRate,
     allowsDocumentCostOverride: line.allowsDocumentCostOverride,
+    originalDocumentUnitCost: line.documentUnitCost,
     description: line.description,
     unitCost: formatMoneyValue(line.documentUnitCost),
     referenceUnitPrice,

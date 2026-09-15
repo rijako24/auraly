@@ -24,7 +24,7 @@ CREATE TABLE [dbo].[Receivables]
     [ReceivableId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [CustomerId] UNIQUEIDENTIFIER NOT NULL,
-    [PartySiteId] UNIQUEIDENTIFIER NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(64) NOT NULL,
     [DocumentNumber] NVARCHAR(64) NOT NULL,

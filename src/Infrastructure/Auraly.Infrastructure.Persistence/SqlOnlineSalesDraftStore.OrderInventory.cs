@@ -170,45 +170,6 @@ public sealed partial class SqlOnlineSalesDraftStore
         return new(orderId, orderNumber, reportingVersion, false);
     }
 
-    public async Task PrepareSourceOrderInventoryAsync(
-        OnlineSalesUserIdentity user,
-        Guid businessId,
-        Guid orderId,
-        Guid destinationWarehouseId,
-        CancellationToken cancellationToken)
-    {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
-            System.Data.IsolationLevel.Serializable, cancellationToken);
-        try
-        {
-            await ReleaseOrderInventoryCoreAsync(
-                connection, transaction, user, orderId, businessId,
-                destinationWarehouseId, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            if (transaction.Connection is not null)
-                await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-    }
-
-    private async Task ReleaseOrderInventoryAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        OnlineSalesUserIdentity user,
-        DraftState state,
-        CancellationToken cancellationToken)
-    {
-        if (state.SourceOrderId is null) return;
-        await ReleaseOrderInventoryCoreAsync(
-            connection, transaction, user, state.SourceOrderId.Value,
-            state.BusinessId, state.WarehouseId, cancellationToken);
-    }
-
     private async Task ReleaseOrderInventoryCoreAsync(
         SqlConnection connection,
         SqlTransaction transaction,

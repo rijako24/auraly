@@ -26,6 +26,9 @@ export type CommerceOrderListItem = {
   canInvoice: boolean;
   invoiceDocumentId: string | null;
   claim: CommerceOrderClaim | null;
+  customerId: string | null;
+  partySiteId: string | null;
+  partySiteName: string | null;
 };
 
 export type CommerceOrderPage = {
@@ -55,7 +58,6 @@ export type CommerceOrderLine = {
 
 export type CommerceOrderDetail = CommerceOrderListItem & {
   businessId: string;
-  customerId: string | null;
   customerEmail: string | null;
   deliveryAddress: string | null;
   notes: string | null;

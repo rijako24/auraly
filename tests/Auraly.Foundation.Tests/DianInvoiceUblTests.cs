@@ -252,7 +252,7 @@ public sealed class DianInvoiceUblTests
     }
 
     [Fact]
-    public void Line_discount_is_not_reported_as_a_global_allowance()
+    public void Line_discount_reconciles_the_DIAN_legal_monetary_total()
     {
         var gross = 200_901.92m;
         var discount = 901.92m;
@@ -266,7 +266,7 @@ public sealed class DianInvoiceUblTests
                     [new DianTax("01", "IVA", net, 0m, 0m)])
             ],
             Taxes = [new DianTax("01", "IVA", net, 0m, 0m)],
-            LineExtensionAmount = net,
+            LineExtensionAmount = gross,
             TaxExclusiveAmount = net,
             TaxInclusiveAmount = net,
             DiscountAmount = discount,
@@ -281,7 +281,12 @@ public sealed class DianInvoiceUblTests
             DianUblNamespaces.Cac + "InvoiceLine").Single().Element(
                 DianUblNamespaces.Cac + "AllowanceCharge")!;
 
-        Assert.Null(monetary.Element(DianUblNamespaces.Cbc + "AllowanceTotalAmount"));
+        Assert.Equal(gross.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            monetary.Element(DianUblNamespaces.Cbc + "LineExtensionAmount")?.Value);
+        Assert.Equal(discount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            monetary.Element(DianUblNamespaces.Cbc + "AllowanceTotalAmount")?.Value);
+        Assert.Equal(net.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            monetary.Element(DianUblNamespaces.Cbc + "PayableAmount")?.Value);
         Assert.Equal("false", allowance.Element(
             DianUblNamespaces.Cbc + "ChargeIndicator")?.Value);
         Assert.Equal("0.45", allowance.Element(

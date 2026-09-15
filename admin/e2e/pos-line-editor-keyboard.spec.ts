@@ -44,7 +44,7 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
     currencyCode: "COP",
     priceSource: "Public",
     discount: 0,
-    documentUnitCost: 6_000,
+    documentUnitCost: index === 1 ? 6_000.123456 : 6_000,
     allowsDocumentCostOverride: index !== 1,
     allowsFractionalSale: false,
     net: 10_000,
@@ -68,6 +68,10 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
     taxAmount: 13_300,
     payableAmount: 83_300,
   };
+  let appliedLines: {
+    lines: Array<{ lineId: string; description: string; unitPrice: number; discount: number; documentUnitCost: number }>;
+    expectedVersion: number;
+  } | null = null;
 
   await page.context().addCookies([{ name: "auth_token", value: "e2e", url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ tenantId, businessId, warehouseId, user }) => {
@@ -94,6 +98,23 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
     else if (path.endsWith("/workspace/select")) body = workspace;
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "session" };
     else if (path.endsWith("/drafts/active")) body = draft;
+    else if (path.endsWith("/drafts/draft/lines") && route.request().method() === "PUT") {
+      appliedLines = route.request().postDataJSON() as typeof appliedLines;
+      body = {
+        ...draft,
+        version: 2,
+        lines: draft.lines.map(line => {
+          const update = appliedLines!.lines.find(candidate => candidate.lineId === line.lineId)!;
+          return {
+            ...line,
+            description: update.description,
+            unitPrice: update.unitPrice,
+            discount: update.discount,
+            documentUnitCost: update.documentUnitCost,
+          };
+        }),
+      };
+    }
     else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
     else if (path.includes("/orders")) body = { items: [], totalCount: 0, totalPages: 0, page: 1, pageSize: 25 };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
@@ -110,6 +131,12 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   await expect(editor).toBeVisible();
   await expect(discounts).toHaveCount(lines.length);
   await expect(discounts.first()).toBeFocused();
+  await expect(editor.locator('input[data-editor-row="0"][data-editor-column="1"]')).toBeEnabled();
+  await expect(editor.locator('input[data-editor-row="0"][data-editor-column="2"]')).toBeEnabled();
+  await expect(editor.locator('input[data-editor-row="1"][data-editor-column="1"]')).toBeDisabled();
+  await expect(editor.locator('input[data-editor-row="1"][data-editor-column="2"]')).toBeDisabled();
+  await expect(editor.locator('input[data-editor-row="1"][data-editor-column="3"]')).toBeEnabled();
+  await expect(editor.locator('input[data-editor-row="1"][data-editor-column="5"]')).toBeEnabled();
 
   await page.keyboard.press("ArrowRight");
   await expect(editor.locator('input[data-editor-row="0"][data-editor-column="4"]')).toBeFocused();
@@ -146,4 +173,20 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   await expect(discounts.last()).toBeFocused();
   await page.keyboard.press("ArrowUp");
   await expect(discounts.nth(lines.length - 2)).toBeFocused();
+
+  const firstCost = editor.locator('input[data-editor-row="0"][data-editor-column="1"]');
+  const firstMargin = editor.locator('input[data-editor-row="0"][data-editor-column="2"]');
+  await firstDescription.fill("Producto puntual editado");
+  await firstCost.fill("7000");
+  await firstMargin.fill("40");
+  await page.keyboard.press("Enter");
+
+  await expect(editor).toBeHidden();
+  expect(appliedLines).not.toBeNull();
+  expect(appliedLines!.expectedVersion).toBe(1);
+  expect(appliedLines!.lines[0].description).toBe("Producto puntual editado");
+  expect(appliedLines!.lines[0].documentUnitCost).toBe(7_000);
+  expect(appliedLines!.lines[0].unitPrice).toBeGreaterThan(10_000);
+  expect(appliedLines!.lines[1].documentUnitCost).toBe(6_000.123456);
+  await expect(page.getByText("Producto puntual editado")).toBeVisible();
 });

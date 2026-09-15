@@ -117,9 +117,11 @@ export default function OrdersPage() {
           await cancelCommerceOrder(order.orderId);
         } : undefined}
         onConfirmReview={user?.permissions?.includes("orders.review") ? async (order, lines) => {
-          if (!order.customerId) throw new Error("El pedido no tiene un cliente válido.");
+          if (!order.customerId || !order.partySiteId)
+            throw new Error("El pedido no conserva un cliente y una sede válidos.");
           await sellerOrdersApi.update(order.orderId, {
             customerId: order.customerId,
+            partySiteId: order.partySiteId,
             notes: order.notes,
             idempotencyKey: crypto.randomUUID(),
             lines,
@@ -181,7 +183,7 @@ export default function OrdersPage() {
       {printerOpen && (
         <PosPrinterDialog client={printerClient} onClose={() => setPrinterOpen(false)} />
       )}
-      {editingOrder?.customerId && (editingOrder.warehouseId || editingWorkspace?.warehouseId) && (
+      {editingOrder?.customerId && editingOrder.partySiteId && (editingOrder.warehouseId || editingWorkspace?.warehouseId) && (
         <SellerOrderCaptureDialog
           businessId={editingOrder.businessId}
           warehouseId={editingOrder.warehouseId ?? editingWorkspace!.warehouseId}
@@ -189,7 +191,7 @@ export default function OrdersPage() {
           stop={{
             routeStopId: `order-${editingOrder.orderId}`,
             customerId: editingOrder.customerId,
-            partySiteId: "",
+            partySiteId: editingOrder.partySiteId,
             sequence: 0,
             customerName: editingOrder.customerName ?? "Cliente",
             identification: editingOrder.customerIdentification,

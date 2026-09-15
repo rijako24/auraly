@@ -52,7 +52,10 @@ public sealed record OrderListItem(
     DateTimeOffset CreatedAt,
     bool CanInvoice,
     Guid? InvoiceDocumentId,
-    OrderClaimSummary? Claim);
+    OrderClaimSummary? Claim,
+    Guid? CustomerId = null,
+    Guid? PartySiteId = null,
+    string? PartySiteName = null);
 
 public sealed record OrderPage(
     IReadOnlyList<OrderListItem> Items,
@@ -103,7 +106,8 @@ public sealed record OrderDetail(
     OrderClaimSummary? Claim,
     IReadOnlyList<OrderLine> Lines,
     Guid? WarehouseId = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    bool CustomerRequiresElectronicInvoice = false);
 
 public sealed record OrderPrintBatchRequest(IReadOnlyCollection<Guid> OrderIds);
 
@@ -159,6 +163,7 @@ public sealed record PosSaveOrderRequest(
     Guid WarehouseId,
     Guid WorkSessionId,
     Guid CustomerId,
+    Guid PartySiteId,
     Guid? OrderId,
     string? Notes,
     string IdempotencyKey,

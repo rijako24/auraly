@@ -34,10 +34,11 @@ export function ProductHero() {
 
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const timer = window.setInterval(() => {
+    let timer = window.setTimeout(function advance() {
       setActive((current) => (current + 1) % HERO_SLIDES.length);
+      timer = window.setTimeout(advance, 5200);
     }, 5200);
-    return () => window.clearInterval(timer);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const Preview = HERO_SLIDES[active].render;

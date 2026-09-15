@@ -438,6 +438,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
         string idempotencyKey,
         CancellationToken cancellationToken)
     {
+        if (customerId.HasValue != partySiteId.HasValue)
+            throw new OnlineSalesDraftValidationException(
+                "Cliente y sede deben seleccionarse juntos.");
         const string operation = "SelectCustomer";
         var hash = Hash($"{operation}|{draftId:D}|{customerId?.ToString("D") ?? "Final"}|{partySiteId?.ToString("D") ?? "None"}");
         await using var connection = connections.Create();
@@ -1122,11 +1125,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             CROSS APPLY(
-                SELECT TOP(1) candidate.PartySiteId,candidate.Name,candidate.AddressLine
+                SELECT candidate.PartySiteId,candidate.Name,candidate.AddressLine
                 FROM dbo.PartySites candidate
                 WHERE candidate.PartyId=p.PartyId AND candidate.IsActive=1
-                  AND (@PartySiteId IS NULL OR candidate.PartySiteId=@PartySiteId)
-                ORDER BY candidate.IsPrimary DESC,candidate.Name,candidate.PartySiteId
+                  AND candidate.PartySiteId=@PartySiteId
             ) site
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
             LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId

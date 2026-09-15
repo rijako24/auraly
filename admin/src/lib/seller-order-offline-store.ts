@@ -8,7 +8,7 @@ export { sellerOfflinePreparationKey } from "@/lib/seller-offline-scope";
 const CATALOG="seller-catalog",DRAFTS="seller-order-drafts",OUTBOX="seller-order-outbox",SNAPSHOTS="seller-order-snapshots",PREPARATIONS="seller-offline-preparations";
 type Draft={key:string;request:SellerOrderRequest;quantities:Record<string,number>;updatedAt:string};
 type Queued={id:string;userId:string;request:SellerOrderRequest;route:SalesRouteDetail|null;visitDate:string;queuedAt:string;attempts:number};
-export type SellerOrderSnapshot={idempotencyKey:string;userId:string;orderId:string;orderNumber:string;businessId:string;warehouseId:string;routeId:string|null;customerName:string;total:number;lineCount:number;operationalDate:string;createdAt:string;status:string;synchronized:boolean};
+export type SellerOrderSnapshot={idempotencyKey:string;userId:string;orderId:string;orderNumber:string;businessId:string;warehouseId:string;routeId:string|null;customerId:string;partySiteId:string;partySiteName:string;customerName:string;total:number;lineCount:number;operationalDate:string;createdAt:string;status:string;synchronized:boolean};
 async function tx<T>(store:string,mode:IDBTransactionMode,action:(value:IDBObjectStore)=>IDBRequest<T>){const db=await openSalesOfflineDatabase();try{return await new Promise<T>((resolve,reject)=>{const result=action(db.transaction(store,mode).objectStore(store));result.onsuccess=()=>resolve(result.result);result.onerror=()=>reject(result.error)})}finally{db.close()}}
 const catalogKey=(businessId:string,warehouseId:string,customerId:string,version?:string)=>`${businessId}:${warehouseId}:${customerId}${version?`:${version}`:""}`;
 const activeCatalogKey=(businessId:string,warehouseId:string)=>`${businessId}:${warehouseId}:active-version`;

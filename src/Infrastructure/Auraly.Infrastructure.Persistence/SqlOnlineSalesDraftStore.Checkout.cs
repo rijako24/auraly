@@ -52,7 +52,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT TOP(2) a.FiscalAuthorizationId,a.AuthorizationNumber,
-                   a.TechnicalKeyVersion,a.Environment
+                   a.TechnicalKeyVersion,a.Environment,d.BusinessId
             FROM dbo.SalesDrafts d
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
             JOIN dbo.WorkSessions ws
@@ -91,7 +91,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             rows.Add(new OnlineSalesFiscalKeyContext(
                 new FiscalKeyReference(
                     user.TenantId,
-                    Guid.Empty,
+                    reader.GetGuid(4),
                     reader.GetGuid(0),
                     reader.GetString(1),
                     reader.GetString(2),
@@ -103,24 +103,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     ? "La sede no tiene una resolución fiscal activa y vigente."
                     : "La sede tiene más de una serie fiscal activa.");
 
-        await reader.DisposeAsync();
-        await using var business = connection.CreateCommand();
-        business.CommandText = """
-            SELECT BusinessId FROM dbo.SalesDrafts
-            WHERE SalesDraftId=@DraftId AND UserId=@UserId;
-            """;
-        business.Parameters.AddRange([
-            P("@DraftId", draftId),
-            P("@UserId", user.UserId)
-        ]);
-        var businessId = await business.ExecuteScalarAsync(cancellationToken) is Guid value
-            ? value
-            : throw new OnlineSalesDraftForbiddenException(
-                "El borrador no pertenece al usuario autenticado.");
-        return rows[0] with
-        {
-            Reference = rows[0].Reference with { BusinessId = businessId }
-        };
+        return rows[0];
     }
 
     private async Task EnsureHabilitationFiscalSeriesAsync(
@@ -495,8 +478,6 @@ public sealed partial class SqlOnlineSalesDraftStore
                     state.CustomerPartySiteId),
             FiscalHabilitationOnly: request.FiscalHabilitationOnly,
             CustomerPartySiteId: state.CustomerPartySiteId);
-
-        await ReleaseOrderInventoryAsync(connection, transaction, user, state, cancellationToken);
 
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """

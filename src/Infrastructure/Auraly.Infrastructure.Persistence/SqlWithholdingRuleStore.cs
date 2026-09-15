@@ -113,6 +113,53 @@ public sealed class SqlWithholdingRuleStore(
         }
     }
 
+    public async Task<IReadOnlyDictionary<Guid, CounterpartyTaxProfileView>> GetProfilesAsync(
+        Guid tenantId,
+        Guid businessId,
+        IReadOnlyCollection<Guid> counterpartyIds,
+        CancellationToken ct)
+    {
+        if (counterpartyIds.Count == 0)
+            return new Dictionary<Guid, CounterpartyTaxProfileView>();
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
+              THROW 51300,'The business is outside the tenant.',1;
+            SELECT profile.BusinessId,profile.CounterpartyId,profile.AppliesWithholding,
+                   profile.Responsibilities,profile.JurisdictionCode,profile.UpdatedAt
+            FROM dbo.CounterpartyTaxProfiles profile
+            INNER JOIN OPENJSON(@CounterpartyIds)
+              WITH(CounterpartyId uniqueidentifier '$') input
+              ON input.CounterpartyId=profile.CounterpartyId
+            WHERE profile.BusinessId=@BusinessId;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue(
+            "@CounterpartyIds",
+            JsonSerializer.Serialize(counterpartyIds.Distinct()));
+        var values = new Dictionary<Guid, CounterpartyTaxProfileView>();
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var value = new CounterpartyTaxProfileView(
+                    reader.GetGuid(0), reader.GetGuid(1), reader.GetBoolean(2),
+                    DeserializeResponsibilities(reader.GetString(3)),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.GetDateTimeOffset(5));
+                values.Add(value.CounterpartyId, value);
+            }
+        }
+        catch (SqlException exception) when (exception.Number == 51300)
+        {
+            throw new TaxationForbiddenException(exception.Message);
+        }
+        return values;
+    }
+
     public async Task<CounterpartyTaxProfileView> SaveProfileAsync(
         Guid tenantId, Guid userId, SaveCounterpartyTaxProfileRequest request,
         CancellationToken ct)

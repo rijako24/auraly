@@ -121,9 +121,10 @@ public sealed class SqlOrderStore(
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
-              COUNT_BIG(1) OVER() TotalRows
+              COUNT_BIG(1) OVER() TotalRows,o.CustomerId,o.PartySiteId,site.Name
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=o.PartySiteId
             LEFT JOIN dbo.PaymentTransactions pt
               ON pt.PaymentTransactionId=o.PaymentTransactionId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
@@ -171,7 +172,10 @@ public sealed class SqlOrderStore(
                 DateTime.SpecifyKind(reader.GetDateTime(10), DateTimeKind.Utc),
                 OrderRules.CanInvoice(storedStatus, reader.GetBoolean(11), hasInvoice),
                 hasInvoice ? reader.GetGuid(12) : null,
-                claim));
+                claim,
+                reader.IsDBNull(21) ? null : reader.GetGuid(21),
+                reader.IsDBNull(22) ? null : reader.GetGuid(22),
+                NullableString(reader, 23)));
         }
 
         return new OrderPage(
@@ -203,9 +207,11 @@ public sealed class SqlOrderStore(
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
               COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
-              o.PartySiteId
+              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit)
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
+            LEFT JOIN dbo.Customers customer
+              ON customer.CustomerId=o.CustomerId AND customer.BusinessId=o.BusinessId
             LEFT JOIN dbo.PaymentTransactions pt
               ON pt.PaymentTransactionId=o.PaymentTransactionId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
@@ -261,7 +267,8 @@ public sealed class SqlOrderStore(
             Confirmed = header.GetBoolean(19),
             DocumentId = hasInvoice ? header.GetGuid(20) : (Guid?)null,
             WarehouseId = header.IsDBNull(28) ? (Guid?)null : header.GetGuid(28),
-            PartySiteId = header.IsDBNull(29) ? (Guid?)null : header.GetGuid(29)
+            PartySiteId = header.IsDBNull(29) ? (Guid?)null : header.GetGuid(29),
+            RequiresElectronicInvoice = header.GetBoolean(30)
         };
         await header.CloseAsync();
 
@@ -325,7 +332,161 @@ public sealed class SqlOrderStore(
             values.Subtotal, values.Discount, values.Total, values.PaymentId,
             values.PaymentStatus, values.CreatedAt,
             OrderRules.CanInvoice(storedStatus, values.Confirmed, hasInvoice),
-            values.DocumentId, claim, lines, values.WarehouseId, values.PartySiteId);
+            values.DocumentId, claim, lines, values.WarehouseId, values.PartySiteId,
+            values.RequiresElectronicInvoice);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, OrderDetail>> GetBatchAsync(
+        OrderActor actor,
+        IReadOnlyCollection<Guid> orderIds,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        const string sql = """
+            DECLARE @Selected TABLE(OrderId uniqueidentifier NOT NULL PRIMARY KEY);
+            INSERT @Selected(OrderId)
+            SELECT DISTINCT TRY_CONVERT(uniqueidentifier,[value])
+            FROM OPENJSON(@OrderIds)
+            WHERE TRY_CONVERT(uniqueidentifier,[value]) IS NOT NULL;
+
+            SELECT
+              o.OrderId,o.BusinessId,
+              COALESCE(NULLIF(o.ExternalDocumentNumber,N''),CONCAT(N'PED-',LEFT(CONVERT(nvarchar(36),o.OrderId),8))),
+              o.Status,o.Source,o.CustomerId,o.CustomerNameSnapshot,o.CustomerDocumentSnapshot,
+              o.CustomerPhoneSnapshot,o.CustomerEmailSnapshot,o.DeliveryAddressSnapshot,
+              o.Notes,o.Currency,o.Subtotal,o.DiscountTotal,o.Total,
+              o.PaymentTransactionId,
+              CASE pt.Status WHEN 2 THEN N'Confirmed' WHEN 3 THEN N'Failed'
+                   WHEN 1 THEN N'Pending' ELSE NULL END,
+              o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
+              document.ProcessingStatus,processingJob.Status,
+              claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
+              COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
+              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit)
+            FROM @Selected selected
+            INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
+            INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
+            LEFT JOIN dbo.Customers customer
+              ON customer.CustomerId=o.CustomerId AND customer.BusinessId=o.BusinessId
+            LEFT JOIN dbo.PaymentTransactions pt ON pt.PaymentTransactionId=o.PaymentTransactionId
+            LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
+            LEFT JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId
+            LEFT JOIN dbo.DocumentProcessingJobs processingJob
+              ON processingJob.DocumentId=document.DocumentId
+             AND processingJob.DocumentType=document.DocumentType
+            OUTER APPLY (
+              SELECT TOP(1) c.OrderClaimId,c.WorkSessionId,c.DeviceId,c.UserId,c.ExpiresAt
+              FROM dbo.OrderClaims c
+              WHERE c.OrderId=o.OrderId AND c.ReleasedAt IS NULL AND c.ExpiresAt>@Now
+              ORDER BY c.ClaimedAt DESC
+            ) claim
+            WHERE o.BusinessId=@BusinessId AND b.TenantId=@TenantId;
+
+            SELECT item.OrderId,item.OrderItemId,item.ProductId,item.ProductCodeSnapshot,item.Sku,
+                   item.ProductNameSnapshot,COALESCE(NULLIF(item.UnitCodeSnapshot,N''),N'EA'),
+                   item.Quantity,item.UnitPrice,item.DiscountAmount,item.LineTotal,
+                   COALESCE(balance.QuantityOnHand,0),CAST(COALESCE(product.ManageStock,0) AS bit),
+                   COALESCE(NULLIF(JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.PriceSource'),N''),N'Captured'),
+                   COALESCE(TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
+                     CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                     '$.ReservedQuantity')),
+                     CASE WHEN o.Status=2 THEN item.Quantity ELSE 0 END),
+                   TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
+                     CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                     '$.DocumentUnitCost'))
+            FROM @Selected selected
+            INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
+            INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId AND b.TenantId=@TenantId
+            INNER JOIN dbo.OrderItems item
+              ON item.OrderId=o.OrderId AND item.BusinessId=o.BusinessId
+            LEFT JOIN dbo.Products product
+              ON product.ProductId=item.ProductId AND product.TenantId=@TenantId
+            LEFT JOIN dbo.InventoryBalances balance
+              ON balance.BusinessId=item.BusinessId
+             AND balance.WarehouseId=COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId')))
+             AND balance.ProductId=item.ProductId
+            WHERE o.BusinessId=@BusinessId
+            ORDER BY item.OrderId,
+              COALESCE(TRY_CONVERT(INT,JSON_VALUE(
+                CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
+                '$.LinePosition')),2147483647),item.CreatedAt,item.OrderItemId;
+            """;
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddRange([
+            P("@OrderIds", JsonSerializer.Serialize(orderIds)),
+            P("@BusinessId", actor.BusinessId),
+            P("@TenantId", actor.TenantId),
+            P("@Now", time.GetUtcNow())
+        ]);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var headers = new Dictionary<Guid, BatchOrderHeader>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var storedStatus = reader.GetInt32(3);
+            var hasInvoice = !reader.IsDBNull(20);
+            var id = reader.GetGuid(0);
+            headers.Add(id, new BatchOrderHeader(
+                id,
+                reader.GetGuid(1),
+                reader.GetString(2),
+                storedStatus,
+                OrderRules.CanonicalStatus(
+                    storedStatus,
+                    hasInvoice,
+                    NullableString(reader, 21),
+                    NullableString(reader, 22)),
+                reader.GetInt32(4),
+                reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                NullableString(reader, 6),
+                NullableString(reader, 7),
+                NullableString(reader, 8),
+                NullableString(reader, 9),
+                NullableString(reader, 10),
+                NullableString(reader, 11),
+                reader.GetString(12),
+                reader.GetDecimal(13),
+                reader.GetDecimal(14),
+                reader.GetDecimal(15),
+                reader.IsDBNull(16) ? null : reader.GetGuid(16),
+                NullableString(reader, 17),
+                DateTime.SpecifyKind(reader.GetDateTime(18), DateTimeKind.Utc),
+                reader.GetBoolean(19),
+                hasInvoice ? reader.GetGuid(20) : null,
+                ReadClaim(reader, 23, actor),
+                reader.IsDBNull(28) ? null : reader.GetGuid(28),
+                reader.IsDBNull(29) ? null : reader.GetGuid(29),
+                reader.GetBoolean(30)));
+        }
+
+        var lines = headers.Keys.ToDictionary(id => id, _ => new List<OrderLine>());
+        await reader.NextResultAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var orderId = reader.GetGuid(0);
+            if (!lines.TryGetValue(orderId, out var orderLines))
+                continue;
+            orderLines.Add(new OrderLine(
+                reader.GetGuid(1),
+                reader.IsDBNull(2) ? null : reader.GetGuid(2),
+                NullableString(reader, 3),
+                NullableString(reader, 4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetDecimal(7),
+                reader.GetDecimal(8),
+                reader.GetDecimal(9),
+                reader.GetDecimal(10),
+                reader.GetDecimal(11),
+                reader.GetBoolean(12),
+                reader.GetString(13),
+                reader.GetDecimal(14),
+                reader.IsDBNull(15) ? null : reader.GetDecimal(15)));
+        }
+
+        return headers.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.ToDetail(lines[pair.Key]));
     }
 
     public async Task<IReadOnlyList<OrderPrintDocument>> GetPrintBatchAsync(
@@ -429,94 +590,119 @@ public sealed class SqlOrderStore(
         Guid orderId,
         Guid workSessionId,
         int leaseMinutes,
+        bool releaseOtherClaims,
         CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
         var expires = now.AddMinutes(leaseMinutes);
+        var claimId = ids.NewId();
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction =
             (SqlTransaction)await connection.BeginTransactionAsync(
                 IsolationLevel.Serializable, cancellationToken);
-        await DemandContextAsync(
-            connection, transaction, actor, orderId, workSessionId, cancellationToken);
+        const string sql = """
+            DECLARE @Status int,@Confirmed bit,@HasInvoice bit,
+                    @ExistingClaimId uniqueidentifier,@OwnerWorkSession uniqueidentifier,
+                    @OwnerDevice uniqueidentifier,@OwnerUser uniqueidentifier;
+            SELECT @Status=o.Status,@Confirmed=o.CustomerConfirmed,
+                   @HasInvoice=CASE WHEN link.OrderId IS NULL THEN 0 ELSE 1 END
+            FROM dbo.Orders o WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId AND b.TenantId=@TenantId
+            INNER JOIN dbo.WorkSessions ws
+              ON ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=o.BusinessId
+             AND ws.TenantId=@TenantId AND ws.UserId=@UserId AND ws.Status=N'Open'
+            LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
+            WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId;
 
-        await ExecuteAsync(connection, transaction, """
-            UPDATE dbo.OrderClaims
-            SET ReleasedAt=@Now
-            WHERE OrderId=@OrderId AND ReleasedAt IS NULL
-              AND (
-                ExpiresAt<=@Now
-                OR NOT EXISTS(
-                  SELECT 1
-                  FROM dbo.WorkSessions ownerSession
-                  WHERE ownerSession.WorkSessionId=dbo.OrderClaims.WorkSessionId
-                    AND ownerSession.Status=N'Open'));
-            """,
-            [P("@Now", now), P("@OrderId", orderId)],
-            cancellationToken);
+            IF @Status IS NULL
+                SELECT 0 ResultCode,CAST(NULL AS uniqueidentifier) OrderClaimId,
+                       CAST(NULL AS uniqueidentifier) DeviceId;
+            ELSE IF NOT ((@Status IN(2,4) AND @Confirmed=1 AND @HasInvoice=0)
+                         OR (@Status=5 AND @CanEditReview=1))
+                SELECT 1 ResultCode,CAST(NULL AS uniqueidentifier) OrderClaimId,
+                       CAST(NULL AS uniqueidentifier) DeviceId;
+            ELSE
+            BEGIN
+                UPDATE dbo.OrderClaims
+                SET ReleasedAt=@Now
+                WHERE OrderId=@OrderId AND ReleasedAt IS NULL
+                  AND (ExpiresAt<=@Now OR NOT EXISTS(
+                    SELECT 1 FROM dbo.WorkSessions ownerSession
+                    WHERE ownerSession.WorkSessionId=dbo.OrderClaims.WorkSessionId
+                      AND ownerSession.Status=N'Open'));
 
-        const string lockSql = """
-            SELECT TOP(1) OrderClaimId,WorkSessionId,DeviceId,UserId,ExpiresAt
-            FROM dbo.OrderClaims WITH(UPDLOCK,HOLDLOCK)
-            WHERE OrderId=@OrderId AND ReleasedAt IS NULL;
+                SELECT TOP(1) @ExistingClaimId=OrderClaimId,
+                       @OwnerWorkSession=WorkSessionId,@OwnerDevice=DeviceId,@OwnerUser=UserId
+                FROM dbo.OrderClaims WITH(UPDLOCK,HOLDLOCK)
+                WHERE OrderId=@OrderId AND ReleasedAt IS NULL;
+
+                IF @ExistingClaimId IS NOT NULL
+                   AND (@OwnerWorkSession<>@WorkSessionId OR @OwnerUser<>@UserId)
+                    SELECT 2 ResultCode,@ExistingClaimId OrderClaimId,@OwnerDevice DeviceId;
+                ELSE
+                BEGIN
+                    IF @ExistingClaimId IS NULL
+                    BEGIN
+                        INSERT dbo.OrderClaims(
+                          OrderClaimId,BusinessId,WarehouseId,OrderId,WorkSessionId,
+                          DeviceId,UserId,ClaimedAt,ExpiresAt)
+                        SELECT @ClaimId,@BusinessId,
+                          COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(
+                            CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,
+                            '$.WarehouseId'))),
+                          @OrderId,@WorkSessionId,@DeviceId,@UserId,@Now,@ExpiresAt
+                        FROM dbo.Orders o
+                        WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId;
+                        SET @ExistingClaimId=@ClaimId;
+                        SET @OwnerDevice=@DeviceId;
+                    END
+                    ELSE
+                        UPDATE dbo.OrderClaims SET ExpiresAt=@ExpiresAt
+                        WHERE OrderClaimId=@ExistingClaimId;
+                    IF @ReleaseOtherClaims=1
+                        UPDATE dbo.OrderClaims
+                        SET ReleasedAt=@Now
+                        WHERE BusinessId=@BusinessId AND WorkSessionId=@WorkSessionId
+                          AND UserId=@UserId AND OrderId<>@OrderId AND ReleasedAt IS NULL;
+                    SELECT 3 ResultCode,@ExistingClaimId OrderClaimId,@OwnerDevice DeviceId;
+                END
+            END;
             """;
-        await using var lockCommand = new SqlCommand(lockSql, connection, transaction);
-        lockCommand.Parameters.Add(P("@OrderId", orderId));
-        await using var reader = await lockCommand.ExecuteReaderAsync(cancellationToken);
-        if (await reader.ReadAsync(cancellationToken))
-        {
-            var claimId = reader.GetGuid(0);
-            var ownerWorkSession = reader.GetGuid(1);
-            var ownerDevice = reader.IsDBNull(2) ? (Guid?)null : reader.GetGuid(2);
-            var ownerUser = reader.GetGuid(3);
-            await reader.CloseAsync();
-            if (ownerWorkSession != workSessionId || ownerUser != actor.UserId)
-                throw new OrderConflictException(
-                    "El pedido está siendo preparado en otra sesión.");
-            await ExecuteAsync(connection, transaction, """
-                UPDATE dbo.OrderClaims SET ExpiresAt=@ExpiresAt
-                WHERE OrderClaimId=@ClaimId;
-                """,
-                [P("@ExpiresAt", expires), P("@ClaimId", claimId)],
-                cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return new OrderClaimSummary(
-                claimId, workSessionId, ownerDevice, actor.UserId, expires, true);
-        }
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddRange([
+            P("@ClaimId", claimId), P("@BusinessId", actor.BusinessId),
+            P("@TenantId", actor.TenantId), P("@OrderId", orderId),
+            P("@WorkSessionId", workSessionId), P("@DeviceId", actor.DeviceId),
+            P("@UserId", actor.UserId), P("@Now", now), P("@ExpiresAt", expires),
+            P("@ReleaseOtherClaims", releaseOtherClaims),
+            P("@CanEditReview", actor.Permissions.Contains(OrderPermissionCodes.Update) ||
+                actor.Permissions.Contains(OrderPermissionCodes.Review))
+        ]);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("The order claim operation returned no result.");
+        var resultCode = reader.GetInt32(0);
+        var effectiveClaimId = resultCode == 3 ? reader.GetGuid(1) : Guid.Empty;
+        var ownerDevice = resultCode == 3 && !reader.IsDBNull(2)
+            ? reader.GetGuid(2)
+            : (Guid?)null;
         await reader.CloseAsync();
-
-        var id = ids.NewId();
-        await ExecuteAsync(connection, transaction, """
-            INSERT dbo.OrderClaims(
-              OrderClaimId,BusinessId,WarehouseId,OrderId,WorkSessionId,DeviceId,UserId,
-              ClaimedAt,ExpiresAt)
-            SELECT
-              @ClaimId,@BusinessId,
-              COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(
-                CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,
-                '$.WarehouseId'))),
-              @OrderId,@WorkSessionId,@DeviceId,@UserId,
-              @Now,@ExpiresAt
-            FROM dbo.WorkSessions ws
-            INNER JOIN dbo.Orders o ON o.OrderId=@OrderId AND o.BusinessId=@BusinessId
-            WHERE ws.WorkSessionId=@WorkSessionId
-              AND ws.TenantId=@TenantId
-              AND ws.BusinessId=@BusinessId
-              AND ws.UserId=@UserId
-              AND ws.Status=N'Open';
-            """,
-            [
-                P("@ClaimId", id), P("@BusinessId", actor.BusinessId),
-                P("@TenantId", actor.TenantId),
-                P("@OrderId", orderId), P("@WorkSessionId", workSessionId),
-                P("@DeviceId", actor.DeviceId), P("@UserId", actor.UserId),
-                P("@Now", now), P("@ExpiresAt", expires)
-            ],
-            cancellationToken);
+        if (resultCode != 3)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            if (resultCode == 0)
+                throw new OrderNotFoundException(
+                    "El pedido o la sesión no pertenecen a esta sede.");
+            if (resultCode == 1)
+                throw new OrderConflictException(
+                    "El pedido no está disponible para facturar o corregir.");
+            throw new OrderConflictException(
+                "El pedido está siendo preparado en otra sesión.");
+        }
         await transaction.CommitAsync(cancellationToken);
         return new OrderClaimSummary(
-            id, workSessionId, actor.DeviceId, actor.UserId, expires, true);
+            effectiveClaimId, workSessionId, ownerDevice, actor.UserId, expires, true);
     }
 
     public async Task ReleaseClaimAsync(
@@ -686,45 +872,6 @@ public sealed class SqlOrderStore(
         }
     }
 
-    private static async Task DemandContextAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        OrderActor actor,
-        Guid orderId,
-        Guid workSessionId,
-        CancellationToken ct)
-    {
-        const string sql = """
-            SELECT o.Status,o.CustomerConfirmed,
-                   CASE WHEN link.OrderId IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END
-            FROM dbo.Orders o
-            INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
-            INNER JOIN dbo.WorkSessions ws
-              ON ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=o.BusinessId
-             AND ws.TenantId=@TenantId AND ws.UserId=@UserId AND ws.Status=N'Open'
-            LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
-            WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId AND b.TenantId=@TenantId;
-            """;
-        await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddRange([
-            P("@WorkSessionId", workSessionId), P("@OrderId", orderId),
-            P("@BusinessId", actor.BusinessId), P("@TenantId", actor.TenantId),
-            P("@UserId", actor.UserId)
-        ]);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct))
-            throw new OrderNotFoundException(
-                "El pedido o la sesión no pertenecen a esta sede.");
-        var status = reader.GetInt32(0);
-        var canEditReview = status == 5 &&
-            (actor.Permissions.Contains(OrderPermissionCodes.Update) ||
-             actor.Permissions.Contains(OrderPermissionCodes.Review));
-        if (!OrderRules.CanInvoice(
-                status, reader.GetBoolean(1), reader.GetBoolean(2)) && !canEditReview)
-            throw new OrderConflictException(
-                "El pedido no está disponible para facturar o corregir.");
-    }
-
     private static void AddStatusFilter(
         ICollection<string> filters,
         ICollection<SqlParameter> parameters,
@@ -839,4 +986,42 @@ public sealed class SqlOrderStore(
 
     private static SqlParameter P(string name, object? value) =>
         new(name, value ?? DBNull.Value);
+
+    private sealed record BatchOrderHeader(
+        Guid Id,
+        Guid BusinessId,
+        string Number,
+        int StoredStatus,
+        string Status,
+        int Source,
+        Guid? CustomerId,
+        string? CustomerName,
+        string? CustomerDocument,
+        string? CustomerPhone,
+        string? CustomerEmail,
+        string? Address,
+        string? Notes,
+        string Currency,
+        decimal Subtotal,
+        decimal Discount,
+        decimal Total,
+        Guid? PaymentId,
+        string? PaymentStatus,
+        DateTime CreatedAt,
+        bool Confirmed,
+        Guid? DocumentId,
+        OrderClaimSummary? Claim,
+        Guid? WarehouseId,
+        Guid? PartySiteId,
+        bool CustomerRequiresElectronicInvoice)
+    {
+        public OrderDetail ToDetail(IReadOnlyList<OrderLine> lines) => new(
+            Id, BusinessId, Number, Status, Source, CustomerId,
+            CustomerName, CustomerDocument, CustomerPhone, CustomerEmail,
+            Address, Notes, Currency, Subtotal, Discount, Total, PaymentId,
+            PaymentStatus, CreatedAt,
+            OrderRules.CanInvoice(StoredStatus, Confirmed, DocumentId is not null),
+            DocumentId, Claim, lines, WarehouseId, PartySiteId,
+            CustomerRequiresElectronicInvoice);
+    }
 }

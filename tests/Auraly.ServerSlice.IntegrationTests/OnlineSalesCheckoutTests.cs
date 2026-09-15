@@ -139,7 +139,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     public async Task Checkout_maps_a_named_natural_person_to_the_required_dian_identification()
     {
         var userId = await CreateUserAsync("natural-person-dian");
-        var customerId = await CreateNaturalPersonCustomerAsync(userId);
+        var (customerId, partySiteId) = await CreateNaturalPersonCustomerAsync(userId);
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate);
@@ -150,7 +150,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
                    $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
                {
                    Content = JsonContent.Create(
-                       new SelectOnlineSalesDraftCustomerRequest(customerId, draft.Version))
+                       new SelectOnlineSalesDraftCustomerRequest(
+                           customerId, draft.Version, partySiteId))
                })
         {
             select.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
@@ -271,7 +272,12 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
                        context,
                        completed.Receipt.DocumentNumber,
                        0,
-                       50)))
+                       10,
+                       From: DateOnly.FromDateTime(completed.Receipt.IssuedAt.DateTime),
+                       To: DateOnly.FromDateTime(completed.Receipt.IssuedAt.DateTime),
+                       ProductId: captured.Lines[0].ProductId,
+                       MinimumTotal: completed.Receipt.PayableAmount,
+                       MaximumTotal: completed.Receipt.PayableAmount)))
         {
             searchResponse.EnsureSuccessStatusCode();
             var page = await searchResponse.Content
@@ -364,6 +370,45 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             key);
         using var conflict = await client.SendAsync(conflictRequest);
         Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task Issued_sales_search_does_not_require_rehydrating_a_historical_payload()
+    {
+        var userId = await CreateUserAsync("historical-issued-sale");
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate);
+
+        var captured = await CaptureAsync(client, await OpenAsync(client));
+        var completed = await CompleteAsync(
+            client,
+            captured.DraftId,
+            new CompleteOnlineSalesDraftRequest(
+                captured.Version,
+                [new OnlineSalesPayment("Cash", captured.PayableAmount, null)]),
+            $"historical-issued-sale-{Guid.NewGuid():N}");
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                UPDATE dbo.DocumentProcessingPayloads
+                SET PayloadJson=JSON_MODIFY(PayloadJson,'$.commercialSnapshot',NULL)
+                WHERE DocumentId=@DocumentId;
+                """, connection);
+            command.Parameters.AddWithValue("@DocumentId", completed.Receipt.DocumentId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        var page = await SearchAsync(
+            client,
+            captured.WorkSessionId,
+            completed.Receipt.DocumentNumber);
+        var issued = Assert.Single(page.Items);
+        Assert.Equal(completed.Receipt.DocumentId, issued.DocumentId);
+        Assert.Equal(completed.Receipt.DocumentType, issued.DocumentType);
+        Assert.Equal(completed.Receipt.CustomerName, issued.CustomerName);
     }
 
     [Fact]
@@ -643,7 +688,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     public async Task Customer_configured_for_electronic_invoicing_cannot_be_completed_as_a_commercial_receipt()
     {
         var userId = await CreateUserAsync("required-invoice");
-        var customerId = await CreateElectronicInvoiceCustomerAsync(userId);
+        var (customerId, partySiteId) = await CreateElectronicInvoiceCustomerAsync(userId);
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate);
@@ -654,7 +699,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
                    $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
                {
                    Content = JsonContent.Create(
-                       new SelectOnlineSalesDraftCustomerRequest(customerId, draft.Version))
+                       new SelectOnlineSalesDraftCustomerRequest(
+                           customerId, draft.Version, partySiteId))
                })
         {
             select.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
@@ -689,7 +735,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     public async Task Customer_withholding_reduces_amount_to_collect_and_is_snapshotted()
     {
         var userId = await CreateUserAsync("sale-withholding");
-        var customerId = await CreateCustomerAsync(userId, false, "Cliente con retefuente");
+        var (customerId, partySiteId) = await CreateCustomerAsync(
+            userId, false, "Cliente con retefuente");
         using (var taxation = fixture.CreateAdminClient(
                    TaxationPermissionCodes.ViewWithholdingRules,
                    TaxationPermissionCodes.ManageWithholdingRules))
@@ -717,7 +764,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
                    HttpMethod.Put, $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
                {
                    Content = JsonContent.Create(
-                       new SelectOnlineSalesDraftCustomerRequest(customerId, draft.Version))
+                       new SelectOnlineSalesDraftCustomerRequest(
+                           customerId, draft.Version, partySiteId))
                })
         {
             select.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
@@ -877,13 +925,14 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         return userId;
     }
 
-    private Task<Guid> CreateElectronicInvoiceCustomerAsync(Guid userId) =>
+    private Task<(Guid CustomerId, Guid PartySiteId)> CreateElectronicInvoiceCustomerAsync(Guid userId) =>
         CreateCustomerAsync(userId, true, "Cliente factura requerida");
 
-    private async Task<Guid> CreateNaturalPersonCustomerAsync(Guid userId)
+    private async Task<(Guid CustomerId, Guid PartySiteId)> CreateNaturalPersonCustomerAsync(Guid userId)
     {
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         await ExecuteAsync(
             """
             INSERT dbo.Parties(
@@ -900,44 +949,78 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
               IsActive,CreatedBy,CreatedAt)
             VALUES(
               @CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+            DECLARE @CountryId uniqueidentifier,@DivisionId uniqueidentifier,@CityId uniqueidentifier;
+            SELECT TOP(1) @CountryId=country.CountryId,
+                          @DivisionId=division.AdministrativeDivisionId,
+                          @CityId=city.CityId
+            FROM dbo.Countries country
+            JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+            JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+            WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1;
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+              @DivisionId,@CityId,N'Dirección principal',1,1,@UserId,SYSDATETIMEOFFSET());
             """,
             new("@PartyId", partyId),
             new("@CustomerId", customerId),
+            new("@PartySiteId", partySiteId),
             new("@TenantId", fixture.TenantId),
             new("@BusinessId", fixture.BusinessId),
             new("@UserId", userId));
-        return customerId;
+        return (customerId, partySiteId);
     }
 
-    private async Task<Guid> CreateCustomerAsync(
+    private async Task<(Guid CustomerId, Guid PartySiteId)> CreateCustomerAsync(
         Guid userId,
         bool requiresElectronicInvoice,
         string name)
     {
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         await ExecuteAsync(
             """
             INSERT dbo.Parties(
-              PartyId,TenantId,PartyType,DisplayName,LegalName,
+              PartyId,TenantId,PartyType,IdentificationCountryId,
+              IdentificationTypeCode,Identification,NormalizedIdentification,
+              DisplayName,LegalName,
               CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES(
-              @PartyId,@TenantId,N'Organization',@Name,
-              @Name,N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+              @PartyId,@TenantId,N'Organization',
+              (SELECT TOP (1) CountryId FROM dbo.Countries WHERE Code=N'CO'),
+              N'31',@Identification,@Identification,@Name,
+              @Name,N'Complete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
               CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
               IsActive,CreatedBy,CreatedAt)
             VALUES(
               @CustomerId,@PartyId,@BusinessId,@RequiresElectronicInvoice,1,@UserId,SYSDATETIMEOFFSET());
+            DECLARE @CountryId uniqueidentifier,@DivisionId uniqueidentifier,@CityId uniqueidentifier;
+            SELECT TOP(1) @CountryId=country.CountryId,
+                          @DivisionId=division.AdministrativeDivisionId,
+                          @CityId=city.CityId
+            FROM dbo.Countries country
+            JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+            JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+            WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1;
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+              @DivisionId,@CityId,N'Dirección principal',1,1,@UserId,SYSDATETIMEOFFSET());
             """,
             new("@PartyId", partyId),
             new("@CustomerId", customerId),
+            new("@PartySiteId", partySiteId),
             new("@TenantId", fixture.TenantId),
             new("@BusinessId", fixture.BusinessId),
             new("@UserId", userId),
+            new("@Identification", customerId.ToString("N")),
             new("@Name", name),
             new("@RequiresElectronicInvoice", requiresElectronicInvoice));
-        return customerId;
+        return (customerId, partySiteId);
     }
 
     private async Task<int> CountCustomerDocumentsAsync(Guid customerId)

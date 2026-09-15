@@ -63,6 +63,9 @@ CREATE TABLE [dbo].[SalesDocuments]
       ([DocumentType]=N'SalesReceipt' AND [FiscalSeriesId] IS NULL AND [FiscalAuthorizationId] IS NULL AND [FiscalNumber] IS NULL AND [FiscalPrefix] IS NULL AND [FiscalConsecutive] IS NULL AND [CufeReceived] IS NULL AND [CufeCalculated] IS NULL AND [FiscalStatus] IS NULL)),
     CONSTRAINT [CK_SalesDocuments_Amounts] CHECK ([UntaxedAmount] >= 0 AND [TaxAmount] >= 0 AND [PayableAmount] >= 0 AND [CreditAmount] BETWEEN 0 AND [PayableAmount]),
     CONSTRAINT [CK_SalesDocuments_CreditTerms] CHECK (([CreditAmount] = 0 AND [CreditDueDate] IS NULL) OR ([CreditAmount] > 0 AND [CreditDueDate] IS NOT NULL AND [CustomerId] IS NOT NULL)),
+    CONSTRAINT [CK_SalesDocuments_CustomerSitePair] CHECK (
+      ([CustomerId] IS NULL AND [CustomerPartySiteId] IS NULL)
+      OR ([CustomerId] IS NOT NULL AND [CustomerPartySiteId] IS NOT NULL)),
     CONSTRAINT [CK_SalesDocuments_SourceMode] CHECK ([SourceMode] IN (N'PosEdge', N'Online')),
     CONSTRAINT [CK_SalesDocuments_OperationalShape] CHECK
       (([DocumentType]=N'ServiceInvoice' AND [SourceMode]=N'Online' AND [WarehouseId] IS NULL
@@ -96,4 +99,10 @@ GO
 
 CREATE INDEX [IX_SalesDocuments_WorkSession_Issued]
     ON [dbo].[SalesDocuments] ([WorkSessionId],[IssuedAt]);
+GO
+
+CREATE INDEX [IX_SalesDocuments_Business_Warehouse_Issued]
+    ON [dbo].[SalesDocuments] ([BusinessId], [WarehouseId], [IssuedAt] DESC)
+    INCLUDE ([DocumentId], [DocumentNumber], [FiscalNumber], [PayableAmount],
+             [CustomerId], [CustomerPartySiteId], [CustomerIdentification], [FiscalStatus]);
 GO

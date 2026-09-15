@@ -3,6 +3,91 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public void Order_site_backfill_precedes_the_constraint_and_has_one_historical_owner()
+    {
+        var root = FindRepositoryRoot();
+        const string migrationName = "20260914_BackfillSellerOrderSites.sql";
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations", migrationName));
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var fastDevelopment = File.ReadAllText(Path.Combine(
+            root, ".github", "workflows", "deploy-dev-fast.yml"));
+        var migrationIndex = pipeline.IndexOf(migrationName, StringComparison.Ordinal);
+        var reportIndex = pipeline.IndexOf("'/Action:DeployReport'", StringComparison.Ordinal);
+
+        Assert.True(migrationIndex >= 0 && migrationIndex < reportIndex,
+            "Legacy seller orders must receive their site before DACPAC adds the constraint.");
+        Assert.Contains(migrationName, fastDevelopment, StringComparison.Ordinal);
+        Assert.Contains("WHERE orders.CustomerId IS NOT NULL AND orders.PartySiteId IS NULL", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("ORDER BY candidate.IsPrimary DESC", migration, StringComparison.Ordinal);
+        Assert.Contains("BEGIN TRANSACTION", migration, StringComparison.Ordinal);
+        Assert.Contains("COMMIT TRANSACTION", migration, StringComparison.Ordinal);
+        Assert.Contains("THROW 51320", migration, StringComparison.Ordinal);
+        Assert.Contains("THROW 51321", migration, StringComparison.Ordinal);
+        Assert.Contains("reporting.SalesReportingJobs", migration, StringComparison.Ordinal);
+        Assert.Contains("JSON_MODIFY(job.SourcePayloadJson,'$.partySiteId'", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("SourcePayloadHash=HASHBYTES('SHA2_256'", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("Latin1_General_100_BIN2_UTF8", migration, StringComparison.Ordinal);
+        Assert.Contains("job.Status IN(N'Pending',N'Failed')", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE dbo.SalesDocuments ADD CustomerPartySiteId", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE dbo.SalesDrafts ADD CustomerPartySiteId", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE dbo.Receivables ADD PartySiteId", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("THROW 51325", migration, StringComparison.Ordinal);
+        Assert.Contains("THROW 51326", migration, StringComparison.Ordinal);
+        Assert.Contains("THROW 51327", migration, StringComparison.Ordinal);
+        Assert.Contains("SET CustomerPartySiteId=orders.PartySiteId", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("SET PartySiteId=document.CustomerPartySiteId", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("ORDER BY candidate.IsPrimary DESC", migration,
+            StringComparison.Ordinal);
+
+        var drafts = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "SalesDrafts.sql"));
+        var documents = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "SalesDocuments.sql"));
+        var receivables = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables", "Receivables.sql"));
+        Assert.Contains("CK_SalesDrafts_CustomerSitePair", drafts, StringComparison.Ordinal);
+        Assert.Contains("CK_SalesDocuments_CustomerSitePair", documents, StringComparison.Ordinal);
+        Assert.Contains("[PartySiteId] UNIQUEIDENTIFIER NOT NULL", receivables,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reporting_site_backfill_is_part_of_post_deployment_and_uses_canonical_documents()
+    {
+        var root = FindRepositoryRoot();
+        const string migrationName = "20260914_BackfillReportingPartySites.sql";
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations", migrationName));
+        var postDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PostDeployment.sql"));
+
+        Assert.Contains(migrationName, postDeployment, StringComparison.Ordinal);
+        Assert.Contains("document.CustomerPartySiteId", migration, StringComparison.Ordinal);
+        Assert.Contains("orders.PartySiteId", migration, StringComparison.Ordinal);
+        Assert.Contains("SET CustomerPartySiteId=orders.PartySiteId", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("SET PartySiteId=document.CustomerPartySiteId", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("BEGIN TRANSACTION", migration, StringComparison.Ordinal);
+        Assert.Contains("COMMIT TRANSACTION", migration, StringComparison.Ordinal);
+        Assert.Contains("THROW 51322", migration, StringComparison.Ordinal);
+        Assert.Contains("THROW 51323", migration, StringComparison.Ordinal);
+        Assert.Contains("THROW 51324", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("PartySites candidate", migration, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Receivables_accounting_cutover_runs_before_dacpac_and_never_retro_posts()
     {
         var root = FindRepositoryRoot();

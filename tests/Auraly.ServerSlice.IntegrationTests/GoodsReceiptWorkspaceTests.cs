@@ -4,11 +4,14 @@ using System.Diagnostics;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
+using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
+public sealed class GoodsReceiptWorkspaceTests(
+    ServerSliceFixture fixture,
+    ITestOutputHelper output)
 {
     [Fact]
     public async Task Product_search_defaults_to_ten_rows()
@@ -32,6 +35,10 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
 
         Assert.True(elapsed.Max() < TimeSpan.FromSeconds(1),
             $"La consulta más lenta tardó {elapsed.Max().TotalMilliseconds:N0} ms.");
+        output.WriteLine(
+            "Búsqueda paginada (10 filas): máximo {0:N0} ms; promedio {1:N0} ms; 5 mediciones.",
+            elapsed.Max().TotalMilliseconds,
+            elapsed.Average(value => value.TotalMilliseconds));
     }
 
     [Fact]

@@ -1,13 +1,17 @@
 using System.Net.Http.Json;
+using System.Diagnostics;
 using Auraly.Application.Orders;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Microsoft.Data.SqlClient;
+using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
+public sealed class OrderCreditInvoiceTests(
+    ServerSliceFixture fixture,
+    ITestOutputHelper output)
 {
     [Fact]
     public async Task Credit_batch_rejects_aggregated_customer_before_creating_any_effect()
@@ -15,7 +19,9 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
         var scenario = await SeedAsync(creditLimit: 25_000m);
         using var client = CreateClient(scenario.UserId);
 
-        var response = await InvoiceAsync(client, scenario, "Credit");
+        var key = $"orders-credit-rejected-{Guid.NewGuid():N}";
+        var response = await InvoiceAsync(client, scenario, "Credit", key);
+        var replay = await InvoiceAsync(client, scenario, "Credit", key);
 
         Assert.Equal("CreditRejected", response.Status);
         Assert.Equal(Guid.Empty, response.OperationId);
@@ -23,6 +29,8 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal(0, response.CompletedCount);
         Assert.Equal(0, response.FailedCount);
         Assert.Empty(response.Results);
+        Assert.True(replay.IsReplay);
+        Assert.Equal(response.CreditValidationIssues, replay.CreditValidationIssues);
         var issue = Assert.Single(response.CreditValidationIssues!);
         Assert.Equal(scenario.CustomerId, issue.CustomerId);
         Assert.Equal(30_000m, issue.RequestedAmount);
@@ -37,7 +45,8 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.OrderInvoiceLinks
                WHERE OrderId IN (@FirstOrderId,@SecondOrderId)),
               (SELECT COUNT(*) FROM dbo.OrderInvoiceBatchReceipts
-               WHERE UserId=@UserId AND BusinessId=@BusinessId),
+               WHERE UserId=@UserId AND BusinessId=@BusinessId
+                 AND Status=N'CreditRejected'),
               (SELECT COUNT(*) FROM dbo.Orders
                WHERE OrderId IN (@FirstOrderId,@SecondOrderId)
                  AND ReleaseTransferId IS NOT NULL);
@@ -49,12 +58,12 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
         await using var reader = await verify.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         Assert.Equal(0, reader.GetInt32(0));
-        Assert.Equal(0, reader.GetInt32(1));
+        Assert.Equal(1, reader.GetInt32(1));
         Assert.Equal(0, reader.GetInt32(2));
     }
 
     [Fact]
-    public async Task Credit_batch_rejects_customer_without_credit_enabled_before_starting_batch()
+    public async Task Credit_batch_rejects_customer_without_credit_enabled_before_creating_business_effects()
     {
         var scenario = await SeedAsync(creditLimit: 100_000m, creditEnabled: false);
         using var client = CreateClient(scenario.UserId);
@@ -73,7 +82,7 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Credit_batch_rejects_an_inactive_customer_before_starting_batch()
+    public async Task Credit_batch_rejects_an_inactive_customer_before_creating_business_effects()
     {
         var scenario = await SeedAsync(creditLimit: 100_000m, customerActive: false);
         using var client = CreateClient(scenario.UserId);
@@ -92,17 +101,33 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Valid_credit_batch_uses_canonical_checkout_and_creates_one_receivable_per_order()
     {
+        await WarmCreditInvoicePathAsync();
+
         var scenario = await SeedAsync(creditLimit: 100_000m);
         using var client = CreateClient(scenario.UserId);
 
         fixture.PauseDocumentProcessing();
         InvoiceOrdersResponse response;
+        var timing = Stopwatch.StartNew();
         try
         {
             response = await InvoiceAsync(client, scenario, "Credit");
-            Assert.Equal("Completed", response.Status);
+            timing.Stop();
+            Assert.True(
+                string.Equals("Completed", response.Status, StringComparison.Ordinal),
+                $"Credit batch ended as {response.Status}: " +
+                string.Join(" | ", response.Results.Select(result =>
+                    $"{result.OrderNumber}: {result.Error ?? result.Status}")));
             Assert.Equal(2, response.CompletedCount);
             Assert.Equal(0, response.FailedCount);
+            Assert.True(
+                timing.Elapsed < TimeSpan.FromSeconds(response.CompletedCount),
+                $"El lote a crédito promedió " +
+                $"{timing.Elapsed.TotalMilliseconds / response.CompletedCount:N0} ms por factura.");
+            output.WriteLine(
+                "Facturación masiva a crédito: {0:N0} ms por factura ({1} documentos).",
+                timing.Elapsed.TotalMilliseconds / response.CompletedCount,
+                response.CompletedCount);
             Assert.True(response.CreditValidationIssues is null or { Count: 0 });
             Assert.All(response.Results, result =>
             {
@@ -160,10 +185,37 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
         OrderPermissionCodes.Recover,
         OrderPermissionCodes.Invoice);
 
+    private async Task WarmCreditInvoicePathAsync()
+    {
+        var scenario = await SeedAsync(creditLimit: 100_000m);
+        using var client = CreateClient(scenario.UserId);
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var response = await InvoiceAsync(client, scenario, "Credit");
+            Assert.True(
+                string.Equals("Completed", response.Status, StringComparison.Ordinal),
+                $"Warm credit batch ended as {response.Status}: " +
+                string.Join(" | ", response.Results.Select(result =>
+                    $"{result.OrderNumber}: {result.Error ?? result.Status}")));
+            Assert.Equal(2, response.CompletedCount);
+            var queued = fixture.DrainDocumentSignals();
+            Assert.Equal(2, queued.Count);
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in queued)
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+        }
+    }
+
     private static async Task<InvoiceOrdersResponse> InvoiceAsync(
         HttpClient client,
         Scenario scenario,
-        string paymentMethodCode)
+        string paymentMethodCode,
+        string? idempotencyKey = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -178,7 +230,9 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
                 null,
                 DocumentType: "SalesReceipt"))
         };
-        request.Headers.Add("Idempotency-Key", $"orders-credit-{Guid.NewGuid():N}");
+        request.Headers.Add(
+            "Idempotency-Key",
+            idempotencyKey ?? $"orders-credit-{Guid.NewGuid():N}");
         using var result = await client.SendAsync(request);
         var body = await result.Content.ReadAsStringAsync();
         Assert.True(result.IsSuccessStatusCode, body);
@@ -200,6 +254,7 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
         var ordersWarehouseId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
@@ -225,6 +280,21 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
             INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
             VALUES(@CustomerId,@PartyId,@BusinessId,@CustomerActive,@UserId,SYSDATETIMEOFFSET());
 
+            DECLARE @CountryId UNIQUEIDENTIFIER,@DivisionId UNIQUEIDENTIFIER,@CityId UNIQUEIDENTIFIER;
+            SELECT TOP(1) @CountryId=country.CountryId,
+                          @DivisionId=division.AdministrativeDivisionId,
+                          @CityId=city.CityId
+            FROM dbo.Cities city
+            JOIN dbo.AdministrativeDivisions division
+              ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+            JOIN dbo.Countries country ON country.CountryId=division.CountryId
+            WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+              CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartySiteId,@PartyId,@SiteCode,N'Sede principal',@CountryId,
+              @DivisionId,@CityId,N'Calle crédito 1',1,1,@UserId,SYSDATETIMEOFFSET());
+
             INSERT dbo.CustomerCreditProfiles(
               CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,
               UpdatedByUserId,UpdatedAt)
@@ -247,15 +317,15 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
 
             INSERT dbo.Orders(
-              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,
+              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,PartySiteId,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,ExternalDocumentNumber,
               OrdersWarehouseId,CreatedAt,CustomAttributesJson)
             VALUES
-              (@FirstOrderId,@BusinessId,0,0,2,@CustomerId,N'Cliente crédito por lote',
+              (@FirstOrderId,@BusinessId,0,0,2,@CustomerId,@PartySiteId,N'Cliente crédito por lote',
                @Identification,N'COP',10000,0,10000,1,@FirstNumber,@OrdersWarehouseId,
                DATEADD(day,-2,SYSUTCDATETIME()),CONCAT(N'{"WarehouseId":"',CONVERT(nvarchar(36),@WarehouseId),N'"}')),
-              (@SecondOrderId,@BusinessId,0,0,2,@CustomerId,N'Cliente crédito por lote',
+              (@SecondOrderId,@BusinessId,0,0,2,@CustomerId,@PartySiteId,N'Cliente crédito por lote',
                @Identification,N'COP',20000,0,20000,1,@SecondNumber,@OrdersWarehouseId,
                DATEADD(day,-1,SYSUTCDATETIME()),CONCAT(N'{"WarehouseId":"',CONVERT(nvarchar(36),@WarehouseId),N'"}'));
 
@@ -279,6 +349,8 @@ public sealed class OrderCreditInvoiceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@OrdersWarehouseCode", $"PED-{ordersWarehouseId:N}"[..32]);
         command.Parameters.AddWithValue("@CustomerId", customerId);
         command.Parameters.AddWithValue("@PartyId", partyId);
+        command.Parameters.AddWithValue("@PartySiteId", partySiteId);
+        command.Parameters.AddWithValue("@SiteCode", $"SITE-{partySiteId:N}"[..24]);
         command.Parameters.AddWithValue("@CreditLimit", creditLimit);
         command.Parameters.AddWithValue("@CreditEnabled", creditEnabled);
         command.Parameters.AddWithValue("@CustomerActive", customerActive);

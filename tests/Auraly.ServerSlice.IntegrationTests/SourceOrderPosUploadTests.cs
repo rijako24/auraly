@@ -260,7 +260,7 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Pos_sale_links_pre_released_source_order_without_creating_line_level_transfers()
+    public async Task Pos_sale_consumes_the_source_order_PED_reservation_without_transfers()
     {
         var orderId = Guid.NewGuid();
         var claimId = Guid.NewGuid();
@@ -354,6 +354,8 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.InventoryMovements
                WHERE DocumentId=@DocumentId AND MovementType=N'Sale'),
               (SELECT COUNT(*) FROM dbo.InventoryMovements
+               WHERE DocumentId=@DocumentId AND MovementType=N'Sale' AND WarehouseId=@OrdersWarehouseId),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements
                WHERE DocumentId=@DocumentId AND MovementType=N'TransferOut' AND WarehouseId=@OrdersWarehouseId),
               (SELECT COUNT(*) FROM dbo.InventoryMovements
                WHERE DocumentId=@DocumentId AND MovementType IN (N'TransferIn',N'Sale') AND WarehouseId=@SalesWarehouseId);
@@ -368,8 +370,9 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
         Assert.Equal(1, reader.GetInt32(0));
         Assert.Equal(1, reader.GetInt32(1));
         Assert.Equal(1, reader.GetInt32(2));
-        Assert.Equal(0, reader.GetInt32(3));
-        Assert.Equal(1, reader.GetInt32(4));
+        Assert.Equal(1, reader.GetInt32(3));
+        Assert.Equal(0, reader.GetInt32(4));
+        Assert.Equal(0, reader.GetInt32(5));
     }
 
     private async Task AssertProcessingCompletedAsync(Guid documentId)

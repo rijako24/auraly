@@ -63,12 +63,6 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
     () => { void load(true); },
   ), [businessId, load]);
 
-  useEffect(() => {
-    if (value?.stage !== "HabilitationReady") return;
-    const timer = window.setInterval(() => { void load(true); }, 30_000);
-    return () => window.clearInterval(timer);
-  }, [load, value?.stage]);
-
   const available = useMemo(
     () => value?.availableRanges.filter((item) => item.isAvailable) ?? [],
     [value],

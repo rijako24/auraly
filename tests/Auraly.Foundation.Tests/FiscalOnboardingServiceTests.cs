@@ -188,6 +188,7 @@ public sealed class FiscalOnboardingServiceTests
             inactiveService.ActivateSupportDocumentAsync(
                 user, inactiveStore.Configuration.BusinessId, Guid.NewGuid()));
         Assert.False(inactiveStore.SupportActivationCalled);
+        Assert.Equal(0, inactiveStore.GetCallCount);
 
         var activeStore = new TestOnboardingStore(
             Configuration("100226966") with { ProductionActive = true });
@@ -199,6 +200,7 @@ public sealed class FiscalOnboardingServiceTests
             user, activeStore.Configuration.BusinessId, Guid.NewGuid());
 
         Assert.True(activeStore.SupportActivationCalled);
+        Assert.Equal(1, activeStore.GetCallCount);
     }
 
     private static byte[] CreatePfx(
@@ -270,10 +272,14 @@ public sealed class FiscalOnboardingServiceTests
         public bool SaveCalled { get; private set; }
         public string? SavedSupplierCheckDigit { get; private set; }
         public bool SupportActivationCalled { get; private set; }
+        public int GetCallCount { get; private set; }
 
         public Task<FiscalOnboardingConfiguration> GetAsync(
-            Guid tenantId, Guid businessId, CancellationToken cancellationToken) =>
-            Task.FromResult(Configuration);
+            Guid tenantId, Guid businessId, CancellationToken cancellationToken)
+        {
+            GetCallCount++;
+            return Task.FromResult(Configuration);
+        }
 
         public Task SaveHabilitationAsync(
             Guid tenantId,
@@ -319,6 +325,9 @@ public sealed class FiscalOnboardingServiceTests
             Guid dianNumberingRangeId,
             CancellationToken cancellationToken)
         {
+            if (!Configuration.ProductionActive)
+                throw new FiscalConfigurationValidationException(
+                    "Activa primero la configuración DIAN de producción.");
             SupportActivationCalled = true;
             return Task.CompletedTask;
         }

@@ -55,16 +55,28 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT d.DocumentId,d.DocumentNumber,d.FiscalNumber,d.IssuedAt,
+            SELECT d.DocumentId,d.DocumentType,d.DocumentNumber,d.FiscalNumber,d.IssuedAt,
                    d.PayableAmount,d.CustomerIdentification,d.FiscalStatus,
-                   payload.PayloadJson
+                   COALESCE(
+                     NULLIF(JSON_VALUE(payload.PayloadJson,'$.commercialSnapshot.customerName'),N''),
+                     NULLIF(JSON_VALUE(payload.PayloadJson,'$.ublSnapshot.customer.registrationName'),N''),
+                     N'Consumidor final') CustomerName
             FROM dbo.SalesDocuments d
             JOIN dbo.DocumentProcessingPayloads payload
               ON payload.DocumentId=d.DocumentId
              AND payload.DocumentType=d.DocumentType
              AND payload.BusinessId=d.BusinessId
-            WHERE d.BusinessId=@BusinessId AND d.WorkSessionId=@WorkSessionId
+            WHERE d.BusinessId=@BusinessId AND d.WarehouseId=@WarehouseId
               AND ISNULL(JSON_VALUE(payload.PayloadJson,'$.fiscalHabilitationOnly'),N'false')<>N'true'
+              AND (@CustomerId IS NULL OR
+                   (d.CustomerId=@CustomerId AND d.CustomerPartySiteId=@PartySiteId))
+              AND (@From IS NULL OR d.IssuedAt>=@From)
+              AND (@ToExclusive IS NULL OR d.IssuedAt<@ToExclusive)
+              AND (@MinimumTotal IS NULL OR d.PayableAmount>=@MinimumTotal)
+              AND (@MaximumTotal IS NULL OR d.PayableAmount<=@MaximumTotal)
+              AND (@ProductId IS NULL OR EXISTS(
+                    SELECT 1 FROM dbo.SalesDocumentLines line
+                    WHERE line.DocumentId=d.DocumentId AND line.ProductId=@ProductId))
               AND (@Search=N'' OR d.DocumentNumber LIKE @Contains
                    OR d.FiscalNumber LIKE @Contains
                    OR d.CufeReceived LIKE @Contains
@@ -75,7 +87,14 @@ public sealed partial class SqlOnlineSalesDraftStore
         var search = request.Search?.Trim() ?? string.Empty;
         command.Parameters.AddRange([
             P("@BusinessId", scope.BusinessId),
-            P("@WorkSessionId", scope.WorkSessionId),
+            P("@WarehouseId", scope.WarehouseId),
+            P("@CustomerId", request.CustomerId),
+            P("@PartySiteId", request.PartySiteId),
+            P("@From", request.From?.ToDateTime(TimeOnly.MinValue)),
+            P("@ToExclusive", request.To?.AddDays(1).ToDateTime(TimeOnly.MinValue)),
+            P("@ProductId", request.ProductId),
+            P("@MinimumTotal", request.MinimumTotal),
+            P("@MaximumTotal", request.MaximumTotal),
             P("@Search", search),
             P("@Contains", $"%{search}%"),
             P("@Skip", request.Skip),
@@ -87,19 +106,16 @@ public sealed partial class SqlOnlineSalesDraftStore
         {
             while (await reader.ReadAsync(cancellationToken))
             {
-                var payload = PosSaleContractSerializer.Deserialize(
-                    reader.GetString(7));
                 items.Add(new(
                     reader.GetGuid(0),
-                    payload.CommercialSnapshot.DocumentType,
                     reader.GetString(1),
-                    reader.IsDBNull(2) ? null : reader.GetString(2),
-                    reader.GetDateTimeOffset(3),
-                    reader.GetDecimal(4),
-                    reader.GetString(5),
-                    payload.UblSnapshot?.Customer.RegistrationName
-                        ?? "Consumidor final",
-                    reader.IsDBNull(6) ? null : reader.GetString(6)));
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.GetDateTimeOffset(4),
+                    reader.GetDecimal(5),
+                    reader.GetString(6),
+                    reader.GetString(8),
+                    reader.IsDBNull(7) ? null : reader.GetString(7)));
             }
         }
         var hasMore = items.Count > request.Take;
@@ -141,13 +157,13 @@ public sealed partial class SqlOnlineSalesDraftStore
              AND payload.BusinessId=document.BusinessId
             WHERE document.DocumentId=@DocumentId
               AND document.BusinessId=@BusinessId
-              AND document.WorkSessionId=@WorkSessionId
+              AND document.WarehouseId=@WarehouseId
               AND ISNULL(JSON_VALUE(payload.PayloadJson,'$.fiscalHabilitationOnly'),N'false')<>N'true';
             """;
         command.Parameters.AddRange([
             P("@DocumentId", documentId),
             P("@BusinessId", scope.BusinessId),
-            P("@WorkSessionId", scope.WorkSessionId)
+            P("@WarehouseId", scope.WarehouseId)
         ]);
         StoredOnlineSalesReceipt? result = null;
         await using (var reader =

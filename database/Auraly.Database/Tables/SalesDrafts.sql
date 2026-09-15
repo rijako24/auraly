@@ -26,6 +26,9 @@ CREATE TABLE [dbo].[SalesDrafts] (
     CONSTRAINT [FK_SalesDrafts_CustomerPartySites] FOREIGN KEY ([CustomerPartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [FK_SalesDrafts_Orders] FOREIGN KEY ([SourceOrderId]) REFERENCES [dbo].[Orders] ([OrderId]),
     CONSTRAINT [CK_SalesDrafts_Status] CHECK ([Status] IN (N'Active', N'Temporary', N'Issuing', N'Consumed', N'Deleted')),
+    CONSTRAINT [CK_SalesDrafts_CustomerSitePair] CHECK (
+        ([CustomerId] IS NULL AND [CustomerPartySiteId] IS NULL)
+        OR ([CustomerId] IS NOT NULL AND [CustomerPartySiteId] IS NOT NULL)),
     CONSTRAINT [CK_SalesDrafts_Version] CHECK ([Version] > 0)
 );
 GO

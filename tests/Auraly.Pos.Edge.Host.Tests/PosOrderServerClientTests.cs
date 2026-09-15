@@ -18,6 +18,7 @@ public sealed class PosOrderServerClientTests
         var deviceId = Guid.NewGuid();
         var client = Client(http, deviceId);
         var session = Session();
+        var partySiteId = Guid.NewGuid();
         var draft = new PosDraft(
             new DraftId(Guid.NewGuid()),
             new PosDraftScope(
@@ -31,7 +32,8 @@ public sealed class PosOrderServerClientTests
             [new PosDraftLine(
                 Guid.NewGuid(), new ProductId(Guid.NewGuid()), "P-1", "Producto", "EA",
                 "01", 19m, 2m, 100m, 90m, "COP", "Captured", null, 10m, null,
-                false, 50m, false, 1)]);
+                false, 50m, false, 1)],
+            CustomerPartySiteId: partySiteId);
 
         var result = await client.SaveAsync(session, draft, "pos-order-draft", default);
 
@@ -41,7 +43,32 @@ public sealed class PosOrderServerClientTests
         Assert.Equal(deviceId.ToString("D"), handler.DeviceId);
         Assert.Equal("pos-order-draft", handler.IdempotencyKey);
         Assert.Equal(draft.CustomerId, handler.Payload!.CustomerId);
+        Assert.Equal(partySiteId, handler.Payload.PartySiteId);
         Assert.Equal(90m, Assert.Single(handler.Payload.Lines).UnitPrice);
+    }
+
+    [Fact]
+    public async Task Saving_an_enrolled_pos_order_requires_the_selected_customer_site()
+    {
+        var handler = new SaveHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test") };
+        var session = Session();
+        var draft = new PosDraft(
+            new DraftId(Guid.NewGuid()),
+            new PosDraftScope(
+                new BusinessId(Guid.NewGuid()),
+                new WarehouseId(Guid.NewGuid()),
+                new DeviceId(Guid.NewGuid()),
+                new WorkSessionId(session.WorkSessionId),
+                new UserId(session.UserId)),
+            Guid.NewGuid(), null, PosDraftStatus.Active, null, null, null,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, []);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Client(http, Guid.NewGuid()).SaveAsync(session, draft, "pos-order-no-site", default));
+
+        Assert.Contains("sede", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, handler.Calls);
     }
 
     [Fact]

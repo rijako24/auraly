@@ -89,7 +89,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Commercial_receipt_credit_and_collection_work_without_accounting_and_are_not_posted_retroactively()
     {
-        var (customerId, userId) = await ConfigureAsync();
+        var (customerId, userId, partySiteId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
             ReceivablesPermissionCodes.Read,
@@ -128,7 +128,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 
             var draft = await CaptureAsync(client,
                 await OpenDraftAsync(client, workSession.WorkSessionId));
-            var selection = await SelectCustomerAsync(client, draft, customerId);
+            var selection = await SelectCustomerAsync(client, draft, customerId, partySiteId);
             var sale = await CompleteAsync(client, selection.Draft,
                 new CompleteOnlineSalesDraftRequest(
                     selection.Draft.Version, [],
@@ -208,7 +208,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             var accountedDraft = await CaptureAsync(client,
                 await OpenDraftAsync(client, workSession.WorkSessionId));
             var accountedSelection = await SelectCustomerAsync(
-                client, accountedDraft, customerId);
+                client, accountedDraft, customerId, partySiteId);
             var accountedSale = await CompleteAsync(client, accountedSelection.Draft,
                 new CompleteOnlineSalesDraftRequest(
                     accountedSelection.Draft.Version, [],
@@ -236,12 +236,12 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Credit_sale_is_rejected_when_customer_credit_is_not_enabled()
     {
-        var (customerId, userId) = await ConfigureAsync();
+        var (customerId, userId, partySiteId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate);
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await CaptureAsync(client, await OpenDraftAsync(client, workSession.WorkSessionId));
-        var selection = await SelectCustomerAsync(client, draft, customerId);
+        var selection = await SelectCustomerAsync(client, draft, customerId, partySiteId);
         using var request = new HttpRequestMessage(HttpMethod.Post,
             $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/complete")
         {
@@ -261,7 +261,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Credit_due_date_is_derived_from_the_server_customer_terms()
     {
-        var (customerId, userId) = await ConfigureAsync();
+        var (customerId, userId, partySiteId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
             ReceivablesPermissionCodes.ManageCredit);
@@ -274,7 +274,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await CaptureAsync(client,
             await OpenDraftAsync(client, workSession.WorkSessionId));
-        var selection = await SelectCustomerAsync(client, draft, customerId);
+        var selection = await SelectCustomerAsync(client, draft, customerId, partySiteId);
         var startedAt = DateTimeOffset.UtcNow;
         var sale = await CompleteAsync(client, selection.Draft,
             new CompleteOnlineSalesDraftRequest(
@@ -295,7 +295,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Enrolled_device_credit_validation_uses_the_current_server_balance()
     {
-        var (customerId, userId) = await ConfigureAsync();
+        var (customerId, userId, _) = await ConfigureAsync();
         using (var user = fixture.CreateUserClient(
                    userId,
                    ReceivablesPermissionCodes.ManageCredit))
@@ -356,7 +356,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Credit_sale_and_customer_payment_are_scoped_idempotent_and_accounted_once()
     {
-        var (customerId, userId) = await ConfigureAsync();
+        var (customerId, userId, partySiteId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
             ReceivablesPermissionCodes.Read,
@@ -378,7 +378,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
         draft = await CaptureAsync(client, draft);
-        var selection = await SelectCustomerAsync(client, draft, customerId);
+        var selection = await SelectCustomerAsync(client, draft, customerId, partySiteId);
         Assert.NotNull(selection.Customer);
         Assert.True(selection.Customer.IsCreditEnabled);
         Assert.Equal(500_000m, selection.Customer.AvailableCredit);
@@ -503,7 +503,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Customer_credit_return_is_capped_at_outstanding_and_creates_no_excess_credit()
     {
-        var (customerId, userId) = await ConfigureAsync();
+        var (customerId, userId, partySiteId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
             ReceivablesPermissionCodes.ManageCredit,
@@ -520,7 +520,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await CaptureAsync(client,
             await OpenDraftAsync(client, workSession.WorkSessionId));
-        var selection = await SelectCustomerAsync(client, draft, customerId);
+        var selection = await SelectCustomerAsync(client, draft, customerId, partySiteId);
         var checkout = await CompleteAsync(client, selection.Draft,
             new CompleteOnlineSalesDraftRequest(
                 selection.Draft.Version, [],
@@ -611,7 +611,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    private async Task<(Guid CustomerId, Guid UserId)> ConfigureAsync()
+    private async Task<(Guid CustomerId, Guid UserId, Guid PartySiteId)> ConfigureAsync()
     {
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
@@ -631,11 +631,14 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                   UPPER(@Email),N'Cajero',N'Cartera',1,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Parties(
-                  PartyId,TenantId,PartyType,IdentificationTypeCode,Identification,
+                  PartyId,TenantId,PartyType,IdentificationCountryId,
+                  IdentificationTypeCode,Identification,
                   NormalizedIdentification,DisplayName,LegalName,CompletionStatus,
                   IsActive,CreatedBy,CreatedAt)
-                VALUES(@PartyId,@TenantId,N'Organization',NULL,NULL,NULL,
-                  N'Cliente crédito E2E',N'Cliente crédito E2E',N'Incomplete',1,
+                VALUES(@PartyId,@TenantId,N'Organization',
+                  (SELECT TOP (1) CountryId FROM dbo.Countries WHERE Code=N'CO'),
+                  N'31',@Identification,@Identification,
+                  N'Cliente crédito E2E',N'Cliente crédito E2E',N'Complete',1,
                   @UserId,SYSDATETIMEOFFSET());
                 INSERT dbo.Customers(
                   CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
@@ -667,6 +670,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 new("@TenantId", fixture.TenantId),
                 new("@BusinessId", fixture.BusinessId),
                 new("@UserId", userId),
+                new("@Identification", customerId.ToString("N")),
                 new("@Username", $"receivables-{userId:N}"),
                 new("@Email", $"receivables-{userId:N}@test.local"));
 
@@ -692,7 +696,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                     '2026-01-01','2026-12-31',N'Open',SYSDATETIMEOFFSET());
                 """, new SqlParameter("@TenantId", fixture.TenantId));
             await transaction.CommitAsync();
-            return (customerId, userId);
+            return (customerId, userId, partySiteId);
         }
         catch
         {
@@ -704,7 +708,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     private async Task<(Guid CustomerId, Guid UserId, Guid NorthSiteId, Guid CenterSiteId)>
         ConfigureWithSitesAsync()
     {
-        var (customerId, userId) = await ConfigureAsync();
+        var (customerId, userId, _) = await ConfigureAsync();
         var northSiteId = Guid.NewGuid();
         var centerSiteId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);

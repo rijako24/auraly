@@ -1145,6 +1145,10 @@ public static class PosEdgeHostApplication
             {
                 return Results.NotFound(new { detail = error.Message });
             }
+            catch (ArgumentException error)
+            {
+                return Results.BadRequest(new { detail = error.Message });
+            }
         });
         edge.MapDelete("/drafts/{draftId:guid}/lines/{lineId:guid}", async (
             Guid draftId,

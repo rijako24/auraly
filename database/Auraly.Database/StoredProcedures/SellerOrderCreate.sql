@@ -46,6 +46,14 @@ BEGIN
         THROW 51300,'La ruta no pertenece al vendedor autenticado.',1;
       SET @SellerId=@RouteSellerId;
     END;
+    IF NOT EXISTS(
+      SELECT 1
+      FROM dbo.Customers customer
+      INNER JOIN dbo.PartySites site
+        ON site.PartyId=customer.PartyId AND site.PartySiteId=@PartySiteId AND site.IsActive=1
+      WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+        AND customer.IsActive=1)
+      THROW 51300,'La sede del pedido no pertenece al cliente seleccionado.',1;
     IF @RouteStopId IS NOT NULL AND NOT EXISTS(
       SELECT 1 FROM dbo.SalesRouteStops stop
       WHERE stop.RouteStopId=@RouteStopId AND stop.RouteId=@RouteId

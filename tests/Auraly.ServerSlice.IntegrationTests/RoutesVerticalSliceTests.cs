@@ -37,29 +37,41 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
         var candidates = await client.GetFromJsonAsync<RouteCandidatePage>(
             $"/api/commerce/v1/routes/{created.RouteId:D}/candidate-sites?page=1&pageSize=50&search={seed.SearchTerm}");
         Assert.NotNull(candidates);
-        Assert.Equal(2, candidates.TotalCount);
+        Assert.Equal(3, candidates.TotalCount);
+        Assert.Contains(candidates.Items, item =>
+            item.CustomerId == seed.CustomerOneId && item.PartySiteId == seed.SiteOneId &&
+            item.SiteName == "Tienda centro");
+        Assert.Contains(candidates.Items, item =>
+            item.CustomerId == seed.CustomerOneId && item.PartySiteId == seed.SiteOneSouthId &&
+            item.SiteName == "Tienda sur");
         Assert.All(candidates.Items, item => Assert.False(item.HasScheduleConflict));
 
         var firstAdd = await client.PostAsJsonAsync($"/api/commerce/v1/routes/{created.RouteId:D}/stops",
             new AddRouteStopsRequest([
                 new(seed.CustomerOneId, seed.SiteOneId, "Primera visita"),
+                new(seed.CustomerOneId, seed.SiteOneSouthId, "Segunda sede del mismo cliente"),
                 new(seed.CustomerTwoId, seed.SiteTwoId, null)], created.RowVersion));
         Assert.Equal(HttpStatusCode.OK, firstAdd.StatusCode);
         var afterAdd = await firstAdd.Content.ReadFromJsonAsync<RouteMutationResult>();
         Assert.NotNull(afterAdd);
         Assert.Equal("Ready", afterAdd.PreparationStatus);
-        Assert.Equal(2, afterAdd.StopCount);
+        Assert.Equal(3, afterAdd.StopCount);
 
         var detail = await client.GetFromJsonAsync<SalesRouteDetail>($"/api/commerce/v1/routes/{created.RouteId:D}");
         Assert.NotNull(detail);
-        Assert.Equal([1,2], detail.Stops.Select(stop => stop.Sequence));
+        Assert.Equal([1,2,3], detail.Stops.Select(stop => stop.Sequence));
+        Assert.Equal(2, detail.Stops.Count(stop => stop.CustomerId == seed.CustomerOneId));
+        Assert.Equal(
+            new[] { seed.SiteOneId, seed.SiteOneSouthId },
+            detail.Stops.Where(stop => stop.CustomerId == seed.CustomerOneId)
+                .Select(stop => stop.PartySiteId).ToArray());
         var reversed = detail.Stops.Reverse().Select(stop => stop.RouteStopId).ToArray();
         var reorder = await client.PutAsJsonAsync($"/api/commerce/v1/routes/{created.RouteId:D}/stops/order",
             new ReorderRouteStopsRequest(reversed, detail.RowVersion));
         Assert.Equal(HttpStatusCode.OK, reorder.StatusCode);
         var reordered = await client.GetFromJsonAsync<SalesRouteDetail>($"/api/commerce/v1/routes/{created.RouteId:D}");
         Assert.Equal(seed.CustomerTwoId, reordered!.Stops.First().CustomerId);
-        Assert.Equal([1,2], reordered.Stops.Select(stop => stop.Sequence));
+        Assert.Equal([1,2,3], reordered.Stops.Select(stop => stop.Sequence));
 
         var visitDate = DateOnly.FromDateTime(DateTime.UtcNow);
         var stop = reordered.Stops.First();
@@ -97,7 +109,7 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/routes?page=1&pageSize=20&search=prueba&dayOfWeek=1&isActive=true");
         var listed = Assert.Single(page!.Items.Where(item => item.RouteId == created.RouteId));
         Assert.Equal("Ready", listed.PreparationStatus);
-        Assert.Equal(2, listed.StopCount);
+        Assert.Equal(3, listed.StopCount);
         Assert.Contains(1, listed.Days);
     }
 
@@ -147,7 +159,7 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
 
     private async Task<RouteSeed> SeedCommercialPartiesAsync()
     {
-        var sellerParty=Guid.NewGuid();var seller=Guid.NewGuid();var partyOne=Guid.NewGuid();var customerOne=Guid.NewGuid();var siteOne=Guid.NewGuid();var partyTwo=Guid.NewGuid();var customerTwo=Guid.NewGuid();var siteTwo=Guid.NewGuid();var searchTerm=$"RUTA{Guid.NewGuid():N}"[..16];
+        var sellerParty=Guid.NewGuid();var seller=Guid.NewGuid();var partyOne=Guid.NewGuid();var customerOne=Guid.NewGuid();var siteOne=Guid.NewGuid();var siteOneSouth=Guid.NewGuid();var partyTwo=Guid.NewGuid();var customerTwo=Guid.NewGuid();var siteTwo=Guid.NewGuid();var searchTerm=$"RUTA{Guid.NewGuid():N}"[..16];
         const string sql="""
             DECLARE @CountryId uniqueidentifier=(SELECT TOP(1) CountryId FROM dbo.Countries WHERE IsActive=1 ORDER BY Code);
             DECLARE @DivisionId uniqueidentifier=(SELECT TOP(1) AdministrativeDivisionId FROM dbo.AdministrativeDivisions WHERE CountryId=@CountryId AND IsActive=1 ORDER BY Code);
@@ -162,12 +174,13 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
             VALUES(@CustomerOne,@PartyOne,@BusinessId,1,@UserId,SYSDATETIMEOFFSET()),(@CustomerTwo,@PartyTwo,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,Neighborhood,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
             VALUES(@SiteOne,@PartyOne,N'PRINCIPAL',N'Tienda centro',@CountryId,@DivisionId,@CityId,N'Calle 1 # 2-3',N'Centro',N'3000000001',1,1,@UserId,SYSDATETIMEOFFSET()),
+                  (@SiteOneSouth,@PartyOne,N'SUR',N'Tienda sur',@CountryId,@DivisionId,@CityId,N'Calle 9 # 8-7',N'Sur',N'3000000003',0,1,@UserId,SYSDATETIMEOFFSET()),
                   (@SiteTwo,@PartyTwo,N'PRINCIPAL',N'Tienda norte',@CountryId,@DivisionId,@CityId,N'Carrera 4 # 5-6',N'Norte',N'3000000002',1,1,@UserId,SYSDATETIMEOFFSET());
             """;
         await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);
-        command.Parameters.AddWithValue("@CustomerOneName",$"{searchTerm} uno");command.Parameters.AddWithValue("@CustomerTwoName",$"{searchTerm} dos");command.Parameters.AddWithValue("@SellerParty",sellerParty);command.Parameters.AddWithValue("@SellerId",seller);command.Parameters.AddWithValue("@SellerCode",$"V-{seller:N}"[..12]);command.Parameters.AddWithValue("@PartyOne",partyOne);command.Parameters.AddWithValue("@CustomerOne",customerOne);command.Parameters.AddWithValue("@SiteOne",siteOne);command.Parameters.AddWithValue("@PartyTwo",partyTwo);command.Parameters.AddWithValue("@CustomerTwo",customerTwo);command.Parameters.AddWithValue("@SiteTwo",siteTwo);command.Parameters.AddWithValue("@TenantId",fixture.TenantId);command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@UserId",fixture.UserId);await command.ExecuteNonQueryAsync();
-        return new(seller,customerOne,siteOne,customerTwo,siteTwo,searchTerm);
+        command.Parameters.AddWithValue("@CustomerOneName",$"{searchTerm} uno");command.Parameters.AddWithValue("@CustomerTwoName",$"{searchTerm} dos");command.Parameters.AddWithValue("@SellerParty",sellerParty);command.Parameters.AddWithValue("@SellerId",seller);command.Parameters.AddWithValue("@SellerCode",$"V-{seller:N}"[..12]);command.Parameters.AddWithValue("@PartyOne",partyOne);command.Parameters.AddWithValue("@CustomerOne",customerOne);command.Parameters.AddWithValue("@SiteOne",siteOne);command.Parameters.AddWithValue("@SiteOneSouth",siteOneSouth);command.Parameters.AddWithValue("@PartyTwo",partyTwo);command.Parameters.AddWithValue("@CustomerTwo",customerTwo);command.Parameters.AddWithValue("@SiteTwo",siteTwo);command.Parameters.AddWithValue("@TenantId",fixture.TenantId);command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@UserId",fixture.UserId);await command.ExecuteNonQueryAsync();
+        return new(seller,customerOne,siteOne,siteOneSouth,customerTwo,siteTwo,searchTerm);
     }
 
-    private sealed record RouteSeed(Guid SellerId,Guid CustomerOneId,Guid SiteOneId,Guid CustomerTwoId,Guid SiteTwoId,string SearchTerm);
+    private sealed record RouteSeed(Guid SellerId,Guid CustomerOneId,Guid SiteOneId,Guid SiteOneSouthId,Guid CustomerTwoId,Guid SiteTwoId,string SearchTerm);
 }

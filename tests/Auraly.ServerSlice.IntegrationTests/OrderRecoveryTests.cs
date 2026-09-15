@@ -57,6 +57,9 @@ public sealed class OrderRecoveryTests(
             new("@BusinessId", fixture.BusinessId), new("@ProductId", productId),
             new("@TaxProfileId", taxProfileId), new("@TaxCode", $"OA-{taxProfileId:N}"[..32]),
             new("@ProductCode", $"ADM-{productId:N}"[..24]));
+        var partySiteId = await SeedPrimarySiteAsync(customerPartyId, userId);
+        var secondaryPartySiteId = await SeedPrimarySiteAsync(
+            customerPartyId, userId, "Sede alterna", false);
 
         using var client = fixture.CreateUserClient(userId, OrderPermissionCodes.Create);
         var stopwatch = Stopwatch.StartNew();
@@ -67,7 +70,7 @@ public sealed class OrderRecoveryTests(
                 businessId = fixture.BusinessId,
                 warehouseId = fixture.WarehouseId,
                 customerId,
-                partySiteId = (Guid?)null,
+                partySiteId,
                 routeId = (Guid?)null,
                 routeStopId = (Guid?)null,
                 capturedOffline = false,
@@ -108,11 +111,43 @@ public sealed class OrderRecoveryTests(
         var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
         var orderId = body.GetProperty("orderId").GetGuid();
 
+        var secondStopwatch = Stopwatch.StartNew();
+        using var secondResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/seller-orders",
+            new
+            {
+                businessId = fixture.BusinessId,
+                warehouseId = fixture.WarehouseId,
+                customerId,
+                partySiteId = secondaryPartySiteId,
+                capturedOffline = false,
+                notes = "Pedido para la segunda sede del mismo cliente",
+                idempotencyKey = Guid.NewGuid().ToString("N"),
+                lines = new[]
+                {
+                    new
+                    {
+                        productId,
+                        quantity = 1m,
+                        unitPrice = 12500m,
+                        discountAmount = 0m,
+                        priceSource = "Public",
+                    },
+                },
+            });
+        secondStopwatch.Stop();
+        Assert.True(secondResponse.IsSuccessStatusCode,
+            $"El pedido de la sede alterna respondió {(int)secondResponse.StatusCode}: {await secondResponse.Content.ReadAsStringAsync()}");
+        Assert.True(secondStopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"Guardar el pedido de la sede alterna tardó {secondStopwatch.Elapsed.TotalMilliseconds:N0} ms.");
+        var secondBody = await secondResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        var secondOrderId = secondBody.GetProperty("orderId").GetGuid();
+
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CapturedByUserId,SellerId
+            SELECT CapturedByUserId,SellerId,PartySiteId
             FROM dbo.Orders
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
             SELECT Quantity,UnitPrice,DiscountAmount,
@@ -121,13 +156,18 @@ public sealed class OrderRecoveryTests(
             FROM dbo.OrderItems
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId
             ORDER BY TRY_CONVERT(int,JSON_VALUE(RawPayloadJson,'$.LinePosition'));
+            SELECT PartySiteId
+            FROM dbo.Orders
+            WHERE OrderId=@SecondOrderId AND BusinessId=@BusinessId;
             """;
         command.Parameters.AddWithValue("@OrderId", orderId);
+        command.Parameters.AddWithValue("@SecondOrderId", secondOrderId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         Assert.Equal(userId, reader.GetGuid(0));
         Assert.True(reader.IsDBNull(1));
+        Assert.Equal(partySiteId, reader.GetGuid(2));
         Assert.True(await reader.NextResultAsync());
         Assert.True(await reader.ReadAsync());
         Assert.Equal(1m, reader.GetDecimal(0));
@@ -142,6 +182,9 @@ public sealed class OrderRecoveryTests(
         Assert.Equal(8200m, reader.GetDecimal(3));
         Assert.Equal(2, reader.GetInt32(4));
         Assert.False(await reader.ReadAsync());
+        Assert.True(await reader.NextResultAsync());
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(secondaryPartySiteId, reader.GetGuid(0));
     }
 
     [Fact]
@@ -219,6 +262,7 @@ public sealed class OrderRecoveryTests(
             new("@SecondCode", $"SP-B-{secondProductId:N}"[..24]),
             new("@TaxProfileId", taxProfileId), new("@TaxCode", $"SO-{taxProfileId:N}"[..32]),
             new("@PromotionId", promotionId));
+        var partySiteId = await SeedPrimarySiteAsync(partyId, userId);
 
         using var client = fixture.CreateUserClient(
             userId, OrderPermissionCodes.Create, OrderPermissionCodes.Read);
@@ -229,7 +273,7 @@ public sealed class OrderRecoveryTests(
                 businessId = fixture.BusinessId,
                 warehouseId = fixture.WarehouseId,
                 customerId,
-                partySiteId = (Guid?)null,
+                partySiteId,
                 routeId = (Guid?)null,
                 routeStopId = (Guid?)null,
                 capturedOffline = false,
@@ -307,12 +351,13 @@ public sealed class OrderRecoveryTests(
         var ordersWarehouseId = await EnsureOrdersWarehouseAsync();
         await ExecuteAsync(
             """
+            DECLARE @CountryId UNIQUEIDENTIFIER=(SELECT TOP(1) CountryId FROM dbo.Countries WHERE IsActive=1 ORDER BY Code);
             INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,IsActive,CreatedAt)
             VALUES(@UserId,@TenantId,@Username,UPPER(@Username),CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Revisión',N'Pedido',1,SYSDATETIMEOFFSET());
-            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,Identification,NormalizedIdentification,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES
-              (@CustomerPartyId,@TenantId,N'Organization',N'Cliente revisión',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
-              (@SellerPartyId,@TenantId,N'NaturalPerson',N'Vendedor revisión',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
+              (@CustomerPartyId,@TenantId,N'Organization',@CountryId,N'31',@CustomerIdentification,@CustomerIdentification,N'Cliente revisión',N'Cliente revisión',N'Complete',1,@UserId,SYSDATETIMEOFFSET()),
+              (@SellerPartyId,@TenantId,N'NaturalPerson',NULL,NULL,NULL,NULL,N'Vendedor revisión',N'Vendedor revisión',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
             UPDATE dbo.AppUsers SET PartyId=@SellerPartyId WHERE UserId=@UserId;
             INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
             VALUES(@CustomerId,@CustomerPartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
@@ -335,6 +380,7 @@ public sealed class OrderRecoveryTests(
             """,
             new("@UserId", userId), new("@TenantId", fixture.TenantId),
             new("@Username", $"review-{userId:N}"), new("@CustomerPartyId", customerPartyId),
+            new("@CustomerIdentification", customerId.ToString("N")),
             new("@SellerPartyId", sellerPartyId), new("@CustomerId", customerId),
             new("@SellerId", sellerId), new("@SellerCode", $"RV-{sellerId:N}"[..20]),
             new("@BusinessId", fixture.BusinessId), new("@WarehouseId", fixture.WarehouseId),
@@ -342,6 +388,7 @@ public sealed class OrderRecoveryTests(
             new("@FirstProductId", firstProductId), new("@SecondProductId", secondProductId),
             new("@FirstCode", $"RV-A-{firstProductId:N}"[..24]),
             new("@SecondCode", $"RV-B-{secondProductId:N}"[..24]));
+        var partySiteId = await SeedPrimarySiteAsync(customerPartyId, userId);
 
         await ExecuteAsync(
             "UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;",
@@ -357,6 +404,7 @@ public sealed class OrderRecoveryTests(
             businessId = fixture.BusinessId,
             warehouseId = fixture.WarehouseId,
             customerId,
+            partySiteId,
             capturedOffline = false,
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -392,7 +440,7 @@ public sealed class OrderRecoveryTests(
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
         await RecoverAsync(client, userId, workSession.WorkSessionId, orderId, draft);
-        Assert.Equal((7m, 2m, 0m, 0m),
+        Assert.Equal((2m, 2m, 5m, 0m),
             await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
         var recoveredDraft = await OpenDraftAsync(client, workSession.WorkSessionId);
         Assert.Equal(orderId, recoveredDraft.SourceOrderId);
@@ -401,6 +449,7 @@ public sealed class OrderRecoveryTests(
         using (var stillInReview = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
         {
             customerId,
+            partySiteId,
             notes = "Continúa pendiente después de recuperar",
             workSessionId = workSession.WorkSessionId,
             idempotencyKey = Guid.NewGuid().ToString("N"),
@@ -449,6 +498,7 @@ public sealed class OrderRecoveryTests(
         using (var forbiddenReview = await readOnly.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
         {
             customerId,
+            partySiteId,
             notes = "Sin permiso de revisión",
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -464,6 +514,7 @@ public sealed class OrderRecoveryTests(
         using (var forbiddenChange = await reviewer.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
         {
             customerId,
+            partySiteId,
             notes = "Intento de cambiar una línea ya reservada",
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -478,6 +529,7 @@ public sealed class OrderRecoveryTests(
         var reviewRequest = new
         {
             customerId,
+            partySiteId,
             notes = "Ajustado a existencia disponible",
             idempotencyKey = reviewKey,
             lines = new[]
@@ -496,6 +548,7 @@ public sealed class OrderRecoveryTests(
         using (var reduceAndRemove = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
         {
             customerId,
+            partySiteId,
             notes = "Edición completa con devolución a ventas",
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -509,6 +562,7 @@ public sealed class OrderRecoveryTests(
         using (var increaseAndAdd = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
         {
             customerId,
+            partySiteId,
             notes = "Edición completa con reserva incremental y producto agregado",
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -530,6 +584,7 @@ public sealed class OrderRecoveryTests(
             $"/api/commerce/v1/seller-orders/{orderId:D}", new
             {
                 customerId,
+                partySiteId,
                 notes = "Edición de datos sin cambio de reserva",
                 idempotencyKey = noInventoryChangeKey,
                 lines = new[]
@@ -550,6 +605,7 @@ public sealed class OrderRecoveryTests(
             businessId = fixture.BusinessId,
             warehouseId = fixture.WarehouseId,
             customerId,
+            partySiteId,
             capturedOffline = false,
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -567,6 +623,7 @@ public sealed class OrderRecoveryTests(
         using (var removePendingLine = await reviewer.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{removalOrderId:D}", new
         {
             customerId,
+            partySiteId,
             notes = "Línea faltante eliminada durante revisión",
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -595,6 +652,7 @@ public sealed class OrderRecoveryTests(
                     businessId = fixture.BusinessId,
                     warehouseId = fixture.WarehouseId,
                     customerId,
+                    partySiteId,
                     capturedOffline = false,
                     idempotencyKey = Guid.NewGuid().ToString("N"),
                     lines = new[]
@@ -660,7 +718,7 @@ public sealed class OrderRecoveryTests(
         await RecoverAsync(
             client, userId, workSession.WorkSessionId, removalOrderId, activeForRemoval);
         var recoveredForRemoval = await OpenDraftAsync(client, workSession.WorkSessionId);
-        Assert.Equal((7m, -8m, 0m, 10m),
+        Assert.Equal((6m, -8m, 1m, 10m),
             await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
         using var resetRequester = fixture.CreateUserClient(
             userId,
@@ -730,6 +788,7 @@ public sealed class OrderRecoveryTests(
             businessId = fixture.BusinessId,
             warehouseId = fixture.WarehouseId,
             customerId,
+            partySiteId,
             capturedOffline = false,
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -847,6 +906,7 @@ public sealed class OrderRecoveryTests(
             new("@ParentProductId", parentProductId), new("@ChildProductId", childProductId),
             new("@ParentCode", $"IF-P-{parentProductId:N}"[..16]),
             new("@ChildCode", $"IF-C-{childProductId:N}"[..16]));
+        var partySiteId = await SeedPrimarySiteAsync(partyId, userId);
 
         await ExecuteAsync(
             "UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;",
@@ -860,6 +920,7 @@ public sealed class OrderRecoveryTests(
             businessId = fixture.BusinessId,
             warehouseId = fixture.WarehouseId,
             customerId,
+            partySiteId,
             capturedOffline = false,
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -883,6 +944,7 @@ public sealed class OrderRecoveryTests(
         using var review = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}", new
         {
             customerId,
+            partySiteId,
             notes = "Cantidad padre ajustada a la existencia restante",
             idempotencyKey = Guid.NewGuid().ToString("N"),
             lines = new[]
@@ -928,16 +990,37 @@ public sealed class OrderRecoveryTests(
     public async Task Seller_route_can_list_todays_orders_and_open_detail_with_legacy_non_json_attributes()
     {
         var orderId = Guid.NewGuid();
+        var customerPartyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
         var orderNumber = $"PED-RUTA-{orderId:N}";
         await ExecuteAsync(
             """
+            INSERT dbo.Parties(
+              PartyId,TenantId,PartyType,DisplayName,CompletionStatus,
+              IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @PartyId,@TenantId,N'Organization',N'Cliente de ruta',N'Incomplete',
+              1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(
+              CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            """,
+            new("@PartyId", customerPartyId),
+            new("@CustomerId", customerId),
+            new("@TenantId", fixture.TenantId),
+            new("@BusinessId", fixture.BusinessId),
+            new("@UserId", fixture.UserId));
+        var partySiteId = await SeedPrimarySiteAsync(customerPartyId, fixture.UserId);
+        await ExecuteAsync(
+            """
             INSERT dbo.Orders(
-              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,
+              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,PartySiteId,
               WarehouseId,CapturedByUserId,CustomerNameSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,
               ExternalDocumentNumber,CustomAttributesJson,CreatedAt)
             VALUES(
-              @OrderId,@BusinessId,1,0,3,NULL,
+              @OrderId,@BusinessId,1,0,3,@CustomerId,@PartySiteId,
               @WarehouseId,@UserId,N'Cliente de ruta',N'COP',
               12500,0,12500,1,@OrderNumber,
               N'<!doctype html><meta name="viewport" content="width=device-width"><h1>legacy</h1>',
@@ -953,6 +1036,8 @@ public sealed class OrderRecoveryTests(
             """,
             new("@OrderId", orderId),
             new("@BusinessId", fixture.BusinessId),
+            new("@CustomerId", customerId),
+            new("@PartySiteId", partySiteId),
             new("@WarehouseId", fixture.WarehouseId),
             new("@UserId", fixture.UserId),
             new("@OrderNumber", orderNumber),
@@ -981,13 +1066,15 @@ public sealed class OrderRecoveryTests(
     }
 
     [Fact]
-    public async Task Recovered_order_update_preserves_price_discount_and_reserved_quantity()
+    public async Task Recovered_order_can_change_customer_and_site_then_invoice_to_the_same_receivable_site()
     {
         var userId = Guid.NewGuid();
         var customerPartyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
         var updatedCustomerPartyId = Guid.NewGuid();
         var updatedCustomerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
+        var updatedPartySiteId = Guid.NewGuid();
         var sellerPartyId = Guid.NewGuid();
         var sellerId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
@@ -1000,6 +1087,19 @@ public sealed class OrderRecoveryTests(
         });
         await ExecuteAsync(
             """
+            DECLARE @CountryId UNIQUEIDENTIFIER,
+                    @DivisionId UNIQUEIDENTIFIER,
+                    @CityId UNIQUEIDENTIFIER;
+            SELECT TOP(1)
+              @CountryId=country.CountryId,
+              @DivisionId=division.AdministrativeDivisionId,
+              @CityId=city.CityId
+            FROM dbo.Cities city
+            JOIN dbo.AdministrativeDivisions division
+              ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+            JOIN dbo.Countries country ON country.CountryId=division.CountryId
+            WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+
             INSERT dbo.AppUsers(
               UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
               FirstName,LastName,IsActive,CreatedAt)
@@ -1009,20 +1109,38 @@ public sealed class OrderRecoveryTests(
               N'Edición',N'Pedido',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.Parties(
-              PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,
+              PartyId,TenantId,PartyType,IdentificationCountryId,
+              IdentificationTypeCode,Identification,NormalizedIdentification,
+              DisplayName,LegalName,CompletionStatus,
               IsActive,CreatedBy,CreatedAt)
             VALUES
-              (@PartyId,@TenantId,N'Organization',N'Cliente edición',N'Cliente edición',
-               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
-              (@UpdatedPartyId,@TenantId,N'Organization',N'Cliente actualizado',N'Cliente actualizado',
-               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
-              (@SellerPartyId,@TenantId,N'NaturalPerson',N'Vendedor edición',N'Vendedor edición',
+              (@PartyId,@TenantId,N'Organization',@CountryId,N'31',N'900100200',N'900100200',
+               N'Cliente edición',N'Cliente edición',N'Complete',1,@UserId,SYSDATETIMEOFFSET()),
+              (@UpdatedPartyId,@TenantId,N'Organization',@CountryId,N'31',N'900100201',N'900100201',
+               N'Cliente actualizado',N'Cliente actualizado',N'Complete',1,@UserId,SYSDATETIMEOFFSET()),
+              (@SellerPartyId,@TenantId,N'NaturalPerson',NULL,NULL,NULL,NULL,
+               N'Vendedor edición',N'Vendedor edición',
                N'Complete',1,@UserId,SYSDATETIMEOFFSET());
 
             INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
             VALUES
               (@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET()),
               (@UpdatedCustomerId,@UpdatedPartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+              CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES
+              (@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+               @DivisionId,@CityId,N'Calle edición 1',1,1,@UserId,SYSDATETIMEOFFSET()),
+              (@UpdatedPartySiteId,@UpdatedPartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+               @DivisionId,@CityId,N'Calle edición 2',1,1,@UserId,SYSDATETIMEOFFSET());
+
+            INSERT dbo.CustomerCreditProfiles(
+              CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,
+              UpdatedByUserId,UpdatedAt)
+            VALUES(
+              @UpdatedCustomerId,@BusinessId,500000,30,1,@UserId,SYSDATETIMEOFFSET());
 
             INSERT dbo.CommerceSellers(
               SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
@@ -1046,12 +1164,12 @@ public sealed class OrderRecoveryTests(
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
 
             INSERT dbo.Orders(
-              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,SellerId,WarehouseId,
+              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,PartySiteId,SellerId,WarehouseId,OrdersWarehouseId,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,
               ExternalDocumentNumber,CustomAttributesJson,CreatedAt)
             VALUES(
-              @OrderId,@BusinessId,1,0,2,@CustomerId,@SellerId,@WarehouseId,
+              @OrderId,@BusinessId,1,0,2,@CustomerId,@PartySiteId,@SellerId,@WarehouseId,@OrdersWarehouseId,
               N'Cliente edición',N'900100200',N'COP',
               20000,1000,19000,1,@OrderNumber,@Attributes,SYSUTCDATETIME());
 
@@ -1068,8 +1186,10 @@ public sealed class OrderRecoveryTests(
             new("@Username", $"order-edit-{userId:N}"),
             new("@PartyId", customerPartyId),
             new("@CustomerId", customerId),
+            new("@PartySiteId", partySiteId),
             new("@UpdatedPartyId", updatedCustomerPartyId),
             new("@UpdatedCustomerId", updatedCustomerId),
+            new("@UpdatedPartySiteId", updatedPartySiteId),
             new("@SellerPartyId", sellerPartyId),
             new("@SellerId", sellerId),
             new("@SellerCode", $"SE-{sellerId:N}"[..20]),
@@ -1086,7 +1206,8 @@ public sealed class OrderRecoveryTests(
             CommercePermissionCodes.SalesCreate,
             OrderPermissionCodes.Read,
             OrderPermissionCodes.Recover,
-            OrderPermissionCodes.Update);
+            OrderPermissionCodes.Update,
+            OrderPermissionCodes.Invoice);
         using (var filteredResponse = await client.GetAsync(
                    $"/api/commerce/v1/orders?page=1&pageSize=20&sellerId={sellerId:D}&customerId={customerId:D}"))
         {
@@ -1107,24 +1228,50 @@ public sealed class OrderRecoveryTests(
         var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
         await RecoverAsync(client, userId, workSession.WorkSessionId, orderId, draft);
 
+        var replacementLines = new[]
+        {
+            new
+            {
+                productId = fixture.ProductId,
+                quantity = 2m,
+                unitPrice = 12_500m,
+                discountAmount = 2_500m,
+            },
+        };
+        using (var missingSite = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/seller-orders/{orderId:D}",
+                   new
+                   {
+                       customerId = updatedCustomerId,
+                       notes = "Cambio sin sede",
+                       idempotencyKey = Guid.NewGuid().ToString("N"),
+                       workSessionId = workSession.WorkSessionId,
+                       lines = replacementLines,
+                   }))
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, missingSite.StatusCode);
+        using (var crossedSite = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/seller-orders/{orderId:D}",
+                   new
+                   {
+                       customerId = updatedCustomerId,
+                       partySiteId,
+                       notes = "Cliente y sede cruzados",
+                       idempotencyKey = Guid.NewGuid().ToString("N"),
+                       workSessionId = workSession.WorkSessionId,
+                       lines = replacementLines,
+                   }))
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, crossedSite.StatusCode);
+
         using var response = await client.PutAsJsonAsync(
             $"/api/commerce/v1/seller-orders/{orderId:D}",
             new
             {
                 customerId = updatedCustomerId,
+                partySiteId = updatedPartySiteId,
                 notes = "Pedido actualizado desde el POS",
                 idempotencyKey = Guid.NewGuid().ToString("N"),
                 workSessionId = workSession.WorkSessionId,
-                lines = new[]
-                {
-                    new
-                    {
-                        productId = fixture.ProductId,
-                        quantity = 2m,
-                        unitPrice = 12_500m,
-                        discountAmount = 2_500m,
-                    },
-                },
+                lines = replacementLines,
             });
         Assert.True(
             response.IsSuccessStatusCode,
@@ -1134,9 +1281,11 @@ public sealed class OrderRecoveryTests(
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT o.CustomerId,o.CustomerNameSnapshot,o.Subtotal,o.DiscountTotal,o.Total,
+            SELECT o.CustomerId,o.PartySiteId,o.CustomerNameSnapshot,o.Subtotal,o.DiscountTotal,o.Total,
                    i.Quantity,i.UnitPrice,i.DiscountAmount,i.LineTotal,
-                   b.QuantityOnHand,o.Notes
+                   b.QuantityOnHand,o.Notes,
+                   (SELECT PartySiteId FROM reporting.CommercialReportOrderFacts fact
+                    WHERE fact.OrderId=o.OrderId)
             FROM dbo.Orders o
             JOIN dbo.OrderItems i ON i.OrderId=o.OrderId
             JOIN dbo.InventoryBalances b
@@ -1149,16 +1298,97 @@ public sealed class OrderRecoveryTests(
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         Assert.Equal(updatedCustomerId, reader.GetGuid(0));
-        Assert.Equal("Cliente actualizado", reader.GetString(1));
-        Assert.Equal(25_000m, reader.GetDecimal(2));
-        Assert.Equal(2_500m, reader.GetDecimal(3));
-        Assert.Equal(22_500m, reader.GetDecimal(4));
-        Assert.Equal(2m, reader.GetDecimal(5));
-        Assert.Equal(12_500m, reader.GetDecimal(6));
-        Assert.Equal(2_500m, reader.GetDecimal(7));
-        Assert.Equal(22_500m, reader.GetDecimal(8));
-        Assert.Equal(2m, reader.GetDecimal(9));
-        Assert.Equal("Pedido actualizado desde el POS", reader.GetString(10));
+        Assert.Equal(updatedPartySiteId, reader.GetGuid(1));
+        Assert.Equal("Cliente actualizado", reader.GetString(2));
+        Assert.Equal(25_000m, reader.GetDecimal(3));
+        Assert.Equal(2_500m, reader.GetDecimal(4));
+        Assert.Equal(22_500m, reader.GetDecimal(5));
+        Assert.Equal(2m, reader.GetDecimal(6));
+        Assert.Equal(12_500m, reader.GetDecimal(7));
+        Assert.Equal(2_500m, reader.GetDecimal(8));
+        Assert.Equal(22_500m, reader.GetDecimal(9));
+        Assert.Equal(2m, reader.GetDecimal(10));
+        Assert.Equal("Pedido actualizado desde el POS", reader.GetString(11));
+        Assert.Equal(updatedPartySiteId, reader.GetGuid(12));
+        await reader.DisposeAsync();
+        await command.DisposeAsync();
+        await connection.DisposeAsync();
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            using var invoiceRequest = new HttpRequestMessage(
+                HttpMethod.Post,
+                "/api/commerce/v1/orders/invoice")
+            {
+                Content = JsonContent.Create(new InvoiceOrdersRequest(
+                    workSession.WorkSessionId,
+                    fixture.WarehouseId,
+                    userId,
+                    [orderId],
+                    "Credit",
+                    null))
+            };
+            invoiceRequest.Headers.Add("Idempotency-Key", $"site-change-invoice-{Guid.NewGuid():N}");
+            using var invoiceResponse = await client.SendAsync(invoiceRequest);
+            Assert.True(invoiceResponse.IsSuccessStatusCode,
+                $"La facturación respondió {(int)invoiceResponse.StatusCode}: {await invoiceResponse.Content.ReadAsStringAsync()}");
+            var invoice = Assert.IsType<InvoiceOrdersResponse>(
+                await invoiceResponse.Content.ReadFromJsonAsync<InvoiceOrdersResponse>());
+            var invoiceResult = Assert.Single(invoice.Results);
+            Assert.True(
+                string.Equals("Invoiced", invoiceResult.Status, StringComparison.Ordinal),
+                $"La facturacion termino como {invoiceResult.Status}: {invoiceResult.Error ?? "sin detalle"}.");
+            Assert.NotNull(invoiceResult.DocumentId);
+
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+
+            await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+            await verifyConnection.OpenAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT document.CustomerId,document.CustomerPartySiteId,
+                       receivable.CustomerId,receivable.PartySiteId,receivable.OutstandingAmount,
+                       report.PartySiteId,line.PartySiteId,
+                       document.ProcessingStatus,processingJob.Status,processingJob.LastError
+                FROM dbo.SalesDocuments document
+                LEFT JOIN dbo.Receivables receivable
+                  ON receivable.SourceDocumentId=document.DocumentId
+                LEFT JOIN reporting.SalesReportDocuments report
+                  ON report.DocumentId=document.DocumentId
+                LEFT JOIN reporting.SalesReportLineFacts line
+                  ON line.SourceDocumentId=document.DocumentId AND line.SourceLineNumber=1
+                LEFT JOIN dbo.DocumentProcessingJobs processingJob
+                  ON processingJob.DocumentId=document.DocumentId
+                 AND processingJob.DocumentType=document.DocumentType
+                WHERE document.DocumentId=@DocumentId;
+                """;
+            verify.Parameters.AddWithValue("@DocumentId", invoiceResult.DocumentId.Value);
+            await using var verifyReader = await verify.ExecuteReaderAsync();
+            Assert.True(await verifyReader.ReadAsync());
+            var processingDiagnostic =
+                $"document={verifyReader.GetString(7)}, " +
+                $"job={(verifyReader.IsDBNull(8) ? "missing" : verifyReader.GetString(8))}, " +
+                $"error={(verifyReader.IsDBNull(9) ? "none" : verifyReader.GetString(9))}";
+            Assert.Equal(updatedCustomerId, verifyReader.GetGuid(0));
+            Assert.Equal(updatedPartySiteId, verifyReader.GetGuid(1));
+            Assert.False(verifyReader.IsDBNull(2), processingDiagnostic);
+            Assert.False(verifyReader.IsDBNull(5), processingDiagnostic);
+            Assert.False(verifyReader.IsDBNull(6), processingDiagnostic);
+            Assert.Equal(updatedCustomerId, verifyReader.GetGuid(2));
+            Assert.Equal(updatedPartySiteId, verifyReader.GetGuid(3));
+            Assert.Equal(22_500m, verifyReader.GetDecimal(4));
+            Assert.Equal(updatedPartySiteId, verifyReader.GetGuid(5));
+            Assert.Equal(updatedPartySiteId, verifyReader.GetGuid(6));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in fixture.DrainDocumentSignals())
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
     }
 
     private async Task<Guid> EnsureOrdersWarehouseAsync()
@@ -1436,6 +1666,25 @@ public sealed class OrderRecoveryTests(
     public async Task Pos_orders_require_both_device_and_logged_in_user_permissions()
     {
         var roleId = Guid.NewGuid();
+        var customerPartyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        await EnsureOrdersWarehouseAsync();
+        await ExecuteAsync(
+            """
+            INSERT dbo.Parties(
+              PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartyId,@TenantId,N'Organization',N'Cliente pedido PWA',
+              N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            """,
+            new("@PartyId", customerPartyId),
+            new("@CustomerId", customerId),
+            new("@TenantId", fixture.TenantId),
+            new("@BusinessId", fixture.BusinessId),
+            new("@UserId", fixture.UserId));
+        var partySiteId = await SeedPrimarySiteAsync(
+            customerPartyId, fixture.UserId, "Sede seleccionada en PWA");
         await ExecuteAsync(
             """
             INSERT dbo.AppRoles(
@@ -1468,6 +1717,37 @@ public sealed class OrderRecoveryTests(
                 $"/api/pos/v1/orders?userId={fixture.UserId:D}&businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&workSessionId={fixture.WorkSessionId:D}&page=1&pageSize=50");
             Assert.Equal(System.Net.HttpStatusCode.OK, allowed.StatusCode);
 
+            using var validSave = await client.PostAsJsonAsync(
+                "/api/pos/v1/orders/save",
+                new PosSaveOrderRequest(
+                    fixture.UserId,
+                    fixture.BusinessId,
+                    fixture.WarehouseId,
+                    fixture.WorkSessionId,
+                    customerId,
+                    partySiteId,
+                    null,
+                    "Pedido preparado en la PWA",
+                    $"pos-site-{Guid.NewGuid():N}",
+                    [new PosSaveOrderLine(
+                        fixture.ProductId, 1m, 10_000m, 0m, "Captured")]));
+            Assert.True(validSave.IsSuccessStatusCode,
+                $"El pedido PWA respondio {(int)validSave.StatusCode}: {await validSave.Content.ReadAsStringAsync()}");
+            var saved = Assert.IsType<PosSaveOrderResponse>(
+                await validSave.Content.ReadFromJsonAsync<PosSaveOrderResponse>());
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText =
+                    "SELECT CustomerId,PartySiteId FROM dbo.Orders WHERE OrderId=@OrderId;";
+                command.Parameters.AddWithValue("@OrderId", saved.OrderId);
+                await using var reader = await command.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(customerId, reader.GetGuid(0));
+                Assert.Equal(partySiteId, reader.GetGuid(1));
+            }
+
             using var saveRoute = await client.PostAsJsonAsync(
                 "/api/pos/v1/orders/save",
                 new PosSaveOrderRequest(
@@ -1475,6 +1755,7 @@ public sealed class OrderRecoveryTests(
                     fixture.BusinessId,
                     fixture.WarehouseId,
                     fixture.WorkSessionId,
+                    Guid.NewGuid(),
                     Guid.NewGuid(),
                     null,
                     null,
@@ -1580,6 +1861,44 @@ public sealed class OrderRecoveryTests(
             """,
             new SqlParameter("@BusinessId", fixture.BusinessId),
             new SqlParameter("@IdempotencyKey", idempotencyKey));
+
+    private async Task<Guid> SeedPrimarySiteAsync(
+        Guid partyId,
+        Guid userId,
+        string siteName = "Sede principal",
+        bool isPrimary = true)
+    {
+        var partySiteId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            DECLARE @CountryId UNIQUEIDENTIFIER,
+                    @DivisionId UNIQUEIDENTIFIER,
+                    @CityId UNIQUEIDENTIFIER;
+            SELECT TOP(1)
+              @CountryId=country.CountryId,
+              @DivisionId=division.AdministrativeDivisionId,
+              @CityId=city.CityId
+            FROM dbo.Cities city
+            JOIN dbo.AdministrativeDivisions division
+              ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+            JOIN dbo.Countries country ON country.CountryId=division.CountryId
+            WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+              CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @PartySiteId,@PartyId,@Code,@SiteName,@CountryId,
+              @DivisionId,@CityId,N'Calle de prueba 1',@IsPrimary,1,@UserId,SYSDATETIMEOFFSET());
+            """,
+            new SqlParameter("@PartySiteId", partySiteId),
+            new SqlParameter("@PartyId", partyId),
+            new SqlParameter("@Code", $"SITE-{partySiteId:N}"[..20]),
+            new SqlParameter("@SiteName", siteName),
+            new SqlParameter("@IsPrimary", isPrimary),
+            new SqlParameter("@UserId", userId));
+        return partySiteId;
+    }
 
     private async Task ExecuteAsync(
         string sql,

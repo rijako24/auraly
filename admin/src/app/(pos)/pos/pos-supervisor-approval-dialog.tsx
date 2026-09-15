@@ -74,7 +74,6 @@ export function PosSupervisorApprovalDialog({
         refreshing = false;
       }
     };
-    const fallback = window.setInterval(() => void refresh(), 1_500);
     void subscribeApprovals(() => void refresh())
       .then((stop) => {
         dispose = stop;
@@ -84,7 +83,7 @@ export function PosSupervisorApprovalDialog({
         if (!active) return;
         setChannelError(caught instanceof Error ? caught.message : "Falló el canal de aprobación.");
       });
-    return () => { active = false; window.clearInterval(fallback); dispose?.(); };
+    return () => { active = false; dispose?.(); };
   }, [allowRemote, approval, loadApproval, subscribeApprovals]);
 
   async function submit(event: FormEvent) {

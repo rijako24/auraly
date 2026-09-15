@@ -26,7 +26,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useRouter } from "next/navigation";
 import { canOpenPosAdministrativeMenu } from "@/lib/default-start-route";
@@ -69,6 +69,10 @@ import {
   closePrintPreview,
   openHalfLetterPrintPreview,
   renderReceiptsReceipt,
+  loadServerIssuedSaleReceipt,
+  searchServerHistoryCustomers,
+  searchServerHistoryProducts,
+  searchServerIssuedSales,
 } from "@/services/pos/online-pos-client";
 import {
   authorizePosEnrollment,
@@ -531,6 +535,7 @@ export default function PosPage() {
       setOrdersCount(0);
       return;
     }
+    if (sidePanel === "orders") return;
     let active = true;
     const range = orderDayRange(localOrderDateValue());
     void client.orders({ ...range, status: "Available", page: 1, pageSize: 1 })
@@ -541,7 +546,7 @@ export default function PosPage() {
         if (active) setOrdersCount(0);
       });
     return () => { active = false; };
-  }, [client, ordersRefreshVersion, serverConnected]);
+  }, [client, ordersRefreshVersion, serverConnected, sidePanel]);
 
   useEffect(() => {
     let active = true;
@@ -901,19 +906,28 @@ export default function PosPage() {
   useEffect(() => {
     if (!client || !draft?.sourceOrderId) return;
     const orderId = draft.sourceOrderId;
-    const renew = () => void client.renewRecoveredOrder(orderId).catch((caught) => {
+    const handleRenewalFailure = (caught: unknown) => {
       setError(caught instanceof Error
         ? caught.message
         : "Se perdió la ocupación del pedido; recupéralo nuevamente antes de continuar.");
       setMessage("El pedido ya no está ocupado por esta sesión");
-    });
-    const timer = window.setInterval(renew, 4 * 60 * 1000);
+    };
+    let stopped = false;
+    let timer = window.setTimeout(async function renewAndSchedule() {
+      try {
+        await client.renewRecoveredOrder(orderId);
+        if (!stopped) timer = window.setTimeout(renewAndSchedule, 4 * 60 * 1000);
+      } catch (caught) {
+        handleRenewalFailure(caught);
+      }
+    }, 4 * 60 * 1000);
     const releaseOnPageExit = () => {
       void client.releaseRecoveredOrder(orderId).catch(() => undefined);
     };
     window.addEventListener("pagehide", releaseOnPageExit);
     return () => {
-      window.clearInterval(timer);
+      stopped = true;
+      window.clearTimeout(timer);
       window.removeEventListener("pagehide", releaseOnPageExit);
     };
   }, [client, draft?.sourceOrderId]);
@@ -1897,6 +1911,8 @@ export default function PosPage() {
       const continueSavingOrder = saveOrderAfterCustomerSelection.current && Boolean(selection.customer);
       saveOrderAfterCustomerSelection.current = false;
       if (continueSavingOrder) {
+        setPricingTransition(false);
+        setMessage("Guardando pedido e inventario reservado…");
         const wasRecovered = Boolean(selection.draft.sourceOrderId);
         const saved = await client.saveOrder(selection.draft);
         setDraft(saved.nextDraft);
@@ -2262,15 +2278,30 @@ export default function PosPage() {
     },
     [client],
   );
+  const salesHistoryScope = useMemo(
+    () => ({
+      businessId: workstation.businessId,
+      warehouseId: workstation.warehouseId,
+      workSessionId: workstation.workSessionId ?? "",
+    }),
+    [workstation.businessId, workstation.warehouseId, workstation.workSessionId],
+  );
   const searchIssuedSales = useCallback(
-    (term: string, skip: number) =>
-      client?.searchIssuedSales(term, skip, 50) ??
-      Promise.resolve({
-        items: [],
-        hasMore: false,
-        nextOffset: null,
-      }),
-    [client],
+    (filters: import("@/services/pos/pos-edge-client").PosIssuedSaleFilters, skip: number) =>
+      searchServerIssuedSales(salesHistoryScope, filters, skip, 20),
+    [salesHistoryScope],
+  );
+  const searchHistoryCustomers = useCallback(
+    (search: string, skip: number) => searchServerHistoryCustomers(salesHistoryScope, search, skip, 10),
+    [salesHistoryScope],
+  );
+  const searchHistoryProducts = useCallback(
+    (search: string, skip: number) => searchServerHistoryProducts(salesHistoryScope, search, skip, 10),
+    [salesHistoryScope],
+  );
+  const loadIssuedSaleDetail = useCallback(
+    (sale: PosIssuedSaleSummary) => loadServerIssuedSaleReceipt(salesHistoryScope, sale.documentId.value),
+    [salesHistoryScope],
   );
 
   async function selectSearchProduct(product: PosCatalogProduct) {
@@ -3426,7 +3457,7 @@ export default function PosPage() {
                   )}
                 </div>
               </div>
-            ) : (
+            ) : !ordersExpanded ? (
               <OrdersWorkspace
                 key={`compact-orders-${ordersRefreshVersion}`}
                 compact
@@ -3449,7 +3480,8 @@ export default function PosPage() {
                 onCountChange={setOrdersCount}
                 onExpand={openOrders}
               />
-            )}
+            ) : null
+            }
           </section>
           )}
         </aside>
@@ -3651,6 +3683,9 @@ export default function PosPage() {
           busy={busy}
 
           onSearch={searchIssuedSales}
+          onSearchCustomers={searchHistoryCustomers}
+          onSearchProducts={searchHistoryProducts}
+          onDetail={loadIssuedSaleDetail}
           onReprint={reprintSale}
           onCancel={() => {
             setInvoiceSearchOpen(false);

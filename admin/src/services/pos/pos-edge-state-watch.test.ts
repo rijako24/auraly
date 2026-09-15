@@ -37,6 +37,6 @@ test("local state invalidations coalesce until the scheduled refresh runs", () =
 test("local state stream reconnects with bounded backoff", () => {
   assert.deepEqual(
     [0, 1, 2, 3, 4, 5, 20].map(posStateStreamReconnectDelay),
-    [500, 1_000, 2_000, 4_000, 5_000, 5_000, 5_000],
+    [1_000, 2_000, 4_000, 8_000, null, null, null],
   );
 });

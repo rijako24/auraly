@@ -56,14 +56,20 @@ export function PosSynchronizationEventsDialog({ open, client, serverConnected, 
   }, [client, open, refetchSynchronizationEvents]);
 
   useEffect(() => {
-    if (!open) return;
-    const timer = window.setInterval(() => {
+    if (!open || liveEvents.length === 0) return;
+    const current = Date.now();
+    const nextBoundary = Math.min(...liveEvents.flatMap(event => [
+      event.expiresAt - fadeForMs,
+      event.expiresAt,
+    ]).filter(boundary => boundary > current));
+    if (!Number.isFinite(nextBoundary)) return;
+    const timer = window.setTimeout(() => {
       const value = Date.now();
       setNow(value);
-      setLiveEvents(current => current.filter(event => event.expiresAt > value));
-    }, 250);
-    return () => window.clearInterval(timer);
-  }, [open]);
+      setLiveEvents(events => events.filter(event => event.expiresAt > value));
+    }, Math.max(0, nextBoundary - current));
+    return () => window.clearTimeout(timer);
+  }, [liveEvents, open]);
 
   useEffect(() => {
     if (!synchronizationEvents) return;

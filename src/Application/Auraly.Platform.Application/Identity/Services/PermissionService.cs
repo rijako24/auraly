@@ -42,21 +42,23 @@ public class PermissionService : IPermissionService
 
     public async Task SeedPermissionsAsync(CancellationToken ct)
     {
-        foreach (var (module, action, resource, description) in PermissionCatalog.All)
-        {
-            if (!await _unitOfWork.Permissions.ExistsByResourceAsync(resource, ct))
+        var existingResources = (await _unitOfWork.Permissions.GetAllAsync(ct))
+            .Select(permission => permission.Resource)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missing = PermissionCatalog.All
+            .Where(definition => !existingResources.Contains(definition.Resource))
+            .Select(definition => new Domain.Entities.Permission
             {
-                await _unitOfWork.Permissions.AddAsync(new Domain.Entities.Permission
-                {
-                    PermissionId = Guid.NewGuid(),
-                    Module = module,
-                    Action = action,
-                    Resource = resource,
-                    Description = description,
-                    CreatedAt = DateTime.UtcNow
-                }, ct);
-            }
-        }
+                PermissionId = Guid.NewGuid(),
+                Module = definition.Module,
+                Action = definition.Action,
+                Resource = definition.Resource,
+                Description = definition.Description,
+                CreatedAt = DateTime.UtcNow
+            })
+            .ToArray();
+        if (missing.Length > 0)
+            await _unitOfWork.Permissions.AddRangeAsync(missing, ct);
 
         await _unitOfWork.SaveChangesAsync(ct);
         await SyncSystemRolePermissionsAsync(ct);

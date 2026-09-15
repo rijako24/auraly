@@ -101,6 +101,7 @@ public static class PosOrdersApi
                         orderId,
                         new SellerOrdersApi.UpdateSellerOrderRequest(
                             request.CustomerId,
+                            request.PartySiteId,
                             request.Notes,
                             request.IdempotencyKey,
                             lines,
@@ -115,7 +116,7 @@ public static class PosOrdersApi
                             request.BusinessId,
                             request.WarehouseId,
                             request.CustomerId,
-                            null,
+                            request.PartySiteId,
                             null,
                             null,
                             false,

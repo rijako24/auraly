@@ -77,6 +77,8 @@ Se permiten varias colas cuando representan responsabilidades o stages diferente
 - Retry, backoff y dead-letter pertenecen a la politica del proceso. No se agrega otra cola para esconder un error permanente o saltar un trabajo bloqueante.
 - Service Bus, RabbitMQ e in-process son perfiles del mismo contrato. Las diferencias de infraestructura se resuelven en adapters.
 - Una cola nueva requiere propietario, contrato, clave de idempotencia, orden, retencion, retry, dead-letter, metricas y runbook.
+- En clientes web, push es el propietario de las invalidaciones operativas y no se complementa con polling periódico. Solo el heartbeat propietario de un lease activo puede repetir I/O: agenda después de completar, corre mientras el lease existe, vence antes que este y se detiene al fallar o liberar. Todos los canales WebSocket/SSE reutilizan una política única de reconexión con backoff, sin intentos simultáneos y con un número finito de fallos; al agotarse, un nuevo ciclo requiere visibilidad, conectividad o acción explícita.
+- Cada pantalla mantiene una sola instancia consultante por recurso y reutiliza la respuesta autoritativa de los comandos. Vistas ocultas, contadores y remounts no pueden duplicar lecturas ni convertir una invalidación en varias solicitudes.
 
 ### 6.1 Nómina
 

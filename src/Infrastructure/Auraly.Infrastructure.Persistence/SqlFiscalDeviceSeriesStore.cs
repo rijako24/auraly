@@ -181,36 +181,41 @@ public sealed class SqlFiscalDeviceSeriesStore(
         command.Parameters.AddWithValue("@CurrentSeriesId", (object?)currentSeriesId ?? DBNull.Value);
         command.Parameters.AddWithValue("@NextConsecutive", (object?)nextConsecutive ?? DBNull.Value);
 
-        var rows = new List<ProvisioningRow>();
+        ProvisioningRow? row = null;
         try
         {
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-                rows.Add(new ProvisioningRow(
+            if (await reader.ReadAsync(cancellationToken))
+                row = new ProvisioningRow(
                     reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
                     reader.GetString(3), reader.GetInt64(4), reader.GetInt64(5),
                     DateOnly.FromDateTime(reader.GetDateTime(6)),
                     DateOnly.FromDateTime(reader.GetDateTime(7)), reader.GetByte(8),
                     reader.GetString(9), reader.GetString(10), reader.GetString(11),
                     reader.GetInt64(12), reader.GetInt64(13),
-                    reader.GetInt32(14), reader.GetInt64(15), reader.GetBoolean(16)));
+                    reader.GetInt32(14), reader.GetInt64(15), reader.GetBoolean(16));
+
+            if (await reader.ReadAsync(cancellationToken))
+                throw new FiscalConfigurationValidationException(
+                    "El equipo tiene más de una serie fiscal activa para facturación.");
         }
         catch (SqlException exception) when (exception.Number is 51023 or 51027)
         {
             throw new FiscalConfigurationValidationException(exception.Message);
         }
 
-        var result = new List<PosFiscalSeriesProvisioning>(rows.Count);
-        foreach (var row in rows)
-        {
-            var material = await technicalKeys.ResolveAsync(
-                new FiscalKeyReference(tenantId, businessId, row.FiscalAuthorizationId,
-                    row.AuthorizationNumber,
-                    row.TechnicalKeyVersion, (FiscalEnvironment)row.Environment),
-                cancellationToken)
-                ?? throw new FiscalConfigurationValidationException(
-                    "La clave técnica de la resolución asignada no está disponible.");
-            result.Add(new PosFiscalSeriesProvisioning(
+        if (row is null) return [];
+
+        var material = await technicalKeys.ResolveAsync(
+            new FiscalKeyReference(tenantId, businessId, row.FiscalAuthorizationId,
+                row.AuthorizationNumber,
+                row.TechnicalKeyVersion, (FiscalEnvironment)row.Environment),
+            cancellationToken)
+            ?? throw new FiscalConfigurationValidationException(
+                "La clave técnica de la resolución asignada no está disponible.");
+        return
+        [
+            new PosFiscalSeriesProvisioning(
                 row.SeriesId, row.FiscalAuthorizationId, row.Prefix,
                 row.AuthorizationNumber, row.RangeStart, row.RangeEnd,
                 row.ValidUntil, row.Environment, material.SupplierTaxId,
@@ -219,9 +224,8 @@ public sealed class SqlFiscalDeviceSeriesStore(
                 row.AuthorizationRangeStart, row.AuthorizationRangeEnd,
                 row.ExpirationWarningDays,
                 row.RemainingNumberWarningThreshold,
-                row.ProductionActive));
-        }
-        return result;
+                row.ProductionActive)
+        ];
     }
 
     private sealed record ProvisioningRow(

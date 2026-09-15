@@ -174,6 +174,13 @@ consignación.
 
 La vista `/dashboard/cash-differences` queda consolidada como **Cierres de caja** y lista todos los cierres, no solo los que tienen diferencia. El detalle conserva ventas, devoluciones, ventas a crédito, periodo, usuario, sede, bodega y esperado/contado por medio. El POS solicita exactamente tres valores ciegos: `Cash`, `Card` y `Transfer`.
 
+`work-sessions.differences.read` autoriza la consulta de todos los cierres del
+tenant, sin restringirlos al usuario que abrió o cerró la sesión. Consultar la
+sesión activa propia (`work-sessions.read`) es independiente y no es requisito
+para abrir este historial. Solo `work-sessions.closures.reconcile` habilita la
+edición y confirmación de la conciliación; un visor conserva acceso de solo
+lectura al mismo detalle.
+
 Las diferencias nunca se presentan como números negativos: se rotulan `Sobrante`, `Faltante` o `Cuadra` y se muestra su valor absoluto. La calculadora de denominaciones no forma parte del cierre: se abre directamente desde ventas con `Ctrl+D`, consume el catálogo `cash-denomination` y puede imprimir una tirilla independiente sin abrir, cerrar ni modificar la sesión.
 
 La conciliación exige confirmar cada medio, registra valor verificado, motivo catalogado y snapshot inmutable. Puede reclasificar un faltante contra un sobrante —por ejemplo, transferencia registrada como efectivo— sin exceder las diferencias reales. El cierre contabiliza inicialmente cada diferencia contra `CashClosureDifferencesPending`; la conciliación lleva solo la diferencia genuina a ingreso/gasto y conserva trazabilidad e idempotencia. Si la reclasificación compensa exactamente ambos medios, los asientos del cierre ya forman la reclasificación y no se genera un asiento duplicado.

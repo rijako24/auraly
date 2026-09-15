@@ -161,6 +161,10 @@ public sealed class DianInvoiceUblBuilder
             MoneyElement("LineExtensionAmount", invoice.LineExtensionAmount, invoice.CurrencyCode),
             MoneyElement("TaxExclusiveAmount", invoice.TaxExclusiveAmount, invoice.CurrencyCode),
             MoneyElement("TaxInclusiveAmount", invoice.TaxInclusiveAmount, invoice.CurrencyCode),
+            invoice.DiscountAmount == 0
+                ? null
+                : MoneyElement("AllowanceTotalAmount", invoice.DiscountAmount,
+                    invoice.CurrencyCode),
             invoice.PayableRoundingAmount == 0
                 ? null
                 : MoneyElement("PayableRoundingAmount", invoice.PayableRoundingAmount,

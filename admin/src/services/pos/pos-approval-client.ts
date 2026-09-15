@@ -4,6 +4,10 @@ import {
   shouldMaintainApprovalRealtimeConnection,
 } from "./pos-approval-synchronization";
 import { fetchWithSessionRetry } from "@/services/api/client";
+import {
+  realtimeReconnectDelay,
+  wasRealtimeConnectionStable,
+} from "@/lib/realtime-reconnect-policy";
 
 export type PosApprovalRequest = {
   approvalRequestId: string;
@@ -139,6 +143,8 @@ export class PosApprovalClient {
     let connecting = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
+    let failedAttempts = 0;
+    let openedAt: number | null = null;
     const disconnect = () => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -148,11 +154,14 @@ export class PosApprovalClient {
     };
     const scheduleReconnect = () => {
       if (stopped || !shouldMaintainApprovalRealtimeConnection(document.visibilityState)) return;
+      const delay = realtimeReconnectDelay(failedAttempts);
+      failedAttempts += 1;
+      if (delay === null) return;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
         void connect();
-      }, 1_000);
+      }, delay);
     };
     const connect = async () => {
       if (stopped || connecting || socket ||
@@ -179,6 +188,7 @@ export class PosApprovalClient {
           );
           current.addEventListener("open", () => {
             window.clearTimeout(timeout);
+            openedAt = Date.now();
             resolve();
           }, { once: true });
           current.addEventListener("error", () => {
@@ -189,6 +199,8 @@ export class PosApprovalClient {
         current.addEventListener("close", () => {
           if (stopped || socket !== current) return;
           socket = null;
+          if (wasRealtimeConnectionStable(openedAt, Date.now())) failedAttempts = 0;
+          openedAt = null;
           scheduleReconnect();
         });
         onApprovalsChanged();
@@ -200,7 +212,10 @@ export class PosApprovalClient {
       }
     };
     const visibilityChanged = () => {
-      if (shouldMaintainApprovalRealtimeConnection(document.visibilityState)) void connect();
+      if (shouldMaintainApprovalRealtimeConnection(document.visibilityState)) {
+        failedAttempts = 0;
+        void connect();
+      }
       else disconnect();
     };
     document.addEventListener("visibilitychange", visibilityChanged);

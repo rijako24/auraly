@@ -35,7 +35,6 @@ public sealed class OrderBatchService(
     OrderService orders,
     OrderRecoveryService recovery,
     OnlineSalesDraftService drafts,
-    OnlineSalesHistoryService history,
     OnlineSalesCheckoutService checkout)
 {
     private static readonly HashSet<string> PaymentMethods =
@@ -46,6 +45,7 @@ public sealed class OrderBatchService(
         "CreditCard",
         "Transfer"
     ];
+    private const int ProgressCheckpointSize = 5;
 
     public async Task<InvoiceOrdersResponse> InvoiceAsync(
         OrderActor actor,
@@ -59,6 +59,16 @@ public sealed class OrderBatchService(
             actor.UserId,
             actor.TenantId,
             actor.Permissions);
+        var hash = RequestHash(request, normalizedOrders);
+        var lease = await batches.BeginAsync(
+            actor,
+            request with { OrderIds = normalizedOrders },
+            idempotencyKey.Trim(),
+            hash,
+            cancellationToken);
+        if (lease.Replay is not null)
+            return lease.Replay with { IsReplay = true };
+
         if (request.PaymentMethodCode == "Credit")
         {
             var creditIssues = await checkout.ValidateOrderCreditBatchAsync(
@@ -67,7 +77,8 @@ public sealed class OrderBatchService(
                 normalizedOrders,
                 cancellationToken);
             if (creditIssues.Count > 0)
-                return new InvoiceOrdersResponse(
+            {
+                var rejected = new InvoiceOrdersResponse(
                     Guid.Empty,
                     "CreditRejected",
                     normalizedOrders.Length,
@@ -83,34 +94,42 @@ public sealed class OrderBatchService(
                             issue.RequestedAmount,
                             issue.AvailableCredit,
                             issue.Reason)).ToArray());
+                await batches.SaveProgressAsync(
+                    actor,
+                    lease.OperationId,
+                    lease.LeaseToken,
+                    rejected,
+                    completed: true,
+                    cancellationToken);
+                return rejected;
+            }
         }
-        var hash = RequestHash(request, normalizedOrders);
-        var lease = await batches.BeginAsync(
-            actor,
-            request with { OrderIds = normalizedOrders },
-            idempotencyKey.Trim(),
-            hash,
-            cancellationToken);
-        if (lease.Replay is not null)
-            return lease.Replay with { IsReplay = true };
 
+        var batchOrders = await orders.GetBatchAsync(
+            actor, normalizedOrders, cancellationToken);
+        var settlementWarmup = checkout.WarmSettlementBatchAsync(
+            identity,
+            actor.BusinessId,
+            batchOrders.Values
+                .Where(order => order.CustomerId.HasValue)
+                .Select(order => order.CustomerId!.Value)
+                .Distinct()
+                .ToArray(),
+            cancellationToken);
         var preparedOrders = new Dictionary<Guid, OrderDetail>();
         var preparationFailures = new Dictionary<Guid, string>();
         foreach (var orderId in normalizedOrders)
         {
             try
             {
-                var order = await orders.GetAsync(actor, orderId, cancellationToken);
+                if (!batchOrders.TryGetValue(orderId, out var order))
+                    throw new OrderNotFoundException("El pedido no existe en esta sede.");
                 if (order.WarehouseId is null)
                     throw new OrderConflictException(
                         "El pedido no tiene una bodega de venta asignada y no puede emitirse.");
                 if (order.WarehouseId != request.WarehouseId)
                     throw new OrderConflictException(
                         "El pedido pertenece a otra bodega de venta. Ábrelo desde la bodega asignada.");
-                if (order.InvoiceDocumentId is null)
-                    await checkout.PrepareSourceOrderInventoryAsync(
-                        identity, actor.BusinessId, order.OrderId,
-                        request.WarehouseId, cancellationToken);
                 preparedOrders.Add(orderId, order);
             }
             catch (Exception exception) when (IsRecoverableOrderFailure(exception))
@@ -118,10 +137,12 @@ public sealed class OrderBatchService(
                 preparationFailures.Add(orderId, exception.Message);
             }
         }
+        await settlementWarmup;
 
         var results = new List<InvoiceOrderResult>(normalizedOrders.Length);
         var completed = 0;
         var failed = 0;
+        OnlineSalesDraft? currentDraft = null;
 
         foreach (var orderId in normalizedOrders)
         {
@@ -135,7 +156,8 @@ public sealed class OrderBatchService(
                     null,
                     preparationError));
                 failed++;
-                await SaveProgressAsync(false);
+                if (ShouldCheckpointProgress())
+                    await SaveProgressAsync(false);
                 continue;
             }
 
@@ -155,7 +177,7 @@ public sealed class OrderBatchService(
                     continue;
                 }
 
-                var draft = await drafts.OpenAsync(
+                var draft = currentDraft ?? await drafts.OpenAsync(
                     identity,
                     new OpenOnlineSalesDraftRequest(
                         new OnlineSalesDraftContext(
@@ -163,14 +185,18 @@ public sealed class OrderBatchService(
                             request.WarehouseId,
                             request.WorkSessionId)),
                     cancellationToken);
-                if (draft.SourceOrderId is null)
+                if (draft.SourceOrderId is null || draft.SourceOrderId == orderId)
                 {
-                    if (draft.Lines.Count != 0)
+                    if (draft.SourceOrderId is null && draft.Lines.Count != 0)
                         throw new OrderConflictException(
                             "La venta activa tiene productos. Páusala o reiníciala antes de facturar pedidos seleccionados.");
-                    var recovered = await recovery.RecoverAsync(
+                    // A previously recovered draft can be older than the order when
+                    // the customer, site or lines were edited afterwards. Reimporting
+                    // that same source is the canonical atomic refresh and prevents
+                    // issuing the stale commercial snapshot.
+                    draft = await recovery.RecoverKnownAsync(
                         actor,
-                        orderId,
+                        order,
                         new RecoverOrderIntoSaleRequest(
                             request.WorkSessionId,
                             request.UserId,
@@ -178,14 +204,8 @@ public sealed class OrderBatchService(
                             draft.Version),
                         OperationKey(lease.OperationId, orderId, "recover"),
                         cancellationToken);
-                    draft = draft with
-                    {
-                        Version = recovered.DraftVersion,
-                        PayableAmount = recovered.PayableAmount,
-                        SourceOrderId = orderId
-                    };
                 }
-                else if (draft.SourceOrderId != orderId)
+                else
                 {
                     throw new OrderConflictException(
                         "La venta activa contiene otro pedido pendiente de completar.");
@@ -200,24 +220,12 @@ public sealed class OrderBatchService(
                     : request.PaymentReference;
                 var creditSale = paymentMethod == "Credit";
                 var documentType = request.DocumentType;
-                if (order.CustomerId is not null &&
-                    request.DocumentType == PosSaleDocumentTypes.Receipt)
-                {
-                    var customer = await history.GetCustomerAsync(
-                        identity,
-                        new GetOnlineSalesCustomerRequest(
-                            new OnlineSalesDraftContext(
-                                actor.BusinessId,
-                                request.WarehouseId,
-                                request.WorkSessionId),
-                            order.CustomerId.Value),
-                        cancellationToken);
-                    if (customer?.RequiresElectronicInvoice == true)
-                        documentType = PosSaleDocumentTypes.Invoice;
-                }
-                var issued = await checkout.CompleteAsync(
+                if (request.DocumentType == PosSaleDocumentTypes.Receipt &&
+                    order.CustomerRequiresElectronicInvoice)
+                    documentType = PosSaleDocumentTypes.Invoice;
+                var issued = await checkout.CompleteKnownDraftAsync(
                     identity,
-                    draft.DraftId,
+                    draft,
                     new CompleteOnlineSalesDraftRequest(
                         draft.Version,
                         creditSale
@@ -244,6 +252,7 @@ public sealed class OrderBatchService(
                     issued.Receipt.DocumentNumber,
                     null,
                     issued.Receipt));
+                currentDraft = issued.NextDraft;
                 completed++;
             }
             catch (Exception exception) when (IsRecoverableOrderFailure(exception))
@@ -260,6 +269,7 @@ public sealed class OrderBatchService(
                 // Batch invoicing has no cashier editing the recovered draft.
                 // Always clear it (or at least release its lease) so a failed
                 // item cannot leave the order occupied for another register.
+                var draftIsReadyForNextOrder = false;
                 try
                 {
                     var active = await drafts.OpenAsync(
@@ -271,15 +281,28 @@ public sealed class OrderBatchService(
                                 request.WorkSessionId)),
                         CancellationToken.None);
                     if (active.SourceOrderId == orderId)
-                        await drafts.ResetAfterFailedOrderAsync(
+                    {
+                        currentDraft = await drafts.ResetAfterFailedOrderAsync(
                             identity,
                             active.DraftId,
                             new ResetOnlineSalesDraftRequest(active.Version),
                             OperationKey(lease.OperationId, orderId, "cleanup"),
                             CancellationToken.None);
+                        draftIsReadyForNextOrder = true;
+                    }
+                    else if (active.SourceOrderId is null && active.Lines.Count == 0)
+                    {
+                        currentDraft = active;
+                        draftIsReadyForNextOrder = true;
+                    }
                 }
-                catch
+                catch (Exception cleanupError)
                 {
+                    var prior = results[^1];
+                    results[^1] = prior with
+                    {
+                        Error = $"{prior.Error} No fue posible limpiar la venta activa: {cleanupError.Message}"
+                    };
                     try
                     {
                         await orders.ReleaseClaimAsync(
@@ -296,12 +319,14 @@ public sealed class OrderBatchService(
                     }
                 }
 
-                // Do not continue: the next order must never reuse a draft
-                // whose cleanup outcome is uncertain.
-                break;
+                // Continue only after proving that the canonical draft is clean.
+                // An uncertain cleanup must never leak one order into the next.
+                if (!draftIsReadyForNextOrder)
+                    break;
             }
 
-            await SaveProgressAsync(false);
+            if (ShouldCheckpointProgress())
+                await SaveProgressAsync(false);
         }
 
         var final = BuildResponse(false);
@@ -336,6 +361,10 @@ public sealed class OrderBatchService(
                 BuildResponse(false),
                 done,
                 cancellationToken);
+
+        bool ShouldCheckpointProgress() =>
+            results.Count < normalizedOrders.Length &&
+            (failed > 0 || results.Count % ProgressCheckpointSize == 0);
     }
 
     private static void Validate(
@@ -413,5 +442,6 @@ public sealed class OrderBatchService(
             OrderValidationException or
             OrderNotFoundException or
             OnlineSalesDraftValidationException or
-            OnlineSalesDraftConcurrencyException;
+            OnlineSalesDraftConcurrencyException or
+            PosSaleInvalidException;
 }

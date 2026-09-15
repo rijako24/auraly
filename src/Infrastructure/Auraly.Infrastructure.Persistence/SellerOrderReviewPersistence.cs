@@ -6,6 +6,7 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed record EditableSellerOrder(
     string Number,
     Guid CustomerId,
+    Guid PartySiteId,
     int Status,
     Guid WarehouseId,
     Guid OrdersWarehouseId,
@@ -53,19 +54,21 @@ public static class SellerOrderReviewPersistence
         ]);
         string number;
         Guid customerId;
+        Guid partySiteId;
         int status;
         Guid warehouseId;
         Guid ordersWarehouseId;
         var lines = new List<EditableSellerOrderLine>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
-            if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1) || reader.IsDBNull(3) || reader.IsDBNull(4))
+            if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1) || reader.IsDBNull(2) || reader.IsDBNull(4) || reader.IsDBNull(5))
                 return null;
             number = reader.GetString(0);
             customerId = reader.GetGuid(1);
-            status = reader.GetInt32(2);
-            warehouseId = reader.GetGuid(3);
-            ordersWarehouseId = reader.GetGuid(4);
+            partySiteId = reader.GetGuid(2);
+            status = reader.GetInt32(3);
+            warehouseId = reader.GetGuid(4);
+            ordersWarehouseId = reader.GetGuid(5);
             if (!await reader.NextResultAsync(cancellationToken))
                 return null;
             while (await reader.ReadAsync(cancellationToken))
@@ -83,7 +86,7 @@ public static class SellerOrderReviewPersistence
                 lines.Add(line);
             }
         }
-        return new EditableSellerOrder(number, customerId, status, warehouseId, ordersWarehouseId, lines);
+        return new EditableSellerOrder(number, customerId, partySiteId, status, warehouseId, ordersWarehouseId, lines);
     }
 
     public static async Task UpdateMetadataAsync(
@@ -113,6 +116,7 @@ public static class SellerOrderReviewPersistence
         Guid orderId,
         Guid businessId,
         Guid customerId,
+        Guid partySiteId,
         string customerName,
         string? customerIdentification,
         string? customerEmail,
@@ -134,6 +138,7 @@ public static class SellerOrderReviewPersistence
             update.Parameters.AddRange([
                 Parameter("@Notes", notes),
                 Parameter("@CustomerId", customerId),
+                Parameter("@PartySiteId", partySiteId),
                 Parameter("@CustomerName", customerName),
                 Parameter("@CustomerIdentification", customerIdentification),
                 Parameter("@CustomerEmail", customerEmail),

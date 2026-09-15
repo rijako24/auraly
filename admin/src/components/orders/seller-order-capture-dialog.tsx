@@ -194,7 +194,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
       let synchronized = online;
       let result: SellerOrderResult;
       if (editing) {
-        result = await sellerOrdersApi.update(editing.orderId,{customerId:stop.customerId,notes:request.notes,idempotencyKey:crypto.randomUUID(),lines:request.lines});
+        result = await sellerOrdersApi.update(editing.orderId,{customerId:stop.customerId,partySiteId:stop.partySiteId,notes:request.notes,idempotencyKey:crypto.randomUUID(),lines:request.lines});
       } else if (localFirst) {
         result = await queueSellerOrder(userId, request, route, localDateKey());
         synchronized = false;
@@ -202,7 +202,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
         if (!online) throw new Error("Prepara el teléfono con conexión antes de tomar pedidos sin Internet.");
         result = await sellerOrdersApi.create(request);
       }
-      if (!editing) await saveSellerOrderSnapshot({idempotencyKey:request.idempotencyKey,userId,orderId:result.orderId,orderNumber:result.orderNumber,businessId,warehouseId,routeId:request.routeId,customerName:stop.customerName,total:synchronized?result.total:total,lineCount:selected.length,operationalDate:localDateKey(),createdAt:new Date().toISOString(),status:result.status,synchronized});
+      if (!editing) await saveSellerOrderSnapshot({idempotencyKey:request.idempotencyKey,userId,orderId:result.orderId,orderNumber:result.orderNumber,businessId,warehouseId,routeId:request.routeId,customerId:stop.customerId,partySiteId:stop.partySiteId,partySiteName:stop.siteName,customerName:stop.customerName,total:synchronized?result.total:total,lineCount:selected.length,operationalDate:localDateKey(),createdAt:new Date().toISOString(),status:result.status,synchronized});
       await removeSellerDraft(key);
       if (!synchronized) { toast.info("Pedido guardado en este dispositivo", { description: online ? "Ya aparece en Pedidos y se está sincronizando en segundo plano." : "Aparece en Pedidos y se enviará automáticamente cuando regrese la conexión." }); window.dispatchEvent(new Event(SELLER_ORDER_SYNC_REQUEST_EVENT)); }
       else toast.success(result.requiresReview ? `${result.orderNumber} quedó en revisión` : editing?`${result.orderNumber} actualizado`:`${result.orderNumber} guardado`);

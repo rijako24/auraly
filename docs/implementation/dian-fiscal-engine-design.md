@@ -78,10 +78,13 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   reserva cupo una sola vez, crea el job y payload durables faltantes y continúa
   por el procesador canónico; conserva `DocumentId`, número, CUFE e idempotencia.
 - Los descuentos capturados por línea se informan en
-  `InvoiceLine/AllowanceCharge`, incluido `MultiplierFactorNumeric`, y ya están
-  reflejados en `LineExtensionAmount`. No se copian a
-  `LegalMonetaryTotal/AllowanceTotalAmount`, reservado por el anexo 1.9 para
-  descuentos globales del documento.
+  `InvoiceLine/AllowanceCharge`, incluido `MultiplierFactorNumeric`. El total
+  legal conserva el bruto antes de descuentos en `LineExtensionAmount`, el neto
+  gravable en `TaxExclusiveAmount` y la suma de descuentos en
+  `AllowanceTotalAmount`; así `PayableAmount` reconcilia como bruto menos
+  descuentos más tributos y ajuste al peso. Esta representación es única para
+  factura, nota crédito y documento soporte y evita las reglas DIAN FAU08,
+  FBE01 y FAU14.
 - Timeout con `TrackId`: pasa a consulta, no crea otro documento.
 - Timeout ambiguo sin `TrackId`: queda `PendingDianResult` para intervención/consulta; la retransmisión automática queda bloqueada.
 - POS: el cursor solo avanza después de persistir la página; reiniciar no pierde venta, estado ni outbox.

@@ -68,10 +68,10 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Seller_order_is_projected_and_aggregated_by_seller()
     {
-        var orderId=Guid.NewGuid();var sellerId=Guid.NewGuid();var customerId=Guid.NewGuid();
+        var orderId=Guid.NewGuid();var sellerId=Guid.NewGuid();var customerId=Guid.NewGuid();var partySiteId=Guid.NewGuid();
         var source=new CommercialOrderProjectionSource(fixture.TenantId,fixture.BusinessId,orderId,
             new DateOnly(2026,7,27),new DateTimeOffset(2026,7,27,14,0,0,TimeSpan.Zero),"PED-REPORT-1",
-            sellerId,"Vendedor proyectado",customerId,"Cliente proyectado",null,125000m,2,false);
+            sellerId,"Vendedor proyectado",customerId,"Cliente proyectado",null,125000m,2,false,partySiteId);
         var payload=System.Text.Json.JsonSerializer.Serialize(source,new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
         var hash=System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload));
         await using(var connection=new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString))
@@ -84,6 +84,11 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
         using var client=fixture.CreateAdminClient(SalesReportingPermissionCodes.Read);
         var rows=await client.GetFromJsonAsync<SellerOrderReportRow[]>("/api/commerce/v1/sales-reports/seller-orders?from=2026-07-27&to=2026-07-27");
         var row=Assert.Single(rows??[],x=>x.SellerId==sellerId);Assert.Equal(1,row.OrderCount);Assert.Equal(125000m,row.OrderAmount);Assert.Equal(1,row.ConfirmedCount);Assert.Equal(0,row.InvoicedCount);
+        await using var verifyConnection=new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();await using var verify=verifyConnection.CreateCommand();
+        verify.CommandText="SELECT PartySiteId FROM reporting.CommercialReportOrderFacts WHERE OrderId=@OrderId";
+        verify.Parameters.AddWithValue("@OrderId",orderId);
+        Assert.Equal(partySiteId,(Guid)(await verify.ExecuteScalarAsync())!);
     }
 
     [Fact]

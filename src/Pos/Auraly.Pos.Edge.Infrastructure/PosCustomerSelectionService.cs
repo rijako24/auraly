@@ -17,6 +17,8 @@ public sealed class PosCustomerSelectionService(
         Guid? partySiteId,
         CancellationToken cancellationToken = default)
     {
+        if (customerId.HasValue != partySiteId.HasValue)
+            throw new ArgumentException("Customer and site must be selected together.");
         var customer = customerId is null
             ? null
             : await catalog.GetCustomerAsync(customerId.Value, cancellationToken)
@@ -24,9 +26,8 @@ public sealed class PosCustomerSelectionService(
         PosCustomerSite? site = null;
         if (customer is not null)
         {
-            site = partySiteId is { } selectedSiteId
-                ? customer.Sites?.SingleOrDefault(value => value.PartySiteId == selectedSiteId)
-                : customer.Sites?.FirstOrDefault(value => value.IsPrimary) ?? customer.Sites?.FirstOrDefault();
+            site = customer.Sites?.SingleOrDefault(
+                value => value.PartySiteId == partySiteId!.Value);
             if (site is null)
                 throw new KeyNotFoundException(
                     "The customer site is not available in the local POS catalog.");

@@ -126,10 +126,21 @@ jobs:
             $connection.AccessToken = $token
             try {
               $connection.Open()
-              $command = $connection.CreateCommand()
-              $command.CommandTimeout = 120
-              $command.CommandText = Get-Content database/Auraly.Database/Scripts/Migrations/20260824_MoveFiscalCredentialsToTenant.sql -Raw
-              [void]$command.ExecuteNonQuery()
+              foreach ($migration in @(
+                'database/Auraly.Database/Scripts/Migrations/20260824_MoveFiscalCredentialsToTenant.sql',
+                'database/Auraly.Database/Scripts/Migrations/20260914_BackfillSellerOrderSites.sql')) {
+                $contents = Get-Content -LiteralPath $migration -Raw
+                $batches = [Text.RegularExpressions.Regex]::Split(
+                  $contents,
+                  '(?im)^\s*GO\s*(?:--.*)?$')
+                foreach ($batch in $batches) {
+                  if ([string]::IsNullOrWhiteSpace($batch)) { continue }
+                  $command = $connection.CreateCommand()
+                  $command.CommandTimeout = 120
+                  $command.CommandText = $batch
+                  [void]$command.ExecuteNonQuery()
+                }
+              }
             } finally {
               $connection.Dispose()
             }

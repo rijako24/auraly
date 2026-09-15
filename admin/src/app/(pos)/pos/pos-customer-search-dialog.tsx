@@ -71,6 +71,7 @@ export function PosCustomerSearchDialog({
       void onSearch(term.trim(), 0)
         .then((page) => {
           if (requestVersion.current !== version) return;
+          page.items.forEach(requireCustomerSiteKey);
           setResults(page.items);
           setSelected(0);
           setHasMore(page.hasMore);
@@ -102,9 +103,10 @@ export function PosCustomerSearchDialog({
     setLoadingMore(true);
     try {
       const page = await onSearch(term.trim(), nextOffset);
+      page.items.forEach(requireCustomerSiteKey);
       setResults((current) => {
-        const known = new Set(current.map((customer) => customer.partySiteId ?? customer.customerId));
-        return [...current, ...page.items.filter((customer) => !known.has(customer.partySiteId ?? customer.customerId))];
+        const known = new Set(current.map(requireCustomerSiteKey));
+        return [...current, ...page.items.filter((customer) => !known.has(requireCustomerSiteKey(customer)))];
       });
       setHasMore(page.hasMore);
       setNextOffset(page.nextOffset);
@@ -186,7 +188,7 @@ export function PosCustomerSearchDialog({
               if (list.scrollHeight - list.scrollTop - list.clientHeight < 100) void loadMore();
             }}>
               {results.map((customer, index) => (
-                <button key={customer.partySiteId ?? customer.customerId} type="button" disabled={busy}
+                <button key={customer.partySiteId!} type="button" disabled={busy}
                   ref={(element) => { if (element) resultButtons.current.set(index, element); else resultButtons.current.delete(index); }}
                   onFocus={() => { setSelected(index); if (index === results.length - 1) void loadMore(); }}
                   onKeyDown={(event) => {
@@ -216,6 +218,12 @@ export function PosCustomerSearchDialog({
       </section>
     </div>
   );
+}
+
+function requireCustomerSiteKey(customer: PosCustomer): string {
+  if (!customer.partySiteId)
+    throw new Error(`El cliente ${customer.name} no tiene una sede operativa.`);
+  return customer.partySiteId;
 }
 
 function PosCustomerCreateForm({ busy, onCountries, onDivisions, onCities, onCreate, onBack }: {

@@ -407,32 +407,46 @@ public sealed class PosDraftStore
             current.Any(line => updates.All(value => value.LineId != line.LineId)))
             throw new InvalidOperationException("Every active line must receive exactly one update.");
 
+        var currentByLine = current.ToDictionary(line => line.LineId);
         foreach (var update in updates)
         {
-            var line = current.Single(value => value.LineId == update.LineId);
+            var line = currentByLine[update.LineId];
             if (!line.AllowsDocumentCostOverride && update.DocumentUnitCost != line.DocumentUnitCost)
                 throw new InvalidOperationException("El costo de un producto con inventario se determina por la valoración de existencias.");
             if (update.Discount > line.Quantity * update.UnitPrice)
                 throw new ArgumentOutOfRangeException(nameof(updates), "Discount cannot exceed line value.");
-            var affected = await ExecuteAsync(connection, transaction, """
-                UPDATE PosDraftLines
-                SET Description=@Description,UnitPrice=@UnitPrice,DocumentUnitCost=@DocumentUnitCost,
-                    Discount=@Discount,
-                    IsPriceOverridden=CASE WHEN UnitPrice<>@UnitPrice THEN 1 ELSE IsPriceOverridden END,
-                    PromotionDiscount=CASE WHEN UnitPrice<>@UnitPrice THEN '0' ELSE PromotionDiscount END
-                WHERE DraftId=@DraftId AND LineId=@LineId;
-                """,
-                [
-                    P("@Description", update.Description.Trim()),
-                    P("@UnitPrice", update.UnitPrice),
-                    P("@DocumentUnitCost", update.DocumentUnitCost),
-                    P("@Discount", update.Discount),
-                    P("@DraftId", draftId.Value),
-                    P("@LineId", update.LineId)
-                ], cancellationToken);
-            if (affected != 1)
-                throw new KeyNotFoundException("The draft line does not exist.");
         }
+
+        var normalized = updates.Select(update => new
+        {
+            update.LineId,
+            Description = update.Description.Trim(),
+            update.UnitPrice,
+            update.DocumentUnitCost,
+            update.Discount
+        }).ToArray();
+        var affected = await ExecuteAsync(connection, transaction, """
+            UPDATE PosDraftLines AS target
+            SET Description=json_extract(input.value,'$.Description'),
+                UnitPrice=json_extract(input.value,'$.UnitPrice'),
+                DocumentUnitCost=json_extract(input.value,'$.DocumentUnitCost'),
+                Discount=json_extract(input.value,'$.Discount'),
+                IsPriceOverridden=CASE
+                  WHEN target.UnitPrice<>json_extract(input.value,'$.UnitPrice')
+                  THEN 1 ELSE target.IsPriceOverridden END,
+                PromotionDiscount=CASE
+                  WHEN target.UnitPrice<>json_extract(input.value,'$.UnitPrice')
+                  THEN '0' ELSE target.PromotionDiscount END
+            FROM json_each(@UpdatesJson) input
+            WHERE target.DraftId=@DraftId
+              AND target.LineId=json_extract(input.value,'$.LineId');
+            """,
+            [
+                P("@UpdatesJson", JsonSerializer.Serialize(normalized)),
+                P("@DraftId", draftId.Value)
+            ], cancellationToken);
+        if (affected != updates.Count)
+            throw new KeyNotFoundException("One or more draft lines no longer exist.");
 
         await TouchAsync(connection, transaction, draftId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -483,19 +497,23 @@ public sealed class PosDraftStore
         DraftId draftId,
         Guid? customerId,
         Guid? sellerId,
+        Guid? customerPartySiteId = null,
         CancellationToken cancellationToken = default)
     {
+        if (customerId.HasValue != customerPartySiteId.HasValue)
+            throw new ArgumentException("Customer and site must be assigned together.");
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
         await RequireActiveAsync(connection, transaction, draftId, cancellationToken);
         await ExecuteAsync(connection, transaction, """
             UPDATE PosDrafts
-            SET CustomerPartySiteId=CASE WHEN CustomerId=@CustomerId THEN CustomerPartySiteId ELSE NULL END,
+            SET CustomerPartySiteId=@CustomerPartySiteId,
                 CustomerId=@CustomerId,SellerId=@SellerId,UpdatedAt=@Now
             WHERE DraftId=@DraftId;
             """,
             [
-                P("@CustomerId", customerId), P("@SellerId", sellerId),
+                P("@CustomerId", customerId), P("@CustomerPartySiteId", customerPartySiteId),
+                P("@SellerId", sellerId),
                 P("@Now", Now()), P("@DraftId", draftId.Value)
             ],
             cancellationToken);
@@ -510,6 +528,8 @@ public sealed class PosDraftStore
         IReadOnlyCollection<PosDraftLinePriceUpdate> prices,
         CancellationToken cancellationToken = default)
     {
+        if (customerId.HasValue != customerPartySiteId.HasValue)
+            throw new ArgumentException("Customer and site must be assigned together.");
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
         await RequireActiveAsync(connection, transaction, draftId, cancellationToken);
@@ -522,39 +542,43 @@ public sealed class PosDraftStore
             current.Lines.Any(line => prices.All(value => value.LineId != line.LineId)))
             throw new InvalidOperationException("Every active line must receive exactly one price.");
 
+        var currentByLine = current.Lines.ToDictionary(line => line.LineId);
         foreach (var price in prices)
         {
             if (price.BaseUnitPrice < 0 || price.UnitPrice < 0)
                 throw new ArgumentOutOfRangeException(nameof(prices), "Prices cannot be negative.");
-            var line = current.Lines.Single(value => value.LineId == price.LineId);
+            var line = currentByLine[price.LineId];
             if (line.Discount + price.PromotionDiscount > line.Quantity * price.UnitPrice)
                 throw new InvalidOperationException(
                     "The existing discount exceeds the selected customer's price.");
-            await ExecuteAsync(connection, transaction, """
-                UPDATE PosDraftLines
-                SET BaseUnitPrice=@BaseUnitPrice,UnitPrice=@UnitPrice,
-                    CurrencyCode=@CurrencyCode,PriceSource=@PriceSource,
-                    PriceChannelId=@PriceChannelId,PromotionDiscount=@PromotionDiscount
-                WHERE DraftId=@DraftId AND LineId=@LineId;
-                """,
-                [
-                    P("@BaseUnitPrice", price.BaseUnitPrice),
-                    P("@UnitPrice", price.UnitPrice),
-                    P("@CurrencyCode", price.CurrencyCode.Trim().ToUpperInvariant()),
-                    P("@PriceSource", price.PriceSource),
-                    P("@PriceChannelId", price.PriceChannelId),
-                    P("@PromotionDiscount", price.PromotionDiscount),
-                    P("@DraftId", draftId.Value),
-                    P("@LineId", price.LineId)
-                ],
-                cancellationToken);
         }
+        var normalizedPrices = prices.Select(price => new
+        {
+            price.LineId,
+            price.BaseUnitPrice,
+            price.UnitPrice,
+            CurrencyCode = price.CurrencyCode.Trim().ToUpperInvariant(),
+            price.PriceSource,
+            price.PriceChannelId,
+            price.PromotionDiscount
+        }).ToArray();
         await ExecuteAsync(connection, transaction, """
+            UPDATE PosDraftLines AS target
+            SET BaseUnitPrice=json_extract(input.value,'$.BaseUnitPrice'),
+                UnitPrice=json_extract(input.value,'$.UnitPrice'),
+                CurrencyCode=json_extract(input.value,'$.CurrencyCode'),
+                PriceSource=json_extract(input.value,'$.PriceSource'),
+                PriceChannelId=json_extract(input.value,'$.PriceChannelId'),
+                PromotionDiscount=json_extract(input.value,'$.PromotionDiscount')
+            FROM json_each(@PricesJson) input
+            WHERE target.DraftId=@DraftId
+              AND target.LineId=json_extract(input.value,'$.LineId');
             UPDATE PosDrafts
             SET CustomerId=@CustomerId,CustomerPartySiteId=@CustomerPartySiteId,UpdatedAt=@Now
             WHERE DraftId=@DraftId;
             """,
             [
+                P("@PricesJson", JsonSerializer.Serialize(normalizedPrices)),
                 P("@CustomerId", customerId),
                 P("@CustomerPartySiteId", customerPartySiteId),
                 P("@Now", Now()),

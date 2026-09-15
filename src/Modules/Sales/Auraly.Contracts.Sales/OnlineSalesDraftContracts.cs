@@ -175,7 +175,14 @@ public sealed record SearchOnlineSalesIssuedSalesRequest(
     OnlineSalesDraftContext Context,
     string? Search = null,
     int Skip = 0,
-    int Take = 50);
+    int Take = 50,
+    Guid? CustomerId = null,
+    Guid? PartySiteId = null,
+    DateOnly? From = null,
+    DateOnly? To = null,
+    Guid? ProductId = null,
+    decimal? MinimumTotal = null,
+    decimal? MaximumTotal = null);
 
 public sealed record OnlineSalesIssuedSale(
     Guid DocumentId,

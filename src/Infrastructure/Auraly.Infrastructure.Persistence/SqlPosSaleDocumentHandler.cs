@@ -48,11 +48,13 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             return;
         }
         await ValidateWorkSessionAsync(session, request, cancellationToken);
+        var inventoryWarehouseId = await ResolveInventoryWarehouseAsync(
+            session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
             await ValidateDocumentCostAsync(session, request.BusinessId, line, cancellationToken);
             await InsertInventoryMovementAsync(
-                session, request, line, cancellationToken);
+                session, request, inventoryWarehouseId, line, cancellationToken);
             await InsertLineAsync(session, request, line, cancellationToken);
         }
 
@@ -200,6 +202,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
     private async Task InsertInventoryMovementAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
+        Guid inventoryWarehouseId,
         PosSaleLineContract line,
         CancellationToken cancellationToken)
     {
@@ -207,7 +210,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             session,
             new InventoryLedgerPosting(
                 request.BusinessId,
-                request.WarehouseId,
+                inventoryWarehouseId,
                 line.ProductId,
                 request.DocumentId,
                 request.CommercialSnapshot.DocumentType,
@@ -218,6 +221,32 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 InventoryValuationMode.AverageCost,
                 request.CommercialSnapshot.IssuedAt),
             cancellationToken);
+    }
+
+    private static async Task<Guid> ResolveInventoryWarehouseAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.SourceOrderId is null)
+            return request.WarehouseId;
+
+        const string sql = """
+            SELECT orders.OrdersWarehouseId
+            FROM dbo.Orders orders WITH(UPDLOCK,HOLDLOCK)
+            WHERE orders.OrderId=@OrderId
+              AND orders.BusinessId=@BusinessId
+              AND orders.CustomerConfirmed=1
+              AND orders.Status IN (2,4)
+              AND orders.OrdersWarehouseId IS NOT NULL;
+            """;
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@OrderId", request.SourceOrderId.Value);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        if (await command.ExecuteScalarAsync(cancellationToken) is not Guid warehouseId)
+            throw new InvalidOperationException(
+                "El pedido de origen no tiene una reserva de inventario válida en la bodega PED.");
+        return warehouseId;
     }
 
     private static async Task ValidateDocumentCostAsync(
@@ -248,13 +277,6 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
     {
         if (request.SourceOrderId is null) return;
         const string sql = """
-            IF NOT EXISTS (
-                SELECT 1 FROM dbo.Orders WITH (UPDLOCK,HOLDLOCK)
-                WHERE OrderId=@OrderId AND BusinessId=@BusinessId
-                  AND CustomerConfirmed=1 AND Status IN (2,4)
-                  AND ExternalStatus=N'InventoryReleasedForInvoice')
-                THROW 51000, 'El pedido de origen no esta disponible en este negocio.', 1;
-
             IF EXISTS (
                 SELECT 1 FROM dbo.OrderInvoiceLinks WITH (UPDLOCK,HOLDLOCK)
                 WHERE OrderId=@OrderId
@@ -264,10 +286,19 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             IF NOT EXISTS (
                 SELECT 1 FROM dbo.OrderInvoiceLinks WITH (UPDLOCK,HOLDLOCK)
                 WHERE OrderId=@OrderId AND BusinessId=@BusinessId AND DocumentId=@DocumentId)
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM dbo.Orders WITH (UPDLOCK,HOLDLOCK)
+                    WHERE OrderId=@OrderId AND BusinessId=@BusinessId
+                      AND CustomerConfirmed=1 AND Status IN (2,4)
+                      AND OrdersWarehouseId IS NOT NULL)
+                    THROW 51000, 'El pedido de origen no esta disponible en este negocio.', 1;
+
                 INSERT INTO dbo.OrderInvoiceLinks
                     (OrderInvoiceLinkId,BusinessId,OrderId,DocumentId,OperationId,CreatedAt)
                 VALUES
                     (@LinkId,@BusinessId,@OrderId,@DocumentId,NULL,@CreatedAt);
+            END
 
             UPDATE dbo.OrderClaims
             SET ReleasedAt=COALESCE(ReleasedAt,@CreatedAt)

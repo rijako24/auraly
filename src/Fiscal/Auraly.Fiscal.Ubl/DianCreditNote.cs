@@ -77,10 +77,12 @@ public sealed record DianCreditNote(
         if (Lines.Any(line => line.Quantity <= 0 || line.UnitPrice < 0 ||
                               line.DiscountAmount < 0 || line.UntaxedAmount < 0))
             throw new ArgumentException("Credit note line values are invalid.");
-        if (LineExtensionAmount != Lines.Sum(line => line.UntaxedAmount) ||
+        if (LineExtensionAmount != Lines.Sum(line => line.UntaxedAmount + line.DiscountAmount) ||
             DiscountAmount != Lines.Sum(line => line.DiscountAmount) ||
+            TaxExclusiveAmount != Lines.Sum(line => line.UntaxedAmount) ||
             TaxInclusiveAmount != TaxExclusiveAmount + Taxes.Sum(tax => tax.Amount) ||
-            PayableAmount != TaxInclusiveAmount)
+            PayableAmount != LineExtensionAmount - DiscountAmount +
+                Taxes.Sum(tax => tax.Amount))
             throw new ArgumentException("Credit note monetary totals are inconsistent.");
     }
 }

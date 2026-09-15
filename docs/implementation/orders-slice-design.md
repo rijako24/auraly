@@ -27,6 +27,15 @@ Se conservaron y unificaron las tablas existentes:
 
 Las restricciones SQL garantizan un único vínculo por pedido, un único vínculo por documento y una única operación por `BusinessId + IdempotencyKey`.
 
+Todo pedido conserva `CustomerId + PartySiteId` como un par: ambos nulos para
+consumidor final o ambos informados para un cliente. En los pedidos capturados
+por vendedor (`Source=1`), los contratos web y PWA exigen la sede explícita y
+el writer valida en la misma operación que esté activa y pertenezca al cliente
+y negocio; el runtime no inventa ni resuelve una sede principal. La migración
+previa al DACPAC es el único propietario de la compatibilidad histórica: asigna
+la sede principal a los pedidos con cliente ya existentes antes de activar la
+restricción física, sin reconstruir por nombre ni dirección.
+
 ## Casos de uso
 
 ### Consultar
@@ -48,18 +57,25 @@ de la outbox durable. El servidor vincula el pedido en la transacción operacion
 que procesa la venta y libera el claim; el pago se procesa por el motor contable
 canónico. Un reintento no duplica factura, pago, inventario ni vínculo.
 
+La preparación inicial del POS descarga clientes por páginas y cada registro
+incluye todas sus sedes activas en el mismo payload. El snapshot SQLite conserva
+esa colección y la búsqueda local devuelve una opción por `PartySiteId`. Al
+seleccionar, el borrador guarda `CustomerId + CustomerPartySiteId`; el contrato
+Edge→Server transporta ambos valores al crear o actualizar el pedido. El snapshot
+offline del vendedor conserva además el nombre de la sede para poder renderizar
+el historial sin una resincronización.
+
 ### Inventario del pedido
 
-La reserva y la liberación nunca se fragmentan por producto:
+La reserva y su consumo nunca se fragmentan ni se reconstruyen durante la factura:
 
 - al confirmar el pedido, una sola `WarehouseTransfer` multilínea mueve todos los
   productos inventariables desde la bodega de venta hacia la bodega sistema `PED`;
-- antes de preparar factura o comprobante, una sola `WarehouseTransfer` multilínea
-  mueve todas las líneas inventariables desde `PED` hacia la bodega de venta y
-  queda referenciada en `Orders.ReleaseTransferId`;
-- el procesador de la venta registra únicamente `Sale` en la bodega de venta. No
-  crea `TransferOut`/`TransferIn` por línea y rechaza un pedido que no haya sido
-  liberado por el flujo anterior.
+- al facturar, el orquestador solo entrega `SourceOrderId` al motor canónico; no
+  consulta disponibilidad ni prepara, libera o vuelve a trasladar inventario;
+- dentro de la transacción canónica de la factura, el procesador registra `Sale`
+  directamente contra la bodega `PED` indicada por `Orders.OrdersWarehouseId`.
+  La cancelación del pedido sí devuelve la reserva a la bodega de venta.
 
 Una edición reemplaza el detalle pero mueve inventario por diferencia agregada:
 si una cantidad no cambia no crea traslados; los aumentos producen como máximo
@@ -81,9 +97,24 @@ desmarcarse antes de emitir; esta preferencia sólo omite la vista previa o la
 impresora física y nunca cambia checkout, numeración, cartera, inventario ni el
 envío fiscal.
 
-La vista ofrece únicamente `Efectivo` y `Crédito`. `Efectivo` entra directamente al lote. Para `Crédito`, el mismo `POST /api/commerce/v1/orders/invoice` ejecuta primero una validación agrupada de todos los clientes y del valor acumulado de sus pedidos; es una sola consulta SQL para la selección completa. Si un cliente no tiene crédito habilitado o el valor agregado supera su cupo disponible, la respuesta identifica los clientes rechazados y no crea operación, borrador, liberación de inventario, factura ni cartera. Si todos cumplen, los pedidos se emiten uno por uno con idempotencia independiente.
+La vista ofrece únicamente `Efectivo` y `Crédito`. `Efectivo` entra directamente al lote. Para `Crédito`, el mismo `POST /api/commerce/v1/orders/invoice` registra primero el recibo idempotente y ejecuta una validación agrupada de todos los clientes y del valor acumulado de sus pedidos; es una sola consulta SQL para la selección completa. Si un cliente no tiene crédito habilitado o el valor agregado supera su cupo disponible, la respuesta identifica los clientes rechazados y el recibo queda finalizado para que un reintento devuelva exactamente la misma decisión, sin repetir lecturas. No crea borrador, liberación de inventario, factura ni cartera. Si todos cumplen, los pedidos se emiten uno por uno con idempotencia independiente.
 
 La prevalidación masiva no reemplaza la validación transaccional. Cada pedido a crédito envía `OnlineSalesCreditTerms` al checkout de ventas existente, que vuelve a validar el saldo bajo bloqueo y genera la cuenta por cobrar por el canal canónico. No existe un writer ni una ruta de cartera específica para pedidos.
+
+El camino exitoso carga encabezados y líneas de toda la selección en una sola
+lectura acotada. Luego conserva la transacción independiente de cada pedido,
+pero reutiliza el borrador limpio que devuelve el checkout, el snapshot completo
+que devuelve la recuperación y el material fiscal ya resuelto para la misma
+autorización. El progreso durable se guarda al fallar, al finalizar y cada cinco
+resultados; no se hace una escritura redundante por documento. Así se preservan
+recuperación e idempotencia sin introducir lecturas N+1 ni refetches del estado
+que el motor canónico ya produjo.
+
+La sede elegida atraviesa sin reinterpretación `Orders`, el borrador recuperado,
+`SalesDocuments.CustomerPartySiteId`, `Receivables.PartySiteId` y las proyecciones
+de ventas, líneas, servicios y pedidos comerciales. Los reportes históricos se
+completan únicamente desde sus documentos y pedidos canónicos durante el
+post-despliegue; no consultan nombres o direcciones para adivinar identidades.
 
 ## Seguridad
 
@@ -122,11 +153,6 @@ camino servidor es menor a un segundo. La preparación offline sigue siendo una
 operación explícita y separada que descarga páginas grandes para instalar un
 snapshot completo; nunca se ejecuta al buscar o abrir el selector en línea.
 
-## No incluido en esta rebanada
-
-- edición comercial completa del pedido;
-- rutas y despacho;
-- devoluciones;
-- cambios tributarios dentro del pedido, porque pertenecen deliberadamente a la factura.
-
-Esas capacidades deben continuar en rebanadas verticales separadas y no como contratos vacíos.
+Los cambios tributarios dentro del pedido continúan fuera de esta rebanada:
+pertenecen deliberadamente a la factura y deben entrar por el motor fiscal
+canónico, no como campos o contratos paralelos en pedidos.

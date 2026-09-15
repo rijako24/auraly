@@ -70,7 +70,10 @@ CREATE TABLE [dbo].[Orders] (
     CONSTRAINT [FK_Orders_CapturedBy] FOREIGN KEY ([CapturedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [CK_Orders_Source] CHECK ([Source] IN (0, 1, 2)),
     CONSTRAINT [CK_Orders_FulfillmentMode] CHECK ([FulfillmentMode] IN (0, 1)),
-    CONSTRAINT [CK_Orders_Status] CHECK ([Status] IN (0, 1, 2, 3, 4, 5, 6, 7, 91))
+    CONSTRAINT [CK_Orders_Status] CHECK ([Status] IN (0, 1, 2, 3, 4, 5, 6, 7, 91)),
+    CONSTRAINT [CK_Orders_CustomerSitePair] CHECK (
+        ([CustomerId] IS NULL AND [PartySiteId] IS NULL)
+        OR ([CustomerId] IS NOT NULL AND [PartySiteId] IS NOT NULL))
 );
 
 GO

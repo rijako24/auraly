@@ -10,8 +10,7 @@ public sealed record PreparedOrderRecovery(
 
 public sealed class OrderRecoveryService(
     OrderService orders,
-    OnlineSalesOrderImportService sales,
-    OnlineSalesCheckoutService checkout)
+    OnlineSalesOrderImportService sales)
 {
     public async Task<RecoveredOrderSale> RecoverAsync(
         OrderActor actor,
@@ -20,9 +19,7 @@ public sealed class OrderRecoveryService(
         string idempotencyKey,
         CancellationToken cancellationToken = default)
     {
-        if (request.DraftId == Guid.Empty || request.ExpectedDraftVersion < 1)
-            throw new OrderValidationException(
-                "La venta activa y su versión son obligatorias.");
+        ValidateRequest(request);
 
         var prepared = await PrepareAsync(
             actor,
@@ -30,6 +27,43 @@ public sealed class OrderRecoveryService(
             request.WorkSessionId,
             request.UserId,
             cancellationToken);
+        var draft = await ImportPreparedDraftAsync(
+            actor, prepared, request, idempotencyKey, cancellationToken);
+        return new RecoveredOrderSale(
+            prepared.Order.OrderId,
+            draft.DraftId,
+            draft.Version,
+            prepared.Order.OrderNumber,
+            draft.PayableAmount);
+    }
+
+    internal async Task<OnlineSalesDraft> RecoverKnownAsync(
+        OrderActor actor,
+        OrderDetail order,
+        RecoverOrderIntoSaleRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        ValidateRequest(request);
+        var prepared = await PrepareOrderAsync(
+            actor,
+            order,
+            request.WorkSessionId,
+            request.UserId,
+            cancellationToken,
+            replaceOtherClaim: true);
+        return await ImportPreparedDraftAsync(
+            actor, prepared, request, idempotencyKey, cancellationToken);
+    }
+
+    private async Task<OnlineSalesDraft> ImportPreparedDraftAsync(
+        OrderActor actor,
+        PreparedOrderRecovery prepared,
+        RecoverOrderIntoSaleRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
         var order = prepared.Order;
         var importCompleted = false;
         try
@@ -56,18 +90,13 @@ public sealed class OrderRecoveryService(
                 idempotencyKey,
                 cancellationToken);
             importCompleted = true;
-            return new RecoveredOrderSale(
-                order.OrderId,
-                draft.DraftId,
-                draft.Version,
-                order.OrderNumber,
-                draft.PayableAmount);
+            return draft;
         }
         catch when (!importCompleted && prepared.ClaimAcquiredByThisAttempt)
         {
             await orders.ReleaseClaimAsync(
                 actor,
-                orderId,
+                order.OrderId,
                 new ReleaseOrderClaimRequest(request.WorkSessionId, request.UserId),
                 cancellationToken);
             throw;
@@ -86,6 +115,18 @@ public sealed class OrderRecoveryService(
                 "La sesión de trabajo y el usuario son obligatorios.");
 
         var order = await orders.GetAsync(actor, orderId, cancellationToken);
+        return await PrepareOrderAsync(
+            actor, order, workSessionId, userId, cancellationToken);
+    }
+
+    private async Task<PreparedOrderRecovery> PrepareOrderAsync(
+        OrderActor actor,
+        OrderDetail order,
+        Guid workSessionId,
+        Guid userId,
+        CancellationToken cancellationToken,
+        bool replaceOtherClaim = false)
+    {
         var canEditReview = order.Status == "InReview" &&
             (actor.Permissions.Contains(OrderPermissionCodes.Update) ||
              actor.Permissions.Contains(OrderPermissionCodes.Review));
@@ -104,39 +145,37 @@ public sealed class OrderRecoveryService(
         var claimAcquiredByThisAttempt = !targetWasAlreadyClaimedBySession;
         try
         {
-            await orders.ClaimAsync(
-                actor,
-                orderId,
-                new ClaimOrderRequest(workSessionId, userId),
-                cancellationToken);
-            if (order.Source == 1)
-            {
-                await checkout.PrepareSourceOrderInventoryAsync(
-                    new OnlineSalesUserIdentity(
-                        actor.UserId,
-                        actor.TenantId,
-                        actor.Permissions),
-                    order.BusinessId,
+            var claimRequest = new ClaimOrderRequest(workSessionId, userId);
+            if (replaceOtherClaim)
+                await orders.ClaimReplacingOtherAsync(
+                    actor, order.OrderId, claimRequest, cancellationToken);
+            else
+                await orders.ClaimAsync(
+                    actor, order.OrderId, claimRequest, cancellationToken);
+            if (!replaceOtherClaim)
+                await orders.ReleaseOtherClaimsAsync(
+                    actor,
                     order.OrderId,
-                    order.WarehouseId.Value,
+                    workSessionId,
+                    userId,
                     cancellationToken);
-            }
-            await orders.ReleaseOtherClaimsAsync(
-                actor,
-                orderId,
-                workSessionId,
-                userId,
-                cancellationToken);
             return new PreparedOrderRecovery(order, claimAcquiredByThisAttempt);
         }
         catch when (claimAcquiredByThisAttempt)
         {
             await orders.ReleaseClaimAsync(
                 actor,
-                orderId,
+                order.OrderId,
                 new ReleaseOrderClaimRequest(workSessionId, userId),
                 cancellationToken);
             throw;
         }
+    }
+
+    private static void ValidateRequest(RecoverOrderIntoSaleRequest request)
+    {
+        if (request.DraftId == Guid.Empty || request.ExpectedDraftVersion < 1)
+            throw new OrderValidationException(
+                "La venta activa y su versión son obligatorias.");
     }
 }

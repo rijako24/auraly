@@ -217,6 +217,17 @@ export type PosCaptureResult = {
   maximumQuantity?: number | null;
 };
 
+export type PosIssuedSaleFilters = {
+  search: string;
+  customerId: string | null;
+  partySiteId: string | null;
+  from: string;
+  to: string;
+  productId: string | null;
+  minimumTotal: number | null;
+  maximumTotal: number | null;
+};
+
 export type PosFiscalNumberPreview = {
   seriesId: string;
   prefix: string;
@@ -919,6 +930,7 @@ export class PosEdgeClient implements PosClient {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectAttempt = 0;
     let connectedOnce = false;
+    let listening = false;
     const invalidations = createPosStateInvalidationNotifier(
       () => {
         if (!controller.signal.aborted) onStateChanged();
@@ -933,12 +945,15 @@ export class PosEdgeClient implements PosClient {
       invalidations.notify();
       const delay = posStateStreamReconnectDelay(reconnectAttempt);
       reconnectAttempt += 1;
+      if (delay === null) return;
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         void listen();
       }, delay);
     };
     const listen = async () => {
+      if (controller.signal.aborted || listening) return;
+      listening = true;
       try {
         const response = await fetch(`${EDGE_BASE_URL}/edge/v1/events`, {
           headers: {
@@ -978,12 +993,24 @@ export class PosEdgeClient implements PosClient {
       } catch {
         // The loopback host can restart while the application stays open.
         scheduleReconnect();
+      } finally {
+        listening = false;
       }
     };
+    const restart = () => {
+      if (document.visibilityState !== "visible" || controller.signal.aborted ||
+          listening || reconnectTimer !== null) return;
+      reconnectAttempt = 0;
+      void listen();
+    };
+    window.addEventListener("online", restart);
+    document.addEventListener("visibilitychange", restart);
     void listen();
     return () => {
       controller.abort();
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      window.removeEventListener("online", restart);
+      document.removeEventListener("visibilitychange", restart);
       invalidations.dispose();
     };
   }

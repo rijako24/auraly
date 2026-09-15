@@ -1,3 +1,4 @@
+using Auraly.Platform.Application.Identity;
 using Auraly.Platform.Application.Identity.Services;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Repositories;
@@ -9,6 +10,36 @@ namespace Auraly.Platform.Tests.Identity;
 
 public sealed class PermissionServiceTests
 {
+    [Fact]
+    public async Task SeedPermissionsAsync_reads_the_catalog_once_instead_of_querying_per_permission()
+    {
+        var existing = PermissionCatalog.All
+            .Select(definition => Permission(definition.Resource))
+            .ToArray();
+        var permissions = new Mock<IPermissionRepository>();
+        permissions.Setup(x => x.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(x => x.Permissions).Returns(permissions.Object);
+        unitOfWork.SetupGet(x => x.AppRoles).Returns(Mock.Of<IAppRoleRepository>());
+        unitOfWork.SetupGet(x => x.RolePermissions).Returns(Mock.Of<IRolePermissionRepository>());
+        unitOfWork.Setup(x => x.AppRoles.GetActiveAdministratorRolesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var service = new PermissionService(unitOfWork.Object, Mock.Of<ILogger<PermissionService>>());
+        await service.SeedPermissionsAsync(CancellationToken.None);
+
+        permissions.Verify(
+            x => x.GetAllAsync(It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+        permissions.Verify(
+            x => x.ExistsByResourceAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        permissions.Verify(
+            x => x.AddRangeAsync(It.IsAny<IEnumerable<Permission>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     [Fact]
     public async Task SeedPermissionsAsync_DoesNotGrantFullCatalogToOperationalSystemRoles()
     {

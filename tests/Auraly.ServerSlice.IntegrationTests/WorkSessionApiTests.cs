@@ -526,8 +526,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         }
 
         using (var denied = fixture.CreateUserClient(userId))
-        using (var deniedResponse = await denied.PostAsJsonAsync(
-                   "/api/commerce/v1/work-sessions/current", command))
+        using (var deniedResponse = await denied.GetAsync(
+                   "/api/commerce/v1/work-sessions/current"))
             Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
 
         await InsertMovementsAsync(opened.WorkSessionId, userId);
@@ -661,6 +661,35 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             item.MovementType == "CashIn" && item.Amount == 100_000m);
         Assert.Contains(verificationItems, item => item.PaymentMethodCode == "Cash" &&
             item.MovementType == "CashOut" && item.Amount == -20_000m);
+
+        var viewerUserId = await CreateUserAsync("work-session-closure-viewer");
+        using (var viewer = fixture.CreateUserClient(
+                   viewerUserId,
+                   WorkSessionPermissionCodes.ReadCashDifferences))
+        {
+            var viewerPage = await viewer.GetFromJsonAsync<WorkSessionClosurePage>(
+                $"/api/commerce/v1/work-sessions/closures?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+            Assert.Contains(
+                viewerPage!.Items,
+                item => item.WorkSessionClosureId == closure.WorkSessionClosureId &&
+                        item.UserId == userId);
+
+            using var currentResponse = await viewer.GetAsync(
+                "/api/commerce/v1/work-sessions/current");
+            Assert.Equal(HttpStatusCode.Forbidden, currentResponse.StatusCode);
+
+            using var reconcileRequest = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
+            {
+                Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest([], [], null))
+            };
+            reconcileRequest.Headers.Add(
+                "Idempotency-Key",
+                $"viewer-reconcile-{Guid.NewGuid():N}");
+            using var reconcileResponse = await viewer.SendAsync(reconcileRequest);
+            Assert.Equal(HttpStatusCode.Forbidden, reconcileResponse.StatusCode);
+        }
 
         using (var incomplete = new HttpRequestMessage(HttpMethod.Post,
                    $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
@@ -806,6 +835,16 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            DECLARE @CountryId UNIQUEIDENTIFIER,@DivisionId UNIQUEIDENTIFIER,@CityId UNIQUEIDENTIFIER;
+            SELECT TOP(1) @CountryId=country.CountryId,
+                          @DivisionId=division.AdministrativeDivisionId,
+                          @CityId=city.CityId
+            FROM dbo.Cities city
+            INNER JOIN dbo.AdministrativeDivisions division
+              ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+            INNER JOIN dbo.Countries country ON country.CountryId=division.CountryId
+            WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,
                CreatedBy,CreatedAt)
@@ -815,6 +854,11 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
               (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,
                CreatedBy,CreatedAt)
             VALUES(@CustomerId,@PartyId,@BusinessId,0,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+              CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES(NEWID(),@PartyId,N'PRINCIPAL',N'Principal',@CountryId,@DivisionId,
+                   @CityId,N'Dirección de prueba',1,1,@UserId,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@PartyId", partyId);
         command.Parameters.AddWithValue("@CustomerId", customerId);
@@ -822,7 +866,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@Name", name);
-        Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        Assert.Equal(3, await command.ExecuteNonQueryAsync());
         return customerId;
     }
 
@@ -843,14 +887,21 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
               (DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
                DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
                DocumentType,IdempotencyKey,PayloadHash,IssuedAt,
-               CustomerIdentification,CustomerId,UntaxedAmount,TaxAmount,PayableAmount,
+               CustomerIdentification,CustomerId,CustomerPartySiteId,
+               UntaxedAmount,TaxAmount,PayableAmount,
                CreditAmount,CreditDueDate,ProcessingStatus,ReceivedAt,SoldByUserId,
                WorkSessionId)
             VALUES
               (@DocumentId,@BusinessId,@WarehouseId,N'Online',@DocumentSeriesId,
                @DocumentNumber,N'CVI',N'00',@Consecutive,
                N'SalesReceipt',@IdempotencyKey,@PayloadHash,SYSDATETIMEOFFSET(),
-               N'900123456',@CustomerId,@Amount,0,@Amount,
+               N'900123456',@CustomerId,
+               (SELECT TOP(1) site.PartySiteId
+                FROM dbo.Customers customer
+                INNER JOIN dbo.PartySites site ON site.PartyId=customer.PartyId
+                WHERE customer.CustomerId=@CustomerId AND site.IsActive=1
+                ORDER BY site.IsPrimary DESC,site.CreatedAt,site.PartySiteId),
+               @Amount,0,@Amount,
                @Amount,DATEADD(day,30,SYSDATETIMEOFFSET()),N'Processed',
                SYSDATETIMEOFFSET(),@UserId,@WorkSessionId);
             """;

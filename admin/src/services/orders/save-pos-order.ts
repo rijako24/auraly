@@ -15,6 +15,8 @@ export async function savePosDraftAsOrder(
 ): Promise<SellerOrderResult> {
   if (!draft.customerId)
     throw new Error("Selecciona un cliente antes de guardar el pedido.");
+  if (!draft.customerPartySiteId)
+    throw new Error("Selecciona la sede del cliente antes de guardar el pedido.");
   if (!draft.lines.length)
     throw new Error("Agrega al menos un producto antes de guardar el pedido.");
 
@@ -22,6 +24,7 @@ export async function savePosDraftAsOrder(
   return draft.sourceOrderId
     ? sellerOrdersApi.update(draft.sourceOrderId, {
         customerId: draft.customerId,
+        partySiteId: draft.customerPartySiteId,
         notes: draft.observation ?? null,
         idempotencyKey,
         lines,
@@ -31,7 +34,7 @@ export async function savePosDraftAsOrder(
         businessId: context.businessId,
         warehouseId: context.warehouseId,
         customerId: draft.customerId,
-        partySiteId: null,
+        partySiteId: draft.customerPartySiteId,
         routeId: null,
         routeStopId: null,
         capturedOffline: false,

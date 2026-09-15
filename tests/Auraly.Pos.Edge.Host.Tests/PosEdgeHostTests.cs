@@ -685,8 +685,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Single(captured!.Draft!.Lines);
 
         var drafts = factory.Services.GetRequiredService<PosDraftStore>();
+        var customerSiteId = Guid.NewGuid();
         var withCustomer = await drafts.AssignPartiesAsync(
-            captured.Draft.DraftId, Guid.NewGuid(), null);
+            captured.Draft.DraftId, Guid.NewGuid(), null, customerSiteId);
         var timer = Stopwatch.StartNew();
         var completed = await client.PostAsJsonAsync(
             "/edge/v1/orders/save",
@@ -723,7 +724,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             await capture.Content.ReadFromJsonAsync<PosCaptureResult>());
         var drafts = factory.Services.GetRequiredService<PosDraftStore>();
         var withCustomer = await drafts.AssignPartiesAsync(
-            captured.Draft!.DraftId, Guid.NewGuid(), null);
+            captured.Draft!.DraftId, Guid.NewGuid(), null, Guid.NewGuid());
 
         using var failed = await client.PostAsJsonAsync(
             "/edge/v1/orders/save",
@@ -757,7 +758,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var recovered = Assert.IsType<PosDraft>(await recover.Content.ReadFromJsonAsync<PosDraft>());
 
         var drafts = factory.Services.GetRequiredService<PosDraftStore>();
-        await drafts.AssignPartiesAsync(recovered.DraftId, Guid.NewGuid(), null);
+        await drafts.AssignPartiesAsync(
+            recovered.DraftId, Guid.NewGuid(), null, Guid.NewGuid());
         using var completed = await client.PostAsJsonAsync(
             "/edge/v1/orders/save",
             new SavePosOrderRequest(recovered.DraftId.Value));
@@ -829,7 +831,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
 
         var selectedResponse = await Client.PutAsJsonAsync(
             $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
-            new SelectCustomerRequest(customer.CustomerId));
+            new SelectCustomerRequest(customer.CustomerId, customer.PartySiteId));
         selectedResponse.EnsureSuccessStatusCode();
         var captureResponse = await Client.PostAsJsonAsync(
             "/edge/v1/capture",
@@ -916,7 +918,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
         var selectedResponse = await Client.PutAsJsonAsync(
             $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
-            new SelectCustomerRequest(customer.CustomerId));
+            new SelectCustomerRequest(customer.CustomerId, customer.PartySiteId));
         selectedResponse.EnsureSuccessStatusCode();
 
         var captureResponse = await Client.PostAsJsonAsync(
@@ -970,9 +972,14 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Equal(500_000m, customer.AvailableCredit);
 
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
-        var selectedResponse = await Client.PutAsJsonAsync(
+        var incompleteSelection = await Client.PutAsJsonAsync(
             $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
             new SelectCustomerRequest(customer.CustomerId));
+        Assert.Equal(HttpStatusCode.BadRequest, incompleteSelection.StatusCode);
+
+        var selectedResponse = await Client.PutAsJsonAsync(
+            $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
+            new SelectCustomerRequest(customer.CustomerId, customer.PartySiteId));
         selectedResponse.EnsureSuccessStatusCode();
         var selected = await selectedResponse.Content.ReadFromJsonAsync<PosCustomerSelectionView>();
         Assert.Equal(customer.CustomerId, selected!.Draft.CustomerId);
@@ -1038,7 +1045,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
         var selectedResponse = await Client.PutAsJsonAsync(
             $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
-            new SelectCustomerRequest(customer.CustomerId));
+            new SelectCustomerRequest(customer.CustomerId, customer.PartySiteId));
         selectedResponse.EnsureSuccessStatusCode();
 
         var firstResponse = await Client.PostAsJsonAsync(
@@ -1082,7 +1089,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
         var selectedResponse = await Client.PutAsJsonAsync(
             $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
-            new SelectCustomerRequest(customer.CustomerId));
+            new SelectCustomerRequest(customer.CustomerId, customer.PartySiteId));
         selectedResponse.EnsureSuccessStatusCode();
 
         var captureResponse = await Client.PostAsJsonAsync(

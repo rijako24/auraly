@@ -43,13 +43,6 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         DemandActiveVersion(state, request.ExpectedVersion);
         var draftLineCount = await CountDraftLinesAsync(
             connection, transaction, draftId, cancellationToken);
-        if (state.SourceOrderId == request.SourceOrderId && draftLineCount != 0)
-        {
-            var current = await ReadDraftAsync(
-                connection, transaction, draftId, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return current;
-        }
         if (draftLineCount != 0 && state.SourceOrderId is null)
             throw new OnlineSalesDraftValidationException(
                 "Pausa o reinicia la venta actual antes de recuperar un pedido.");

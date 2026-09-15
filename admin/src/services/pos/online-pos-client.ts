@@ -34,7 +34,7 @@ import {
   PosEdgeClient,
   readEdgeUserSession,
   PosIssuedSaleSearchPage,
-  PosIssuedSaleSummary,
+  PosIssuedSaleFilters,
   PosNextNumbers,
   PosPaymentInput,
   PosCreditTerms,
@@ -68,6 +68,10 @@ import {
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
 import { referenceOptionsApi } from "@/services/api/reference-options";
+import {
+  realtimeReconnectDelay,
+  wasRealtimeConnectionStable,
+} from "@/lib/realtime-reconnect-policy";
 import { cashDenominationCountHtml, printCashDenominationCount, printWorkSessionClosure, workSessionCloseRequest, workSessionClosurePreviewRequest, workSessionClosureReceiptRequest } from "./pos-work-session-close";
 import { cashMovementTicketHtml, printCashMovementTicket } from "./pos-cash-movement-print";
 import { receiptBrandMarkup } from "./pos-receipt-brand";
@@ -198,6 +202,90 @@ type OnlineIssuedSalePage = {
   hasMore: boolean;
   nextOffset: number | null;
 };
+
+export type PosServerHistoryScope = {
+  businessId: string;
+  warehouseId: string;
+  workSessionId: string;
+};
+
+function mapIssuedSales(page: OnlineIssuedSalePage): PosIssuedSaleSearchPage {
+  return {
+    items: page.items.map((sale) => ({
+      documentId: { value: sale.documentId },
+      documentType: sale.documentType,
+      documentNumber: sale.documentNumber,
+      fiscalNumber: sale.fiscalNumber,
+      issuedAt: sale.issuedAt,
+      total: sale.total,
+      customerIdentification: sale.customerIdentification,
+      customerName: sale.customerName,
+      fiscalStatus: sale.fiscalStatus,
+    })),
+    hasMore: page.hasMore,
+    nextOffset: page.nextOffset,
+  };
+}
+
+export async function searchServerIssuedSales(
+  context: PosServerHistoryScope,
+  filters: PosIssuedSaleFilters,
+  skip = 0,
+  take = 20,
+) {
+  const page = await request<OnlineIssuedSalePage>(
+    "/api/commerce/v1/pos/drafts/sales/search",
+    { method: "POST", body: JSON.stringify({
+      context,
+      search: filters.search,
+      skip,
+      take,
+      customerId: filters.customerId,
+      partySiteId: filters.partySiteId,
+      from: filters.from || null,
+      to: filters.to || null,
+      productId: filters.productId,
+      minimumTotal: filters.minimumTotal,
+      maximumTotal: filters.maximumTotal,
+    }) },
+  );
+  return mapIssuedSales(page);
+}
+
+export async function searchServerHistoryCustomers(
+  context: PosServerHistoryScope,
+  search: string,
+  skip = 0,
+  take = 10,
+) {
+  const page = await request<OnlineCustomerPage>(
+    "/api/commerce/v1/pos/drafts/customers/search",
+    { method: "POST", body: JSON.stringify({ context, search, skip, take }) },
+  );
+  return { ...page, items: page.items.map(mapCustomer) } satisfies PosCustomerSearchPage;
+}
+
+export async function searchServerHistoryProducts(
+  context: PosServerHistoryScope,
+  search: string,
+  skip = 0,
+  take = 10,
+) {
+  return request<OnlineProductPage>(
+    "/api/commerce/v1/pos/drafts/products/search",
+    { method: "POST", body: JSON.stringify({ context, search, skip, take, customerId: null, publicPriceOnly: false }) },
+  );
+}
+
+export async function loadServerIssuedSaleReceipt(
+  context: PosServerHistoryScope,
+  documentId: string,
+) {
+  return request<PosPrintableReceipt>(
+    `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
+    { method: "POST", body: JSON.stringify(context) },
+  );
+}
 
 type OnlineCheckoutResponse = {
   receipt: PosPrintableReceipt;
@@ -350,8 +438,21 @@ export class OnlinePosClient implements PosClient {
 
   watchWarehousePolicy(onChanged: (allowsNegativeStock: boolean) => void) {
     let stopped = false;
+    let connecting = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
+    let failedAttempts = 0;
+    let openedAt: number | null = null;
+    const scheduleReconnect = () => {
+      if (reconnectTimer !== null) return;
+      const delay = realtimeReconnectDelay(failedAttempts);
+      failedAttempts += 1;
+      if (stopped || delay === null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, delay);
+    };
     const refresh = async () => {
       const options = await request<SalesWorkspaceOption[]>(
         "/api/commerce/v1/pos/workspace/options");
@@ -362,6 +463,8 @@ export class OnlinePosClient implements PosClient {
         onChanged(current.warehouseAllowsNegativeStockSales);
     };
     const connect = async () => {
+      if (stopped || connecting || socket) return;
+      connecting = true;
       try {
         const negotiation = await request<{ clientAccessUri: string }>(
           `/api/commerce/v1/pos/workspace/synchronization/negotiate?businessId=${encodeURIComponent(this.context.businessId)}`,
@@ -370,25 +473,42 @@ export class OnlinePosClient implements PosClient {
         const current = new WebSocket(
           negotiation.clientAccessUri, "json.webpubsub.azure.v1");
         socket = current;
+        current.addEventListener("open", () => {
+          if (!stopped && socket === current) openedAt = Date.now();
+        });
         current.addEventListener("message", (event: MessageEvent<string>) => {
           if (isWorkspacePolicySynchronizationMessage(event.data))
             void refresh();
         });
         current.addEventListener("close", () => {
           if (stopped || socket !== current) return;
-          reconnectTimer = window.setTimeout(() => void connect(), 1_000);
+          socket = null;
+          if (wasRealtimeConnectionStable(openedAt, Date.now())) failedAttempts = 0;
+          openedAt = null;
+          scheduleReconnect();
         });
       } catch (caught) {
         socket?.close();
         socket = null;
         const status = caught instanceof PosEdgeError ? caught.status : undefined;
         if (!stopped && shouldReconnectWorkspacePolicy(status))
-          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+          scheduleReconnect();
+      } finally {
+        connecting = false;
       }
     };
+    const restartConnection = () => {
+      if (document.visibilityState !== "visible" || socket) return;
+      failedAttempts = 0;
+      void connect();
+    };
+    window.addEventListener("online", restartConnection);
+    document.addEventListener("visibilitychange", restartConnection);
     void connect();
     return () => {
       stopped = true;
+      window.removeEventListener("online", restartConnection);
+      document.removeEventListener("visibilitychange", restartConnection);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       socket?.close();
     };
@@ -617,14 +737,17 @@ export class OnlinePosClient implements PosClient {
       primarySite: input.primarySite,
       pricing: null,
     }));
-    const primarySite = created.sites.find((site) => site.isPrimary) ?? created.sites[0];
+    const primarySite = created.sites.find((site) => site.isPrimary);
+    if (!primarySite) {
+      throw new Error("El cliente fue creado sin una sede operativa.");
+    }
     return {
       customerId: created.customerId,
       identification: created.identification,
       name: created.displayName,
-      partySiteId: primarySite?.partySiteId ?? null,
-      siteName: primarySite?.name ?? input.primarySite.name,
-      siteAddress: primarySite?.addressLine ?? input.primarySite.addressLine,
+      partySiteId: primarySite.partySiteId,
+      siteName: primarySite.name,
+      siteAddress: primarySite.addressLine,
       priceChannelId: created.priceChannelId,
       requiresElectronicInvoice: created.requiresElectronicInvoice,
       isActive: created.isActive,
@@ -903,24 +1026,7 @@ export class OnlinePosClient implements PosClient {
       "/api/commerce/v1/pos/drafts/sales/search",
       this.post({ context: this.scope(), search, skip, take }),
     );
-    return {
-      items: page.items.map(
-        (sale) =>
-          ({
-            documentId: { value: sale.documentId },
-            documentType: sale.documentType,
-            documentNumber: sale.documentNumber,
-            fiscalNumber: sale.fiscalNumber,
-            issuedAt: sale.issuedAt,
-            total: sale.total,
-            customerIdentification: sale.customerIdentification,
-            customerName: sale.customerName,
-            fiscalStatus: sale.fiscalStatus,
-          }) satisfies PosIssuedSaleSummary,
-      ),
-      hasMore: page.hasMore,
-      nextOffset: page.nextOffset,
-    } satisfies PosIssuedSaleSearchPage;
+    return mapIssuedSales(page);
   }
 
   async reprint(documentId: string) {

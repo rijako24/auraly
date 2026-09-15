@@ -57,7 +57,7 @@ CREATE TABLE [dbo].[OrderInvoiceBatchReceipts] (
     CONSTRAINT [FK_OrderInvoiceBatchReceipts_Devices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[EnrolledDevices] ([DeviceId]),
     CONSTRAINT [FK_OrderInvoiceBatchReceipts_Users] FOREIGN KEY ([UserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [UQ_OrderInvoiceBatchReceipts_Business_Key] UNIQUE ([BusinessId], [IdempotencyKey]),
-    CONSTRAINT [CK_OrderInvoiceBatchReceipts_Status] CHECK ([Status] IN (N'Processing', N'PartiallyCompleted', N'Completed', N'Failed')),
+    CONSTRAINT [CK_OrderInvoiceBatchReceipts_Status] CHECK ([Status] IN (N'Processing', N'PartiallyCompleted', N'Completed', N'Failed', N'CreditRejected')),
     CONSTRAINT [CK_OrderInvoiceBatchReceipts_Counts] CHECK ([RequestedCount] > 0 AND [CompletedCount] >= 0 AND [FailedCount] >= 0),
     CONSTRAINT [CK_OrderInvoiceBatchReceipts_Lease] CHECK ([LeaseExpiresAt] >= [CreatedAt])
 );

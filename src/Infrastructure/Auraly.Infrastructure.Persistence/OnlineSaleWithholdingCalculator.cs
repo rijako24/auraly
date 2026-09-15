@@ -7,6 +7,23 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class OnlineSaleWithholdingCalculator(
     WithholdingService withholdings) : IOnlineSaleWithholdingCalculator
 {
+    private readonly Dictionary<(Guid TenantId, Guid BusinessId), WithholdingCalculationPlan>
+        _plans = [];
+
+    public async Task WarmAsync(
+        Guid tenantId,
+        Guid businessId,
+        IReadOnlyCollection<Guid> customerIds,
+        CancellationToken cancellationToken)
+    {
+        if (customerIds.Count == 0 || _plans.ContainsKey((tenantId, businessId)))
+            return;
+        _plans.Add(
+            (tenantId, businessId),
+            await withholdings.PrepareCalculationPlanAsync(
+                tenantId, businessId, customerIds, cancellationToken));
+    }
+
     public Task<WithholdingCalculationSnapshot> CalculateAsync(
         Guid tenantId,
         OnlineSaleSettlementContext context,
@@ -20,10 +37,7 @@ public sealed class OnlineSaleWithholdingCalculator(
             return Task.FromResult(new WithholdingCalculationSnapshot(
                 gross, 0m, gross, []));
 
-        return withholdings.CalculateAsync(
-            tenantId,
-            context.BusinessId,
-            new WithholdingPreviewRequest(
+        var request = new WithholdingPreviewRequest(
                 context.BusinessId,
                 WithholdingDirections.Sale,
                 WithholdingRecognitionMoments.Accrual,
@@ -32,7 +46,10 @@ public sealed class OnlineSaleWithholdingCalculator(
                 null,
                 context.TaxExclusiveAmount,
                 context.VatAmount,
-                context.OccurredAt),
-            cancellationToken);
+                context.OccurredAt);
+        return _plans.TryGetValue((tenantId, context.BusinessId), out var plan)
+            ? Task.FromResult(withholdings.Calculate(plan, request))
+            : withholdings.CalculateAsync(
+                tenantId, context.BusinessId, request, cancellationToken);
     }
 }

@@ -14,7 +14,16 @@ internal static class SqlSaleUblPartyReader
         PosSaleUblAddressContract fallback,
         CancellationToken cancellationToken)
     {
-        if (customerId is null) return FinalConsumer(fallback);
+        if (customerId is null)
+        {
+            if (partySiteId is not null)
+                throw new InvalidOperationException(
+                    "A customer site cannot be used without a customer.");
+            return FinalConsumer(fallback);
+        }
+        if (partySiteId is null)
+            throw new InvalidOperationException(
+                "The fiscal customer does not contain its selected site.");
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -28,12 +37,9 @@ internal static class SqlSaleUblPartyReader
                    email.Value,phone.Value
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
-            OUTER APPLY(
-              SELECT TOP(1) value.* FROM dbo.PartySites value
-              WHERE value.PartyId=p.PartyId AND value.IsActive=1
-                AND (@PartySiteId IS NULL OR value.PartySiteId=@PartySiteId)
-              ORDER BY CASE WHEN value.PartySiteId=@PartySiteId THEN 0 ELSE 1 END,
-                       value.IsPrimary DESC,value.CreatedAt,value.PartySiteId) site
+            JOIN dbo.PartySites site
+              ON site.PartyId=p.PartyId AND site.IsActive=1
+             AND site.PartySiteId=@PartySiteId
             LEFT JOIN dbo.Countries country ON country.CountryId=site.CountryId
             LEFT JOIN dbo.AdministrativeDivisions division
               ON division.AdministrativeDivisionId=site.AdministrativeDivisionId
@@ -51,10 +57,11 @@ internal static class SqlSaleUblPartyReader
             """;
         command.Parameters.AddWithValue("@CustomerId", customerId.Value);
         command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@PartySiteId", (object?)partySiteId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId", partySiteId.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1))
-            return FinalConsumer(fallback);
+            throw new InvalidOperationException(
+                "The selected fiscal customer site is not active in this business.");
         var sourceIdentificationType = reader.IsDBNull(3) ? "13" : reader.GetString(3);
         var dianIdentificationType =
             PosSaleFiscalMappings.DianIdentificationTypeCode(sourceIdentificationType)

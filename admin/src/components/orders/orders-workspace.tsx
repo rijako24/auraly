@@ -55,7 +55,6 @@ import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date
 import { getOrderAvailability } from "./order-availability";
 import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
 
-const ORDER_STATUS_REFRESH_INTERVAL_MS = 10_000;
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
@@ -234,14 +233,9 @@ export function OrdersWorkspace({
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refreshSilently();
     };
-    const interval = window.setInterval(
-      refreshSilently,
-      ORDER_STATUS_REFRESH_INTERVAL_MS,
-    );
     window.addEventListener("focus", refreshSilently);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      window.clearInterval(interval);
       window.removeEventListener("focus", refreshSilently);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
@@ -724,7 +718,8 @@ export function OrdersWorkspace({
                           {order.customerName || "Consumidor final"}
                         </p>
                         <p className="truncate text-xs text-slate-500">
-                          {order.customerIdentification || order.customerPhone || "Sin identificación"}
+                          {[order.partySiteName, order.customerIdentification || order.customerPhone]
+                            .filter(Boolean).join(" · ") || "Sin identificación"}
                         </p>
                       </div>
                     )}
@@ -874,6 +869,7 @@ export function OrdersWorkspace({
                   <p className="mt-2 text-xs text-slate-500">
                     {detail.customerIdentification || "Sin identificación"}
                   </p>
+                  {detail.partySiteName && <p className="text-xs font-medium text-teal-700">{detail.partySiteName}</p>}
                   <p className="text-xs text-slate-500">{detail.customerPhone || "Sin teléfono"}</p>
                 </div>
                 <dl className="space-y-2 rounded-xl border border-slate-200 p-4 text-sm">

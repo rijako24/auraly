@@ -12,16 +12,45 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Saved_order_clears_its_draft_without_restart_permission()
     {
-        Guid customerId;
+        var customerId = Guid.NewGuid();
+        var partyId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         await using (var customerConnection = new SqlConnection(fixture.ConnectionString))
         {
             await customerConnection.OpenAsync();
-            await using var findCustomer = new SqlCommand(
-                "SELECT TOP(1) CustomerId FROM dbo.Customers WHERE BusinessId=@BusinessId AND IsActive=1;",
+            await using var createCustomer = new SqlCommand(
+                """
+                DECLARE @CountryId UNIQUEIDENTIFIER,@DivisionId UNIQUEIDENTIFIER,@CityId UNIQUEIDENTIFIER;
+                SELECT TOP(1) @CountryId=country.CountryId,
+                              @DivisionId=division.AdministrativeDivisionId,
+                              @CityId=city.CityId
+                FROM dbo.Cities city
+                JOIN dbo.AdministrativeDivisions division
+                  ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+                JOIN dbo.Countries country ON country.CountryId=division.CountryId
+                WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+
+                INSERT dbo.Parties(
+                  PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,
+                  IsActive,CreatedBy,CreatedAt)
+                VALUES(@PartyId,@TenantId,N'Organization',N'Cliente pedido web',
+                  N'Cliente pedido web',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+                INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+                VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+                INSERT dbo.PartySites(
+                  PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+                  CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                VALUES(@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+                  @DivisionId,@CityId,N'Calle prueba 1',1,1,@UserId,SYSDATETIMEOFFSET());
+                """,
                 customerConnection);
-            findCustomer.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-            customerId = (Guid)(await findCustomer.ExecuteScalarAsync()
-                ?? throw new InvalidOperationException("The fixture customer is missing."));
+            createCustomer.Parameters.AddWithValue("@PartyId", partyId);
+            createCustomer.Parameters.AddWithValue("@CustomerId", customerId);
+            createCustomer.Parameters.AddWithValue("@PartySiteId", partySiteId);
+            createCustomer.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            createCustomer.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            createCustomer.Parameters.AddWithValue("@UserId", fixture.UserId);
+            await createCustomer.ExecuteNonQueryAsync();
         }
         using var client = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
         var draft = await OpenAsync(client, new(
@@ -41,11 +70,22 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
                 ?? throw new InvalidOperationException("The captured draft was empty.");
         }
 
+        using (var incompleteCustomer = Mutation(
+                   HttpMethod.Put,
+                   $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer",
+                   new SelectOnlineSalesDraftCustomerRequest(
+                       customerId, draft.Version, PartySiteId: null),
+                   Guid.NewGuid().ToString("D")))
+        using (var response = await client.SendAsync(incompleteCustomer))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
         using (var customer = Mutation(
                    HttpMethod.Put,
                    $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer",
                    new SelectOnlineSalesDraftCustomerRequest(
-                       customerId, draft.Version),
+                       customerId, draft.Version, partySiteId),
                    Guid.NewGuid().ToString("D")))
         using (var response = await client.SendAsync(customer))
         {
@@ -63,15 +103,16 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             await using var seed = new SqlCommand(
                 """
                 INSERT dbo.Orders(
-                    OrderId,BusinessId,CustomerId,WarehouseId,CapturedByUserId,
+                    OrderId,BusinessId,CustomerId,PartySiteId,WarehouseId,CapturedByUserId,
                     Source,Status,CustomerNameSnapshot,Total,IdempotencyKey)
                 VALUES(
-                    @OrderId,@BusinessId,@CustomerId,@WarehouseId,@UserId,
+                    @OrderId,@BusinessId,@CustomerId,@PartySiteId,@WarehouseId,@UserId,
                     1,3,N'Cliente de prueba',0,@IdempotencyKey);
                 """, connection);
             seed.Parameters.AddWithValue("@OrderId", orderId);
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             seed.Parameters.AddWithValue("@CustomerId", customerId);
+            seed.Parameters.AddWithValue("@PartySiteId", partySiteId);
             seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
             seed.Parameters.AddWithValue("@UserId", fixture.UserId);
             seed.Parameters.AddWithValue(

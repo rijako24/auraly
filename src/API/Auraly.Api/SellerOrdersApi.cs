@@ -19,10 +19,10 @@ public static class SellerOrdersApi
         decimal DiscountAmount = 0m,
         string? PriceSource = null,
         decimal? DocumentUnitCost = null);
-    public sealed record UpdateSellerOrderRequest(Guid CustomerId, string? Notes, string IdempotencyKey, IReadOnlyCollection<SellerOrderLineInput> Lines,
+    public sealed record UpdateSellerOrderRequest(Guid CustomerId, Guid PartySiteId, string? Notes, string IdempotencyKey, IReadOnlyCollection<SellerOrderLineInput> Lines,
         Guid? WorkSessionId = null);
     public sealed record CreateSellerOrderRequest(Guid BusinessId, Guid WarehouseId, Guid CustomerId,
-        Guid? PartySiteId, Guid? RouteId, Guid? RouteStopId, bool CapturedOffline, string? Notes,
+        Guid PartySiteId, Guid? RouteId, Guid? RouteStopId, bool CapturedOffline, string? Notes,
         string IdempotencyKey, IReadOnlyCollection<SellerOrderLineInput> Lines);
     public sealed record SellerCatalogRequest(Guid BusinessId, Guid WarehouseId, Guid CustomerId,
         string? Search, int Skip = 0, int Take = 10);
@@ -89,9 +89,14 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         var editableAt=timing.ElapsedMilliseconds;
         if(editable.Status is not (2 or 5))throw new SellerOrderConflictException("Solo se puede editar un pedido disponible o en revisión que todavía no haya sido facturado.");
         var number=editable.Number;var customerId=request.CustomerId;var warehouseId=editable.WarehouseId;var ordersWarehouseId=editable.OrdersWarehouseId;
+        var selectedPartySiteId=request.PartySiteId;
+        if(selectedPartySiteId==Guid.Empty)
+            throw new SellerOrderValidationException("Selecciona la sede del cliente para actualizar el pedido.");
         var requested=NormalizeOrderLines(request.Lines);
         if(!canFullyEdit)
         {
+            if(customerId!=editable.CustomerId||selectedPartySiteId!=editable.PartySiteId)
+                throw new SellerOrderConflictException("El permiso de revisión no permite cambiar el cliente ni su sede.");
             if(editable.Status!=5)
             {
                 var unchanged=requested.Length==editable.Lines.Count&&requested.All(input=>
@@ -121,6 +126,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var metadataOnly=editable.Status==2
                 && editable.Lines.All(original=>!original.ManageStock||original.ReservedQuantity==original.Quantity)
                 && customerId==editable.CustomerId
+                && selectedPartySiteId==editable.PartySiteId
                 && requested.Length==editable.Lines.Count
                 && requested.All(input=>editable.Lines.SingleOrDefault(original=>original.Position==input.Position) is { } original
                     && input.ProductId==original.ProductId
@@ -144,7 +150,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                     orderId,timing.ElapsedMilliseconds,openedAt,editableAt-openedAt,metadataUpdatedAt-editableAt,metadataReportingAt-metadataUpdatedAt,metadataCommittedAt-metadataReportingAt);
                 return new(orderId,number,editable.Status==5?"InReview":"Confirmed",metadataTotal,editable.Status==5,editable.Status==5?["Requiere revisión de inventario."]:[]);
             }
-            var context=await LoadContextAsync(connection,transaction,actor,actor.BusinessId,warehouseId,customerId,null,token);
+            var context=await LoadContextAsync(connection,transaction,actor,actor.BusinessId,warehouseId,customerId,selectedPartySiteId,token);
             var contextAt=timing.ElapsedMilliseconds;
             if(context.OrdersWarehouseId!=ordersWarehouseId)throw new SellerOrderConflictException("El cliente seleccionado no comparte la bodega de pedidos configurada para este pedido.");
             var factsInput=requested.Concat(editable.Lines
@@ -218,7 +224,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var key=request.IdempotencyKey.Trim();
             if(releases.Length>0)await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases,connection,transaction,token);
             if(reservations.Length>0)await TransferAsync(identity,$"seller-order-edit-reserve:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-reserve:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Nueva reserva del pedido {number}",reservations,connection,transaction,token);
-            await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,customerId,context.Name,context.Identification,context.Email,context.Phone,context.Address,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
+            await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,customerId,context.PartySiteId,context.Name,context.Identification,context.Email,context.Phone,context.Address,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
                 review?5:2,review?"StockReview":"InventoryTransferAccepted",review,
                 lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,line.DocumentUnitCost,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m,LinePosition=line.Position}))).ToArray(),
                 actor.UserId,request.WorkSessionId,token);
@@ -343,7 +349,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var confirmedExternalStatus=reservableLines.Length>0?"InventoryTransferProcessed":"Confirmed";
             var persistedLines=lines.Select(line=>{var lineTotal=line.LineTotal;var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);var reservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m;return new{productId=line.ProductId,code=line.Code,name=line.Name,unitCode=line.UnitCode,quantity=line.Quantity,unitPrice=line.UnitPrice,discountAmount=line.DiscountAmount,taxAmount=tax,lineTotal,rawPayloadJson=JsonSerializer.Serialize(new{line.PriceSource,line.DocumentUnitCost,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=reservedQuantity,LinePosition=line.Position})};});
             await using(var insert=Procedure("dbo.SellerOrderCreate",connection,transaction))
-            {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@WarehouseId",request.WarehouseId),P("@OrdersWarehouseId",context.OrdersWarehouseId),P("@ReservationTransferId",reservationTransferId),P("@RouteId",request.RouteId),P("@RouteStopId",request.RouteStopId),P("@PartySiteId",request.PartySiteId),P("@CapturedByUserId",actor.UserId),P("@CapturedOffline",request.CapturedOffline),P("@RequiresStockReview",review),P("@Status",review?5:2),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":confirmedExternalStatus),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
+            {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@WarehouseId",request.WarehouseId),P("@OrdersWarehouseId",context.OrdersWarehouseId),P("@ReservationTransferId",reservationTransferId),P("@RouteId",request.RouteId),P("@RouteStopId",request.RouteStopId),P("@PartySiteId",context.PartySiteId),P("@CapturedByUserId",actor.UserId),P("@CapturedOffline",request.CapturedOffline),P("@RequiresStockReview",review),P("@Status",review?5:2),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":confirmedExternalStatus),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
             var stockLines=reservableLines.GroupBy(line=>line.ProductId).Select((group,index)=>new WarehouseTransferLineRequest(index+1,group.Key,group.Sum(line=>line.Quantity))).ToArray();
             if(stockLines.Length>0)
             {
@@ -373,8 +379,8 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
 
     private static Task<CustomerContext> LoadContextAsync(SqlConnection connection,SqlTransaction transaction,SellerOrderActor actor,SellerOrdersApi.CreateSellerOrderRequest request,CancellationToken token)
         =>LoadContextAsync(connection,transaction,actor,request.BusinessId,request.WarehouseId,request.CustomerId,request.PartySiteId,token);
-    private static async Task<CustomerContext> LoadContextAsync(SqlConnection connection,SqlTransaction transaction,SellerOrderActor actor,Guid businessId,Guid warehouseId,Guid customerId,Guid? partySiteId,CancellationToken token)
-    {await using var command=Procedure("dbo.SellerOrderContextGet",connection,transaction);command.Parameters.AddRange([P("@SiteId",partySiteId),P("@BusinessId",businessId),P("@TenantId",actor.TenantId),P("@CustomerId",customerId),P("@WarehouseId",warehouseId)]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))throw new SellerOrderValidationException("El cliente, su sede o la bodega de pedidos no están disponibles.");return new(reader.GetString(0),reader.IsDBNull(1)?null:reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),reader.GetGuid(5),reader.GetBoolean(6));}
+    private static async Task<CustomerContext> LoadContextAsync(SqlConnection connection,SqlTransaction transaction,SellerOrderActor actor,Guid businessId,Guid warehouseId,Guid customerId,Guid partySiteId,CancellationToken token)
+    {await using var command=Procedure("dbo.SellerOrderContextGet",connection,transaction);command.Parameters.AddRange([P("@SiteId",partySiteId),P("@BusinessId",businessId),P("@TenantId",actor.TenantId),P("@CustomerId",customerId),P("@WarehouseId",warehouseId)]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))throw new SellerOrderValidationException("El cliente, su sede o la bodega de pedidos no están disponibles.");return new(reader.GetString(0),reader.IsDBNull(1)?null:reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),reader.GetGuid(5),reader.GetGuid(6),reader.GetBoolean(7));}
 
     private static async Task<IReadOnlyDictionary<Guid,OrderLine>> ResolveProductFactsAsync(
         SqlConnection connection,SqlTransaction transaction,Guid businessId,Guid warehouseId,
@@ -418,14 +424,14 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         "Base" or "Public" or "PriceChannel" or "Promotion" or "Promotion+PriceChannel" or "Manual"=>value,
         _=>"Captured"
     };
-    private static void Validate(SellerOrderActor actor,SellerOrdersApi.CreateSellerOrderRequest request){if(request.BusinessId!=actor.BusinessId||request.WarehouseId==Guid.Empty||request.CustomerId==Guid.Empty)throw new SellerOrderValidationException("Sede, bodega y cliente son obligatorios.");if(string.IsNullOrWhiteSpace(request.IdempotencyKey)||request.IdempotencyKey.Trim().Length>160)throw new SellerOrderValidationException("La clave idempotente es obligatoria.");if(request.Lines.Count is <1 or >500||request.Lines.Any(line=>line.ProductId==Guid.Empty||line.Quantity<=0))throw new SellerOrderValidationException("El pedido requiere productos y cantidades válidas.");if(request.Notes?.Length>1000)throw new SellerOrderValidationException("Las notas superan 1000 caracteres.");}
+    private static void Validate(SellerOrderActor actor,SellerOrdersApi.CreateSellerOrderRequest request){if(request.BusinessId!=actor.BusinessId||request.WarehouseId==Guid.Empty||request.CustomerId==Guid.Empty||request.PartySiteId==Guid.Empty)throw new SellerOrderValidationException("Sede del cliente, bodega y cliente son obligatorios.");if(string.IsNullOrWhiteSpace(request.IdempotencyKey)||request.IdempotencyKey.Trim().Length>160)throw new SellerOrderValidationException("La clave idempotente es obligatoria.");if(request.Lines.Count is <1 or >500||request.Lines.Any(line=>line.ProductId==Guid.Empty||line.Quantity<=0))throw new SellerOrderValidationException("El pedido requiere productos y cantidades válidas.");if(request.Notes?.Length>1000)throw new SellerOrderValidationException("Las notas superan 1000 caracteres.");}
     private static void Demand(SellerOrderActor actor,string permission){if(!actor.Permissions.Contains(permission))throw new SellerOrderForbiddenException($"Permission '{permission}' is required.");}
     public static Guid DeterministicDocumentId(string value)=>DeterministicGuid(value);
     private static Guid DeterministicGuid(string value){var hash=System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));return new Guid(hash.AsSpan(0,16));}
     private static SqlParameter P(string name,object? value)=>new(name,value??DBNull.Value);
     private static SqlParameter Money(string name,decimal value)=>new(name,SqlDbType.Decimal){Precision=19,Scale=4,Value=value};
     private static SqlCommand Procedure(string name,SqlConnection connection,SqlTransaction? transaction=null)=>new(name,connection,transaction){CommandType=CommandType.StoredProcedure};
-    private sealed record CustomerContext(string Name,string? Identification,string? Email,string? Phone,string Address,Guid OrdersWarehouseId,bool SourceWarehouseAllowsNegativeStock);
+    private sealed record CustomerContext(string Name,string? Identification,string? Email,string? Phone,string Address,Guid OrdersWarehouseId,Guid PartySiteId,bool SourceWarehouseAllowsNegativeStock);
     private sealed record OrderLine(Guid ProductId,string Code,string Name,string UnitCode,decimal Quantity,decimal UnitPrice,string PriceSource,decimal Available,bool ManageStock,decimal TaxRate,int Position,decimal DiscountAmount=0m,Guid InventoryProductId=default,decimal InventoryFactor=1m,bool CanReserve=false,decimal? DocumentUnitCost=null)
     {
         public decimal LineTotal=>decimal.Round(UnitPrice*Quantity-DiscountAmount,2,MidpointRounding.AwayFromZero);

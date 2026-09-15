@@ -1,3 +1,5 @@
+import { realtimeReconnectDelay } from "../../lib/realtime-reconnect-policy";
+
 type PosStateNotificationScheduler = (notify: () => void) => () => void;
 
 export function isChangedPosStateEvent(event: string) {
@@ -5,8 +7,7 @@ export function isChangedPosStateEvent(event: string) {
 }
 
 export function posStateStreamReconnectDelay(attempt: number) {
-  const safeAttempt = Math.max(0, Math.floor(attempt));
-  return Math.min(5_000, 500 * (2 ** Math.min(safeAttempt, 4)));
+  return realtimeReconnectDelay(attempt);
 }
 
 export function createPosStateInvalidationNotifier(

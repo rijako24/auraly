@@ -116,10 +116,9 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   useEffect(() => {
     if (!canManageSubscription) { setBilling([]); return; }
     void refreshBilling();
-    const timer = window.setInterval(() => void refreshBilling(), 60_000);
     const onFocus = () => void refreshBilling();
     window.addEventListener("focus", onFocus);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", onFocus); };
+    return () => window.removeEventListener("focus", onFocus);
   }, [canManageSubscription, refreshBilling]);
 
   async function openBillingNotification(item: TenantBillingNotification) {
@@ -138,6 +137,10 @@ export function NotificationsDropdown({ className }: { className?: string }) {
 
   function changeDropdownOpen(open: boolean) {
     setDropdownOpen(open);
+    if (!open) return;
+    void refresh();
+    void refreshBilling();
+    void refreshFiscalCertificates();
   }
 
   useEffect(() => {
@@ -173,19 +176,20 @@ export function NotificationsDropdown({ className }: { className?: string }) {
     const receiveServiceWorkerMessage = (event: MessageEvent<{ type?: string }>) => {
       if (event.data?.type === "auraly:pos-approvals-changed") void refresh();
     };
-    const fallback = window.setInterval(refreshVisible, 15_000);
     window.addEventListener("focus", refreshVisible);
     document.addEventListener("visibilitychange", refreshVisible);
     navigator.serviceWorker?.addEventListener("message", receiveServiceWorkerMessage);
     void refresh()
       .then(() => posApprovalClient.subscribe(() => active && void refresh()))
-      .then((stop) => { dispose = stop; })
+      .then((stop) => {
+        if (active) dispose = stop;
+        else stop();
+      })
       .catch((caught) => {
         if (active) setError(caught instanceof Error ? caught.message : "No fue posible conectar las autorizaciones.");
       });
     return () => {
       active = false;
-      window.clearInterval(fallback);
       window.removeEventListener("focus", refreshVisible);
       document.removeEventListener("visibilitychange", refreshVisible);
       navigator.serviceWorker?.removeEventListener("message", receiveServiceWorkerMessage);

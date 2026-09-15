@@ -156,8 +156,6 @@ public sealed partial class SqlOnlineSalesDraftStore
                     state.CustomerPartySiteId),
             CustomerPartySiteId: state.CustomerPartySiteId);
 
-        await ReleaseOrderInventoryAsync(connection, transaction, user, state, ct);
-
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """
             UPDATE dbo.SalesDrafts

@@ -243,6 +243,34 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void Seller_orders_require_the_explicit_customer_site_across_web_and_pos()
+    {
+        var sellerApi = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "API", "Auraly.Api", "SellerOrdersApi.cs"));
+        var posContracts = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Modules", "Orders", "Auraly.Contracts.Orders",
+            "OrderContracts.cs"));
+        var edgeClient = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host",
+            "PosOrderServerClient.cs"));
+        var contextSql = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "database", "Auraly.Database", "StoredProcedures",
+            "SellerOrderContextGet.sql"));
+
+        Assert.Contains(
+            "CreateSellerOrderRequest(Guid BusinessId, Guid WarehouseId, Guid CustomerId,\n        Guid PartySiteId",
+            sellerApi.Replace("\r\n", "\n"), StringComparison.Ordinal);
+        Assert.Contains(
+            "UpdateSellerOrderRequest(Guid CustomerId, Guid PartySiteId",
+            sellerApi, StringComparison.Ordinal);
+        Assert.Contains("Guid PartySiteId,", posContracts, StringComparison.Ordinal);
+        Assert.Contains("draft.CustomerPartySiteId is not Guid partySiteId", edgeClient,
+            StringComparison.Ordinal);
+        Assert.Contains("site.PartySiteId=@SiteId", contextSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("@SiteId IS NULL", contextSql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void SellerOrderAndInventoryProcedures_ParticipateInTheCallerTransaction()
     {
         var sellerSource = File.ReadAllText(Path.Combine(
@@ -361,6 +389,28 @@ public sealed class ArchitectureDebtRatchetTests
 
         var posDraftStore = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Infrastructure", "PosDraftStore.cs"));
+        var updateLinesStart = posDraftStore.IndexOf(
+            "public async Task<PosDraft> UpdateLinesAsync(",
+            StringComparison.Ordinal);
+        var updateLinesEnd = posDraftStore.IndexOf(
+            "public async Task<PosDraft> RemoveLineAsync(",
+            updateLinesStart,
+            StringComparison.Ordinal);
+        var updateLines = posDraftStore[updateLinesStart..updateLinesEnd];
+        Assert.Contains("json_each(@UpdatesJson)", updateLines, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(updateLines, @"ExecuteAsync\s*\("));
+
+        var repriceStart = posDraftStore.IndexOf(
+            "public async Task<PosDraft> AssignCustomerAndPricesAsync(",
+            StringComparison.Ordinal);
+        var repriceEnd = posDraftStore.IndexOf(
+            "public async Task<PosDraft> SaveTemporaryAsync(",
+            repriceStart,
+            StringComparison.Ordinal);
+        var reprice = posDraftStore[repriceStart..repriceEnd];
+        Assert.Contains("json_each(@PricesJson)", reprice, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(reprice, @"ExecuteAsync\s*\("));
+
         var importStart = posDraftStore.IndexOf(
             "public async Task<PosDraft> ImportOrderAsync(",
             StringComparison.Ordinal);
@@ -422,9 +472,6 @@ public sealed class ArchitectureDebtRatchetTests
         var checkout = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
             "SqlOnlineSalesDraftStore.Checkout.cs"));
-        var orderInventory = File.ReadAllText(Path.Combine(
-            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
-            "SqlOnlineSalesDraftStore.OrderInventory.cs"));
         var handler = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
             "SqlPosSaleDocumentHandler.cs"));
@@ -434,13 +481,16 @@ public sealed class ArchitectureDebtRatchetTests
             RepositoryRoot, "src", "Modules", "Orders", "Auraly.Application.Orders",
             "OrderBatchService.cs"));
 
-        Assert.Contains("state.SourceOrderId", checkout, StringComparison.Ordinal);
-        Assert.Contains("ReleaseOrderInventoryAsync", orderInventory, StringComparison.Ordinal);
-        Assert.Contains("ConfirmSystemTransferAtomicallyAsync", orderInventory, StringComparison.Ordinal);
-        Assert.Contains("InventoryReleasedForInvoice", orderInventory, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReleaseOrderInventoryAsync", checkout, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrepareSourceOrderInventoryAsync", batch, StringComparison.Ordinal);
+        Assert.Contains("ResolveInventoryWarehouseAsync", handler, StringComparison.Ordinal);
+        Assert.Contains("orders.OrdersWarehouseId", handler, StringComparison.Ordinal);
+        Assert.Contains("inventoryWarehouseId", handler, StringComparison.Ordinal);
         Assert.Contains("InventoryConsumedByInvoice", handler, StringComparison.Ordinal);
         Assert.Contains("OnlineSalesCheckoutService checkout", batch, StringComparison.Ordinal);
-        Assert.Contains("checkout.CompleteAsync", batch, StringComparison.Ordinal);
+        Assert.Contains("checkout.CompleteKnownDraftAsync", batch, StringComparison.Ordinal);
+        Assert.Contains("currentDraft = issued.NextDraft", batch, StringComparison.Ordinal);
+        Assert.Contains("ProgressCheckpointSize", batch, StringComparison.Ordinal);
         Assert.DoesNotContain("IConfirmedDocumentHandler", batch, StringComparison.Ordinal);
         Assert.DoesNotContain("SellerOrderInvoiceInventoryService", ordersApi, StringComparison.Ordinal);
         Assert.False(File.Exists(Path.Combine(
@@ -525,6 +575,57 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void OnlineInvoiceBatch_ReusesFiscalMaterialAndResolvesItsContextInOneQuery()
+    {
+        var service = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Modules", "Sales", "Auraly.Application.Sales",
+            "OnlineSalesCheckoutService.cs"));
+        var checkout = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.Checkout.cs"));
+        var reception = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Modules", "Sales", "Auraly.Application.Sales",
+            "ReceivePosSaleService.cs"));
+        var batch = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Modules", "Orders", "Auraly.Application.Orders",
+            "OrderBatchService.cs"));
+
+        Assert.Contains("_fiscalMaterialByReference", service, StringComparison.Ordinal);
+        Assert.Contains("_fiscalKeyContextByBusiness", service, StringComparison.Ordinal);
+        Assert.Contains("d.BusinessId", checkout, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "SELECT BusinessId FROM dbo.SalesDrafts",
+            checkout,
+            StringComparison.Ordinal);
+        var receiveCoreStart = reception.IndexOf(
+            "private async Task<PosSaleUploadResponse> ReceiveCoreAsync(",
+            StringComparison.Ordinal);
+        var receiveCoreEnd = reception.IndexOf(
+            "private static void ValidateIdempotencyKey(",
+            receiveCoreStart,
+            StringComparison.Ordinal);
+        var receiveCore = reception[receiveCoreStart..receiveCoreEnd];
+        Assert.Single(Regex.Matches(receiveCore, @"store\.FindAsync\s*\("));
+    }
+
+    [Fact]
+    public void OrderBatch_LoadsOrdersAsOneBoundedSet_WithoutPerOrderCustomerReads()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Modules", "Orders", "Auraly.Application.Orders",
+            "OrderBatchService.cs"));
+
+        Assert.Contains("orders.GetBatchAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("orders.GetAsync(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetCustomerAsync(", source, StringComparison.Ordinal);
+        Assert.Contains("request.OrderIds.Count is < 1 or > 50", source, StringComparison.Ordinal);
+        var begin = source.IndexOf("batches.BeginAsync", StringComparison.Ordinal);
+        Assert.True(begin >= 0);
+        Assert.True(begin < source.IndexOf("checkout.ValidateOrderCreditBatchAsync", StringComparison.Ordinal));
+        Assert.True(begin < source.IndexOf("orders.GetBatchAsync", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void PurchaseOrdersAndRotation_DoNotEmbedSqlInApplicationCode()
     {
         var paths = new[]
@@ -555,6 +656,48 @@ public sealed class ArchitectureDebtRatchetTests
         foreach (var procedure in procedures)
             Assert.True(File.Exists(Path.Combine(RepositoryRoot, "database", "Auraly.Database",
                 "StoredProcedures", procedure)), $"Missing procedure {procedure}.");
+    }
+
+    [Fact]
+    public void Frontend_does_not_introduce_periodic_intervals()
+    {
+        var violations = Directory.EnumerateFiles(
+                Path.Combine(RepositoryRoot, "admin", "src"), "*.*",
+                SearchOption.AllDirectories)
+            .Where(file => file.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) ||
+                           file.EndsWith(".tsx", StringComparison.OrdinalIgnoreCase))
+            .Where(file => Regex.IsMatch(
+                File.ReadAllText(file),
+                @"(?<![A-Za-z0-9_])(?:window\.)?setInterval\s*\("))
+            .Select(file => Path.GetRelativePath(RepositoryRoot, file).Replace('\\', '/'))
+            .ToArray();
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void Frontend_realtime_channels_use_the_shared_bounded_reconnect_policy()
+    {
+        var channelOwners = Directory.EnumerateFiles(
+                Path.Combine(RepositoryRoot, "admin", "src"), "*.*",
+                SearchOption.AllDirectories)
+            .Where(file => file.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) ||
+                           file.EndsWith(".tsx", StringComparison.OrdinalIgnoreCase))
+            .Where(file =>
+            {
+                var source = File.ReadAllText(file);
+                return source.Contains("synchronization/negotiate", StringComparison.Ordinal) &&
+                       source.Contains("new WebSocket", StringComparison.Ordinal);
+            })
+            .ToArray();
+
+        Assert.Equal(3, channelOwners.Length);
+        foreach (var owner in channelOwners)
+        {
+            var source = File.ReadAllText(owner);
+            Assert.Contains("realtimeReconnectDelay", source, StringComparison.Ordinal);
+            Assert.DoesNotMatch(@"setTimeout\s*\(\s*\(\)\s*=>\s*void\s+connect\(\)\s*,\s*\d", source);
+        }
     }
 
     private static void AssertSingleClass(string className)

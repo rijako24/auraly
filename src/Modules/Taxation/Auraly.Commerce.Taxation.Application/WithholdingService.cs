@@ -9,10 +9,18 @@ public interface IWithholdingRuleStore
     Task<WithholdingRule> SaveVersionAsync(Guid tenantId, Guid userId, Guid? ruleId, WithholdingRule proposed, CancellationToken ct);
     Task<CounterpartyTaxProfileView?> GetProfileAsync(
         Guid tenantId, Guid businessId, Guid counterpartyId, CancellationToken ct);
+    Task<IReadOnlyDictionary<Guid, CounterpartyTaxProfileView>> GetProfilesAsync(
+        Guid tenantId, Guid businessId, IReadOnlyCollection<Guid> counterpartyIds,
+        CancellationToken ct);
     Task<CounterpartyTaxProfileView> SaveProfileAsync(
         Guid tenantId, Guid userId, SaveCounterpartyTaxProfileRequest request, CancellationToken ct);
     Task<IReadOnlySet<string>> GetActiveResponsibilityCodesAsync(CancellationToken ct);
 }
+
+public sealed record WithholdingCalculationPlan(
+    Guid BusinessId,
+    IReadOnlyList<WithholdingRule> Rules,
+    IReadOnlyDictionary<Guid, CounterpartyTaxProfileView> Profiles);
 
 public sealed class WithholdingService(
     IWithholdingRuleStore store,
@@ -120,11 +128,37 @@ public sealed class WithholdingService(
     public async Task<WithholdingCalculationSnapshot> CalculateAsync(
         Guid tenantId, Guid businessId, WithholdingPreviewRequest request, CancellationToken ct = default)
     {
-        if (request.BusinessId != businessId)
+        var plan = await PrepareCalculationPlanAsync(
+            tenantId,
+            businessId,
+            request.CounterpartyId == Guid.Empty ? [] : [request.CounterpartyId],
+            ct);
+        return Calculate(plan, request);
+    }
+
+    public async Task<WithholdingCalculationPlan> PrepareCalculationPlanAsync(
+        Guid tenantId,
+        Guid businessId,
+        IReadOnlyCollection<Guid> counterpartyIds,
+        CancellationToken ct = default)
+    {
+        var ids = counterpartyIds.Where(id => id != Guid.Empty).Distinct().ToArray();
+        var profilesTask = store.GetProfilesAsync(tenantId, businessId, ids, ct);
+        var rulesTask = store.ListAsync(tenantId, businessId, false, ct);
+        await Task.WhenAll(profilesTask, rulesTask);
+        return new WithholdingCalculationPlan(
+            businessId,
+            await rulesTask,
+            await profilesTask);
+    }
+
+    public WithholdingCalculationSnapshot Calculate(
+        WithholdingCalculationPlan plan,
+        WithholdingPreviewRequest request)
+    {
+        if (request.BusinessId != plan.BusinessId)
             throw new TaxationForbiddenException("The calculation belongs to another business.");
-        var profile = request.CounterpartyId == Guid.Empty
-            ? null
-            : await store.GetProfileAsync(tenantId, businessId, request.CounterpartyId, ct);
+        plan.Profiles.TryGetValue(request.CounterpartyId, out var profile);
         var responsibilities = request.CounterpartyResponsibilities is { Count: > 0 }
             ? new HashSet<string>(request.CounterpartyResponsibilities
                 .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -134,14 +168,13 @@ public sealed class WithholdingService(
             ? profile?.JurisdictionCode
             : request.JurisdictionCode.Trim().ToUpperInvariant();
         var context = new WithholdingCalculationContext(
-            businessId, Parse<WithholdingDirection>(request.Direction, nameof(request.Direction)),
+            plan.BusinessId, Parse<WithholdingDirection>(request.Direction, nameof(request.Direction)),
             Parse<WithholdingRecognitionMoment>(request.Moment, nameof(request.Moment)),
             request.CounterpartyId, request.ConceptCode, jurisdictionCode,
             request.TaxExclusiveAmount, request.VatAmount, request.OccurredAt,
             profile?.AppliesWithholding ?? false, responsibilities,
             new HashSet<Guid>(request.PreviouslyRecognizedRuleIds ?? []));
-        var rules = await store.ListAsync(tenantId, businessId, false, ct);
-        return ToSnapshot(engine.Calculate(context, rules));
+        return ToSnapshot(engine.Calculate(context, plan.Rules));
     }
 
     private static WithholdingRuleView ToView(WithholdingRule rule) => new(

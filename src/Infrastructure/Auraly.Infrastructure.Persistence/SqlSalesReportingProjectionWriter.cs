@@ -37,10 +37,10 @@ public sealed class SqlSalesReportingProjectionWriter(
         var discount = value.Lines.Sum(line => line.DiscountAmount);
         await using (var header = new SqlCommand("""
             INSERT reporting.ServiceInvoiceFacts
-              (DocumentId,TenantId,BusinessId,CustomerId,DocumentNumber,FiscalNumber,
+              (DocumentId,TenantId,BusinessId,CustomerId,PartySiteId,DocumentNumber,FiscalNumber,
                IssuedAt,BusinessLocalDate,CurrencyCode,UntaxedAmount,DiscountAmount,
                TaxAmount,TotalAmount,SourcePayloadHash,ProjectionVersion,ProjectedAt)
-            VALUES(@DocumentId,@TenantId,@BusinessId,@CustomerId,@DocumentNumber,@FiscalNumber,
+            VALUES(@DocumentId,@TenantId,@BusinessId,@CustomerId,@PartySiteId,@DocumentNumber,@FiscalNumber,
                @IssuedAt,@LocalDate,@Currency,@Untaxed,@Discount,@Tax,@Total,@Hash,@Version,@Now);
             """, session.Connection, session.Transaction))
         {
@@ -48,6 +48,7 @@ public sealed class SqlSalesReportingProjectionWriter(
             header.Parameters.AddWithValue("@TenantId", value.TenantId);
             header.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             header.Parameters.AddWithValue("@CustomerId", value.CustomerId);
+            header.Parameters.AddWithValue("@PartySiteId", (object?)value.CustomerPartySiteId ?? DBNull.Value);
             header.Parameters.AddWithValue("@DocumentNumber", value.DocumentNumber.FullNumber);
             header.Parameters.AddWithValue("@FiscalNumber", value.FiscalSnapshot.FiscalNumber);
             header.Parameters.AddWithValue("@IssuedAt", value.CommercialSnapshot.IssuedAt);
@@ -66,10 +67,10 @@ public sealed class SqlSalesReportingProjectionWriter(
         {
             await using var detail = new SqlCommand("""
                 INSERT reporting.ServiceInvoiceLineFacts
-                  (DocumentId,LineNumber,TenantId,BusinessId,CustomerId,BillableServiceId,
+                  (DocumentId,LineNumber,TenantId,BusinessId,CustomerId,PartySiteId,BillableServiceId,
                    ServiceCode,Description,Quantity,UntaxedAmount,DiscountAmount,TaxAmount,
                    TotalAmount,BusinessLocalDate,ProjectedAt)
-                VALUES(@DocumentId,@Line,@TenantId,@BusinessId,@CustomerId,@ServiceId,
+                VALUES(@DocumentId,@Line,@TenantId,@BusinessId,@CustomerId,@PartySiteId,@ServiceId,
                    @Code,@Description,@Quantity,@Untaxed,@Discount,@Tax,@Total,@LocalDate,@Now);
                 """, session.Connection, session.Transaction);
             detail.Parameters.AddWithValue("@DocumentId", value.DocumentId);
@@ -77,6 +78,7 @@ public sealed class SqlSalesReportingProjectionWriter(
             detail.Parameters.AddWithValue("@TenantId", value.TenantId);
             detail.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             detail.Parameters.AddWithValue("@CustomerId", value.CustomerId);
+            detail.Parameters.AddWithValue("@PartySiteId", (object?)value.CustomerPartySiteId ?? DBNull.Value);
             detail.Parameters.AddWithValue("@ServiceId", line.BillableServiceId);
             detail.Parameters.AddWithValue("@Code", line.ServiceCode);
             detail.Parameters.AddWithValue("@Description", line.Description);
@@ -95,6 +97,8 @@ public sealed class SqlSalesReportingProjectionWriter(
     {
         var v=JsonSerializer.Deserialize<CommercialOrderProjectionSource>(payload,new JsonSerializerOptions(JsonSerializerDefaults.Web))
             ?? throw new InvalidOperationException("The seller order reporting source is invalid.");
+        if(v.PartySiteId is null)
+            throw new InvalidOperationException("The seller order reporting source does not contain a customer site.");
         await using var c=new SqlCommand("""
           MERGE reporting.CommercialReportOrderFacts WITH(HOLDLOCK) AS target
           USING (SELECT @Id AS OrderId) AS source ON target.OrderId=source.OrderId
@@ -529,14 +533,14 @@ public sealed class SqlSalesReportingProjectionWriter(
             (
               DocumentId,TenantId,BusinessId,DocumentType,DocumentNumber,FiscalNumber,
               IssuedAt,BusinessLocalDate,TimeZoneId,WarehouseId,WarehouseName,WorkSessionId,SellerId,SellerName,
-              CustomerId,CustomerIdentification,CustomerName,SourceMode,FiscalStatus,
+              CustomerId,PartySiteId,CustomerIdentification,CustomerName,SourceMode,FiscalStatus,
               CurrencyCode,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,
               CreditAmount,CollectedAmount,RecognizedCostAmount,ProjectionVersion,
               SourcePayloadHash,ProjectedAt
             )
             SELECT d.DocumentId,@TenantId,d.BusinessId,d.DocumentType,d.DocumentNumber,d.FiscalNumber,
                    d.IssuedAt,@LocalDate,@TimeZoneId,d.WarehouseId,w.Name,d.WorkSessionId,@SellerId,@SellerName,
-                   d.CustomerId,d.CustomerIdentification,
+                   d.CustomerId,d.CustomerPartySiteId,d.CustomerIdentification,
                    COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
                             NULLIF(CONCAT(p.FirstName,N' ',p.LastName),N' '),N'Consumidor final'),
                    d.SourceMode,d.FiscalStatus,@Currency,@Gross,@Discount,d.UntaxedAmount,
@@ -582,13 +586,13 @@ public sealed class SqlSalesReportingProjectionWriter(
             (
               FactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,SourceLineNumber,
               OriginalSaleDocumentId,OriginalLineNumber,MovementType,OccurredAt,BusinessLocalDate,
-              WarehouseId,WorkSessionId,SellerId,CustomerId,ProductId,ProductCode,ProductName,
+              WarehouseId,WorkSessionId,SellerId,CustomerId,PartySiteId,ProductId,ProductCode,ProductName,
               CategoryId,CategoryName,SupplierId,SupplierName,Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,
               TotalAmount,RecognizedCostAmount,ProjectionVersion,ProjectedAt
             )
             SELECT @FactId,@TenantId,@BusinessId,@DocumentId,@DocumentType,@LineNumber,
                    @DocumentId,@LineNumber,N'Sale',@OccurredAt,@LocalDate,@WarehouseId,
-                   @WorkSessionId,@SellerId,@CustomerId,p.ProductId,
+                   @WorkSessionId,@SellerId,@CustomerId,@PartySiteId,p.ProductId,
                    CASE WHEN sourceLine.AttributionSnapshotVersion>0
                         THEN COALESCE(sourceLine.ProductCodeSnapshot,N'')
                         ELSE COALESCE(p.ProductCode,p.Sku,p.Reference,N'') END,
@@ -640,6 +644,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@WorkSessionId", value.WorkSessionId);
         command.Parameters.AddWithValue("@SellerId", (object?)sellerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@CustomerId", (object?)value.CustomerId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)value.CustomerPartySiteId ?? DBNull.Value);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         command.Parameters.AddWithValue("@ProductName", line.Description);
         AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
@@ -752,7 +757,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         Guid documentId, CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT WarehouseId,WorkSessionId,SoldByUserId,CustomerId
+            SELECT WarehouseId,WorkSessionId,SoldByUserId,CustomerId,CustomerPartySiteId
             FROM dbo.SalesDocuments
             WHERE BusinessId=@BusinessId AND DocumentId=@DocumentId;
             """;
@@ -765,7 +770,8 @@ public sealed class SqlSalesReportingProjectionWriter(
         return new OriginalSaleDimensions(reader.GetGuid(0),
             reader.IsDBNull(1) ? null : reader.GetGuid(1),
             reader.IsDBNull(2) ? null : reader.GetGuid(2),
-            reader.IsDBNull(3) ? null : reader.GetGuid(3));
+            reader.IsDBNull(3) ? null : reader.GetGuid(3),
+            reader.IsDBNull(4) ? null : reader.GetGuid(4));
     }
 
     private async Task InsertReturnLineFactAsync(
@@ -778,14 +784,14 @@ public sealed class SqlSalesReportingProjectionWriter(
             (
               FactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,SourceLineNumber,
               OriginalSaleDocumentId,OriginalLineNumber,MovementType,OccurredAt,BusinessLocalDate,
-              WarehouseId,WorkSessionId,SellerId,CustomerId,ProductId,ProductCode,ProductName,
+              WarehouseId,WorkSessionId,SellerId,CustomerId,PartySiteId,ProductId,ProductCode,ProductName,
               CategoryId,CategoryName,SupplierId,SupplierName,Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,
               TotalAmount,RecognizedCostAmount,ReturnReasonCode,ReturnDisposition,
               ProjectionVersion,ProjectedAt
             )
             SELECT @FactId,@TenantId,@BusinessId,@ReturnId,N'SalesReturn',@LineNumber,
                    @OriginalId,@OriginalLine,N'Return',@OccurredAt,@LocalDate,@WarehouseId,
-                   @WorkSessionId,@SellerId,@CustomerId,p.ProductId,
+                   @WorkSessionId,@SellerId,@CustomerId,@PartySiteId,p.ProductId,
                    COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,p.ProductCategoryId,
                    COALESCE(pc.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
                    -@Quantity,-@Gross,-@Discount,-@Untaxed,-@Tax,
@@ -812,6 +818,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@WorkSessionId", (object?)(value.WorkSessionId ?? original.WorkSessionId) ?? DBNull.Value);
         command.Parameters.AddWithValue("@SellerId", (object?)original.SellerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@CustomerId", (object?)(value.CustomerId ?? original.CustomerId) ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)original.PartySiteId ?? DBNull.Value);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
         AddDecimal(command, "@Gross", line.UntaxedAmount + line.DiscountAmount, 19, 4);
@@ -1060,5 +1067,5 @@ public sealed class SqlSalesReportingProjectionWriter(
         string Code, decimal Rate, decimal Taxable, decimal Tax, decimal Total);
 
     private sealed record OriginalSaleDimensions(
-        Guid WarehouseId, Guid? WorkSessionId, Guid? SellerId, Guid? CustomerId);
+        Guid WarehouseId, Guid? WorkSessionId, Guid? SellerId, Guid? CustomerId, Guid? PartySiteId);
 }

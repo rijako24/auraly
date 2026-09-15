@@ -34,6 +34,12 @@ public sealed record OnlineOrderCreditValidationIssue(
 
 public interface IOnlineSaleWithholdingCalculator
 {
+    Task WarmAsync(
+        Guid tenantId,
+        Guid businessId,
+        IReadOnlyCollection<Guid> customerIds,
+        CancellationToken cancellationToken);
+
     Task<WithholdingCalculationSnapshot> CalculateAsync(
         Guid tenantId,
         OnlineSaleSettlementContext context,
@@ -45,13 +51,6 @@ public interface IOnlineSalesCheckoutStore
     Task<OnlineSaleSettlementContext> ReadSettlementContextAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
-        CancellationToken cancellationToken);
-
-    Task PrepareSourceOrderInventoryAsync(
-        OnlineSalesUserIdentity user,
-        Guid businessId,
-        Guid orderId,
-        Guid destinationWarehouseId,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<OnlineOrderCreditValidationIssue>> ValidateOrderCreditBatchAsync(
@@ -89,6 +88,14 @@ public sealed class OnlineSalesCheckoutService(
     ReceivePosSaleService receiver,
     IOnlineSaleWithholdingCalculator withholdings)
 {
+    // The service is request-scoped. A batch can issue several documents with
+    // the same authorization, so resolve protected key material once per key
+    // instead of performing a secret/database read for every document.
+    private readonly Dictionary<FiscalKeyReference, FiscalVerificationMaterial?>
+        _fiscalMaterialByReference = [];
+    private readonly Dictionary<(Guid BusinessId, bool Habilitation), OnlineSalesFiscalKeyContext>
+        _fiscalKeyContextByBusiness = [];
+
     private static readonly HashSet<string> PaymentMethods =
     [
         "Cash",
@@ -97,19 +104,15 @@ public sealed class OnlineSalesCheckoutService(
         "Transfer"
     ];
 
-    public Task PrepareSourceOrderInventoryAsync(
+    public Task WarmSettlementBatchAsync(
         OnlineSalesUserIdentity user,
         Guid businessId,
-        Guid orderId,
-        Guid destinationWarehouseId,
+        IReadOnlyCollection<Guid> customerIds,
         CancellationToken cancellationToken = default)
     {
         DemandPermission(user);
-        if (businessId == Guid.Empty || orderId == Guid.Empty || destinationWarehouseId == Guid.Empty)
-            throw new OnlineSalesDraftValidationException(
-                "El pedido y la bodega de venta son obligatorios.");
-        return checkouts.PrepareSourceOrderInventoryAsync(
-            user, businessId, orderId, destinationWarehouseId, cancellationToken);
+        return withholdings.WarmAsync(
+            user.TenantId, businessId, customerIds, cancellationToken);
     }
 
     public Task<IReadOnlyList<OnlineOrderCreditValidationIssue>> ValidateOrderCreditBatchAsync(
@@ -139,6 +142,52 @@ public sealed class OnlineSalesCheckoutService(
         Validate(draftId, request, idempotencyKey);
         var settlement = await PrepareSettlementAsync(
             user, draftId, cancellationToken);
+        return await CompletePreparedAsync(
+            user, draftId, request, idempotencyKey, settlement, cancellationToken);
+    }
+
+    public async Task<CompleteOnlineSalesDraftResponse> CompleteKnownDraftAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesDraft draft,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ArgumentNullException.ThrowIfNull(draft);
+        Validate(draft.DraftId, request, idempotencyKey);
+        if (draft.UserId != user.UserId ||
+            draft.Version != request.ExpectedVersion ||
+            !string.Equals(draft.Status, "Active", StringComparison.Ordinal))
+            throw new OnlineSalesDraftConcurrencyException(
+                "El borrador preparado ya no coincide con la venta que se intenta completar.");
+        var context = new OnlineSaleSettlementContext(
+            draft.BusinessId,
+            draft.CustomerId,
+            draft.UntaxedAmount,
+            draft.TaxAmount,
+            draft.UpdatedAt,
+            draft.Lines.Any(line => SaleBelowCostPolicy.IsBelowCost(
+                line.Quantity, line.Net, line.DocumentUnitCost)));
+        var withholding = await withholdings.CalculateAsync(
+            user.TenantId, context, cancellationToken);
+        return await CompletePreparedAsync(
+            user,
+            draft.DraftId,
+            request,
+            idempotencyKey,
+            new PreparedOnlineSaleSettlement(context, withholding),
+            cancellationToken);
+    }
+
+    private async Task<CompleteOnlineSalesDraftResponse> CompletePreparedAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        PreparedOnlineSaleSettlement settlement,
+        CancellationToken cancellationToken)
+    {
         if (settlement.Context.HasBelowCostLine &&
             !user.Permissions.Contains(CommercePermissionCodes.SalesBelowCost))
             throw new OnlineSalesDraftForbiddenException(
@@ -146,9 +195,16 @@ public sealed class OnlineSalesCheckoutService(
         FiscalVerificationMaterial? material = null;
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
         {
-            var keyContext = await checkouts.ResolveFiscalKeyContextAsync(
-                user, draftId, request.FiscalHabilitationOnly, cancellationToken);
-            material = await technicalKeys.ResolveAsync(
+            var cacheKey = (
+                settlement.Context.BusinessId,
+                request.FiscalHabilitationOnly);
+            if (!_fiscalKeyContextByBusiness.TryGetValue(cacheKey, out var keyContext))
+            {
+                keyContext = await checkouts.ResolveFiscalKeyContextAsync(
+                    user, draftId, request.FiscalHabilitationOnly, cancellationToken);
+                _fiscalKeyContextByBusiness.Add(cacheKey, keyContext);
+            }
+            material = await ResolveFiscalMaterialAsync(
                 keyContext.Reference, cancellationToken)
                 ?? throw new OnlineSalesDraftValidationException(
                     request.FiscalHabilitationOnly
@@ -158,10 +214,11 @@ public sealed class OnlineSalesCheckoutService(
         var prepared = await checkouts.PrepareAsync(
             user, draftId, request, idempotencyKey.Trim(),
             material, settlement, cancellationToken);
-        var reception = await receiver.ReceiveOnlineAsync(
+        var reception = await receiver.ReceivePreparedOnlineAsync(
             user,
             $"online:{prepared.Request.DocumentId:N}",
             prepared.Request,
+            prepared.IsReplay,
             cancellationToken);
         await checkouts.MarkResultAsync(
             user,
@@ -179,6 +236,17 @@ public sealed class OnlineSalesCheckoutService(
             OnlineSalesReceiptMapper.From(prepared.Request, reception.Status),
             prepared.NextDraft,
             prepared.IsReplay || reception.IsDuplicate);
+    }
+
+    private async Task<FiscalVerificationMaterial?> ResolveFiscalMaterialAsync(
+        FiscalKeyReference reference,
+        CancellationToken cancellationToken)
+    {
+        if (_fiscalMaterialByReference.TryGetValue(reference, out var cached))
+            return cached;
+        var resolved = await technicalKeys.ResolveAsync(reference, cancellationToken);
+        _fiscalMaterialByReference.Add(reference, resolved);
+        return resolved;
     }
 
     public async Task<WithholdingCalculationSnapshot> PreviewSettlementAsync(

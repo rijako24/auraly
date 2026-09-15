@@ -213,10 +213,6 @@ public sealed class FiscalOnboardingService(
         if (dianNumberingRangeId == Guid.Empty)
             throw new FiscalConfigurationValidationException(
                 "Selecciona una resolución DIAN de documento soporte disponible.");
-        var current = await store.GetAsync(user.TenantId, businessId, cancellationToken);
-        if (!current.ProductionActive)
-            throw new FiscalConfigurationValidationException(
-                "Activa primero la facturación electrónica de producción para esta sede.");
         await store.ActivateSupportDocumentAsync(
             user.TenantId, businessId, user.UserId, dianNumberingRangeId, cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);

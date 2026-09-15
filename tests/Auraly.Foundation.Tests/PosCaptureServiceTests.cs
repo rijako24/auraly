@@ -475,7 +475,8 @@ public sealed class PosCaptureServiceTests
                 new UserId(Guid.NewGuid()));
             var active = await drafts.GetOrCreateActiveAsync(scope);
             if (assignCustomer)
-                await drafts.AssignPartiesAsync(active.DraftId, customerId, null);
+                await drafts.AssignPartiesAsync(
+                    active.DraftId, customerId, null, Guid.NewGuid());
             await test(service, drafts, scope, productId, customerId, availability);
         }
         finally

@@ -1,5 +1,9 @@
 import { apiClient } from "./client";
 import { isFiscalStatusSynchronizationMessage } from "./fiscal-onboarding-events";
+import {
+  realtimeReconnectDelay,
+  wasRealtimeConnectionStable,
+} from "@/lib/realtime-reconnect-policy";
 
 export type FiscalResolutionConfiguration = {
   businessId: string;
@@ -120,9 +124,24 @@ export const fiscalConfigurationApi = {
     onStatusChanged: () => void,
   ) => {
     let stopped = false;
+    let connecting = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
+    let failedAttempts = 0;
+    let openedAt: number | null = null;
+    const scheduleReconnect = () => {
+      if (reconnectTimer !== null) return;
+      const delay = realtimeReconnectDelay(failedAttempts);
+      failedAttempts += 1;
+      if (stopped || delay === null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, delay);
+    };
     const connect = async () => {
+      if (stopped || connecting || socket) return;
+      connecting = true;
       try {
         const negotiation = await apiClient.post<FiscalSynchronizationNegotiation>(
           `/commerce/v1/fiscal/configuration/onboarding/synchronization/negotiate?businessId=${encodeURIComponent(businessId)}`,
@@ -133,23 +152,39 @@ export const fiscalConfigurationApi = {
           "json.webpubsub.azure.v1",
         );
         socket = current;
+        current.addEventListener("open", () => {
+          if (!stopped && socket === current) openedAt = Date.now();
+        });
         current.addEventListener("message", (event: MessageEvent<string>) => {
           if (isFiscalStatusSynchronizationMessage(event.data)) onStatusChanged();
         });
         current.addEventListener("close", () => {
           if (stopped || socket !== current) return;
-          reconnectTimer = window.setTimeout(() => void connect(), 1_000);
+          socket = null;
+          if (wasRealtimeConnectionStable(openedAt, Date.now())) failedAttempts = 0;
+          openedAt = null;
+          scheduleReconnect();
         });
       } catch {
         socket?.close();
         socket = null;
-        if (!stopped)
-          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+        if (!stopped) scheduleReconnect();
+      } finally {
+        connecting = false;
       }
     };
+    const restartConnection = () => {
+      if (document.visibilityState !== "visible" || socket) return;
+      failedAttempts = 0;
+      void connect();
+    };
+    window.addEventListener("online", restartConnection);
+    document.addEventListener("visibilitychange", restartConnection);
     void connect();
     return () => {
       stopped = true;
+      window.removeEventListener("online", restartConnection);
+      document.removeEventListener("visibilitychange", restartConnection);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       socket?.close();
     };

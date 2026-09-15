@@ -19,6 +19,8 @@ public sealed class PosOrderServerClient(
     {
         if (draft.CustomerId is not Guid customerId)
             throw new InvalidOperationException("Selecciona un cliente antes de guardar el pedido.");
+        if (draft.CustomerPartySiteId is not Guid partySiteId)
+            throw new InvalidOperationException("Selecciona la sede del cliente antes de guardar el pedido.");
         return SendAsync<PosSaveOrderResponse>(
             HttpMethod.Post,
             "/api/pos/v1/orders/save",
@@ -28,6 +30,7 @@ public sealed class PosOrderServerClient(
                 runtime.WarehouseId.Value,
                 session.WorkSessionId,
                 customerId,
+                partySiteId,
                 draft.SourceOrderId,
                 draft.Observation,
                 idempotencyKey,

@@ -24,6 +24,11 @@ public interface IOrderStore
         Guid orderId,
         CancellationToken cancellationToken);
 
+    Task<IReadOnlyDictionary<Guid, OrderDetail>> GetBatchAsync(
+        OrderActor actor,
+        IReadOnlyCollection<Guid> orderIds,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<OrderPrintDocument>> GetPrintBatchAsync(
         OrderActor actor,
         IReadOnlyCollection<Guid> orderIds,
@@ -34,6 +39,7 @@ public interface IOrderStore
         Guid orderId,
         Guid workSessionId,
         int leaseMinutes,
+        bool releaseOtherClaims,
         CancellationToken cancellationToken);
 
     Task ReleaseClaimAsync(
@@ -95,6 +101,19 @@ public sealed class OrderService(
             ?? throw new OrderNotFoundException("El pedido no existe en esta sede.");
     }
 
+    internal Task<IReadOnlyDictionary<Guid, OrderDetail>> GetBatchAsync(
+        OrderActor actor,
+        IReadOnlyCollection<Guid> orderIds,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(actor, OrderPermissionCodes.Read);
+        ArgumentNullException.ThrowIfNull(orderIds);
+        if (orderIds.Count is < 1 or > 50 || orderIds.Any(id => id == Guid.Empty))
+            throw new OrderValidationException(
+                "Selecciona entre 1 y 50 pedidos válidos.");
+        return orders.GetBatchAsync(actor, orderIds, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<OrderPrintDocument>> GetPrintBatchAsync(
         OrderActor actor,
         OrderPrintBatchRequest request,
@@ -126,6 +145,24 @@ public sealed class OrderService(
             orderId,
             request.WorkSessionId,
             OrderRules.LeaseMinutes(request.LeaseMinutes),
+            releaseOtherClaims: false,
+            cancellationToken);
+    }
+
+    internal Task<OrderClaimSummary> ClaimReplacingOtherAsync(
+        OrderActor actor,
+        Guid orderId,
+        ClaimOrderRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(actor, OrderPermissionCodes.Recover);
+        ValidateActorRequest(actor, orderId, request.WorkSessionId, request.UserId);
+        return orders.ClaimAsync(
+            actor,
+            orderId,
+            request.WorkSessionId,
+            OrderRules.LeaseMinutes(request.LeaseMinutes),
+            releaseOtherClaims: true,
             cancellationToken);
     }
 
