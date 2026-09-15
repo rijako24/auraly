@@ -14,6 +14,8 @@ test("converts the online net line back to the public price when building an ord
       total: 2_101,
       priceSource: "PriceChannel",
       documentUnitCost: 7_250,
+      publicUnitPrice: 2_101,
+      publicDiscountAmount: 0,
     },
   ]);
 
@@ -73,4 +75,30 @@ test("builds the complete replacement from only the lines that remain in the rec
     },
   ]);
   assert.equal(lines.some((line) => line.productId === "removed-product"), false);
+});
+
+test("preserves the exact public total instead of producing a negative cent discount", () => {
+  const lines = buildPosOrderUpdateLines([
+    {
+      productId: { value: "taxed-product" },
+      quantity: 3,
+      unitPrice: 3_361.34,
+      discount: 0,
+      taxRate: 19,
+      total: 12_000,
+      priceSource: "Public",
+      documentUnitCost: 2_000,
+      publicUnitPrice: 4_000,
+      publicDiscountAmount: 0,
+    },
+  ]);
+
+  assert.deepEqual(lines, [{
+    productId: "taxed-product",
+    quantity: 3,
+    unitPrice: 4_000,
+    discountAmount: 0,
+    priceSource: "Public",
+    documentUnitCost: 2_000,
+  }]);
 });

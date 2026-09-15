@@ -2,7 +2,6 @@ import type {
   CommerceOrderDetail,
   CommerceOrderFilters,
   CommerceOrderPage,
-  InvoiceOrdersResponse,
 } from "@/services/orders/commerce-orders-client";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
 import type { TenantBranding } from "@/services/api/tenants";
@@ -131,6 +130,8 @@ export type PosDraftLine = {
   net: number;
   tax: number;
   total: number;
+  publicUnitPrice?: number | null;
+  publicDiscountAmount?: number | null;
 };
 
 
@@ -179,7 +180,7 @@ export type PosSensitiveAuthorization = {
 export type PosDraftLineUpdate = Pick<
   PosDraftLine,
   "lineId" | "description" | "unitPrice" | "discount" | "documentUnitCost"
->;
+> & { publicUnitPrice?: number; publicDiscountAmount?: number };
 
 export type PosDraft = {
   draftId: DraftId;
@@ -678,16 +679,6 @@ export interface PosClient {
   renewRecoveredOrder(orderId: string): Promise<unknown>;
   releaseRecoveredOrder(orderId: string): Promise<unknown>;
   saveOrder(draft: PosDraft): Promise<{ order: SellerOrderResult; nextDraft: PosDraft }>;
-  invoiceOrders(
-    orderIds: string[],
-    paymentMethodCode: string,
-    documentType: PosSaleDocumentType,
-    paymentReference?: string | null,
-    bankAccountId?: string | null,
-    paymentNotes?: string | null,
-    printAfterInvoice?: boolean,
-    idempotencyKey?: string,
-  ): Promise<InvoiceOrdersResponse>;
   printOrders(orderIds: string[]): Promise<{ printedCount: number }>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
@@ -1408,31 +1399,6 @@ export class PosEdgeClient implements PosClient {
         body: JSON.stringify({ draftId: draft.draftId.value }),
       },
     );
-  }
-
-  invoiceOrders(
-    orderIds: string[],
-    paymentMethodCode: string,
-    documentType: PosSaleDocumentType,
-    paymentReference?: string | null,
-    bankAccountId?: string | null,
-    paymentNotes?: string | null,
-    printAfterInvoice = true,
-    idempotencyKey = crypto.randomUUID(),
-  ) {
-    return this.request<InvoiceOrdersResponse>("/edge/v1/orders/invoice", {
-      method: "POST",
-      body: JSON.stringify({
-        orderIds,
-        paymentMethodCode,
-        paymentReference: paymentReference ?? null,
-        bankAccountId: bankAccountId ?? null,
-        paymentNotes: paymentNotes ?? null,
-        idempotencyKey,
-        printAfterInvoice,
-        documentType,
-      }),
-    });
   }
 
   printOrders(orderIds: string[]) {

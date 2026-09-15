@@ -6,7 +6,7 @@ La fuente canónica es el pedido que ya crea el bot en `dbo.Orders` y `dbo.Order
 
 Un pedido es comercial y no tributario. Guarda producto, cantidad, **precio público pactado incluido IVA**, descuento público y total comercial bruto. No congela el perfil ni la tarifa tributaria, la base gravable, CUFE, resolución o numeración fiscal. Al convertirlo en factura se consulta la configuración vigente del producto, se descompone el total público en base e impuesto y se construye entonces el snapshot fiscal inmutable.
 
-`OrderItems.UnitPrice`, `OrderItems.DiscountAmount`, `OrderItems.LineTotal` y `Orders.Total` usan siempre esa semántica pública/bruta, sin importar si el productor fue bot, captura de vendedor, POS online o POS Edge. El borrador online conserva importes netos para su cálculo interno; su adaptador los convierte a públicos al crear o actualizar el pedido. La recuperación hace la conversión inversa con el IVA vigente y conserva el total bruto pactado. POS Edge ya opera con precios públicos y los transporta sin conversión.
+`OrderItems.UnitPrice`, `OrderItems.DiscountAmount`, `OrderItems.LineTotal` y `Orders.Total` usan siempre esa semántica pública/bruta, sin importar si el productor fue bot, captura de vendedor, POS online o POS Edge. Todo productor aplica una sola vez `MonetaryRounding.CeilingLineUnitPrice` cuando el producto ingresa o se edita. El borrador online conserva tanto los importes netos para su cálculo interno como el snapshot público exacto; su adaptador copia ese snapshot al crear o actualizar el pedido. Recuperar, pausar, volver a guardar y facturar transportan los importes pactados sin volver a redondearlos ni reconstruirlos. POS Edge opera con la misma regla y semántica pública.
 
 ## Alcance y aislamiento
 
@@ -124,7 +124,7 @@ post-despliegue; no consultan nombres o direcciones para adivinar identidades.
 
 Permisos mínimos: `orders.read`, `orders.recover`, `orders.invoice`, `orders.cancel` y `orders.override-pricing`. Facturar también exige `sales.create`.
 
-La web usa JWT de usuario. POS Edge usa identidad del dispositivo y además resuelve el usuario que inició sesión localmente contra `AppUsers`, roles, negocio y permisos actuales. El `BusinessId`, la caja y la bodega no se aceptan solo porque lleguen en el body.
+La vista web usa siempre el JWT del usuario y `POST /api/commerce/v1/orders/invoice`, incluso cuando se abre dentro de un POS enrolado. Edge participa únicamente como transporte físico de impresión después de que la API confirma la emisión; no reenvía ni posee la facturación del pedido. Las rutas de POS Edge que procesan operaciones locales usan identidad del dispositivo y además resuelven el usuario que inició sesión localmente contra `AppUsers`, roles, negocio y permisos actuales. El `BusinessId`, la caja y la bodega no se aceptan solo porque lleguen en el body.
 
 ## Experiencia
 

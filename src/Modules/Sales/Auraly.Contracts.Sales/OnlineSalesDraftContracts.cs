@@ -30,7 +30,9 @@ public sealed record UpdateOnlineSalesDraftLineRequest(
     string Description,
     decimal UnitPrice,
     decimal Discount,
-    decimal DocumentUnitCost = 0);
+    decimal DocumentUnitCost = 0,
+    decimal? PublicUnitPrice = null,
+    decimal? PublicDiscountAmount = null);
 
 public sealed record SelectOnlineSalesDraftCustomerRequest(
     Guid? CustomerId,
@@ -127,7 +129,9 @@ public sealed record OnlineSalesDraftLine(
     decimal Net,
     decimal Tax,
     decimal Total,
-    decimal PromotionDiscount = 0)
+    decimal PromotionDiscount = 0,
+    decimal? PublicUnitPrice = null,
+    decimal? PublicDiscountAmount = null)
 {
     public decimal TotalDiscount => Discount + PromotionDiscount;
 }

@@ -1,4 +1,5 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Sales;
 using Auraly.Domain.Inventory;
@@ -154,8 +155,8 @@ public sealed class PosCaptureService(
                 captured.Product.TaxCode,
                 captured.Product.TaxRate,
                 captured.Quantity,
-                captured.Product.UnitPrice,
-                captured.Product.UnitPrice,
+                MonetaryRounding.CeilingLineUnitPrice(captured.Product.UnitPrice),
+                MonetaryRounding.CeilingLineUnitPrice(captured.Product.UnitPrice),
                 captured.Product.CurrencyCode,
                 "Base",
                 null,

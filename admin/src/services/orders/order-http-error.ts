@@ -24,3 +24,18 @@ export async function orderHttpError(response: Response): Promise<Error> {
         : "No fue posible consultar los pedidos.";
   return new Error(status);
 }
+
+export function orderOperationErrorMessage(
+  error: unknown,
+  fallback = "No fue posible procesar el pedido.",
+): string {
+  if (!(error instanceof Error)) return fallback;
+  if (
+    error.name === "TypeError" ||
+    error.name === "AbortError" ||
+    /fetch|network|conexi[oó]n|servidor no est[aá] disponible/i.test(error.message)
+  ) {
+    return "No hay conexión con Auraly. Revisa la conexión e intenta nuevamente.";
+  }
+  return error.message.trim() || fallback;
+}

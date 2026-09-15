@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using Auraly.Application.Inventory;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Contracts.Inventory;
 using Auraly.Domain.Inventory;
 using Auraly.Infrastructure.Persistence;
@@ -170,8 +171,10 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 var preserveCommercialValues=!canFullyEdit&&original is not null;
                 var unitPrice=preserveCommercialValues?original!.UnitPrice:input.UnitPrice!.Value;
                 var discountAmount=preserveCommercialValues?original!.DiscountAmount:input.DiscountAmount;
+                if(!preserveCommercialValues)
+                    unitPrice=MonetaryRounding.CeilingLineUnitPrice(unitPrice);
                 var priceSource=preserveCommercialValues?original!.PriceSource:NormalizePriceSource(input.PriceSource);
-                var gross=decimal.Round(unitPrice*input.Quantity,2,MidpointRounding.AwayFromZero);
+                var gross=MonetaryRounding.RoundLineAmount(unitPrice*input.Quantity);
                 if(discountAmount>gross)throw new SellerOrderValidationException($"El descuento de {line.Code} supera el valor bruto de la línea.");
                 lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position,DocumentUnitCost=preserveCommercialValues?original!.DocumentUnitCost:input.DocumentUnitCost});
             }
@@ -328,11 +331,13 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                     ? legacyPrices[input.LineId.ToString("D")]
                     : null;
                 var unitPrice=input.UnitPrice??legacyPrice!.UnitPrice;
+                var discountAmount=input.DiscountAmount;
+                unitPrice=MonetaryRounding.CeilingLineUnitPrice(unitPrice);
                 var priceSource=input.UnitPrice is null
                     ? legacyPrice!.PriceSource
                     : NormalizePriceSource(input.PriceSource);
-                var gross=decimal.Round(unitPrice*input.Quantity,2,MidpointRounding.AwayFromZero);
-                if(input.DiscountAmount>gross)
+                var gross=MonetaryRounding.RoundLineAmount(unitPrice*input.Quantity);
+                if(discountAmount>gross)
                     throw new SellerOrderValidationException($"El descuento de {line.Code} supera el valor bruto de la línea.");
                 if(input.UnitPrice is null)
                     warnings.Add($"{line.Code}: el cliente anterior no envió el precio capturado; revisa el valor antes de confirmar.");
@@ -340,7 +345,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 var canReserve=context.SourceWarehouseAllowsNegativeStock||allocation.CanReserve;
                 if(line.ManageStock&&!canReserve)
                     warnings.Add($"{line.Code}: solicitadas {input.Quantity:N3}, disponibles {InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,line.InventoryFactor):N3}.");
-                lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=input.DiscountAmount,Position=++position,CanReserve=canReserve,DocumentUnitCost=input.DocumentUnitCost});
+                lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position,CanReserve=canReserve,DocumentUnitCost=input.DocumentUnitCost});
             }
             var review=warnings.Count>0;var number=$"PED-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString("N")[..8].ToUpperInvariant()}";
             var total=lines.Sum(line=>line.LineTotal);
@@ -434,7 +439,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     private sealed record CustomerContext(string Name,string? Identification,string? Email,string? Phone,string Address,Guid OrdersWarehouseId,Guid PartySiteId,bool SourceWarehouseAllowsNegativeStock);
     private sealed record OrderLine(Guid ProductId,string Code,string Name,string UnitCode,decimal Quantity,decimal UnitPrice,string PriceSource,decimal Available,bool ManageStock,decimal TaxRate,int Position,decimal DiscountAmount=0m,Guid InventoryProductId=default,decimal InventoryFactor=1m,bool CanReserve=false,decimal? DocumentUnitCost=null)
     {
-        public decimal LineTotal=>decimal.Round(UnitPrice*Quantity-DiscountAmount,2,MidpointRounding.AwayFromZero);
+        public decimal LineTotal=>MonetaryRounding.RoundLineAmount(UnitPrice*Quantity-DiscountAmount);
     }
     private sealed record NormalizedOrderLine(
         Guid LineId,int Position,Guid ProductId,decimal Quantity,decimal? UnitPrice,

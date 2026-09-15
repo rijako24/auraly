@@ -46,6 +46,7 @@ import {
   type CommerceOrderPage,
   type OrderCreditValidationIssue,
 } from "@/services/orders/commerce-orders-client";
+import { orderOperationErrorMessage } from "@/services/orders/order-http-error";
 import {
   limitInvoiceBatch,
   loadAllMatchingOrders,
@@ -165,7 +166,6 @@ export function OrdersWorkspace({
     "SalesInvoice",
   );
   const [paymentMethodCode, setPaymentMethodCode] = useState<"Cash" | "Credit">("Cash");
-  const requestedPaymentMethodCodeRef = useRef<"Cash" | "Credit">("Cash");
   const invoiceAttemptRef = useRef<{ fingerprint: string; key: string } | null>(null);
   const [creditValidationIssues, setCreditValidationIssues] = useState<OrderCreditValidationIssue[]>([]);
   const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
@@ -211,7 +211,7 @@ export function OrdersWorkspace({
         return updated;
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible consultar los pedidos.");
+      setError(orderOperationErrorMessage(caught, "No fue posible consultar los pedidos."));
     } finally {
       if (!silent) setLoading(false);
     }
@@ -282,7 +282,7 @@ export function OrdersWorkspace({
           : `${available.length} pedidos disponibles seleccionados en todas las páginas.`,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible seleccionar todos los pedidos.");
+      setError(orderOperationErrorMessage(caught, "No fue posible seleccionar todos los pedidos."));
     } finally {
       setSelectingAll(false);
     }
@@ -294,7 +294,7 @@ export function OrdersWorkspace({
     try {
       setDetail(await loadDetail(orderId));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible abrir el pedido.");
+      setError(orderOperationErrorMessage(caught, "No fue posible abrir el pedido."));
     } finally {
       setWorking(false);
     }
@@ -310,13 +310,13 @@ export function OrdersWorkspace({
       setNotice(`Pedido ${order.orderNumber} llevado a la venta.`);
       await refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible recuperar el pedido.");
+      setError(orderOperationErrorMessage(caught, "No fue posible recuperar el pedido."));
     } finally {
       setWorking(false);
     }
   }
 
-  async function invoiceSelected() {
+  async function invoiceSelected(requestedPaymentMethodCode: "Cash" | "Credit") {
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
     if (selectedOrders.length > ORDER_INVOICE_BATCH_LIMIT) {
       setError(`Puedes facturar máximo ${ORDER_INVOICE_BATCH_LIMIT} pedidos por lote.`);
@@ -331,7 +331,6 @@ export function OrdersWorkspace({
       await refresh();
       return;
     }
-    const requestedPaymentMethodCode = requestedPaymentMethodCodeRef.current;
     const fingerprint = JSON.stringify({
       orderIds: available.map((order) => order.orderId).sort(),
       documentType,
@@ -391,11 +390,21 @@ export function OrdersWorkspace({
           ? `${completed} ${completed === 1 ? "pedido emitido" : "pedidos emitidos"} correctamente.`
           : `${completed} emitidos y ${failed} pendientes de revisar.`,
       );
+      if (failed === 0) {
+        const invoicedIds = new Set(available.map((order) => order.orderId));
+        setData((current) => current && ({
+          ...current,
+          items: current.items.filter((order) => !invoicedIds.has(order.orderId)),
+          totalCount: Math.max(0, current.totalCount - invoicedIds.size),
+        }));
+        if (data) onCountChange?.(Math.max(0, data.totalCount - invoicedIds.size));
+        setInvoiceProgress(null);
+      }
       setSelected(new Map());
       setAllMatchingSelected(false);
-      await refresh();
+      void refresh(true);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible facturar los pedidos.");
+      setError(orderOperationErrorMessage(caught, "No fue posible facturar los pedidos."));
     } finally {
       setWorking(false);
       window.setTimeout(() => setInvoiceProgress(null), 2200);
@@ -424,7 +433,7 @@ export function OrdersWorkspace({
       setCancelling(null);
       await refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible eliminar el pedido.");
+      setError(orderOperationErrorMessage(caught, "No fue posible eliminar el pedido."));
     } finally {
       setWorking(false);
     }
@@ -439,7 +448,7 @@ export function OrdersWorkspace({
       const result = await onPrintSelected(selectedOrders);
       setNotice(`${result.printedCount} ${result.printedCount === 1 ? "pedido enviado" : "pedidos enviados"} a impresión.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible imprimir los pedidos.");
+      setError(orderOperationErrorMessage(caught, "No fue posible imprimir los pedidos."));
     } finally {
       setWorking(false);
     }
@@ -454,7 +463,7 @@ export function OrdersWorkspace({
           </span>
           <p className="mt-3 font-semibold text-slate-900">Pedidos disponibles en línea</p>
           <p className="mt-1 max-w-sm text-sm text-slate-500">
-            La venta local sigue disponible. Los pedidos se actualizarán al recuperar la conexión con Auraly.
+            No hay conexión con Auraly. Conéctate al servidor para consultar, recuperar o facturar pedidos.
           </p>
         </div>
       </div>
@@ -644,19 +653,13 @@ export function OrdersWorkspace({
                 <div className="grid h-9 grid-cols-2 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Condición de pago">
                   <button type="button" aria-pressed={paymentMethodCode === "Cash"}
                     disabled={working || selectingAll}
-                    onClick={() => {
-                      requestedPaymentMethodCodeRef.current = "Cash";
-                      setPaymentMethodCode("Cash");
-                    }}
+                    onClick={() => setPaymentMethodCode("Cash")}
                     className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Cash" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
                     <Banknote className="h-3.5 w-3.5" />Efectivo
                   </button>
                   <button type="button" aria-pressed={paymentMethodCode === "Credit"}
                     disabled={working || selectingAll}
-                    onClick={() => {
-                      requestedPaymentMethodCodeRef.current = "Credit";
-                      setPaymentMethodCode("Credit");
-                    }}
+                    onClick={() => setPaymentMethodCode("Credit")}
                     className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Credit" ? "bg-amber-500 text-amber-950" : "text-slate-600 hover:bg-slate-50"}`}>
                     <CreditCard className="h-3.5 w-3.5" />Crédito
                   </button>
@@ -675,7 +678,7 @@ export function OrdersWorkspace({
                 <Button
                   type="button"
                   disabled={!selectedOrders.length || working || selectingAll || !onInvoiceSelected}
-                  onClick={() => void invoiceSelected()}
+                  onClick={() => void invoiceSelected(paymentMethodCode)}
                   className="col-span-2 w-full whitespace-nowrap bg-teal-700 text-white hover:bg-teal-800 sm:col-span-1 sm:w-auto"
                 >
                   {working ? (

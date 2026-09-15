@@ -1730,7 +1730,7 @@ public sealed class OrderRecoveryTests(
                     "Pedido preparado en la PWA",
                     $"pos-site-{Guid.NewGuid():N}",
                     [new PosSaveOrderLine(
-                        fixture.ProductId, 1m, 10_000m, 0m, "Captured")]));
+                        fixture.ProductId, 3m, 3_999.9901m, 0m, "Captured")]));
             Assert.True(validSave.IsSuccessStatusCode,
                 $"El pedido PWA respondio {(int)validSave.StatusCode}: {await validSave.Content.ReadAsStringAsync()}");
             var saved = Assert.IsType<PosSaveOrderResponse>(
@@ -1740,12 +1740,22 @@ public sealed class OrderRecoveryTests(
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
                 command.CommandText =
-                    "SELECT CustomerId,PartySiteId FROM dbo.Orders WHERE OrderId=@OrderId;";
+                    """
+                    SELECT o.CustomerId,o.PartySiteId,o.Total,
+                           item.UnitPrice,item.DiscountAmount,item.LineTotal
+                    FROM dbo.Orders o
+                    JOIN dbo.OrderItems item ON item.OrderId=o.OrderId
+                    WHERE o.OrderId=@OrderId;
+                    """;
                 command.Parameters.AddWithValue("@OrderId", saved.OrderId);
                 await using var reader = await command.ExecuteReaderAsync();
                 Assert.True(await reader.ReadAsync());
                 Assert.Equal(customerId, reader.GetGuid(0));
                 Assert.Equal(partySiteId, reader.GetGuid(1));
+                Assert.Equal(12_000m, reader.GetDecimal(2));
+                Assert.Equal(4_000m, reader.GetDecimal(3));
+                Assert.Equal(0m, reader.GetDecimal(4));
+                Assert.Equal(12_000m, reader.GetDecimal(5));
             }
 
             using var saveRoute = await client.PostAsJsonAsync(

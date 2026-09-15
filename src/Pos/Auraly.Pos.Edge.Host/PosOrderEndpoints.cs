@@ -198,6 +198,7 @@ public static class PosOrderEndpoints
             InvoicePosOrdersRequest request,
             PosOrderServerClient server,
             ConfigurablePosReceiptPrinter receiptPrinter,
+            ILoggerFactory loggerFactory,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
@@ -216,35 +217,36 @@ public static class PosOrderEndpoints
                 return Results.Ok(response with { PrintStatus = "NotRequired" });
             if (!request.PrintAfterInvoice)
                 return Results.Ok(response with { PrintStatus = "NotRequired" });
-            try
+            var receipts = response.Results
+                .Where(result => result.Error is null && result.Receipt is not null)
+                .Select(result => result.Receipt!)
+                .ToArray();
+            _ = ObserveInvoicePrintAsync(
+                receiptPrinter.PrintSalesDocumentsAsync(receipts, CancellationToken.None),
+                loggerFactory.CreateLogger("Auraly.Pos.OrderInvoicePrinting"));
+            return Results.Ok(response with
             {
-                var receipts = response.Results
-                    .Where(result => result.Error is null && result.Receipt is not null)
-                    .Select(result => result.Receipt!)
-                    .ToArray();
-                await receiptPrinter.PrintSalesDocumentsAsync(receipts, ct);
-                return Results.Ok(response with
-                {
-                    PrintStatus = receipts.Length == 0 ? "NotRequired" : "Sent"
-                });
-            }
-            catch (Exception error) when (error is IOException or
-                                          InvalidOperationException or
-                                          PlatformNotSupportedException or
-                                          System.ComponentModel.Win32Exception)
-            {
-                return Results.Ok(response with
-                {
-                    PrintStatus = "Failed",
-                    PrintError = "Los pedidos se facturaron, pero no fue posible imprimir: " +
-                                 (string.IsNullOrWhiteSpace(error.Message)
-                                     ? "la impresora configurada no respondió. Revisa la impresora de Facturas en Periféricos."
-                                     : error.Message)
-                });
-            }
+                PrintStatus = receipts.Length == 0 ? "NotRequired" : "Sent"
+            });
         });
 
         return edge;
+    }
+
+    private static async Task ObserveInvoicePrintAsync(Task printing, ILogger logger)
+    {
+        try
+        {
+            await printing;
+        }
+        catch (Exception error) when (error is IOException or
+                                      InvalidOperationException or
+                                      PlatformNotSupportedException or
+                                      System.ComponentModel.Win32Exception)
+        {
+            logger.LogError(error,
+                "Los pedidos se facturaron, pero la impresión posterior falló.");
+        }
     }
 }
 

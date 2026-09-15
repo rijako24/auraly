@@ -1,4 +1,5 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Money;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
@@ -28,7 +29,10 @@ public sealed class PosDraftPricingService(PosCatalogStore catalog, PosDraftStor
                         line.LineId, line.BaseUnitPrice, line.UnitPrice, line.CurrencyCode,
                         line.PriceSource, line.PriceChannelId, line.PromotionDiscount);
                 return new PosDraftLinePriceUpdate(
-                    line.LineId, price.BaseAmount, price.ReferenceAmount ?? price.Amount, price.CurrencyCode,
+                    line.LineId,
+                    MonetaryRounding.CeilingLineUnitPrice(price.BaseAmount),
+                    MonetaryRounding.CeilingLineUnitPrice(price.ReferenceAmount ?? price.Amount),
+                    price.CurrencyCode,
                     price.Source, price.PriceChannelId, price.PromotionDiscount);
             }).ToArray(),
             ct);

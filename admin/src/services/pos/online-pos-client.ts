@@ -135,6 +135,8 @@ type OnlineDraftLine = {
   net: number;
   tax: number;
   total: number;
+  publicUnitPrice?: number | null;
+  publicDiscountAmount?: number | null;
 };
 
 type OnlineDraft = {
@@ -1246,21 +1248,23 @@ export class OnlinePosClient implements PosClient {
     }
     if (!printAfterInvoice) {
       response.printStatus = "NotRequired";
-      await this.activeDraft();
       return response;
     }
-    try {
-      const receipts = orderReceiptsFromEmission(response.results);
-      await this.printDirect(receipts, receipts.length > 0, "pos", browserPreview);
-      response.printStatus = response.completedCount ? "Sent" : "NotRequired";
-    } catch (error) {
+    const receipts = orderReceiptsFromEmission(response.results);
+    response.printStatus = response.completedCount ? "Sent" : "NotRequired";
+    const printing = new Promise<void>((resolve, reject) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          void this.printDirect(
+            receipts, receipts.length > 0, "pos", browserPreview,
+          ).then(resolve, reject);
+        });
+      });
+    }).catch((error) => {
       closePrintPreview(browserPreview);
-      response.printStatus = "Failed";
-      response.printError = `Los pedidos se facturaron, pero no fue posible imprimir: ${
-        error instanceof Error ? error.message : "error desconocido"
-      }`;
-    }
-    await this.activeDraft();
+      console.error("Los pedidos se facturaron, pero no fue posible imprimir.", error);
+    });
+    void printing;
     return response;
   }
 

@@ -32,6 +32,10 @@ import { useRouter } from "next/navigation";
 import { canOpenPosAdministrativeMenu } from "@/lib/default-start-route";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
+import {
+  loadCommerceOrder,
+  loadCommerceOrders,
+} from "@/services/orders/commerce-orders-client";
 import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
 import {
   PosCatalogProduct,
@@ -213,6 +217,7 @@ export default function PosPage() {
   const captureInFlight = useRef(false);
   const router = useRouter();
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
+  const cloudUser = useAuthStore((state) => state.user);
   const cloudAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const logoutCloud = useAuthStore((state) => state.logout);
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
@@ -233,6 +238,10 @@ export default function PosPage() {
   const initialEdgeHealth = useRef<{
     client: PosEdgeClient;
     health: Awaited<ReturnType<PosClient["health"]>>;
+  } | null>(null);
+  const webOrderInvoiceClient = useRef<{
+    key: string;
+    client: OnlinePosClient;
   } | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
   const [workspaceChanging, setWorkspaceChanging] = useState(false);
@@ -531,14 +540,14 @@ export default function PosPage() {
   }, [client]);
 
   useEffect(() => {
-    if (!client || !serverConnected) {
+    if (!client) {
       setOrdersCount(0);
       return;
     }
     if (sidePanel === "orders") return;
     let active = true;
     const range = orderDayRange(localOrderDateValue());
-    void client.orders({ ...range, status: "Available", page: 1, pageSize: 1 })
+    void loadCommerceOrders({ ...range, status: "Available", page: 1, pageSize: 1 })
       .then((page) => {
         if (active) setOrdersCount(page.totalCount);
       })
@@ -546,7 +555,7 @@ export default function PosPage() {
         if (active) setOrdersCount(0);
       });
     return () => { active = false; };
-  }, [client, ordersRefreshVersion, serverConnected, sidePanel]);
+  }, [client, ordersRefreshVersion, sidePanel]);
 
   useEffect(() => {
     let active = true;
@@ -2448,12 +2457,6 @@ export default function PosPage() {
     }
   }
   function openOrders() {
-    if (!serverConnected) {
-      setError(null);
-      setMessage("Los pedidos se consultan en línea. Auraly Server no está disponible.");
-      focusScanner();
-      return;
-    }
     setOrdersExpanded(true);
   }
 
@@ -2484,7 +2487,46 @@ export default function PosPage() {
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
   ) {
     if (!client) throw new Error("El punto de venta no está disponible.");
-    const result = await client.invoiceOrders(
+    if (!cloudUser)
+      throw new Error("La sesión web de facturación no está disponible.");
+
+    // Orders are always issued by the canonical web API. An enrolled Edge is
+    // only passed as the physical print transport; it never owns issuance.
+    let orderClient = client instanceof OnlinePosClient ? client : null;
+    if (!orderClient) {
+      const clientKey = [
+        cloudUser.userId,
+        workstation.businessId,
+        workstation.warehouseId,
+        edgeEnrollmentToken ?? "browser",
+      ].join(":");
+      if (webOrderInvoiceClient.current?.key === clientKey) {
+        orderClient = webOrderInvoiceClient.current.client;
+      } else {
+        const context = await selectSalesWorkspace({
+          businessId: workstation.businessId,
+          businessName: workstation.businessName,
+          warehouseId: workstation.warehouseId,
+          warehouseCode: workstation.warehouseId,
+          warehouseName: workstation.warehouseName,
+          warehouseAllowsNegativeStockSales:
+            workstation.warehouseAllowsNegativeStockSales,
+          hasActiveEdgeEnrollment: true,
+          fiscalReadyForOnlineSales: workstation.fiscalReady,
+          fiscalReadyForEnrollment: workstation.fiscalReady,
+          hasDianDocumentQuota: workstation.dianQuotaAvailable !== false,
+          fiscalWarningMessages: workstation.fiscalWarnings,
+        });
+        orderClient = new OnlinePosClient(
+          context,
+          cloudUser.userId,
+          `${cloudUser.firstName} ${cloudUser.lastName}`.trim() || cloudUser.username,
+          edgeEnrollmentToken,
+        );
+        webOrderInvoiceClient.current = { key: clientKey, client: orderClient };
+      }
+    }
+    const result = await orderClient.invoiceOrders(
       orderIds,
       paymentMethodCode,
       documentType,
@@ -3186,9 +3228,9 @@ export default function PosPage() {
                       </td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-700">
                         {money.format(calculateRetailUnitPrice(
-                          line.unitPrice,
+                          line.publicUnitPrice ?? line.unitPrice,
                           line.taxRate,
-                          client.mode === "online",
+                          client.mode === "online" && line.publicUnitPrice == null,
                         ))}
                       </td>
                       <td className="px-3 py-3 text-right text-base font-bold tabular-nums text-slate-950">
@@ -3471,10 +3513,9 @@ export default function PosPage() {
                 key={`compact-orders-${ordersRefreshVersion}`}
                 compact
                 initialStatus="Available"
-                connected={serverConnected}
                 activeOrderId={draft?.sourceOrderId}
-                loadPage={(filters) => client!.orders(filters)}
-                loadDetail={(orderId) => client!.order(orderId)}
+                loadPage={loadCommerceOrders}
+                loadDetail={loadCommerceOrder}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={(orders) => client!.printOrders(orders.map((order) => order.orderId))}
                 onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) =>
@@ -3522,10 +3563,9 @@ export default function PosPage() {
             <OrdersWorkspace
               key={`expanded-orders-${ordersRefreshVersion}`}
               initialStatus="Available"
-              connected={serverConnected}
               activeOrderId={draft?.sourceOrderId}
-              loadPage={(filters) => client.orders(filters)}
-              loadDetail={(orderId) => client.order(orderId)}
+              loadPage={loadCommerceOrders}
+              loadDetail={loadCommerceOrder}
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={(orders) => client.printOrders(orders.map((order) => order.orderId))}
               onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) =>

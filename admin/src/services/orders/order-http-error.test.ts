@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { orderHttpError } from "./order-http-error";
+import { orderHttpError, orderOperationErrorMessage } from "./order-http-error";
 
 test("order errors preserve problem details returned as json", async () => {
   const error = await orderHttpError(new Response(
@@ -17,4 +17,11 @@ test("order errors never expose an html error page in the seller UI", async () =
   ));
   assert.equal(error.message, "El servidor no pudo consultar los pedidos. Intenta nuevamente.");
   assert.doesNotMatch(error.message, /html|device-width|internal/i);
+});
+
+test("order operations present a friendly message when the API cannot be reached", () => {
+  assert.equal(
+    orderOperationErrorMessage(new TypeError("Failed to fetch")),
+    "No hay conexión con Auraly. Revisa la conexión e intenta nuevamente.",
+  );
 });

@@ -104,6 +104,9 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                 line.Quantity,
                 BaseUnitPrice = product.UnitPrice,
                 UnitPrice = unitPrice,
+                PublicUnitPrice = Money(line.PublicUnitPrice),
+                PublicDiscountAmount = Money(line.PublicDiscountAmount),
+                PublicLineTotal = Money(line.PublicLineTotal),
                 DocumentUnitCost = line.DocumentUnitCost ?? product.UnitCost,
                 product.CurrencyCode,
                 PriceSource = NormalizePriceSource(line.PriceSource),
@@ -117,11 +120,11 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.SalesDraftLines(
               SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
-              UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,DocumentUnitCost,
+              UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,PublicUnitPrice,PublicDiscountAmount,PublicLineTotal,DocumentUnitCost,
               CurrencyCode,PriceSource,DiscountAmount,Position)
             SELECT input.LineId,@DraftId,input.ProductId,input.ProductCode,input.Description,
                    input.UnitCode,input.TaxCode,input.TaxRate,input.Quantity,input.BaseUnitPrice,
-                   input.UnitPrice,input.DocumentUnitCost,input.CurrencyCode,input.PriceSource,
+                   input.UnitPrice,input.PublicUnitPrice,input.PublicDiscountAmount,input.PublicLineTotal,input.DocumentUnitCost,input.CurrencyCode,input.PriceSource,
                    input.Discount,input.Position
             FROM OPENJSON(@LinesJson) WITH(
               LineId uniqueidentifier '$.LineId',ProductId uniqueidentifier '$.ProductId',
@@ -129,6 +132,9 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
               UnitCode nvarchar(24) '$.UnitCode',TaxCode nvarchar(16) '$.TaxCode',
               TaxRate decimal(9,4) '$.TaxRate',Quantity decimal(18,4) '$.Quantity',
               BaseUnitPrice decimal(18,2) '$.BaseUnitPrice',UnitPrice decimal(18,2) '$.UnitPrice',
+              PublicUnitPrice decimal(18,2) '$.PublicUnitPrice',
+              PublicDiscountAmount decimal(18,2) '$.PublicDiscountAmount',
+              PublicLineTotal decimal(18,2) '$.PublicLineTotal',
               DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',CurrencyCode nvarchar(3) '$.CurrencyCode',
               PriceSource nvarchar(64) '$.PriceSource',Discount decimal(18,2) '$.Discount',
               Position int '$.Position') input;

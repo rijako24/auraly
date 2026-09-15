@@ -69,6 +69,8 @@ export function PosLineEditorDialog({
     description: line.description.trim(),
     unitPrice: exclusive(line.documentUnitPrice, line.taxRate),
     discount: exclusive(parseMoneyDraft(line.discount), line.taxRate),
+    publicUnitPrice: line.documentUnitPrice,
+    publicDiscountAmount: parseMoneyDraft(line.discount),
     documentUnitCost: line.allowsDocumentCostOverride
       ? parseMoneyDraft(line.unitCost)
       : line.originalDocumentUnitCost,
@@ -269,8 +271,8 @@ function focusEditorControl(target: HTMLInputElement | HTMLButtonElement | null 
 }
 
 function toEditable(line: PosDraftLine): EditableLine {
-  const referenceUnitPrice = inclusive(line.unitPrice, line.taxRate);
-  const discount = inclusive(line.discount, line.taxRate);
+  const referenceUnitPrice = line.publicUnitPrice ?? inclusive(line.unitPrice, line.taxRate);
+  const discount = line.publicDiscountAmount ?? inclusive(line.discount, line.taxRate);
   const finalUnitPrice = Math.max(0, referenceUnitPrice - discount / line.quantity);
   return {
     lineId: line.lineId,
