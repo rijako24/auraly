@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
@@ -13,14 +14,24 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
     public async Task Product_search_defaults_to_ten_rows()
     {
         using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.ReadGoodsReceipts);
+        var endpoint = $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}" +
+                       "&includeUnassociated=true";
+        _ = await client.GetFromJsonAsync<GoodsReceiptProductPage>(endpoint);
 
-        var products = await client.GetFromJsonAsync<GoodsReceiptProductPage>(
-            $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}" +
-            "&includeUnassociated=true");
+        var elapsed = new List<TimeSpan>();
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var startedAt = Stopwatch.GetTimestamp();
+            var products = await client.GetFromJsonAsync<GoodsReceiptProductPage>(
+                endpoint + $"&search={attempt}");
+            elapsed.Add(Stopwatch.GetElapsedTime(startedAt));
+            Assert.NotNull(products);
+            Assert.Equal(10, products.PageSize);
+            Assert.InRange(products.Items.Count, 0, 10);
+        }
 
-        Assert.NotNull(products);
-        Assert.Equal(10, products.PageSize);
-        Assert.InRange(products.Items.Count, 0, 10);
+        Assert.True(elapsed.Max() < TimeSpan.FromSeconds(1),
+            $"La consulta más lenta tardó {elapsed.Max().TotalMilliseconds:N0} ms.");
     }
 
     [Fact]
