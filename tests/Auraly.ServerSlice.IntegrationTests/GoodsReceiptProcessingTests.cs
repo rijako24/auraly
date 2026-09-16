@@ -787,6 +787,11 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
               INSERT dbo.TaxProfiles(
                 TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
               VALUES(NEWID(),@BusinessId,N'IVA-0',N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId AND Code=N'IVA-19')
+              INSERT dbo.TaxProfiles(
+                TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+              VALUES(NEWID(),@BusinessId,N'IVA-19',N'01',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
 
             UPDATE party SET IdentificationCountryId=@CountryId,IdentificationTypeCode=N'31',
               Identification=N'900999001',NormalizedIdentification=N'900999001',VerificationDigit=N'1',

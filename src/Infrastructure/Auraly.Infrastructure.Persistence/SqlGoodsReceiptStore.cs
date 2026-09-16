@@ -755,11 +755,13 @@ public sealed class SqlGoodsReceiptStore(
             SELECT Code,DianTaxCode,Rate
             FROM dbo.TaxProfiles
             WHERE BusinessId=@BusinessId AND IsActive=1
-              AND Code IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$'));
+              AND (Code IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$'))
+                OR DianTaxCode IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$')));
             """;
         var metadata = new Dictionary<Guid, (string Code, string Unit)>();
         var taxProfiles = new Dictionary<string, (string DianCode, decimal Rate)>(
             StringComparer.OrdinalIgnoreCase);
+        var taxProfilesByDianCode = new Dictionary<(string DianCode, decimal Rate), string>();
         await using (var products = new SqlCommand(productsSql, connection, transaction))
         {
             products.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
@@ -771,16 +773,22 @@ public sealed class SqlGoodsReceiptStore(
                 metadata[reader.GetGuid(0)] = (reader.GetString(1), reader.GetString(2));
             await reader.NextResultAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
-                taxProfiles[reader.GetString(0)] = (
-                    reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
-                    reader.GetDecimal(2));
+            {
+                var code = reader.GetString(0);
+                var dianCode = reader.IsDBNull(1) ? string.Empty : reader.GetString(1).Trim();
+                var rate = reader.GetDecimal(2);
+                taxProfiles[code] = (dianCode, rate);
+                if (!string.IsNullOrWhiteSpace(dianCode))
+                    taxProfilesByDianCode[(dianCode.ToUpperInvariant(), rate)] = dianCode;
+            }
         }
         var snapshot = new PurchaseSupportFiscalSnapshot(receipt, support.IssuerConfigurationId,
             support.FiscalNumber, support.Environment, support.QrValidationUrl, support.Seller,
             support.Authorization, receipt.Lines.Select(line =>
             {
                 var product = metadata[line.ProductId];
-                var dianTaxCode = ResolveDianTaxCode(line, taxProfiles);
+                var dianTaxCode = ResolveDianTaxCode(
+                    line, taxProfiles, taxProfilesByDianCode);
                 return new PurchaseSupportLineMetadata(line.LineNumber, product.Code, "999",
                     product.Unit, PosSaleFiscalMappings.TaxName(dianTaxCode), dianTaxCode);
             }).ToArray());
@@ -811,15 +819,17 @@ public sealed class SqlGoodsReceiptStore(
 
     private static string ResolveDianTaxCode(
         GoodsReceiptLineSnapshot line,
-        IReadOnlyDictionary<string, (string DianCode, decimal Rate)> taxProfiles)
+        IReadOnlyDictionary<string, (string DianCode, decimal Rate)> taxProfiles,
+        IReadOnlyDictionary<(string DianCode, decimal Rate), string> taxProfilesByDianCode)
     {
-        if (line.TaxCode.Length == 2 && line.TaxCode.All(char.IsDigit))
-            return line.TaxCode;
-        if (!taxProfiles.TryGetValue(line.TaxCode, out var profile) ||
-            profile.Rate != line.TaxRate || string.IsNullOrWhiteSpace(profile.DianCode))
-            throw new PurchasingValidationException(
-                $"La línea {line.LineNumber} no tiene un código tributario DIAN congelable.");
-        return profile.DianCode.Trim();
+        if (taxProfiles.TryGetValue(line.TaxCode, out var profile) &&
+            profile.Rate == line.TaxRate && !string.IsNullOrWhiteSpace(profile.DianCode))
+            return profile.DianCode;
+        if (taxProfilesByDianCode.TryGetValue(
+                (line.TaxCode.Trim().ToUpperInvariant(), line.TaxRate), out var dianCode))
+            return dianCode;
+        throw new PurchasingValidationException(
+            $"La línea {line.LineNumber} no tiene un código tributario DIAN congelable.");
     }
 
     private async Task InsertJobAsync(SqlConnection connection, SqlTransaction transaction,
