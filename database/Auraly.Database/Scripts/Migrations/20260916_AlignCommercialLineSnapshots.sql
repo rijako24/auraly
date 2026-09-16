@@ -1,10 +1,22 @@
 SET XACT_ABORT ON;
 
-IF EXISTS
-(
-    SELECT 1 FROM sys.extended_properties
-    WHERE class=0 AND name=N'Auraly.Migration.20260916.AlignCommercialLineSnapshots'
-)
+IF COL_LENGTH(N'dbo.OrderItems',N'DocumentUnitCost') IS NOT NULL
+   AND COL_LENGTH(N'dbo.OrderDraftItems',N'DocumentUnitCost') IS NOT NULL
+   AND COL_LENGTH(N'dbo.SalesDraftLines',N'PublicUnitPrice') IS NOT NULL
+   AND COL_LENGTH(N'dbo.SalesDraftLines',N'PublicLineTotal') IS NOT NULL
+   AND COL_LENGTH(N'dbo.SalesDraftLines',N'PublicDiscountAmount') IS NULL
+   AND NOT EXISTS
+   (
+       SELECT 1 FROM sys.columns
+       WHERE (object_id=OBJECT_ID(N'dbo.OrderItems') AND name=N'DocumentUnitCost' AND is_nullable=1)
+          OR (object_id=OBJECT_ID(N'dbo.OrderDraftItems') AND name=N'DocumentUnitCost' AND is_nullable=1)
+          OR (object_id=OBJECT_ID(N'dbo.SalesDraftLines') AND name IN(N'PublicUnitPrice',N'PublicLineTotal') AND is_nullable=1)
+   )
+   AND NOT EXISTS
+   (
+       SELECT 1 FROM dbo.SalesDraftLines
+       WHERE ABS(ROUND(PublicUnitPrice*Quantity-DiscountAmount-PromotionDiscountAmount,2)-PublicLineTotal)>0.001
+   )
     RETURN;
 
 BEGIN TRANSACTION;
@@ -87,7 +99,10 @@ IF COL_LENGTH(N'dbo.SalesDraftLines',N'PublicDiscountAmount') IS NOT NULL
 BEGIN
     EXEC(N'
       UPDATE line
-      SET DiscountAmount=line.PublicDiscountAmount
+      SET DiscountAmount=CASE
+        WHEN line.PublicDiscountAmount>line.PromotionDiscountAmount
+          THEN line.PublicDiscountAmount-line.PromotionDiscountAmount
+        ELSE 0 END
       FROM dbo.SalesDraftLines line
       WHERE line.PublicDiscountAmount IS NOT NULL;');
 END;
@@ -128,6 +143,15 @@ SET PublicLineTotal=ROUND(
       line.PublicUnitPrice*line.Quantity-line.DiscountAmount-line.PromotionDiscountAmount,2)
 FROM dbo.SalesDraftLines line
 WHERE line.PublicLineTotal IS NULL;
+
+UPDATE line
+SET DiscountAmount=ROUND(
+      line.PublicUnitPrice*line.Quantity-line.PromotionDiscountAmount-line.PublicLineTotal,2)
+FROM dbo.SalesDraftLines line
+WHERE ABS(ROUND(
+        line.PublicUnitPrice*line.Quantity-line.DiscountAmount-line.PromotionDiscountAmount,2)
+      -line.PublicLineTotal)>0.001
+  AND line.PublicUnitPrice*line.Quantity-line.PromotionDiscountAmount-line.PublicLineTotal>=0;
 
 IF EXISTS(SELECT 1 FROM dbo.SalesDraftLines
           WHERE PublicUnitPrice IS NULL OR PublicLineTotal IS NULL)
@@ -195,9 +219,5 @@ BEGIN
                      WHERE link.OrderId=orderValue.OrderId)
       AND (orderValue.Subtotal<>totals.Total OR orderValue.Total<>totals.Total);
 END;
-
-EXEC sys.sp_addextendedproperty
-    @name=N'Auraly.Migration.20260916.AlignCommercialLineSnapshots',
-    @value=N'Applied';
 
 COMMIT TRANSACTION;

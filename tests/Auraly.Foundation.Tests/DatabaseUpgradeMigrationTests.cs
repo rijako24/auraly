@@ -781,6 +781,11 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.DoesNotContain("ADD DocumentUnitCost", align, StringComparison.Ordinal);
         Assert.DoesNotContain("ADD PublicUnitPrice", align, StringComparison.Ordinal);
+        Assert.Contains(
+            "line.PublicUnitPrice*line.Quantity-line.PromotionDiscountAmount-line.PublicLineTotal",
+            align,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("sp_addextendedproperty", align, StringComparison.Ordinal);
 
         var addPosition = pipeline.IndexOf(
             "20260916_AddCommercialLineSnapshotColumns.sql", StringComparison.Ordinal);
