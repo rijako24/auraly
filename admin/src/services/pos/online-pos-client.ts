@@ -56,8 +56,10 @@ import {
   loadBrowserPrinterConfiguration,
 } from "./pos-edge-client";
 import {
+  invoiceOrdersInSequence,
   orderReceiptsFromEmission,
   resolvePosOrderPrintRoute,
+  type OrderInvoiceSequenceProgress,
 } from "./pos-order-print-routing";
 import { toPrintableOrder } from "./pos-order-print-document";
 import { resolvePosReceiptPrintRoute } from "./pos-receipt-print-routing";
@@ -1229,6 +1231,7 @@ export class OnlinePosClient implements PosClient {
     paymentNotes?: string | null,
     printAfterInvoice = true,
     idempotencyKey = crypto.randomUUID(),
+    onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
   ): Promise<InvoiceOrdersResponse> {
     const printRoute = printAfterInvoice
       ? resolvePosOrderPrintRoute(this.edgeSessionToken)
@@ -1236,17 +1239,37 @@ export class OnlinePosClient implements PosClient {
     const browserPreview = printRoute === "browser"
       ? openHalfLetterPrintPreview()
       : null;
-    const response = await invoiceCommerceOrders({
-      workSessionId: this.context.workSessionId,
-      warehouseId: this.context.warehouseId,
-      userId: this.userId,
-      orderIds,
-      paymentMethodCode,
-      paymentReference: paymentReference ?? null,
-      bankAccountId: bankAccountId ?? null,
-      paymentNotes: paymentNotes ?? null,
-      documentType,
-    }, idempotencyKey);
+    const installedPrinter = printRoute === "installed-app"
+      ? this.localEdge()
+      : null;
+    const branding = installedPrinter
+      ? await tenantsApi.getBranding().catch(() => null)
+      : null;
+    const response = await invoiceOrdersInSequence(orderIds, idempotencyKey, {
+      invoiceOne: (orderId, orderIdempotencyKey) => invoiceCommerceOrders({
+        workSessionId: this.context.workSessionId,
+        warehouseId: this.context.warehouseId,
+        userId: this.userId,
+        orderIds: [orderId],
+        paymentMethodCode,
+        paymentReference: paymentReference ?? null,
+        bankAccountId: bankAccountId ?? null,
+        paymentNotes: paymentNotes ?? null,
+        documentType,
+      }, orderIdempotencyKey),
+      printOne: installedPrinter && printAfterInvoice
+        ? async (receipts) => {
+            for (const receipt of receipts) {
+              await installedPrinter.printReceipt({
+                ...receipt,
+                businessName: this.context.businessName,
+                warehouseName: this.context.warehouseName,
+              }, branding, "pos");
+            }
+          }
+        : undefined,
+      onProgress,
+    });
     if (response.creditValidationIssues?.length) {
       closePrintPreview(browserPreview);
       return response;
@@ -1256,6 +1279,20 @@ export class OnlinePosClient implements PosClient {
       return response;
     }
     const receipts = orderReceiptsFromEmission(response.results);
+    if (installedPrinter) {
+      if (receipts.length > 0) {
+        try {
+          await installedPrinter.openCashDrawer();
+        } catch (error) {
+          const drawerError = error instanceof Error
+            ? error.message
+            : "No fue posible abrir el cajón.";
+          response.printStatus = "Failed";
+          response.printError = [response.printError, drawerError].filter(Boolean).join(" · ");
+        }
+      }
+      return response;
+    }
     response.printStatus = response.completedCount ? "Sent" : "NotRequired";
     const printing = new Promise<void>((resolve, reject) => {
       window.requestAnimationFrame(() => {

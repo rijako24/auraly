@@ -180,6 +180,10 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   await firstDescription.fill("Producto puntual editado");
   await firstCost.fill("5000");
   await expect(firstMargin).toHaveValue("40");
+  const secondPrice = editor.locator('input[data-editor-row="1"][data-editor-column="5"]');
+  const secondMargin = editor.locator('input[data-editor-row="1"][data-editor-column="2"]');
+  await secondPrice.fill("9000");
+  await expect(secondMargin).toHaveValue("20,67");
   await page.keyboard.press("Enter");
 
   await expect(editor).toBeHidden();
@@ -190,5 +194,6 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   expect(appliedLines!.lines[0].unitPrice).toBe(10_000);
   expect(appliedLines!.lines[0].discount).toBe(1_983.33);
   expect(appliedLines!.lines[1].documentUnitCost).toBe(6_000.123456);
+  expect(appliedLines!.lines[1].discount).toBe(2_900);
   await expect(page.getByText("Producto puntual editado")).toBeVisible();
 });

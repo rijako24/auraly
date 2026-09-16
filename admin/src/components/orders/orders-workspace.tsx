@@ -53,6 +53,7 @@ import {
   ORDER_INVOICE_BATCH_LIMIT,
 } from "@/services/orders/order-batch-selection";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
+import type { OrderInvoiceSequenceProgress } from "@/services/pos/pos-order-print-routing";
 import { getOrderAvailability } from "./order-availability";
 import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
 
@@ -89,6 +90,7 @@ type OrdersWorkspaceProps = {
     paymentMethodCode: "Cash" | "Credit",
     printAfterInvoice: boolean,
     idempotencyKey: string,
+    onProgress: (progress: OrderInvoiceSequenceProgress) => void,
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -355,12 +357,49 @@ export function OrdersWorkspace({
       events: [],
     });
     try {
+      const updateProgress = (next: OrderInvoiceSequenceProgress) => {
+        setInvoiceProgress((current) => {
+          if (!current) return current;
+          const label = next.currentOrderNumber || next.currentOrderId;
+          const currentText = next.phase === "invoicing"
+            ? `Facturando ${label}`
+            : next.phase === "printing"
+              ? `Imprimiendo ${label}`
+              : next.printError
+                ? `${label} facturado con novedad de impresión`
+                : next.failed > current.failed
+                  ? `${label} requiere revisión`
+                  : `${label} facturado${next.printed ? " e impreso" : ""}`;
+          const event = next.phase === "completed"
+            ? [{
+                id: `${next.currentOrderId}-${next.processed}`,
+                text: next.printError
+                  ? `${label}: ${next.printError}`
+                  : next.failed > current.failed
+                    ? `${label} no pudo facturarse`
+                    : `${label} completado`,
+                tone: next.printError || next.failed > current.failed
+                  ? "error" as const
+                  : "success" as const,
+              }]
+            : [];
+          return {
+            ...current,
+            processed: next.processed,
+            completed: next.completed,
+            failed: next.failed,
+            current: currentText,
+            events: [...current.events, ...event].slice(-5),
+          };
+        });
+      };
       const result = await onInvoiceSelected(
         available,
         documentType,
         requestedPaymentMethodCode,
         printAfterInvoice,
         idempotencyKey,
+        updateProgress,
       );
       invoiceAttemptRef.current = null;
       if (result.creditValidationIssues?.length) {
@@ -398,7 +437,6 @@ export function OrdersWorkspace({
           totalCount: Math.max(0, current.totalCount - invoicedIds.size),
         }));
         if (data) onCountChange?.(Math.max(0, data.totalCount - invoicedIds.size));
-        setInvoiceProgress(null);
       }
       setSelected(new Map());
       setAllMatchingSelected(false);

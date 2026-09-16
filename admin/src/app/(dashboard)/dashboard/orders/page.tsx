@@ -151,7 +151,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user
-            ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) => {
+            ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
@@ -169,6 +169,7 @@ export default function OrdersPage() {
                   null,
                   printAfterInvoice,
                   idempotencyKey,
+                  onProgress,
                 );
                 return {
                   completedCount: response.completedCount,

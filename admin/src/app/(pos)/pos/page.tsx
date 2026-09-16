@@ -79,6 +79,7 @@ import {
   searchServerHistoryProducts,
   searchServerIssuedSales,
 } from "@/services/pos/online-pos-client";
+import type { OrderInvoiceSequenceProgress } from "@/services/pos/pos-order-print-routing";
 import {
   authorizePosEnrollment,
   redeemPosEnrollment,
@@ -2626,6 +2627,7 @@ export default function PosPage() {
     documentType: "SalesInvoice" | "SalesReceipt",
     printAfterInvoice: boolean,
     idempotencyKey: string,
+    onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
   ) {
     const result = await runOnlineOrderRequest(async () => {
@@ -2639,6 +2641,7 @@ export default function PosPage() {
         transfer?.notes,
         printAfterInvoice,
         idempotencyKey,
+        onProgress,
       );
     });
     setMessage(
@@ -3622,13 +3625,14 @@ export default function PosPage() {
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={async (orders) =>
                   printOrdersOnline(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     paymentMethodCode,
                     documentType,
                     printAfterInvoice,
                     idempotencyKey,
+                    onProgress,
                   )
                 }
                 onConfigurePrinting={() => setPrinterOpen(true)}
@@ -3673,13 +3677,14 @@ export default function PosPage() {
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={async (orders) =>
                 printOrdersOnline(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
                   documentType,
                   printAfterInvoice,
                   idempotencyKey,
+                  onProgress,
                 )
               }
               onConfigurePrinting={() => setPrinterOpen(true)}
