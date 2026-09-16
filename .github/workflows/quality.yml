@@ -15,6 +15,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - name: Install SQLPackage 170 for integration tests
+        shell: pwsh
+        run: |
+          dotnet tool install --global Microsoft.SqlPackage --version 170.4.83
+          "SQLPACKAGE_PATH=$HOME/.dotnet/tools/sqlpackage.exe" >> $env:GITHUB_ENV
       - run: dotnet restore Auraly.Commerce.sln --locked-mode
       - run: dotnet build Auraly.Commerce.sln --no-restore --configuration Release
       - run: dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj --no-build --configuration Release

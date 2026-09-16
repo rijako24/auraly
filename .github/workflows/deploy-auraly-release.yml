@@ -82,6 +82,13 @@ jobs:
           cache: npm
           cache-dependency-path: admin/package-lock.json
 
+      - name: Install SQLPackage 170 for release tests
+        if: inputs.environment == 'dev'
+        shell: pwsh
+        run: |
+          dotnet tool install --global Microsoft.SqlPackage --version 170.4.83
+          "SQLPACKAGE_PATH=$HOME/.dotnet/tools/sqlpackage.exe" >> $env:GITHUB_ENV
+
       - name: Import Auraly code-signing certificate
         if: inputs.environment == 'dev'
         id: signing_certificate
