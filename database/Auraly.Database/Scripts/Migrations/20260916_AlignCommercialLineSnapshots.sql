@@ -9,12 +9,6 @@ IF EXISTS
 
 BEGIN TRANSACTION;
 
-IF COL_LENGTH(N'dbo.OrderItems',N'DocumentUnitCost') IS NULL
-    ALTER TABLE dbo.OrderItems ADD DocumentUnitCost DECIMAL(19,6) NULL;
-
-IF COL_LENGTH(N'dbo.OrderDraftItems',N'DocumentUnitCost') IS NULL
-    ALTER TABLE dbo.OrderDraftItems ADD DocumentUnitCost DECIMAL(19,6) NULL;
-
 ;WITH itemCosts AS
 (
     SELECT item.OrderItemId,COALESCE(price.CostBasisAmount,0) DocumentUnitCost
@@ -64,11 +58,6 @@ IF EXISTS(SELECT 1 FROM sys.columns
           WHERE object_id=OBJECT_ID(N'dbo.OrderDraftItems')
             AND name=N'DocumentUnitCost' AND is_nullable=1)
     ALTER TABLE dbo.OrderDraftItems ALTER COLUMN DocumentUnitCost DECIMAL(19,6) NOT NULL;
-
-IF COL_LENGTH(N'dbo.SalesDraftLines',N'PublicUnitPrice') IS NULL
-    ALTER TABLE dbo.SalesDraftLines ADD PublicUnitPrice DECIMAL(18,2) NULL;
-IF COL_LENGTH(N'dbo.SalesDraftLines',N'PublicLineTotal') IS NULL
-    ALTER TABLE dbo.SalesDraftLines ADD PublicLineTotal DECIMAL(18,2) NULL;
 
 CREATE TABLE #LegacySalesDraftLines(SalesDraftLineId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY);
 INSERT #LegacySalesDraftLines(SalesDraftLineId)

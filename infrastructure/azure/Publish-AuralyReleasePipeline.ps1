@@ -394,6 +394,7 @@ function Publish-Database {
             '20260907_AddAccountingCostCenterAssignments.sql',
             '20260907_AddSupportDocumentAdjustment.sql',
             '20260914_BackfillSellerOrderSites.sql',
+            '20260916_AddCommercialLineSnapshotColumns.sql',
             '20260916_AlignCommercialLineSnapshots.sql',
             '20260907_AlignReceivablesWithAccountingSource.sql')
         foreach ($migration in $reviewedMigrations) {

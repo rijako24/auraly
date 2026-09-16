@@ -762,6 +762,34 @@ public sealed class DatabaseUpgradeMigrationTests
             "La bodega interna de pedidos debe garantizarse después de crear todos los negocios sembrados.");
     }
 
+    [Fact]
+    public void Commercial_snapshot_columns_are_created_in_a_separate_batch_before_backfill()
+    {
+        var root = FindRepositoryRoot();
+        var migrations = Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations");
+        var addColumns = File.ReadAllText(Path.Combine(
+            migrations, "20260916_AddCommercialLineSnapshotColumns.sql"));
+        var align = File.ReadAllText(Path.Combine(
+            migrations, "20260916_AlignCommercialLineSnapshots.sql"));
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+
+        Assert.Contains("ALTER TABLE dbo.OrderItems ADD DocumentUnitCost", addColumns,
+            StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE dbo.SalesDraftLines ADD PublicUnitPrice", addColumns,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("ADD DocumentUnitCost", align, StringComparison.Ordinal);
+        Assert.DoesNotContain("ADD PublicUnitPrice", align, StringComparison.Ordinal);
+
+        var addPosition = pipeline.IndexOf(
+            "20260916_AddCommercialLineSnapshotColumns.sql", StringComparison.Ordinal);
+        var alignPosition = pipeline.IndexOf(
+            "20260916_AlignCommercialLineSnapshots.sql", StringComparison.Ordinal);
+        Assert.True(addPosition >= 0 && alignPosition > addPosition,
+            "Las columnas deben existir en un lote anterior al backfill que las referencia.");
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
