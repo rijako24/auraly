@@ -47,6 +47,24 @@ public sealed class OrderBatchService(
     ];
     private const int ProgressCheckpointSize = 5;
 
+    public async Task<IReadOnlyList<OrderCreditValidationIssue>> ValidateCreditAsync(
+        OrderActor actor,
+        InvoiceOrdersRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Validate(actor, request with { PaymentMethodCode = "Credit" }, "credit-preflight");
+        var identity = new OnlineSalesUserIdentity(
+            actor.UserId,
+            actor.TenantId,
+            actor.Permissions);
+        var issues = await checkout.ValidateOrderCreditBatchAsync(
+            identity,
+            actor.BusinessId,
+            request.OrderIds.Distinct().ToArray(),
+            cancellationToken);
+        return issues.Select(MapCreditIssue).ToArray();
+    }
+
     public async Task<InvoiceOrdersResponse> InvoiceAsync(
         OrderActor actor,
         InvoiceOrdersRequest request,
@@ -86,14 +104,7 @@ public sealed class OrderBatchService(
                     0,
                     false,
                     [],
-                    CreditValidationIssues: creditIssues.Select(issue =>
-                        new OrderCreditValidationIssue(
-                            issue.CustomerId,
-                            issue.CustomerName,
-                            issue.CustomerIdentification,
-                            issue.RequestedAmount,
-                            issue.AvailableCredit,
-                            issue.Reason)).ToArray());
+                    CreditValidationIssues: creditIssues.Select(MapCreditIssue).ToArray());
                 await batches.SaveProgressAsync(
                     actor,
                     lease.OperationId,
@@ -366,6 +377,16 @@ public sealed class OrderBatchService(
             results.Count < normalizedOrders.Length &&
             (failed > 0 || results.Count % ProgressCheckpointSize == 0);
     }
+
+    private static OrderCreditValidationIssue MapCreditIssue(
+        OnlineOrderCreditValidationIssue issue) =>
+        new(
+            issue.CustomerId,
+            issue.CustomerName,
+            issue.CustomerIdentification,
+            issue.RequestedAmount,
+            issue.AvailableCredit,
+            issue.Reason);
 
     private static void Validate(
         OrderActor actor,

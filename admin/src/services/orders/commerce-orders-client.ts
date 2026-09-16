@@ -245,6 +245,26 @@ export function invoiceCommerceOrders(request: {
   );
 }
 
+export function validateCommerceOrderCredit(request: {
+  workSessionId: string;
+  warehouseId: string;
+  userId: string;
+  orderIds: string[];
+  paymentMethodCode: string;
+  paymentReference: string | null;
+  bankAccountId?: string | null;
+  paymentNotes?: string | null;
+  documentType?: "SalesInvoice" | "SalesReceipt";
+}) {
+  return orderRequest<OrderCreditValidationIssue[]>(
+    "/api/commerce/v1/orders/invoice/credit-validation",
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
 export function retryCommerceOrderEmission(orderId: string) {
   return orderRequest<{
     jobId: string;

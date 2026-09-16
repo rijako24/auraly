@@ -6,6 +6,7 @@ import {
   recoverCommerceOrder,
   releaseCommerceOrderClaim,
   renewCommerceOrderClaim,
+  validateCommerceOrderCredit,
   type CommerceOrderFilters,
   type InvoiceOrdersResponse,
 } from "@/services/orders/commerce-orders-client";
@@ -1245,18 +1246,40 @@ export class OnlinePosClient implements PosClient {
     const branding = installedPrinter
       ? await tenantsApi.getBranding().catch(() => null)
       : null;
+    const invoiceRequest = (requestedOrderIds: string[]) => ({
+      workSessionId: this.context.workSessionId,
+      warehouseId: this.context.warehouseId,
+      userId: this.userId,
+      orderIds: requestedOrderIds,
+      paymentMethodCode,
+      paymentReference: paymentReference ?? null,
+      bankAccountId: bankAccountId ?? null,
+      paymentNotes: paymentNotes ?? null,
+      documentType,
+    });
+    if (paymentMethodCode === "Credit") {
+      const creditValidationIssues = await validateCommerceOrderCredit(invoiceRequest(orderIds));
+      if (creditValidationIssues.length > 0) {
+        closePrintPreview(browserPreview);
+        return {
+          operationId: "00000000-0000-0000-0000-000000000000",
+          status: "CreditRejected",
+          requestedCount: orderIds.length,
+          completedCount: 0,
+          failedCount: 0,
+          isReplay: false,
+          results: [],
+          printStatus: "NotRequired",
+          printError: null,
+          creditValidationIssues,
+        };
+      }
+    }
     const response = await invoiceOrdersInSequence(orderIds, idempotencyKey, {
-      invoiceOne: (orderId, orderIdempotencyKey) => invoiceCommerceOrders({
-        workSessionId: this.context.workSessionId,
-        warehouseId: this.context.warehouseId,
-        userId: this.userId,
-        orderIds: [orderId],
-        paymentMethodCode,
-        paymentReference: paymentReference ?? null,
-        bankAccountId: bankAccountId ?? null,
-        paymentNotes: paymentNotes ?? null,
-        documentType,
-      }, orderIdempotencyKey),
+      invoiceOne: (orderId, orderIdempotencyKey) => invoiceCommerceOrders(
+        invoiceRequest([orderId]),
+        orderIdempotencyKey,
+      ),
       printOne: installedPrinter && printAfterInvoice
         ? async (receipts) => {
             for (const receipt of receipts) {

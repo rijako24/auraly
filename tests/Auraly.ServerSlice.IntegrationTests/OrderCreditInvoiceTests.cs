@@ -19,10 +19,15 @@ public sealed class OrderCreditInvoiceTests(
         var scenario = await SeedAsync(creditLimit: 25_000m);
         using var client = CreateClient(scenario.UserId);
 
+        var preflight = await ValidateCreditAsync(client, scenario);
         var key = $"orders-credit-rejected-{Guid.NewGuid():N}";
         var response = await InvoiceAsync(client, scenario, "Credit", key);
         var replay = await InvoiceAsync(client, scenario, "Credit", key);
 
+        var preflightIssue = Assert.Single(preflight);
+        Assert.Equal(scenario.CustomerId, preflightIssue.CustomerId);
+        Assert.Equal(30_000m, preflightIssue.RequestedAmount);
+        Assert.Equal(25_000m, preflightIssue.AvailableCredit);
         Assert.Equal("CreditRejected", response.Status);
         Assert.Equal(Guid.Empty, response.OperationId);
         Assert.Equal(2, response.RequestedCount);
@@ -240,6 +245,28 @@ public sealed class OrderCreditInvoiceTests(
                    body,
                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))
                ?? throw new InvalidOperationException("Empty order credit response.");
+    }
+
+    private static async Task<IReadOnlyList<OrderCreditValidationIssue>> ValidateCreditAsync(
+        HttpClient client,
+        Scenario scenario)
+    {
+        using var result = await client.PostAsJsonAsync(
+            "/api/commerce/v1/orders/invoice/credit-validation",
+            new InvoiceOrdersRequest(
+                scenario.WorkSessionId,
+                scenario.WarehouseId,
+                scenario.UserId,
+                [scenario.FirstOrderId, scenario.SecondOrderId],
+                "Credit",
+                null,
+                DocumentType: "SalesReceipt"));
+        var body = await result.Content.ReadAsStringAsync();
+        Assert.True(result.IsSuccessStatusCode, body);
+        return System.Text.Json.JsonSerializer.Deserialize<IReadOnlyList<OrderCreditValidationIssue>>(
+                   body,
+                   new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))
+               ?? throw new InvalidOperationException("Empty order credit validation response.");
     }
 
     private async Task<Scenario> SeedAsync(

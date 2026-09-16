@@ -120,6 +120,16 @@ public static class OrdersApi
                     ct);
             }));
 
+        group.MapPost("/invoice/credit-validation", async (
+            HttpContext context,
+            InvoiceOrdersRequest request,
+            OrderBatchService service,
+            CancellationToken ct) =>
+            await Handle(() => service.ValidateCreditAsync(
+                context.User.ToOrderUserActor(request.WorkSessionId),
+                request,
+                ct)));
+
         group.MapPost("/{orderId:guid}/cancel", async (
             HttpContext context,
             Guid orderId,
