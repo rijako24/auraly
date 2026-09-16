@@ -1459,7 +1459,7 @@ export default function PosPage() {
         !discountOpen &&
         !printerOpen &&
         !denominationCalculatorOpen &&
-        !closurePreview &&
+        (!closurePreview || !closureAttempt) &&
         !confirmation &&
         !invoiceSearchOpen &&
         !returnsOpen &&
@@ -1476,6 +1476,7 @@ export default function PosPage() {
     busy,
     cashMovementDirection,
     client,
+    closureAttempt,
     closurePreview,
     confirmation,
     customerSearchOpen,
@@ -3773,6 +3774,7 @@ export default function PosPage() {
           value={closurePreview}
           busy={busy}
           submitted={Boolean(closureAttempt)}
+          onOpenDenominations={() => setDenominationCalculatorOpen(true)}
           onClose={() => {
             setClosurePreview(null);
             setClosureAttempt(null);
@@ -3791,7 +3793,7 @@ export default function PosPage() {
           userName={workstation.userDisplayName}
           onClose={() => {
             setDenominationCalculatorOpen(false);
-            focusScanner();
+            if (!closurePreview) focusScanner();
           }}
         />
       )}

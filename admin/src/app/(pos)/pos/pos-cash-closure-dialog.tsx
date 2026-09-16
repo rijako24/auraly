@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { LockKeyhole } from "lucide-react";
+import { Calculator, LockKeyhole } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -12,12 +12,13 @@ import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessio
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-export function PosCashClosureDialog({ value, busy, submitted, onClose, onConfirm }: {
+export function PosCashClosureDialog({ value, busy, submitted, onClose, onConfirm, onOpenDenominations }: {
   value: PosAuthorizedClosurePreview;
   busy: boolean;
   submitted: boolean;
   onClose: () => void;
   onConfirm: (paymentCounts: PosWorkSessionPaymentCount[], note: string | null) => Promise<void>;
+  onOpenDenominations?: () => void;
 }) {
   const countablePayments = useMemo(
     () => value.preview.paymentTotals.filter((payment) => payment.requiresCount),
@@ -47,7 +48,7 @@ export function PosCashClosureDialog({ value, busy, submitted, onClose, onConfir
             <div>
               <DialogTitle>Cerrar sesión operativa</DialogTitle>
               <DialogDescription className="mt-1">
-                Conteo ciego: registra efectivo y tarjetas. Los valores del sistema se revelan únicamente en el comprobante final.
+                Conteo ciego: registra efectivo, tarjetas y transferencias. Los valores del sistema se revelan únicamente en el comprobante final.
               </DialogDescription>
             </div>
           </div>
@@ -62,15 +63,41 @@ export function PosCashClosureDialog({ value, busy, submitted, onClose, onConfir
             </div>
           </section>
 
+          {onOpenDenominations && (
+            <section className="flex flex-col gap-4 rounded-xl border border-teal-200 bg-gradient-to-r from-teal-50 to-cyan-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-teal-600 text-white shadow-sm">
+                  <Calculator className="h-5 w-5" />
+                </span>
+                <div>
+                  <h3 className="font-semibold text-slate-900">Te ayudamos a contar el efectivo</h3>
+                  <p className="text-sm text-slate-600">Suma monedas y billetes antes de registrar el valor contado.</p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy || submitted}
+                onClick={onOpenDenominations}
+                aria-keyshortcuts="Control+D"
+                className="shrink-0 border-teal-300 bg-white text-teal-800 hover:bg-teal-100 hover:text-teal-950"
+              >
+                <Calculator className="mr-2 h-4 w-4" />
+                Contar por denominaciones
+                <kbd className="ml-2 hidden text-[10px] opacity-70 sm:inline">Ctrl+D</kbd>
+              </Button>
+            </section>
+          )}
+
           <section className="overflow-hidden rounded-xl border">
             <div className="border-b bg-slate-50 px-4 py-3">
               <h3 className="font-semibold">Valores contados</h3>
               <p className="text-xs text-slate-500">Registra el valor realmente recibido en efectivo, tarjeta y transferencia.</p>
             </div>
-            <div className="grid gap-4 p-4 sm:grid-cols-2">
+            <div className="space-y-3 p-4">
               {countablePayments.map((payment, index) => (
-                <div className="space-y-2" key={payment.paymentMethodCode}>
-                  <Label htmlFor={`count-${payment.paymentMethodCode}`}>{workSessionPaymentMethodName(payment.paymentMethodCode)}</Label>
+                <div className="grid gap-2 rounded-xl border bg-white p-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)] sm:items-center sm:gap-4" key={payment.paymentMethodCode}>
+                  <Label className="font-semibold text-slate-800" htmlFor={`count-${payment.paymentMethodCode}`}>{workSessionPaymentMethodName(payment.paymentMethodCode)}</Label>
                   <Input
                     id={`count-${payment.paymentMethodCode}`}
                     autoFocus={index === 0}
