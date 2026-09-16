@@ -103,12 +103,7 @@ public sealed class FiscalGenerationWorker(
             }
 
             var generatedAt = timeProvider.GetUtcNow();
-            var signingTime = work.IsCorrection &&
-                              work.FiscalDocumentType == FiscalDocumentTypeCodes.Invoice
-                ? work.Sale?.FiscalSnapshot?.IssuedAt
-                  ?? work.ServiceInvoice?.FiscalSnapshot.IssuedAt
-                  ?? generatedAt
-                : generatedAt;
+            var signingTime = ResolveSigningTime(work) ?? generatedAt;
             var signed = await signer.SignAsync(new FiscalSigningRequest(
                 work.BusinessId, work.Issuer.SupplierTaxId, unsigned.Xml,
                 new FiscalCertificateReference(work.BusinessId, work.Issuer.CertificateProvider,
@@ -226,8 +221,7 @@ public sealed class FiscalGenerationWorker(
             SupplierParty(ubl.Supplier, work), Party(ubl.Customer), lines, taxes,
             new DianPayment(ubl.PaymentFormCode, ubl.PaymentMeansCode, ubl.DueDate,
                 ubl.PaymentReference),
-            sale.FiscalSnapshot.UntaxedAmount + sale.Lines.Sum(line => line.DiscountAmount),
-            sale.FiscalSnapshot.UntaxedAmount,
+            sale.FiscalSnapshot.UntaxedAmount, sale.FiscalSnapshot.UntaxedAmount,
             sale.FiscalSnapshot.UntaxedAmount + sale.FiscalSnapshot.TaxAmount,
             sale.Lines.Sum(line => line.DiscountAmount),
             sale.FiscalSnapshot.PayableAmount, sale.FiscalSnapshot.QrPayload,
@@ -305,8 +299,8 @@ public sealed class FiscalGenerationWorker(
                 ubl.SoftwareIdentificationCode, pin), SupplierParty(ubl.Supplier, work), Party(ubl.Customer),
             lines, taxes, new DianPayment(ubl.PaymentFormCode, ubl.PaymentMeansCode,
                 ubl.DueDate, ubl.PaymentReference),
-            snapshot.UntaxedAmount + invoice.Lines.Sum(line => line.DiscountAmount),
-            snapshot.UntaxedAmount, snapshot.UntaxedAmount + snapshot.TaxAmount,
+            snapshot.UntaxedAmount, snapshot.UntaxedAmount,
+            snapshot.UntaxedAmount + snapshot.TaxAmount,
             invoice.Lines.Sum(line => line.DiscountAmount), snapshot.PayableAmount,
             snapshot.QrPayload,
             PayableRoundingAmount: snapshot.PayableRoundingAmount);
@@ -387,10 +381,7 @@ public sealed class FiscalGenerationWorker(
             IssuerParty(work.Issuer), Party(snapshot.Customer),
             new DianInvoiceReference(snapshot.OriginalInvoiceNumber,
                 snapshot.OriginalInvoiceCufe, snapshot.OriginalInvoiceIssuedOn),
-            lines, taxes,
-            snapshot.Return.UntaxedAmount +
-                snapshot.Return.Lines.Sum(line => line.DiscountAmount),
-            snapshot.Return.UntaxedAmount,
+            lines, taxes, snapshot.Return.UntaxedAmount, snapshot.Return.UntaxedAmount,
             snapshot.Return.TotalAmount,
             snapshot.Return.Lines.Sum(line => line.DiscountAmount),
             snapshot.Return.TotalAmount, cude.QrPayload);
@@ -546,9 +537,12 @@ public sealed class FiscalGenerationWorker(
                 if (!metadata.TryGetValue(line.LineNumber, out var item))
                     throw new FiscalSnapshotDataException(
                         $"Support-document metadata is missing for line {line.LineNumber}.");
+                if (string.IsNullOrWhiteSpace(item.DianTaxCode))
+                    throw new FiscalSnapshotDataException(
+                        $"Support-document metadata has no DIAN tax code for line {line.LineNumber}.");
                 return new DianInvoiceLine(line.LineNumber, item.ProductCode, item.ProductCodeScheme,
                     line.Description, item.UnitCode, line.Quantity, line.UnitCost, line.DiscountAmount,
-                    line.NetAmount, [new DianTax(line.TaxCode, item.TaxName,
+                    line.NetAmount, [new DianTax(item.DianTaxCode, item.TaxName,
                         line.NetAmount, line.TaxAmount, line.TaxRate)]);
             }).ToArray();
             issuedAt = receipt.ReceivedAt;
@@ -596,7 +590,7 @@ public sealed class FiscalGenerationWorker(
                 work.Issuer.SoftwareId, pin), Party(snapshot.Seller), IssuerParty(work.Issuer),
             lines, taxes, new DianPayment(createsPayable ? "2" : "1", "42",
                 DateOnly.FromDateTime(dueAt.Date), null),
-            untaxedAmount + discountAmount, untaxedAmount, untaxedAmount + taxAmount,
+            untaxedAmount, untaxedAmount, untaxedAmount + taxAmount,
             discountAmount, totalAmount, cuds.QrPayload,
             snapshot.SellerOriginCode,
             "DIAN 2.1: documento soporte en adquisiciones efectuadas a no obligados a facturar.",
@@ -631,10 +625,13 @@ public sealed class FiscalGenerationWorker(
             if (!metadata.TryGetValue(line.LineNumber, out var item))
                 throw new FiscalSnapshotDataException(
                     $"Support-adjustment metadata is missing for line {line.LineNumber}.");
+            if (string.IsNullOrWhiteSpace(item.DianTaxCode))
+                throw new FiscalSnapshotDataException(
+                    $"Support-adjustment metadata has no DIAN tax code for line {line.LineNumber}.");
             return new DianCreditNoteLine(line.LineNumber, item.ProductCode,
                 item.ProductCodeScheme, line.Description, item.UnitCode, line.Quantity,
                 line.UnitCost, line.DiscountAmount, line.NetAmount,
-                [new DianTax(line.TaxCode, item.TaxName, line.NetAmount,
+                [new DianTax(item.DianTaxCode, item.TaxName, line.NetAmount,
                     line.TaxAmount, line.TaxRate)]);
         }).ToArray();
         var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
@@ -654,9 +651,7 @@ public sealed class FiscalGenerationWorker(
             IssuerParty(work.Issuer),
             new DianInvoiceReference(snapshot.OriginalSupportNumber!,
                 snapshot.OriginalSupportCuds!, snapshot.OriginalSupportIssuedOn.Value),
-            lines, taxes,
-            adjustment.NetAmount + adjustment.Lines.Sum(line => line.DiscountAmount),
-            adjustment.NetAmount,
+            lines, taxes, adjustment.NetAmount, adjustment.NetAmount,
             adjustment.TotalAmount, adjustment.Lines.Sum(line => line.DiscountAmount),
             adjustment.TotalAmount, cuds.QrPayload,
             DocumentTypeCode: "95", CustomizationId: snapshot.SellerOriginCode,
@@ -722,6 +717,20 @@ public sealed class FiscalGenerationWorker(
                 : issuer.LegalProfileTelephone.Trim()
         };
     }
+
+    private static DateTimeOffset? ResolveSigningTime(FiscalGenerationWorkItem work) =>
+        work.FiscalDocumentType switch
+        {
+            FiscalDocumentTypeCodes.Invoice =>
+                work.Sale?.FiscalSnapshot?.IssuedAt ??
+                work.ServiceInvoice?.FiscalSnapshot.IssuedAt,
+            FiscalDocumentTypeCodes.SupportDocument =>
+                work.SupportDocument?.Receipt?.ReceivedAt ??
+                work.SupportDocument?.Expense?.IssuedAt,
+            FiscalDocumentTypeCodes.SupportDocumentAdjustment =>
+                work.SupportDocument?.Adjustment?.ReturnedAt,
+            _ => null
+        };
 
     private static string DianIdentificationTypeCode(string value) =>
         PosSaleFiscalMappings.DianIdentificationTypeCode(value)

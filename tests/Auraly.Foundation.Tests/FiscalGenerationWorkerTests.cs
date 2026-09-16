@@ -64,10 +64,13 @@ public sealed class FiscalGenerationWorkerTests
         Assert.Contains("tax rate differs", store.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public async Task Dian_rejected_invoice_correction_preserves_the_original_fiscal_signing_date()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Invoice_generation_preserves_the_original_fiscal_signing_date(
+        bool isCorrection)
     {
-        var work = CreateWork() with { IsCorrection = true };
+        var work = CreateWork() with { IsCorrection = isCorrection };
         var store = new TestStore(work);
         var worker = CreateWorker(store);
 

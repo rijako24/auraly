@@ -460,7 +460,11 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
     public async Task Fiscal_retry_recovers_a_previously_blocked_valid_snapshot_through_the_canonical_ingress()
     {
         fixture.DrainDocumentSignals();
-        var request = fixture.CreateValidRequest(7_125);
+        var request = fixture.CreateValidRequest(7_125) with
+        {
+            DeviceId = Guid.Empty,
+            SourceMode = SaleSourceModes.Online
+        };
         var idempotencyKey = $"recover-integrity-{request.DocumentId:N}";
         using (var scope = fixture.CreateScope())
         {

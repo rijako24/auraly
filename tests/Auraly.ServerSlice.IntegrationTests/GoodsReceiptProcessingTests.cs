@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
@@ -494,18 +495,27 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     public async Task Buyer_support_document_creates_the_inventory_entry_and_immutable_fiscal_work()
     {
         await ConfigureSupportDocumentAsync();
-        var request = CreateRequest() with
+        var template = CreateRequest();
+        var request = template with
         {
             DocumentId = Guid.NewGuid(),
             SupplierInvoiceNumber = null,
-            PurchaseEvidenceType = PurchaseEvidenceTypes.BuyerElectronicSupportDocument
+            PurchaseEvidenceType = PurchaseEvidenceTypes.BuyerElectronicSupportDocument,
+            Lines = [template.Lines.Single() with
+            {
+                TaxCode = "IVA-0",
+                TaxRate = 0m,
+                TaxTreatment = PurchasingTaxTreatments.NotApplicable
+            }]
         };
         using var client = fixture.CreateAdminClient(
             PurchasingPermissionCodes.CreateGoodsReceipts,
             PurchasingPermissionCodes.ConfirmGoodsReceipts);
         using var message = CreateMessage(request, $"support-document-{request.DocumentId:N}");
         using var response = await client.SendAsync(message);
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            $"Expected support document to be accepted, got {response.StatusCode}: {responseBody}");
 
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id", request.DocumentId));
@@ -516,10 +526,18 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             "SELECT UniqueCodeType FROM dbo.FiscalDocuments WHERE DocumentId=@Id", request.DocumentId));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM fiscal.PurchaseSupportFiscalSnapshots WHERE DocumentId=@Id", request.DocumentId));
+        Assert.Contains("\"dianTaxCode\":\"01\"", await ScalarAsync<string>(
+            "SELECT SnapshotJson FROM fiscal.PurchaseSupportFiscalSnapshots WHERE DocumentId=@Id",
+            request.DocumentId), StringComparison.Ordinal);
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@Id", request.DocumentId));
         Assert.NotNull(await ScalarAsync<string>(
             "SELECT SupportFiscalNumber FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id", request.DocumentId));
+
+        await GenerateFiscalAsync(request.DocumentId);
+        var fiscal = await ReadFiscalGenerationAsync(request.DocumentId);
+        Assert.Equal(FiscalDocumentStatusCodes.PendingSubmission, fiscal.Status);
+        Assert.False(string.IsNullOrWhiteSpace(fiscal.UniqueCode));
     }
 
     [Fact]
@@ -763,6 +781,12 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             INNER JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
             WHERE country.Code=N'CO' ORDER BY city.Code;
             IF @CityId IS NULL THROW 51201,'Colombian geography seed is required.',1;
+
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId AND Code=N'IVA-0')
+              INSERT dbo.TaxProfiles(
+                TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+              VALUES(NEWID(),@BusinessId,N'IVA-0',N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
 
             UPDATE party SET IdentificationCountryId=@CountryId,IdentificationTypeCode=N'31',
               Identification=N'900999001',NormalizedIdentification=N'900999001',VerificationDigit=N'1',

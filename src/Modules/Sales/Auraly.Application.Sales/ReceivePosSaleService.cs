@@ -179,11 +179,22 @@ public sealed class ReceivePosSaleService(
         var response = await ReceiveCoreAsync(
             conflict.IdempotencyKey,
             request,
-            validateDeviceContext: true,
+            validateDeviceContext: RequiresDeviceContext(request),
             lookupExisting: true,
             cancellationToken);
         return response.Status != PosSaleRemoteStatuses.FiscalIntegrityConflict;
     }
+
+    private static bool RequiresDeviceContext(PosSaleUploadRequest request) =>
+        request.SourceMode switch
+        {
+            SaleSourceModes.PosEdge => true,
+            SaleSourceModes.Online when request.DeviceId == Guid.Empty => false,
+            SaleSourceModes.Online => throw new PosSaleInvalidException(
+                "An online fiscal recovery cannot be associated with a POS device."),
+            _ => throw new PosSaleInvalidException(
+                $"Unsupported sale source mode '{request.SourceMode}'.")
+        };
 
     private async Task<PosSaleUploadResponse> ReceiveCoreAsync(
         string idempotencyKey,

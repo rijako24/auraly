@@ -252,7 +252,7 @@ public sealed class DianInvoiceUblTests
     }
 
     [Fact]
-    public void Line_discount_reconciles_the_DIAN_legal_monetary_total()
+    public void Line_discount_is_not_duplicated_as_a_global_allowance()
     {
         var gross = 200_901.92m;
         var discount = 901.92m;
@@ -266,7 +266,7 @@ public sealed class DianInvoiceUblTests
                     [new DianTax("01", "IVA", net, 0m, 0m)])
             ],
             Taxes = [new DianTax("01", "IVA", net, 0m, 0m)],
-            LineExtensionAmount = gross,
+            LineExtensionAmount = net,
             TaxExclusiveAmount = net,
             TaxInclusiveAmount = net,
             DiscountAmount = discount,
@@ -281,10 +281,9 @@ public sealed class DianInvoiceUblTests
             DianUblNamespaces.Cac + "InvoiceLine").Single().Element(
                 DianUblNamespaces.Cac + "AllowanceCharge")!;
 
-        Assert.Equal(gross.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+        Assert.Equal(net.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
             monetary.Element(DianUblNamespaces.Cbc + "LineExtensionAmount")?.Value);
-        Assert.Equal(discount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
-            monetary.Element(DianUblNamespaces.Cbc + "AllowanceTotalAmount")?.Value);
+        Assert.Null(monetary.Element(DianUblNamespaces.Cbc + "AllowanceTotalAmount"));
         Assert.Equal(net.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
             monetary.Element(DianUblNamespaces.Cbc + "PayableAmount")?.Value);
         Assert.Equal("false", allowance.Element(
@@ -295,6 +294,47 @@ public sealed class DianInvoiceUblTests
             allowance.Element(DianUblNamespaces.Cbc + "Amount")?.Value);
         Assert.Equal(gross.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
             allowance.Element(DianUblNamespaces.Cbc + "BaseAmount")?.Value);
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+    }
+
+    [Fact]
+    public void Support_document_preserves_source_precision_for_line_and_header_tax_bases()
+    {
+        decimal[] bases = [106_421.4450m, 50_829.8450m, 10_075.4550m];
+        var total = bases.Sum();
+        var invoice = CreateInvoice() with
+        {
+            InvoiceTypeCode = "05",
+            ProfileId = "DIAN 2.1: documento soporte en adquisiciones efectuadas a no obligados a facturar.",
+            UniqueCodeScheme = "CUDS-SHA384",
+            BuyerGenerated = true,
+            Lines = bases.Select((value, index) => new DianInvoiceLine(
+                index + 1, $"P{index + 1}", "999", $"Producto {index + 1}", "EA",
+                1m, value, 0m, value,
+                [new DianTax("01", "IVA", value, 0m, 0m)])).ToArray(),
+            Taxes = [new DianTax("01", "IVA", total, 0m, 0m)],
+            LineExtensionAmount = total,
+            TaxExclusiveAmount = total,
+            TaxInclusiveAmount = total,
+            DiscountAmount = 0m,
+            PayableAmount = total
+        };
+
+        var built = new DianInvoiceUblBuilder().Build(invoice);
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var monetary = document.Descendants(
+            DianUblNamespaces.Cac + "LegalMonetaryTotal").Single();
+        var lineBases = document.Descendants(
+                DianUblNamespaces.Cac + "InvoiceLine")
+            .Select(line => decimal.Parse(
+                line.Element(DianUblNamespaces.Cbc + "LineExtensionAmount")!.Value,
+                System.Globalization.CultureInfo.InvariantCulture))
+            .ToArray();
+
+        Assert.Equal(bases, lineBases);
+        Assert.Equal(total.ToString("0.00####", System.Globalization.CultureInfo.InvariantCulture),
+            monetary.Element(DianUblNamespaces.Cbc + "LineExtensionAmount")?.Value);
         var validation = new DianSchemaValidator().Validate(built.Xml);
         Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
     }

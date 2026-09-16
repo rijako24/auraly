@@ -209,7 +209,7 @@ public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAur
         var snapshot = new PurchaseSupportFiscalSnapshot(null,
             support.IssuerConfigurationId, support.FiscalNumber, support.Environment,
             support.QrValidationUrl, support.Seller, support.Authorization,
-            [new PurchaseSupportLineMetadata(1, $"GASTO-{expense.ConceptId:N}", "999", "EA", "IVA")],
+            [new PurchaseSupportLineMetadata(1, $"GASTO-{expense.ConceptId:N}", "999", "EA", "IVA", "01")],
             Expense: expense);
         await using var command = new SqlCommand("""
             INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,

@@ -18,7 +18,7 @@ public static class FiscalDocumentTypeCodes
 
 public sealed record PurchaseSupportLineMetadata(
     int LineNumber, string ProductCode, string ProductCodeScheme,
-    string UnitCode, string TaxName);
+    string UnitCode, string TaxName, string? DianTaxCode = null);
 
 public sealed record PurchaseSupportFiscalSnapshot(
     GoodsReceiptDocumentPayload? Receipt,

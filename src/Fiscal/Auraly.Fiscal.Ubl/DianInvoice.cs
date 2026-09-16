@@ -100,12 +100,11 @@ public sealed record DianInvoice(
             throw new ArgumentException("The authorized range is invalid.");
         if (!DocumentNumber.StartsWith(Authorization.Prefix, StringComparison.Ordinal))
             throw new ArgumentException("The document number does not match the authorized prefix.");
-        if (LineExtensionAmount != Lines.Sum(line => line.UntaxedAmount + line.DiscountAmount) ||
+        if (LineExtensionAmount != Lines.Sum(line => line.UntaxedAmount) ||
             DiscountAmount != Lines.Sum(line => line.DiscountAmount) ||
             TaxExclusiveAmount != Lines.Sum(line => line.UntaxedAmount) ||
-            TaxInclusiveAmount != TaxExclusiveAmount + Taxes.Sum(tax => tax.Amount) ||
-            PayableAmount != LineExtensionAmount - DiscountAmount +
-                Taxes.Sum(tax => tax.Amount) + PayableRoundingAmount)
+            TaxInclusiveAmount != LineExtensionAmount + Taxes.Sum(tax => tax.Amount) ||
+            PayableAmount != TaxInclusiveAmount + PayableRoundingAmount)
             throw new ArgumentException("Invoice monetary totals are inconsistent.");
     }
 }

@@ -1284,7 +1284,7 @@ internal sealed class TestFiscalSigningCertificateProvider :
         request.CertificateExtensions.Add(new X509KeyUsageExtension(
             X509KeyUsageFlags.DigitalSignature, true));
         return request.CreateSelfSigned(
-            DateTimeOffset.UtcNow.AddDays(-1),
-            DateTimeOffset.UtcNow.AddDays(30));
+            DateTimeOffset.UtcNow.AddYears(-2),
+            DateTimeOffset.UtcNow.AddYears(2));
     }
 }

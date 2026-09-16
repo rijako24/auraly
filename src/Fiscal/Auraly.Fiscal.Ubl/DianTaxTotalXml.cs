@@ -60,8 +60,7 @@ internal static class DianTaxTotalXml
     private static XElement MoneyElement(string name, decimal value, string currency) =>
         new(Cbc + name, new XAttribute("currencyID", currency), Money(value));
 
-    private static string Money(decimal value) =>
-        value.ToString("0.00", CultureInfo.InvariantCulture);
+    private static string Money(decimal value) => DianUblAmountFormatter.Money(value);
 
     private static string Number(decimal value) =>
         value.ToString("0.00", CultureInfo.InvariantCulture);

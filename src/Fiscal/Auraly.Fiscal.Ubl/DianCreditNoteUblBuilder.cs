@@ -136,10 +136,6 @@ public sealed class DianCreditNoteUblBuilder
             MoneyElement("LineExtensionAmount", note.LineExtensionAmount, note.CurrencyCode),
             MoneyElement("TaxExclusiveAmount", note.TaxExclusiveAmount, note.CurrencyCode),
             MoneyElement("TaxInclusiveAmount", note.TaxInclusiveAmount, note.CurrencyCode),
-            note.DiscountAmount == 0
-                ? null
-                : MoneyElement("AllowanceTotalAmount", note.DiscountAmount,
-                    note.CurrencyCode),
             MoneyElement("PayableAmount", note.PayableAmount, note.CurrencyCode));
 
     private static XElement CreditLine(DianCreditNoteLine line, string currency) =>
@@ -188,7 +184,7 @@ public sealed class DianCreditNoteUblBuilder
         new(Cbc + name, new XAttribute("currencyID", currency), Money(value));
     private static XElement E(XNamespace ns, string name, object value) => new(ns + name, value);
     private static string Date(DateOnly value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-    private static string Money(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
+    private static string Money(decimal value) => DianUblAmountFormatter.Money(value);
     private static string Number(decimal value) => value.ToString("0.000000", CultureInfo.InvariantCulture);
     private static string Percentage(decimal amount, decimal baseAmount) =>
         decimal.Round(amount / baseAmount * 100m, 2, MidpointRounding.AwayFromZero)

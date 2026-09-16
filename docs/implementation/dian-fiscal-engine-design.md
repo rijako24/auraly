@@ -87,13 +87,19 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   reserva cupo una sola vez, crea el job y payload durables faltantes y continúa
   por el procesador canónico; conserva `DocumentId`, número, CUFE e idempotencia.
 - Los descuentos capturados por línea se informan en
-  `InvoiceLine/AllowanceCharge`, incluido `MultiplierFactorNumeric`. El total
-  legal conserva el bruto antes de descuentos en `LineExtensionAmount`, el neto
-  gravable en `TaxExclusiveAmount` y la suma de descuentos en
-  `AllowanceTotalAmount`; así `PayableAmount` reconcilia como bruto menos
-  descuentos más tributos y ajuste al peso. Esta representación es única para
-  factura, nota crédito y documento soporte y evita las reglas DIAN FAU08,
-  FBE01 y FAU14.
+  `InvoiceLine/AllowanceCharge`, incluido `MultiplierFactorNumeric`. Como ya
+  están incorporados en el `LineExtensionAmount` neto de cada línea, no se
+  vuelven a publicar como un descuento global en
+  `LegalMonetaryTotal/AllowanceTotalAmount`. El encabezado se deriva de las
+  mismas líneas proyectadas y `PayableAmount` reconcilia como valor neto más
+  tributos y ajuste al peso. Esta representación evita mezclar descuentos de
+  línea y de documento en las reglas DIAN FAU02, FAU06, FAU08 y FAU14.
+- Los importes UBL conservan entre dos y seis decimales permitidos por el anexo.
+  Esto es especialmente necesario en documentos soporte provenientes de una
+  recepción de compra que congela bases a cuatro decimales: las líneas y los
+  resúmenes tributarios se construyen desde la misma proyección fiscal en memoria
+  y el builder sólo la serializa; no recalcula ni redondea independientemente el
+  XML.
 - Timeout con `TrackId`: pasa a consulta, no crea otro documento.
 - Timeout ambiguo sin `TrackId`: queda `PendingDianResult` para intervención/consulta; la retransmisión automática queda bloqueada.
 - POS: el cursor solo avanza después de persistir la página; reiniciar no pierde venta, estado ni outbox.

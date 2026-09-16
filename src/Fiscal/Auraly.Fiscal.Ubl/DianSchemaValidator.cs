@@ -99,7 +99,78 @@ public sealed class DianSchemaValidator
         ValidateTaxResponsibilityListNames(document, errors);
         ValidateColombiaTime(document, errors);
         ValidateTaxTotals(document, errors);
+        ValidateMonetaryTotals(document, errors);
     }
+
+    private static void ValidateMonetaryTotals(XDocument document, List<string> errors)
+    {
+        var root = document.Root;
+        var monetary = root?.Element(Cac + "LegalMonetaryTotal");
+        if (root is null || monetary is null) return;
+
+        var lineElements = root.Elements()
+            .Where(element => element.Name.LocalName is
+                "InvoiceLine" or "CreditNoteLine" or "DebitNoteLine")
+            .ToArray();
+        if (!TryDecimal(monetary.Element(Cbc + "LineExtensionAmount")?.Value,
+                out var lineExtension) ||
+            lineElements.Any(line => !TryDecimal(
+                line.Element(Cbc + "LineExtensionAmount")?.Value, out _)))
+            return;
+
+        var lineTotal = lineElements.Sum(line =>
+        {
+            TryDecimal(line.Element(Cbc + "LineExtensionAmount")?.Value, out var value);
+            return value;
+        });
+        if (lineExtension != lineTotal)
+            errors.Add(
+                "Error: FAU02 el valor bruto antes de tributos no coincide con la suma de las líneas.");
+
+        var headerTax = root.Elements(Cac + "TaxTotal")
+            .Sum(total => TryDecimal(total.Element(Cbc + "TaxAmount")?.Value, out var value)
+                ? value
+                : 0m);
+        if (TryDecimal(monetary.Element(Cbc + "TaxInclusiveAmount")?.Value,
+                out var taxInclusive) &&
+            taxInclusive != lineExtension + headerTax)
+            errors.Add(
+                "Error: FAU06 el valor bruto más tributos no coincide con el valor bruto y los tributos de encabezado.");
+
+        var headerAllowances = HeaderAllowanceAmount(root, chargeIndicator: false);
+        var headerCharges = HeaderAllowanceAmount(root, chargeIndicator: true);
+        var declaredAllowance = OptionalMoney(monetary, "AllowanceTotalAmount");
+        var declaredCharge = OptionalMoney(monetary, "ChargeTotalAmount");
+        if (declaredAllowance != headerAllowances)
+            errors.Add(
+                "Error: FAU08 el descuento total no coincide con los descuentos globales del documento.");
+        if (declaredCharge != headerCharges)
+            errors.Add(
+                "Error: FAU10 el cargo total no coincide con los cargos globales del documento.");
+
+        if (!TryDecimal(monetary.Element(Cbc + "PayableAmount")?.Value, out var payable) ||
+            !TryDecimal(monetary.Element(Cbc + "TaxInclusiveAmount")?.Value,
+                out taxInclusive))
+            return;
+        var prepaid = OptionalMoney(monetary, "PrepaidAmount");
+        var rounding = OptionalMoney(monetary, "PayableRoundingAmount");
+        if (payable != taxInclusive - declaredAllowance + declaredCharge - prepaid + rounding)
+            errors.Add(
+                "Error: FAU14 el valor pagable no reconcilia con tributos, descuentos, cargos, anticipos y redondeo.");
+    }
+
+    private static decimal HeaderAllowanceAmount(XElement root, bool chargeIndicator) =>
+        root.Elements(Cac + "AllowanceCharge")
+            .Where(value => bool.TryParse(
+                                value.Element(Cbc + "ChargeIndicator")?.Value,
+                                out var isCharge) &&
+                            isCharge == chargeIndicator)
+            .Sum(value => TryDecimal(value.Element(Cbc + "Amount")?.Value, out var amount)
+                ? amount
+                : 0m);
+
+    private static decimal OptionalMoney(XElement parent, string name) =>
+        TryDecimal(parent.Element(Cbc + name)?.Value, out var value) ? value : 0m;
 
     private static void ValidateTaxResponsibilityListNames(
         XDocument document,

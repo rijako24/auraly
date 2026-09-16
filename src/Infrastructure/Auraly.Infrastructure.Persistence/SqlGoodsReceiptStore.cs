@@ -752,23 +752,37 @@ public sealed class SqlGoodsReceiptStore(
             SELECT ProductId,COALESCE(NULLIF(ProductCode,N''),CONVERT(nvarchar(36),ProductId)),COALESCE(BaseUnitCode,N'EA')
             FROM dbo.Products WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND ProductId IN
               (SELECT value FROM OPENJSON(@Ids) WITH (value uniqueidentifier '$'));
+            SELECT Code,DianTaxCode,Rate
+            FROM dbo.TaxProfiles
+            WHERE BusinessId=@BusinessId AND IsActive=1
+              AND Code IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$'));
             """;
         var metadata = new Dictionary<Guid, (string Code, string Unit)>();
+        var taxProfiles = new Dictionary<string, (string DianCode, decimal Rate)>(
+            StringComparer.OrdinalIgnoreCase);
         await using (var products = new SqlCommand(productsSql, connection, transaction))
         {
             products.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
             products.Parameters.AddWithValue("@Ids", JsonSerializer.Serialize(requestLines.Select(x => x.ProductId)));
+            products.Parameters.AddWithValue("@TaxCodes", JsonSerializer.Serialize(
+                requestLines.Select(line => line.TaxCode).Distinct(StringComparer.OrdinalIgnoreCase)));
             await using var reader = await products.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
                 metadata[reader.GetGuid(0)] = (reader.GetString(1), reader.GetString(2));
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                taxProfiles[reader.GetString(0)] = (
+                    reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                    reader.GetDecimal(2));
         }
         var snapshot = new PurchaseSupportFiscalSnapshot(receipt, support.IssuerConfigurationId,
             support.FiscalNumber, support.Environment, support.QrValidationUrl, support.Seller,
             support.Authorization, receipt.Lines.Select(line =>
             {
                 var product = metadata[line.ProductId];
+                var dianTaxCode = ResolveDianTaxCode(line, taxProfiles);
                 return new PurchaseSupportLineMetadata(line.LineNumber, product.Code, "999",
-                    product.Unit, line.TaxCode == "01" ? "IVA" : "Impuesto");
+                    product.Unit, PosSaleFiscalMappings.TaxName(dianTaxCode), dianTaxCode);
             }).ToArray());
         const string sql = """
             INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
@@ -793,6 +807,19 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@Environment", support.Environment);
         command.Parameters.AddWithValue("@IssuerId", support.IssuerConfigurationId);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static string ResolveDianTaxCode(
+        GoodsReceiptLineSnapshot line,
+        IReadOnlyDictionary<string, (string DianCode, decimal Rate)> taxProfiles)
+    {
+        if (line.TaxCode.Length == 2 && line.TaxCode.All(char.IsDigit))
+            return line.TaxCode;
+        if (!taxProfiles.TryGetValue(line.TaxCode, out var profile) ||
+            profile.Rate != line.TaxRate || string.IsNullOrWhiteSpace(profile.DianCode))
+            throw new PurchasingValidationException(
+                $"La línea {line.LineNumber} no tiene un código tributario DIAN congelable.");
+        return profile.DianCode.Trim();
     }
 
     private async Task InsertJobAsync(SqlConnection connection, SqlTransaction transaction,
