@@ -4,6 +4,7 @@ import type {
 import type { PosPrintableReceipt } from "./pos-edge-client";
 
 export type PosOrderPrintRoute = "installed-app" | "browser";
+export type OrderInvoicePrintMode = "optional" | "always";
 
 export type OrderInvoiceSequenceProgress = {
   total: number;
@@ -27,6 +28,13 @@ export function resolvePosOrderPrintRoute(
   edgeSessionToken: string | null,
 ): PosOrderPrintRoute {
   return edgeSessionToken ? "installed-app" : "browser";
+}
+
+export function shouldPrintOrderInvoice(
+  mode: OrderInvoicePrintMode,
+  requestedByUser: boolean,
+) {
+  return mode === "always" || requestedByUser;
 }
 
 export function orderReceiptsFromEmission<T>(
