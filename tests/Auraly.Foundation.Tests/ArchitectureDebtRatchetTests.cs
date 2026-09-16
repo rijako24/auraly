@@ -627,10 +627,20 @@ public sealed class ArchitectureDebtRatchetTests
         Assert.DoesNotContain("orders.GetAsync(", source, StringComparison.Ordinal);
         Assert.DoesNotContain("GetCustomerAsync(", source, StringComparison.Ordinal);
         Assert.Contains("request.OrderIds.Count is < 1 or > 50", source, StringComparison.Ordinal);
-        var begin = source.IndexOf("batches.BeginAsync", StringComparison.Ordinal);
+        var invoiceAsync = source.IndexOf(
+            "public async Task<InvoiceOrdersResponse> InvoiceAsync(",
+            StringComparison.Ordinal);
+        Assert.True(invoiceAsync >= 0);
+        var begin = source.IndexOf("batches.BeginAsync", invoiceAsync, StringComparison.Ordinal);
         Assert.True(begin >= 0);
-        Assert.True(begin < source.IndexOf("checkout.ValidateOrderCreditBatchAsync", StringComparison.Ordinal));
-        Assert.True(begin < source.IndexOf("orders.GetBatchAsync", StringComparison.Ordinal));
+        Assert.True(begin < source.IndexOf(
+            "checkout.ValidateOrderCreditBatchAsync",
+            invoiceAsync,
+            StringComparison.Ordinal));
+        Assert.True(begin < source.IndexOf(
+            "orders.GetBatchAsync",
+            invoiceAsync,
+            StringComparison.Ordinal));
     }
 
     [Fact]
