@@ -10,9 +10,8 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     [Quantity] DECIMAL(18, 4) NOT NULL,
     [BaseUnitPrice] DECIMAL(18, 2) NOT NULL,
     [UnitPrice] DECIMAL(18, 2) NOT NULL,
-    [PublicUnitPrice] DECIMAL(18, 2) NULL,
-    [PublicDiscountAmount] DECIMAL(18, 2) NULL,
-    [PublicLineTotal] DECIMAL(18, 2) NULL,
+    [PublicUnitPrice] DECIMAL(18, 2) NOT NULL,
+    [PublicLineTotal] DECIMAL(18, 2) NOT NULL,
     [DocumentUnitCost] DECIMAL(19, 6) NOT NULL CONSTRAINT [DF_SalesDraftLines_DocumentUnitCost] DEFAULT 0,
     [CurrencyCode] NVARCHAR(3) NOT NULL,
     [PriceSource] NVARCHAR(24) NOT NULL,
@@ -28,9 +27,8 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     CONSTRAINT [CK_SalesDraftLines_Quantity] CHECK ([Quantity] > 0),
     CONSTRAINT [CK_SalesDraftLines_Amounts]
         CHECK ([BaseUnitPrice] >= 0 AND [UnitPrice] >= 0
-          AND ([PublicUnitPrice] IS NULL OR [PublicUnitPrice] >= 0) AND [DocumentUnitCost] >= 0
-          AND ([PublicDiscountAmount] IS NULL OR [PublicDiscountAmount] >= 0)
-          AND ([PublicLineTotal] IS NULL OR [PublicLineTotal] >= 0)
+          AND [PublicUnitPrice] >= 0 AND [DocumentUnitCost] >= 0
+          AND [PublicLineTotal] >= 0
           AND [DiscountAmount] >= 0 AND [PromotionDiscountAmount] >= 0),
     CONSTRAINT [CK_SalesDraftLines_TaxRate] CHECK ([TaxRate] >= 0)
 );

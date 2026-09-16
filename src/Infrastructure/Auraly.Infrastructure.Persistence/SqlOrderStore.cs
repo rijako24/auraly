@@ -282,9 +282,7 @@ public sealed class SqlOrderStore(
                      CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
                      '$.ReservedQuantity')),
                      CASE WHEN @StoredStatus=2 THEN item.Quantity ELSE 0 END),
-                   TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
-                     CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
-                     '$.DocumentUnitCost'))
+                   item.DocumentUnitCost
             FROM dbo.OrderItems item
             LEFT JOIN dbo.Products product
               ON product.ProductId=item.ProductId AND product.TenantId=@TenantId
@@ -317,11 +315,11 @@ public sealed class SqlOrderStore(
                 lineReader.GetDecimal(7),
                 lineReader.GetDecimal(8),
                 lineReader.GetDecimal(9),
+                lineReader.GetDecimal(14),
                 lineReader.GetDecimal(10),
                 lineReader.GetBoolean(11),
                 lineReader.GetString(12),
-                lineReader.GetDecimal(13),
-                lineReader.IsDBNull(14) ? null : lineReader.GetDecimal(14)));
+                lineReader.GetDecimal(13)));
         }
 
         return new OrderDetail(
@@ -392,9 +390,7 @@ public sealed class SqlOrderStore(
                      CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
                      '$.ReservedQuantity')),
                      CASE WHEN o.Status=2 THEN item.Quantity ELSE 0 END),
-                   TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
-                     CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
-                     '$.DocumentUnitCost'))
+                   item.DocumentUnitCost
             FROM @Selected selected
             INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId AND b.TenantId=@TenantId
@@ -477,11 +473,11 @@ public sealed class SqlOrderStore(
                 reader.GetDecimal(8),
                 reader.GetDecimal(9),
                 reader.GetDecimal(10),
+                reader.GetDecimal(15),
                 reader.GetDecimal(11),
                 reader.GetBoolean(12),
                 reader.GetString(13),
-                reader.GetDecimal(14),
-                reader.IsDBNull(15) ? null : reader.GetDecimal(15)));
+                reader.GetDecimal(14)));
         }
 
         return headers.ToDictionary(

@@ -457,7 +457,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
                 ServerSliceFixture.TechnicalKeyVersion),
             FiscalEnvironment.Test,
             ServerSliceFixture.QrValidationUrl,
-            [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m)],
+            [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m, 6_000m)],
             [new OfflineSalePayment("Cash", 11_900m)]);
     }
 

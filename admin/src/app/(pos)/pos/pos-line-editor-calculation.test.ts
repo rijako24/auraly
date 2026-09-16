@@ -48,11 +48,37 @@ test("changing margin derives final price and its discount against the reference
 
 test("raising final price never produces a negative discount", () => {
   assert.deepEqual(lineEconomicsFromFinalPrice(50_000, 1, 100_000, 130_000, 0), {
-    finalUnitPrice: 130_000,
-    documentUnitPrice: 130_000,
+    finalUnitPrice: 100_000,
+    documentUnitPrice: 100_000,
     discount: 0,
     discountPercent: 0,
-    marginPercent: 61.5385,
+    marginPercent: 50,
+  });
+});
+
+test("promotion remains separate while every editor control derives the manual discount", () => {
+  const byValue = lineEconomicsFromDiscount(50_000, 2, 100_000, 20_000, 0, 10_000);
+  const byFinalPrice = lineEconomicsFromFinalPrice(50_000, 2, 100_000, 85_000, 0, 10_000);
+  const byPercent = lineEconomicsFromDiscountPercent(50_000, 2, 100_000, 10, 0, 10_000);
+
+  assert.deepEqual(byValue, byFinalPrice);
+  assert.deepEqual(byPercent, byFinalPrice);
+  assert.deepEqual(byFinalPrice, {
+    finalUnitPrice: 85_000,
+    documentUnitPrice: 100_000,
+    discount: 20_000,
+    discountPercent: 10,
+    marginPercent: 41.1765,
+  });
+});
+
+test("an active promotion caps the final price without being erased or converted", () => {
+  assert.deepEqual(lineEconomicsFromFinalPrice(50_000, 2, 100_000, 100_000, 0, 10_000), {
+    finalUnitPrice: 95_000,
+    documentUnitPrice: 100_000,
+    discount: 0,
+    discountPercent: 0,
+    marginPercent: 47.3684,
   });
 });
 

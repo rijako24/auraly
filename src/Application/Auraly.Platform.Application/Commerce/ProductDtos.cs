@@ -45,7 +45,8 @@ public sealed record ProductReference(
     string? ProductClassName = null,
     string? ExternalCategoryId = null,
     Guid? IntegrationConnectionId = null,
-    Guid? ProductCategoryId = null)
+    Guid? ProductCategoryId = null,
+    decimal DocumentUnitCost = 0m)
 {
     public bool IsActive { get; init; } = true;
 }

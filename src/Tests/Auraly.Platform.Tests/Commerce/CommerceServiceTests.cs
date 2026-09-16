@@ -293,7 +293,7 @@ public class CommerceServiceTests
     }
 
     [Fact]
-    public async Task CreateOrderAsync_RefreshesThePublishedPriceBeforeConfirmation()
+    public async Task CreateOrderAsync_CopiesTheFrozenDraftPriceAndCostWithoutPerLineRepricing()
     {
         var businessId = Guid.NewGuid();
         var conversationId = Guid.NewGuid();
@@ -317,6 +317,7 @@ public class CommerceServiceTests
             ProductNameSnapshot = "Producto publicado",
             Quantity = 1m,
             UnitPrice = 10000m,
+            DocumentUnitCost = 7_000m,
             LineTotal = 10000m
         };
         var persistedItems = new List<OrderItem>();
@@ -400,10 +401,14 @@ public class CommerceServiceTests
             context,
             new CreateOrderRequest(true, null, null, null, null, null, null));
 
-        snapshot.Total.Should().Be(25000m);
-        snapshot.Items.Should().ContainSingle().Which.UnitPrice.Should().Be(25000m);
+        snapshot.Total.Should().Be(10000m);
+        snapshot.Items.Should().ContainSingle().Which.UnitPrice.Should().Be(10000m);
         persistedOrder.Should().NotBeNull();
-        persistedOrder!.Total.Should().Be(25000m);
-        persistedItems.Should().ContainSingle().Which.UnitPrice.Should().Be(25000m);
+        persistedOrder!.Total.Should().Be(10000m);
+        persistedItems.Should().ContainSingle().Which.UnitPrice.Should().Be(10000m);
+        persistedItems.Should().ContainSingle().Which.DocumentUnitCost.Should().Be(7_000m);
+        adapter.Verify(value => value.GetProductAsync(
+            It.IsAny<AddOrderItemRequest>(), It.IsAny<CommerceAdapterContext>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 }

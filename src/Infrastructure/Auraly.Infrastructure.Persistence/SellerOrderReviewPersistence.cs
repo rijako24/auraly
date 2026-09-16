@@ -20,7 +20,7 @@ public sealed record EditableSellerOrderLine(
     decimal UnitPrice,
     decimal DiscountAmount,
     string PriceSource,
-    decimal? DocumentUnitCost,
+    decimal DocumentUnitCost,
     bool ManageStock);
 
 public sealed record SellerOrderReplacementLine(
@@ -30,6 +30,7 @@ public sealed record SellerOrderReplacementLine(
     string UnitCode,
     decimal Quantity,
     decimal UnitPrice,
+    decimal DocumentUnitCost,
     decimal DiscountAmount,
     decimal LineTotal,
     string RawPayloadJson);
@@ -81,7 +82,7 @@ public static class SellerOrderReviewPersistence
                     reader.GetDecimal(4),
                     reader.GetDecimal(5),
                     reader.GetString(6),
-                    reader.IsDBNull(7) ? null : reader.GetDecimal(7),
+                    reader.GetDecimal(7),
                     reader.GetBoolean(8));
                 lines.Add(line);
             }
@@ -161,6 +162,7 @@ public static class SellerOrderReviewPersistence
                     unitCode = line.UnitCode,
                     quantity = line.Quantity,
                     unitPrice = line.UnitPrice,
+                    documentUnitCost = line.DocumentUnitCost,
                     discountAmount = line.DiscountAmount,
                     lineTotal = line.LineTotal,
                     rawPayloadJson = line.RawPayloadJson

@@ -4,10 +4,10 @@ public sealed record OnlineSalesOrderImportLine(
     Guid ProductId,
     decimal Quantity,
     decimal PublicUnitPrice,
-    decimal PublicDiscountAmount,
+    decimal DiscountAmount,
     decimal PublicLineTotal,
-    string PriceSource = "Order",
-    decimal? DocumentUnitCost = null);
+    string PriceSource,
+    decimal DocumentUnitCost);
 
 public sealed record ImportOnlineSalesOrderRequest(
     Guid SourceOrderId,

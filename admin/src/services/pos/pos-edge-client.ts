@@ -125,7 +125,6 @@ export type PosDraftLine = {
   tax: number;
   total: number;
   publicUnitPrice?: number | null;
-  publicDiscountAmount?: number | null;
 };
 
 
@@ -174,7 +173,7 @@ export type PosSensitiveAuthorization = {
 export type PosDraftLineUpdate = Pick<
   PosDraftLine,
   "lineId" | "description" | "unitPrice" | "discount" | "documentUnitCost"
-> & { publicUnitPrice?: number; publicDiscountAmount?: number };
+>;
 
 export type PosDraft = {
   draftId: DraftId;

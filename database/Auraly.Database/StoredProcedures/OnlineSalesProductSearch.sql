@@ -46,7 +46,7 @@ BEGIN
              COALESCE(t.DianTaxCode,N'01') TaxCode,COALESCE(t.Rate,0) TaxRate,
              price.Amount UnitPrice,price.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
              p.CategoryName,p.ProductCategoryId,p.ProductBrandId,
-             COALESCE(NULLIF(balance.AverageUnitCost,0),price.CostBasisAmount,0) AverageUnitCost,
+             COALESCE(price.CostBasisAmount,0) AverageUnitCost,
              COALESCE(latest.LatestUnitCost,price.CostBasisAmount,NULLIF(balance.AverageUnitCost,0),0) LatestUnitCost,
              COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent) TargetMarginPercent
       FROM dbo.Products p

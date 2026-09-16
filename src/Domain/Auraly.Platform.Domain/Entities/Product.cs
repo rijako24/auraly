@@ -27,6 +27,10 @@ public class Product
     [NotMapped]
     public decimal UnitPrice { get; set; }
 
+    /// <summary>Cost snapshot source loaded with the canonical published price.</summary>
+    [NotMapped]
+    public decimal UnitCost { get; set; }
+
     /// <summary>Set by the canonical ProductPrices reader; never persisted on Products.</summary>
     [NotMapped]
     public bool HasPublishedPrice { get; set; }

@@ -192,11 +192,8 @@ public sealed class SqlSalesReportingProjectionWriter(
 
         foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
         {
-            var lineCost = line.DocumentUnitCost is decimal documentUnitCost
-                ? decimal.Round(line.Quantity * documentUnitCost, 4, MidpointRounding.AwayFromZero)
-                : await ReadSaleLineCostAsync(
-                    session, value.DocumentId, value.CommercialSnapshot.DocumentType,
-                    line.LineNumber, cancellationToken);
+            var lineCost = decimal.Round(
+                line.Quantity * line.DocumentUnitCost, 4, MidpointRounding.AwayFromZero);
             recognizedCost += lineCost;
             await InsertSaleLineFactAsync(
                 session, value, line, seller.SellerId, lineCost, localDate.Date, now,
@@ -488,33 +485,6 @@ public sealed class SqlSalesReportingProjectionWriter(
             return new SellerAttribution(reader.GetGuid(0), reader.GetString(1));
 
         return new SellerAttribution(null, "Sin vendedor");
-    }
-
-    private static async Task<decimal> ReadSaleLineCostAsync(
-        SalesReportingSqlSession session,
-        Guid documentId,
-        string documentType,
-        int lineNumber,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT CASE WHEN line.AttributionSnapshotVersion>0
-                        THEN COALESCE(line.UnitCostSnapshot*line.Quantity,0)
-                        ELSE COALESCE(ABS(movement.ValueChange),0) END
-            FROM dbo.SalesDocumentLines line
-            LEFT JOIN dbo.InventoryMovements movement
-              ON movement.DocumentId=line.DocumentId
-             AND movement.DocumentType=@DocumentType
-             AND movement.LineNumber=line.LineNumber
-             AND movement.MovementType=N'Sale'
-            WHERE line.DocumentId=@DocumentId AND line.LineNumber=@LineNumber;
-            """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@DocumentId", documentId);
-        command.Parameters.AddWithValue("@DocumentType", documentType);
-        command.Parameters.AddWithValue("@LineNumber", lineNumber);
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        return result is null or DBNull ? 0m : Convert.ToDecimal(result);
     }
 
     private sealed record SellerAttribution(Guid? SellerId, string SellerName);

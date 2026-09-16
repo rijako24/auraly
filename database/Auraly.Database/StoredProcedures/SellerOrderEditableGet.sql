@@ -28,9 +28,7 @@ BEGIN
            COALESCE(NULLIF(JSON_VALUE(
              CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
              '$.PriceSource'),N''),N'Captured'),
-           TRY_CONVERT(DECIMAL(19,6),JSON_VALUE(
-             CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
-             '$.DocumentUnitCost')),
+           item.DocumentUnitCost,
            CAST(COALESCE(product.ManageStock,0) AS BIT)
     FROM dbo.OrderItems item
     INNER JOIN dbo.Orders orders

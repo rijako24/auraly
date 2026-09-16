@@ -78,8 +78,8 @@ BEGIN
         N'COP',@Subtotal,@DiscountTotal,0,@Total,1,@Number,@ExternalStatus,@IdempotencyKey,SYSUTCDATETIME(),SYSUTCDATETIME());
 
     INSERT dbo.OrderItems(OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,ProductNameSnapshot,
-        DescriptionSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,DiscountAmount,TaxAmount,LineTotal,RawPayloadJson,CreatedAt)
-    SELECT NEWID(),@OrderId,@BusinessId,j.ProductId,j.Code,j.Code,j.Name,j.Name,j.UnitCode,j.Quantity,j.UnitPrice,j.DiscountAmount,j.TaxAmount,j.LineTotal,j.RawPayloadJson,SYSUTCDATETIME()
+        DescriptionSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,DocumentUnitCost,DiscountAmount,TaxAmount,LineTotal,RawPayloadJson,CreatedAt)
+    SELECT NEWID(),@OrderId,@BusinessId,j.ProductId,j.Code,j.Code,j.Name,j.Name,j.UnitCode,j.Quantity,j.UnitPrice,j.DocumentUnitCost,j.DiscountAmount,j.TaxAmount,j.LineTotal,j.RawPayloadJson,SYSUTCDATETIME()
     FROM OPENJSON(@LinesJson) WITH(
         ProductId UNIQUEIDENTIFIER '$.productId',
         Code NVARCHAR(100) '$.code',
@@ -87,6 +87,7 @@ BEGIN
         UnitCode NVARCHAR(24) '$.unitCode',
         Quantity DECIMAL(19,6) '$.quantity',
         UnitPrice DECIMAL(19,4) '$.unitPrice',
+        DocumentUnitCost DECIMAL(19,6) '$.documentUnitCost',
         DiscountAmount DECIMAL(19,4) '$.discountAmount',
         TaxAmount DECIMAL(19,4) '$.taxAmount',
         LineTotal DECIMAL(19,4) '$.lineTotal',

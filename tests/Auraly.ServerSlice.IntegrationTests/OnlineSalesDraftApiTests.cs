@@ -242,7 +242,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             HttpMethod.Put,
             $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
             new UpdateOnlineSalesDraftLinesRequest(
-                [new(line.LineId, "Servicio puntual", 12_000m, 2_000m, 4_500m)],
+                [new(line.LineId, "Servicio puntual", line.UnitPrice, 2_000m, line.DocumentUnitCost)],
                 captured.Version),
             Guid.NewGuid().ToString("D"));
         using var updateResponse = await client.SendAsync(update);
@@ -250,16 +250,18 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         var changed = await updateResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>();
         var changedLine = Assert.Single(changed!.Lines);
         Assert.Equal("Servicio puntual", changedLine.Description);
-        Assert.Equal(12_000m, changedLine.UnitPrice);
+        Assert.Equal(line.UnitPrice, changedLine.UnitPrice);
+        Assert.Equal(10_000m, changedLine.PublicUnitPrice);
+        Assert.Equal(18_000m, changedLine.PublicLineTotal);
         Assert.Equal(2_000m, changedLine.Discount);
-        Assert.Equal(4_500m, changedLine.DocumentUnitCost);
+        Assert.Equal(4_000m, changedLine.DocumentUnitCost);
 
         await using var checkConnection = new SqlConnection(fixture.ConnectionString);
         await checkConnection.OpenAsync();
         await using var check = new SqlCommand(
             """
             SELECT p.Name,pp.Amount,pp.CostBasisAmount,l.Description,l.UnitPrice,
-                   l.DiscountAmount,l.DocumentUnitCost
+                   l.DiscountAmount,l.DocumentUnitCost,l.PublicUnitPrice,l.PublicLineTotal
             FROM dbo.Products p
             INNER JOIN dbo.ProductPrices pp ON pp.ProductId=p.ProductId AND pp.IsActive=1
             INNER JOIN dbo.SalesDraftLines l ON l.ProductId=p.ProductId
@@ -273,9 +275,11 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         Assert.Equal(10_000m, reader.GetDecimal(1));
         Assert.Equal(4_000m, reader.GetDecimal(2));
         Assert.Equal("Servicio puntual", reader.GetString(3));
-        Assert.Equal(12_000m, reader.GetDecimal(4));
+        Assert.Equal(line.UnitPrice, reader.GetDecimal(4));
         Assert.Equal(2_000m, reader.GetDecimal(5));
-        Assert.Equal(4_500m, reader.GetDecimal(6));
+        Assert.Equal(4_000m, reader.GetDecimal(6));
+        Assert.Equal(10_000m, reader.GetDecimal(7));
+        Assert.Equal(18_000m, reader.GetDecimal(8));
         await reader.DisposeAsync();
 
         using var addSameProduct = Mutation(
@@ -289,15 +293,15 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             ?? throw new InvalidOperationException("The updated draft response was empty.");
         Assert.Equal(2, withNewLine.Lines.Count);
         var persistedEditedLine = withNewLine.Lines.Single(value => value.LineId == line.LineId);
-        Assert.Equal(12_000m, persistedEditedLine.UnitPrice);
+        Assert.Equal(line.UnitPrice, persistedEditedLine.UnitPrice);
         Assert.Equal(2_000m, persistedEditedLine.Discount);
         Assert.Equal("Manual", persistedEditedLine.PriceSource);
-        Assert.Equal(10_000m, withNewLine.Lines.Single(value => value.LineId != line.LineId).UnitPrice);
+        Assert.Equal(10_000m, withNewLine.Lines.Single(value => value.LineId != line.LineId).PublicUnitPrice);
 
         var reloaded = await OpenAsync(client, new(
             fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));
         Assert.Equal(withNewLine.DraftId, reloaded.DraftId);
-        Assert.Equal(12_000m, reloaded.Lines.Single(value => value.LineId == line.LineId).UnitPrice);
+        Assert.Equal(line.UnitPrice, reloaded.Lines.Single(value => value.LineId == line.LineId).UnitPrice);
         Assert.Equal("Manual", reloaded.Lines.Single(value => value.LineId == line.LineId).PriceSource);
 
         using var cleanup = Mutation(
@@ -358,7 +362,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             Guid.NewGuid().ToString("D"));
         using var updateResponse = await client.SendAsync(update);
         Assert.Equal(HttpStatusCode.BadRequest, updateResponse.StatusCode);
-        Assert.Contains("maneja inventario", await updateResponse.Content.ReadAsStringAsync(),
+        Assert.Contains("congelado", await updateResponse.Content.ReadAsStringAsync(),
             StringComparison.OrdinalIgnoreCase);
 
         using var cleanup = Mutation(

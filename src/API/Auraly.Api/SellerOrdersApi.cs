@@ -134,8 +134,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                     && input.Quantity==original.Quantity
                     && input.UnitPrice==original.UnitPrice
                     && input.DiscountAmount==original.DiscountAmount
-                    && input.PriceSource==original.PriceSource
-                    && input.DocumentUnitCost==original.DocumentUnitCost);
+                    && input.PriceSource==original.PriceSource);
             if(metadataOnly)
             {
                 await SellerOrderReviewPersistence.UpdateMetadataAsync(connection,transaction,orderId,actor.BusinessId,request.Notes,actor.UserId,request.WorkSessionId,token);
@@ -159,8 +158,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 .Select(original=>new NormalizedOrderLine(
                     DeterministicGuid($"seller-order-edit-original:{original.Position}:{original.ProductId:N}"),
                     original.Position,original.ProductId,original.Quantity,original.UnitPrice,
-                    original.DiscountAmount,original.PriceSource,
-                    original.DocumentUnitCost)))
+                    original.DiscountAmount,original.PriceSource)))
                 .ToArray();
             var resolvedLines=await ResolveProductFactsAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,factsInput,token);
             var factsAt=timing.ElapsedMilliseconds;
@@ -176,7 +174,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 var priceSource=preserveCommercialValues?original!.PriceSource:NormalizePriceSource(input.PriceSource);
                 var gross=MonetaryRounding.RoundLineAmount(unitPrice*input.Quantity);
                 if(discountAmount>gross)throw new SellerOrderValidationException($"El descuento de {line.Code} supera el valor bruto de la línea.");
-                lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position,DocumentUnitCost=preserveCommercialValues?original!.DocumentUnitCost:input.DocumentUnitCost});
+                lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position,DocumentUnitCost=original?.DocumentUnitCost??line.DocumentUnitCost});
             }
             var previousDemand=InventoryDemandResolver.Resolve(editable.Lines
                 .Where(line=>line.ReservedQuantity>0)
@@ -229,7 +227,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             if(reservations.Length>0)await TransferAsync(identity,$"seller-order-edit-reserve:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-reserve:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Nueva reserva del pedido {number}",reservations,connection,transaction,token);
             await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,customerId,context.PartySiteId,context.Name,context.Identification,context.Email,context.Phone,context.Address,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
                 review?5:2,review?"StockReview":"InventoryTransferAccepted",review,
-                lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,line.DocumentUnitCost,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m,LinePosition=line.Position}))).ToArray(),
+                lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DocumentUnitCost,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m,LinePosition=line.Position}))).ToArray(),
                 actor.UserId,request.WorkSessionId,token);
             var replacedAt=timing.ElapsedMilliseconds;
             var reportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
@@ -345,14 +343,14 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 var canReserve=context.SourceWarehouseAllowsNegativeStock||allocation.CanReserve;
                 if(line.ManageStock&&!canReserve)
                     warnings.Add($"{line.Code}: solicitadas {input.Quantity:N3}, disponibles {InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,line.InventoryFactor):N3}.");
-                lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position,CanReserve=canReserve,DocumentUnitCost=input.DocumentUnitCost});
+                lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position,CanReserve=canReserve});
             }
             var review=warnings.Count>0;var number=$"PED-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString("N")[..8].ToUpperInvariant()}";
             var total=lines.Sum(line=>line.LineTotal);
             var reservationTransferId=DeterministicGuid($"seller-order-transfer:{orderId:N}");
             var reservableLines=lines.Where(line=>line.ManageStock&&line.CanReserve).ToArray();
             var confirmedExternalStatus=reservableLines.Length>0?"InventoryTransferProcessed":"Confirmed";
-            var persistedLines=lines.Select(line=>{var lineTotal=line.LineTotal;var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);var reservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m;return new{productId=line.ProductId,code=line.Code,name=line.Name,unitCode=line.UnitCode,quantity=line.Quantity,unitPrice=line.UnitPrice,discountAmount=line.DiscountAmount,taxAmount=tax,lineTotal,rawPayloadJson=JsonSerializer.Serialize(new{line.PriceSource,line.DocumentUnitCost,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=reservedQuantity,LinePosition=line.Position})};});
+            var persistedLines=lines.Select(line=>{var lineTotal=line.LineTotal;var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);var reservedQuantity=line.ManageStock&&line.CanReserve?line.Quantity:0m;return new{productId=line.ProductId,code=line.Code,name=line.Name,unitCode=line.UnitCode,quantity=line.Quantity,unitPrice=line.UnitPrice,documentUnitCost=line.DocumentUnitCost,discountAmount=line.DiscountAmount,taxAmount=tax,lineTotal,rawPayloadJson=JsonSerializer.Serialize(new{line.PriceSource,Available=InventoryDemandResolver.InProductUnits(line.Available,line.InventoryFactor),ReservedQuantity=reservedQuantity,LinePosition=line.Position})};});
             await using(var insert=Procedure("dbo.SellerOrderCreate",connection,transaction))
             {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@WarehouseId",request.WarehouseId),P("@OrdersWarehouseId",context.OrdersWarehouseId),P("@ReservationTransferId",reservationTransferId),P("@RouteId",request.RouteId),P("@RouteStopId",request.RouteStopId),P("@PartySiteId",context.PartySiteId),P("@CapturedByUserId",actor.UserId),P("@CapturedOffline",request.CapturedOffline),P("@RequiresStockReview",review),P("@Status",review?5:2),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":confirmedExternalStatus),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
             var stockLines=reservableLines.GroupBy(line=>line.ProductId).Select((group,index)=>new WarehouseTransferLineRequest(index+1,group.Key,group.Sum(line=>line.Quantity))).ToArray();
@@ -408,7 +406,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 lines.Add(productId,new(
                     productId,reader.GetString(1),reader.GetString(2),reader.GetString(3),input.Quantity,0,
                     "Captured",reader.GetDecimal(4),reader.GetBoolean(5),reader.GetDecimal(6),0,
-                    0m,reader.GetGuid(7),reader.GetDecimal(8)));
+                    reader.GetDecimal(9),0m,reader.GetGuid(7),reader.GetDecimal(8),false));
             }
         }
         var unresolved=inputs.Where(input=>!lines.ContainsKey(input.ProductId)).Select(input=>input.ProductId).ToArray();
@@ -422,7 +420,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         return lines.Select((line,index)=>new NormalizedOrderLine(
             DeterministicGuid($"seller-order-line:{index+1}:{line.ProductId:N}"),
             index+1,line.ProductId,line.Quantity,line.UnitPrice,line.DiscountAmount,
-            NormalizePriceSource(line.PriceSource),line.DocumentUnitCost)).ToArray();
+            NormalizePriceSource(line.PriceSource))).ToArray();
     }
     private static string NormalizePriceSource(string? value)=>value switch
     {
@@ -437,13 +435,13 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     private static SqlParameter Money(string name,decimal value)=>new(name,SqlDbType.Decimal){Precision=19,Scale=4,Value=value};
     private static SqlCommand Procedure(string name,SqlConnection connection,SqlTransaction? transaction=null)=>new(name,connection,transaction){CommandType=CommandType.StoredProcedure};
     private sealed record CustomerContext(string Name,string? Identification,string? Email,string? Phone,string Address,Guid OrdersWarehouseId,Guid PartySiteId,bool SourceWarehouseAllowsNegativeStock);
-    private sealed record OrderLine(Guid ProductId,string Code,string Name,string UnitCode,decimal Quantity,decimal UnitPrice,string PriceSource,decimal Available,bool ManageStock,decimal TaxRate,int Position,decimal DiscountAmount=0m,Guid InventoryProductId=default,decimal InventoryFactor=1m,bool CanReserve=false,decimal? DocumentUnitCost=null)
+    private sealed record OrderLine(Guid ProductId,string Code,string Name,string UnitCode,decimal Quantity,decimal UnitPrice,string PriceSource,decimal Available,bool ManageStock,decimal TaxRate,int Position,decimal DocumentUnitCost,decimal DiscountAmount=0m,Guid InventoryProductId=default,decimal InventoryFactor=1m,bool CanReserve=false)
     {
         public decimal LineTotal=>MonetaryRounding.RoundLineAmount(UnitPrice*Quantity-DiscountAmount);
     }
     private sealed record NormalizedOrderLine(
         Guid LineId,int Position,Guid ProductId,decimal Quantity,decimal? UnitPrice,
-        decimal DiscountAmount,string PriceSource,decimal? DocumentUnitCost);
+        decimal DiscountAmount,string PriceSource);
     private sealed record SellerCatalogCandidate(
         Guid ProductId,string ProductCode,string? Reference,string Name,string UnitCode,
         decimal QuantityOnHand,bool ManageStock);

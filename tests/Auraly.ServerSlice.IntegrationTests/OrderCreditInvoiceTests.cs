@@ -120,10 +120,6 @@ public sealed class OrderCreditInvoiceTests(
                     $"{result.OrderNumber}: {result.Error ?? result.Status}")));
             Assert.Equal(2, response.CompletedCount);
             Assert.Equal(0, response.FailedCount);
-            Assert.True(
-                timing.Elapsed < TimeSpan.FromSeconds(response.CompletedCount),
-                $"El lote a crédito promedió " +
-                $"{timing.Elapsed.TotalMilliseconds / response.CompletedCount:N0} ms por factura.");
             output.WriteLine(
                 "Facturación masiva a crédito: {0:N0} ms por factura ({1} documentos).",
                 timing.Elapsed.TotalMilliseconds / response.CompletedCount,
@@ -144,6 +140,10 @@ public sealed class OrderCreditInvoiceTests(
             fixture.ResumeDocumentProcessing();
             foreach (var signal in signals)
                 await fixture.DocumentSignals.PublishAsync(signal);
+            Assert.True(
+                timing.Elapsed < TimeSpan.FromSeconds(response.CompletedCount),
+                $"El lote a crédito promedió " +
+                $"{timing.Elapsed.TotalMilliseconds / response.CompletedCount:N0} ms por factura.");
         }
         finally
         {
@@ -332,12 +332,12 @@ public sealed class OrderCreditInvoiceTests(
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
               ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-              DiscountAmount,LineTotal,CreatedAt)
+              DocumentUnitCost,DiscountAmount,LineTotal,CreatedAt)
             VALUES
               (NEWID(),@FirstOrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-               N'Producto crédito',N'EA',1,10000,0,10000,DATEADD(day,-2,SYSUTCDATETIME())),
+               N'Producto crédito',N'EA',1,10000,6000,0,10000,DATEADD(day,-2,SYSUTCDATETIME())),
               (NEWID(),@SecondOrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-               N'Producto crédito',N'EA',2,10000,0,20000,DATEADD(day,-1,SYSUTCDATETIME()));
+               N'Producto crédito',N'EA',2,10000,6000,0,20000,DATEADD(day,-1,SYSUTCDATETIME()));
             """;
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);

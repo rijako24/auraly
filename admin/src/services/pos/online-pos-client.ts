@@ -136,7 +136,6 @@ type OnlineDraftLine = {
   tax: number;
   total: number;
   publicUnitPrice?: number | null;
-  publicDiscountAmount?: number | null;
 };
 
 type OnlineDraft = {

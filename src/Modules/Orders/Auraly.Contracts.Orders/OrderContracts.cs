@@ -75,11 +75,11 @@ public sealed record OrderLine(
     decimal UnitPrice,
     decimal DiscountAmount,
     decimal LineTotal,
+    decimal DocumentUnitCost,
     decimal QuantityOnHand = 0m,
     bool ManageStock = false,
     string PriceSource = "Captured",
-    decimal ReservedQuantity = 0m,
-    decimal? DocumentUnitCost = null);
+    decimal ReservedQuantity = 0m);
 
 public sealed record OrderDetail(
     Guid OrderId,

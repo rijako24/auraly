@@ -112,25 +112,21 @@ public sealed partial class SqlOnlineSalesDraftStore
             .Select(line =>
             {
                 var price = prices[line.LineId.ToString("D")];
-                var unitPrice = MonetaryRounding.RoundLineAmount(
-                    TaxExclusive(price.ReferenceUnitPrice, line.TaxRate));
-                var targetNet = MonetaryRounding.RoundLineAmount(
-                    TaxExclusive(price.LineTotal, line.TaxRate));
+                var publicUnitPrice = MonetaryRounding.CeilingLineUnitPrice(
+                    price.ReferenceUnitPrice);
+                var unitPrice = MonetaryRounding.CeilingLineUnitPrice(
+                    TaxExclusive(publicUnitPrice, line.TaxRate));
                 return new
                 {
                     line.LineId,
                     BaseUnitPrice = price.Input.BaseUnitPrice,
                     UnitPrice = unitPrice,
-                    PublicUnitPrice = MonetaryRounding.CeilingLineUnitPrice(
-                        price.ReferenceUnitPrice),
-                    PublicDiscountAmount = MonetaryRounding.RoundLineAmount(
-                        price.DiscountAmount),
+                    PublicUnitPrice = publicUnitPrice,
                     PublicLineTotal = MonetaryRounding.RoundLineAmount(price.LineTotal),
                     price.Input.CurrencyCode,
                     price.PriceSource,
                     price.PriceChannelId,
-                    PromotionDiscount = MonetaryRounding.RoundLineAmount(
-                        Math.Max(0, line.Quantity * unitPrice - targetNet))
+                    PromotionDiscount = MonetaryRounding.RoundLineAmount(price.DiscountAmount)
                 };
             })
             .ToArray();
@@ -139,18 +135,16 @@ public sealed partial class SqlOnlineSalesDraftStore
             UPDATE line
             SET BaseUnitPrice=input.BaseUnitPrice,UnitPrice=input.UnitPrice,
                 PublicUnitPrice=input.PublicUnitPrice,
-                PublicDiscountAmount=input.PublicDiscountAmount,
                 PublicLineTotal=input.PublicLineTotal,
                 CurrencyCode=input.CurrencyCode,PriceSource=input.PriceSource,
                 PriceChannelId=input.PriceChannelId,
-                PromotionDiscountAmount=input.PromotionDiscount
+                DiscountAmount=0,PromotionDiscountAmount=input.PromotionDiscount
             FROM dbo.SalesDraftLines line
             INNER JOIN OPENJSON(@UpdatesJson) WITH(
               LineId uniqueidentifier '$.LineId',
               BaseUnitPrice decimal(18,2) '$.BaseUnitPrice',
               UnitPrice decimal(18,2) '$.UnitPrice',
               PublicUnitPrice decimal(18,2) '$.PublicUnitPrice',
-              PublicDiscountAmount decimal(18,2) '$.PublicDiscountAmount',
               PublicLineTotal decimal(18,2) '$.PublicLineTotal',
               CurrencyCode nvarchar(3) '$.CurrencyCode',
               PriceSource nvarchar(24) '$.PriceSource',

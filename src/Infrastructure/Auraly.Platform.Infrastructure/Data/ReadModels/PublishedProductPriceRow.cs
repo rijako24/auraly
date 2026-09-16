@@ -10,6 +10,7 @@ public sealed class PublishedProductPriceRow
     public Guid BusinessId { get; set; }
     public Guid ProductId { get; set; }
     public decimal Amount { get; set; }
+    public decimal? CostBasisAmount { get; set; }
     public string CurrencyCode { get; set; } = "COP";
     public DateTimeOffset ValidFrom { get; set; }
     public DateTimeOffset? ValidUntil { get; set; }

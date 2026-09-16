@@ -110,7 +110,7 @@ public sealed class FiscalGenerationWorkerTests
                 "222222222", 2, "v1", [new PosSaleTaxContract("01", 1900m)],
                 10000m, 1900m, 11900m, new string('a', 96), "https://example.test/qr"),
             [new PosSaleLineContract(1, Guid.NewGuid(), "PRODUCTO CONGELADO", "01", 1m,
-                10000m, 0m, 1900m, 10000m, 11900m, 19m)],
+                10000m, 0m, 1900m, 10000m, 11900m, 19m, 6_000m)],
             [new PosSalePaymentContract(1, "10", 11900m, null)],
             new PosSaleUblSnapshotContract(configId, "COP", "01", supplier, customer,
                 new PosSaleUblAuthorizationContract("18760000001", new DateOnly(2026, 1, 1),

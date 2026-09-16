@@ -109,12 +109,15 @@ public sealed partial class SqlOnlineSalesDraftStore
             series.SeriesCode, consecutive, series.Padding);
         var customerIdentification = await ResolveCustomerIdentificationAsync(
             connection, transaction, state.BusinessId, state.CustomerId, ct);
-        var lines = draft.Lines.Select((line, index) => new PosSaleLineContract(
-            index + 1, line.ProductId, line.Description, line.TaxCode,
-            line.Quantity, line.UnitPrice, line.TotalDiscount, line.Tax,
-            line.Net, line.Total, line.TaxRate,
-            line.AllowsDocumentCostOverride ? line.DocumentUnitCost : null,
-            line.PromotionDiscount)).ToArray();
+        var lines = draft.Lines.Select((line, index) =>
+        {
+            var fiscal = Fiscalize(line);
+            return new PosSaleLineContract(
+                index + 1, line.ProductId, line.Description, line.TaxCode,
+                line.Quantity, fiscal.UnitPrice, fiscal.Discount, line.Tax,
+                line.Net, line.Total, line.TaxRate, line.DocumentUnitCost,
+                fiscal.PromotionDiscount);
+        }).ToArray();
         var payments = request.Payments.Select((payment, index) => new PosSalePaymentContract(
             index + 1, payment.MethodCode, payment.Amount,
             string.IsNullOrWhiteSpace(payment.Reference) ? null : payment.Reference.Trim(),

@@ -112,12 +112,12 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await ExecuteAsync(connection, transaction, """
                 INSERT dbo.SalesDraftLines(
                   SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
-                  UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,PublicUnitPrice,PublicDiscountAmount,PublicLineTotal,DocumentUnitCost,
+                  UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,PublicUnitPrice,PublicLineTotal,DocumentUnitCost,
                   CurrencyCode,PriceSource,PriceChannelId,
                   DiscountAmount,PromotionDiscountAmount,Position)
                 SELECT
                   @LineId,@DraftId,@ProductId,@ProductCode,@Description,
-                  @UnitCode,@TaxCode,@TaxRate,@Quantity,@BaseUnitPrice,@UnitPrice,@PublicUnitPrice,0,@PublicLineTotal,@DocumentUnitCost,
+                  @UnitCode,@TaxCode,@TaxRate,@Quantity,@BaseUnitPrice,@UnitPrice,@PublicUnitPrice,@PublicLineTotal,@DocumentUnitCost,
                   @CurrencyCode,@PriceSource,@PriceChannelId,
                   0,0,COALESCE(MAX(Position),0)+1
                 FROM dbo.SalesDraftLines WHERE SalesDraftId=@DraftId;
@@ -128,7 +128,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
                     P("@Description", product.Name), P("@UnitCode", product.UnitCode),
                     P("@TaxCode", product.TaxCode), P("@TaxRate", product.TaxRate),
                     P("@Quantity", quantity), P("@BaseUnitPrice", product.UnitPrice),
-                    P("@UnitPrice", TaxExclusive(product.UnitPrice, product.TaxRate)), P("@CurrencyCode", product.CurrencyCode),
+                    P("@UnitPrice", MonetaryRounding.CeilingLineUnitPrice(TaxExclusive(
+                        MonetaryRounding.CeilingLineUnitPrice(product.UnitPrice), product.TaxRate))), P("@CurrencyCode", product.CurrencyCode),
                     P("@PublicUnitPrice", MonetaryRounding.CeilingLineUnitPrice(product.UnitPrice)),
                     P("@PublicLineTotal", MonetaryRounding.RoundLineAmount(
                         MonetaryRounding.CeilingLineUnitPrice(product.UnitPrice) * quantity)),
@@ -241,9 +242,11 @@ public sealed partial class SqlOnlineSalesDraftStore(
         DemandActiveVersion(state, expectedVersion);
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE dbo.SalesDraftLines
-            SET DiscountAmount=@Discount,PublicDiscountAmount=NULL,PublicLineTotal=NULL
+            SET DiscountAmount=@Discount,
+                PublicLineTotal=ROUND(PublicUnitPrice*Quantity-@Discount-PromotionDiscountAmount,2),
+                PriceSource=N'Manual',PriceChannelId=NULL
             WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId
-              AND @Discount<=Quantity*UnitPrice-PromotionDiscountAmount;
+              AND @Discount<=Quantity*PublicUnitPrice-PromotionDiscountAmount;
             """,
             [P("@Discount", discount), P("@DraftId", draftId), P("@LineId", lineId)],
             cancellationToken);
@@ -272,7 +275,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         const string operation = "UpdateLines";
         var payload = string.Join('|', lines
             .OrderBy(line => line.LineId)
-            .Select(line => $"{line.LineId:D}:{line.Description.Trim()}:{Invariant(line.UnitPrice)}:{Invariant(line.Discount)}:{Invariant(line.DocumentUnitCost)}:{(line.PublicUnitPrice is { } publicPrice ? Invariant(publicPrice) : "legacy")}:{(line.PublicDiscountAmount is { } publicDiscount ? Invariant(publicDiscount) : "legacy")}"));
+            .Select(line => $"{line.LineId:D}:{line.Description.Trim()}:{Invariant(line.UnitPrice)}:{Invariant(line.Discount)}:{Invariant(line.DocumentUnitCost)}"));
         var hash = Hash($"{operation}|{draftId:D}|{includesProratedDiscount}|{payload}");
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -309,8 +312,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
             lines.Any(line =>
                 line.UnitPrice != currentDraftLines[line.LineId].UnitPrice ||
                 line.Discount != currentDraftLines[line.LineId].Discount ||
-                line.PublicUnitPrice != currentDraftLines[line.LineId].PublicUnitPrice ||
-                line.PublicDiscountAmount != currentDraftLines[line.LineId].PublicDiscountAmount ||
                 line.DocumentUnitCost != currentDraftLines[line.LineId].DocumentUnitCost))
             throw new OnlineSalesDraftForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesChangePrice}' is required.");
@@ -325,73 +326,47 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 $"Permission '{CommercePermissionCodes.SalesProratedDiscount}' is required.");
 
         var activeByLine = activeLines.ToDictionary(line => line.LineId);
-        var products = await ReadProductsAsync(
-            connection,
-            transaction,
-            state.BusinessId,
-            state.WarehouseId,
-            activeLines.Select(line => line.ProductId).Distinct().ToArray(),
-            cancellationToken);
         var updates = lines.Select(line =>
         {
             var current = activeByLine[line.LineId];
-            if (!products.TryGetValue(current.ProductId, out var product))
+            var currentDraftLine = currentDraftLines[line.LineId];
+            if (line.DocumentUnitCost != current.DocumentUnitCost)
                 throw new OnlineSalesDraftValidationException(
-                    "El producto no está disponible para este negocio.");
-            if (product.ManagesStock && line.DocumentUnitCost != current.DocumentUnitCost)
+                    "El costo de la línea queda congelado cuando se agrega el producto.");
+            if (line.UnitPrice != current.UnitPrice)
                 throw new OnlineSalesDraftValidationException(
-                    "El costo de un producto que maneja inventario no se puede cambiar en la venta.");
-            if (!product.ManagesStock && line.DocumentUnitCost < 0)
-                throw new OnlineSalesDraftValidationException("El costo de la línea no puede ser negativo.");
-            var documentUnitCost = product.ManagesStock
-                ? current.DocumentUnitCost
-                : line.DocumentUnitCost;
-            if (line.Discount > current.Quantity * line.UnitPrice)
+                    "El precio fiscal base de la línea no se puede modificar.");
+            var manualDiscount = MonetaryRounding.RoundLineAmount(line.Discount);
+            if (manualDiscount > current.Quantity * currentDraftLine.PublicUnitPrice -
+                currentDraftLine.PromotionDiscount)
                 throw new OnlineSalesDraftValidationException(
                     "El descuento no puede superar el valor de la línea.");
-            if (line.PublicUnitPrice is < 0 || line.PublicDiscountAmount is < 0 ||
-                line.PublicDiscountAmount > current.Quantity * line.PublicUnitPrice)
-                throw new OnlineSalesDraftValidationException(
-                    "El precio público o descuento público de la línea no es válido.");
+            var discountChanged = manualDiscount != currentDraftLine.Discount;
             return new
             {
                 line.LineId,
                 Description = line.Description.Trim(),
-                line.UnitPrice,
-                PublicUnitPrice = MonetaryRounding.CeilingLineUnitPrice(
-                    line.PublicUnitPrice ??
-                    line.UnitPrice * (1m + product.TaxRate / 100m)),
-                PublicDiscountAmount = MonetaryRounding.RoundLineAmount(
-                    line.PublicDiscountAmount ??
-                    line.Discount * (1m + product.TaxRate / 100m)),
                 PublicLineTotal = MonetaryRounding.RoundLineAmount(
-                    MonetaryRounding.CeilingLineUnitPrice(
-                        line.PublicUnitPrice ??
-                        line.UnitPrice * (1m + product.TaxRate / 100m)) * current.Quantity -
-                    MonetaryRounding.RoundLineAmount(
-                        line.PublicDiscountAmount ??
-                        line.Discount * (1m + product.TaxRate / 100m))),
-                DocumentUnitCost = documentUnitCost,
-                Discount = line.Discount
+                    currentDraftLine.PublicUnitPrice * current.Quantity -
+                    manualDiscount - currentDraftLine.PromotionDiscount),
+                DocumentUnitCost = current.DocumentUnitCost,
+                Discount = manualDiscount,
+                DiscountChanged = discountChanged
             };
         }).ToArray();
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE target
-            SET Description=input.Description,UnitPrice=input.UnitPrice,PublicUnitPrice=input.PublicUnitPrice,
-                PublicDiscountAmount=input.PublicDiscountAmount,
-                PublicLineTotal=input.PublicLineTotal,
+            SET Description=input.Description,PublicLineTotal=input.PublicLineTotal,
                 DocumentUnitCost=input.DocumentUnitCost,DiscountAmount=input.Discount,
-                PriceSource=CASE WHEN target.UnitPrice<>input.UnitPrice OR ISNULL(target.PublicUnitPrice,-1)<>input.PublicUnitPrice THEN N'Manual' ELSE target.PriceSource END,
-                PriceChannelId=CASE WHEN target.UnitPrice<>input.UnitPrice OR ISNULL(target.PublicUnitPrice,-1)<>input.PublicUnitPrice THEN NULL ELSE target.PriceChannelId END,
-                PromotionDiscountAmount=CASE WHEN target.UnitPrice<>input.UnitPrice OR ISNULL(target.PublicUnitPrice,-1)<>input.PublicUnitPrice THEN 0 ELSE target.PromotionDiscountAmount END
+                PriceSource=CASE WHEN input.DiscountChanged=1 THEN N'Manual' ELSE target.PriceSource END,
+                PriceChannelId=CASE WHEN input.DiscountChanged=1 THEN NULL ELSE target.PriceChannelId END
             FROM dbo.SalesDraftLines target
             JOIN OPENJSON(@UpdatesJson) WITH(
               LineId uniqueidentifier '$.LineId',Description nvarchar(500) '$.Description',
-              UnitPrice decimal(19,4) '$.UnitPrice',DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',
-              PublicUnitPrice decimal(18,2) '$.PublicUnitPrice',
-              PublicDiscountAmount decimal(18,2) '$.PublicDiscountAmount',
+              DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',
               PublicLineTotal decimal(18,2) '$.PublicLineTotal',
-              Discount decimal(19,4) '$.Discount') input
+              Discount decimal(19,4) '$.Discount',
+              DiscountChanged bit '$.DiscountChanged') input
               ON input.LineId=target.SalesDraftLineId
             WHERE target.SalesDraftId=@DraftId;
             """,
@@ -872,7 +847,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                    COALESCE(t.DianTaxCode,N'01'),COALESCE(t.Rate,0),
                    price.Amount,
                    price.CurrencyCode,p.AllowsFractionalSale,
-                    COALESCE(NULLIF(balance.AverageUnitCost,0),price.CostBasisAmount,0),
+                    COALESCE(price.CostBasisAmount,0),
                     CAST(CASE WHEN p.ManageStock=1 OR EXISTS(
                       SELECT 1 FROM dbo.ProductLinks inventoryLink
                       WHERE inventoryLink.BusinessId=@BusinessId
@@ -1294,8 +1269,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                    line.PriceSource,line.DiscountAmount,line.DocumentUnitCost,
                    CAST(CASE WHEN product.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit),
                    product.AllowsFractionalSale,
-                   line.PromotionDiscountAmount,line.PublicUnitPrice,line.PublicDiscountAmount,
-                   line.PublicLineTotal
+                   line.PromotionDiscountAmount,line.PublicUnitPrice,line.PublicLineTotal
             FROM dbo.SalesDraftLines line
             JOIN OPENJSON(@DraftIdsJson) WITH(DraftId uniqueidentifier '$') input
               ON input.DraftId=line.SalesDraftId
@@ -1336,27 +1310,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
             var discount = reader.GetDecimal(13);
             var promotionDiscount = reader.GetDecimal(17);
             var taxRate = reader.GetDecimal(7);
-            var hasPublicSnapshot = !reader.IsDBNull(18) && !reader.IsDBNull(19) &&
-                !reader.IsDBNull(20);
-            var legacyNet = MonetaryRounding.RoundLineAmount(
-                quantity * price - discount - promotionDiscount);
-            var legacyTax = decimal.Round(
-                legacyNet * taxRate / 100m, 2,
-                MidpointRounding.AwayFromZero);
-            var publicUnitPrice = hasPublicSnapshot
-                ? reader.GetDecimal(18)
-                : MonetaryRounding.CeilingLineUnitPrice(
-                    price * (1m + taxRate / 100m));
-            var publicDiscountAmount = hasPublicSnapshot
-                ? reader.GetDecimal(19)
-                : MonetaryRounding.RoundLineAmount(
-                    publicUnitPrice * quantity - (legacyNet + legacyTax));
-            var total = hasPublicSnapshot
-                ? reader.GetDecimal(20)
-                : legacyNet + legacyTax;
-            var net = hasPublicSnapshot
-                ? MonetaryRounding.RoundLineAmount(TaxExclusive(total, taxRate))
-                : legacyNet;
+            var publicUnitPrice = reader.GetDecimal(18);
+            var total = reader.GetDecimal(19);
+            var net = MonetaryRounding.RoundLineAmount(TaxExclusive(total, taxRate));
             var tax = total - net;
             draftLines.Add(new(
                 reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3),
@@ -1364,8 +1320,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 taxRate, quantity, reader.GetDecimal(9), price,
                 reader.GetString(11), reader.GetString(12), discount,
                 reader.GetDecimal(14), !reader.GetBoolean(15), reader.GetBoolean(16),
-                net, tax, total, promotionDiscount, publicUnitPrice,
-                publicDiscountAmount));
+                net, tax, total, promotionDiscount, publicUnitPrice, total));
         }
         return headers.ToDictionary(pair => pair.Key, pair =>
         {
@@ -1404,6 +1359,23 @@ public sealed partial class SqlOnlineSalesDraftStore(
         decimal.Round(grossPrice / (1m + taxRate / 100m), 6,
             MidpointRounding.AwayFromZero);
 
+    private static FiscalLineAmounts Fiscalize(OnlineSalesDraftLine line)
+    {
+        var fiscalGross = MonetaryRounding.RoundLineAmount(line.Quantity * line.UnitPrice);
+        var fiscalDiscount = MonetaryRounding.RoundLineAmount(fiscalGross - line.Net);
+        if (fiscalDiscount < 0)
+            throw new OnlineSalesDraftValidationException(
+                "El precio fiscal base no alcanza el total público de la línea.");
+        var publicDiscount = line.TotalDiscount;
+        var promotionDiscount = publicDiscount <= 0 || line.PromotionDiscount <= 0
+            ? 0
+            : Math.Min(
+                fiscalDiscount,
+                MonetaryRounding.RoundLineAmount(
+                    fiscalDiscount * line.PromotionDiscount / publicDiscount));
+        return new(line.UnitPrice, fiscalDiscount, promotionDiscount);
+    }
+
     private sealed record DraftState(
         Guid BusinessId,
         Guid WarehouseId,
@@ -1415,6 +1387,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
         Guid? SourceOrderId,
         Guid? CustomerPartySiteId);
     private sealed record DraftLineMatch(Guid LineId, decimal Quantity);
+    private sealed record FiscalLineAmounts(
+        decimal UnitPrice,
+        decimal Discount,
+        decimal PromotionDiscount);
     private sealed record DraftLineProduct(
         Guid LineId,
         Guid ProductId,

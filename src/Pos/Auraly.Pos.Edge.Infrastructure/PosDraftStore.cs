@@ -288,7 +288,7 @@ public sealed class PosDraftStore
         await MutateLineAsync(
             draftId,
             lineId,
-            "UPDATE PosDraftLines SET Discount=@Value WHERE DraftId=@DraftId AND LineId=@LineId;",
+            "UPDATE PosDraftLines SET Discount=@Value,IsPriceOverridden=1 WHERE DraftId=@DraftId AND LineId=@LineId;",
             P("@Value", discount),
             cancellationToken);
         return await GetRequiredAsync(draftId, cancellationToken);
@@ -318,9 +318,11 @@ public sealed class PosDraftStore
         foreach (var update in updates)
         {
             var line = currentByLine[update.LineId];
-            if (!line.AllowsDocumentCostOverride && update.DocumentUnitCost != line.DocumentUnitCost)
-                throw new InvalidOperationException("El costo de un producto con inventario se determina por la valoración de existencias.");
-            if (update.Discount > line.Quantity * update.UnitPrice)
+            if (update.UnitPrice != line.UnitPrice)
+                throw new InvalidOperationException("El precio fiscal de la línea no se edita; el valor final se expresa como descuento sobre el precio público.");
+            if (update.DocumentUnitCost != line.DocumentUnitCost)
+                throw new InvalidOperationException("El costo de la línea queda congelado cuando se agrega el producto.");
+            if (update.Discount > line.Gross - line.PromotionDiscount)
                 throw new ArgumentOutOfRangeException(nameof(updates), "Discount cannot exceed line value.");
         }
 
@@ -328,22 +330,17 @@ public sealed class PosDraftStore
         {
             update.LineId,
             Description = update.Description.Trim(),
-            update.UnitPrice,
             update.DocumentUnitCost,
-            update.Discount
+            update.Discount,
+            DiscountChanged = update.Discount != currentByLine[update.LineId].Discount ? 1 : 0
         }).ToArray();
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE PosDraftLines AS target
             SET Description=json_extract(input.value,'$.Description'),
-                UnitPrice=json_extract(input.value,'$.UnitPrice'),
                 DocumentUnitCost=json_extract(input.value,'$.DocumentUnitCost'),
                 Discount=json_extract(input.value,'$.Discount'),
-                IsPriceOverridden=CASE
-                  WHEN target.UnitPrice<>json_extract(input.value,'$.UnitPrice')
-                  THEN 1 ELSE target.IsPriceOverridden END,
-                PromotionDiscount=CASE
-                  WHEN target.UnitPrice<>json_extract(input.value,'$.UnitPrice')
-                  THEN '0' ELSE target.PromotionDiscount END
+                IsPriceOverridden=CASE WHEN json_extract(input.value,'$.DiscountChanged')=1
+                  THEN 1 ELSE target.IsPriceOverridden END
             FROM json_each(@UpdatesJson) input
             WHERE target.DraftId=@DraftId
               AND target.LineId=json_extract(input.value,'$.LineId');

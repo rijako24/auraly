@@ -46,9 +46,9 @@ public sealed class OrderRecoveryTests(
             VALUES(@ProductId,@TenantId,@BusinessId,@ProductCode,@ProductCode,
               N'Producto pedido administrativo',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(
-              ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
+              ProductPriceId,BusinessId,ProductId,Amount,CostBasisAmount,CurrencyCode,ValidFrom,
               RoundingIncrement,RoundingMode,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,@ProductId,12500,N'COP',
+            VALUES(NEWID(),@BusinessId,@ProductId,12500,6000,N'COP',
               DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET());
             """,
             new("@UserId", userId), new("@TenantId", fixture.TenantId),
@@ -150,8 +150,7 @@ public sealed class OrderRecoveryTests(
             SELECT CapturedByUserId,SellerId,PartySiteId
             FROM dbo.Orders
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
-            SELECT Quantity,UnitPrice,DiscountAmount,
-                   TRY_CONVERT(decimal(19,6),JSON_VALUE(RawPayloadJson,'$.DocumentUnitCost')),
+            SELECT Quantity,UnitPrice,DiscountAmount,DocumentUnitCost,
                    TRY_CONVERT(int,JSON_VALUE(RawPayloadJson,'$.LinePosition'))
             FROM dbo.OrderItems
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId
@@ -173,13 +172,13 @@ public sealed class OrderRecoveryTests(
         Assert.Equal(1m, reader.GetDecimal(0));
         Assert.Equal(12500m, reader.GetDecimal(1));
         Assert.Equal(0m, reader.GetDecimal(2));
-        Assert.Equal(7100m, reader.GetDecimal(3));
+        Assert.Equal(6000m, reader.GetDecimal(3));
         Assert.Equal(1, reader.GetInt32(4));
         Assert.True(await reader.ReadAsync());
         Assert.Equal(2m, reader.GetDecimal(0));
         Assert.Equal(15000m, reader.GetDecimal(1));
         Assert.Equal(1000m, reader.GetDecimal(2));
-        Assert.Equal(8200m, reader.GetDecimal(3));
+        Assert.Equal(6000m, reader.GetDecimal(3));
         Assert.Equal(2, reader.GetInt32(4));
         Assert.False(await reader.ReadAsync());
         Assert.True(await reader.NextResultAsync());
@@ -1029,10 +1028,10 @@ public sealed class OrderRecoveryTests(
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
               ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-              DiscountAmount,LineTotal,CreatedAt)
+              DocumentUnitCost,DiscountAmount,LineTotal,CreatedAt)
             VALUES(
               NEWID(),@OrderId,@BusinessId,@ProductId,N'P-RUTA',N'P-RUTA',
-              N'Producto tomado en ruta',N'EA',1,12500,0,12500,SYSUTCDATETIME());
+              N'Producto tomado en ruta',N'EA',1,12500,6000,0,12500,SYSUTCDATETIME());
             """,
             new("@OrderId", orderId),
             new("@BusinessId", fixture.BusinessId),
@@ -1176,10 +1175,10 @@ public sealed class OrderRecoveryTests(
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
               ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-              DiscountAmount,LineTotal,CreatedAt)
+              DocumentUnitCost,DiscountAmount,LineTotal,CreatedAt)
             VALUES(
               NEWID(),@OrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-              N'Producto edición',N'EA',2,10000,1000,19000,SYSUTCDATETIME());
+              N'Producto edición',N'EA',2,10000,6000,1000,19000,SYSUTCDATETIME());
             """,
             new("@UserId", userId),
             new("@TenantId", fixture.TenantId),
@@ -1448,11 +1447,11 @@ public sealed class OrderRecoveryTests(
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
               ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-              DiscountAmount,LineTotal,RawPayloadJson,CreatedAt)
+              DocumentUnitCost,DiscountAmount,LineTotal,RawPayloadJson,CreatedAt)
             VALUES(
               @ItemId,@OrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
               N'Producto del pedido',N'EA',2,7777,
-              777,14777,N'{"PriceSource":"Promotion"}',DATEADD(day,-4,SYSUTCDATETIME()));
+              6000,777,14777,N'{"PriceSource":"Promotion"}',DATEADD(day,-4,SYSUTCDATETIME()));
 
             INSERT dbo.TaxProfiles(
               TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
@@ -1499,7 +1498,9 @@ public sealed class OrderRecoveryTests(
             var line = Assert.Single(recovered.Lines);
             Assert.Equal(2m, line.Quantity);
             Assert.Equal(7_406.67m, line.UnitPrice);
-            Assert.Equal(740.01m, line.Discount);
+            Assert.Equal(0m, line.Discount);
+            Assert.Equal(777m, line.PromotionDiscount);
+            Assert.Equal(777m, line.TotalDiscount);
             Assert.Equal("Promotion", line.PriceSource);
             Assert.Equal(5m, line.TaxRate);
             Assert.Equal(703.67m, line.Tax);
@@ -1583,12 +1584,12 @@ public sealed class OrderRecoveryTests(
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
               ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-              DiscountAmount,LineTotal,CreatedAt)
+              DocumentUnitCost,DiscountAmount,LineTotal,CreatedAt)
             VALUES
               (NEWID(),@FirstOrderId,@BusinessId,@ProductId,N'P-A',N'P-A',
-               N'Producto A',N'EA',1,10000,0,10000,SYSUTCDATETIME()),
+               N'Producto A',N'EA',1,10000,6000,0,10000,SYSUTCDATETIME()),
               (NEWID(),@SecondOrderId,@BusinessId,@ProductId,N'P-B',N'P-B',
-               N'Producto B',N'EA',1,12000,0,12000,SYSUTCDATETIME());
+               N'Producto B',N'EA',1,12000,6000,0,12000,SYSUTCDATETIME());
             """,
             new("@UserId", userId),
             new("@ReplacementUserId", replacementUserId),

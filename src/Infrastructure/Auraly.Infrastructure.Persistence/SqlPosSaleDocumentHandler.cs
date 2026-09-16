@@ -52,7 +52,6 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
-            await ValidateDocumentCostAsync(session, request.BusinessId, line, cancellationToken);
             await InsertInventoryMovementAsync(
                 session, request, inventoryWarehouseId, line, cancellationToken);
             await InsertLineAsync(session, request, line, cancellationToken);
@@ -146,7 +145,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             SELECT
                 @DocumentId, @LineNumber, @ProductId, @Description, @TaxCode, @TaxRate,
                 @Quantity, @UnitPrice,
-                COALESCE(@UnitCostSnapshot,CASE WHEN @Quantity=0 THEN 0 ELSE COALESCE(ABS(movement.ValueChange)/@Quantity,0) END),
+                @UnitCostSnapshot,
                 @DiscountAmount, @PromotionDiscountAmount, @TaxAmount,
                 @UntaxedAmount, @LineTotal,COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,
                 p.ProductCategoryId,COALESCE(category.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
@@ -163,20 +162,12 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               WHERE sp.BusinessId=@BusinessId AND sp.ProductId=p.ProductId AND sp.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId
             ) supplier
-            OUTER APPLY
-            (
-              SELECT TOP(1) movement.ValueChange
-              FROM dbo.InventoryMovements movement
-              WHERE movement.DocumentId=@DocumentId AND movement.DocumentType=@DocumentType
-                AND movement.LineNumber=@LineNumber AND movement.MovementType=N'Sale'
-            ) movement
             WHERE p.ProductId=@ProductId
               AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
                    OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
@@ -188,7 +179,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         var unitCost = command.Parameters.Add("@UnitCostSnapshot", SqlDbType.Decimal);
         unitCost.Precision = 19;
         unitCost.Scale = 6;
-        unitCost.Value = (object?)line.DocumentUnitCost ?? DBNull.Value;
+        unitCost.Value = line.DocumentUnitCost;
         AddDecimal(command, "@DiscountAmount", line.DiscountAmount, 19, 4);
         AddDecimal(command, "@PromotionDiscountAmount", line.PromotionDiscountAmount, 19, 4);
         AddDecimal(command, "@TaxAmount", line.TaxAmount, 19, 4);
@@ -247,27 +238,6 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             throw new InvalidOperationException(
                 "El pedido de origen no tiene una reserva de inventario válida en la bodega PED.");
         return warehouseId;
-    }
-
-    private static async Task ValidateDocumentCostAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        Guid businessId,
-        PosSaleLineContract line,
-        CancellationToken cancellationToken)
-    {
-        if (line.DocumentUnitCost is null) return;
-        if (line.DocumentUnitCost < 0)
-            throw new InvalidOperationException("The document unit cost cannot be negative.");
-        await using var command = new SqlCommand(
-            "SELECT ManageStock FROM dbo.Products WHERE ProductId=@ProductId AND IsActive=1 AND (TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) OR (TenantId IS NULL AND BusinessId=@BusinessId));",
-            session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        if (await command.ExecuteScalarAsync(cancellationToken) is not bool managesStock)
-            throw new InvalidOperationException("The sale product is not active in this business.");
-        if (managesStock)
-            throw new InvalidOperationException(
-                "The cost of an inventory-managed product must come from inventory valuation.");
     }
 
     private async Task LinkSourceOrderAsync(

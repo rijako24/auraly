@@ -540,7 +540,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                     tax,
                     untaxed,
                     payable,
-                    19m)
+                    19m,
+                    6_000m)
             ],
             [new PosSalePaymentContract(1, "Cash", payable, null)]);
     }
@@ -550,10 +551,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         var request = CreateValidRequest(consecutive);
         var first = new PosSaleLineContract(
             1, ProductId, "Producto IVA 5", "01",
-            1m, 10_000m, 0m, 500m, 10_000m, 10_500m, 5m);
+            1m, 10_000m, 0m, 500m, 10_000m, 10_500m, 5m, 6_000m);
         var second = new PosSaleLineContract(
             2, ProductId, "Producto IVA 19", "01",
-            1m, 20_000m, 0m, 3_800m, 20_000m, 23_800m, 19m);
+            1m, 20_000m, 0m, 3_800m, 20_000m, 23_800m, 19m, 12_000m);
         const decimal untaxed = 30_000m;
         const decimal tax = 4_300m;
         const decimal payable = 34_300m;
@@ -1001,10 +1002,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@ProductId, @TenantId, @BusinessId, 0, N'P-E2E', N'Producto E2E', N'COP', 1, 1, SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
-              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
+              (ProductPriceId,BusinessId,ProductId,Amount,CostBasisAmount,CurrencyCode,ValidFrom,
                TargetMarginPercent,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',
+              (NEWID(),@BusinessId,@ProductId,10000,6000,N'COP','2026-01-01',
                30,1,N'Nearest',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.Parties

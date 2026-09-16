@@ -645,6 +645,7 @@ public class ApplicationDbContext : DbContext
             entity.ToTable("ProductPrices");
             entity.HasKey(price => price.ProductPriceId);
             entity.Property(price => price.Amount).HasPrecision(19, 4);
+            entity.Property(price => price.CostBasisAmount).HasPrecision(19, 6);
             entity.Property(price => price.CurrencyCode).HasMaxLength(3).IsFixedLength();
             entity.Property(price => price.ValidFrom).HasColumnType("datetimeoffset");
             entity.Property(price => price.ValidUntil).HasColumnType("datetimeoffset");
@@ -1016,6 +1017,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.ProductNameSnapshot).IsRequired().HasMaxLength(250);
             entity.Property(e => e.Quantity).HasPrecision(18, 2);
             entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
+            entity.Property(e => e.DocumentUnitCost).HasPrecision(19, 6);
             entity.Property(e => e.DiscountAmount).HasPrecision(18, 2);
 
             entity.Property(e => e.LineTotal).HasPrecision(18, 2);
@@ -1051,6 +1053,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.ProductNameSnapshot).IsRequired().HasMaxLength(250);
             entity.Property(e => e.Quantity).HasPrecision(18, 2);
             entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
+            entity.Property(e => e.DocumentUnitCost).HasPrecision(19, 6);
             entity.Property(e => e.DiscountAmount).HasPrecision(18, 2);
 
             entity.Property(e => e.LineTotal).HasPrecision(18, 2);

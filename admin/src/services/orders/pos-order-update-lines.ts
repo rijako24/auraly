@@ -9,7 +9,6 @@ type PosOrderDraftLine = {
   priceSource: string;
   documentUnitCost: number;
   publicUnitPrice?: number | null;
-  publicDiscountAmount?: number | null;
 };
 
 export function buildPosOrderUpdateLines(lines: PosOrderDraftLine[]) {
@@ -23,7 +22,7 @@ export function buildPosOrderUpdateLines(lines: PosOrderDraftLine[]) {
       productId: line.productId.value,
       quantity: line.quantity,
       unitPrice: publicUnitPrice,
-      discountAmount: line.publicDiscountAmount ?? money(publicGross - line.total),
+      discountAmount: money(publicGross - line.total),
       priceSource: line.priceSource,
       documentUnitCost: line.documentUnitCost,
     };

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Platform.Application.Agents;
 using Auraly.Platform.Application.Agents.Configuration;
 using Auraly.Platform.Application.Promotions;
@@ -332,9 +333,10 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             throw new InvalidOperationException("Product inactive.");
 
         var draft = await GetOrCreateDraftAsync(ctx, adapterContext, ct);
-        var unitPrice = adapter is IAuthoritativeCommercePricingAdapter
+        var unitPrice = MonetaryRounding.CeilingLineUnitPrice(
+            adapter is IAuthoritativeCommercePricingAdapter
             ? product.UnitPrice
-            : request.UnitPrice ?? product.UnitPrice;
+            : request.UnitPrice ?? product.UnitPrice);
         var existingItems = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(ctx.BusinessId, draft.OrderDraftId, ct);
         var existingItem = existingItems.FirstOrDefault(item => IsSameOrderProduct(item, product));
         EnsureRequestedQuantityFitsStock(product, request.Quantity, existingItem?.Quantity ?? 0m);
@@ -366,6 +368,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             DescriptionSnapshot = product.Description,
             Quantity = request.Quantity,
             UnitPrice = unitPrice,
+            DocumentUnitCost = product.DocumentUnitCost,
             DiscountAmount = 0,
 
             LineTotal = request.Quantity * unitPrice,
@@ -438,8 +441,6 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             EnsureRequestedQuantityFitsStock(product, quantity, 0m);
 
         item.Quantity = quantity;
-        if (adapter is IAuthoritativeCommercePricingAdapter)
-            item.UnitPrice = product.UnitPrice;
         item.LineTotal = quantity * item.UnitPrice;
         item.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.OrderDraftItems.UpdateAsync(item, ct);
@@ -456,22 +457,6 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         var draft = await GetActiveDraftAsync(ctx, ct);
         if (draft is null)
             return EmptyDraftSnapshot();
-
-        var adapterContext = await BuildContextAsync(
-            ctx.BusinessId,
-            ctx.AgentId,
-            ctx.ConversationId,
-            ctx.Config,
-            ctx.ChannelPhone,
-            ctx.CommerceCustomer,
-            ctx.RecipientPhoneNumberId,
-            ct);
-        var items = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(
-            draft.BusinessId,
-            draft.OrderDraftId,
-            ct);
-        if (await EnsureOrderProductsSellableAsync(draft, items, adapterContext, ct))
-            await _unitOfWork.SaveChangesAsync(ct);
 
         return await BuildSnapshotAsync(draft, ct);
     }
@@ -574,7 +559,8 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                 product.Currency,
                 product.StockQuantity,
                 RawPayloadJson: product.RawPayloadJson,
-                IntegrationConnectionId: product.IntegrationConnectionId)
+                IntegrationConnectionId: product.IntegrationConnectionId,
+                DocumentUnitCost: product.UnitCost)
             { IsActive = product.IsActive };
     }
 
@@ -890,7 +876,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (draftItems.Count == 0)
             throw new InvalidOperationException("Order has no items.");
 
-        _ = await EnsureOrderProductsSellableAsync(draft, draftItems, adapterContext, ct);
+        await DemandOrderProductsSellableAsync(draft, draftItems, ct);
 
         var order = new Order
         {
@@ -940,6 +926,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                 DescriptionSnapshot = draftItem.DescriptionSnapshot,
                 Quantity = draftItem.Quantity,
                 UnitPrice = draftItem.UnitPrice,
+                DocumentUnitCost = draftItem.DocumentUnitCost,
                 DiscountAmount = draftItem.DiscountAmount,
 
                 LineTotal = draftItem.LineTotal,
@@ -952,56 +939,14 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         return order;
     }
 
-    private async Task<bool> EnsureOrderProductsSellableAsync(
+    private async Task DemandOrderProductsSellableAsync(
         OrderDraft draft,
         IReadOnlyList<OrderDraftItem> items,
-        CommerceAdapterContext adapterContext,
         CancellationToken ct)
     {
         var unavailable = await _availability.FindUnavailableDraftItemsAsync(draft.BusinessId, items, ct);
         if (unavailable.Count > 0)
             throw new InvalidOperationException("Product inactive.");
-
-        var adapter = _adapterFactory.Resolve(adapterContext.Provider);
-        var priceChanged = false;
-        foreach (var item in items)
-        {
-            var live = await adapter.GetProductAsync(
-                new AddOrderItemRequest(
-                    item.ProductId,
-                    item.ExternalProductId,
-                    item.Sku,
-                    item.ProductNameSnapshot,
-                    item.Quantity,
-                    null),
-                adapterContext,
-                ct);
-            if (live is null)
-                throw new InvalidOperationException("Product not found or it does not have a published price.");
-            if (!_availability.IsSellable(live))
-                throw new InvalidOperationException("Product inactive.");
-            if (live.StockQuantity.HasValue && item.Quantity > live.StockQuantity.Value)
-            {
-                throw new InsufficientProductStockException(
-                    live.Name,
-                    item.Quantity,
-                    live.StockQuantity.Value,
-                    0m);
-            }
-
-            if (adapter is not IAuthoritativeCommercePricingAdapter || item.UnitPrice == live.UnitPrice)
-                continue;
-
-            item.UnitPrice = live.UnitPrice;
-            item.LineTotal = item.Quantity * live.UnitPrice;
-            item.UpdatedAt = DateTime.UtcNow;
-            await _unitOfWork.OrderDraftItems.UpdateAsync(item, ct);
-            priceChanged = true;
-        }
-
-        if (priceChanged)
-            await RecalculateAsync(draft, ct);
-        return priceChanged;
     }
 
     private async Task SyncExternalOrderIfNeededAsync(Order order, CommerceAdapterContext adapterContext, CancellationToken ct)

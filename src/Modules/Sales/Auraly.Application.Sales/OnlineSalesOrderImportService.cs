@@ -40,11 +40,11 @@ public sealed class OnlineSalesOrderImportService(
                 line.ProductId == Guid.Empty ||
                 line.Quantity <= 0 ||
                 line.PublicUnitPrice < 0 ||
-                line.PublicDiscountAmount < 0 ||
+                line.DiscountAmount < 0 ||
                 line.PublicLineTotal < 0 ||
                 Math.Abs(
                     line.Quantity * line.PublicUnitPrice -
-                    line.PublicDiscountAmount -
+                    line.DiscountAmount -
                     line.PublicLineTotal) > 0.01m))
             throw new OnlineSalesDraftValidationException(
                 "El pedido no contiene datos comerciales válidos para llevarlo a la venta.");

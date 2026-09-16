@@ -134,15 +134,27 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
             }
 
             command.CommandText = """
-                SELECT AttributionSnapshotVersion,SupplierIdSnapshot,UnitCostSnapshot
-                FROM dbo.SalesDocumentLines
-                WHERE DocumentId=@DocumentId AND LineNumber=1;
+                SELECT line.AttributionSnapshotVersion,line.SupplierIdSnapshot,line.UnitCostSnapshot,
+                       fact.RecognizedCostAmount,fact.UntaxedAmount
+                FROM dbo.SalesDocumentLines line
+                JOIN reporting.SalesReportLineFacts fact
+                  ON fact.SourceDocumentId=line.DocumentId
+                 AND fact.SourceLineNumber=line.LineNumber
+                 AND fact.MovementType=N'Sale'
+                WHERE line.DocumentId=@DocumentId AND line.LineNumber=1;
                 """;
             await using var attribution = await command.ExecuteReaderAsync();
             Assert.True(await attribution.ReadAsync());
             Assert.Equal((short)1, attribution.GetInt16(0));
             Assert.Equal(fixture.SupplierId, attribution.GetGuid(1));
-            Assert.True(attribution.GetDecimal(2) >= 0);
+            Assert.Equal(sale.Lines[0].DocumentUnitCost, attribution.GetDecimal(2));
+            Assert.Equal(
+                sale.Lines[0].Quantity * sale.Lines[0].DocumentUnitCost,
+                attribution.GetDecimal(3));
+            Assert.Equal(
+                sale.Lines[0].UntaxedAmount -
+                sale.Lines[0].Quantity * sale.Lines[0].DocumentUnitCost,
+                attribution.GetDecimal(4) - attribution.GetDecimal(3));
         }
 
         using var reporting = fixture.CreateAdminClient(

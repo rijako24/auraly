@@ -23,7 +23,13 @@ public sealed partial class ProductRepository
                 && price.IsActive
                 && price.ValidFrom <= now
                 && (price.ValidUntil == null || price.ValidUntil > now))
-            .Select(price => new { price.ProductId, price.Amount, price.CurrencyCode })
+            .Select(price => new
+            {
+                price.ProductId,
+                price.Amount,
+                price.CurrencyCode,
+                UnitCost = price.CostBasisAmount ?? 0m
+            })
             .ToDictionaryAsync(price => price.ProductId, ct);
 
         foreach (var product in products)
@@ -31,12 +37,14 @@ public sealed partial class ProductRepository
             if (prices.TryGetValue(product.ProductId, out var price))
             {
                 product.UnitPrice = price.Amount;
+                product.UnitCost = price.UnitCost;
                 product.Currency = price.CurrencyCode;
                 product.HasPublishedPrice = true;
                 continue;
             }
 
             product.UnitPrice = 0m;
+            product.UnitCost = 0m;
             product.Currency = "COP";
             product.HasPublishedPrice = false;
         }

@@ -1930,7 +1930,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             [
                 new PosSaleLineContract(
                     1, fixture.ProductId, "Producto acumulación", "01",
-                    quantity, unitPrice, 0m, tax, untaxed, total, 19m)
+                    quantity, unitPrice, 0m, tax, untaxed, total, 19m, 6_000m)
             ]
         };
         sale = WithUblSnapshot(sale);

@@ -45,7 +45,8 @@ BEGIN
            CAST(CASE WHEN p.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS BIT),
            COALESCE(tax.Rate,0),
            COALESCE(inventoryLink.ParentProductId,p.ProductId),
-           COALESCE(NULLIF(inventoryLink.InventoryFactor,0),1)
+           COALESCE(NULLIF(inventoryLink.InventoryFactor,0),1),
+           COALESCE(price.CostBasisAmount,0)
     FROM requested
     JOIN dbo.Products p ON p.ProductId=requested.ProductId
     LEFT JOIN dbo.ProductLinks inventoryLink
@@ -57,11 +58,14 @@ BEGIN
      AND balance.WarehouseId=@WarehouseId
      AND balance.ProductId=COALESCE(inventoryLink.ParentProductId,p.ProductId)
     LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.IsActive=1
+    CROSS APPLY(
+      SELECT TOP(1) pp.CostBasisAmount
+      FROM dbo.ProductPrices pp
+      WHERE pp.BusinessId=@BusinessId AND pp.ProductId=p.ProductId
+        AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET()
+        AND (pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
+      ORDER BY pp.ValidFrom DESC,pp.ProductPriceId) price
     WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
       AND p.IsActive=1
-      AND EXISTS(
-        SELECT 1 FROM dbo.ProductPrices price
-        WHERE price.BusinessId=@BusinessId AND price.ProductId=p.ProductId
-          AND price.IsActive=1 AND price.ValidFrom<=SYSDATETIMEOFFSET()
-          AND (price.ValidUntil IS NULL OR price.ValidUntil>SYSDATETIMEOFFSET()));
+      ;
 END

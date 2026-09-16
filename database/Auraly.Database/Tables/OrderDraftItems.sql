@@ -10,6 +10,7 @@ CREATE TABLE [dbo].[OrderDraftItems] (
     [DescriptionSnapshot] NVARCHAR(MAX) NULL,
     [Quantity] DECIMAL(18, 2) NOT NULL,
     [UnitPrice] DECIMAL(18, 2) NOT NULL,
+    [DocumentUnitCost] DECIMAL(19, 6) NOT NULL,
     [DiscountAmount] DECIMAL(18, 2) NOT NULL DEFAULT 0,
     [TaxAmount] DECIMAL(18, 2) NOT NULL DEFAULT 0,
 

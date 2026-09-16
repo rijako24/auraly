@@ -294,10 +294,10 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                 INSERT dbo.OrderItems(
                   OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
                   ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-                  DiscountAmount,LineTotal,CreatedAt)
+                  DocumentUnitCost,DiscountAmount,LineTotal,CreatedAt)
                 VALUES(
                   NEWID(),@OrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-                  N'Producto pedido POS',N'EA',1,10000,0,10000,SYSUTCDATETIME());
+                  N'Producto pedido POS',N'EA',1,10000,6000,0,10000,SYSUTCDATETIME());
 
                 INSERT dbo.OrderClaims(
                   OrderClaimId,BusinessId,WarehouseId,OrderId,WorkSessionId,DeviceId,UserId,

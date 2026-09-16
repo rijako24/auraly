@@ -258,7 +258,7 @@ public sealed class PosCaptureServiceTests
             var original = Assert.Single(captured.Draft!.Lines);
             var edited = await drafts.UpdateLinesAsync(
                 captured.Draft.DraftId,
-                [new(original.LineId, original.Description, 95m, 0m, original.DocumentUnitCost)]);
+                [new(original.LineId, original.Description, original.UnitPrice, 5m, original.DocumentUnitCost)]);
 
             availability.Response = new(
                 productId, scope.WarehouseId.Value, 2m, 10m, true, true, "Available");
@@ -270,7 +270,8 @@ public sealed class PosCaptureServiceTests
             Assert.Equal([1m, 2m], availability.Requests.Select(request => request.Quantity));
             var editedLine = addedAgain.Draft.Lines.Single(line => line.LineId == original.LineId);
             var automatic = addedAgain.Draft.Lines.Single(line => line.LineId != original.LineId);
-            Assert.Equal(95m, editedLine.UnitPrice);
+            Assert.Equal(original.UnitPrice, editedLine.UnitPrice);
+            Assert.Equal(5m, editedLine.Discount);
             Assert.Equal(original.PriceSource, editedLine.PriceSource);
             Assert.Equal(80m, automatic.UnitPrice);
 
@@ -278,10 +279,12 @@ public sealed class PosCaptureServiceTests
                 productId, scope.WarehouseId.Value, 4m, 10m, true, true, "Available");
             var changed = await service.ChangeQuantityAsync(
                 edited.DraftId, automatic.LineId, 3m, false, Guid.NewGuid());
-            Assert.Equal(95m, changed.Draft!.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
+            Assert.Equal(original.UnitPrice, changed.Draft!.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
+            Assert.Equal(5m, changed.Draft.Lines.Single(line => line.LineId == original.LineId).Discount);
 
             var recovered = await drafts.GetOrCreateActiveAsync(scope);
-            Assert.Equal(95m, recovered.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
+            Assert.Equal(original.UnitPrice, recovered.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
+            Assert.Equal(5m, recovered.Lines.Single(line => line.LineId == original.LineId).Discount);
             Assert.Equal(original.PriceSource, recovered.Lines.Single(line => line.LineId == original.LineId).PriceSource);
         });
     }

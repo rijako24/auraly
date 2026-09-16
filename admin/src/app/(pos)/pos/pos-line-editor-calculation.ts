@@ -35,16 +35,26 @@ export function lineEconomicsFromFinalPrice(
   referenceUnitPriceWithTax: number,
   finalUnitPriceWithTax: number,
   taxRate: number,
+  promotionDiscountWithTax = 0,
 ): ReactiveLineEconomics {
-  const finalUnitPrice = round(Math.max(0, finalUnitPriceWithTax), 6);
-  const documentUnitPrice = round(Math.max(referenceUnitPriceWithTax, finalUnitPrice), 6);
-  const discount = round(Math.max(0, quantity * (documentUnitPrice - finalUnitPrice)), 6);
+  const documentUnitPrice = round(Math.max(0, referenceUnitPriceWithTax), 6);
+  const maximumFinalUnitPrice = quantity <= 0
+    ? 0
+    : Math.max(0, documentUnitPrice - promotionDiscountWithTax / quantity);
+  const finalUnitPrice = round(
+    Math.min(maximumFinalUnitPrice, Math.max(0, finalUnitPriceWithTax)), 6,
+  );
+  const discount = round(Math.max(
+    0,
+    quantity * (documentUnitPrice - finalUnitPrice) - promotionDiscountWithTax,
+  ), 6);
+  const totalDiscount = discount + promotionDiscountWithTax;
   return {
     finalUnitPrice,
     documentUnitPrice,
     discount,
     discountPercent: lineDiscountPercent(discount, quantity, documentUnitPrice),
-    marginPercent: lineMarginPercent(unitCost, quantity, documentUnitPrice, discount, taxRate),
+    marginPercent: lineMarginPercent(unitCost, quantity, documentUnitPrice, totalDiscount, taxRate),
   };
 }
 
@@ -54,18 +64,25 @@ export function lineEconomicsFromDiscount(
   referenceUnitPriceWithTax: number,
   discountWithTax: number,
   taxRate: number,
+  promotionDiscountWithTax = 0,
 ): ReactiveLineEconomics {
-  const discount = round(Math.max(0, discountWithTax), 6);
+  const gross = quantity * referenceUnitPriceWithTax;
+  const discount = round(Math.min(
+    Math.max(0, gross - promotionDiscountWithTax),
+    Math.max(0, discountWithTax),
+  ), 6);
   const finalUnitPrice = quantity <= 0
     ? 0
-    : round(referenceUnitPriceWithTax - discount / quantity, 6);
+    : round(referenceUnitPriceWithTax -
+      (discount + promotionDiscountWithTax) / quantity, 6);
   return {
     finalUnitPrice,
     documentUnitPrice: referenceUnitPriceWithTax,
     discount,
     discountPercent: lineDiscountPercent(discount, quantity, referenceUnitPriceWithTax),
     marginPercent: lineMarginPercent(
-      unitCost, quantity, referenceUnitPriceWithTax, discount, taxRate,
+      unitCost, quantity, referenceUnitPriceWithTax,
+      discount + promotionDiscountWithTax, taxRate,
     ),
   };
 }
@@ -76,6 +93,7 @@ export function lineEconomicsFromDiscountPercent(
   referenceUnitPriceWithTax: number,
   discountPercent: number,
   taxRate: number,
+  promotionDiscountWithTax = 0,
 ): ReactiveLineEconomics {
   return lineEconomicsFromDiscount(
     unitCost,
@@ -83,6 +101,7 @@ export function lineEconomicsFromDiscountPercent(
     referenceUnitPriceWithTax,
     quantity * referenceUnitPriceWithTax * discountPercent / 100,
     taxRate,
+    promotionDiscountWithTax,
   );
 }
 
@@ -92,6 +111,7 @@ export function lineEconomicsFromMargin(
   referenceUnitPriceWithTax: number,
   marginPercent: number,
   taxRate: number,
+  promotionDiscountWithTax = 0,
 ): ReactiveLineEconomics {
   return lineEconomicsFromFinalPrice(
     unitCost,
@@ -99,6 +119,7 @@ export function lineEconomicsFromMargin(
     referenceUnitPriceWithTax,
     salePriceForMargin(unitCost, marginPercent, 0, taxRate),
     taxRate,
+    promotionDiscountWithTax,
   );
 }
 

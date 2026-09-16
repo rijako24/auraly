@@ -984,12 +984,12 @@ public sealed class OrderBatchInvoiceTests(
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
               ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-              DiscountAmount,LineTotal,CreatedAt)
+              DocumentUnitCost,DiscountAmount,LineTotal,CreatedAt)
             VALUES
               (NEWID(),@FirstOrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-               N'Producto lote',N'EA',1,10000,0,10000,DATEADD(day,-2,SYSUTCDATETIME())),
+               N'Producto lote',N'EA',1,10000,6000,0,10000,DATEADD(day,-2,SYSUTCDATETIME())),
               (NEWID(),@SecondOrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-               N'Producto lote',N'EA',2,10000,0,20000,DATEADD(day,-1,SYSUTCDATETIME()));
+               N'Producto lote',N'EA',2,10000,6000,0,20000,DATEADD(day,-1,SYSUTCDATETIME()));
             """;
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);

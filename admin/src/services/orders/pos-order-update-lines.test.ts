@@ -15,7 +15,6 @@ test("converts the online net line back to the public price when building an ord
       priceSource: "PriceChannel",
       documentUnitCost: 7_250,
       publicUnitPrice: 2_101,
-      publicDiscountAmount: 0,
     },
   ]);
 
@@ -89,7 +88,6 @@ test("preserves the exact public total instead of producing a negative cent disc
       priceSource: "Public",
       documentUnitCost: 2_000,
       publicUnitPrice: 4_000,
-      publicDiscountAmount: 0,
     },
   ]);
 
