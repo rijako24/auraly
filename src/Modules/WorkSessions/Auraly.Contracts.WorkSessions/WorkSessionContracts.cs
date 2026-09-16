@@ -250,6 +250,7 @@ public sealed record WorkSessionPaymentVerificationItem(
     string? ApprovalNumber,
     DateTimeOffset OccurredAt,
     string SourceDocumentType,
+    string? CustomerName,
     string? Status);
 
 public sealed record WorkSessionPaymentVerificationDecision(

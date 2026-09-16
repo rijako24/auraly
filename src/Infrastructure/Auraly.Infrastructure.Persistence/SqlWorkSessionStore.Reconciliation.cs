@@ -368,7 +368,7 @@ public sealed partial class SqlWorkSessionStore
                   COALESCE(mapping.ClosureMethodCode,payment.MethodCode) PaymentMethodCode,N'Sale' MovementType,
                   payment.DocumentId SourceId,document.DocumentNumber,payment.PaymentNumber SourceNumber,
                   payment.Amount,payment.Reference,payment.CardFranchiseCode,payment.ApprovalNumber,payment.RegisteredAt OccurredAt,
-                  document.DocumentType SourceDocumentType
+                  document.DocumentType SourceDocumentType,CAST(NULL AS nvarchar(300)) CustomerName
                 FROM dbo.SalesPayments payment
                 INNER JOIN dbo.SalesDocuments document ON document.DocumentId=payment.DocumentId
                 INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
@@ -376,16 +376,20 @@ public sealed partial class SqlWorkSessionStore
                 UNION ALL
                 SELECT CONCAT(N'CreditSale:',CONVERT(nvarchar(36),document.DocumentId)),
                   N'Credit',N'CreditSale',document.DocumentId,document.DocumentNumber,0,
-                  document.CreditAmount,NULL,NULL,NULL,document.IssuedAt,document.DocumentType
+                  document.CreditAmount,NULL,NULL,NULL,document.IssuedAt,document.DocumentType,
+                  COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),
+                    NULLIF(party.Identification,N''),NULLIF(document.CustomerIdentification,N''),N'Cliente')
                 FROM dbo.SalesDocuments document
                 INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
+                LEFT JOIN dbo.Customers customer ON customer.CustomerId=document.CustomerId
+                LEFT JOIN dbo.Parties party ON party.PartyId=customer.PartyId
                 WHERE document.CreditAmount>0
                 UNION ALL
                 SELECT CONCAT(N'Refund:',CONVERT(nvarchar(36),settlement.ReturnId),N':',settlement.SettlementNumber),
                   COALESCE(mapping.ClosureMethodCode,settlement.MethodCode),N'Refund',settlement.ReturnId,
                   saleReturn.DocumentNumber,settlement.SettlementNumber,-settlement.Amount,settlement.Reference,
                   settlement.CardFranchiseCode,settlement.ApprovalNumber,settlement.OccurredAt,
-                  N'SalesReturn'
+                  N'SalesReturn',CAST(NULL AS nvarchar(300))
                 FROM dbo.SalesReturnSettlements settlement
                 INNER JOIN dbo.SalesReturns saleReturn ON saleReturn.ReturnId=settlement.ReturnId
                 INNER JOIN ClosureContext context ON saleReturn.CreatedByUserId=context.UserId
@@ -396,7 +400,7 @@ public sealed partial class SqlWorkSessionStore
                 SELECT CONCAT(N'Movement:',CONVERT(nvarchar(36),movement.WorkSessionMovementId)),
                   COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode),movement.MovementType,movement.WorkSessionMovementId,
                   COALESCE(NULLIF(movement.Reference,N''),movement.SourceKey),0,movement.Amount,movement.Reference,
-                  NULL,NULL,movement.OccurredAt,N'CashMovement'
+                  NULL,NULL,movement.OccurredAt,N'CashMovement',CAST(NULL AS nvarchar(300))
                 FROM dbo.WorkSessionMovements movement
                 INNER JOIN ClosureContext context ON context.WorkSessionId=movement.WorkSessionId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=movement.PaymentMethodCode
@@ -405,7 +409,7 @@ public sealed partial class SqlWorkSessionStore
             SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType,movement.SourceId,
               movement.DocumentNumber,movement.SourceNumber,movement.Amount,movement.Reference,
               movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt,
-              movement.SourceDocumentType,decision.Status
+              movement.SourceDocumentType,movement.CustomerName,decision.Status
             FROM VerificationMovements movement
             LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
@@ -430,7 +434,8 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8),
                 reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetDateTimeOffset(10),
-                reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12)));
+                reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13)));
         return result;
     }
 

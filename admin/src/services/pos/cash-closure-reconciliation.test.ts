@@ -16,14 +16,14 @@ const items = [
   { verificationKey: "credit", paymentMethodCode: "Credit", movementType: "CreditSale", amount: 30_000 },
 ];
 
-test("cash reconciliation hides sales and refunds but verifies entries exits and credit sales", () => {
+test("cash shows only entries and exits while credit sales remain independently verifiable", () => {
   assert.deepEqual(
     cashClosureVerificationDecisions(items).map(item => item.verificationKey),
     ["in", "out", "credit"],
   );
   assert.deepEqual(
     cashClosureCashGroups(items).map(group => [group.label, group.items.length]),
-    [["Entradas de dinero", 1], ["Salidas de dinero", 1], ["Ventas a cartera", 1]],
+    [["Entradas de dinero", 1], ["Salidas de dinero", 1]],
   );
 });
 
@@ -35,7 +35,9 @@ test("cash verified total trusts hidden sales and changes as movements are check
   assert.equal(isCashClosureMethodConfirmed(
     "Cash",
     items,
-    { in: "Verified", out: "Missing", credit: "Verified" },
+    { in: "Verified", out: "Missing" },
     false,
   ), true);
+  assert.equal(isCashClosureMethodConfirmed("Credit", items, {}, false), false);
+  assert.equal(isCashClosureMethodConfirmed("Credit", items, { credit: "Verified" }, false), true);
 });

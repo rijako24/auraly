@@ -44,8 +44,7 @@ export function isCashClosureMethodConfirmed(
 ) {
   const required = items.filter(item =>
     requiresIndividualCashClosureVerification(item) &&
-    (item.paymentMethodCode === paymentMethodCode ||
-      (paymentMethodCode === "Cash" && item.movementType === "CreditSale")));
+    item.paymentMethodCode === paymentMethodCode);
   return required.length
     ? required.every(item => statuses[item.verificationKey] !== undefined)
     : paymentMethodCode === "Cash" || fallback;
@@ -57,6 +56,5 @@ export function cashClosureCashGroups<T extends CashClosureVerification>(
   return [
     { key: "CashIn", label: "Entradas de dinero", items: items.filter(item => item.movementType === "CashIn") },
     { key: "CashOut", label: "Salidas de dinero", items: items.filter(item => item.movementType === "CashOut") },
-    { key: "CreditSale", label: "Ventas a cartera", items: items.filter(item => item.movementType === "CreditSale") },
   ].filter(group => group.items.length > 0);
 }

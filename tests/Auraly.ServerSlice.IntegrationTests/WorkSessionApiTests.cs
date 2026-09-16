@@ -341,6 +341,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             item.PaymentMethodCode == "Credit" && item.MovementType == "CreditSale");
         Assert.Equal("CVI-CARTERA-1", creditVerification.DocumentNumber);
         Assert.Equal(25_000m, creditVerification.Amount);
+        Assert.Equal("Cliente cartera exacta", creditVerification.CustomerName);
 
         using var receiptResponse = await client.PostAsJsonAsync(
             $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-receipt",
