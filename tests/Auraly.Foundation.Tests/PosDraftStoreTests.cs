@@ -86,7 +86,7 @@ public sealed class PosDraftStoreTests
             Assert.Equal(10_000m, updated.Lines[0].UnitPrice);
             Assert.Equal(10_000m, updated.Lines[0].BaseUnitPrice);
             Assert.Equal(4_000m, updated.Lines[0].DocumentUnitCost);
-            Assert.True(updated.Lines[0].IsPriceOverridden);
+            Assert.False(updated.Lines[0].IsPriceOverridden);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 store.UpdateLinesAsync(

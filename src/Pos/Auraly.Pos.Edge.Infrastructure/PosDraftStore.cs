@@ -288,7 +288,7 @@ public sealed class PosDraftStore
         await MutateLineAsync(
             draftId,
             lineId,
-            "UPDATE PosDraftLines SET Discount=@Value,IsPriceOverridden=1 WHERE DraftId=@DraftId AND LineId=@LineId;",
+            "UPDATE PosDraftLines SET Discount=@Value WHERE DraftId=@DraftId AND LineId=@LineId;",
             P("@Value", discount),
             cancellationToken);
         return await GetRequiredAsync(draftId, cancellationToken);
@@ -331,16 +331,13 @@ public sealed class PosDraftStore
             update.LineId,
             Description = update.Description.Trim(),
             update.DocumentUnitCost,
-            update.Discount,
-            DiscountChanged = update.Discount != currentByLine[update.LineId].Discount ? 1 : 0
+            update.Discount
         }).ToArray();
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE PosDraftLines AS target
             SET Description=json_extract(input.value,'$.Description'),
                 DocumentUnitCost=json_extract(input.value,'$.DocumentUnitCost'),
-                Discount=json_extract(input.value,'$.Discount'),
-                IsPriceOverridden=CASE WHEN json_extract(input.value,'$.DiscountChanged')=1
-                  THEN 1 ELSE target.IsPriceOverridden END
+                Discount=json_extract(input.value,'$.Discount')
             FROM json_each(@UpdatesJson) input
             WHERE target.DraftId=@DraftId
               AND target.LineId=json_extract(input.value,'$.LineId');
