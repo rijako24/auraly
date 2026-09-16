@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Auraly.Contracts.Orders;
 
 public static class OrderPermissionCodes
@@ -79,7 +81,10 @@ public sealed record OrderLine(
     decimal QuantityOnHand = 0m,
     bool ManageStock = false,
     string PriceSource = "Captured",
-    decimal ReservedQuantity = 0m);
+    decimal ReservedQuantity = 0m,
+    decimal TaxAmount = 0m,
+    string TaxCode = "01",
+    decimal TaxRate = 0m);
 
 public sealed record OrderDetail(
     Guid OrderId,
@@ -107,7 +112,8 @@ public sealed record OrderDetail(
     IReadOnlyList<OrderLine> Lines,
     Guid? WarehouseId = null,
     Guid? PartySiteId = null,
-    bool CustomerRequiresElectronicInvoice = false);
+    bool CustomerRequiresElectronicInvoice = false,
+    [property: JsonIgnore] byte[]? SnapshotVersion = null);
 
 public sealed record OrderPrintBatchRequest(IReadOnlyCollection<Guid> OrderIds);
 

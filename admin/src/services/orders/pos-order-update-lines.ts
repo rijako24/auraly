@@ -1,5 +1,6 @@
 type PosOrderDraftLine = {
   productId: { value: string };
+  description: string;
   quantity: number;
   unitPrice: number;
   discount: number;
@@ -20,6 +21,7 @@ export function buildPosOrderUpdateLines(lines: PosOrderDraftLine[]) {
 
     return {
       productId: line.productId.value,
+      description: line.description,
       quantity: line.quantity,
       unitPrice: publicUnitPrice,
       discountAmount: money(publicGross - line.total),

@@ -304,7 +304,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             WorkSessionPermissionCodes.Read,
-            WorkSessionPermissionCodes.Close);
+            WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences);
         var opened = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
         var customerId = await CreateCustomerAsync(userId, "Cliente cartera exacta");
@@ -333,6 +334,13 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             ]));
         Assert.Equal(3, closure.ReceiptTemplateVersion);
         Assert.Equal(closure.CreditSalesAmount, closure.CreditSales!.Sum(item => item.Amount));
+
+        var verificationItems = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
+        var creditVerification = Assert.Single(verificationItems!, item =>
+            item.PaymentMethodCode == "Credit" && item.MovementType == "CreditSale");
+        Assert.Equal("CVI-CARTERA-1", creditVerification.DocumentNumber);
+        Assert.Equal(25_000m, creditVerification.Amount);
 
         using var receiptResponse = await client.PostAsJsonAsync(
             $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-receipt",
@@ -708,10 +716,14 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         }
 
         var verificationDecisions = verificationItems
-            .Where(item => item.PaymentMethodCode != "Cash")
+            .Where(item => item.PaymentMethodCode != "Cash" ||
+                item.MovementType is "CashIn" or "CashOut" or "CreditSale")
             .Select(item =>
             new WorkSessionPaymentVerificationDecision(item.VerificationKey,
-                item.PaymentMethodCode == "Transfer" && item.Amount == 20_000m ? "Missing" : "Verified")).ToArray();
+                (item.PaymentMethodCode == "Transfer" && item.Amount == 20_000m) ||
+                item.MovementType == "CashOut"
+                    ? "Missing"
+                    : "Verified")).ToArray();
 
         using var message = new HttpRequestMessage(HttpMethod.Post,
             $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
@@ -740,7 +752,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
         Assert.NotNull(persistedDecisions);
         Assert.All(
-            persistedDecisions.Where(item => item.PaymentMethodCode != "Cash"),
+            persistedDecisions.Where(item => item.PaymentMethodCode != "Cash" ||
+                item.MovementType is "CashIn" or "CashOut" or "CreditSale"),
             item => Assert.Equal(
                 verificationDecisions.Single(decision =>
                     decision.VerificationKey == item.VerificationKey).Status,

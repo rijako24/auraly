@@ -35,6 +35,15 @@ export function orderReceiptsFromEmission<T>(
   return results.flatMap((result) => result.receipt ? [result.receipt] : []);
 }
 
+export function orderReceiptsForPrinting<T extends { creditAcknowledgement?: unknown }>(
+  receipts: readonly T[],
+  includeCreditAcknowledgement: boolean,
+): T[] {
+  return receipts.map(receipt => includeCreditAcknowledgement
+    ? { ...receipt }
+    : { ...receipt, creditAcknowledgement: undefined });
+}
+
 export function orderInvoiceIdempotencyKey(batchKey: string, orderId: string) {
   const suffix = `:${orderId}`;
   return `${batchKey.slice(0, Math.max(0, 100 - suffix.length))}${suffix}`;

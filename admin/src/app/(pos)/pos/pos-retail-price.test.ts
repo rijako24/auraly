@@ -5,6 +5,7 @@ import "./pos-temporary-name.test";
 
 import {
   calculateReceiptRetailUnitPrice,
+  calculateEffectiveRetailUnitPrice,
   calculateRetailUnitPrice,
 } from "./pos-retail-price";
 
@@ -23,4 +24,10 @@ test("reconstruye el precio de venta en una tirilla historica", () => {
 test("no presenta precios invalidos", () => {
   assert.equal(calculateRetailUnitPrice(Number.NaN), 0);
   assert.equal(calculateRetailUnitPrice(100, Number.NaN, true), 0);
+});
+
+test("muestra en la grilla el precio efectivo que reproduce el total de la línea", () => {
+  assert.equal(calculateEffectiveRetailUnitPrice(54_500, 7), 7_785.714286);
+  assert.equal(calculateEffectiveRetailUnitPrice(12_500, 1), 12_500);
+  assert.equal(calculateEffectiveRetailUnitPrice(10_000, 0), 0);
 });

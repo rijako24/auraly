@@ -28,8 +28,10 @@ CREATE TABLE [dbo].[OnlineSalesCheckoutReceipts]
 (
     [OnlineSalesCheckoutReceiptId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [SalesDraftId] UNIQUEIDENTIFIER NOT NULL,
-    [NextSalesDraftId] UNIQUEIDENTIFIER NOT NULL,
+    [SalesDraftId] UNIQUEIDENTIFIER NULL,
+    [NextSalesDraftId] UNIQUEIDENTIFIER NULL,
+    [SourceOrderId] UNIQUEIDENTIFIER NULL,
+    [OperationId] UNIQUEIDENTIFIER NULL,
     [IdempotencyKey] NVARCHAR(100) NOT NULL,
     [RequestHash] CHAR(64) NOT NULL,
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
@@ -45,14 +47,32 @@ CREATE TABLE [dbo].[OnlineSalesCheckoutReceipts]
         FOREIGN KEY ([SalesDraftId]) REFERENCES [dbo].[SalesDrafts] ([SalesDraftId]),
     CONSTRAINT [FK_OnlineSalesCheckoutReceipts_NextDraft]
         FOREIGN KEY ([NextSalesDraftId]) REFERENCES [dbo].[SalesDrafts] ([SalesDraftId]),
-    CONSTRAINT [UQ_OnlineSalesCheckoutReceipts_Draft] UNIQUE ([SalesDraftId]),
+    CONSTRAINT [FK_OnlineSalesCheckoutReceipts_Orders]
+        FOREIGN KEY ([SourceOrderId]) REFERENCES [dbo].[Orders] ([OrderId]),
+    CONSTRAINT [FK_OnlineSalesCheckoutReceipts_OrderBatch]
+        FOREIGN KEY ([OperationId]) REFERENCES [dbo].[OrderInvoiceBatchReceipts] ([OperationId]),
     CONSTRAINT [UQ_OnlineSalesCheckoutReceipts_Business_Key]
         UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [UQ_OnlineSalesCheckoutReceipts_Document] UNIQUE ([DocumentId]),
     CONSTRAINT [CK_OnlineSalesCheckoutReceipts_Status]
-        CHECK ([Status] IN (N'Prepared', N'Completed', N'FiscalConflict'))
+        CHECK ([Status] IN (N'Prepared', N'Completed', N'FiscalConflict')),
+    CONSTRAINT [CK_OnlineSalesCheckoutReceipts_Source]
+        CHECK (([SalesDraftId] IS NOT NULL AND [NextSalesDraftId] IS NOT NULL
+                AND [SourceOrderId] IS NULL AND [OperationId] IS NULL)
+            OR ([SalesDraftId] IS NULL AND [NextSalesDraftId] IS NULL
+                AND [SourceOrderId] IS NOT NULL AND [OperationId] IS NOT NULL))
 );
 
+GO
+
+CREATE UNIQUE INDEX [UX_OnlineSalesCheckoutReceipts_Draft]
+    ON [dbo].[OnlineSalesCheckoutReceipts] ([SalesDraftId])
+    WHERE [SalesDraftId] IS NOT NULL;
+GO
+
+CREATE UNIQUE INDEX [UX_OnlineSalesCheckoutReceipts_Order]
+    ON [dbo].[OnlineSalesCheckoutReceipts] ([SourceOrderId])
+    WHERE [SourceOrderId] IS NOT NULL;
 GO
 
 CREATE INDEX [IX_OnlineSalesCheckoutReceipts_Business_Status]

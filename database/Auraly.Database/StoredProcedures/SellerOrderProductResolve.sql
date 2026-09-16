@@ -46,7 +46,7 @@ BEGIN
            COALESCE(tax.Rate,0),
            COALESCE(inventoryLink.ParentProductId,p.ProductId),
            COALESCE(NULLIF(inventoryLink.InventoryFactor,0),1),
-           COALESCE(price.CostBasisAmount,0)
+           COALESCE(price.CostBasisAmount,0),COALESCE(tax.DianTaxCode,N'01')
     FROM requested
     JOIN dbo.Products p ON p.ProductId=requested.ProductId
     LEFT JOIN dbo.ProductLinks inventoryLink

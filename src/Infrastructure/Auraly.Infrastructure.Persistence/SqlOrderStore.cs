@@ -207,7 +207,7 @@ public sealed class SqlOrderStore(
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
               COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
-              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit)
+              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit),o.RowVersion
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.Customers customer
@@ -268,7 +268,8 @@ public sealed class SqlOrderStore(
             DocumentId = hasInvoice ? header.GetGuid(20) : (Guid?)null,
             WarehouseId = header.IsDBNull(28) ? (Guid?)null : header.GetGuid(28),
             PartySiteId = header.IsDBNull(29) ? (Guid?)null : header.GetGuid(29),
-            RequiresElectronicInvoice = header.GetBoolean(30)
+            RequiresElectronicInvoice = header.GetBoolean(30),
+            SnapshotVersion = (byte[])header.GetValue(31)
         };
         await header.CloseAsync();
 
@@ -282,10 +283,14 @@ public sealed class SqlOrderStore(
                      CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
                      '$.ReservedQuantity')),
                      CASE WHEN @StoredStatus=2 THEN item.Quantity ELSE 0 END),
-                   item.DocumentUnitCost
+                   item.DocumentUnitCost,item.TaxAmount,
+                   COALESCE(NULLIF(JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxCode'),N''),tax.DianTaxCode,N'01'),
+                   COALESCE(TRY_CONVERT(DECIMAL(9,4),JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxRate')),tax.Rate,0)
             FROM dbo.OrderItems item
             LEFT JOIN dbo.Products product
               ON product.ProductId=item.ProductId AND product.TenantId=@TenantId
+            LEFT JOIN dbo.TaxProfiles tax
+              ON tax.TaxProfileId=product.TaxProfileId AND tax.IsActive=1
             LEFT JOIN dbo.InventoryBalances balance
               ON balance.BusinessId=item.BusinessId AND balance.WarehouseId=@WarehouseId
              AND balance.ProductId=item.ProductId
@@ -319,7 +324,10 @@ public sealed class SqlOrderStore(
                 lineReader.GetDecimal(10),
                 lineReader.GetBoolean(11),
                 lineReader.GetString(12),
-                lineReader.GetDecimal(13)));
+                lineReader.GetDecimal(13),
+                lineReader.GetDecimal(15),
+                lineReader.GetString(16),
+                lineReader.GetDecimal(17)));
         }
 
         return new OrderDetail(
@@ -331,7 +339,7 @@ public sealed class SqlOrderStore(
             values.PaymentStatus, values.CreatedAt,
             OrderRules.CanInvoice(storedStatus, values.Confirmed, hasInvoice),
             values.DocumentId, claim, lines, values.WarehouseId, values.PartySiteId,
-            values.RequiresElectronicInvoice);
+            values.RequiresElectronicInvoice, values.SnapshotVersion);
     }
 
     public async Task<IReadOnlyDictionary<Guid, OrderDetail>> GetBatchAsync(
@@ -361,7 +369,7 @@ public sealed class SqlOrderStore(
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
               COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
-              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit)
+              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit),o.RowVersion
             FROM @Selected selected
             INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
@@ -390,7 +398,9 @@ public sealed class SqlOrderStore(
                      CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
                      '$.ReservedQuantity')),
                      CASE WHEN o.Status=2 THEN item.Quantity ELSE 0 END),
-                   item.DocumentUnitCost
+                   item.DocumentUnitCost,item.TaxAmount,
+                   COALESCE(NULLIF(JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxCode'),N''),tax.DianTaxCode,N'01'),
+                   COALESCE(TRY_CONVERT(DECIMAL(9,4),JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxRate')),tax.Rate,0)
             FROM @Selected selected
             INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId AND b.TenantId=@TenantId
@@ -398,6 +408,8 @@ public sealed class SqlOrderStore(
               ON item.OrderId=o.OrderId AND item.BusinessId=o.BusinessId
             LEFT JOIN dbo.Products product
               ON product.ProductId=item.ProductId AND product.TenantId=@TenantId
+            LEFT JOIN dbo.TaxProfiles tax
+              ON tax.TaxProfileId=product.TaxProfileId AND tax.IsActive=1
             LEFT JOIN dbo.InventoryBalances balance
               ON balance.BusinessId=item.BusinessId
              AND balance.WarehouseId=COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId')))
@@ -452,7 +464,8 @@ public sealed class SqlOrderStore(
                 ReadClaim(reader, 23, actor),
                 reader.IsDBNull(28) ? null : reader.GetGuid(28),
                 reader.IsDBNull(29) ? null : reader.GetGuid(29),
-                reader.GetBoolean(30)));
+                reader.GetBoolean(30),
+                (byte[])reader.GetValue(31)));
         }
 
         var lines = headers.Keys.ToDictionary(id => id, _ => new List<OrderLine>());
@@ -477,7 +490,10 @@ public sealed class SqlOrderStore(
                 reader.GetDecimal(11),
                 reader.GetBoolean(12),
                 reader.GetString(13),
-                reader.GetDecimal(14)));
+                reader.GetDecimal(14),
+                reader.GetDecimal(16),
+                reader.GetString(17),
+                reader.GetDecimal(18)));
         }
 
         return headers.ToDictionary(
@@ -1009,7 +1025,8 @@ public sealed class SqlOrderStore(
         OrderClaimSummary? Claim,
         Guid? WarehouseId,
         Guid? PartySiteId,
-        bool CustomerRequiresElectronicInvoice)
+        bool CustomerRequiresElectronicInvoice,
+        byte[] SnapshotVersion)
     {
         public OrderDetail ToDetail(IReadOnlyList<OrderLine> lines) => new(
             Id, BusinessId, Number, Status, Source, CustomerId,
@@ -1018,6 +1035,6 @@ public sealed class SqlOrderStore(
             PaymentStatus, CreatedAt,
             OrderRules.CanInvoice(StoredStatus, Confirmed, DocumentId is not null),
             DocumentId, Claim, lines, WarehouseId, PartySiteId,
-            CustomerRequiresElectronicInvoice);
+            CustomerRequiresElectronicInvoice, SnapshotVersion);
     }
 }

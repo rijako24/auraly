@@ -63,6 +63,7 @@ export function editableOrderInitialState(lines: readonly CommerceOrderLine[]): 
         line.reservedQuantity,
       ),
       manageStock: line.manageStock,
+      documentUnitCost: line.documentUnitCost,
     };
     quantities[line.productId] = line.quantity;
   }

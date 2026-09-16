@@ -19,3 +19,13 @@ export function calculateReceiptRetailUnitPrice(
 ): number {
   return calculateRetailUnitPrice(publishedUnitPrice);
 }
+
+export function calculateEffectiveRetailUnitPrice(
+  lineTotal: number,
+  quantity: number,
+) {
+  if (!Number.isFinite(lineTotal) || !Number.isFinite(quantity) || quantity <= 0) {
+    return 0;
+  }
+  return Math.round((lineTotal / quantity + Number.EPSILON) * 1_000_000) / 1_000_000;
+}

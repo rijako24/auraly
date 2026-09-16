@@ -59,6 +59,7 @@ import {
 import {
   invoiceOrdersInSequence,
   orderReceiptsFromEmission,
+  orderReceiptsForPrinting,
   resolvePosOrderPrintRoute,
   type OrderInvoiceSequenceProgress,
 } from "./pos-order-print-routing";
@@ -1233,6 +1234,7 @@ export class OnlinePosClient implements PosClient {
     printAfterInvoice = true,
     idempotencyKey = crypto.randomUUID(),
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
+    includeCreditAcknowledgement = false,
   ): Promise<InvoiceOrdersResponse> {
     const printRoute = printAfterInvoice
       ? resolvePosOrderPrintRoute(this.edgeSessionToken)
@@ -1282,7 +1284,10 @@ export class OnlinePosClient implements PosClient {
       ),
       printOne: installedPrinter && printAfterInvoice
         ? async (receipts) => {
-            for (const receipt of receipts) {
+            for (const receipt of orderReceiptsForPrinting(
+              receipts,
+              includeCreditAcknowledgement,
+            )) {
               await installedPrinter.printReceipt({
                 ...receipt,
                 businessName: this.context.businessName,
@@ -1301,7 +1306,10 @@ export class OnlinePosClient implements PosClient {
       response.printStatus = "NotRequired";
       return response;
     }
-    const receipts = orderReceiptsFromEmission(response.results);
+    const receipts = orderReceiptsForPrinting(
+      orderReceiptsFromEmission(response.results),
+      includeCreditAcknowledgement,
+    );
     if (installedPrinter) {
       if (receipts.length > 0) {
         try {

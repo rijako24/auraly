@@ -68,6 +68,8 @@
     "src/services/pos/pos-enrollment.test.ts",
     "src/services/pos/pos-work-session-close.ts",
     "src/services/pos/pos-work-session-close.test.ts",
+    "src/services/pos/cash-closure-reconciliation.ts",
+    "src/services/pos/cash-closure-reconciliation.test.ts",
     "src/services/pos/pos-receipt-brand.test.ts",
     "src/services/pos/pos-receipt-line-markup.ts",
     "src/services/pos/pos-receipt-line-markup.test.ts",

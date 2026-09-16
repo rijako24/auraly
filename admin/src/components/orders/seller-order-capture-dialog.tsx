@@ -63,7 +63,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
   useEffect(() => {
     if (editing) return;
     if (!Object.values(quantities).some((quantity) => quantity > 0)) return;
-    const lines=Object.entries(quantities).filter(([, quantity]) => quantity > 0).flatMap(([productId, quantity]) => { const item=knownItems[productId]; return item?[{ productId, quantity, unitPrice:item.unitPrice, discountAmount:0, priceSource:item.priceSource }]:[]; });
+    const lines=Object.entries(quantities).filter(([, quantity]) => quantity > 0).flatMap(([productId, quantity]) => { const item=knownItems[productId]; return item?[{ productId, description:item.name, quantity, unitPrice:item.unitPrice, discountAmount:0, priceSource:item.priceSource, documentUnitCost:item.documentUnitCost }]:[]; });
     if(!lines.length)return;
     const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: localFirst || !navigatorOnline(), notes: notes || null, idempotencyKey: `draft-${key}`, lines };
     void saveSellerDraft(key, request, quantities);
@@ -190,7 +190,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
     if (!userId) { toast.error("No encontramos el usuario de esta sesión. Vuelve a iniciar sesión."); return; }
     setSaving(true);
     try {
-      const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !online, notes: notes || null, idempotencyKey: crypto.randomUUID(), lines: selected.map(({ item, quantity }) => {const original=originalLinesByProduct.get(item.productId);return { productId: item.productId, quantity, unitPrice:item.unitPrice, discountAmount:original?.discountAmount??0, priceSource:item.priceSource };}) };
+      const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !online, notes: notes || null, idempotencyKey: crypto.randomUUID(), lines: selected.map(({ item, quantity }) => {const original=originalLinesByProduct.get(item.productId);return { productId: item.productId, description:item.name, quantity, unitPrice:item.unitPrice, discountAmount:original?.discountAmount??0, priceSource:item.priceSource, documentUnitCost:item.documentUnitCost??original?.documentUnitCost };}) };
       let synchronized = online;
       let result: SellerOrderResult;
       if (editing) {

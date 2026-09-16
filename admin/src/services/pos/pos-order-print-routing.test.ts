@@ -4,6 +4,7 @@ import {
   invoiceOrdersInSequence,
   orderInvoiceIdempotencyKey,
   orderReceiptsFromEmission,
+  orderReceiptsForPrinting,
   resolvePosOrderPrintRoute,
 } from "./pos-order-print-routing";
 
@@ -15,13 +16,23 @@ test("el navegador conserva la vista previa para pedidos", () => {
   assert.equal(resolvePosOrderPrintRoute(null), "browser");
 });
 
-test("pedidos imprime la tirilla devuelta al emitir sin una segunda consulta fiscal", () => {
-  const receipt = { documentType: "SalesReceipt", cufe: null, qrPayload: null };
+test("pedidos conserva factura y comprobante de cartera devueltos al emitir", () => {
+  const receipt = {
+    documentType: "SalesReceipt",
+    cufe: null,
+    qrPayload: null,
+    creditAcknowledgement: { documentNumber: "FV-1", customerName: "Cliente" },
+  };
   assert.deepEqual(orderReceiptsFromEmission([
     { receipt },
     { receipt: null },
     {},
   ]), [receipt]);
+  assert.equal(orderReceiptsForPrinting([receipt], false)[0].creditAcknowledgement, undefined);
+  assert.deepEqual(
+    orderReceiptsForPrinting([receipt], true)[0].creditAcknowledgement,
+    receipt.creditAcknowledgement,
+  );
 });
 
 test("factura e imprime cada pedido antes de comenzar el siguiente y reporta el contador", async () => {

@@ -112,8 +112,7 @@ public sealed partial class SqlWorkSessionStore
                 throw new WorkSessionValidationException("La conciliación debe incluir cada medio contado exactamente una vez.");
             var expectedVerifications = await ReadPaymentVerificationsAsync(
                 connection, transaction, closureId, cancellationToken);
-            var individuallyVerifiable = expectedVerifications.Where(item =>
-                !item.PaymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var individuallyVerifiable = expectedVerifications.Where(RequiresIndividualVerification).ToArray();
             var requestedVerifications = request.PaymentVerifications ?? [];
             var verificationDecisions = requestedVerifications
                 .GroupBy(value => value.VerificationKey.Trim(), StringComparer.OrdinalIgnoreCase)
@@ -124,20 +123,21 @@ public sealed partial class SqlWorkSessionStore
                 verificationDecisions.Keys.Any(key => individuallyVerifiable.All(item =>
                     !item.VerificationKey.Equals(key, StringComparison.OrdinalIgnoreCase))))
                 throw new WorkSessionValidationException(
-                    "Debe verificar cada comprobante de tarjeta y transferencia exactamente una vez.");
-            var verifiedAmounts = individuallyVerifiable
-                .Where(item => verificationDecisions[item.VerificationKey][0].Status == "Verified")
-                .GroupBy(item => item.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.Sum(item => item.Amount),
-                    StringComparer.OrdinalIgnoreCase);
-            foreach (var method in individuallyVerifiable.Select(item => item.PaymentMethodCode)
-                         .Distinct(StringComparer.OrdinalIgnoreCase))
+                    "Debe verificar cada comprobante y movimiento conciliable exactamente una vez.");
+            foreach (var method in countable.Select(item => item.PaymentMethodCode))
             {
-                var verified = verifiedAmounts.GetValueOrDefault(method);
+                var trusted = expectedVerifications
+                    .Where(item => item.PaymentMethodCode.Equals(method, StringComparison.OrdinalIgnoreCase) &&
+                        !RequiresIndividualVerification(item))
+                    .Sum(item => item.Amount);
+                var verified = individuallyVerifiable
+                    .Where(item => item.PaymentMethodCode.Equals(method, StringComparison.OrdinalIgnoreCase) &&
+                        verificationDecisions[item.VerificationKey][0].Status == "Verified")
+                    .Sum(item => item.Amount) + trusted;
                 if (!lines.TryGetValue(method, out var line) ||
                     decimal.Round(line.VerifiedAmount, 4) != decimal.Round(verified, 4))
                     throw new WorkSessionValidationException(
-                        "El valor verificado debe corresponder a los comprobantes confirmados.");
+                        "El valor verificado debe corresponder a los comprobantes y movimientos confirmados.");
             }
             var differences = countable.ToDictionary(value => value.PaymentMethodCode,
                 value => decimal.Round(lines[value.PaymentMethodCode].VerifiedAmount-value.NetAmount,4),
@@ -152,7 +152,10 @@ public sealed partial class SqlWorkSessionStore
                 differences[correction.FromPaymentMethodCode] += correction.Amount;
                 differences[correction.ToPaymentMethodCode] -= correction.Amount;
             }
-            var status = differences.Values.All(value => value == 0)
+            var hasMissingCreditSale = individuallyVerifiable.Any(item =>
+                item.MovementType == "CreditSale" &&
+                verificationDecisions[item.VerificationKey][0].Status == "Missing");
+            var status = differences.Values.All(value => value == 0) && !hasMissingCreditSale
                 ? "Reconciled" : "ReconciledWithDifferences";
             var reconciliationId = ids.NewId();
             var reconciledAt = timeProvider.GetUtcNow();
@@ -371,6 +374,13 @@ public sealed partial class SqlWorkSessionStore
                 INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=payment.MethodCode
                 UNION ALL
+                SELECT CONCAT(N'CreditSale:',CONVERT(nvarchar(36),document.DocumentId)),
+                  N'Credit',N'CreditSale',document.DocumentId,document.DocumentNumber,0,
+                  document.CreditAmount,NULL,NULL,NULL,document.IssuedAt,document.DocumentType
+                FROM dbo.SalesDocuments document
+                INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
+                WHERE document.CreditAmount>0
+                UNION ALL
                 SELECT CONCAT(N'Refund:',CONVERT(nvarchar(36),settlement.ReturnId),N':',settlement.SettlementNumber),
                   COALESCE(mapping.ClosureMethodCode,settlement.MethodCode),N'Refund',settlement.ReturnId,
                   saleReturn.DocumentNumber,settlement.SettlementNumber,-settlement.Amount,settlement.Reference,
@@ -397,7 +407,7 @@ public sealed partial class SqlWorkSessionStore
               movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt,
               movement.SourceDocumentType,decision.Status
             FROM VerificationMovements movement
-            INNER JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
+            LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
             OUTER APPLY
             (
@@ -408,7 +418,8 @@ public sealed partial class SqlWorkSessionStore
                   AND JSON_VALUE(value.value,N'$.verificationKey')=movement.VerificationKey
                 ORDER BY reconciliation.ReconciledAt DESC
             ) decision
-            ORDER BY closureOption.SortOrder,movement.OccurredAt,movement.VerificationKey;
+            WHERE closureOption.OptionId IS NOT NULL OR movement.PaymentMethodCode=N'Credit'
+            ORDER BY COALESCE(closureOption.SortOrder,15),movement.OccurredAt,movement.VerificationKey;
             """, connection, transaction);
         command.Parameters.AddWithValue("@ClosureId", closureId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -422,6 +433,10 @@ public sealed partial class SqlWorkSessionStore
                 reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12)));
         return result;
     }
+
+    private static bool RequiresIndividualVerification(WorkSessionPaymentVerificationItem item) =>
+        !item.PaymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase) ||
+        item.MovementType is "CashIn" or "CashOut" or "CreditSale";
 
     private static void AddClosureSearchParameters(SqlCommand command, WorkSessionIdentity identity,
         DateOnly from, DateOnly to, string? status)

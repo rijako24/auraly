@@ -28,8 +28,17 @@ BEGIN
            p.Name,
            COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
            COALESCE(balance.QuantityOnHand,0)/COALESCE(NULLIF(inventoryLink.InventoryFactor,0),1),
-           CAST(CASE WHEN p.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS BIT)
+           CAST(CASE WHEN p.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS BIT),
+           COALESCE(activePrice.CostBasisAmount,0)
     FROM dbo.Products p
+    CROSS APPLY (
+      SELECT TOP(1) price.CostBasisAmount
+      FROM dbo.ProductPrices price
+      WHERE price.BusinessId=@BusinessId AND price.ProductId=p.ProductId
+        AND price.IsActive=1 AND price.ValidFrom<=SYSDATETIMEOFFSET()
+        AND (price.ValidUntil IS NULL OR price.ValidUntil>SYSDATETIMEOFFSET())
+      ORDER BY price.ValidFrom DESC,price.ProductPriceId
+    ) activePrice
     LEFT JOIN dbo.ProductLinks inventoryLink
       ON inventoryLink.BusinessId=@BusinessId
      AND inventoryLink.ChildProductId=p.ProductId
@@ -39,11 +48,6 @@ BEGIN
      AND balance.WarehouseId=@WarehouseId
      AND balance.ProductId=COALESCE(inventoryLink.ParentProductId,p.ProductId)
     WHERE p.TenantId=@TenantId AND p.IsActive=1
-      AND EXISTS(
-        SELECT 1 FROM dbo.ProductPrices price
-        WHERE price.BusinessId=@BusinessId AND price.ProductId=p.ProductId
-          AND price.IsActive=1 AND price.ValidFrom<=SYSDATETIMEOFFSET()
-          AND (price.ValidUntil IS NULL OR price.ValidUntil>SYSDATETIMEOFFSET()))
       AND(@Search=N''
       OR p.Name COLLATE Latin1_General_100_CI_AI LIKE @Contains COLLATE Latin1_General_100_CI_AI
       OR p.ProductCode COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI

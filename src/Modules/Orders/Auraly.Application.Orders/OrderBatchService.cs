@@ -33,8 +33,6 @@ public interface IOrderBatchStore
 public sealed class OrderBatchService(
     IOrderBatchStore batches,
     OrderService orders,
-    OrderRecoveryService recovery,
-    OnlineSalesDraftService drafts,
     OnlineSalesCheckoutService checkout)
 {
     private static readonly HashSet<string> PaymentMethods =
@@ -153,8 +151,6 @@ public sealed class OrderBatchService(
         var results = new List<InvoiceOrderResult>(normalizedOrders.Length);
         var completed = 0;
         var failed = 0;
-        OnlineSalesDraft? currentDraft = null;
-
         foreach (var orderId in normalizedOrders)
         {
             if (preparationFailures.TryGetValue(orderId, out var preparationError))
@@ -188,40 +184,6 @@ public sealed class OrderBatchService(
                     continue;
                 }
 
-                var draft = currentDraft ?? await drafts.OpenAsync(
-                    identity,
-                    new OpenOnlineSalesDraftRequest(
-                        new OnlineSalesDraftContext(
-                            actor.BusinessId,
-                            request.WarehouseId,
-                            request.WorkSessionId)),
-                    cancellationToken);
-                if (draft.SourceOrderId is null || draft.SourceOrderId == orderId)
-                {
-                    if (draft.SourceOrderId is null && draft.Lines.Count != 0)
-                        throw new OrderConflictException(
-                            "La venta activa tiene productos. Páusala o reiníciala antes de facturar pedidos seleccionados.");
-                    // A previously recovered draft can be older than the order when
-                    // the customer, site or lines were edited afterwards. Reimporting
-                    // that same source is the canonical atomic refresh and prevents
-                    // issuing the stale commercial snapshot.
-                    draft = await recovery.RecoverKnownAsync(
-                        actor,
-                        order,
-                        new RecoverOrderIntoSaleRequest(
-                            request.WorkSessionId,
-                            request.UserId,
-                            draft.DraftId,
-                            draft.Version),
-                        OperationKey(lease.OperationId, orderId, "recover"),
-                        cancellationToken);
-                }
-                else
-                {
-                    throw new OrderConflictException(
-                        "La venta activa contiene otro pedido pendiente de completar.");
-                }
-
                 var paidOrder = order.PaymentStatus == "Confirmed";
                 var paymentMethod = paidOrder
                     ? "Transfer"
@@ -234,23 +196,50 @@ public sealed class OrderBatchService(
                 if (request.DocumentType == PosSaleDocumentTypes.Receipt &&
                     order.CustomerRequiresElectronicInvoice)
                     documentType = PosSaleDocumentTypes.Invoice;
-                var issued = await checkout.CompleteKnownDraftAsync(
+                var warehouseId = order.WarehouseId ?? throw new OrderConflictException(
+                    "El pedido no tiene una bodega de venta asignada y no puede emitirse.");
+                var source = new OnlineSalesOrderCheckoutSource(
+                    lease.OperationId,
+                    order.OrderId,
+                    order.BusinessId,
+                    warehouseId,
+                    request.WorkSessionId,
+                    order.CustomerId,
+                    order.PartySiteId,
+                    order.SnapshotVersion ?? throw new OrderConflictException(
+                        "El pedido no conserva una versión transaccional válida."),
+                    order.Lines.Select(line => new OnlineSalesOrderCheckoutLine(
+                        line.OrderItemId,
+                        line.ProductId!.Value,
+                        line.ProductCode ?? line.Sku ?? string.Empty,
+                        line.ProductName,
+                        line.UnitCode,
+                        line.TaxCode,
+                        line.TaxRate,
+                        line.Quantity,
+                        line.UnitPrice,
+                        line.DiscountAmount,
+                        line.LineTotal,
+                        line.DocumentUnitCost,
+                        order.Currency,
+                        line.PriceSource)).ToArray());
+                var issued = await checkout.CompleteOrderAsync(
                     identity,
-                    draft,
+                    source,
                     new CompleteOnlineSalesDraftRequest(
-                        draft.Version,
+                        1,
                         creditSale
                             ? []
                             : [
                                 new OnlineSalesPayment(
                                     paymentMethod,
-                                    draft.PayableAmount,
+                                    order.Total,
                                     paymentReference,
                                     BankAccountId: request.BankAccountId,
                                     Notes: request.PaymentNotes)
                             ],
                         Credit: creditSale
-                            ? new OnlineSalesCreditTerms(draft.PayableAmount)
+                            ? new OnlineSalesCreditTerms(order.Total)
                             : null,
                         DocumentType: documentType),
                     OperationKey(lease.OperationId, orderId, "invoice"),
@@ -263,7 +252,6 @@ public sealed class OrderBatchService(
                     issued.Receipt.DocumentNumber,
                     null,
                     issued.Receipt));
-                currentDraft = issued.NextDraft;
                 completed++;
             }
             catch (Exception exception) when (IsRecoverableOrderFailure(exception))
@@ -277,63 +265,6 @@ public sealed class OrderBatchService(
                     exception.Message));
                 failed++;
 
-                // Batch invoicing has no cashier editing the recovered draft.
-                // Always clear it (or at least release its lease) so a failed
-                // item cannot leave the order occupied for another register.
-                var draftIsReadyForNextOrder = false;
-                try
-                {
-                    var active = await drafts.OpenAsync(
-                        identity,
-                        new OpenOnlineSalesDraftRequest(
-                            new OnlineSalesDraftContext(
-                                actor.BusinessId,
-                                request.WarehouseId,
-                                request.WorkSessionId)),
-                        CancellationToken.None);
-                    if (active.SourceOrderId == orderId)
-                    {
-                        currentDraft = await drafts.ResetAfterFailedOrderAsync(
-                            identity,
-                            active.DraftId,
-                            new ResetOnlineSalesDraftRequest(active.Version),
-                            OperationKey(lease.OperationId, orderId, "cleanup"),
-                            CancellationToken.None);
-                        draftIsReadyForNextOrder = true;
-                    }
-                    else if (active.SourceOrderId is null && active.Lines.Count == 0)
-                    {
-                        currentDraft = active;
-                        draftIsReadyForNextOrder = true;
-                    }
-                }
-                catch (Exception cleanupError)
-                {
-                    var prior = results[^1];
-                    results[^1] = prior with
-                    {
-                        Error = $"{prior.Error} No fue posible limpiar la venta activa: {cleanupError.Message}"
-                    };
-                    try
-                    {
-                        await orders.ReleaseClaimAsync(
-                            actor,
-                            orderId,
-                            new ReleaseOrderClaimRequest(
-                                request.WorkSessionId,
-                                request.UserId),
-                            CancellationToken.None);
-                    }
-                    catch (OrderConflictException)
-                    {
-                        // The checkout or reset already released it.
-                    }
-                }
-
-                // Continue only after proving that the canonical draft is clean.
-                // An uncertain cleanup must never leak one order into the next.
-                if (!draftIsReadyForNextOrder)
-                    break;
             }
 
             if (ShouldCheckpointProgress())

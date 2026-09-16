@@ -12,10 +12,12 @@ import { evaluateOrderReviewQuantity, isOrderReviewLinePending } from "./order-r
 
 export type ReviewOrderLineInput = {
   productId: string;
+  description: string;
   quantity: number;
   unitPrice: number;
   discountAmount: number;
   priceSource: string;
+  documentUnitCost: number;
 };
 
 type Props = {
@@ -60,10 +62,12 @@ export function OrderReviewEditor({ order, onClose, onConfirm }: Props) {
     try {
       await onConfirm(remaining.map(({ line, next }) => ({
         productId: line.productId!,
+        description: line.productName,
         quantity: next,
         unitPrice: line.unitPrice,
         discountAmount: line.discountAmount,
         priceSource: line.priceSource,
+        documentUnitCost: line.documentUnitCost,
       })));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No fue posible confirmar el pedido.");

@@ -7,6 +7,7 @@ test("converts the online net line back to the public price when building an ord
   const lines = buildPosOrderUpdateLines([
     {
       productId: { value: "product-1" },
+      description: "Producto con IVA",
       quantity: 1,
       unitPrice: 1_765.55,
       discount: 0,
@@ -21,6 +22,7 @@ test("converts the online net line back to the public price when building an ord
   assert.deepEqual(lines, [
     {
       productId: "product-1",
+      description: "Producto con IVA",
       quantity: 1,
       unitPrice: 2_101,
       discountAmount: 0,
@@ -34,6 +36,7 @@ test("builds the complete replacement from only the lines that remain in the rec
   const lines = buildPosOrderUpdateLines([
     {
       productId: { value: "kept-product" },
+      description: "Nombre editado",
       quantity: 7,
       unitPrice: 8_000,
       discount: 1_000,
@@ -45,6 +48,7 @@ test("builds the complete replacement from only the lines that remain in the rec
     },
     {
       productId: { value: "new-product" },
+      description: "Producto nuevo",
       quantity: 2,
       unitPrice: 4_500,
       discount: 0,
@@ -58,6 +62,7 @@ test("builds the complete replacement from only the lines that remain in the rec
   assert.deepEqual(lines, [
     {
       productId: "kept-product",
+      description: "Nombre editado",
       quantity: 7,
       unitPrice: 8_000,
       discountAmount: 1_500,
@@ -66,6 +71,7 @@ test("builds the complete replacement from only the lines that remain in the rec
     },
     {
       productId: "new-product",
+      description: "Producto nuevo",
       quantity: 2,
       unitPrice: 4_500,
       discountAmount: 0,
@@ -80,6 +86,7 @@ test("preserves the exact public total instead of producing a negative cent disc
   const lines = buildPosOrderUpdateLines([
     {
       productId: { value: "taxed-product" },
+      description: "Producto redondeado",
       quantity: 3,
       unitPrice: 3_361.34,
       discount: 0,
@@ -93,6 +100,7 @@ test("preserves the exact public total instead of producing a negative cent disc
 
   assert.deepEqual(lines, [{
     productId: "taxed-product",
+    description: "Producto redondeado",
     quantity: 3,
     unitPrice: 4_000,
     discountAmount: 0,

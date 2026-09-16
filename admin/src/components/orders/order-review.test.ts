@@ -69,6 +69,7 @@ test("complete editing renders the order snapshot before the catalog refresh fin
     manageStock: true,
     priceSource: "Captured",
     reservedQuantity: 4,
+    documentUnitCost: 2_750,
   }]);
 
   assert.deepEqual(state.quantities, { "product-1": 12 });
@@ -81,5 +82,6 @@ test("complete editing renders the order snapshot before the catalog refresh fin
     priceSource: "Captured",
     quantityOnHand: 7,
     manageStock: true,
+    documentUnitCost: 2_750,
   });
 });

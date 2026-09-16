@@ -124,7 +124,7 @@ import {
   type PosApprovalRequest,
 } from "@/services/pos/pos-approval-client";
 import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-approval-permission";
-import { calculateRetailUnitPrice } from "./pos-retail-price";
+import { calculateEffectiveRetailUnitPrice } from "./pos-retail-price";
 import {
   canRequestOrderSave,
   removingLastRecoveredOrderLineCancelsOrder,
@@ -148,6 +148,13 @@ const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
   maximumFractionDigits: 0,
+});
+
+const effectiveUnitMoney = new Intl.NumberFormat("es-CO", {
+  style: "currency",
+  currency: "COP",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 6,
 });
 
 let rejectedScanAudioContext: AudioContext | null = null;
@@ -2642,6 +2649,7 @@ export default function PosPage() {
         printAfterInvoice,
         idempotencyKey,
         onProgress,
+        true,
       );
     });
     setMessage(
@@ -3335,10 +3343,9 @@ export default function PosPage() {
                         />
                       </td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-700">
-                        {money.format(calculateRetailUnitPrice(
-                          line.publicUnitPrice ?? line.unitPrice,
-                          line.taxRate,
-                          client.mode === "online" && line.publicUnitPrice == null,
+                        {effectiveUnitMoney.format(calculateEffectiveRetailUnitPrice(
+                          line.total,
+                          line.quantity,
                         ))}
                       </td>
                       <td className="px-3 py-3 text-right text-base font-bold tabular-nums text-slate-950">

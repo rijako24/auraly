@@ -488,6 +488,9 @@ public sealed class ArchitectureDebtRatchetTests
         var batch = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Modules", "Orders", "Auraly.Application.Orders",
             "OrderBatchService.cs"));
+        var directOrderCheckout = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.OrderCheckout.cs"));
 
         Assert.DoesNotContain("ReleaseOrderInventoryAsync", checkout, StringComparison.Ordinal);
         Assert.DoesNotContain("PrepareSourceOrderInventoryAsync", batch, StringComparison.Ordinal);
@@ -496,8 +499,14 @@ public sealed class ArchitectureDebtRatchetTests
         Assert.Contains("inventoryWarehouseId", handler, StringComparison.Ordinal);
         Assert.Contains("InventoryConsumedByInvoice", handler, StringComparison.Ordinal);
         Assert.Contains("OnlineSalesCheckoutService checkout", batch, StringComparison.Ordinal);
-        Assert.Contains("checkout.CompleteKnownDraftAsync", batch, StringComparison.Ordinal);
-        Assert.Contains("currentDraft = issued.NextDraft", batch, StringComparison.Ordinal);
+        Assert.Contains("checkout.CompleteOrderAsync", batch, StringComparison.Ordinal);
+        Assert.Contains("OnlineSalesOrderCheckoutSource", batch, StringComparison.Ordinal);
+        Assert.DoesNotContain("OnlineSalesDraftService", batch, StringComparison.Ordinal);
+        Assert.DoesNotContain("OrderRecoveryService", batch, StringComparison.Ordinal);
+        Assert.DoesNotContain("CompleteKnownDraftAsync", batch, StringComparison.Ordinal);
+        Assert.DoesNotContain("dbo.SalesDrafts", directOrderCheckout, StringComparison.Ordinal);
+        Assert.DoesNotContain("dbo.SalesDraftLines", directOrderCheckout, StringComparison.Ordinal);
+        Assert.Contains("SourceOrderId", directOrderCheckout, StringComparison.Ordinal);
         Assert.Contains("ProgressCheckpointSize", batch, StringComparison.Ordinal);
         Assert.DoesNotContain("IConfirmedDocumentHandler", batch, StringComparison.Ordinal);
         Assert.DoesNotContain("SellerOrderInvoiceInventoryService", ordersApi, StringComparison.Ordinal);
@@ -597,6 +606,9 @@ public sealed class ArchitectureDebtRatchetTests
         var batch = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Modules", "Orders", "Auraly.Application.Orders",
             "OrderBatchService.cs"));
+        var directOrderCheckout = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.OrderCheckout.cs"));
 
         Assert.Contains("_fiscalMaterialByReference", service, StringComparison.Ordinal);
         Assert.Contains("_fiscalKeyContextByBusiness", service, StringComparison.Ordinal);

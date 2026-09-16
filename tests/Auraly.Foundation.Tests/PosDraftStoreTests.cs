@@ -119,7 +119,15 @@ public sealed class PosDraftStoreTests
             var sellerId = Guid.NewGuid();
             var active = await store.AddOrIncrementLineAsync(
                 scope,
-                Line(quantity: 2m) with { Discount = 500m });
+                Line(quantity: 2m) with
+                {
+                    Discount = 500m,
+                    DocumentUnitCost = 4_000m,
+                    AllowsDocumentCostOverride = true
+                });
+            active = await store.UpdateLinesAsync(
+                active.DraftId,
+                [new(active.Lines.Single().LineId, "Nombre editado antes de pausar", 10_000m, 750m, 4_500m)]);
             var customerPartySiteId = Guid.NewGuid();
             await store.AssignPartiesAsync(
                 active.DraftId, customerId, sellerId, customerPartySiteId);
@@ -142,8 +150,12 @@ public sealed class PosDraftStoreTests
             Assert.Equal(customerId, recovered.CustomerId);
             Assert.Equal(customerPartySiteId, recovered.CustomerPartySiteId);
             Assert.Equal(sellerId, recovered.SellerId);
-            Assert.Equal(500m, recovered.Lines.Single().Discount);
-            Assert.Equal(19_500m, recovered.PayableAmount);
+            var recoveredLine = recovered.Lines.Single();
+            Assert.Equal("Nombre editado antes de pausar", recoveredLine.Description);
+            Assert.Equal(4_500m, recoveredLine.DocumentUnitCost);
+            Assert.Equal(10_000m, recoveredLine.UnitPrice);
+            Assert.Equal(750m, recoveredLine.Discount);
+            Assert.Equal(19_250m, recovered.PayableAmount);
 
             await Assert.ThrowsAsync<InvalidOperationException>(
                 () => reopened.RecoverTemporaryAsync(temporary.DraftId, scope));

@@ -54,6 +54,7 @@ export type CommerceOrderLine = {
   manageStock: boolean;
   priceSource: string;
   reservedQuantity: number;
+  documentUnitCost: number;
 };
 
 export type CommerceOrderDetail = CommerceOrderListItem & {

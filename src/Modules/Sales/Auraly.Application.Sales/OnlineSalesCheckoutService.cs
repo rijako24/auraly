@@ -12,6 +12,69 @@ public sealed record PreparedOnlineSalesCheckout(
     OnlineSalesDraft NextDraft,
     bool IsReplay);
 
+public sealed record PreparedOnlineOrderCheckout(
+    PosSaleUploadRequest Request,
+    bool IsReplay);
+
+public sealed record OnlineSalesOrderCheckoutLine(
+    Guid LineId,
+    Guid ProductId,
+    string ProductCode,
+    string Description,
+    string UnitCode,
+    string TaxCode,
+    decimal TaxRate,
+    decimal Quantity,
+    decimal PublicUnitPrice,
+    decimal DiscountAmount,
+    decimal PublicLineTotal,
+    decimal DocumentUnitCost,
+    string CurrencyCode,
+    string PriceSource);
+
+public sealed record OnlineSalesOrderCheckoutSource(
+    Guid OperationId,
+    Guid OrderId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    Guid WorkSessionId,
+    Guid? CustomerId,
+    Guid? CustomerPartySiteId,
+    byte[] SnapshotVersion,
+    IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines);
+
+public static class OnlineSalesOrderCheckoutLineMapper
+{
+    public static OnlineSalesDraftLine[] Normalize(
+        IReadOnlyList<OnlineSalesOrderCheckoutLine> source) =>
+        source.Select(line =>
+        {
+            var unitPrice = decimal.Round(
+                line.PublicUnitPrice / (1m + line.TaxRate / 100m),
+                6, MidpointRounding.AwayFromZero);
+            var net = decimal.Round(
+                line.PublicLineTotal / (1m + line.TaxRate / 100m),
+                2, MidpointRounding.ToEven);
+            if (decimal.Round(line.Quantity * unitPrice, 2, MidpointRounding.ToEven) < net)
+                unitPrice = decimal.Ceiling(net / line.Quantity * 100m) / 100m;
+            var promotion = string.Equals(
+                line.PriceSource, "Promotion", StringComparison.OrdinalIgnoreCase);
+            return new OnlineSalesDraftLine(
+                line.LineId, line.ProductId, line.ProductCode, line.Description,
+                line.UnitCode, line.TaxCode, line.TaxRate, line.Quantity,
+                unitPrice, unitPrice, line.CurrencyCode, line.PriceSource,
+                promotion ? 0m : line.DiscountAmount,
+                line.DocumentUnitCost, false, true,
+                net, line.PublicLineTotal - net, line.PublicLineTotal,
+                promotion ? line.DiscountAmount : 0m,
+                line.PublicUnitPrice, line.PublicLineTotal);
+        }).ToArray();
+}
+
+public sealed record CompleteOnlineOrderSaleResponse(
+    OnlineSalesReceipt Receipt,
+    bool IsReplay);
+
 public sealed record OnlineSaleSettlementContext(
     Guid BusinessId,
     Guid? CustomerId,
@@ -74,9 +137,31 @@ public interface IOnlineSalesCheckoutStore
         PreparedOnlineSaleSettlement settlement,
         CancellationToken cancellationToken);
 
+    Task<OnlineSalesFiscalKeyContext> ResolveOrderFiscalKeyContextAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesOrderCheckoutSource source,
+        bool fiscalHabilitationOnly,
+        CancellationToken cancellationToken);
+
+    Task<PreparedOnlineOrderCheckout> PrepareOrderAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesOrderCheckoutSource source,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        FiscalVerificationMaterial? fiscalMaterial,
+        PreparedOnlineSaleSettlement settlement,
+        CancellationToken cancellationToken);
+
     Task MarkResultAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
+        Guid documentId,
+        string status,
+        CancellationToken cancellationToken);
+
+    Task MarkOrderResultAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesOrderCheckoutSource source,
         Guid documentId,
         string status,
         CancellationToken cancellationToken);
@@ -86,7 +171,8 @@ public sealed class OnlineSalesCheckoutService(
     IOnlineSalesCheckoutStore checkouts,
     IFiscalTechnicalKeyProvider technicalKeys,
     ReceivePosSaleService receiver,
-    IOnlineSaleWithholdingCalculator withholdings)
+    IOnlineSaleWithholdingCalculator withholdings,
+    TimeProvider time)
 {
     // The service is request-scoped. A batch can issue several documents with
     // the same authorization, so resolve protected key material once per key
@@ -178,6 +264,72 @@ public sealed class OnlineSalesCheckoutService(
             idempotencyKey,
             new PreparedOnlineSaleSettlement(context, withholding),
             cancellationToken);
+    }
+
+    public async Task<CompleteOnlineOrderSaleResponse> CompleteOrderAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesOrderCheckoutSource source,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ArgumentNullException.ThrowIfNull(source);
+        ValidateOrderSource(source, request, idempotencyKey);
+        var lines = OnlineSalesOrderCheckoutLineMapper.Normalize(source.Lines);
+        var context = new OnlineSaleSettlementContext(
+            source.BusinessId,
+            source.CustomerId,
+            lines.Sum(line => line.Net),
+            lines.Sum(line => line.Tax),
+            time.GetUtcNow(),
+            lines.Any(line => SaleBelowCostPolicy.IsBelowCost(
+                line.Quantity, line.Net, line.DocumentUnitCost)));
+        var withholding = await withholdings.CalculateAsync(
+            user.TenantId, context, cancellationToken);
+        var settlement = new PreparedOnlineSaleSettlement(context, withholding);
+        if (context.HasBelowCostLine &&
+            !user.Permissions.Contains(CommercePermissionCodes.SalesBelowCost))
+            throw new OnlineSalesDraftForbiddenException(
+                $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
+
+        FiscalVerificationMaterial? material = null;
+        if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
+        {
+            var cacheKey = (source.BusinessId, request.FiscalHabilitationOnly);
+            if (!_fiscalKeyContextByBusiness.TryGetValue(cacheKey, out var keyContext))
+            {
+                keyContext = await checkouts.ResolveOrderFiscalKeyContextAsync(
+                    user, source, request.FiscalHabilitationOnly, cancellationToken);
+                _fiscalKeyContextByBusiness.Add(cacheKey, keyContext);
+            }
+            material = await ResolveFiscalMaterialAsync(
+                keyContext.Reference, cancellationToken)
+                ?? throw new OnlineSalesDraftValidationException(
+                    "La clave técnica de la resolución fiscal activa no está disponible.");
+        }
+
+        var prepared = await checkouts.PrepareOrderAsync(
+            user, source, request, idempotencyKey.Trim(), material,
+            settlement, cancellationToken);
+        var reception = await receiver.ReceivePreparedOnlineAsync(
+            user,
+            $"online:{prepared.Request.DocumentId:N}",
+            prepared.Request,
+            prepared.IsReplay,
+            cancellationToken);
+        var status = reception.Status == PosSaleRemoteStatuses.FiscalIntegrityConflict
+            ? "FiscalConflict"
+            : "Completed";
+        await checkouts.MarkOrderResultAsync(
+            user, source, prepared.Request.DocumentId, status, cancellationToken);
+        if (status == "FiscalConflict")
+            throw new OnlineSalesDraftValidationException(
+                "La factura no superó la validación fiscal interna y no fue enviada a la DIAN. " +
+                "Consulta el documento fiscal antes de volver a facturar el pedido.");
+        return new(
+            OnlineSalesReceiptMapper.From(prepared.Request, reception.Status),
+            prepared.IsReplay || reception.IsDuplicate);
     }
 
     private async Task<CompleteOnlineSalesDraftResponse> CompletePreparedAsync(
@@ -330,4 +482,25 @@ public sealed class OnlineSalesCheckoutService(
                 "El valor del crédito no es válido.");
 
     }
+
+    private static void ValidateOrderSource(
+        OnlineSalesOrderCheckoutSource source,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey)
+    {
+        Validate(source.OrderId, request, idempotencyKey);
+        if (source.OperationId == Guid.Empty || source.OrderId == Guid.Empty ||
+            source.BusinessId == Guid.Empty || source.WarehouseId == Guid.Empty ||
+            source.WorkSessionId == Guid.Empty || source.SnapshotVersion.Length == 0 ||
+            source.Lines.Count is < 1 or > 500 ||
+            source.Lines.Any(line => line.LineId == Guid.Empty ||
+                line.ProductId == Guid.Empty || line.Quantity <= 0 ||
+                line.PublicUnitPrice < 0 || line.DiscountAmount < 0 ||
+                line.PublicLineTotal < 0 || line.DocumentUnitCost < 0 ||
+                line.TaxRate is < 0 or > 100) ||
+            string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 100)
+            throw new OnlineSalesDraftValidationException(
+                "El pedido no contiene datos comerciales válidos para facturar.");
+    }
+
 }
