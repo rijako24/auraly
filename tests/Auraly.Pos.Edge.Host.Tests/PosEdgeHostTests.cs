@@ -7,7 +7,6 @@ using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
-using Auraly.Contracts.Orders;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
@@ -461,96 +460,20 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Restarting_a_recovered_order_cancels_it_on_the_server_before_deleting_the_local_sale()
+    public async Task Edge_does_not_expose_order_business_endpoints()
     {
-        var orderId = Guid.NewGuid();
-        var productId = await LocalProductIdAsync();
-        var handler = new RecoveredOrderHandler(orderId, productId, cancelSucceeds: true);
-        using var factory = _factory!.WithWebHostBuilder(webHost =>
-            webHost.ConfigureServices(services =>
-            {
-                services.RemoveAll<HttpClient>();
-                services.AddSingleton(new HttpClient(handler)
-                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
-            }));
-        using var client = AuthenticatedClient(factory);
+        using var page = await Client.GetAsync("/edge/v1/orders");
+        using var recover = await Client.PostAsync(
+            $"/edge/v1/orders/{Guid.NewGuid():D}/recover", null);
+        using var save = await Client.PostAsJsonAsync(
+            "/edge/v1/orders/save", new { draftId = Guid.NewGuid() });
+        using var invoice = await Client.PostAsJsonAsync(
+            "/edge/v1/orders/invoice", new { orderIds = Array.Empty<Guid>() });
 
-        var recoveryTimer = Stopwatch.StartNew();
-        using var recover = await client.PostAsync($"/edge/v1/orders/{orderId:D}/recover", null);
-        recoveryTimer.Stop();
-        recover.EnsureSuccessStatusCode();
-        Assert.True(
-            recoveryTimer.Elapsed < TimeSpan.FromSeconds(1),
-            $"Recovery took {recoveryTimer.Elapsed}.");
-        var recovered = Assert.IsType<PosDraft>(await recover.Content.ReadFromJsonAsync<PosDraft>());
-        Assert.Equal(orderId, recovered.SourceOrderId);
-
-        using var restarted = await client.DeleteAsync($"/edge/v1/drafts/{recovered.DraftId.Value:D}");
-        restarted.EnsureSuccessStatusCode();
-
-        Assert.Equal(1, handler.CancelCalls);
-        Assert.Equal(PosDraftStatus.Deleted, await DraftStatusAsync(recovered.DraftId.Value));
-    }
-
-    [Fact]
-    public async Task Another_order_can_be_recovered_immediately_after_restarting_the_previous_one()
-    {
-        var firstOrderId = Guid.NewGuid();
-        var secondOrderId = Guid.NewGuid();
-        var productId = await LocalProductIdAsync();
-        var handler = new RecoveredOrderHandler(
-            firstOrderId, productId, cancelSucceeds: true, secondOrderId);
-        using var factory = _factory!.WithWebHostBuilder(webHost =>
-            webHost.ConfigureServices(services =>
-            {
-                services.RemoveAll<HttpClient>();
-                services.AddSingleton(new HttpClient(handler)
-                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
-            }));
-        using var client = AuthenticatedClient(factory);
-
-        using var firstRecovery = await client.PostAsync(
-            $"/edge/v1/orders/{firstOrderId:D}/recover", null);
-        firstRecovery.EnsureSuccessStatusCode();
-        var firstDraft = Assert.IsType<PosDraft>(
-            await firstRecovery.Content.ReadFromJsonAsync<PosDraft>());
-        using var restart = await client.DeleteAsync(
-            $"/edge/v1/drafts/{firstDraft.DraftId.Value:D}");
-        restart.EnsureSuccessStatusCode();
-
-        using var secondRecovery = await client.PostAsync(
-            $"/edge/v1/orders/{secondOrderId:D}/recover", null);
-        secondRecovery.EnsureSuccessStatusCode();
-        var secondDraft = Assert.IsType<PosDraft>(
-            await secondRecovery.Content.ReadFromJsonAsync<PosDraft>());
-
-        Assert.Equal(secondOrderId, secondDraft.SourceOrderId);
-        Assert.Single(secondDraft.Lines);
-    }
-
-    [Fact]
-    public async Task Failed_server_cancellation_keeps_the_recovered_local_sale_intact()
-    {
-        var orderId = Guid.NewGuid();
-        var productId = await LocalProductIdAsync();
-        var handler = new RecoveredOrderHandler(orderId, productId, cancelSucceeds: false);
-        using var factory = _factory!.WithWebHostBuilder(webHost =>
-            webHost.ConfigureServices(services =>
-            {
-                services.RemoveAll<HttpClient>();
-                services.AddSingleton(new HttpClient(handler)
-                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
-            }));
-        using var client = AuthenticatedClient(factory);
-
-        using var recover = await client.PostAsync($"/edge/v1/orders/{orderId:D}/recover", null);
-        recover.EnsureSuccessStatusCode();
-        var recovered = Assert.IsType<PosDraft>(await recover.Content.ReadFromJsonAsync<PosDraft>());
-
-        using var restarted = await client.DeleteAsync($"/edge/v1/drafts/{recovered.DraftId.Value:D}");
-        Assert.False(restarted.IsSuccessStatusCode);
-        Assert.Equal(1, handler.CancelCalls);
-        Assert.Equal(PosDraftStatus.Active, await DraftStatusAsync(recovered.DraftId.Value));
+        Assert.Equal(HttpStatusCode.NotFound, page.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, recover.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, save.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, invoice.StatusCode);
     }
 
     [Fact]
@@ -666,17 +589,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Saving_a_new_order_uses_the_device_server_route_and_clears_the_local_draft_once()
+    public async Task Online_order_commit_can_clear_only_the_owned_local_draft()
     {
-        var handler = new SaveOrderHandler();
-        using var factory = _factory!.WithWebHostBuilder(webHost =>
-            webHost.ConfigureServices(services =>
-            {
-                services.RemoveAll<HttpClient>();
-                services.AddSingleton(new HttpClient(handler)
-                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
-            }));
-        using var client = AuthenticatedClient(factory);
+        using var client = AuthenticatedClient(_factory!);
         var capture = await client.PostAsJsonAsync(
             "/edge/v1/capture",
             new CaptureRequest("770123", null));
@@ -684,89 +599,17 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
         Assert.Single(captured!.Draft!.Lines);
 
-        var drafts = factory.Services.GetRequiredService<PosDraftStore>();
-        var customerSiteId = Guid.NewGuid();
-        var withCustomer = await drafts.AssignPartiesAsync(
-            captured.Draft.DraftId, Guid.NewGuid(), null, customerSiteId);
-        var timer = Stopwatch.StartNew();
-        var completed = await client.PostAsJsonAsync(
-            "/edge/v1/orders/save",
-            new SavePosOrderRequest(withCustomer.DraftId.Value));
-        timer.Stop();
+        var completed = await client.PostAsync(
+            $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/clear-after-online-commit",
+            null);
 
         completed.EnsureSuccessStatusCode();
-        var saved = await completed.Content.ReadFromJsonAsync<SaveOrderEnvelope>();
-        Assert.NotNull(saved);
-        Assert.Empty(saved!.NextDraft.Lines);
-        Assert.NotEqual(captured.Draft.DraftId, saved.NextDraft.DraftId);
-        Assert.Equal(1, handler.Calls);
-        Assert.Equal("/api/pos/v1/orders/save", handler.Path);
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(1), $"Save took {timer.Elapsed}.");
-    }
-
-    [Fact]
-    public async Task Failed_server_order_save_keeps_the_complete_local_draft_for_retry()
-    {
-        var handler = new SaveOrderHandler(fail: true);
-        using var factory = _factory!.WithWebHostBuilder(webHost =>
-            webHost.ConfigureServices(services =>
-            {
-                services.RemoveAll<HttpClient>();
-                services.AddSingleton(new HttpClient(handler)
-                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
-            }));
-        using var client = AuthenticatedClient(factory);
-        using var capture = await client.PostAsJsonAsync(
-            "/edge/v1/capture",
-            new CaptureRequest("770123", null));
-        capture.EnsureSuccessStatusCode();
-        var captured = Assert.IsType<PosCaptureResult>(
-            await capture.Content.ReadFromJsonAsync<PosCaptureResult>());
-        var drafts = factory.Services.GetRequiredService<PosDraftStore>();
-        var withCustomer = await drafts.AssignPartiesAsync(
-            captured.Draft!.DraftId, Guid.NewGuid(), null, Guid.NewGuid());
-
-        using var failed = await client.PostAsJsonAsync(
-            "/edge/v1/orders/save",
-            new SavePosOrderRequest(withCustomer.DraftId.Value));
-
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
-        var preserved = await drafts.GetAsync(withCustomer.DraftId);
-        Assert.NotNull(preserved);
-        Assert.Single(preserved.Lines);
-        Assert.Equal(PosDraftStatus.Active, preserved.Status);
-        Assert.Equal(1, handler.Calls);
-    }
-
-    [Fact]
-    public async Task Saving_a_recovered_order_only_clears_the_local_draft_after_the_cloud_update()
-    {
-        var orderId = Guid.NewGuid();
-        var productId = await LocalProductIdAsync();
-        var handler = new RecoveredOrderHandler(orderId, productId, cancelSucceeds: true);
-        using var factory = _factory!.WithWebHostBuilder(webHost =>
-            webHost.ConfigureServices(services =>
-            {
-                services.RemoveAll<HttpClient>();
-                services.AddSingleton(new HttpClient(handler)
-                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
-            }));
-        using var client = AuthenticatedClient(factory);
-
-        using var recover = await client.PostAsync($"/edge/v1/orders/{orderId:D}/recover", null);
-        recover.EnsureSuccessStatusCode();
-        var recovered = Assert.IsType<PosDraft>(await recover.Content.ReadFromJsonAsync<PosDraft>());
-
-        var drafts = factory.Services.GetRequiredService<PosDraftStore>();
-        await drafts.AssignPartiesAsync(
-            recovered.DraftId, Guid.NewGuid(), null, Guid.NewGuid());
-        using var completed = await client.PostAsJsonAsync(
-            "/edge/v1/orders/save",
-            new SavePosOrderRequest(recovered.DraftId.Value));
-
-        completed.EnsureSuccessStatusCode();
-        Assert.Equal(0, handler.ReleaseCalls);
-        Assert.Equal(PosDraftStatus.Deleted, await DraftStatusAsync(recovered.DraftId.Value));
+        var next = Assert.IsType<PosDraft>(
+            await completed.Content.ReadFromJsonAsync<PosDraft>());
+        Assert.Empty(next.Lines);
+        Assert.NotEqual(captured.Draft.DraftId, next.DraftId);
+        Assert.Equal(PosDraftStatus.Deleted,
+            await DraftStatusAsync(captured.Draft.DraftId.Value));
     }
 
     [Fact]
@@ -1692,17 +1535,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         return client;
     }
 
-    private async Task<Guid> LocalProductIdAsync()
-    {
-        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
-            $"Data Source={_path}");
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT ProductId FROM PosCatalogProducts WHERE ProductCode='P-1';";
-        return Guid.Parse((string)(await command.ExecuteScalarAsync()
-            ?? throw new InvalidOperationException("The local test product does not exist.")));
-    }
-
     private async Task<string> DraftStatusAsync(Guid draftId)
     {
         await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
@@ -1788,93 +1620,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             CancellationToken cancellationToken) =>
             Task.FromException<HttpResponseMessage>(
                 new HttpRequestException("Auraly Server is offline."));
-    }
-
-    private sealed class SaveOrderHandler(bool fail = false) : HttpMessageHandler
-    {
-        public int Calls { get; private set; }
-        public string? Path { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            var path = request.RequestUri!.AbsolutePath;
-            if (!path.EndsWith("/orders/save", StringComparison.Ordinal))
-                return Task.FromResult(Json(HttpStatusCode.NotFound, new { detail = "Not part of this test." }));
-            Calls++;
-            Path = path;
-            if (fail)
-                return Task.FromResult(Json(
-                    HttpStatusCode.ServiceUnavailable,
-                    new { detail = "Auraly Server no pudo guardar el pedido." }));
-            return Task.FromResult(Json(HttpStatusCode.OK, new PosSaveOrderResponse(
-                Guid.NewGuid(), "PED-LOCAL-1", "Confirmed", 100m, false, [])));
-        }
-
-        private static HttpResponseMessage Json<T>(HttpStatusCode status, T body) => new(status)
-        {
-            Content = JsonContent.Create(body)
-        };
-    }
-
-    private sealed record SaveOrderEnvelope(PosSaveOrderResponse Order, PosDraft NextDraft);
-
-    private sealed class RecoveredOrderHandler(
-        Guid orderId,
-        Guid productId,
-        bool cancelSucceeds,
-        Guid? additionalOrderId = null) : HttpMessageHandler
-    {
-        public int CancelCalls { get; private set; }
-        public int ReleaseCalls { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            var path = request.RequestUri!.AbsolutePath;
-            var recoveredOrderId = path.EndsWith(
-                    $"/orders/{orderId:D}/prepare-recovery", StringComparison.Ordinal)
-                ? orderId
-                : additionalOrderId is Guid candidate && path.EndsWith(
-                    $"/orders/{candidate:D}/prepare-recovery", StringComparison.Ordinal)
-                    ? candidate
-                    : (Guid?)null;
-            if (request.Method == HttpMethod.Post && recoveredOrderId.HasValue)
-                return Task.FromResult(Json(HttpStatusCode.OK, new OrderDetail(
-                    recoveredOrderId.Value, Guid.NewGuid(), "PED-EDGE-1", "Available", 1,
-                    null, "Cliente local", null, null, null, null, null, "COP",
-                    100m, 0m, 100m, null, null, DateTimeOffset.UtcNow, true, null, null,
-                    [new OrderLine(Guid.NewGuid(), productId, "P-1", "P-1", "Product",
-                        "EA", 1m, 100m, 0m, 100m)], Guid.NewGuid())));
-            if (request.Method == HttpMethod.Post && path.EndsWith("/orders/save", StringComparison.Ordinal))
-                return Task.FromResult(Json(HttpStatusCode.OK, new PosSaveOrderResponse(
-                    orderId, "PED-EDGE-1", "Confirmed", 100m, false, [])));
-            if (request.Method == HttpMethod.Post &&
-                path.EndsWith($"/orders/{orderId:D}/cancel", StringComparison.Ordinal))
-            {
-                CancelCalls++;
-                return Task.FromResult(cancelSucceeds
-                    ? Json(HttpStatusCode.OK,
-                        new CancelOrderResponse(orderId, "PED-EDGE-1", "Cancelled", false))
-                    : Json(HttpStatusCode.ServiceUnavailable,
-                        new { detail = "No fue posible cancelar el pedido." }));
-            }
-            if (request.Method == HttpMethod.Post &&
-                path.EndsWith($"/orders/{orderId:D}/claim/release", StringComparison.Ordinal))
-            {
-                ReleaseCalls++;
-                return Task.FromResult(Json(HttpStatusCode.OK, new { released = true }));
-            }
-            return Task.FromResult(Json(HttpStatusCode.NotFound,
-                new { detail = $"Unexpected test request: {request.Method} {path}" }));
-        }
-
-        private static HttpResponseMessage Json<T>(HttpStatusCode status, T body) => new(status)
-        {
-            Content = JsonContent.Create(body)
-        };
     }
 
     private sealed class EnrollmentConflictHandler : HttpMessageHandler

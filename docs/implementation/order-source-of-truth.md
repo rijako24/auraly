@@ -127,12 +127,18 @@ validación o pendiente de reintento.
 
 - `GET /api/commerce/v1/orders`
 - `GET /api/commerce/v1/orders/{orderId}`
-- `POST /api/pos/v1/orders/{orderId}/claim`
-- `DELETE /api/pos/v1/orders/{orderId}/claim`
-- `POST /api/pos/v1/orders/{orderId}/recover`
-- `POST /api/commerce/v1/orders/invoice-batches`
-- `GET /api/commerce/v1/orders/invoice-batches/{operationId}`
+- `POST /api/commerce/v1/orders/{orderId}/claim`
+- `POST /api/commerce/v1/orders/{orderId}/claim/release`
+- `POST /api/commerce/v1/orders/{orderId}/recover`
+- `POST /api/commerce/v1/orders/invoice`
+- `POST /api/commerce/v1/orders/print-batch`
 - `POST /api/commerce/v1/orders/{orderId}/cancel`
+
+Los pedidos son siempre un recurso en linea. POS instalado y POS web consumen
+estos mismos contratos de Commerce; Edge no expone ni replica endpoints de
+pedidos. La unica diferencia instalada es la salida fisica de impresion, que
+reutiliza el transporte local despues de obtener el documento autoritativo de
+la API. En web, el mismo documento se presenta en el modal de impresion.
 
 Permisos:
 

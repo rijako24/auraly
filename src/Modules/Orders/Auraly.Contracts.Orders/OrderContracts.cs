@@ -148,31 +148,3 @@ public sealed record CancelOrderResponse(
     string OrderNumber,
     string Status,
     bool IsReplay);
-
-public sealed record PosSaveOrderLine(
-    Guid ProductId,
-    decimal Quantity,
-    decimal UnitPrice,
-    decimal DiscountAmount,
-    string PriceSource,
-    decimal? DocumentUnitCost = null);
-
-public sealed record PosSaveOrderRequest(
-    Guid UserId,
-    Guid BusinessId,
-    Guid WarehouseId,
-    Guid WorkSessionId,
-    Guid CustomerId,
-    Guid PartySiteId,
-    Guid? OrderId,
-    string? Notes,
-    string IdempotencyKey,
-    IReadOnlyCollection<PosSaveOrderLine> Lines);
-
-public sealed record PosSaveOrderResponse(
-    Guid OrderId,
-    string OrderNumber,
-    string Status,
-    decimal Total,
-    bool RequiresReview,
-    IReadOnlyList<string> Warnings);

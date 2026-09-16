@@ -426,7 +426,6 @@ builder.Services.AddScoped<IPosOfflineIdentityStore, SqlPosOfflineIdentityStore>
 builder.Services.AddScoped<PosOfflineIdentityService>();
 builder.Services.AddScoped<IOrderStore, SqlOrderStore>();
 builder.Services.AddScoped<IOrderCancellationStore, SqlOnlineSalesDraftStore>();
-builder.Services.AddScoped<IPosOrderActorResolver, SqlPosOrderActorResolver>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<OrderCancellationService>();
 builder.Services.AddScoped<OrderRecoveryService>();
@@ -689,7 +688,6 @@ app.MapFiscalApi();
 app.MapFiscalConfigurationApi();
 app.MapOrdersApi();
 app.MapSellerOrdersApi();
-app.MapPosOrdersApi();
 app.MapPurchasingApi();
 app.MapReceivablesApi();
 app.MapPayablesApi();

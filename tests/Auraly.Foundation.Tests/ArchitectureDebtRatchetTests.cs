@@ -247,12 +247,11 @@ public sealed class ArchitectureDebtRatchetTests
     {
         var sellerApi = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "API", "Auraly.Api", "SellerOrdersApi.cs"));
-        var posContracts = File.ReadAllText(Path.Combine(
-            RepositoryRoot, "src", "Modules", "Orders", "Auraly.Contracts.Orders",
-            "OrderContracts.cs"));
-        var edgeClient = File.ReadAllText(Path.Combine(
-            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host",
-            "PosOrderServerClient.cs"));
+        var posSave = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "admin", "src", "services", "orders",
+            "save-pos-order.ts"));
+        var edgeProgram = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "Program.cs"));
         var contextSql = File.ReadAllText(Path.Combine(
             RepositoryRoot, "database", "Auraly.Database", "StoredProcedures",
             "SellerOrderContextGet.sql"));
@@ -263,11 +262,40 @@ public sealed class ArchitectureDebtRatchetTests
         Assert.Contains(
             "UpdateSellerOrderRequest(Guid CustomerId, Guid PartySiteId",
             sellerApi, StringComparison.Ordinal);
-        Assert.Contains("Guid PartySiteId,", posContracts, StringComparison.Ordinal);
-        Assert.Contains("draft.CustomerPartySiteId is not Guid partySiteId", edgeClient,
+        Assert.Contains("if (!draft.customerPartySiteId)", posSave,
             StringComparison.Ordinal);
+        Assert.DoesNotContain("MapPosOrders", edgeProgram, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "PosOrderEndpoints.cs")));
+        Assert.False(File.Exists(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "PosOrderServerClient.cs")));
         Assert.Contains("site.PartySiteId=@SiteId", contextSql, StringComparison.Ordinal);
         Assert.DoesNotContain("@SiteId IS NULL", contextSql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Orders_are_owned_by_the_web_api_and_edge_is_only_a_print_transport()
+    {
+        var page = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
+        var edgeClient = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "admin", "src", "services", "pos", "pos-edge-client.ts"));
+        var onlineClient = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "admin", "src", "services", "pos", "online-pos-client.ts"));
+        var edgeProgram = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "Program.cs"));
+
+        Assert.Contains("getWebOrderClient", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("client.recoverOrder(", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("client.saveOrder(", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("/edge/v1/orders", edgeClient, StringComparison.Ordinal);
+        Assert.DoesNotContain("MapPosOrders", edgeProgram, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(
+            RepositoryRoot, "src", "API", "Auraly.Api", "PosOrdersApi.cs")));
+        Assert.Contains("loadCommerceOrderPrintBatch(orderIds)", onlineClient,
+            StringComparison.Ordinal);
+        Assert.Contains("for (const receipt of receipts)", onlineClient,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -361,19 +389,6 @@ public sealed class ArchitectureDebtRatchetTests
         Assert.Contains("ReadDraftsAsync(", temporaries, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach", temporaries, StringComparison.Ordinal);
 
-        var edgeRecovery = File.ReadAllText(Path.Combine(
-            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "PosOrderEndpoints.cs"));
-        var recoveryStart = edgeRecovery.IndexOf(
-            "public async Task<PosDraft> RecoverAsync(",
-            StringComparison.Ordinal);
-        var recoveryEnd = edgeRecovery.IndexOf(
-            "public static class PosOrderEndpoints",
-            recoveryStart,
-            StringComparison.Ordinal);
-        var recovery = edgeRecovery[recoveryStart..recoveryEnd];
-        Assert.Contains("GetByProductIdsAsync(", recovery, StringComparison.Ordinal);
-        Assert.DoesNotContain("GetByProductIdAsync(", recovery, StringComparison.Ordinal);
-
         var catalogStore = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Infrastructure", "PosCatalogStore.cs"));
         var catalogBatchStart = catalogStore.IndexOf(
@@ -411,16 +426,8 @@ public sealed class ArchitectureDebtRatchetTests
         Assert.Contains("json_each(@PricesJson)", reprice, StringComparison.Ordinal);
         Assert.Single(Regex.Matches(reprice, @"ExecuteAsync\s*\("));
 
-        var importStart = posDraftStore.IndexOf(
-            "public async Task<PosDraft> ImportOrderAsync(",
+        Assert.DoesNotContain("ImportOrderAsync(", posDraftStore,
             StringComparison.Ordinal);
-        var importEnd = posDraftStore.IndexOf(
-            "public async Task<PosDraft> GetOrCreateActiveAsync(",
-            importStart,
-            StringComparison.Ordinal);
-        var import = posDraftStore[importStart..importEnd];
-        Assert.Contains("json_each(@LinesJson)", import, StringComparison.Ordinal);
-        Assert.DoesNotContain("InsertLineAsync(", import, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -16,36 +16,6 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosSaleCompletionServiceTests
 {
     [Fact]
-    public async Task Recovered_order_is_preserved_in_the_durable_sale_upload()
-    {
-        await WithFixtureAsync(async fixture =>
-        {
-            var orderId = Guid.NewGuid();
-            var draft = await fixture.Drafts.ImportOrderAsync(
-                fixture.Scope,
-                orderId,
-                Guid.NewGuid(),
-                [new PosDraftLineInput(
-                    new ProductId(Guid.NewGuid()),
-                    "P-ORDER",
-                    "Producto pedido",
-                    "EA",
-                    "01",
-                    19m,
-                    1m,
-                    10_000m,
-                    10_000m,
-                    "COP",
-                    "BusinessDefault")]);
-
-            await fixture.CompleteAsync(draft.DraftId);
-
-            var outbox = Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
-            var upload = PosSaleContractSerializer.Deserialize(outbox.Payload);
-            Assert.Equal(orderId, upload.SourceOrderId);
-        });
-    }
-    [Fact]
     public async Task Successful_completion_clears_sale_before_printing_and_previews_the_next_number()
     {
         await WithFixtureAsync(async fixture =>

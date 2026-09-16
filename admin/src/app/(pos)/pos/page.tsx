@@ -212,6 +212,22 @@ function authorizationIsCurrent(authorization: PosSensitiveAuthorization | null)
   );
 }
 
+async function runOnlineOrderRequest<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (caught) {
+    if (
+      caught instanceof TypeError ||
+      (caught instanceof DOMException &&
+        (caught.name === "AbortError" || caught.name === "TimeoutError"))
+    )
+      throw new Error(
+        "No hay conexión con Auraly. Pedidos requiere conexión con el servidor; inténtalo nuevamente cuando vuelva la red.",
+      );
+    throw caught;
+  }
+}
+
 export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
   const captureInFlight = useRef(false);
@@ -239,10 +255,11 @@ export default function PosPage() {
     client: PosEdgeClient;
     health: Awaited<ReturnType<PosClient["health"]>>;
   } | null>(null);
-  const webOrderInvoiceClient = useRef<{
+  const webOrderClient = useRef<{
     key: string;
     client: OnlinePosClient;
   } | null>(null);
+  const edgeClientBeforeOnlineOrder = useRef<PosEdgeClient | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
   const [workspaceChanging, setWorkspaceChanging] = useState(false);
   const [onlineOptions, setOnlineOptions] = useState<SalesWorkspaceOption[]>([]);
@@ -514,6 +531,87 @@ export default function PosPage() {
     setError(text);
     setMessage("Revisa la novedad");
   }, [client?.mode]);
+
+  const getWebOrderClient = useCallback(async () => {
+    if (client instanceof OnlinePosClient) return client;
+    if (!cloudUser)
+      throw new Error("La sesión web de pedidos no está disponible.");
+    if (!workstation.businessId || !workstation.warehouseId)
+      throw new Error("Selecciona la sede y la bodega antes de trabajar con pedidos.");
+    const key = [
+      cloudUser.userId,
+      workstation.businessId,
+      workstation.warehouseId,
+      workstation.workSessionId ?? "no-session",
+      edgeEnrollmentToken ?? "browser",
+    ].join(":");
+    if (webOrderClient.current?.key === key)
+      return webOrderClient.current.client;
+    const context = await selectSalesWorkspace({
+      businessId: workstation.businessId,
+      businessName: workstation.businessName,
+      warehouseId: workstation.warehouseId,
+      warehouseCode: workstation.warehouseId,
+      warehouseName: workstation.warehouseName,
+      warehouseAllowsNegativeStockSales:
+        workstation.warehouseAllowsNegativeStockSales,
+      hasActiveEdgeEnrollment: Boolean(edgeEnrollmentToken),
+      fiscalReadyForOnlineSales: workstation.fiscalReady,
+      fiscalReadyForEnrollment: workstation.fiscalReady,
+      hasDianDocumentQuota: workstation.dianQuotaAvailable !== false,
+      fiscalWarningMessages: workstation.fiscalWarnings,
+    });
+    const online = new OnlinePosClient(
+      context,
+      cloudUser.userId,
+      `${cloudUser.firstName} ${cloudUser.lastName}`.trim() || cloudUser.username,
+      edgeEnrollmentToken,
+    );
+    webOrderClient.current = { key, client: online };
+    return online;
+  }, [
+    client,
+    cloudUser,
+    edgeEnrollmentToken,
+    workstation.businessId,
+    workstation.businessName,
+    workstation.dianQuotaAvailable,
+    workstation.fiscalReady,
+    workstation.fiscalWarnings,
+    workstation.warehouseAllowsNegativeStockSales,
+    workstation.warehouseId,
+    workstation.warehouseName,
+    workstation.workSessionId,
+  ]);
+
+  const recoverOrderOnline = useCallback(async (orderId: string) => {
+    const { orderClient, recovered } = await runOnlineOrderRequest(async () => {
+      const online = await getWebOrderClient();
+      return { orderClient: online, recovered: await online.recoverOrder(orderId) };
+    });
+    if (client instanceof PosEdgeClient)
+      edgeClientBeforeOnlineOrder.current = client;
+    if (client !== orderClient) setClient(orderClient);
+    return { orderClient, recovered };
+  }, [client, getWebOrderClient]);
+
+  const saveDraftAsOnlineOrder = useCallback(async (value: PosDraft) => {
+    return runOnlineOrderRequest(async () => {
+      const orderClient = await getWebOrderClient();
+      const edge = client instanceof PosEdgeClient ? client : null;
+      return orderClient.saveOrder(
+        value,
+        edge
+          ? () => edge.clearAfterOnlineCommit(value.draftId.value)
+          : undefined,
+      );
+    });
+  }, [client, getWebOrderClient]);
+
+  const printOrdersOnline = useCallback((orderIds: string[]) =>
+    runOnlineOrderRequest(async () =>
+      (await getWebOrderClient()).printOrders(orderIds)),
+  [getWebOrderClient]);
   useEffect(() => {
     const saved = window.localStorage.getItem("auraly.pos.document-type");
     if (saved === "SalesInvoice" || saved === "SalesReceipt")
@@ -886,12 +984,12 @@ export default function PosPage() {
     recoveredOrderFromUrl.current = orderId;
     setBusy(true);
     setError(null);
-    void client.recoverOrder(orderId)
-      .then((recovered) => {
+    void recoverOrderOnline(orderId)
+      .then(({ orderClient, recovered }) => {
         setDraft(recovered);
         setSelectedCustomer(null);
         if (recovered.customerId) {
-          void client.customer(recovered.customerId, recovered.customerPartySiteId)
+          void orderClient.customer(recovered.customerId, recovered.customerPartySiteId)
             .then(setSelectedCustomer)
             .catch(() => setMessage("Pedido recuperado; no fue posible actualizar el cliente."));
         }
@@ -910,10 +1008,10 @@ export default function PosPage() {
         setBusy(false);
         focusScanner();
       });
-  }, [busy, client, draft, edgeReady, focusScanner, showError]);
+  }, [busy, client, draft, edgeReady, focusScanner, recoverOrderOnline, showError]);
 
   useEffect(() => {
-    if (!client || !draft?.sourceOrderId || busy) return;
+    if (!(client instanceof OnlinePosClient) || !draft?.sourceOrderId || busy) return;
     const orderId = draft.sourceOrderId;
     const handleRenewalFailure = (caught: unknown) => {
       setError(caught instanceof Error
@@ -1040,7 +1138,7 @@ export default function PosPage() {
     setError(null);
     try {
       const wasRecovered = Boolean(draft.sourceOrderId);
-      const saved = await client.saveOrder(draft);
+      const saved = await saveDraftAsOnlineOrder(draft);
       setDraft(saved.nextDraft);
       setSelectedCustomer(null);
       setSelectedLineId(null);
@@ -1049,6 +1147,10 @@ export default function PosPage() {
       setSidePanel("orders");
       setOrdersRefreshVersion((current) => current + 1);
       setMessage(`${saved.order.orderNumber} ${wasRecovered ? "actualizado" : "guardado"}; inventario reservado en Pedidos`);
+      if (wasRecovered && edgeClientBeforeOnlineOrder.current) {
+        setClient(edgeClientBeforeOnlineOrder.current);
+        edgeClientBeforeOnlineOrder.current = null;
+      }
     } catch (caught) {
       const detail = typeof caught === "object" && caught !== null && "message" in caught
         ? String((caught as { message: unknown }).message)
@@ -1059,7 +1161,7 @@ export default function PosPage() {
       setBusy(false);
       focusScanner();
     }
-  }, [busy, client, draft, focusScanner]);
+  }, [busy, client, draft, focusScanner, saveDraftAsOnlineOrder]);
 
   const requestSaveOrder = useCallback(() => {
     if (!draft?.sourceOrderId) {
@@ -1706,7 +1808,7 @@ export default function PosPage() {
           paymentCounts: submitted.paymentCounts,
           note: submitted.note,
         });
-        if (draft?.sourceOrderId)
+        if (draft?.sourceOrderId && client instanceof OnlinePosClient)
           await client.releaseRecoveredOrder(draft.sourceOrderId).catch(() => undefined);
         setClosurePreview(null);
         setClosureAttempt(null);
@@ -1877,6 +1979,10 @@ export default function PosPage() {
           setMessage(draft.sourceOrderId
             ? "Pedido eliminado y venta reiniciada. Nueva venta lista."
             : "Venta reiniciada. Nueva venta lista.");
+          if (draft.sourceOrderId && edgeClientBeforeOnlineOrder.current) {
+            setClient(edgeClientBeforeOnlineOrder.current);
+            edgeClientBeforeOnlineOrder.current = null;
+          }
         },
       );
     } catch (caught) {
@@ -1923,7 +2029,7 @@ export default function PosPage() {
         setPricingTransition(false);
         setMessage("Guardando pedido e inventario reservado…");
         const wasRecovered = Boolean(selection.draft.sourceOrderId);
-        const saved = await client.saveOrder(selection.draft);
+        const saved = await saveDraftAsOnlineOrder(selection.draft);
         setDraft(saved.nextDraft);
         setSelectedCustomer(null);
         setSelectedLineId(null);
@@ -1932,6 +2038,10 @@ export default function PosPage() {
         setSidePanel("orders");
         setOrdersRefreshVersion((current) => current + 1);
         setMessage(`${saved.order.orderNumber} ${wasRecovered ? "actualizado" : "guardado"}; inventario reservado en Pedidos`);
+        if (wasRecovered && edgeClientBeforeOnlineOrder.current) {
+          setClient(edgeClientBeforeOnlineOrder.current);
+          edgeClientBeforeOnlineOrder.current = null;
+        }
         return;
       }
       setMessage(
@@ -2172,6 +2282,10 @@ export default function PosPage() {
       setError(null);
       setPaymentOpen(false);
       setSaleSettlement(null);
+      if (draft.sourceOrderId && edgeClientBeforeOnlineOrder.current) {
+        setClient(edgeClientBeforeOnlineOrder.current);
+        edgeClientBeforeOnlineOrder.current = null;
+      }
 
       const printAfterCompletedSale = async () => {
         try {
@@ -2461,10 +2575,9 @@ export default function PosPage() {
   }
 
   async function recoverPosOrder(orderId: string) {
-    if (!client) throw new Error("El punto de venta no está disponible.");
-    const recovered = await client.recoverOrder(orderId);
+    const { orderClient, recovered } = await recoverOrderOnline(orderId);
     const recoveredCustomer = recovered.customerId
-      ? await client.customer(recovered.customerId, recovered.customerPartySiteId).catch(() => null)
+      ? await orderClient.customer(recovered.customerId, recovered.customerPartySiteId).catch(() => null)
       : null;
     setDraft(recovered);
     setSelectedCustomer(recoveredCustomer);
@@ -2486,56 +2599,19 @@ export default function PosPage() {
     idempotencyKey: string,
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
   ) {
-    if (!client) throw new Error("El punto de venta no está disponible.");
-    if (!cloudUser)
-      throw new Error("La sesión web de facturación no está disponible.");
-
-    // Orders are always issued by the canonical web API. An enrolled Edge is
-    // only passed as the physical print transport; it never owns issuance.
-    let orderClient = client instanceof OnlinePosClient ? client : null;
-    if (!orderClient) {
-      const clientKey = [
-        cloudUser.userId,
-        workstation.businessId,
-        workstation.warehouseId,
-        edgeEnrollmentToken ?? "browser",
-      ].join(":");
-      if (webOrderInvoiceClient.current?.key === clientKey) {
-        orderClient = webOrderInvoiceClient.current.client;
-      } else {
-        const context = await selectSalesWorkspace({
-          businessId: workstation.businessId,
-          businessName: workstation.businessName,
-          warehouseId: workstation.warehouseId,
-          warehouseCode: workstation.warehouseId,
-          warehouseName: workstation.warehouseName,
-          warehouseAllowsNegativeStockSales:
-            workstation.warehouseAllowsNegativeStockSales,
-          hasActiveEdgeEnrollment: true,
-          fiscalReadyForOnlineSales: workstation.fiscalReady,
-          fiscalReadyForEnrollment: workstation.fiscalReady,
-          hasDianDocumentQuota: workstation.dianQuotaAvailable !== false,
-          fiscalWarningMessages: workstation.fiscalWarnings,
-        });
-        orderClient = new OnlinePosClient(
-          context,
-          cloudUser.userId,
-          `${cloudUser.firstName} ${cloudUser.lastName}`.trim() || cloudUser.username,
-          edgeEnrollmentToken,
-        );
-        webOrderInvoiceClient.current = { key: clientKey, client: orderClient };
-      }
-    }
-    const result = await orderClient.invoiceOrders(
-      orderIds,
-      paymentMethodCode,
-      documentType,
-      transfer?.reference,
-      transfer?.bankAccountId,
-      transfer?.notes,
-      printAfterInvoice,
-      idempotencyKey,
-    );
+    const result = await runOnlineOrderRequest(async () => {
+      const orderClient = await getWebOrderClient();
+      return orderClient.invoiceOrders(
+        orderIds,
+        paymentMethodCode,
+        documentType,
+        transfer?.reference,
+        transfer?.bankAccountId,
+        transfer?.notes,
+        printAfterInvoice,
+        idempotencyKey,
+      );
+    });
     setMessage(
       (result.printError ? result.printError + " · " : "") +
         result.completedCount +
@@ -3517,7 +3593,8 @@ export default function PosPage() {
                 loadPage={loadCommerceOrders}
                 loadDetail={loadCommerceOrder}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
-                onPrintSelected={(orders) => client!.printOrders(orders.map((order) => order.orderId))}
+                onPrintSelected={async (orders) =>
+                  printOrdersOnline(orders.map((order) => order.orderId))}
                 onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
@@ -3567,7 +3644,8 @@ export default function PosPage() {
               loadPage={loadCommerceOrders}
               loadDetail={loadCommerceOrder}
               onRecover={(order) => recoverPosOrder(order.orderId)}
-              onPrintSelected={(orders) => client.printOrders(orders.map((order) => order.orderId))}
+              onPrintSelected={async (orders) =>
+                printOrdersOnline(orders.map((order) => order.orderId))}
               onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),

@@ -531,15 +531,14 @@ export class OnlinePosClient implements PosClient {
     if (this.edgeSessionToken) {
       const edge = this.localEdge();
       const branding = await tenantsApi.getBranding().catch(() => null);
-      const jobs = receipts.map((receipt) =>
-        edge.printReceipt({
+      for (const receipt of receipts) {
+        await edge.printReceipt({
           ...receipt,
           businessName: this.context.businessName,
           warehouseName: this.context.warehouseName,
-        }, branding, workflow),
-      );
-      if (openDrawer) jobs.push(edge.openCashDrawer());
-      await Promise.all(jobs);
+        }, branding, workflow);
+      }
+      if (openDrawer) await edge.openCashDrawer();
       return;
     }
     const configuration = loadBrowserPrinterConfiguration();
@@ -1186,23 +1185,30 @@ export class OnlinePosClient implements PosClient {
     );
   }
 
-  async saveOrder(draft: PosDraft): Promise<{
+  async saveOrder(
+    draft: PosDraft,
+    completeDraft?: (order: SellerOrderResult) => Promise<PosDraft>,
+  ): Promise<{
     order: SellerOrderResult;
     nextDraft: PosDraft;
   }> {
-    const idempotencyKey = `pos-order-${draft.draftId.value}-${this.version(draft.draftId.value)}`;
+    const idempotencyKey = completeDraft
+      ? `pos-order-${draft.draftId.value}-online-commit`
+      : `pos-order-${draft.draftId.value}-${this.version(draft.draftId.value)}`;
     const order = await savePosDraftAsOrder(this.context, draft, idempotencyKey);
 
     try {
-      const nextDraft = this.mapDraft(
-        await request<OnlineDraft>(
-          `/api/commerce/v1/pos/drafts/${draft.draftId.value}/complete-order`,
-          this.mutation(
-            { orderId: order.orderId, expectedVersion: this.version(draft.draftId.value) },
-            "POST",
-          ),
-        ),
-      );
+      const nextDraft = completeDraft
+        ? await completeDraft(order)
+        : this.mapDraft(
+            await request<OnlineDraft>(
+              `/api/commerce/v1/pos/drafts/${draft.draftId.value}/complete-order`,
+              this.mutation(
+                { orderId: order.orderId, expectedVersion: this.version(draft.draftId.value) },
+                "POST",
+              ),
+            ),
+          );
       return { order, nextDraft };
     } catch (cleanupError) {
       if (draft.sourceOrderId)
@@ -1269,27 +1275,10 @@ export class OnlinePosClient implements PosClient {
   }
 
   async printOrders(orderIds: string[]): Promise<{ printedCount: number }> {
-    if (this.edgeSessionToken) {
-      try {
-        return await this.localEdge().printOrders(orderIds);
-      } catch (error) {
-        if (!(error instanceof PosEdgeError) || error.status !== 404) throw error;
-
-        // Keep deployed Edge installations compatible while they update to the
-        // dedicated batch endpoint. Fetch once from the server, then send each
-        // rendered order to the legacy orders printer route.
-        const documents = await loadCommerceOrderPrintBatch(orderIds);
-        const receipts = documents.map((order) => toPrintableOrder(order, this.context));
-        const branding = await tenantsApi.getBranding().catch(() => null);
-        const edge = this.localEdge();
-        await Promise.all(receipts.map((receipt) => edge.printLegacyOrderReceipt(receipt, branding)));
-        return { printedCount: receipts.length };
-      }
-    }
-    const preview = openHalfLetterPrintPreview();
+    const documents = await loadCommerceOrderPrintBatch(orderIds);
+    const receipts = documents.map((order) => toPrintableOrder(order, this.context));
+    const preview = this.edgeSessionToken ? null : openHalfLetterPrintPreview();
     try {
-      const documents = await loadCommerceOrderPrintBatch(orderIds);
-      const receipts = documents.map((order) => toPrintableOrder(order, this.context));
       await this.printDirect(receipts, false, "order-tickets", preview);
       return { printedCount: receipts.length };
     } catch (error) {

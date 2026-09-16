@@ -1663,142 +1663,23 @@ public sealed class OrderRecoveryTests(
     }
 
     [Fact]
-    public async Task Pos_orders_require_both_device_and_logged_in_user_permissions()
+    public async Task Legacy_device_order_routes_are_not_exposed()
     {
-        var roleId = Guid.NewGuid();
-        var customerPartyId = Guid.NewGuid();
-        var customerId = Guid.NewGuid();
-        await EnsureOrdersWarehouseAsync();
-        await ExecuteAsync(
-            """
-            INSERT dbo.Parties(
-              PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
-            VALUES(@PartyId,@TenantId,N'Organization',N'Cliente pedido PWA',
-              N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
-            """,
-            new("@PartyId", customerPartyId),
-            new("@CustomerId", customerId),
-            new("@TenantId", fixture.TenantId),
-            new("@BusinessId", fixture.BusinessId),
-            new("@UserId", fixture.UserId));
-        var partySiteId = await SeedPrimarySiteAsync(
-            customerPartyId, fixture.UserId, "Sede seleccionada en PWA");
-        await ExecuteAsync(
-            """
-            INSERT dbo.AppRoles(
-              RoleId,TenantId,Name,NormalizedName,Description,IsSystemRole,IsActive,CreatedAt)
-            VALUES(
-              @RoleId,@TenantId,@Name,UPPER(@Name),N'POS orders integration role',0,1,SYSDATETIMEOFFSET());
+        using var client = fixture.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        client.DefaultRequestHeaders.Add(
+            "X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
 
-            INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
-            SELECT NEWID(),@RoleId,PermissionId,SYSDATETIMEOFFSET()
-            FROM dbo.Permissions WHERE Resource IN(N'orders.read',N'orders.create');
+        using var page = await client.GetAsync("/api/pos/v1/orders");
+        using var save = await client.PostAsJsonAsync(
+            "/api/pos/v1/orders/save", new { draftId = Guid.NewGuid() });
+        using var invoice = await client.PostAsJsonAsync(
+            "/api/pos/v1/orders/invoice", new { orderIds = Array.Empty<Guid>() });
 
-            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
-            VALUES(NEWID(),@UserId,@RoleId,@BusinessId,SYSDATETIMEOFFSET());
-            """,
-            new("@RoleId", roleId),
-            new("@TenantId", fixture.TenantId),
-            new("@Name", $"POS orders {roleId:N}"),
-            new("@UserId", fixture.UserId),
-            new("@BusinessId", fixture.BusinessId));
-
-        try
-        {
-            using var client = fixture.CreateClient();
-            client.DefaultRequestHeaders.Add(
-                "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
-            client.DefaultRequestHeaders.Add(
-                "X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
-
-            using var allowed = await client.GetAsync(
-                $"/api/pos/v1/orders?userId={fixture.UserId:D}&businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&workSessionId={fixture.WorkSessionId:D}&page=1&pageSize=50");
-            Assert.Equal(System.Net.HttpStatusCode.OK, allowed.StatusCode);
-
-            using var validSave = await client.PostAsJsonAsync(
-                "/api/pos/v1/orders/save",
-                new PosSaveOrderRequest(
-                    fixture.UserId,
-                    fixture.BusinessId,
-                    fixture.WarehouseId,
-                    fixture.WorkSessionId,
-                    customerId,
-                    partySiteId,
-                    null,
-                    "Pedido preparado en la PWA",
-                    $"pos-site-{Guid.NewGuid():N}",
-                    [new PosSaveOrderLine(
-                        fixture.ProductId, 3m, 3_999.9901m, 0m, "Captured")]));
-            Assert.True(validSave.IsSuccessStatusCode,
-                $"El pedido PWA respondio {(int)validSave.StatusCode}: {await validSave.Content.ReadAsStringAsync()}");
-            var saved = Assert.IsType<PosSaveOrderResponse>(
-                await validSave.Content.ReadFromJsonAsync<PosSaveOrderResponse>());
-            await using (var connection = new SqlConnection(fixture.ConnectionString))
-            {
-                await connection.OpenAsync();
-                await using var command = connection.CreateCommand();
-                command.CommandText =
-                    """
-                    SELECT o.CustomerId,o.PartySiteId,o.Total,
-                           item.UnitPrice,item.DiscountAmount,item.LineTotal
-                    FROM dbo.Orders o
-                    JOIN dbo.OrderItems item ON item.OrderId=o.OrderId
-                    WHERE o.OrderId=@OrderId;
-                    """;
-                command.Parameters.AddWithValue("@OrderId", saved.OrderId);
-                await using var reader = await command.ExecuteReaderAsync();
-                Assert.True(await reader.ReadAsync());
-                Assert.Equal(customerId, reader.GetGuid(0));
-                Assert.Equal(partySiteId, reader.GetGuid(1));
-                Assert.Equal(12_000m, reader.GetDecimal(2));
-                Assert.Equal(4_000m, reader.GetDecimal(3));
-                Assert.Equal(0m, reader.GetDecimal(4));
-                Assert.Equal(12_000m, reader.GetDecimal(5));
-            }
-
-            using var saveRoute = await client.PostAsJsonAsync(
-                "/api/pos/v1/orders/save",
-                new PosSaveOrderRequest(
-                    fixture.UserId,
-                    fixture.BusinessId,
-                    fixture.WarehouseId,
-                    fixture.WorkSessionId,
-                    Guid.NewGuid(),
-                    Guid.NewGuid(),
-                    null,
-                    null,
-                    $"pos-route-{Guid.NewGuid():N}",
-                    []));
-            Assert.Equal(System.Net.HttpStatusCode.BadRequest, saveRoute.StatusCode);
-            Assert.NotEqual(System.Net.HttpStatusCode.Forbidden, saveRoute.StatusCode);
-
-            using var printRoute = await client.PostAsJsonAsync(
-                "/api/pos/v1/orders/print-batch",
-                new PosPrintOrdersRequest(
-                    fixture.UserId,
-                    fixture.BusinessId,
-                    fixture.WarehouseId,
-                    fixture.WorkSessionId,
-                    [Guid.NewGuid()]));
-            Assert.Equal(System.Net.HttpStatusCode.NotFound, printRoute.StatusCode);
-            Assert.NotEqual(System.Net.HttpStatusCode.MethodNotAllowed, printRoute.StatusCode);
-
-            using var unknownUser = await client.GetAsync(
-                $"/api/pos/v1/orders?userId={Guid.NewGuid():D}&businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&workSessionId={fixture.WorkSessionId:D}&page=1&pageSize=50");
-            Assert.Equal(System.Net.HttpStatusCode.Forbidden, unknownUser.StatusCode);
-        }
-        finally
-        {
-            await ExecuteAsync(
-                """
-                DELETE dbo.UserRoles WHERE RoleId=@RoleId;
-                DELETE dbo.RolePermissions WHERE RoleId=@RoleId;
-                DELETE dbo.AppRoles WHERE RoleId=@RoleId;
-                """,
-                new SqlParameter("@RoleId", roleId));
-        }
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, page.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, save.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, invoice.StatusCode);
     }
     private async Task<OnlineSalesDraft> OpenDraftAsync(HttpClient client, Guid workSessionId)
     {

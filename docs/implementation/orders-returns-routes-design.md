@@ -212,10 +212,11 @@ Atajos del diálogo:
 - claim vigente de la caja/usuario;
 - contexto de negocio, sede, bodega y caja compatible.
 
-El servidor crea el claim y devuelve un snapshot. POS Edge guarda el snapshot y
-los vínculos por línea dentro del borrador local. Perder la red después de
-recuperarlo no pierde el borrador, pero la emisión requiere reconciliar el claim
-y cantidades con el servidor.
+El servidor crea el claim y devuelve el borrador autoritativo en linea. Tanto
+POS instalado como POS web operan ese borrador mediante la API Commerce; Edge
+no guarda una copia de pedido ni ofrece una ruta alterna para recuperarlo o
+facturarlo. Si la conexion falla, la operacion se detiene y la UI informa que no
+hay conexion con el servidor.
 
 ### 3.5. Facturar seleccionados
 
@@ -239,12 +240,17 @@ producto, el servidor conserva las aplicaciones por línea.
 
 - `GET /api/commerce/v1/orders`
 - `GET /api/commerce/v1/orders/{orderId}`
-- `POST /api/pos/v1/orders/{orderId}/claim`
-- `DELETE /api/pos/v1/orders/{orderId}/claim`
-- `POST /api/pos/v1/orders/{orderId}/recover`
-- `POST /api/commerce/v1/orders/invoice-batches`
-- `GET /api/commerce/v1/orders/invoice-batches/{operationId}`
+- `POST /api/commerce/v1/orders/{orderId}/claim`
+- `POST /api/commerce/v1/orders/{orderId}/claim/release`
+- `POST /api/commerce/v1/orders/{orderId}/recover`
+- `POST /api/commerce/v1/orders/invoice`
+- `POST /api/commerce/v1/orders/print-batch`
 - `POST /api/commerce/v1/orders/{orderId}/cancel`
+
+La impresion conserva el mecanismo existente: la API produce el documento y el
+cliente instalado lo envia al transporte fisico local; el cliente web abre el
+modal. Esta diferencia de salida no cambia el propietario ni el flujo en linea
+del pedido.
 
 Permisos:
 

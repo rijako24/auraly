@@ -216,8 +216,6 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosCreditServerClient>();
         builder.Services.AddSingleton<PosRemoteApprovalClient>();
         builder.Services.AddSingleton<PosSensitiveActionAuthorizer>();
-        builder.Services.AddSingleton<PosOrderServerClient>();
-        builder.Services.AddSingleton<PosOrderRecoveryService>();
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
         builder.Services.AddSingleton<PosCaptureService>();
@@ -378,17 +376,7 @@ public static class PosEdgeHostApplication
                     detail = error.Message
                 });
             }
-            catch (PosOrderServerException error)
-            {
-                context.Response.StatusCode = error.StatusCode is >= 400 and <= 599
-                    ? error.StatusCode
-                    : StatusCodes.Status502BadGateway;
-                await context.Response.WriteAsJsonAsync(new
-                {
-                    code = "OrderServerRejected",
-                    detail = error.Message
-                });
-            }            catch (InvalidOperationException error)
+            catch (InvalidOperationException error)
                 when (string.Equals(
                     error.Message,
                     "The sale was already issued and is locked until its receipt is printed.",
@@ -1175,7 +1163,6 @@ public static class PosEdgeHostApplication
             Guid draftId,
             HttpContext http,
             PosDraftStore drafts,
-            PosOrderServerClient orderServer,
             PosEdgeRuntimeContext context,
             PosSensitiveActionAuthorizer authorizer,
             PosLocalSessionAccessor sessions,
@@ -1187,25 +1174,28 @@ public static class PosEdgeHostApplication
                 http.Request.Headers["X-Auraly-Approval-Id"],
                 http.Request.Headers["X-Auraly-Operation-Id"],
                 http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
-            var sourceOrderId = (await drafts.GetAsync(new DraftId(draftId), ct))?.SourceOrderId;
-            if (sourceOrderId.HasValue)
-            {
-                var operationId = authorization.OperationId != Guid.Empty
-                    ? authorization.OperationId.ToString("N")
-                    : draftId.ToString("N");
-                await orderServer.CancelAsync(
-                    user,
-                    sourceOrderId.Value,
-                    draftId,
-                    authorization,
-                    "Venta reiniciada desde el punto de venta.",
-                    $"pos-order-cancel:{operationId}",
-                    ct);
-            }
             await drafts.CancelAsync(new DraftId(draftId), ct);
             var result = await drafts.GetOrCreateActiveAsync(context.ScopeFor(user), ct);
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);
+        });
+        edge.MapPost("/drafts/{draftId:guid}/clear-after-online-commit", async (
+            Guid draftId,
+            PosDraftStore drafts,
+            PosEdgeRuntimeContext context,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            var user = sessions.Required();
+            var draft = await drafts.GetAsync(new DraftId(draftId), ct)
+                ?? throw new KeyNotFoundException("La venta activa no existe.");
+            if (draft.Scope.UserId.Value != user.UserId ||
+                draft.Scope.WorkSessionId.Value != user.WorkSessionId)
+                throw new InvalidOperationException(
+                    "La venta no pertenece a la sesión local activa.");
+            await drafts.CancelAsync(draft.DraftId, ct);
+            return Results.Ok(await drafts.GetOrCreateActiveAsync(
+                context.ScopeFor(user), ct));
         });
         edge.MapPost("/drafts/{draftId:guid}/temporary", async (
             Guid draftId,
@@ -1260,7 +1250,6 @@ public static class PosEdgeHostApplication
             return Results.NoContent();
         });
         edge.MapPosSaleCompletion();
-        edge.MapPosOrders();
         edge.MapPosWorkSessionClosure();
         return app;
     }

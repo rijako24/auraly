@@ -45,7 +45,7 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Rejects_a_work_session_in_an_assigned_business_of_another_tenant()
+    public async Task Allows_reading_work_sessions_in_an_assigned_selected_tenant()
     {
         var tenantId = Guid.NewGuid();
         var businessId = Guid.NewGuid();
@@ -58,13 +58,10 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
                 businessId, "work-sessions.read");
             client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString("D"));
 
-            using var response = await client.PostAsJsonAsync(
-                "/api/commerce/v1/work-sessions/current",
-                new OpenWorkSessionRequest(businessId, warehouseId, null));
+            using var response = await client.GetAsync(
+                "/api/commerce/v1/work-sessions/current");
 
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-            var detail = await response.Content.ReadAsStringAsync();
-            Assert.Contains("no pertenece al tenant seleccionado", detail);
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
 
             await using var connection = new SqlConnection(fixture.ConnectionString);
             await connection.OpenAsync();

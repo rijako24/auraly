@@ -1,9 +1,3 @@
-import type {
-  CommerceOrderDetail,
-  CommerceOrderFilters,
-  CommerceOrderPage,
-} from "@/services/orders/commerce-orders-client";
-import type { SellerOrderResult } from "@/services/api/seller-orders";
 import type { TenantBranding } from "@/services/api/tenants";
 import { printWorkSessionClosure } from "./pos-work-session-close";
 import {
@@ -673,13 +667,6 @@ export interface PosClient {
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
   reprint(documentId: string): Promise<void>;
-  orders(filters: CommerceOrderFilters): Promise<CommerceOrderPage>;
-  order(orderId: string): Promise<CommerceOrderDetail>;
-  recoverOrder(orderId: string): Promise<PosDraft>;
-  renewRecoveredOrder(orderId: string): Promise<unknown>;
-  releaseRecoveredOrder(orderId: string): Promise<unknown>;
-  saveOrder(draft: PosDraft): Promise<{ order: SellerOrderResult; nextDraft: PosDraft }>;
-  printOrders(orderIds: string[]): Promise<{ printedCount: number }>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
   printCashMovement(ticket: PosCashMovementTicket): Promise<void>;
@@ -1337,24 +1324,6 @@ export class PosEdgeClient implements PosClient {
     return this.requestVoid(`/edge/v1/sales/${documentId}/reprint`, { method: "POST" });
   }
 
-  orders(filters: CommerceOrderFilters) {
-    const query = new URLSearchParams();
-    Object.entries(filters).forEach(([key, value]) => {
-      if (value !== undefined && value !== "") query.set(key, String(value));
-    });
-    return this.request<CommerceOrderPage>(`/edge/v1/orders?${query}`);
-  }
-
-  order(orderId: string) {
-    return this.request<CommerceOrderDetail>(`/edge/v1/orders/${orderId}`);
-  }
-
-  recoverOrder(orderId: string) {
-    return this.request<PosDraft>(`/edge/v1/orders/${orderId}/recover`, {
-      method: "POST",
-    });
-  }
-
   validateDraftInventory(draftId: string) {
     return this.request<PosInventoryValidation>(
       `/edge/v1/drafts/${draftId}/inventory-validation`,
@@ -1380,48 +1349,9 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
-  renewRecoveredOrder(orderId: string) {
-    return this.request(`/edge/v1/orders/${orderId}/claim`, { method: "POST" });
-  }
-
-  releaseRecoveredOrder(orderId: string) {
-    return this.request(`/edge/v1/orders/${orderId}/claim/release`, {
+  clearAfterOnlineCommit(draftId: string) {
+    return this.request<PosDraft>(`/edge/v1/drafts/${draftId}/clear-after-online-commit`, {
       method: "POST",
-      keepalive: true,
-    });
-  }
-
-  async saveOrder(draft: PosDraft) {
-    return this.request<{ order: SellerOrderResult; nextDraft: PosDraft }>(
-      "/edge/v1/orders/save",
-      {
-        method: "POST",
-        body: JSON.stringify({ draftId: draft.draftId.value }),
-      },
-    );
-  }
-
-  printOrders(orderIds: string[]) {
-    return this.request<{ printedCount: number }>("/edge/v1/orders/print", {
-      method: "POST",
-      body: JSON.stringify({ orderIds }),
-    });
-  }
-
-  printLegacyOrderReceipt(
-    receipt: PosPrintableReceipt,
-    branding?: TenantBranding | null,
-  ) {
-    return this.requestVoid("/edge/v1/print/receipt?workflow=orders", {
-      method: "POST",
-      body: JSON.stringify({
-        ...receipt,
-        // Edge versions before the dedicated order endpoint only accepted sale
-        // document types. The orders workflow still routes to its own printer.
-        documentType: "SalesReceipt",
-        companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName ?? null,
-        companyLogoSource: branding?.logoUrl ?? receipt.companyLogoSource ?? null,
-      }),
     });
   }
 

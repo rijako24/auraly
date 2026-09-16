@@ -65,15 +65,12 @@ internal sealed class ExecutionContextMiddleware(
         }
 
         Guid tenantId;
-        if (UsesIdentityTenant(context.Request.Path))
+        if (UsesIdentityTenant(context.Request))
         {
-            if (selectedTenantId is { } requestedTenant && requestedTenant != identityTenantId)
-            {
-                await Problem(context, 403,
-                    "El usuario autenticado no pertenece al tenant seleccionado. " +
-                    "Cambia al tenant que le corresponde o inicia sesión con un usuario de ese tenant.");
-                return;
-            }
+            // POS resources always belong to the immutable tenant of the
+            // authenticated identity. Administrative work-session views use
+            // the selected execution context and are still validated by the
+            // persisted tenant/business membership below.
             tenantId = identityTenantId;
         }
         else if (selectedTenantId is { } requestedTenant)
@@ -159,9 +156,10 @@ internal sealed class ExecutionContextMiddleware(
         out Guid value) =>
         Guid.TryParse(principal.FindFirstValue(claimType), out value);
 
-    private static bool UsesIdentityTenant(PathString path) =>
-        path.StartsWithSegments("/api/commerce/v1/pos") ||
-        path.StartsWithSegments("/api/commerce/v1/work-sessions");
+    private static bool UsesIdentityTenant(HttpRequest request) =>
+        request.Path.StartsWithSegments("/api/commerce/v1/pos") ||
+        (request.Path.StartsWithSegments("/api/commerce/v1/work-sessions") &&
+         !HttpMethods.IsGet(request.Method));
 
     private static Task Problem(HttpContext context, int status, string detail)
     {

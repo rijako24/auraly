@@ -135,7 +135,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/work-sessions/current");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Contains(
-            "no pertenece al tenant seleccionado",
+            "no puede trabajar en el tenant o negocio seleccionado",
             await response.Content.ReadAsStringAsync(),
             StringComparison.OrdinalIgnoreCase);
 
