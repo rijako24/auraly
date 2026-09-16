@@ -1253,7 +1253,6 @@ export default function PosPage() {
     if (
         !event.ctrlKey &&
         shortcut === POS_ACTION_SHORTCUTS.returns &&
-        client?.mode === "online" &&
         serverConnected &&
         !busy &&
         !temporaryOpen &&
@@ -3184,9 +3183,9 @@ export default function PosPage() {
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.invoices}</span>
               </button>
               <button type="button"
-                disabled={client?.mode !== "online" || !serverConnected || busy}
+                disabled={!serverConnected || busy}
                 onClick={() => setReturnsOpen(true)}
-                title={client?.mode === "online" ? "Abrir devoluciones" : "Disponible en facturación online"}
+                title={serverConnected ? "Abrir devoluciones" : "Requiere conexión con Auraly Server"}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <RotateCcw className="h-4 w-4" />
                 Devoluciones
@@ -3690,7 +3689,7 @@ export default function PosPage() {
         </div>
       )}
 
-      {returnsOpen && client?.mode === "online" && serverConnected && (
+      {returnsOpen && serverConnected && (
         <div className="fixed inset-0 z-50 flex flex-col bg-slate-50">
           <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
             <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Auraly</p><h2 className="text-xl font-bold text-slate-950">Devoluciones de venta</h2></div>

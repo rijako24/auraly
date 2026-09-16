@@ -330,9 +330,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
         {
             var current = activeByLine[line.LineId];
             var currentDraftLine = currentDraftLines[line.LineId];
-            if (line.DocumentUnitCost != current.DocumentUnitCost)
+            if (line.DocumentUnitCost != current.DocumentUnitCost &&
+                !currentDraftLine.AllowsDocumentCostOverride)
                 throw new OnlineSalesDraftValidationException(
-                    "El costo de la línea queda congelado cuando se agrega el producto.");
+                    "El costo de inventario de la línea queda congelado cuando se agrega el producto.");
             if (line.UnitPrice != current.UnitPrice)
                 throw new OnlineSalesDraftValidationException(
                     "El precio fiscal base de la línea no se puede modificar.");
@@ -349,7 +350,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 PublicLineTotal = MonetaryRounding.RoundLineAmount(
                     currentDraftLine.PublicUnitPrice * current.Quantity -
                     manualDiscount - currentDraftLine.PromotionDiscount),
-                DocumentUnitCost = current.DocumentUnitCost,
+                line.DocumentUnitCost,
                 Discount = manualDiscount,
                 DiscountChanged = discountChanged
             };

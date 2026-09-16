@@ -123,7 +123,7 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   await page.setViewportSize({ width: 1100, height: 650 });
   await page.goto("/pos");
   await expect(page.locator("#pos-scanner")).toBeEnabled();
-  await page.keyboard.press("F2");
+  await page.getByRole("button", { name: /Editar líneas F2/ }).click();
 
   const editor = page.locator('form[aria-keyshortcuts="Enter Escape"]').filter({ hasText: "Editar líneas" });
   const scrollRegion = editor.getByTestId("pos-line-editor-scroll-region");
@@ -137,6 +137,7 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   await expect(editor.locator('input[data-editor-row="1"][data-editor-column="2"]')).toBeDisabled();
   await expect(editor.locator('input[data-editor-row="1"][data-editor-column="3"]')).toBeEnabled();
   await expect(editor.locator('input[data-editor-row="1"][data-editor-column="5"]')).toBeEnabled();
+  await expect(editor.getByText("Precio original con IVA: 11.900").first()).toBeVisible();
 
   await page.keyboard.press("ArrowRight");
   await expect(editor.locator('input[data-editor-row="0"][data-editor-column="4"]')).toBeFocused();
@@ -177,16 +178,17 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   const firstCost = editor.locator('input[data-editor-row="0"][data-editor-column="1"]');
   const firstMargin = editor.locator('input[data-editor-row="0"][data-editor-column="2"]');
   await firstDescription.fill("Producto puntual editado");
-  await firstCost.fill("7000");
-  await firstMargin.fill("40");
+  await firstCost.fill("5000");
+  await expect(firstMargin).toHaveValue("40");
   await page.keyboard.press("Enter");
 
   await expect(editor).toBeHidden();
   expect(appliedLines).not.toBeNull();
   expect(appliedLines!.expectedVersion).toBe(1);
   expect(appliedLines!.lines[0].description).toBe("Producto puntual editado");
-  expect(appliedLines!.lines[0].documentUnitCost).toBe(7_000);
-  expect(appliedLines!.lines[0].unitPrice).toBeGreaterThan(10_000);
+  expect(appliedLines!.lines[0].documentUnitCost).toBe(5_000);
+  expect(appliedLines!.lines[0].unitPrice).toBe(10_000);
+  expect(appliedLines!.lines[0].discount).toBe(1_983.33);
   expect(appliedLines!.lines[1].documentUnitCost).toBe(6_000.123456);
   await expect(page.getByText("Producto puntual editado")).toBeVisible();
 });

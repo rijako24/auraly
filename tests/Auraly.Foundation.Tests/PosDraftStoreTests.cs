@@ -67,7 +67,7 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
-    public async Task Document_line_edits_are_atomic_and_derive_discount_without_changing_price_or_cost()
+    public async Task Document_line_edits_are_atomic_and_allow_document_cost_only_when_the_line_supports_it()
     {
         await WithStoreAsync(async (store, _, scope, _) =>
         {
@@ -77,7 +77,7 @@ public sealed class PosDraftStoreTests
             var updated = await store.UpdateLinesAsync(
                 draft.DraftId,
                 [
-                    new(first.Lines.Single().LineId, "Descripción puntual", 10_000m, 1_000m, 4_000m),
+                    new(first.Lines.Single().LineId, "Descripción puntual", 10_000m, 1_000m, 4_500m),
                     new(draft.Lines[1].LineId, "Segunda línea", 10_000m, 0m, 4_000m)
                 ]);
 
@@ -85,7 +85,7 @@ public sealed class PosDraftStoreTests
             Assert.Equal("Descripción puntual", updated.Lines[0].Description);
             Assert.Equal(10_000m, updated.Lines[0].UnitPrice);
             Assert.Equal(10_000m, updated.Lines[0].BaseUnitPrice);
-            Assert.Equal(4_000m, updated.Lines[0].DocumentUnitCost);
+            Assert.Equal(4_500m, updated.Lines[0].DocumentUnitCost);
             Assert.False(updated.Lines[0].IsPriceOverridden);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -99,7 +99,7 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
-    public async Task Captured_document_cost_is_frozen_for_every_product()
+    public async Task Captured_document_cost_is_frozen_when_the_product_manages_inventory()
     {
         await WithStoreAsync(async (store, _, scope, _) =>
         {

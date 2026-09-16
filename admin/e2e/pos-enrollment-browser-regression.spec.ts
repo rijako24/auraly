@@ -14,7 +14,13 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
     firstName: "Admin",
     lastName: "Prueba",
     roles: ["ADMINISTRATOR"],
-    permissions: ["sales.create", "pos.devices.enroll"],
+    permissions: [
+      "sales.create",
+      "pos.devices.enroll",
+      "sales.returns.read",
+      "sales.returns.create",
+      "sales.returns.confirm",
+    ],
   };
   const workspace = {
     businessId,
@@ -202,6 +208,29 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         workspace,
       };
+    } else if (path === "/api/commerce/v1/sales-returns/sales") {
+      body = {
+        items: [{
+          documentId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          documentNumber: "VTA-EDGE-001",
+          fiscalNumber: "CVI-EDGE-001",
+          cufe: "CUDE-EDGE-001",
+          issuedAt: "2026-09-15T14:00:00-05:00",
+          customerId: null,
+          customerName: "Consumidor final",
+          customerIdentification: "222222222222",
+          warehouseId,
+          warehouseName: "Principal",
+          totalAmount: 11_900,
+          returnedAmount: 0,
+          hasAvailableQuantity: true,
+          fiscalStatus: "Accepted",
+        }],
+        page: 1,
+        pageSize: 25,
+        totalCount: 1,
+        totalPages: 1,
+      };
     }
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
@@ -238,6 +267,12 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   expect(completeCalls).toBe(1);
   expect(workSessionCalls).toBe(1);
 
+  const returns = page.getByRole("button", { name: /Devoluciones/ });
+  await expect(returns).toBeEnabled();
+  await returns.click();
+  await expect(page.getByRole("heading", { name: "Devoluciones de venta" })).toBeVisible();
+  await expect(page.getByText("VTA-EDGE-001")).toBeVisible();
+
   function localSession(opened: boolean) {
     return {
       sessionId: "99999999-9999-9999-9999-999999999999",
@@ -245,7 +280,12 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
       userId,
       username: "admin",
       displayName: "Admin Prueba",
-      permissions: ["sales.create"],
+      permissions: [
+        "sales.create",
+        "sales.returns.read",
+        "sales.returns.create",
+        "sales.returns.confirm",
+      ],
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
       token: "local-user-session",
     };

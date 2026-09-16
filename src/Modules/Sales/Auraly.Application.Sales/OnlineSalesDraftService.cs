@@ -232,7 +232,8 @@ public sealed class OnlineSalesDraftService(
                 string.IsNullOrWhiteSpace(line.Description) ||
                 line.Description.Trim().Length > 250 ||
                 line.UnitPrice < 0 ||
-                line.Discount < 0))
+                line.Discount < 0 ||
+                line.DocumentUnitCost < 0))
             throw new OnlineSalesDraftValidationException(
                 "Cada línea debe tener un identificador único, una descripción y valores no negativos.");
         return await drafts.UpdateLinesAsync(

@@ -320,8 +320,9 @@ public sealed class PosDraftStore
             var line = currentByLine[update.LineId];
             if (update.UnitPrice != line.UnitPrice)
                 throw new InvalidOperationException("El precio fiscal de la línea no se edita; el valor final se expresa como descuento sobre el precio público.");
-            if (update.DocumentUnitCost != line.DocumentUnitCost)
-                throw new InvalidOperationException("El costo de la línea queda congelado cuando se agrega el producto.");
+            if (update.DocumentUnitCost != line.DocumentUnitCost &&
+                !line.AllowsDocumentCostOverride)
+                throw new InvalidOperationException("El costo de inventario de la línea queda congelado cuando se agrega el producto.");
             if (update.Discount > line.Gross - line.PromotionDiscount)
                 throw new ArgumentOutOfRangeException(nameof(updates), "Discount cannot exceed line value.");
         }

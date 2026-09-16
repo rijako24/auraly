@@ -238,11 +238,34 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         using var hiddenCostChangeResponse = await priceOnlyClient.SendAsync(hiddenCostChange);
         Assert.Equal(HttpStatusCode.Forbidden, hiddenCostChangeResponse.StatusCode);
 
+        using var costReadOnlyClient = fixture.CreateAdminClient(
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesReadCostAndMargin);
+        using var unauthorizedCostChange = Mutation(
+            HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
+            new UpdateOnlineSalesDraftLinesRequest(
+                [new(line.LineId, line.Description, line.UnitPrice, line.Discount, 4_500m)],
+                captured.Version),
+            Guid.NewGuid().ToString("D"));
+        using var unauthorizedCostChangeResponse = await costReadOnlyClient.SendAsync(unauthorizedCostChange);
+        Assert.Equal(HttpStatusCode.Forbidden, unauthorizedCostChangeResponse.StatusCode);
+
+        using var negativeCost = Mutation(
+            HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
+            new UpdateOnlineSalesDraftLinesRequest(
+                [new(line.LineId, line.Description, line.UnitPrice, line.Discount, -1m)],
+                captured.Version),
+            Guid.NewGuid().ToString("D"));
+        using var negativeCostResponse = await client.SendAsync(negativeCost);
+        Assert.Equal(HttpStatusCode.BadRequest, negativeCostResponse.StatusCode);
+
         using var update = Mutation(
             HttpMethod.Put,
             $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
             new UpdateOnlineSalesDraftLinesRequest(
-                [new(line.LineId, "Servicio puntual", line.UnitPrice, 2_000m, line.DocumentUnitCost)],
+                [new(line.LineId, "Servicio puntual", line.UnitPrice, 2_000m, 4_500m)],
                 captured.Version),
             Guid.NewGuid().ToString("D"));
         using var updateResponse = await client.SendAsync(update);
@@ -254,7 +277,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         Assert.Equal(10_000m, changedLine.PublicUnitPrice);
         Assert.Equal(18_000m, changedLine.PublicLineTotal);
         Assert.Equal(2_000m, changedLine.Discount);
-        Assert.Equal(4_000m, changedLine.DocumentUnitCost);
+        Assert.Equal(4_500m, changedLine.DocumentUnitCost);
 
         await using var checkConnection = new SqlConnection(fixture.ConnectionString);
         await checkConnection.OpenAsync();
@@ -277,7 +300,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         Assert.Equal("Servicio puntual", reader.GetString(3));
         Assert.Equal(line.UnitPrice, reader.GetDecimal(4));
         Assert.Equal(2_000m, reader.GetDecimal(5));
-        Assert.Equal(4_000m, reader.GetDecimal(6));
+        Assert.Equal(4_500m, reader.GetDecimal(6));
         Assert.Equal(10_000m, reader.GetDecimal(7));
         Assert.Equal(18_000m, reader.GetDecimal(8));
         await reader.DisposeAsync();
@@ -295,6 +318,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         var persistedEditedLine = withNewLine.Lines.Single(value => value.LineId == line.LineId);
         Assert.Equal(line.UnitPrice, persistedEditedLine.UnitPrice);
         Assert.Equal(2_000m, persistedEditedLine.Discount);
+        Assert.Equal(4_500m, persistedEditedLine.DocumentUnitCost);
         Assert.Equal("Manual", persistedEditedLine.PriceSource);
         Assert.Equal(10_000m, withNewLine.Lines.Single(value => value.LineId != line.LineId).PublicUnitPrice);
 
@@ -302,15 +326,58 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));
         Assert.Equal(withNewLine.DraftId, reloaded.DraftId);
         Assert.Equal(line.UnitPrice, reloaded.Lines.Single(value => value.LineId == line.LineId).UnitPrice);
+        Assert.Equal(4_500m, reloaded.Lines.Single(value => value.LineId == line.LineId).DocumentUnitCost);
         Assert.Equal("Manual", reloaded.Lines.Single(value => value.LineId == line.LineId).PriceSource);
 
-        using var cleanup = Mutation(
+        using var complete = Mutation(
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{reloaded.DraftId:D}/reset",
-            new ResetOnlineSalesDraftRequest(reloaded.Version),
+            $"/api/commerce/v1/pos/drafts/{reloaded.DraftId:D}/complete",
+            new CompleteOnlineSalesDraftRequest(
+                reloaded.Version,
+                [new OnlineSalesPayment("Cash", reloaded.PayableAmount, null)],
+                DocumentType: PosSaleDocumentTypes.Receipt),
             Guid.NewGuid().ToString("D"));
-        using var cleanupResponse = await client.SendAsync(cleanup);
-        cleanupResponse.EnsureSuccessStatusCode();
+        using var completeResponse = await client.SendAsync(complete);
+        completeResponse.EnsureSuccessStatusCode();
+        var completed = await completeResponse.Content.ReadFromJsonAsync<CompleteOnlineSalesDraftResponse>()
+            ?? throw new InvalidOperationException("The completed sale response was empty.");
+        Assert.Empty(completed.NextDraft.Lines);
+        Assert.Equal(2, completed.Receipt.Lines.Count);
+
+        await using var profitability = new SqlCommand(
+            """
+            SELECT line.LineNumber,line.UnitCostSnapshot,fact.RecognizedCostAmount
+            FROM dbo.SalesDocumentLines line
+            INNER JOIN reporting.SalesReportLineFacts fact
+              ON fact.SourceDocumentId=line.DocumentId
+             AND fact.SourceLineNumber=line.LineNumber
+             AND fact.MovementType=N'Sale'
+            WHERE line.DocumentId=@DocumentId
+            ORDER BY line.LineNumber;
+
+            SELECT UntaxedAmount,RecognizedCostAmount,UntaxedAmount-RecognizedCostAmount
+            FROM reporting.SalesReportDocuments
+            WHERE DocumentId=@DocumentId;
+            """, checkConnection);
+        profitability.Parameters.AddWithValue("@DocumentId", completed.Receipt.DocumentId);
+        await using var profitabilityReader = await profitability.ExecuteReaderAsync();
+        Assert.True(await profitabilityReader.ReadAsync());
+        Assert.Equal(1, profitabilityReader.GetInt32(0));
+        Assert.Equal(4_500m, profitabilityReader.GetDecimal(1));
+        Assert.Equal(9_000m, profitabilityReader.GetDecimal(2));
+        Assert.True(await profitabilityReader.ReadAsync());
+        Assert.Equal(2, profitabilityReader.GetInt32(0));
+        Assert.Equal(4_000m, profitabilityReader.GetDecimal(1));
+        Assert.Equal(4_000m, profitabilityReader.GetDecimal(2));
+        Assert.False(await profitabilityReader.ReadAsync());
+        Assert.True(await profitabilityReader.NextResultAsync());
+        Assert.True(await profitabilityReader.ReadAsync());
+        var projectedUntaxedAmount = profitabilityReader.GetDecimal(0);
+        var projectedCostAmount = profitabilityReader.GetDecimal(1);
+        var projectedProfit = profitabilityReader.GetDecimal(2);
+        Assert.Equal(completed.Receipt.UntaxedAmount, projectedUntaxedAmount);
+        Assert.Equal(13_000m, projectedCostAmount);
+        Assert.Equal(projectedUntaxedAmount - 13_000m, projectedProfit);
     }
 
     [Fact]

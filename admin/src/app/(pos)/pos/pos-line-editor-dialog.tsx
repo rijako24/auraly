@@ -18,6 +18,7 @@ type EditableLine = {
   quantity: number;
   taxRate: number;
   originalDocumentUnitCost: number;
+  allowsDocumentCostOverride: boolean;
   originalUnitPrice: number;
   promotionDiscount: number;
   description: string;
@@ -70,7 +71,9 @@ export function PosLineEditorDialog({
     description: line.description.trim(),
     unitPrice: line.originalUnitPrice,
     discount: parseMoneyDraft(line.discount),
-    documentUnitCost: line.originalDocumentUnitCost,
+    documentUnitCost: line.allowsDocumentCostOverride
+      ? parseMoneyDraft(line.unitCost)
+      : line.originalDocumentUnitCost,
   })), [drafts]);
   const valid = parsed.every((line, index) =>
     Boolean(line.description) &&
@@ -91,8 +94,13 @@ export function PosLineEditorDialog({
     let cost = currentCost;
     let margin = Number(line.margin.replace(",", ".")) || 0;
     let economics: ReactiveLineEconomics;
-    if (field === "cost") cost = parseMoneyDraft(raw);
-    if (field === "price") {
+    if (field === "cost") {
+      cost = parseMoneyDraft(raw);
+      economics = lineEconomicsFromMargin(
+        cost, line.quantity, line.referenceUnitPrice, margin, line.taxRate,
+        line.promotionDiscount,
+      );
+    } else if (field === "price") {
       economics = lineEconomicsFromFinalPrice(
         cost, line.quantity, line.referenceUnitPrice, parseMoneyDraft(raw), line.taxRate,
         line.promotionDiscount,
@@ -149,9 +157,11 @@ export function PosLineEditorDialog({
     const column = Number(current.dataset.editorColumn);
     if (!Number.isInteger(row) || !Number.isInteger(column)) return false;
     event.preventDefault();
-    const available = drafts.map(() => [
+    const available = drafts.map((line) => [
       ...(canEditDescription ? [0] : []),
-      ...(canReadCostAndMargin && canEditCommercialValues ? [2] : []),
+      ...(canReadCostAndMargin && canEditCommercialValues && line.allowsDocumentCostOverride
+        ? [1, 2]
+        : []),
       ...(canEditCommercialValues ? [3, 4, 5] : []),
     ]);
     const next = nextGridPosition(row, column, available, event.key as GridDirection);
@@ -219,7 +229,7 @@ export function PosLineEditorDialog({
       }
     }} className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:rounded-3xl">
       <header className="flex shrink-0 items-start justify-between gap-4 bg-gradient-to-r from-slate-950 to-teal-950 px-5 py-5 text-white sm:px-6">
-        <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/10 text-teal-200"><PencilLine className="h-5 w-5"/></span><div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-300">Cambio puntual</p><h2 id="pos-line-editor-title" className="text-xl font-bold">Editar líneas de esta venta</h2><p className="mt-1 text-sm text-slate-300">El costo y los precios base permanecen congelados; los cambios de valor se guardan como descuento.</p></div></div>
+        <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/10 text-teal-200"><PencilLine className="h-5 w-5"/></span><div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-300">Cambio puntual</p><h2 id="pos-line-editor-title" className="text-xl font-bold">Editar líneas de esta venta</h2><p className="mt-1 text-sm text-slate-300">El costo solo se puede cambiar en productos sin inventario; los cambios de valor se guardan como descuento.</p></div></div>
         <span className="hidden items-center gap-2 rounded-full border border-teal-300/30 bg-teal-300/10 px-3 py-1.5 text-xs font-semibold text-teal-100 sm:flex"><ShieldCheck className="h-4 w-4"/>Solo este documento</span>
       </header>
       <div data-testid="pos-line-editor-scroll-region" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">
@@ -237,11 +247,11 @@ export function PosLineEditorDialog({
             <div className="flex items-center justify-between gap-3 border-b bg-slate-50 px-4 py-3"><div><p className="text-xs font-bold uppercase tracking-wide text-teal-700">Línea {index + 1} · {line.productCode}</p><p className="text-xs text-slate-500">Cantidad: {line.quantity}</p></div><strong className="tabular-nums text-slate-950">{formatMoneyValue(total)}</strong></div>
             <div className="grid gap-x-4 gap-y-3 p-4 sm:grid-cols-2 xl:grid-cols-[minmax(240px,2fr)_repeat(5,minmax(120px,1fr))]">
               <label className="space-y-1.5 text-sm font-semibold text-slate-700 sm:col-span-2 xl:col-span-1">Nombre del producto en el documento<input data-editor-row={index} data-editor-column={0} disabled={!canEditDescription} maxLength={250} value={line.description} onChange={(event)=>change(line.lineId,{description:event.target.value})} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 font-normal text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Costo<input data-editor-row={index} data-editor-column={1} aria-label={canReadCostAndMargin ? "Costo" : "Costo oculto"} disabled value={canReadCostAndMargin?line.unitCost:"— — —"} className="h-11 w-full rounded-xl border border-slate-300 bg-slate-100 px-3 text-right font-semibold tabular-nums text-slate-500"/><span className="block text-xs font-normal text-slate-500">Costo capturado al agregar el producto.</span></label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Margen %<input data-editor-row={index} data-editor-column={2} aria-label={canReadCostAndMargin ? "Margen" : "Margen oculto"} inputMode="decimal" disabled={!canReadCostAndMargin||!canEditCommercialValues} value={canReadCostAndMargin?line.margin:"— — —"} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"margin",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Costo<input data-editor-row={index} data-editor-column={1} aria-label={canReadCostAndMargin ? "Costo" : "Costo oculto"} inputMode="decimal" disabled={!canReadCostAndMargin||!canEditCommercialValues||!line.allowsDocumentCostOverride} value={canReadCostAndMargin?line.unitCost:"— — —"} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"cost",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/><span className="block text-xs font-normal text-slate-500">{line.allowsDocumentCostOverride?"Costo propio de esta línea.":"Costo de inventario congelado."}</span></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Margen %<input data-editor-row={index} data-editor-column={2} aria-label={canReadCostAndMargin ? "Margen" : "Margen oculto"} inputMode="decimal" disabled={!canReadCostAndMargin||!canEditCommercialValues||!line.allowsDocumentCostOverride} value={canReadCostAndMargin?line.margin:"— — —"} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"margin",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
               <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento<input data-editor-row={index} data-editor-column={3} ref={(element)=>{discountInputs.current[index]=element;}} inputMode="decimal" disabled={!canEditCommercialValues} value={line.discount} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"discount",event.target.value)} className={`h-11 w-full rounded-xl border bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:ring-4 ${invalidDiscount?"border-red-500 focus:ring-red-500/10":"border-slate-300 focus:border-teal-600 focus:ring-teal-600/10"}`}/>{invalidDiscount&&<span className="block text-xs font-normal text-red-700">No puede superar el valor de la línea.</span>}</label>
               <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento %<input data-editor-row={index} data-editor-column={4} inputMode="decimal" disabled={!canEditCommercialValues} value={percentage(discount, line.quantity * line.documentUnitPrice)} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"percentage",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Precio de venta<input data-editor-row={index} data-editor-column={5} inputMode="decimal" disabled={!canEditCommercialValues} value={line.unitPrice} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"price",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Precio de venta<input data-editor-row={index} data-editor-column={5} inputMode="decimal" disabled={!canEditCommercialValues} value={line.unitPrice} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"price",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/><span className="block text-xs font-normal text-slate-500">Precio original con IVA: <strong className="font-semibold text-slate-700">{formatMoneyValue(line.referenceUnitPrice)}</strong></span></label>
             </div>
           </article>;
         })}
@@ -291,6 +301,7 @@ function toEditable(line: PosDraftLine): EditableLine {
     quantity: line.quantity,
     taxRate: line.taxRate,
     originalDocumentUnitCost: line.documentUnitCost,
+    allowsDocumentCostOverride: line.allowsDocumentCostOverride,
     originalUnitPrice: line.unitPrice,
     promotionDiscount,
     description: line.description,
