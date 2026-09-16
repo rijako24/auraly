@@ -421,14 +421,16 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             activate.EnsureSuccessStatusCode();
 
         var bankAccountId = await CreatePrimaryBankAccountAsync(accounting);
-        var customerId = await CreateCustomerAsync();
+        var (customerId, customerPartySiteId) = await CreateCustomerAsync();
         var request = WithUblSnapshot(fixture.CreateValidRequest(9_900)) with
         {
             CustomerId = customerId,
+            CustomerPartySiteId = customerPartySiteId,
             Credit = new PosSaleCreditContract(
                 customerId, 4_000m,
                 new DateTimeOffset(2026, 8, 31, 0, 0, 0,
-                    TimeSpan.FromHours(-5))),
+                    TimeSpan.FromHours(-5)),
+                PartySiteId: customerPartySiteId),
             Payments =
             [
                 new(1, "Cash", 1_900m, null),
@@ -1078,14 +1080,16 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.NotNull(entry); Assert.StartsWith("ASI-", entry.EntryNumber); Assert.Equal(entry.DebitTotal, entry.CreditTotal); Assert.True(entry.Lines.Count >= 3);
         }
 
-        var customerId = await CreateCustomerAsync();
+        var (customerId, customerPartySiteId) = await CreateCustomerAsync();
         var creditBase = fixture.CreateValidRequest(9_813) with
         {
             Payments = [],
             CustomerId = customerId,
+            CustomerPartySiteId = customerPartySiteId,
             Credit = new PosSaleCreditContract(
                 customerId, 11_900m,
-                new DateTimeOffset(2026, 8, 31, 0, 0, 0, TimeSpan.FromHours(-5)))
+                new DateTimeOffset(2026, 8, 31, 0, 0, 0, TimeSpan.FromHours(-5)),
+                PartySiteId: customerPartySiteId)
         };
         var creditInvoice = WithUblSnapshot(creditBase);
         creditInvoice = creditInvoice with
@@ -1559,7 +1563,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 
         await AssertTenSalePipelineIsExactAndIdempotentAsync();
         await AssertAccumulatedCodesForTenSalesReturnsAndCreditNotesAsync(
-            accounting, customerId);
+            accounting, customerId, customerPartySiteId);
 
         using (var report = await accounting.GetAsync("/api/commerce/v1/accounting/reports/trial-balance?from=2026-01-01&to=2026-12-31"))
         {
@@ -1757,7 +1761,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     private async Task AssertAccumulatedCodesForTenSalesReturnsAndCreditNotesAsync(
-        HttpClient accounting, Guid customerId)
+        HttpClient accounting, Guid customerId, Guid customerPartySiteId)
     {
         const decimal creditNoteAmount = 7_100m;
 
@@ -1773,7 +1777,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         await SetWarehouseNegativeSalesPolicyAsync(true);
         for (var index = 0; index < 10; index++)
         {
-            var sale = CreateAccumulationCreditSale(9_840 + index, customerId);
+            var sale = CreateAccumulationCreditSale(
+                9_840 + index, customerId, customerPartySiteId);
             sales.Add(sale);
             using (var upload = fixture.CreateUploadMessage(sale))
             using (var response = await fixture.CreateClient().SendAsync(upload))
@@ -1883,7 +1888,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     private PosSaleUploadRequest CreateAccumulationCreditSale(
-        long consecutive, Guid customerId)
+        long consecutive, Guid customerId, Guid customerPartySiteId)
     {
         const decimal quantity = 10m;
         const decimal unitPrice = 10_000m;
@@ -1905,11 +1910,13 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         var sale = source with
         {
             CustomerId = customerId,
+            CustomerPartySiteId = customerPartySiteId,
             Payments = [],
             Credit = new PosSaleCreditContract(
                 customerId, total,
                 new DateTimeOffset(2026, 8, 31, 0, 0, 0,
-                    TimeSpan.FromHours(-5))),
+                    TimeSpan.FromHours(-5)),
+                PartySiteId: customerPartySiteId),
             CommercialSnapshot = source.CommercialSnapshot with
             {
                 Taxes = [new PosSaleTaxContract("01", tax)],
@@ -2683,13 +2690,24 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         return userId;
     }
 
-    private async Task<Guid> CreateCustomerAsync()
+    private async Task<(Guid CustomerId, Guid PartySiteId)> CreateCustomerAsync()
     {
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
+            DECLARE @CountryId UNIQUEIDENTIFIER,@DivisionId UNIQUEIDENTIFIER,@CityId UNIQUEIDENTIFIER;
+            SELECT TOP(1) @CountryId=country.CountryId,
+                          @DivisionId=division.AdministrativeDivisionId,
+                          @CityId=city.CityId
+            FROM dbo.Cities city
+            JOIN dbo.AdministrativeDivisions division
+              ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+            JOIN dbo.Countries country ON country.CountryId=division.CountryId
+            WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,
                CreatedBy,CreatedAt)
@@ -2699,6 +2717,11 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
               (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,
                CreatedBy,CreatedAt)
             VALUES(@CustomerId,@PartyId,@BusinessId,0,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+              CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+              @DivisionId,@CityId,N'Calle contable 1',1,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.CustomerCreditProfiles
               (CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,
                UpdatedByUserId,UpdatedAt)
@@ -2706,11 +2729,12 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             """, connection);
         command.Parameters.AddWithValue("@PartyId", partyId);
         command.Parameters.AddWithValue("@CustomerId", customerId);
+        command.Parameters.AddWithValue("@PartySiteId", partySiteId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
-        Assert.Equal(3, await command.ExecuteNonQueryAsync());
-        return customerId;
+        Assert.Equal(4, await command.ExecuteNonQueryAsync());
+        return (customerId, partySiteId);
     }
 
     private async Task AssertBalancedAsync(Guid documentId)

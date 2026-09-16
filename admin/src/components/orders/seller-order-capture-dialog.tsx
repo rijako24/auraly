@@ -77,7 +77,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
     0,
   );
   const online = navigatorOnline() && !localFirst;
-  const shortages = online && !allowsNegativeStockSales
+  const shortages = Boolean(editing) && online && !allowsNegativeStockSales
     ? selected.filter((value) => value.item.manageStock && value.quantity > value.item.quantityOnHand)
     : [];
   const invalidQuantity = selected.some(({ item, quantity }) => quantity > sellerOrderMaximumQuantity(
@@ -206,6 +206,9 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
       await removeSellerDraft(key);
       if (!synchronized) { toast.info("Pedido guardado en este dispositivo", { description: online ? "Ya aparece en Pedidos y se está sincronizando en segundo plano." : "Aparece en Pedidos y se enviará automáticamente cuando regrese la conexión." }); window.dispatchEvent(new Event(SELLER_ORDER_SYNC_REQUEST_EVENT)); }
       else toast.success(result.requiresReview ? `${result.orderNumber} quedó en revisión` : editing?`${result.orderNumber} actualizado`:`${result.orderNumber} guardado`);
+      if (synchronized && result.requiresReview) {
+        result.warnings.forEach((warning) => toast.warning(warning));
+      }
       await onCreated(result.orderId);
     } catch (error) { toast.error(sellerOrderErrorMessage(error)); }
     finally { setSaving(false); }

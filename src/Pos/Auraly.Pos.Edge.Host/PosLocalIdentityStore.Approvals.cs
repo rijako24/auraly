@@ -21,7 +21,7 @@ public sealed partial class PosLocalIdentityStore
         string permissionResource,
         Guid draftId,
         Guid? lineId,
-        string? supervisorSecret,
+        string? authorizerSecret,
         CancellationToken cancellationToken = default)
     {
         ValidateSensitivePermission(permissionResource);
@@ -30,18 +30,18 @@ public sealed partial class PosLocalIdentityStore
         var method = "DirectPermission";
         if (!direct)
         {
-            if (string.IsNullOrWhiteSpace(supervisorSecret))
+            if (string.IsNullOrWhiteSpace(authorizerSecret))
                 throw new PosLocalApprovalException(
                     "ApprovalRequired",
-                    "Esta acción requiere la credencial secundaria de un supervisor.");
-            authorizerId = await ResolveSupervisorAsync(
+                    "Esta acción requiere la credencial de un usuario autorizado.");
+            authorizerId = await ResolveAuthorizerAsync(
                 requester.UserId,
                 permissionResource,
-                supervisorSecret,
+                authorizerSecret,
                 cancellationToken)
                 ?? throw new PosLocalApprovalException(
                     "InvalidSupervisorCredential",
-                    "La credencial no corresponde a un supervisor autorizado en este dispositivo.");
+                    "La credencial no corresponde a un usuario habilitado para aprobar esta acción en este dispositivo.");
             method = "OfflineSupervisorCredential";
         }
 
@@ -88,12 +88,12 @@ public sealed partial class PosLocalIdentityStore
             throw new InvalidOperationException("The local sensitive authorization is not active.");
     }
 
-    private sealed record ResolvedSupervisor(
+    private sealed record ResolvedAuthorizer(
         Guid UserId,
         bool IsOneTime,
         DateTimeOffset ChangedAt);
 
-    private async Task<Guid?> ResolveSupervisorAsync(
+    private async Task<Guid?> ResolveAuthorizerAsync(
         Guid requesterId,
         string permissionResource,
         string secret,
@@ -109,15 +109,11 @@ public sealed partial class PosLocalIdentityStore
               AND u.ProtectedSupervisorCredential IS NOT NULL
               AND EXISTS(SELECT 1 FROM PosOfflineUserPermissions p
                          WHERE p.UserId=u.UserId AND p.PermissionCode=$permission)
-              AND EXISTS(SELECT 1 FROM PosOfflineUserPermissions p
-                         WHERE p.UserId=u.UserId AND p.PermissionCode=$authorize)
             ORDER BY u.UserId;
             """;
         command.Parameters.AddWithValue("$requester", requesterId.ToString("D"));
         command.Parameters.AddWithValue("$permission", permissionResource);
-        command.Parameters.AddWithValue(
-            "$authorize", CommercePermissionCodes.PosApprovalsAuthorize);
-        ResolvedSupervisor? matched = null;
+        ResolvedAuthorizer? matched = null;
         var secretBytes = Encoding.UTF8.GetBytes(secret);
         {
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -161,15 +157,9 @@ public sealed partial class PosLocalIdentityStore
 
     private static void ValidateSensitivePermission(string permissionResource)
     {
-        if (permissionResource is not (
-            CommercePermissionCodes.SalesChangePrice or
-            CommercePermissionCodes.SalesRemoveLine or
-            CommercePermissionCodes.SalesRestartDraft or
-            CommercePermissionCodes.SalesDeletePausedDraft or
-            WorkSessionPermissionCodes.Close or
-            WorkSessionPermissionCodes.CloseWithPausedSales))
+        if (!PosDelegatedPermissionPolicy.IsValid(permissionResource))
             throw new PosLocalApprovalException(
-                "UnsupportedPermission", "La acción no admite autorización delegada.");
+                "InvalidPermission", "La autorización no identifica un permiso válido.");
     }
 }
 

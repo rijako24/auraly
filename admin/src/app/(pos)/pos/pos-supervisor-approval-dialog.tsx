@@ -63,13 +63,13 @@ export function PosSupervisorApprovalDialog({
           resolved = true;
           setExpired(current.status === "Expired");
           setChannelError(current.status === "Rejected"
-            ? "El supervisor rechazó la acción."
+            ? "El usuario autorizador rechazó la acción."
             : "La solicitud venció; inténtala nuevamente.");
         }
       } catch (caught) {
         if (active) setChannelError(caught instanceof Error
           ? caught.message
-          : "No fue posible confirmar la respuesta del supervisor.");
+          : "No fue posible confirmar la respuesta del usuario autorizador.");
       } finally {
         refreshing = false;
       }
@@ -101,7 +101,7 @@ export function PosSupervisorApprovalDialog({
             </span>
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-teal-200">Acción protegida</p>
-              <h2 className="mt-1 text-xl font-black">Autorización de supervisor</h2>
+              <h2 className="mt-1 text-xl font-black">Autorización requerida</h2>
             </div>
           </div>
         </header>
@@ -110,16 +110,16 @@ export function PosSupervisorApprovalDialog({
             <div className="rounded-2xl border border-teal-200 bg-teal-50 p-5 text-center">
               <Smartphone className="mx-auto h-8 w-8 text-teal-700" />
               <h3 className="mt-3 font-bold text-slate-950">Esperando respuesta remota</h3>
-              <p className="mt-1 text-sm text-slate-600">El supervisor puede aprobar desde su teléfono. También puedes autorizar aquí con su clave.</p>
+              <p className="mt-1 text-sm text-slate-600">Un usuario habilitado para aprobar y con el permiso requerido puede responder desde su teléfono o autorizar aquí con su clave.</p>
             </div>
           )}
           <form onSubmit={submit} className={allowRemote ? "mt-4" : undefined}>
               <div className="flex items-start gap-3 rounded-2xl bg-amber-50 p-4 text-amber-950">
                 <KeyRound className="mt-0.5 h-5 w-5 shrink-0" />
-                <p className="text-sm">Un supervisor autorizado puede escribir aquí su credencial secundaria. No se guarda ni se reutiliza.</p>
+                <p className="text-sm">Cualquier usuario habilitado para aprobar y que tenga el permiso solicitado puede escribir aquí su credencial de autorización. No se guarda ni se reutiliza.</p>
               </div>
               <label className="mt-5 block text-sm font-bold text-slate-800">
-                Credencial del supervisor
+                Credencial del usuario autorizador
                 <input ref={secretInput} autoFocus type="password" autoComplete="off" value={secret}
                   onChange={(event) => setSecret(event.target.value)}
                   className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-lg tracking-widest outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/15" />

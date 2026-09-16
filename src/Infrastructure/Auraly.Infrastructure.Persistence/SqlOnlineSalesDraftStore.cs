@@ -189,7 +189,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
             quantity, cancellationToken);
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE dbo.SalesDraftLines
-            SET Quantity=@Quantity
+            SET Quantity=@Quantity,
+                PublicLineTotal=CASE WHEN PriceSource=N'Manual'
+                    THEN ROUND(PublicUnitPrice*@Quantity-DiscountAmount-PromotionDiscountAmount,2)
+                    ELSE PublicLineTotal END
             WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
             """,
             [

@@ -39,7 +39,9 @@ export function sellerOrderMaximumQuantity(
   originalQuantity: number | null,
   allowsNegativeStockSales: boolean,
 ): number {
-  if (!manageStock || allowsNegativeStockSales) return Number.POSITIVE_INFINITY;
+  if (!manageStock || allowsNegativeStockSales || originalQuantity === null) {
+    return Number.POSITIVE_INFINITY;
+  }
   return Math.max(quantityOnHand, originalQuantity ?? 0);
 }
 

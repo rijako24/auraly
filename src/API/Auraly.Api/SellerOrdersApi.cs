@@ -211,7 +211,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 var allocation=allocationByPosition[line.Position];
                 var canReserve=context.SourceWarehouseAllowsNegativeStock||allocation.CanReserve;
                 if(line.ManageStock&&!canReserve)
-                    warnings.Add($"{line.Code}: solicitadas {line.Quantity:N3}, disponibles {InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,line.InventoryFactor):N3}.");
+                    warnings.Add($"{line.Name} ({line.Code}): solicitadas {line.Quantity:N3}, disponibles {InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,line.InventoryFactor):N3}.");
                 return line with{Available=allocation.AvailableInventoryQuantity,CanReserve=canReserve};
             }).ToList();
             var review=warnings.Count>0;
@@ -352,7 +352,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                 var allocation=allocationByLine[input.LineId];
                 var canReserve=context.SourceWarehouseAllowsNegativeStock||allocation.CanReserve;
                 if(line.ManageStock&&!canReserve)
-                    warnings.Add($"{line.Code}: solicitadas {input.Quantity:N3}, disponibles {InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,line.InventoryFactor):N3}.");
+                    warnings.Add($"{line.Name} ({line.Code}): solicitadas {input.Quantity:N3}, disponibles {InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,line.InventoryFactor):N3}.");
                 lines.Add(line with{Quantity=input.Quantity,UnitPrice=unitPrice,PriceSource=priceSource,DiscountAmount=discountAmount,Position=++position,CanReserve=canReserve,Name=string.IsNullOrWhiteSpace(input.Description)?line.Name:input.Description.Trim(),DocumentUnitCost=input.DocumentUnitCost??line.DocumentUnitCost});
             }
             var review=warnings.Count>0;var number=$"PED-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString("N")[..8].ToUpperInvariant()}";

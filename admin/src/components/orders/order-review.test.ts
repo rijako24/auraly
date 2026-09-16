@@ -48,9 +48,14 @@ test("an existing shortage can be resubmitted but cannot be increased", () => {
 });
 
 test("negative-stock policy controls the capture limit", () => {
-  assert.equal(sellerOrderMaximumQuantity(true, 3, null, false), 3);
+  assert.equal(sellerOrderMaximumQuantity(true, 3, null, false), Number.POSITIVE_INFINITY);
   assert.equal(sellerOrderMaximumQuantity(true, 3, null, true), Number.POSITIVE_INFINITY);
   assert.equal(sellerOrderMaximumQuantity(false, 0, null, false), Number.POSITIVE_INFINITY);
+});
+
+test("a new order is saved before shortages are handled in review", () => {
+  assert.equal(sellerOrderMaximumQuantity(true, 0, null, false), Number.POSITIVE_INFINITY);
+  assert.equal(sellerOrderSubmitDisabled(false, 1, false, true, false), false);
 });
 
 test("complete editing renders the order snapshot before the catalog refresh finishes", () => {

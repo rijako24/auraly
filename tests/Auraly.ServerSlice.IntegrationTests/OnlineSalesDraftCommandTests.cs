@@ -262,6 +262,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         var userId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         var priceChannelId = Guid.NewGuid();
         var priceChannelItemId = Guid.NewGuid();
         var volumePriceChannelItemId = Guid.NewGuid();
@@ -277,6 +278,16 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         var barcode = $"770{Random.Shared.NextInt64(1_000_000_000, 9_999_999_999)}";
         await ExecuteAsync(
             """
+            DECLARE @CountryId UNIQUEIDENTIFIER,@DivisionId UNIQUEIDENTIFIER,@CityId UNIQUEIDENTIFIER;
+            SELECT TOP(1) @CountryId=country.CountryId,
+                          @DivisionId=division.AdministrativeDivisionId,
+                          @CityId=city.CityId
+            FROM dbo.Cities city
+            JOIN dbo.AdministrativeDivisions division
+              ON division.AdministrativeDivisionId=city.AdministrativeDivisionId
+            JOIN dbo.Countries country ON country.CountryId=division.CountryId
+            WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1;
+
             INSERT dbo.AppUsers(
               UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,
               IsActive,CreatedAt)
@@ -294,6 +305,11 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
             VALUES(
               @CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+              CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
+              @DivisionId,@CityId,N'Calle prueba 1',1,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PriceChannels(
               PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
             VALUES(
@@ -350,6 +366,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new("@NormalizedUsername", $"ONLINE-{userId:N}".ToUpperInvariant()),
             new("@PartyId", partyId),
             new("@CustomerId", customerId),
+            new("@PartySiteId", partySiteId),
             new("@BusinessId", fixture.BusinessId),
             new("@PriceChannelId", priceChannelId),
             new("@ChannelCode", $"C-{priceChannelId:N}"[..20]),
@@ -564,7 +581,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             client,
             HttpMethod.Put,
             $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer",
-            new SelectOnlineSalesDraftCustomerRequest(customerId, captured.Version));
+            new SelectOnlineSalesDraftCustomerRequest(customerId, captured.Version, partySiteId));
         Assert.NotNull(selected.Customer);
         Assert.Equal(customerId, selected.Customer.CustomerId);
         var customerLine = Assert.Single(selected.Draft.Lines);
@@ -591,9 +608,9 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
             new AddOnlineSalesDraftItemRequest(barcode, 1m, changed.Version));
         Assert.Equal(2, withAnotherLine.Lines.Count);
-        Assert.Equal(7_000m, withAnotherLine.Lines.Single(line => line.LineId == customerLine.LineId).UnitPrice);
+        Assert.Equal(8_000m, withAnotherLine.Lines.Single(line => line.LineId == customerLine.LineId).UnitPrice);
         Assert.Equal(7_000m, withAnotherLine.Lines.Single(line => line.LineId != customerLine.LineId).UnitPrice);
-        Assert.Equal(20_000m, withAnotherLine.PayableAmount);
+        Assert.Equal(22_000m, withAnotherLine.PayableAmount);
 
         var removed = await MutateAsync<OnlineSalesDraft>(
             client,
@@ -900,7 +917,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             INSERT dbo.TaxProfiles(
               TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
             VALUES(
-              @TaxProfileId,@BusinessId,N'IVA-0',N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
+              @TaxProfileId,@BusinessId,@TaxCode,N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
             UPDATE dbo.Products
             SET TaxProfileId=@TaxProfileId
             WHERE ProductId=@ProductId;
@@ -909,6 +926,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new("@TenantId", fixture.TenantId),
             new("@Username", $"dian-tax-{userId:N}"),
             new("@TaxProfileId", taxProfileId),
+            new("@TaxCode", $"IVA0-{taxProfileId:N}"[..32]),
             new("@BusinessId", fixture.BusinessId),
             new("@ProductId", fixture.ProductId));
         try

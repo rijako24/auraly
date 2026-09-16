@@ -158,6 +158,7 @@ internal static class PosSaleHostModule
         edge.MapPost("/drafts/{draftId:guid}/complete", async (
             Guid draftId,
             CompleteDraftRequest request,
+            HttpContext http,
             PosSaleCompletionService completion,
             PosSaleHostSettings settings,
             PosFiscalRuntimeSettings fiscalRuntime,
@@ -165,11 +166,26 @@ internal static class PosSaleHostModule
             PosSynchronizationSignal synchronization,
             PosDraftStore drafts,
             PosCreditServerClient creditServer,
+            PosSensitiveActionAuthorizer authorizer,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
             try
             {
+                var session = sessions.Required();
+                PosSensitiveActionAuthorization? authorization = null;
+                if (!string.IsNullOrWhiteSpace(http.Request.Headers["X-Auraly-Operation-Id"]) ||
+                    !string.IsNullOrWhiteSpace(http.Request.Headers["X-Auraly-Approval-Id"]) ||
+                    !string.IsNullOrWhiteSpace(http.Request.Headers["X-Auraly-Supervisor-Secret"]))
+                    authorization = await authorizer.AuthorizeAsync(
+                        session,
+                        CommercePermissionCodes.SalesBelowCost,
+                        draftId,
+                        null,
+                        http.Request.Headers["X-Auraly-Approval-Id"],
+                        http.Request.Headers["X-Auraly-Operation-Id"],
+                        http.Request.Headers["X-Auraly-Supervisor-Secret"],
+                        ct);
                 var payments = request.Payments
                     .Select(payment => new OfflineSalePayment(
                         payment.MethodCode,
@@ -181,7 +197,6 @@ internal static class PosSaleHostModule
                         payment.Notes,
                         payment.TenderedAmount))
                     .ToArray();
-                var session = sessions.Required();
                 PosSaleCreditTerms? credit = null;
                 var ublSnapshot = request.UblSnapshot;
                 var customerIdentification = string.IsNullOrWhiteSpace(
@@ -247,10 +262,16 @@ internal static class PosSaleHostModule
                         settings.PaperWidthMillimeters,
                         ublSnapshot,
                         request.DocumentType,
-                        session.Permissions.ToHashSet(StringComparer.Ordinal),
+                        authorization is null
+                            ? session.Permissions.ToHashSet(StringComparer.Ordinal)
+                            : session.Permissions
+                                .Append(CommercePermissionCodes.SalesBelowCost)
+                                .ToHashSet(StringComparer.Ordinal),
                         credit,
                         session.DisplayName),
                     ct);
+                if (authorization is not null)
+                    await authorizer.CompleteAsync(authorization, ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
                 // The sale is already durably issued at this point. Every completed
                 // sale opens the local drawer, including offline sales. A disconnected
@@ -264,7 +285,10 @@ internal static class PosSaleHostModule
             }
             catch (UnauthorizedAccessException error)
             {
-                return Results.Json(new { detail = error.Message }, statusCode: StatusCodes.Status403Forbidden);
+                return Results.Json(
+                    new { detail = error.Message },
+                    contentType: "application/json; charset=utf-8",
+                    statusCode: StatusCodes.Status403Forbidden);
             }
         });
 

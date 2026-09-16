@@ -24,6 +24,7 @@ dotnet test tests/Auraly.Pos.Edge.Host.Tests/Auraly.Pos.Edge.Host.Tests.csproj -
 ## Pruebas SQL Server
 
 Las pruebas despliegan el DACPAC en una base temporal real y eliminan únicamente esa base al finalizar.
+La suite completa es un bloqueo obligatorio tanto del control de calidad de `main` como de la construcción de cualquier release de DEV; no se publica un artefacto si falla guardar, recuperar o facturar pedidos contra SQL Server real.
 
 ```powershell
 dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --configuration Release

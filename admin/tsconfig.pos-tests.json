@@ -21,6 +21,8 @@
     "src/app/(pos)/pos/pos-payment-keyboard.test.ts",
     "src/app/(pos)/pos/pos-public-error.ts",
     "src/app/(pos)/pos/pos-public-error.test.ts",
+    "src/app/(pos)/pos/pos-sale-authorization.ts",
+    "src/app/(pos)/pos/pos-sale-authorization.test.ts",
     "src/components/returns/sales-return-calculation.ts",
     "src/components/returns/sales-return-calculation.test.ts",
     "src/lib/sales-return-business-context.ts",

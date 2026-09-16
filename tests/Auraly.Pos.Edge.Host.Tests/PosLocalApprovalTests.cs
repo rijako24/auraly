@@ -63,6 +63,24 @@ public sealed class PosLocalApprovalTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Below_cost_sale_accepts_an_authorizer_with_the_action_permission()
+    {
+        var store = Assert.IsType<PosLocalIdentityStore>(_store);
+        var session = await store.LoginAsync(
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
+
+        var authorization = await store.AuthorizeSensitiveAsync(
+            session,
+            CommercePermissionCodes.SalesBelowCost,
+            Guid.NewGuid(),
+            null,
+            "Supervisor-Secret-1");
+
+        Assert.Equal(_supervisorId, authorization.AuthorizedByUserId);
+        Assert.Equal(CommercePermissionCodes.SalesBelowCost, authorization.PermissionResource);
+    }
+
+    [Fact]
     public async Task Invalid_credential_never_creates_an_authorization_audit()
     {
         var store = Assert.IsType<PosLocalIdentityStore>(_store);
@@ -109,8 +127,8 @@ public sealed class PosLocalApprovalTests : IAsyncLifetime
                     _supervisorId, "supervisor", "Supervisora",
                     [
                         CommercePermissionCodes.SalesCreate,
-                        CommercePermissionCodes.SalesRemoveLine,
-                        CommercePermissionCodes.PosApprovalsAuthorize
+                        CommercePermissionCodes.SalesBelowCost,
+                        CommercePermissionCodes.SalesRemoveLine
                     ],
                     supervisorPassword,
                     new PosOfflineSupervisorCredentialVerifier(
@@ -180,9 +198,9 @@ public sealed class PosLocalApprovalTests : IAsyncLifetime
                     "Supervisora",
                     [
                         CommercePermissionCodes.SalesCreate,
+                        CommercePermissionCodes.SalesBelowCost,
                         CommercePermissionCodes.SalesRemoveLine,
-                        CommercePermissionCodes.SalesRestartDraft,
-                        CommercePermissionCodes.PosApprovalsAuthorize
+                        CommercePermissionCodes.SalesRestartDraft
                     ],
                     supervisorPassword,
                     new PosOfflineSupervisorCredentialVerifier(

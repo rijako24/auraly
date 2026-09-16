@@ -72,7 +72,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
-      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',N'pos.workspace.change',
+      N'pos.approvals.read',N'pos.approvals.manage_credential',N'pos.workspace.change',
       N'pos.customer.create',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',
@@ -127,7 +127,7 @@ WHERE roleValue.IsActive=1
       N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
-      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',N'pos.workspace.change',
+      N'pos.approvals.read',N'pos.approvals.manage_credential',N'pos.workspace.change',
       N'pos.customer.create',N'pos.inventory.availability.read',N'orders.read',N'orders.review',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
       N'sales.debit-notes.read',N'sales.debit-notes.create',

@@ -207,6 +207,10 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "SUPERVISOR", "pos.approvals.receive_notifications"));
         Assert.False(await RoleHasPermissionAsync(
+            result.TenantId, "SUPERVISOR", CommercePermissionCodes.PosApprovalsAuthorize));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "ADMINISTRATOR", CommercePermissionCodes.PosApprovalsAuthorize));
+        Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.approvals.receive_notifications"));
         Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.synchronization.events.read"));
@@ -1347,12 +1351,42 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         var authorizationId = Guid.NewGuid();
         var issuerId = Guid.NewGuid();
         var seriesId = Guid.NewGuid();
+        var documentSeriesId = Guid.NewGuid();
         const string supplierTaxId = "901777333";
         const string authorizationNumber = "18769999999";
         const string technicalVersion = "billing-test-v1";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
+            IF NOT EXISTS(
+              SELECT 1
+              FROM dbo.TenantLegalProfiles profile
+              JOIN dbo.Businesses business ON business.TenantId=profile.TenantId
+              WHERE business.BusinessId=@BusinessId)
+            BEGIN
+              INSERT dbo.TenantLegalProfiles(
+                TenantId,LegalName,TradeName,Nit,NormalizedNit,VerificationDigit,
+                EntityType,IdentificationTypeCode,CountryId,AdministrativeDivisionId,
+                CityId,Address,Phone,Email,TaxResponsibilities,PrimaryBusinessId,CreatedAt)
+              SELECT business.TenantId,N'Auraly',N'Auraly',@SupplierTaxId,@SupplierTaxId,N'1',
+                N'Organization',N'NIT',country.CountryId,division.AdministrativeDivisionId,
+                city.CityId,N'Calle 1',N'3000000000',business.Email,N'R-99-PN',
+                @BusinessId,SYSDATETIMEOFFSET()
+              FROM dbo.Businesses business
+              CROSS APPLY(
+                SELECT TOP(1) country.CountryId,division.AdministrativeDivisionId,city.CityId
+                FROM dbo.Countries country
+                JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+                JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+                WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1
+                ORDER BY country.CountryId,division.AdministrativeDivisionId,city.CityId) geography
+              JOIN dbo.Countries country ON country.CountryId=geography.CountryId
+              JOIN dbo.AdministrativeDivisions division
+                ON division.AdministrativeDivisionId=geography.AdministrativeDivisionId
+              JOIN dbo.Cities city ON city.CityId=geography.CityId
+              WHERE business.BusinessId=@BusinessId;
+            END;
+
             INSERT dbo.FiscalAuthorizations
               (FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
                Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
@@ -1372,6 +1406,14 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                '11111111-1111-1111-1111-111111111111',N'Test',N'Test',N'TEST',
                N'https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc',N'1.9',
                N'Auraly.Tests','2026-01-01',1,SYSDATETIMEOFFSET());
+            IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries
+                          WHERE BusinessId=@BusinessId AND DocumentType=N'ServiceInvoice'
+                            AND DeviceId IS NULL AND IsActive=1)
+              INSERT dbo.DocumentSeries(
+                DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
+                Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+              VALUES(@DocumentSeriesId,@BusinessId,NULL,N'ServiceInvoice',N'SVP',N'00',8,
+                1,99999999,0,1,SYSDATETIMEOFFSET());
             INSERT dbo.FiscalSeries
               (SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
                DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
@@ -1381,6 +1423,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@AuthorizationId", authorizationId);
         command.Parameters.AddWithValue("@IssuerId", issuerId);
         command.Parameters.AddWithValue("@SeriesId", seriesId);
+        command.Parameters.AddWithValue("@DocumentSeriesId", documentSeriesId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@AuthorizationNumber", authorizationNumber);
         command.Parameters.AddWithValue("@SupplierTaxId", supplierTaxId);

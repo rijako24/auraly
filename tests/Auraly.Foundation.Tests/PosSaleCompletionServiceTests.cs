@@ -116,6 +116,36 @@ public sealed class PosSaleCompletionServiceTests
     }
 
     [Fact]
+    public async Task Below_cost_sale_requires_explicit_permission_and_succeeds_when_authorized()
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            var draft = await fixture.AddLineAsync(documentUnitCost: 10_001m);
+
+            var forbidden = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                fixture.CompleteAsync(draft.DraftId));
+
+            Assert.Contains(CommercePermissionCodes.SalesBelowCost, forbidden.Message);
+            Assert.Equal(
+                PosDraftStatus.Active,
+                (await fixture.Drafts.GetAsync(draft.DraftId))!.Status);
+            Assert.Empty(await fixture.Sales.GetPendingOutboxAsync());
+
+            var completed = await fixture.CompleteAsync(
+                draft.DraftId,
+                permissions: new HashSet<string>(StringComparer.Ordinal)
+                {
+                    CommercePermissionCodes.SalesBelowCost
+                });
+
+            Assert.Equal(PosDraftStatus.Consumed,
+                (await fixture.Drafts.GetAsync(draft.DraftId))!.Status);
+            Assert.Equal("VTA03-00000100", completed.IssuedSale.DocumentNumber);
+            Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
+        });
+    }
+
+    [Fact]
     public async Task Server_authorized_credit_is_persisted_as_financing_not_received_money()
     {
         await WithFixtureAsync(async fixture =>
@@ -284,7 +314,7 @@ public sealed class PosSaleCompletionServiceTests
             return new Fixture(scope, executionContext, drafts, issuance, sales, new RecordingPrinter());
         }
 
-        public Task<PosDraft> AddLineAsync() =>
+        public Task<PosDraft> AddLineAsync(decimal documentUnitCost = 0m) =>
             Drafts.AddOrIncrementLineAsync(
                 Scope,
                 new PosDraftLineInput(
@@ -298,12 +328,14 @@ public sealed class PosSaleCompletionServiceTests
                     10_000m,
                     10_000m,
                     "COP",
-                    "BusinessDefault"));
+                    "BusinessDefault",
+                    DocumentUnitCost: documentUnitCost));
 
         public Task<CompletePosSaleResult> CompleteAsync(
             DraftId draftId,
             IReadOnlyCollection<OfflineSalePayment>? payments = null,
-            PosSaleCreditTerms? credit = null) =>
+            PosSaleCreditTerms? credit = null,
+            IReadOnlySet<string>? permissions = null) =>
             new PosSaleCompletionService(Drafts, Issuance, Sales, Printer).CompleteAsync(
                 draftId,
                 new CompletePosSaleCommand(
@@ -317,6 +349,7 @@ public sealed class PosSaleCompletionServiceTests
                     "https://catalogo-vpfe.dian.gov.co/document/searchqr",
                     payments ?? [new OfflineSalePayment("Cash", 10_000m)],
                     80,
+                    Permissions: permissions,
                     Credit: credit));
     }
 

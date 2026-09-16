@@ -285,13 +285,31 @@ group.MapPost("/{draftId:guid}/items", async (
             Guid draftId,
             CompleteOnlineSalesDraftRequest request,
             OnlineSalesCheckoutService service,
+            PosApprovalService approvals,
             CancellationToken ct) =>
-            await Handle(() => service.CompleteAsync(
-                context.User.ToOnlineSalesUserIdentity(),
-                draftId,
-                request,
-                IdempotencyKey(context),
-                ct)));
+            await Handle(() =>
+            {
+                var user = context.User.ToOnlineSalesUserIdentity();
+                if (string.IsNullOrWhiteSpace(
+                        context.Request.Headers["X-Auraly-Operation-Id"]))
+                    return service.CompleteAsync(
+                        user, draftId, request, IdempotencyKey(context), ct);
+                var authorizedUser = user with
+                {
+                    Permissions = user.Permissions
+                        .Append(CommercePermissionCodes.SalesBelowCost)
+                        .ToHashSet(StringComparer.Ordinal)
+                };
+                return ExecuteSensitiveAsync(
+                    context,
+                    approvals,
+                    draftId,
+                    null,
+                    CommercePermissionCodes.SalesBelowCost,
+                    () => service.CompleteAsync(
+                        authorizedUser, draftId, request, IdempotencyKey(context), ct),
+                    ct);
+            }));
 
         group.MapPost("/{draftId:guid}/reset", async (
             HttpContext context,
@@ -360,8 +378,11 @@ group.MapPost("/{draftId:guid}/items", async (
         Func<Task<T>> action,
         CancellationToken cancellationToken)
     {
-        var idempotencyKey = IdempotencyKey(context);
-        if (!Guid.TryParse(idempotencyKey, out var operationId) || operationId == Guid.Empty)
+        var operationHeader = context.Request.Headers["X-Auraly-Operation-Id"].ToString();
+        var operationValue = string.IsNullOrWhiteSpace(operationHeader)
+            ? IdempotencyKey(context)
+            : operationHeader;
+        if (!Guid.TryParse(operationValue, out var operationId) || operationId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
                 "Idempotency-Key must be a non-empty UUID for sensitive POS actions.");
         var approvalHeader = context.Request.Headers["X-Auraly-Approval-Id"].ToString();

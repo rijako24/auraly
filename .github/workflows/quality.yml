@@ -8,6 +8,8 @@ on:
 jobs:
   backend:
     runs-on: windows-latest
+    env:
+      AURALY_TEST_SQLSERVER: '(localdb)\MSSQLLocalDB'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -16,6 +18,8 @@ jobs:
       - run: dotnet restore Auraly.Commerce.sln --locked-mode
       - run: dotnet build Auraly.Commerce.sln --no-restore --configuration Release
       - run: dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj --no-build --configuration Release
+      - run: dotnet test tests/Auraly.Pos.Edge.Host.Tests/Auraly.Pos.Edge.Host.Tests.csproj --no-build --configuration Release
+      - run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release
 
   admin:
     runs-on: ubuntu-latest
@@ -32,4 +36,5 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test:pos
+      - run: npm run test:orders-ui
       - run: npm run build

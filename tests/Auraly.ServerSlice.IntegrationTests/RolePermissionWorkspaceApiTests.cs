@@ -145,15 +145,18 @@ public sealed class RolePermissionWorkspaceApiTests(ServerSliceFixture fixture)
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
-            SELECT NEWID(),userRole.RoleId,permissionValue.PermissionId,SYSUTCDATETIME()
-            FROM dbo.UserRoles userRole
+            SELECT NEWID(),candidate.RoleId,candidate.PermissionId,SYSUTCDATETIME()
+            FROM(
+              SELECT DISTINCT userRole.RoleId,permissionValue.PermissionId
+              FROM dbo.UserRoles userRole
             CROSS JOIN dbo.Permissions permissionValue
             WHERE userRole.UserId=@UserId
               AND permissionValue.PermissionId IN (SELECT value FROM STRING_SPLIT(@PermissionIds,','))
-              AND NOT EXISTS(
+            ) candidate
+            WHERE NOT EXISTS(
                   SELECT 1 FROM dbo.RolePermissions existing
-                  WHERE existing.RoleId=userRole.RoleId
-                    AND existing.PermissionId=permissionValue.PermissionId);
+                  WHERE existing.RoleId=candidate.RoleId
+                    AND existing.PermissionId=candidate.PermissionId);
             """;
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
         command.Parameters.AddWithValue(

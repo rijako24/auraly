@@ -119,6 +119,8 @@ jobs:
       - name: Build and test release once in DEV
         if: inputs.environment == 'dev'
         shell: pwsh
+        env:
+          AURALY_TEST_SQLSERVER: '(localdb)\MSSQLLocalDB'
         run: >-
           ./infrastructure/azure/New-AuralyRelease.ps1
           -Version '${{ inputs.version }}'

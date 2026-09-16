@@ -298,6 +298,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
     [InlineData(CommercePermissionCodes.SalesRemoveLine, "RemoveLine")]
     [InlineData(CommercePermissionCodes.SalesRestartDraft, "RestartSale")]
     [InlineData(CommercePermissionCodes.SalesChangePrice, "ChangePrice")]
+    [InlineData(CommercePermissionCodes.SalesBelowCost, "CompleteBelowCostSale")]
     [InlineData("work-sessions.close", "CloseWorkSession")]
     [InlineData(CommercePermissionCodes.EnrolledDevicesEnroll, "EnrollPosDevice")]
     public async Task Every_sensitive_pos_action_accepts_local_window_and_remote_approval(
@@ -366,6 +367,43 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             decisions[local.ApprovalRequestId]);
         Assert.Equal((PosApprovalStatus.Approved, "Remote", supervisorId),
             decisions[remote.ApprovalRequestId]);
+    }
+
+    [Fact]
+    public async Task Local_credential_requires_only_the_action_permission()
+    {
+        var authorizerId = Guid.NewGuid();
+        await SeedSupervisorAsync(authorizerId);
+        using var authorizer = fixture.CreateUserClient(
+            authorizerId,
+            CommercePermissionCodes.SalesBelowCost,
+            CommercePermissionCodes.PosApprovalsManageCredential);
+        await RemovePermissionAsync(authorizerId, CommercePermissionCodes.PosApprovalsAuthorize);
+        var secret = $"Authorizer-{Guid.NewGuid():N}"[..24];
+        using var configured = await authorizer.PutAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/supervisor-credential",
+            new ConfigureSupervisorCredentialRequest(secret, 8));
+        configured.EnsureSuccessStatusCode();
+
+        using var requester = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        using var createdResponse = await requester.PostAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/",
+            new CreatePosApprovalRequest(
+                fixture.BusinessId,
+                fixture.DeviceId,
+                fixture.WorkSessionId,
+                Guid.NewGuid(),
+                null,
+                CommercePermissionCodes.SalesBelowCost,
+                "{\"action\":\"CompleteBelowCostSale\"}"));
+        createdResponse.EnsureSuccessStatusCode();
+        var approval = await createdResponse.Content.ReadFromJsonAsync<PosApprovalRequestView>();
+        Assert.NotNull(approval);
+
+        using var authorization = await requester.PostAsJsonAsync(
+            $"/api/commerce/v1/pos/approvals/{approval.ApprovalRequestId:D}/local-authorization",
+            new AuthorizePosApprovalLocallyRequest(secret));
+        authorization.EnsureSuccessStatusCode();
     }
 
     [Fact]
@@ -578,7 +616,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
             SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
             FROM dbo.Permissions WHERE Resource IN(
-              N'sales.create',N'sales.change-price',N'sales.lines.remove',N'sales.drafts.restart',
+              N'sales.create',N'sales.change-price',N'sales.below-cost',N'sales.lines.remove',N'sales.drafts.restart',
               N'work-sessions.close',N'pos.devices.enroll',
               N'pos.approvals.read',N'pos.approvals.authorize',N'pos.approvals.manage_credential');
             """;
@@ -592,6 +630,23 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@Hash", verifier.Hash);
         command.Parameters.AddWithValue("@Iterations", verifier.Iterations);
         command.Parameters.AddWithValue("@ChangedAt", verifier.ChangedAt);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task RemovePermissionAsync(Guid userId, string permissionResource)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE rp
+            FROM dbo.RolePermissions rp
+            JOIN dbo.UserRoles ur ON ur.RoleId=rp.RoleId AND ur.UserId=@UserId
+            JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
+            WHERE p.Resource=@Permission;
+            """;
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@Permission", permissionResource);
         await command.ExecuteNonQueryAsync();
     }
 }

@@ -663,6 +663,7 @@ export interface PosClient {
     documentType: PosSaleDocumentType,
     credit?: PosCreditTerms | null,
     fiscalHabilitationOnly?: boolean,
+    authorization?: PosSensitiveAuthorization,
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
   reprint(documentId: string): Promise<void>;
@@ -1278,6 +1279,7 @@ export class PosEdgeClient implements PosClient {
     documentType: PosSaleDocumentType,
     credit: PosCreditTerms | null = null,
     fiscalHabilitationOnly = false,
+    authorization?: PosSensitiveAuthorization,
   ) {
     if (fiscalHabilitationOnly)
       return Promise.reject(new PosEdgeError(
@@ -1286,6 +1288,7 @@ export class PosEdgeClient implements PosClient {
       `/edge/v1/drafts/${draftId}/complete`,
       {
         method: "POST",
+        headers: sensitiveHeaders(authorization),
         body: JSON.stringify({ customerIdentification, payments, documentType, credit }),
       },
     );

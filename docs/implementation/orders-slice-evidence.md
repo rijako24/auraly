@@ -17,7 +17,7 @@ Fecha de ejecución: 2026-07-31.
 ## Escenarios demostrados
 
 - el esquema de Orders y OrderItems no contiene totales ni tarifas de IVA;
-- el pedido recuperado conserva precio y descuento, pero la venta usa el IVA vigente del producto;
+- el pedido recuperado hidrata literalmente la fotografía guardada, aun si el producto quedó inactivo; una edición posterior vuelve a aplicar las reglas vigentes;
 - recuperación SQLite atómica y durable;
 - rechazo de mezcla con una venta existente;
 - `SourceOrderId` sobrevive borrador → emisión → outbox;

@@ -72,6 +72,8 @@ El ejecutable abre la ruta general `/login` con el token efímero de sesión en 
 
 ## Verificaciones automatizadas
 
+La publicación de DEV ejecuta estas verificaciones como bloqueo. Las regresiones cubren persistencia y recuperación del borrador, edición de líneas, conservación de la descripción, emisión/consulta de ventas y autorización de ventas bajo costo.
+
 ```powershell
 dotnet build Auraly.Commerce.sln --configuration Release
 dotnet test tests\Auraly.Foundation.Tests\Auraly.Foundation.Tests.csproj --configuration Release

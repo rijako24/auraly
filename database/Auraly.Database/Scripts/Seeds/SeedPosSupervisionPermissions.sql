@@ -35,8 +35,16 @@ WHERE replacement.Resource IN(N'sales.lines.remove',N'sales.drafts.restart')
       WHERE currentAssignment.RoleId=legacy.RoleId
         AND currentAssignment.PermissionId=replacement.PermissionId);
 
-/* Los roles estándar de administración y supervisión pueden atender solicitudes.
-   El cajero no recibe estas concesiones por defecto. */
+/* Solo el administrador del tenant atiende solicitudes remotas. Los roles
+   operativos pueden conservar las demás capacidades sin recibir authorize. */
+DELETE assignment
+FROM dbo.RolePermissions assignment
+JOIN dbo.AppRoles roleValue ON roleValue.RoleId=assignment.RoleId
+JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
+WHERE permissionValue.Resource=N'pos.approvals.authorize'
+  AND roleValue.NormalizedName IN(
+    N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ACCOUNTANT',N'SELLER');
+
 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
 SELECT NEWID(), roleValue.RoleId, permissionValue.PermissionId, SYSUTCDATETIME()
 FROM dbo.AppRoles roleValue
@@ -47,6 +55,8 @@ WHERE roleValue.IsActive=1
       N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',
       N'pos.workspace.change')
+  AND (permissionValue.Resource<>N'pos.approvals.authorize'
+       OR roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR'))
   AND NOT EXISTS(
       SELECT 1 FROM dbo.RolePermissions currentAssignment
       WHERE currentAssignment.RoleId=roleValue.RoleId

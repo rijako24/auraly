@@ -127,7 +127,9 @@ import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-ap
 import { calculateEffectiveRetailUnitPrice } from "./pos-retail-price";
 import {
   canRequestOrderSave,
+  orderSaveRequiresCustomerSelection,
   removingLastRecoveredOrderLineCancelsOrder,
+  shouldSaveOrderAfterCustomerSelection,
 } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
 import { capturePosFunctionShortcut, isPosCashDrawerShortcut, isPosDenominationCalculatorShortcut, POS_ACTION_SHORTCUTS } from "./pos-function-shortcut";
@@ -142,6 +144,7 @@ import {
 import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
 import type { PosPreparationHealth } from "./pos-preparation-progress";
 import { posPublicError } from "./pos-public-error";
+import { saleRequiresBelowCostAuthorization } from "./pos-sale-authorization";
 
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -519,6 +522,9 @@ export default function PosPage() {
   const showError = useCallback((caught: unknown) => {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
     const onlineTransportFailure = client?.mode === "online" && caught instanceof TypeError;
+    const publicError = caught instanceof Error
+      ? posPublicError(caught.message, "No fue posible completar la operación.")
+      : null;
     if (onlineTransportFailure) {
       setEdgeReady(false);
       setServerConnected(false);
@@ -526,9 +532,9 @@ export default function PosPage() {
     const text = onlineTransportFailure
       ? "No hay conexión con Auraly. La venta en línea requiere conexión con el servidor."
       : client?.mode === "online" && caught instanceof PosEdgeError
-        ? caught.message
+        ? publicError
         : status === 409 && caught instanceof PosEdgeError
-          ? caught.message
+          ? publicError
           : status === 404
             ? "Producto no encontrado en el catálogo local"
             : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
@@ -1165,7 +1171,7 @@ export default function PosPage() {
 
   const saveOrder = useCallback(async () => {
     if (!client || !draft?.lines.length || busy) return;
-    if (!draft.customerId) {
+    if (orderSaveRequiresCustomerSelection(draft.customerId)) {
       saveOrderAfterCustomerSelection.current = true;
       setError("Selecciona un cliente antes de guardar el pedido.");
       setMessage("El pedido necesita cliente");
@@ -1731,7 +1737,7 @@ export default function PosPage() {
         if (!approvalRequestConfirmsExistingPermission(caught)) {
           setSensitiveApprovalError(caught instanceof Error
             ? caught.message
-            : "No fue posible enviar la solicitud remota. Puedes autorizar con la clave del supervisor o reintentar.");
+            : "No fue posible enviar la solicitud remota. Puedes autorizar con la clave de un usuario que tenga el permiso o reintentar.");
           return;
         }
         setSensitiveApproval((current) => current?.operationId === operationId ? null : current);
@@ -2061,7 +2067,10 @@ export default function PosPage() {
       setDraft(selection.draft);
       setSelectedCustomer(selection.customer);
       setCustomerSearchOpen(false);
-      const continueSavingOrder = saveOrderAfterCustomerSelection.current && Boolean(selection.customer);
+      const continueSavingOrder = shouldSaveOrderAfterCustomerSelection({
+        pendingOrderSave: saveOrderAfterCustomerSelection.current,
+        selectedCustomerId: selection.customer?.customerId,
+      });
       saveOrderAfterCustomerSelection.current = false;
       if (continueSavingOrder) {
         setPricingTransition(false);
@@ -2278,8 +2287,9 @@ export default function PosPage() {
   async function completeSale(
     payments: PosPaymentInput[],
     settlement: PosPaymentSettlement,
+    authorization: PosSensitiveAuthorization | null = null,
   ) {
-    if (!client || !draft || busy) return;
+    if (!client || !draft || (busy && !authorizationIsCurrent(authorization))) return;
     const effectiveDocumentType = selectedCustomer?.requiresElectronicInvoice
       ? "SalesInvoice"
       : documentType;
@@ -2287,6 +2297,26 @@ export default function PosPage() {
       workstation.dianQuotaAvailable !== false, habilitationMode)) {
       setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
         ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
+      return;
+    }
+    if (saleRequiresBelowCostAuthorization(draft.lines) &&
+        !authorizationIsCurrent(authorization)) {
+      try {
+        await authorizeSensitiveConfirmation(
+          "sales.below-cost",
+          null,
+          {
+            action: "CompleteBelowCostSale",
+            lineCount: draft.lines.length,
+            total: draft.payableAmount,
+            products: draft.lines.map((line) => line.description),
+          },
+          null,
+          async (approved) => completeSale(payments, settlement, approved),
+        );
+      } catch (caught) {
+        showError(caught);
+      }
       return;
     }
     const localPrintPreview = client.mode === "edge"
@@ -2303,6 +2333,7 @@ export default function PosPage() {
         effectiveDocumentType,
         checkout.credit,
         habilitationMode,
+        authorization ?? undefined,
       );
       if (client.mode === "edge" && (result.printedDirectly || result.printCompletion))
         closePrintPreview(localPrintPreview);

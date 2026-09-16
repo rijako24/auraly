@@ -612,6 +612,10 @@ public sealed class ArchitectureDebtRatchetTests
 
         Assert.Contains("_fiscalMaterialByReference", service, StringComparison.Ordinal);
         Assert.Contains("_fiscalKeyContextByBusiness", service, StringComparison.Ordinal);
+        Assert.Contains("FiscalAuthorizations fiscalAuthorization", directOrderCheckout,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("FiscalAuthorizations authorization", directOrderCheckout,
+            StringComparison.OrdinalIgnoreCase);
         Assert.Contains("d.BusinessId", checkout, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "SELECT BusinessId FROM dbo.SalesDrafts",

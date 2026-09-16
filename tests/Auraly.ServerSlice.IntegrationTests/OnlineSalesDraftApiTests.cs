@@ -329,16 +329,51 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         Assert.Equal(4_500m, reloaded.Lines.Single(value => value.LineId == line.LineId).DocumentUnitCost);
         Assert.Equal("Manual", reloaded.Lines.Single(value => value.LineId == line.LineId).PriceSource);
 
+        using var belowCostUpdate = Mutation(
+            HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{reloaded.DraftId:D}/lines",
+            new UpdateOnlineSalesDraftLinesRequest(
+                reloaded.Lines.Select(value => new UpdateOnlineSalesDraftLineRequest(
+                    value.LineId,
+                    value.Description,
+                    value.UnitPrice,
+                    value.Discount,
+                    value.LineId == line.LineId ? 12_000m : value.DocumentUnitCost)).ToArray(),
+                reloaded.Version),
+            Guid.NewGuid().ToString("D"));
+        using var belowCostUpdateResponse = await client.SendAsync(belowCostUpdate);
+        belowCostUpdateResponse.EnsureSuccessStatusCode();
+        var belowCost = await belowCostUpdateResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>()
+            ?? throw new InvalidOperationException("The below-cost draft response was empty.");
+
+        var checkoutKey = $"generic-checkout-{Guid.NewGuid():N}";
+        using (var forbiddenComplete = Mutation(
+                   HttpMethod.Post,
+                   $"/api/commerce/v1/pos/drafts/{belowCost.DraftId:D}/complete",
+                   new CompleteOnlineSalesDraftRequest(
+                       belowCost.Version,
+                       [new OnlineSalesPayment("Cash", belowCost.PayableAmount, null)],
+                       DocumentType: PosSaleDocumentTypes.Receipt),
+                   checkoutKey))
+        using (var forbiddenResponse = await client.SendAsync(forbiddenComplete))
+            Assert.Equal(HttpStatusCode.Forbidden, forbiddenResponse.StatusCode);
+
         using var complete = Mutation(
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{reloaded.DraftId:D}/complete",
+            $"/api/commerce/v1/pos/drafts/{belowCost.DraftId:D}/complete",
             new CompleteOnlineSalesDraftRequest(
-                reloaded.Version,
-                [new OnlineSalesPayment("Cash", reloaded.PayableAmount, null)],
+                belowCost.Version,
+                [new OnlineSalesPayment("Cash", belowCost.PayableAmount, null)],
                 DocumentType: PosSaleDocumentTypes.Receipt),
-            Guid.NewGuid().ToString("D"));
-        using var completeResponse = await client.SendAsync(complete);
-        completeResponse.EnsureSuccessStatusCode();
+            checkoutKey);
+        complete.Headers.Add("X-Auraly-Operation-Id", Guid.NewGuid().ToString("D"));
+        using var authorizedCheckout = fixture.CreateAdminClient(
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesBelowCost);
+        using var completeResponse = await authorizedCheckout.SendAsync(complete);
+        Assert.True(
+            completeResponse.IsSuccessStatusCode,
+            $"La venta bajo costo autorizada respondió {(int)completeResponse.StatusCode}: {await completeResponse.Content.ReadAsStringAsync()}");
         var completed = await completeResponse.Content.ReadFromJsonAsync<CompleteOnlineSalesDraftResponse>()
             ?? throw new InvalidOperationException("The completed sale response was empty.");
         Assert.Empty(completed.NextDraft.Lines);
@@ -363,8 +398,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         await using var profitabilityReader = await profitability.ExecuteReaderAsync();
         Assert.True(await profitabilityReader.ReadAsync());
         Assert.Equal(1, profitabilityReader.GetInt32(0));
-        Assert.Equal(4_500m, profitabilityReader.GetDecimal(1));
-        Assert.Equal(9_000m, profitabilityReader.GetDecimal(2));
+        Assert.Equal(12_000m, profitabilityReader.GetDecimal(1));
+        Assert.Equal(24_000m, profitabilityReader.GetDecimal(2));
         Assert.True(await profitabilityReader.ReadAsync());
         Assert.Equal(2, profitabilityReader.GetInt32(0));
         Assert.Equal(4_000m, profitabilityReader.GetDecimal(1));
@@ -376,8 +411,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         var projectedCostAmount = profitabilityReader.GetDecimal(1);
         var projectedProfit = profitabilityReader.GetDecimal(2);
         Assert.Equal(completed.Receipt.UntaxedAmount, projectedUntaxedAmount);
-        Assert.Equal(13_000m, projectedCostAmount);
-        Assert.Equal(projectedUntaxedAmount - 13_000m, projectedProfit);
+        Assert.Equal(28_000m, projectedCostAmount);
+        Assert.Equal(projectedUntaxedAmount - 28_000m, projectedProfit);
     }
 
     [Fact]

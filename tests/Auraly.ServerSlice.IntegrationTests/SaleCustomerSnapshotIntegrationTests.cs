@@ -12,6 +12,7 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
     {
         var countryId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
+        var partySiteId = Guid.NewGuid();
         var otherBusinessId = Guid.NewGuid();
         var otherCustomerId = Guid.NewGuid();
         await ExecuteAsync(
@@ -32,9 +33,20 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
               N'Calle 1',N'3000000000',@OtherBusinessEmail,N'https://other.auraly.test',1,SYSUTCDATETIME());
             INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
             VALUES(@OtherCustomerId,@PartyId,@OtherBusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.PartySites(
+              PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            SELECT TOP(1) @PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',
+              country.CountryId,division.AdministrativeDivisionId,city.CityId,
+              N'Calle 1',1,1,@UserId,SYSDATETIMEOFFSET()
+            FROM dbo.Countries country
+            JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+            JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+            WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1;
             """,
             new SqlParameter("@CountryId", countryId),
             new SqlParameter("@PartyId", partyId),
+            new SqlParameter("@PartySiteId", partySiteId),
             new SqlParameter("@OtherCustomerId", otherCustomerId),
             new SqlParameter("@TenantId", fixture.TenantId),
             new SqlParameter("@BusinessId", fixture.BusinessId),
@@ -42,7 +54,11 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
             new SqlParameter("@OtherBusinessEmail", $"other-{otherBusinessId:N}@auraly.test"),
             new SqlParameter("@UserId", fixture.UserId));
 
-        var request = fixture.CreateValidRequest(8701) with { CustomerId = otherCustomerId };
+        var request = fixture.CreateValidRequest(8701) with
+        {
+            CustomerId = otherCustomerId,
+            CustomerPartySiteId = partySiteId
+        };
         using var client = fixture.CreateClient();
         using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -79,7 +95,11 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
         var unchanged = PosSaleContractSerializer.Deserialize(unchangedJson!);
         Assert.Equal("222222222", unchanged.FiscalSnapshot!.CustomerIdentification);
 
-        var visitingAgain = fixture.CreateValidRequest(8702) with { CustomerId = otherCustomerId };
+        var visitingAgain = fixture.CreateValidRequest(8702) with
+        {
+            CustomerId = otherCustomerId,
+            CustomerPartySiteId = partySiteId
+        };
         using var visitingAgainResponse = await client.SendAsync(fixture.CreateUploadMessage(visitingAgain));
         Assert.Equal(HttpStatusCode.OK, visitingAgainResponse.StatusCode);
         Assert.Equal(storedCustomerId, await ScalarAsync<Guid?>(

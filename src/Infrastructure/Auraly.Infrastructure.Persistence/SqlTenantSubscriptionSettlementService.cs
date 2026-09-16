@@ -121,7 +121,8 @@ public sealed class SqlTenantSubscriptionSettlementService(
             var fiscalNumber = $"{configuration.FiscalPrefix}{fiscalConsecutive}";
             var customer = await SqlOnlineSalesDraftStore.ReadCustomerPartyAsync(
                 connection, transaction, source.BillingBusinessId,
-                source.BillingCustomerId, null, configuration, cancellationToken);
+                source.BillingCustomerId, source.BillingCustomerPartySiteId,
+                configuration, cancellationToken);
             var quoteLines = JsonSerializer.Deserialize<IReadOnlyList<TenantQuoteLineDto>>(
                 source.LinesJson, Json) ?? throw new InvalidOperationException(
                     "La orden pagada no contiene líneas comerciales válidas.");
@@ -175,7 +176,8 @@ public sealed class SqlTenantSubscriptionSettlementService(
                     source.ExternalPaymentReference),
                 lines,
                 new PosSalePaymentContract(1, source.PaymentMethodCode, source.PayableAmount,
-                    source.ExternalPaymentReference));
+                    source.ExternalPaymentReference),
+                source.BillingCustomerPartySiteId);
             await PersistAsync(
                 connection, transaction, source, snapshot, configuration,
                 payment, now, cancellationToken);
@@ -270,7 +272,8 @@ public sealed class SqlTenantSubscriptionSettlementService(
                    COALESCE(JSON_VALUE(payment.CheckoutSnapshotJson,N'$.paymentMethodCode'),N'Transfer'),
                    COALESCE(TRY_CONVERT(datetimeoffset(7),JSON_VALUE(payment.CheckoutSnapshotJson,N'$.paidAt')),
                             CONVERT(datetimeoffset(7),payment.ConfirmedAt),SYSDATETIMEOFFSET()),
-                   COALESCE(payment.ProviderTransactionId,payment.PaymentReferenceId)
+                   COALESCE(payment.ProviderTransactionId,payment.PaymentReferenceId),
+                   customerSite.PartySiteId
             FROM dbo.PaymentTransactions payment WITH(UPDLOCK,HOLDLOCK)
             JOIN billing.TenantSubscriptionRenewalOrders renewal WITH(UPDLOCK,HOLDLOCK)
               ON renewal.TenantSubscriptionRenewalOrderId=payment.SubjectId
@@ -281,6 +284,14 @@ public sealed class SqlTenantSubscriptionSettlementService(
               ON settings.PlatformBillingSettingId=1
             JOIN dbo.Businesses billing ON billing.BusinessId=settings.BillingBusinessId
             JOIN dbo.Tenants billingTenant ON billingTenant.TenantId=billing.TenantId
+            OUTER APPLY(
+              SELECT TOP(1) site.PartySiteId
+              FROM dbo.Customers customer
+              JOIN dbo.PartySites site
+                ON site.PartyId=customer.PartyId AND site.IsActive=1
+              WHERE customer.CustomerId=subscription.BillingCustomerId
+                AND customer.BusinessId=billing.BusinessId AND customer.IsActive=1
+              ORDER BY site.IsPrimary DESC,site.CreatedAt,site.PartySiteId) customerSite
             WHERE payment.PaymentTransactionId=@PaymentId
               AND payment.SubjectType=N'TenantSubscription' AND payment.SubjectId=@OrderId
               AND payment.Status=@Confirmed;
@@ -303,7 +314,8 @@ public sealed class SqlTenantSubscriptionSettlementService(
             reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16),
             reader.GetInt32(17), reader.GetInt32(18), reader.GetInt32(19),
             reader.GetString(20), reader.GetString(23),
-            reader.GetFieldValue<DateTimeOffset>(24), reader.GetString(25));
+            reader.GetFieldValue<DateTimeOffset>(24), reader.GetString(25),
+            reader.IsDBNull(26) ? null : reader.GetGuid(26));
     }
 
     private static async Task<IReadOnlyList<ServiceInvoiceLineContract>> BuildLinesAsync(
@@ -487,5 +499,6 @@ public sealed class SqlTenantSubscriptionSettlementService(
         decimal PayableAmount, decimal DiscountRate, int Periods,
         int FullUserLimit, int SellerUserLimit, int PosDeviceLimit,
         int DianDocumentMonthlyLimit, int PayrollEmployeeLimit, string LinesJson,
-        string PaymentMethodCode, DateTimeOffset PaidAt, string ExternalPaymentReference);
+        string PaymentMethodCode, DateTimeOffset PaidAt, string ExternalPaymentReference,
+        Guid? BillingCustomerPartySiteId);
 }

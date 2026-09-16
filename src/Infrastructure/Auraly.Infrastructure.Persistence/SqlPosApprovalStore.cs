@@ -114,12 +114,10 @@ public sealed class SqlPosApprovalStore(
             JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1 AND r.TenantId=@TenantId
             JOIN dbo.RolePermissions rp ON rp.RoleId=r.RoleId
             JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
-            WHERE u.TenantId=@TenantId AND u.IsActive=1 AND p.Resource IN(@Requested,@Authorize)
-            GROUP BY u.UserId,c.SecretSalt,c.SecretHash,c.SecretIterations,c.IsOneTime
-            HAVING COUNT(DISTINCT p.Resource)=2;
+            WHERE u.TenantId=@TenantId AND u.IsActive=1 AND p.Resource=@Requested;
             """;
         await using var command=new SqlCommand(sql,connection); Add(command,"@TenantId",tenantId); Add(command,"@BusinessId",businessId);
-        Add(command,"@Requested",permissionResource); Add(command,"@Authorize",CommercePermissionCodes.PosApprovalsAuthorize);
+        Add(command,"@Requested",permissionResource);
         var values=new List<SupervisorCredentialVerifier>(); await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken)) values.Add(new(reader.GetGuid(0),(byte[])reader[1],(byte[])reader[2],reader.GetInt32(3),reader.GetBoolean(4)));
         return values;
@@ -141,11 +139,9 @@ public sealed class SqlPosApprovalStore(
                 AND EXISTS(
                   SELECT 1 FROM dbo.UserRoles ur
                   JOIN dbo.AppRoles role ON role.RoleId=ur.RoleId AND role.IsActive=1
-                  JOIN dbo.RolePermissions rp ON rp.RoleId=role.RoleId
-                  JOIN dbo.Permissions permission ON permission.PermissionId=rp.PermissionId
                   WHERE ur.UserId=target.UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId)
-                    AND permission.Resource=N'pos.approvals.authorize'))
-              THROW 51070,'El usuario no es un autorizador activo en este negocio.',1;
+                    AND role.TenantId=@TenantId))
+              THROW 51070,'El usuario no está activo en este negocio.',1;
             UPDATE dbo.SupervisorCredentials
             SET IsActive=0,RevokedByUserId=@ActorUserId,RevokedAt=@Now
             WHERE UserId=@TargetUserId AND IsActive=1;

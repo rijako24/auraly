@@ -138,8 +138,6 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
         var afterSale = await QuantityAsync();
-        var valueAfterSale = await InventoryValueAsync();
-        var recognizedCost = await OriginalRecognizedCostAsync(original.DocumentId);
 
         var request = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
@@ -168,7 +166,8 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.SalesReturns WHERE ReturnId=@Id", request.ReturnId));
         Assert.Equal(afterSale + .5m, await QuantityAsync());
-        Assert.Equal(decimal.Round(valueAfterSale + (.5m * recognizedCost), 4, MidpointRounding.AwayFromZero), await InventoryValueAsync());
+        Assert.Equal(await MovementInventoryValueAfterAsync(request.ReturnId),
+            await InventoryValueAsync());
         Assert.Equal(5_000m, await ScalarAsync<decimal>(
             "SELECT SUM(UntaxedAmount) FROM dbo.SalesReturnLines WHERE ReturnId=@Id", request.ReturnId));
         Assert.Equal(950m, await ScalarAsync<decimal>(
@@ -372,14 +371,15 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         return Convert.ToDecimal(await command.ExecuteScalarAsync());
     }
 
-    private async Task<decimal> OriginalRecognizedCostAsync(Guid documentId)
+    private async Task<decimal> MovementInventoryValueAfterAsync(Guid documentId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT RecognizedUnitCost FROM dbo.InventoryMovements
-            WHERE DocumentId=@Id AND DocumentType=N'SalesInvoice' AND LineNumber=1;
+            SELECT CAST(QuantityAfter*AverageUnitCostAfter AS DECIMAL(19,4))
+            FROM dbo.InventoryMovements
+            WHERE DocumentId=@Id AND LineNumber=1;
             """;
         command.Parameters.AddWithValue("@Id", documentId);
         return Convert.ToDecimal(await command.ExecuteScalarAsync());

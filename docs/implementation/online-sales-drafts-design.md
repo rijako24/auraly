@@ -74,8 +74,9 @@ para el cálculo interno; los campos `Net`, `Tax` y `Total` exponen la composici
 vigente. La misma línea conserva además `PublicUnitPrice`,
 `PublicDiscountAmount` y `PublicLineTotal`, el snapshot público exacto fijado al ingresar o editar el
 producto. Al guardar o actualizar un pedido, el adaptador online copia ese
-snapshot sin recalcularlo. Al recuperar un pedido conserva sus importes públicos
-y deriva únicamente la composición interna con la tarifa vigente.
+snapshot sin recalcularlo. Al recuperar un pedido conserva también código, nombre,
+unidad, costo, impuesto y moneda de esa fotografía; no exige que el producto siga
+activo. Una mutación comercial posterior vuelve a resolver las reglas vigentes.
 
 Al completar una venta, la respuesta autoritativa instala inmediatamente el
 `nextDraft` vacío y retira de la interfaz cliente, líneas, pagos y pedido de
@@ -163,6 +164,15 @@ bodega que bloquee inventario negativo.
 - Una bodega que bloquea negativos impide captura sin existencia.
 - Usuario sin permiso recibe solicitud de autorización en acciones sensibles y un
   contexto ajeno recibe `403`.
+- El flujo de aprobación no mantiene una lista paralela de permisos delegables:
+  acepta cualquier recurso de permiso bien formado indicado por el endpoint
+  propietario. Cuando una persona ingresa su credencial en la caja, basta con que
+  posea el permiso concreto de la acción; no exige un rol, nombre de cargo ni
+  `pos.approvals.authorize`. La bandeja y las notificaciones remotas sí se limitan a
+  usuarios que posean `pos.approvals.authorize` y el permiso concreto solicitado.
+  API y Edge consumen la misma política sintáctica, por lo que una capacidad nueva
+  no exige modificar el frontend ni registrar el permiso en un segundo motor de
+  autorización.
 
 ## Pendiente inmediato
 

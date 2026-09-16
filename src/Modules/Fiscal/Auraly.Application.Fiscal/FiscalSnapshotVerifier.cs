@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Core;
@@ -152,6 +153,13 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
                 return $"Line {line.LineNumber} contains invalid values.";
             }
 
+            var expectedUntaxed = MonetaryRounding.RoundLineAmount(
+                (line.Quantity * line.UnitPrice) - line.DiscountAmount);
+            if (line.UntaxedAmount != expectedUntaxed ||
+                line.LineTotal != expectedUntaxed + line.TaxAmount)
+            {
+                return $"Line {line.LineNumber} totals do not match its quantity, price and discounts.";
+            }
         }
 
         var untaxedTotal = request.Lines.Sum(line => line.UntaxedAmount);

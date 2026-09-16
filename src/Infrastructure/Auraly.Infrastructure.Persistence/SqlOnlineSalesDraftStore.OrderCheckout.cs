@@ -26,9 +26,9 @@ public sealed partial class SqlOnlineSalesDraftStore
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT TOP(2) authorization.FiscalAuthorizationId,
-                   authorization.AuthorizationNumber,
-                   authorization.TechnicalKeyVersion,authorization.Environment,
+            SELECT TOP(2) fiscalAuthorization.FiscalAuthorizationId,
+                   fiscalAuthorization.AuthorizationNumber,
+                   fiscalAuthorization.TechnicalKeyVersion,fiscalAuthorization.Environment,
                    orderRow.BusinessId
             FROM dbo.Orders orderRow
             JOIN dbo.Businesses business
@@ -43,12 +43,12 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON series.BusinessId=orderRow.BusinessId AND series.DeviceId IS NULL
              AND series.EmitterKind=N'Server'
              AND series.DocumentType=@DocumentType AND series.IsActive=1
-            JOIN dbo.FiscalAuthorizations authorization
-              ON authorization.FiscalAuthorizationId=series.FiscalAuthorizationId
-             AND authorization.BusinessId=orderRow.BusinessId
-             AND authorization.IsActive=1
+            JOIN dbo.FiscalAuthorizations fiscalAuthorization
+              ON fiscalAuthorization.FiscalAuthorizationId=series.FiscalAuthorizationId
+             AND fiscalAuthorization.BusinessId=orderRow.BusinessId
+             AND fiscalAuthorization.IsActive=1
             WHERE orderRow.OrderId=@OrderId AND orderRow.BusinessId=@BusinessId
-              AND CONVERT(date,@Now) BETWEEN authorization.ValidFrom AND authorization.ValidUntil
+              AND CONVERT(date,@Now) BETWEEN fiscalAuthorization.ValidFrom AND fiscalAuthorization.ValidUntil
             ORDER BY series.SeriesId;
             """;
         command.Parameters.AddRange([

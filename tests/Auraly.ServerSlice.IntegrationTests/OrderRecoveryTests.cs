@@ -172,13 +172,13 @@ public sealed class OrderRecoveryTests(
         Assert.Equal(1m, reader.GetDecimal(0));
         Assert.Equal(12500m, reader.GetDecimal(1));
         Assert.Equal(0m, reader.GetDecimal(2));
-        Assert.Equal(6000m, reader.GetDecimal(3));
+        Assert.Equal(7100m, reader.GetDecimal(3));
         Assert.Equal(1, reader.GetInt32(4));
         Assert.True(await reader.ReadAsync());
         Assert.Equal(2m, reader.GetDecimal(0));
         Assert.Equal(15000m, reader.GetDecimal(1));
         Assert.Equal(1000m, reader.GetDecimal(2));
-        Assert.Equal(6000m, reader.GetDecimal(3));
+        Assert.Equal(8200m, reader.GetDecimal(3));
         Assert.Equal(2, reader.GetInt32(4));
         Assert.False(await reader.ReadAsync());
         Assert.True(await reader.NextResultAsync());
@@ -264,7 +264,11 @@ public sealed class OrderRecoveryTests(
         var partySiteId = await SeedPrimarySiteAsync(partyId, userId);
 
         using var client = fixture.CreateUserClient(
-            userId, OrderPermissionCodes.Create, OrderPermissionCodes.Read);
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Create,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover);
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/seller-orders",
             new
@@ -280,8 +284,8 @@ public sealed class OrderRecoveryTests(
                 idempotencyKey = Guid.NewGuid().ToString("N"),
                 lines = new[]
                 {
-                    new { productId = firstProductId, quantity = 1m, unitPrice = 111m, discountAmount = 1m, priceSource = "Promotion" },
-                    new { productId = secondProductId, quantity = 1m, unitPrice = 99m, discountAmount = 4m, priceSource = "Promotion" }
+                    new { productId = firstProductId, description = "Nombre capturado A", quantity = 1m, unitPrice = 111m, discountAmount = 1m, priceSource = "Promotion" },
+                    new { productId = secondProductId, description = "Nombre capturado B", quantity = 1m, unitPrice = 99m, discountAmount = 4m, priceSource = "Promotion" }
                 }
             });
         Assert.True(response.IsSuccessStatusCode,
@@ -294,17 +298,19 @@ public sealed class OrderRecoveryTests(
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ProductId,UnitPrice
+            SELECT ProductId,UnitPrice,ProductNameSnapshot
             FROM dbo.OrderItems
             WHERE OrderId=@OrderId
             ORDER BY ProductId;
             """;
         command.Parameters.AddWithValue("@OrderId", orderId);
         await using var reader = await command.ExecuteReaderAsync();
-        var prices = new Dictionary<Guid, decimal>();
-        while (await reader.ReadAsync()) prices.Add(reader.GetGuid(0), reader.GetDecimal(1));
-        Assert.Equal(111m, prices[firstProductId]);
-        Assert.Equal(99m, prices[secondProductId]);
+        var persistedLines = new Dictionary<Guid, (decimal Price, string Name)>();
+        while (await reader.ReadAsync())
+            persistedLines.Add(reader.GetGuid(0), (reader.GetDecimal(1), reader.GetString(2)));
+        await reader.CloseAsync();
+        Assert.Equal((111m, "Nombre capturado A"), persistedLines[firstProductId]);
+        Assert.Equal((99m, "Nombre capturado B"), persistedLines[secondProductId]);
 
         using var printResponse = await client.PostAsJsonAsync(
             "/api/commerce/v1/orders/print-batch",
@@ -319,12 +325,14 @@ public sealed class OrderRecoveryTests(
             printable.Lines.OrderBy(line => line.UnitPrice),
             line =>
             {
+                Assert.Equal("Nombre capturado B", line.ProductName);
                 Assert.Equal(99m, line.UnitPrice);
                 Assert.Equal(4m, line.DiscountAmount);
                 Assert.Equal(95m, line.LineTotal);
             },
             line =>
             {
+                Assert.Equal("Nombre capturado A", line.ProductName);
                 Assert.Equal(111m, line.UnitPrice);
                 Assert.Equal(1m, line.DiscountAmount);
                 Assert.Equal(110m, line.LineTotal);
@@ -334,6 +342,27 @@ public sealed class OrderRecoveryTests(
             "/api/commerce/v1/orders/print-batch",
             new OrderPrintBatchRequest([orderId, Guid.NewGuid()]));
         Assert.Equal(System.Net.HttpStatusCode.NotFound, missingPrint.StatusCode);
+
+        await using (var deactivate = connection.CreateCommand())
+        {
+            deactivate.CommandText = """
+                UPDATE dbo.Products
+                SET IsActive=0,Name=N'Nombre posterior del catálogo'
+                WHERE ProductId IN (@FirstProductId,@SecondProductId);
+                """;
+            deactivate.Parameters.AddWithValue("@FirstProductId", firstProductId);
+            deactivate.Parameters.AddWithValue("@SecondProductId", secondProductId);
+            Assert.Equal(2, await deactivate.ExecuteNonQueryAsync());
+        }
+
+        var workSession = await fixture.OpenWorkSessionAsync(client);
+        var activeDraft = await OpenDraftAsync(client, workSession.WorkSessionId);
+        await RecoverAsync(client, userId, workSession.WorkSessionId, orderId, activeDraft);
+        var recovered = await OpenDraftAsync(client, workSession.WorkSessionId);
+        Assert.Equal(
+            ["Nombre capturado A", "Nombre capturado B"],
+            recovered.Lines.OrderBy(line => line.Description).Select(line => line.Description));
+        Assert.All(recovered.Lines, line => Assert.Equal("EA", line.UnitCode));
     }
 
     [Fact]
@@ -417,6 +446,8 @@ public sealed class OrderRecoveryTests(
         var created = await create.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
         Assert.True(created.GetProperty("requiresReview").GetBoolean());
         Assert.Equal("InReview", created.GetProperty("status").GetString());
+        var warning = Assert.Single(created.GetProperty("warnings").EnumerateArray());
+        Assert.Contains("Producto insuficiente", warning.GetString(), StringComparison.Ordinal);
         var orderId = created.GetProperty("orderId").GetGuid();
         Assert.Equal((2m, 2m, 5m, 0m), await ReadBalancesAsync(firstProductId, secondProductId, ordersWarehouseId));
 
@@ -1418,7 +1449,7 @@ public sealed class OrderRecoveryTests(
     }
 
     [Fact]
-    public async Task Recovering_order_preserves_commercial_values_but_uses_current_product_tax()
+    public async Task Recovering_order_hydrates_the_saved_snapshot_before_later_mutations_reprice()
     {
         var userId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
@@ -1451,7 +1482,7 @@ public sealed class OrderRecoveryTests(
             VALUES(
               @ItemId,@OrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
               N'Producto del pedido',N'EA',2,7777,
-              6000,777,14777,N'{"PriceSource":"Promotion"}',DATEADD(day,-4,SYSUTCDATETIME()));
+              6000,777,14777,N'{"PriceSource":"Promotion","TaxCode":"01","TaxRate":0}',DATEADD(day,-4,SYSUTCDATETIME()));
 
             INSERT dbo.TaxProfiles(
               TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
@@ -1496,14 +1527,15 @@ public sealed class OrderRecoveryTests(
 
             var recovered = await OpenDraftAsync(client, workSession.WorkSessionId);
             var line = Assert.Single(recovered.Lines);
+            Assert.Equal("Producto del pedido", line.Description);
             Assert.Equal(2m, line.Quantity);
-            Assert.Equal(7_406.67m, line.UnitPrice);
+            Assert.Equal(7_777m, line.UnitPrice);
             Assert.Equal(0m, line.Discount);
             Assert.Equal(777m, line.PromotionDiscount);
             Assert.Equal(777m, line.TotalDiscount);
             Assert.Equal("Promotion", line.PriceSource);
-            Assert.Equal(5m, line.TaxRate);
-            Assert.Equal(703.67m, line.Tax);
+            Assert.Equal(0m, line.TaxRate);
+            Assert.Equal(0m, line.Tax);
             Assert.Equal(14_777m, recovered.PayableAmount);
 
             using var quantityRequest = new HttpRequestMessage(
@@ -1518,9 +1550,11 @@ public sealed class OrderRecoveryTests(
                     $"El cambio de cantidad respondió {(int)quantityResponse.StatusCode}: {await quantityResponse.Content.ReadAsStringAsync()}");
             var repriced = await OpenDraftAsync(client, workSession.WorkSessionId);
             var repricedLine = Assert.Single(repriced.Lines);
+            Assert.Equal("Producto del pedido", repricedLine.Description);
             Assert.Equal(3m, repricedLine.Quantity);
             Assert.NotEqual(7_777m, repricedLine.UnitPrice);
             Assert.Equal("Base", repricedLine.PriceSource);
+            Assert.Equal(0m, repricedLine.TaxRate);
 
             var page = await client.GetFromJsonAsync<OrderPage>(
                 $"/api/commerce/v1/orders?orderNumber={orderId:D}");

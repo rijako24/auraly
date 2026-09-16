@@ -156,6 +156,10 @@ try {
         -c Release --no-build --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'Las pruebas de POS Edge fallaron.' }
 
+    & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
+        -c Release --no-build --logger 'console;verbosity=minimal'
+    if ($LASTEXITCODE) { throw 'Las regresiones reales de API, pedidos y facturación fallaron.' }
+
     $functionPublish = Join-Path $publishPath 'function'
     & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj') `
         -c Release --no-restore -o $functionPublish `

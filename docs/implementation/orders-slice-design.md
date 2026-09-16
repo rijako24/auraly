@@ -47,13 +47,27 @@ Las consultas son paginadas en servidor y combinan número, cliente, producto, e
 
 1. La caja reclama temporalmente el pedido.
 2. Obtiene el detalle desde Auraly Server.
-3. Hidrata el borrador online con los productos vigentes.
-4. Conserva cantidad, precio público, descuento público y total bruto del pedido.
-5. Toma impuesto y configuración vendible actuales al construir la venta.
-6. Importa todas las líneas de forma atómica en el borrador del servidor; nunca deja media venta visible.
-7. Impide mezclarlo con productos o con otro pedido ya presente.
+3. Hidrata el borrador online desde la fotografía del pedido, sin consultar ni exigir que el producto siga activo o vendible.
+4. Conserva código, nombre, unidad, cantidad, precio público, descuentos, costo, impuesto, moneda y total bruto del pedido.
+5. Importa todas las líneas de forma atómica en el borrador del servidor; nunca deja media venta visible.
+6. Impide mezclarlo con productos o con otro pedido ya presente.
 
-Recuperar es una hidratación, no una reprificación: el cambio de tarifa vigente redistribuye base e impuesto, pero no incrementa ni reduce el total público del pedido.
+Recuperar es una hidratación literal, no una reprificación ni una revalidación del catálogo. Solo una mutación comercial posterior de la línea vuelve a invocar el coordinador común y aplica las reglas vigentes.
+
+Desde el POS, `Guardar pedido` exige cliente. Si el borrador todavía no lo tiene,
+abre primero el selector; seleccionar el cliente pasa por el motor canónico de
+precios para aplicar su lista o canal y solamente después guarda el pedido con el
+borrador revalorizado. Esta reprificación pertenece a la captura inicial y no se
+ejecuta al recuperar un pedido.
+
+Crear un pedido no bloquea la captura por disponibilidad. En la transacción de
+guardado, el motor intenta reservar únicamente líneas que manejan inventario. Si
+la bodega no permite negativos y una línea completa no alcanza, esa línea no se
+mueve parcialmente y el pedido completo queda `InReview`; las líneas suficientes
+sí quedan reservadas. Al editar la revisión se identifican solamente las líneas
+pendientes, con cantidad solicitada y disponible, para reducirlas o eliminarlas.
+Productos sin control de inventario y bodegas que permiten negativos no generan
+revisión por existencia.
 
 Un pedido recuperado nunca se copia al borrador SQLite ni entra a la outbox. Aun
 en un equipo instalado, el navegador cambia ese trabajo al borrador online y lo

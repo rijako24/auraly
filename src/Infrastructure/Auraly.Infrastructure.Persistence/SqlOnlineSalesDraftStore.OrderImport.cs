@@ -74,34 +74,24 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                 cancellationToken);
         }
 
-        var products = await ReadProductsAsync(
-            connection,
-            transaction,
-            state.BusinessId,
-            state.WarehouseId,
-            request.Lines.Select(line => line.ProductId).Distinct().ToArray(),
-            cancellationToken);
         var importedLines = request.Lines.Select((line, index) =>
         {
-            if (!products.TryGetValue(line.ProductId, out var product))
-                throw new OnlineSalesDraftValidationException(
-                    "El producto no está disponible para este negocio.");
-            var unitPrice = Money(TaxExclusive(line.PublicUnitPrice, product.TaxRate));
+            var unitPrice = Money(TaxExclusive(line.PublicUnitPrice, line.TaxRate));
             var targetNetLineTotal = Money(
-                TaxExclusive(line.PublicLineTotal, product.TaxRate));
+                TaxExclusive(line.PublicLineTotal, line.TaxRate));
             if (Money(line.Quantity * unitPrice) < targetNetLineTotal)
                 unitPrice = MoneyCeiling(targetNetLineTotal / line.Quantity);
             return new
             {
                 LineId = ids.NewId(),
                 line.ProductId,
-                ProductCode = product.Code,
-                Description = product.Name,
-                product.UnitCode,
-                product.TaxCode,
-                product.TaxRate,
+                ProductCode = line.ProductCode ?? string.Empty,
+                line.Description,
+                line.UnitCode,
+                line.TaxCode,
+                line.TaxRate,
                 line.Quantity,
-                BaseUnitPrice = product.UnitPrice,
+                BaseUnitPrice = unitPrice,
                 UnitPrice = unitPrice,
                 PublicUnitPrice = Money(line.PublicUnitPrice),
                 DiscountAmount = NormalizePriceSource(line.PriceSource) == "Promotion"
@@ -112,7 +102,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                     : 0m,
                 PublicLineTotal = Money(line.PublicLineTotal),
                 DocumentUnitCost = line.DocumentUnitCost,
-                product.CurrencyCode,
+                CurrencyCode = request.Currency,
                 PriceSource = NormalizePriceSource(line.PriceSource),
                 Position = index + 1
             };

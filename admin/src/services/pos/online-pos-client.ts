@@ -984,6 +984,7 @@ export class OnlinePosClient implements PosClient {
     documentType: PosSaleDocumentType,
     credit: PosCreditTerms | null = null,
     fiscalHabilitationOnly = false,
+    authorization?: PosSensitiveAuthorization,
   ) {
     const printRoute = resolvePosReceiptPrintRoute(
       this.edgeSessionToken,
@@ -991,12 +992,19 @@ export class OnlinePosClient implements PosClient {
     );
     const browserPreview = printRoute === "browser" ? openHalfLetterPrintPreview() : null;
     try {
+      const mutation = this.mutation({
+        expectedVersion: this.version(draftId),
+        payments, credit, documentType, fiscalHabilitationOnly,
+      }, "POST", `online-sale-${draftId}`, authorization?.approvalRequestId);
+      mutation.headers = {
+        ...mutation.headers,
+        ...(authorization?.operationId
+          ? { "X-Auraly-Operation-Id": authorization.operationId }
+          : {}),
+      };
       const result = await request<OnlineCheckoutResponse>(
         `/api/commerce/v1/pos/drafts/${draftId}/complete`,
-        this.mutation({
-          expectedVersion: this.version(draftId),
-          payments, credit, documentType, fiscalHabilitationOnly,
-        }, "POST", `online-sale-${draftId}`),
+        mutation,
       );
       const nextDraft = this.mapDraft(result.nextDraft);
       const printCompletion = fiscalHabilitationOnly

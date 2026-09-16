@@ -231,7 +231,7 @@ public sealed class PosApprovalService(
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(secret))
-            throw new PosApprovalException("CredentialRequired", "Escribe la credencial secundaria del supervisor.");
+            throw new PosApprovalException("CredentialRequired", "Escribe la credencial del usuario autorizador.");
         var approval = await store.GetAsync(requester, approvalRequestId, cancellationToken)
             ?? throw new PosApprovalException("NotFound", "La solicitud de autorización no existe.");
         EnsureBusiness(requester, approval.BusinessId);
@@ -250,7 +250,7 @@ public sealed class PosApprovalService(
         }
 
         if (authorizer is null)
-            throw new PosApprovalException("InvalidCredential", "La credencial no corresponde a un supervisor autorizado.");
+            throw new PosApprovalException("InvalidCredential", "La credencial no corresponde a un usuario habilitado para aprobar esta acción.");
         if (authorizer.UserId == requester.UserId)
             throw new PosApprovalException("SelfApprovalForbidden", "Quien solicita no puede aprobar su propia acción.");
 
@@ -267,7 +267,6 @@ public sealed class PosApprovalService(
             requester.BusinessId,
             new HashSet<string>(StringComparer.Ordinal)
             {
-                CommercePermissionCodes.PosApprovalsAuthorize,
                 approval.PermissionResource
             });
         var result = await store.DecideAsync(
@@ -293,7 +292,7 @@ public sealed class PosApprovalService(
         if (user.Permissions.Contains(permissionResource))
             return await action();
         if (approvalRequestId == Guid.Empty)
-            throw new PosApprovalException("ApprovalRequired", "Esta acción requiere aprobación de un supervisor.");
+            throw new PosApprovalException("ApprovalRequired", "Esta acción requiere aprobación de un usuario autorizado.");
 
         await store.ReserveAsync(
             user, approvalRequestId, businessId, draftId, lineId,
@@ -317,7 +316,7 @@ public sealed class PosApprovalService(
         ValidateSensitivePermission(permissionResource);
         if (user.Permissions.Contains(permissionResource)) return;
         if (approvalRequestId == Guid.Empty)
-            throw new PosApprovalException("ApprovalRequired", "Esta acción requiere aprobación de un supervisor.");
+            throw new PosApprovalException("ApprovalRequired", "Esta acción requiere aprobación de un usuario autorizado.");
 
         var approval = await store.GetAsync(user, approvalRequestId, cancellationToken)
             ?? throw new PosApprovalException("InvalidApproval", "La autorización no existe.");
@@ -395,13 +394,13 @@ public sealed class PosApprovalService(
             requesterUserId == authorizedByUserId)
             throw new PosApprovalException(
                 "InvalidApproval",
-                "La autorización local no identifica un supervisor diferente y vigente.");
+                "La autorización local no identifica un usuario autorizador diferente y vigente.");
         var authorizers = await store.AuthorizersAsync(
             tenantId, businessId, permissionResource, cancellationToken);
         if (authorizers.All(candidate => candidate.UserId != authorizedByUserId))
             throw new PosApprovalException(
                 "InvalidApproval",
-                "El supervisor ya no puede autorizar esta acción.");
+                "El usuario ya no puede autorizar esta acción.");
     }
 
     public Task ConfigureCredentialAsync(
@@ -474,14 +473,9 @@ public sealed class PosApprovalService(
 
     private static void ValidateSensitivePermission(string permission)
     {
-        if (permission is not (
-            CommercePermissionCodes.SalesChangePrice or
-            CommercePermissionCodes.SalesRemoveLine or
-            CommercePermissionCodes.SalesRestartDraft or
-            CommercePermissionCodes.SalesDeletePausedDraft or
-            CommercePermissionCodes.EnrolledDevicesEnroll or
-            "work-sessions.close" or
-            "work-sessions.close-with-paused-sales"))
-            throw new PosApprovalException("UnsupportedPermission", "La acción no admite autorización delegada.");
+        if (!PosDelegatedPermissionPolicy.IsValid(permission))
+            throw new PosApprovalException(
+                "InvalidPermission",
+                "La autorización no identifica un permiso válido.");
     }
 }
