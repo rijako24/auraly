@@ -374,7 +374,8 @@ public sealed class ArchitectureDebtRatchetTests
             updateStart,
             StringComparison.Ordinal);
         var update = draftStore[updateStart..updateEnd];
-        Assert.Contains("ReadProductsAsync(", update, StringComparison.Ordinal);
+        Assert.Contains("ReadLineProductsAsync(", update, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadProductsAsync(", update, StringComparison.Ordinal);
         Assert.Contains("OPENJSON(@UpdatesJson)", update, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach", update, StringComparison.Ordinal);
 
