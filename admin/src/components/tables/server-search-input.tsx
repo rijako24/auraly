@@ -5,6 +5,7 @@ import * as React from "react";
 
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { shouldShowServerSearchSpinner } from "./server-search-state";
 
 export function ServerSearchInput({
   value,
@@ -29,6 +30,11 @@ export function ServerSearchInput({
   const normalizedDraft = draft.trim();
   const normalizedValue = value.trim();
   const pending = normalizedDraft !== normalizedValue;
+  const showSpinner = shouldShowServerSearchSpinner({
+    draft,
+    value,
+    isSearching,
+  });
 
   React.useEffect(() => {
     onSearchRef.current = onSearch;
@@ -60,7 +66,7 @@ export function ServerSearchInput({
         placeholder={placeholder}
         className={cn("pl-9 pr-9", inputClassName)}
       />
-      {(pending || isSearching) && (
+      {showSpinner && (
         <Loader2
           aria-label="Buscando"
           className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-teal-600"

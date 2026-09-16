@@ -30,6 +30,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 
 import { useRouter } from "next/navigation";
 import { canOpenPosAdministrativeMenu } from "@/lib/default-start-route";
+import { realtimeReconnectDelay } from "@/lib/realtime-reconnect-policy";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
 import {
@@ -480,13 +481,12 @@ export default function PosPage() {
   );
   const showCashChange = lastSettlement ? shouldShowCashChange(lastSettlement) : false;
   const orderSaveAvailable = canRequestOrderSave({
-    connected: serverConnected,
     lineCount: draft?.lines.length ?? 0,
     busy,
   });
-  // Online sales read the authoritative server and do not depend on POS Edge hydration.
-  // Enrolled/offline workstations still require the local durable service to be ready.
-  const salesReady = client?.mode === "online" ? serverConnected : edgeReady;
+  // Online commands own their connectivity result: attempt the canonical API
+  // and show its real error instead of blocking on a stale health snapshot.
+  const salesReady = client?.mode === "online" ? Boolean(client) : edgeReady;
 
   const revealLine = useCallback((lineId: string | null) => {
     if (!lineId) return;
@@ -789,6 +789,19 @@ export default function PosPage() {
     let refreshRequested = false;
     let hydrated = false;
     let stopLiveState: (() => void) | null = null;
+    let reconnectTimer: number | null = null;
+    let failedReconnectAttempts = 0;
+
+    const scheduleReconnect = () => {
+      if (!active || client.mode !== "online" || reconnectTimer !== null) return;
+      const delay = realtimeReconnectDelay(failedReconnectAttempts);
+      failedReconnectAttempts += 1;
+      if (delay === null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, delay);
+    };
 
     const applyHealth = (health: Awaited<ReturnType<typeof client.health>>) => {
       if (!active) return;
@@ -928,7 +941,12 @@ export default function PosPage() {
           hydrated = true;
           focusScanner();
         }
-        if (active) setEdgeReady(true);
+        if (active) {
+          failedReconnectAttempts = 0;
+          if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+          setEdgeReady(true);
+        }
       } catch (caught) {
         hydrated = false;
         if (active) {
@@ -938,6 +956,7 @@ export default function PosPage() {
             setEdgeLoginState("required");
           }
         }
+        scheduleReconnect();
       } finally {
         checking = false;
         if (active && refreshRequested) {
@@ -960,20 +979,31 @@ export default function PosPage() {
           : null;
     };
     void connect().finally(startLiveState);
-    const handleOnline = () => void connect();
+    const handleOnline = () => {
+      failedReconnectAttempts = 0;
+      void connect();
+    };
     const handleOffline = () => {
       if (client.mode === "online") {
         setServerConnected(false);
         setEdgeReady(false);
       }
     };
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      failedReconnectAttempts = 0;
+      void connect();
+    };
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
+    document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       active = false;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       stopLiveState?.();
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [client, documentType, focusScanner]);
 
@@ -3440,11 +3470,9 @@ export default function PosPage() {
                 type="button"
                 disabled={!orderSaveAvailable}
                 onClick={requestSaveOrder}
-                title={serverConnected
-                  ? draft?.customerId
-                    ? "Reserva las existencias en la bodega Pedidos y limpia la venta"
-                    : "Selecciona el cliente y guarda el pedido"
-                  : "Guardar pedidos requiere conexión con Auraly"}
+                title={draft?.customerId
+                  ? "Reserva las existencias en la bodega Pedidos y limpia la venta"
+                  : "Selecciona el cliente y guarda el pedido"}
                 className="flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-emerald-300/45 bg-emerald-400/10 px-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ClipboardList className="h-4 w-4 shrink-0" />

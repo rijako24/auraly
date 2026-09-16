@@ -29,6 +29,8 @@
     "src/components/orders/order-availability.test.ts",
     "src/components/orders/order-review.ts",
     "src/components/orders/order-review.test.ts",
+    "src/components/tables/server-search-state.ts",
+    "src/components/tables/server-search-state.test.ts",
     "src/app/(pos)/pos/pos-discount-calculation.ts",
     "src/app/(pos)/pos/pos-discount-calculation.test.ts",
     "src/app/(pos)/pos/pos-retail-price.ts",

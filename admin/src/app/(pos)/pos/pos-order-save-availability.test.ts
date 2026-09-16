@@ -7,13 +7,13 @@ import {
 } from "./pos-order-save-availability";
 
 test("habilita guardar pedido desde el primer producto", () => {
-  assert.equal(canRequestOrderSave({ connected: true, lineCount: 1, busy: false }), true);
+  assert.equal(canRequestOrderSave({ lineCount: 1, busy: false }), true);
 });
 
-test("mantiene guardar pedido bloqueado sin productos, sin conexión o durante otra operación", () => {
-  assert.equal(canRequestOrderSave({ connected: true, lineCount: 0, busy: false }), false);
-  assert.equal(canRequestOrderSave({ connected: false, lineCount: 1, busy: false }), false);
-  assert.equal(canRequestOrderSave({ connected: true, lineCount: 1, busy: true }), false);
+test("intenta la API sin prejuzgar conectividad y solo bloquea sin productos o durante otra operación", () => {
+  assert.equal(canRequestOrderSave({ lineCount: 0, busy: false }), false);
+  assert.equal(canRequestOrderSave({ lineCount: 1, busy: false }), true);
+  assert.equal(canRequestOrderSave({ lineCount: 1, busy: true }), false);
 });
 
 test("eliminar la última línea de un pedido recuperado usa la cancelación del pedido", () => {
