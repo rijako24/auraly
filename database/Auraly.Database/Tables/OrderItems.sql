@@ -13,6 +13,7 @@ CREATE TABLE [dbo].[OrderItems] (
     [Quantity] DECIMAL(18, 2) NOT NULL,
     [UnitPrice] DECIMAL(18, 2) NOT NULL,
     [DocumentUnitCost] DECIMAL(19, 6) NOT NULL,
+    [IsGenericProductSnapshot] BIT NOT NULL CONSTRAINT [DF_OrderItems_IsGenericProductSnapshot] DEFAULT 0,
     [DiscountAmount] DECIMAL(18, 2) NOT NULL DEFAULT 0,
     [TaxAmount] DECIMAL(18, 2) NOT NULL DEFAULT 0,
 

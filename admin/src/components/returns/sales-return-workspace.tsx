@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { HandCoins, Landmark, PackageCheck, ReceiptText, RotateCcw, Search, ShieldCheck } from "lucide-react";
+import { AlertCircle, HandCoins, Landmark, PackageCheck, ReceiptText, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
@@ -73,6 +73,7 @@ export function SalesReturnWorkspace({ embedded = false, businessId, onCashRefun
       <div className="space-y-2"><Label>Hasta</Label><DatePicker value={to} onChange={(value) => { setTo(value); setPage(1); }} /></div>
       <Button variant={onlyAvailable ? "secondary" : "outline"} onClick={() => { setOnlyAvailable((value) => !value); setPage(1); }}>Solo con saldo</Button>
     </section>
+    {list.isError && <section role="alert" className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><AlertCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">No fue posible consultar las facturas disponibles.</p><p className="text-sm">{list.error instanceof Error ? list.error.message : "Verifica la conexión y los permisos de devoluciones."}</p></div></div><Button type="button" variant="outline" className="shrink-0 border-red-300 bg-white" onClick={() => void list.refetch()}>Reintentar</Button></section>}
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={list.data?.page} pageSize={list.data?.pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }} onRowClick={canCreate ? open : undefined} />
     <SalesReturnEditor key={selected?.documentId ?? "none"} sale={selected} open={!!selected} businessId={businessId} canConfirm={canConfirm} onCashRefundConfirmed={onCashRefundConfirmed} onClose={() => setSelected(undefined)} />
   </div>;

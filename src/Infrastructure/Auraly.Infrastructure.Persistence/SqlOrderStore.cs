@@ -285,7 +285,8 @@ public sealed class SqlOrderStore(
                      CASE WHEN @StoredStatus=2 THEN item.Quantity ELSE 0 END),
                    item.DocumentUnitCost,item.TaxAmount,
                    COALESCE(NULLIF(JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxCode'),N''),tax.DianTaxCode,N'01'),
-                   COALESCE(TRY_CONVERT(DECIMAL(9,4),JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxRate')),tax.Rate,0)
+                   COALESCE(TRY_CONVERT(DECIMAL(9,4),JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxRate')),tax.Rate,0),
+                   item.IsGenericProductSnapshot
             FROM dbo.OrderItems item
             LEFT JOIN dbo.Products product
               ON product.ProductId=item.ProductId AND product.TenantId=@TenantId
@@ -327,7 +328,8 @@ public sealed class SqlOrderStore(
                 lineReader.GetDecimal(13),
                 lineReader.GetDecimal(15),
                 lineReader.GetString(16),
-                lineReader.GetDecimal(17)));
+                lineReader.GetDecimal(17),
+                lineReader.GetBoolean(18)));
         }
 
         return new OrderDetail(
@@ -400,7 +402,8 @@ public sealed class SqlOrderStore(
                      CASE WHEN o.Status=2 THEN item.Quantity ELSE 0 END),
                    item.DocumentUnitCost,item.TaxAmount,
                    COALESCE(NULLIF(JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxCode'),N''),tax.DianTaxCode,N'01'),
-                   COALESCE(TRY_CONVERT(DECIMAL(9,4),JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxRate')),tax.Rate,0)
+                   COALESCE(TRY_CONVERT(DECIMAL(9,4),JSON_VALUE(CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,'$.TaxRate')),tax.Rate,0),
+                   item.IsGenericProductSnapshot
             FROM @Selected selected
             INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId AND b.TenantId=@TenantId
@@ -493,7 +496,8 @@ public sealed class SqlOrderStore(
                 reader.GetDecimal(14),
                 reader.GetDecimal(16),
                 reader.GetString(17),
-                reader.GetDecimal(18)));
+                reader.GetDecimal(18),
+                reader.GetBoolean(19)));
         }
 
         return headers.ToDictionary(

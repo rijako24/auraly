@@ -375,7 +375,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                 line.Total,
                 line.TaxRate,
                 line.DocumentUnitCost,
-                fiscal.PromotionDiscount);
+                fiscal.PromotionDiscount,
+                line.AllowsDocumentCostOverride,
+                line.ProductCode);
         }).ToArray();
         var payments = request.Payments.Select((payment, index) =>
             new PosSalePaymentContract(

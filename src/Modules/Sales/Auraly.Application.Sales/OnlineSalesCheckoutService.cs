@@ -30,7 +30,8 @@ public sealed record OnlineSalesOrderCheckoutLine(
     decimal PublicLineTotal,
     decimal DocumentUnitCost,
     string CurrencyCode,
-    string PriceSource);
+    string PriceSource,
+    bool IsGenericProductSnapshot = false);
 
 public sealed record OnlineSalesOrderCheckoutSource(
     Guid OperationId,
@@ -64,7 +65,7 @@ public static class OnlineSalesOrderCheckoutLineMapper
                 line.UnitCode, line.TaxCode, line.TaxRate, line.Quantity,
                 unitPrice, unitPrice, line.CurrencyCode, line.PriceSource,
                 promotion ? 0m : line.DiscountAmount,
-                line.DocumentUnitCost, false, true,
+                line.DocumentUnitCost, line.IsGenericProductSnapshot, true,
                 net, line.PublicLineTotal - net, line.PublicLineTotal,
                 promotion ? line.DiscountAmount : 0m,
                 line.PublicUnitPrice, line.PublicLineTotal);

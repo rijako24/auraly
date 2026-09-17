@@ -20,9 +20,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider time,
-    SqlInventoryOperationStore inventoryOperations,
-    SqlSellerOrderReportingJobWriter orderReportingJobs,
-    SalesReportingProcessingCoordinator salesReporting) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
+    SqlInventoryOperationStore inventoryOperations) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
     IOnlineSalesHistoryStore, IOrderCancellationStore
 {
     public async Task<OnlineSalesDraft> GetOrCreateActiveAsync(
@@ -61,6 +59,20 @@ public sealed partial class SqlOnlineSalesDraftStore(
                     P("@WorkSessionId", context.WorkSessionId),
                     P("@UserId", user.UserId),
                     P("@Now", now)
+                ],
+                cancellationToken);
+        }
+        else
+        {
+            await ExecuteAsync(connection, transaction, """
+                UPDATE dbo.SalesDrafts
+                SET WarehouseId=@WarehouseId,Version=Version+1,UpdatedAt=@Now
+                WHERE SalesDraftId=@DraftId AND WarehouseId<>@WarehouseId;
+                """,
+                [
+                    P("@DraftId", draftId.Value),
+                    P("@WarehouseId", context.WarehouseId),
+                    P("@Now", time.GetUtcNow())
                 ],
                 cancellationToken);
         }
@@ -113,12 +125,12 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 INSERT dbo.SalesDraftLines(
                   SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
                   UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,PublicUnitPrice,PublicLineTotal,DocumentUnitCost,
-                  CurrencyCode,PriceSource,PriceChannelId,
+                  CurrencyCode,PriceSource,PriceChannelId,IsGenericProductSnapshot,
                   DiscountAmount,PromotionDiscountAmount,Position)
                 SELECT
                   @LineId,@DraftId,@ProductId,@ProductCode,@Description,
                   @UnitCode,@TaxCode,@TaxRate,@Quantity,@BaseUnitPrice,@UnitPrice,@PublicUnitPrice,@PublicLineTotal,@DocumentUnitCost,
-                  @CurrencyCode,@PriceSource,@PriceChannelId,
+                  @CurrencyCode,@PriceSource,@PriceChannelId,@IsGenericProduct,
                   0,0,COALESCE(MAX(Position),0)+1
                 FROM dbo.SalesDraftLines WHERE SalesDraftId=@DraftId;
                 """,
@@ -127,15 +139,16 @@ public sealed partial class SqlOnlineSalesDraftStore(
                     P("@ProductId", productId), P("@ProductCode", product.Code),
                     P("@Description", product.Name), P("@UnitCode", product.UnitCode),
                     P("@TaxCode", product.TaxCode), P("@TaxRate", product.TaxRate),
-                    P("@Quantity", quantity), P("@BaseUnitPrice", product.UnitPrice),
+                    P("@Quantity", quantity), P("@BaseUnitPrice", product.IsGenericProduct ? 0m : product.UnitPrice),
                     P("@UnitPrice", MonetaryRounding.CeilingLineUnitPrice(TaxExclusive(
-                        MonetaryRounding.CeilingLineUnitPrice(product.UnitPrice), product.TaxRate))), P("@CurrencyCode", product.CurrencyCode),
-                    P("@PublicUnitPrice", MonetaryRounding.CeilingLineUnitPrice(product.UnitPrice)),
+                        MonetaryRounding.CeilingLineUnitPrice(product.IsGenericProduct ? 0m : product.UnitPrice), product.TaxRate))), P("@CurrencyCode", product.CurrencyCode),
+                    P("@PublicUnitPrice", MonetaryRounding.CeilingLineUnitPrice(product.IsGenericProduct ? 0m : product.UnitPrice)),
                     P("@PublicLineTotal", MonetaryRounding.RoundLineAmount(
-                        MonetaryRounding.CeilingLineUnitPrice(product.UnitPrice) * quantity)),
-                    P("@DocumentUnitCost", product.UnitCost),
-                    P("@PriceSource", "Base"),
-                    P("@PriceChannelId", null)
+                        MonetaryRounding.CeilingLineUnitPrice(product.IsGenericProduct ? 0m : product.UnitPrice) * quantity)),
+                    P("@DocumentUnitCost", product.IsGenericProduct ? 0m : product.UnitCost),
+                    P("@PriceSource", product.IsGenericProduct ? "Manual" : "Base"),
+                    P("@PriceChannelId", null),
+                    P("@IsGenericProduct", product.IsGenericProduct)
                 ],
                 cancellationToken);
         await RepriceDraftAsync(
@@ -269,7 +282,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
     public async Task<OnlineSalesDraft> UpdateLinesAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
-        IReadOnlyList<UpdateOnlineSalesDraftLineRequest> lines,
+        IReadOnlyList<UpdateSalesDraftLineRequest> lines,
         bool includesProratedDiscount,
         long expectedVersion,
         string idempotencyKey,
@@ -278,7 +291,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         const string operation = "UpdateLines";
         var payload = string.Join('|', lines
             .OrderBy(line => line.LineId)
-            .Select(line => $"{line.LineId:D}:{line.Description.Trim()}:{Invariant(line.UnitPrice)}:{Invariant(line.Discount)}:{Invariant(line.DocumentUnitCost)}"));
+            .Select(line => $"{line.LineId:D}:{line.Description.Trim()}:{Invariant(line.PublicUnitPrice)}:{Invariant(line.Discount)}:{Invariant(line.DocumentUnitCost)}"));
         var hash = Hash($"{operation}|{draftId:D}|{includesProratedDiscount}|{payload}");
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -313,13 +326,15 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 $"Permission '{CommercePermissionCodes.SalesChangeDescription}' is required.");
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesChangePrice) &&
             lines.Any(line =>
-                line.UnitPrice != currentDraftLines[line.LineId].UnitPrice ||
-                line.Discount != currentDraftLines[line.LineId].Discount ||
-                line.DocumentUnitCost != currentDraftLines[line.LineId].DocumentUnitCost))
+                !currentDraftLines[line.LineId].AllowsDocumentCostOverride &&
+                (line.PublicUnitPrice != currentDraftLines[line.LineId].PublicUnitPrice ||
+                 line.Discount != currentDraftLines[line.LineId].Discount ||
+                 line.DocumentUnitCost != currentDraftLines[line.LineId].DocumentUnitCost)))
             throw new OnlineSalesDraftForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesChangePrice}' is required.");
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesReadCostAndMargin) &&
             lines.Any(line =>
+                !currentDraftLines[line.LineId].AllowsDocumentCostOverride &&
                 line.DocumentUnitCost != currentDraftLines[line.LineId].DocumentUnitCost))
             throw new OnlineSalesDraftForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesReadCostAndMargin}' is required.");
@@ -337,11 +352,16 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 !currentDraftLine.AllowsDocumentCostOverride)
                 throw new OnlineSalesDraftValidationException(
                     "El costo de inventario de la línea queda congelado cuando se agrega el producto.");
-            if (line.UnitPrice != current.UnitPrice)
+            if (!currentDraftLine.AllowsDocumentCostOverride &&
+                line.PublicUnitPrice != currentDraftLine.PublicUnitPrice)
                 throw new OnlineSalesDraftValidationException(
-                    "El precio fiscal base de la línea no se puede modificar.");
+                    "El precio público base solo se puede reemplazar en un producto genérico.");
+            if (currentDraftLine.AllowsDocumentCostOverride && line.Discount != 0)
+                throw new OnlineSalesDraftValidationException(
+                    "Un producto genérico siempre tiene descuento cero.");
+            var publicUnitPrice = MonetaryRounding.RoundLineAmount(line.PublicUnitPrice);
             var manualDiscount = MonetaryRounding.RoundLineAmount(line.Discount);
-            if (manualDiscount > current.Quantity * currentDraftLine.PublicUnitPrice -
+            if (manualDiscount > current.Quantity * publicUnitPrice -
                 currentDraftLine.PromotionDiscount)
                 throw new OnlineSalesDraftValidationException(
                     "El descuento no puede superar el valor de la línea.");
@@ -350,27 +370,33 @@ public sealed partial class SqlOnlineSalesDraftStore(
             {
                 line.LineId,
                 Description = line.Description.Trim(),
+                PublicUnitPrice = publicUnitPrice,
+                UnitPrice = MonetaryRounding.RoundLineAmount(
+                    TaxExclusive(publicUnitPrice, currentDraftLine.TaxRate)),
                 PublicLineTotal = MonetaryRounding.RoundLineAmount(
-                    currentDraftLine.PublicUnitPrice * current.Quantity -
+                    publicUnitPrice * current.Quantity -
                     manualDiscount - currentDraftLine.PromotionDiscount),
                 line.DocumentUnitCost,
                 Discount = manualDiscount,
-                DiscountChanged = discountChanged
+                CommercialChanged = discountChanged ||
+                    publicUnitPrice != currentDraftLine.PublicUnitPrice
             };
         }).ToArray();
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE target
-            SET Description=input.Description,PublicLineTotal=input.PublicLineTotal,
+            SET Description=input.Description,BaseUnitPrice=input.UnitPrice,UnitPrice=input.UnitPrice,
+                PublicUnitPrice=input.PublicUnitPrice,PublicLineTotal=input.PublicLineTotal,
                 DocumentUnitCost=input.DocumentUnitCost,DiscountAmount=input.Discount,
-                PriceSource=CASE WHEN input.DiscountChanged=1 THEN N'Manual' ELSE target.PriceSource END,
-                PriceChannelId=CASE WHEN input.DiscountChanged=1 THEN NULL ELSE target.PriceChannelId END
+                PriceSource=CASE WHEN input.CommercialChanged=1 THEN N'Manual' ELSE target.PriceSource END,
+                PriceChannelId=CASE WHEN input.CommercialChanged=1 THEN NULL ELSE target.PriceChannelId END
             FROM dbo.SalesDraftLines target
             JOIN OPENJSON(@UpdatesJson) WITH(
               LineId uniqueidentifier '$.LineId',Description nvarchar(500) '$.Description',
+              UnitPrice decimal(18,2) '$.UnitPrice',PublicUnitPrice decimal(18,2) '$.PublicUnitPrice',
               DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',
               PublicLineTotal decimal(18,2) '$.PublicLineTotal',
               Discount decimal(19,4) '$.Discount',
-              DiscountChanged bit '$.DiscountChanged') input
+              CommercialChanged bit '$.CommercialChanged') input
               ON input.LineId=target.SalesDraftLineId
             WHERE target.SalesDraftId=@DraftId;
             """,
@@ -541,7 +567,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             operation, hash, cancellationToken);
         if (replay is not null)
         {
-            var replayCancellation = cancelSourceOrder && state.SourceOrderId is Guid replaySourceOrderId
+            _ = cancelSourceOrder && state.SourceOrderId is Guid replaySourceOrderId
                 ? await CancelOrderCoreAsync(
                     connection,
                     transaction,
@@ -559,13 +585,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
                     cancellationToken)
                 : null;
             await transaction.CommitAsync(cancellationToken);
-            if (replayCancellation is not null)
-                await salesReporting.RequestProjectionAsync(
-                    state.BusinessId,
-                    replayCancellation.OrderId,
-                    "SellerOrder",
-                    cancellationToken,
-                    replayCancellation.ReportingVersion);
             return replay;
         }
 
@@ -659,13 +678,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
         var result = await ReadDraftAsync(
             connection, transaction, nextId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        if (cancellation is not null)
-            await salesReporting.RequestProjectionAsync(
-                state.BusinessId,
-                cancellation.OrderId,
-                "SellerOrder",
-                cancellationToken,
-                cancellation.ReportingVersion);
         return result;
     }
 
@@ -863,7 +875,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
                               FROM ProductCategoryAncestors ancestor
                               WHERE ancestor.RootProductId=p.ProductId),N''),
                     latestCost.Amount,
-                    COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)
+                    COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent),
+                    p.IsGenericProduct
             FROM dbo.Products p
             JOIN RequestedProducts requested ON requested.ProductId=p.ProductId
             LEFT JOIN dbo.TaxProfiles t
@@ -908,7 +921,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 reader.IsDBNull(12) ? null : reader.GetGuid(12),
                 reader.IsDBNull(13) ? null : reader.GetGuid(13),
                 reader.GetString(14).Split(',',StringSplitOptions.RemoveEmptyEntries).Select(Guid.Parse).ToArray(),
-                reader.GetDecimal(15),reader.IsDBNull(16) ? null : reader.GetDecimal(16)));
+                reader.GetDecimal(15),reader.IsDBNull(16) ? null : reader.GetDecimal(16),
+                reader.GetBoolean(17)));
         return products;
     }
 
@@ -1106,6 +1120,51 @@ public sealed partial class SqlOnlineSalesDraftStore(
         return result;
     }
 
+    public async Task<OnlineSalesDraft> DiscardUnpricedGenericLineAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid lineId,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        const string operation = "DiscardUnpricedGenericLine";
+        var hash = Hash($"{operation}|{draftId:D}|{lineId:D}");
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        var state = await LockDraftAsync(connection, transaction, user, draftId, cancellationToken);
+        var replay = await ReplayAsync(
+            connection, transaction, state.BusinessId, idempotencyKey,
+            operation, hash, cancellationToken);
+        if (replay is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return replay;
+        }
+        DemandActiveVersion(state, expectedVersion);
+        var affected = await ExecuteAsync(connection, transaction, """
+            DELETE dbo.SalesDraftLines
+            WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId
+              AND IsGenericProductSnapshot=1 AND PublicUnitPrice=0
+              AND DocumentUnitCost=0 AND DiscountAmount=0 AND PromotionDiscountAmount=0;
+            """, [P("@DraftId", draftId), P("@LineId", lineId)], cancellationToken);
+        if (affected != 1)
+            throw new OnlineSalesDraftValidationException(
+                "Solo se puede descartar sin autorización un producto genérico que aún no tiene valor.");
+        await RepriceDraftAsync(
+            connection, transaction, state, draftId, state.CustomerId, cancellationToken);
+        var version = await AdvanceVersionAsync(
+            connection, transaction, draftId, expectedVersion, cancellationToken);
+        await SaveReceiptAsync(
+            connection, transaction, state.BusinessId, draftId,
+            idempotencyKey, operation, hash, version, cancellationToken);
+        var result = await ReadDraftAsync(connection, transaction, draftId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
     private static async Task<OnlineSalesCustomer?> ReadCustomerAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -1271,7 +1330,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             SELECT line.SalesDraftId,line.SalesDraftLineId,line.ProductId,line.ProductCode,line.Description,line.UnitCode,
                    line.TaxCode,line.TaxRate,line.Quantity,line.BaseUnitPrice,line.UnitPrice,line.CurrencyCode,
                    line.PriceSource,line.DiscountAmount,line.DocumentUnitCost,
-                   CAST(CASE WHEN product.ManageStock=1 OR inventoryLink.ProductLinkId IS NOT NULL THEN 1 ELSE 0 END AS bit),
+                   line.IsGenericProductSnapshot,
                    product.AllowsFractionalSale,
                    line.PromotionDiscountAmount,line.PublicUnitPrice,line.PublicLineTotal
             FROM dbo.SalesDraftLines line
@@ -1323,7 +1382,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 reader.GetString(4), reader.GetString(5), reader.GetString(6),
                 taxRate, quantity, reader.GetDecimal(9), price,
                 reader.GetString(11), reader.GetString(12), discount,
-                reader.GetDecimal(14), !reader.GetBoolean(15), reader.GetBoolean(16),
+                reader.GetDecimal(14), reader.GetBoolean(15), reader.GetBoolean(16),
                 net, tax, total, promotionDiscount, publicUnitPrice, total));
         }
         return headers.ToDictionary(pair => pair.Key, pair =>
@@ -1421,7 +1480,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         Guid? ProductBrandId,
         IReadOnlyCollection<Guid> ProductCategoryAncestorIds,
         decimal LatestUnitCost,
-        decimal? TargetMarginPercent);
+        decimal? TargetMarginPercent,
+        bool IsGenericProduct = false);
     private sealed record DraftSnapshotHeader(
         Guid DraftId,
         Guid BusinessId,

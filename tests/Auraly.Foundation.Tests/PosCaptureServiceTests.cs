@@ -247,6 +247,31 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
+    public async Task Generic_product_starts_unpriced_manual_and_does_not_infer_from_inventory()
+    {
+        await WithServiceAsync(async (service, _, scope, _, _, availability) =>
+        {
+            var result = await service.CaptureAsync(
+                "770123", scope, null, false, Guid.NewGuid());
+
+            var line = Assert.Single(result.Draft!.Lines);
+            Assert.True(line.AllowsDocumentCostOverride);
+            Assert.True(line.IsPriceOverridden);
+            Assert.Equal("Manual", line.PriceSource);
+            Assert.Equal(0m, line.PublicUnitPrice);
+            Assert.Equal(0m, line.DocumentUnitCost);
+            Assert.Empty(availability.Requests);
+        }, managesStock: false, isGenericProduct: true, assignCustomer: false);
+
+        await WithServiceAsync(async (service, _, scope, _, _, _) =>
+        {
+            var result = await service.CaptureAsync(
+                "770123", scope, null, false, Guid.NewGuid());
+            Assert.False(Assert.Single(result.Draft!.Lines).AllowsDocumentCostOverride);
+        }, managesStock: false, isGenericProduct: false, assignCustomer: false);
+    }
+
+    [Fact]
     public async Task Adding_same_product_creates_normal_price_line_without_changing_edited_lines()
     {
         await WithServiceAsync(async (service, drafts, scope, productId, customerId, availability) =>
@@ -272,7 +297,7 @@ public sealed class PosCaptureServiceTests
             var automatic = addedAgain.Draft.Lines.Single(line => line.LineId != original.LineId);
             Assert.Equal(original.UnitPrice, editedLine.UnitPrice);
             Assert.Equal(5m, editedLine.Discount);
-            Assert.Equal(original.PriceSource, editedLine.PriceSource);
+            Assert.Equal("Manual", editedLine.PriceSource);
             Assert.Equal(80m, automatic.UnitPrice);
 
             availability.Response = new(
@@ -285,7 +310,7 @@ public sealed class PosCaptureServiceTests
             var recovered = await drafts.GetOrCreateActiveAsync(scope);
             Assert.Equal(original.UnitPrice, recovered.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
             Assert.Equal(5m, recovered.Lines.Single(line => line.LineId == original.LineId).Discount);
-            Assert.Equal(original.PriceSource, recovered.Lines.Single(line => line.LineId == original.LineId).PriceSource);
+            Assert.Equal("Manual", recovered.Lines.Single(line => line.LineId == original.LineId).PriceSource);
         });
     }
 
@@ -429,6 +454,7 @@ public sealed class PosCaptureServiceTests
         Func<Guid, IReadOnlyCollection<PosPromotion>>? promotionsFactory = null,
         Func<Guid, IReadOnlyCollection<PosCatalogItem>>? additionalItemsFactory = null,
         Func<Guid, Guid, IReadOnlyCollection<PosPriceChannelTier>>? priceTiersFactory = null,
+        bool isGenericProduct = false,
         bool assignCustomer = true)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-capture-{Guid.NewGuid():N}.db");
@@ -441,7 +467,8 @@ public sealed class PosCaptureServiceTests
                 productId, "P-1", "REF-1", "Product", "EA", "VAT19", 19m,
                 100m, "COP", IsActive: true, IsWeighable: false,
                 AllowsFractionalSale: false, Scale: null, Barcodes: ["770123"],
-                Identifiers: [], UnitCost: 0m, ManagesStock: managesStock);
+                Identifiers: [], UnitCost: 0m, ManagesStock: managesStock,
+                IsGenericProduct: isGenericProduct);
             var sessionId = Guid.NewGuid();
             var items = new[] { item }
                 .Concat(additionalItemsFactory?.Invoke(productId) ?? [])

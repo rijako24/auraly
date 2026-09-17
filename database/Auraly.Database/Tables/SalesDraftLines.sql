@@ -13,6 +13,7 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     [PublicUnitPrice] DECIMAL(18, 2) NOT NULL,
     [PublicLineTotal] DECIMAL(18, 2) NOT NULL,
     [DocumentUnitCost] DECIMAL(19, 6) NOT NULL CONSTRAINT [DF_SalesDraftLines_DocumentUnitCost] DEFAULT 0,
+    [IsGenericProductSnapshot] BIT NOT NULL CONSTRAINT [DF_SalesDraftLines_IsGenericProductSnapshot] DEFAULT 0,
     [CurrencyCode] NVARCHAR(3) NOT NULL,
     [PriceSource] NVARCHAR(24) NOT NULL,
     [PriceChannelId] UNIQUEIDENTIFIER NULL,

@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
@@ -52,10 +53,13 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
-            await InsertInventoryMovementAsync(
-                session, request, inventoryWarehouseId, line, cancellationToken);
-            await InsertLineAsync(session, request, line, cancellationToken);
+            if (!line.IsGenericProductSnapshot)
+            {
+                await InsertInventoryMovementAsync(
+                    session, request, inventoryWarehouseId, line, cancellationToken);
+            }
         }
+        await InsertLinesAsync(session, request, cancellationToken);
 
         await LinkSourceOrderAsync(session, request, cancellationToken);
 
@@ -127,10 +131,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
     }
 
-    private static async Task InsertLineAsync(
+    private static async Task InsertLinesAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
-        PosSaleLineContract line,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -140,17 +143,28 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 Quantity, UnitPrice, UnitCostSnapshot, DiscountAmount, PromotionDiscountAmount, TaxAmount,
                 UntaxedAmount, LineTotal,ProductCodeSnapshot,ProductNameSnapshot,
                 CategoryIdSnapshot,CategoryNameSnapshot,SupplierIdSnapshot,SupplierNameSnapshot,
-                AttributionSnapshotVersion
+                AttributionSnapshotVersion,IsGenericProductSnapshot
             )
             SELECT
-                @DocumentId, @LineNumber, @ProductId, @Description, @TaxCode, @TaxRate,
-                @Quantity, @UnitPrice,
-                @UnitCostSnapshot,
-                @DiscountAmount, @PromotionDiscountAmount, @TaxAmount,
-                @UntaxedAmount, @LineTotal,COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,
+                @DocumentId,input.LineNumber,input.ProductId,input.Description,input.TaxCode,input.TaxRate,
+                input.Quantity,input.UnitPrice,input.DocumentUnitCost,
+                input.DiscountAmount,input.PromotionDiscountAmount,input.TaxAmount,
+                input.UntaxedAmount,input.LineTotal,
+                COALESCE(NULLIF(input.ProductCodeSnapshot,N''),p.ProductCode,p.Sku,p.Reference,N''),input.Description,
                 p.ProductCategoryId,COALESCE(category.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
-                1
-            FROM dbo.Products p
+                1,input.IsGenericProductSnapshot
+            FROM OPENJSON(@LinesJson) WITH(
+              LineNumber int '$.LineNumber',ProductId uniqueidentifier '$.ProductId',
+              Description nvarchar(300) '$.Description',TaxCode nvarchar(16) '$.TaxCode',
+              TaxRate decimal(9,6) '$.TaxRate',Quantity decimal(19,6) '$.Quantity',
+              UnitPrice decimal(19,4) '$.UnitPrice',DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',
+              DiscountAmount decimal(19,4) '$.DiscountAmount',
+              PromotionDiscountAmount decimal(19,4) '$.PromotionDiscountAmount',
+              TaxAmount decimal(19,4) '$.TaxAmount',UntaxedAmount decimal(19,4) '$.UntaxedAmount',
+              LineTotal decimal(19,4) '$.LineTotal',
+              IsGenericProductSnapshot bit '$.IsGenericProductSnapshot',
+              ProductCodeSnapshot nvarchar(80) '$.ProductCodeSnapshot') input
+            INNER JOIN dbo.Products p ON p.ProductId=input.ProductId
             LEFT JOIN dbo.ProductCategories category
               ON category.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY
@@ -159,35 +173,19 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               FROM dbo.SupplierProducts sp
               INNER JOIN dbo.Suppliers s
                 ON s.SupplierId=sp.SupplierId AND s.BusinessId=sp.BusinessId AND s.IsActive=1
-              WHERE sp.BusinessId=@BusinessId AND sp.ProductId=p.ProductId AND sp.IsActive=1
+              WHERE sp.BusinessId=@BusinessId AND sp.ProductId=input.ProductId AND sp.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId
             ) supplier
-            WHERE p.ProductId=@ProductId
-              AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
                    OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        command.Parameters.AddWithValue("@Description", line.Description);
-        command.Parameters.AddWithValue("@TaxCode", line.TaxCode);
-        AddDecimal(command, "@TaxRate", line.TaxRate, 9, 6);
-        AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
-        AddDecimal(command, "@UnitPrice", line.UnitPrice, 19, 4);
-        var unitCost = command.Parameters.Add("@UnitCostSnapshot", SqlDbType.Decimal);
-        unitCost.Precision = 19;
-        unitCost.Scale = 6;
-        unitCost.Value = line.DocumentUnitCost;
-        AddDecimal(command, "@DiscountAmount", line.DiscountAmount, 19, 4);
-        AddDecimal(command, "@PromotionDiscountAmount", line.PromotionDiscountAmount, 19, 4);
-        AddDecimal(command, "@TaxAmount", line.TaxAmount, 19, 4);
-        AddDecimal(command, "@UntaxedAmount", line.UntaxedAmount, 19, 4);
-        AddDecimal(command, "@LineTotal", line.LineTotal, 19, 4);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        command.Parameters.AddWithValue("@LinesJson", JsonSerializer.Serialize(request.Lines));
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != request.Lines.Count)
             throw new InvalidOperationException(
-                $"The immutable attribution for sale line {line.LineNumber} could not be captured.");
+                "The immutable attribution for every sale line could not be captured.");
     }
 
     private async Task InsertInventoryMovementAsync(

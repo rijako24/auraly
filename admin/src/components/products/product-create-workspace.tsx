@@ -29,6 +29,7 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCatalogDraft } from "@/hooks/use-catalog-draft";
 import { catalogDraftKey } from "@/lib/catalog-draft-store";
+import { genericProductCatalogPrice, setGenericProductMode, validateProductCreateFields } from "@/components/products/product-generic-policy";
 
 const none = "__none__";
 const sections = [
@@ -47,7 +48,7 @@ interface CreateState {
   reference: string; name: string; description: string;
   productCategoryId: string | null; productBrandId: string | null; baseUnitCode: string;
   unitGrossWeightKg: number | null;
-  manageInventory: boolean; allowsFractionalSale: boolean; isWeighable: boolean;
+  isGenericProduct: boolean; manageInventory: boolean; allowsFractionalSale: boolean; isWeighable: boolean;
   salesTaxProfileId: string; purchaseTaxProfileId: string;
   purchaseTaxTreatment: "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
   cost: number; margin: number; salePrice: number;
@@ -67,7 +68,7 @@ interface ProductCreateDraft {
 
 const initialState: CreateState = {
   reference: "", name: "", description: "", productCategoryId: null,
-  productBrandId: null, baseUnitCode: "EA", unitGrossWeightKg: null, manageInventory: true, allowsFractionalSale: false,
+  productBrandId: null, baseUnitCode: "EA", unitGrossWeightKg: null, isGenericProduct: false, manageInventory: true, allowsFractionalSale: false,
   isWeighable: false, salesTaxProfileId: "", purchaseTaxProfileId: "",
   purchaseTaxTreatment: "DeductibleInputVat", cost: 0, margin: 0, salePrice: 0, barcodes: [],
   scaleCode: "", scalePrefix: "", scaleDecimals: 3, supplierId: null, supplierProductCode: "",
@@ -111,8 +112,8 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
           previewUrl: URL.createObjectURL(image.file),
         }));
       });
-      setLinkedProducts(stored.linkedProducts ?? []);
-      setConversionMaximumLossPercent(stored.conversionMaximumLossPercent ?? null);
+      setLinkedProducts(stored.form?.isGenericProduct ? [] : stored.linkedProducts ?? []);
+      setConversionMaximumLossPercent(stored.form?.isGenericProduct ? null : stored.conversionMaximumLossPercent ?? null);
       setSelectedSupplier(stored.selectedSupplier ?? null);
     },
     onError: operation => toast.error(operation === "load"
@@ -137,26 +138,17 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
   const create = useMutation({
     mutationFn: async () => {
       if (!businessId) throw new Error("Selecciona un negocio antes de crear el producto.");
-      const nextErrors: Record<string, string> = {};
-      if (!form.name.trim()) nextErrors.name = "Este campo es requerido";
-      if (!form.baseUnitCode) nextErrors.baseUnitCode = "Este campo es requerido";
-      if (!form.salesTaxProfileId) nextErrors.salesTaxProfileId = "Este campo es requerido";
-      if (!form.purchaseTaxProfileId) nextErrors.purchaseTaxProfileId = "Este campo es requerido";
-      if (!form.supplierId) nextErrors.supplierId = "Este campo es requerido";
-      if (!(form.cost > 0)) nextErrors.cost = "Este campo es requerido";
-      if (form.margin < 0) nextErrors.margin = "No puede ser negativo";
-      else if (form.margin >= 100) nextErrors.margin = "Debe ser menor que 100 %";
-      if (!(form.salePrice > 0)) nextErrors.salePrice = "Este campo es requerido";
+      const nextErrors = validateProductCreateFields(form);
       setFieldErrors(nextErrors);
       if (Object.keys(nextErrors).length > 0) throw new Error("Revisa los campos resaltados.");
       if (!form.name.trim()) throw new Error("El nombre es obligatorio.");
-      if (!form.salesTaxProfileId || !form.purchaseTaxProfileId) throw new Error("Selecciona el IVA de venta y el IVA de compra.");
-      if ((purchaseTax?.rate ?? 0) === 0 && form.purchaseTaxTreatment !== "NotApplicable") throw new Error("Un IVA de compra del 0 % debe usar el tratamiento No aplica.");
-      if ((purchaseTax?.rate ?? 0) > 0 && form.purchaseTaxTreatment === "NotApplicable") throw new Error("Selecciona IVA descontable o Mayor valor del costo para un IVA de compra mayor que 0 %.");
+      if (!form.salesTaxProfileId || (!form.isGenericProduct && !form.purchaseTaxProfileId)) throw new Error("Selecciona los IVA requeridos para este producto.");
+      if (!form.isGenericProduct && (purchaseTax?.rate ?? 0) === 0 && form.purchaseTaxTreatment !== "NotApplicable") throw new Error("Un IVA de compra del 0 % debe usar el tratamiento No aplica.");
+      if (!form.isGenericProduct && (purchaseTax?.rate ?? 0) > 0 && form.purchaseTaxTreatment === "NotApplicable") throw new Error("Selecciona IVA descontable o Mayor valor del costo para un IVA de compra mayor que 0 %.");
       if (!form.baseUnitCode) throw new Error("Selecciona la unidad del producto.");
-      if (!(form.cost > 0)) throw new Error("El costo debe ser mayor que cero.");
-      if (!(form.margin >= 0 && form.margin < 100)) throw new Error("El margen debe estar entre 0 % y menos de 100 %.");
-      if (!(form.salePrice > 0)) throw new Error("El precio público debe ser mayor que cero.");
+      if (!form.isGenericProduct && !(form.cost > 0)) throw new Error("El costo debe ser mayor que cero.");
+      if (!form.isGenericProduct && !(form.margin >= 0 && form.margin < 100)) throw new Error("El margen debe estar entre 0 % y menos de 100 %.");
+      if (!form.isGenericProduct && !(form.salePrice > 0)) throw new Error("El precio público debe ser mayor que cero.");
       if (form.isWeighable && !form.allowsFractionalSale) throw new Error("Habilita la venta fraccionada antes de usar balanza.");
       let supplierDetails = selectedSupplier;
       if (form.supplierId && !supplierDetails) {
@@ -173,11 +165,13 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         name: form.name.trim(), description: form.description.trim() || null,
         baseUnitCode: form.baseUnitCode, taxProfileId: form.salesTaxProfileId,
         unitGrossWeightKg: form.unitGrossWeightKg,
-        purchaseTaxProfileId: form.purchaseTaxProfileId, purchaseTaxTreatment: form.purchaseTaxTreatment,
-        manageInventory: form.manageInventory, isWeighable: form.isWeighable,
-        barcodes: form.barcodes, identifiers: [], prices: [{ amount: form.salePrice, currencyCode: "COP",
-          costBasisAmount: form.cost, targetMarginPercent: form.margin }],
-        suppliers: supplier ? [{ supplierId: supplier.supplierId, identification: supplier.identification,
+        purchaseTaxProfileId: form.isGenericProduct ? null : form.purchaseTaxProfileId, purchaseTaxTreatment: form.isGenericProduct ? "NotApplicable" : form.purchaseTaxTreatment,
+        isGenericProduct: form.isGenericProduct,
+        manageInventory: form.isGenericProduct ? false : form.manageInventory, isWeighable: form.isGenericProduct ? false : form.isWeighable,
+        barcodes: form.barcodes, identifiers: [], prices: [form.isGenericProduct
+          ? genericProductCatalogPrice()
+          : { amount: form.salePrice, currencyCode: "COP", costBasisAmount: form.cost, targetMarginPercent: form.margin }],
+        suppliers: !form.isGenericProduct && supplier ? [{ supplierId: supplier.supplierId, identification: supplier.identification,
           name: supplier.name, supplierProductCode: form.supplierProductCode.trim() || null,
           baseUnitCost: form.cost, isPrimary: true, purchasePresentationName: form.packageName.trim() || "Unidad",
           unitsPerPresentation: form.unitsPerPackage }] : [],
@@ -188,12 +182,13 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         link: null,
 
       });
-      if (linkedProducts.length > 0) {
+      if (!form.isGenericProduct && linkedProducts.length > 0) {
         await productMerchandisingApi.save(product.productId, {
           productCategoryId: form.productCategoryId,
           productBrandId: form.productBrandId,
           baseUnitCode: form.baseUnitCode,
           unitGrossWeightKg: form.unitGrossWeightKg,
+          isGenericProduct: form.isGenericProduct,
           manageInventory: form.manageInventory,
           allowsFractionalSale: form.allowsFractionalSale,
           isWeighable: form.isWeighable,
@@ -272,7 +267,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
             <p className="text-xs font-bold uppercase tracking-[.2em] text-teal-300">Nuevo producto</p>
             <h2 className="mt-2 text-2xl font-semibold">Una ficha, todo conectado</h2>
             <p className="mt-2 text-sm text-slate-300">Completa lo necesario para comprar, publicar y vender sin abrir ventanas adicionales.</p>
-            <nav className="mt-8 space-y-1">{sections.map(([id, label, Icon], index) => <a key={id} href={`#new-${id}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10"><span className="flex h-7 w-7 items-center justify-center rounded-full border border-teal-400/40 text-xs text-teal-300">{index + 1}</span><Icon className="h-4 w-4" />{label}</a>)}</nav>
+            <nav className="mt-8 space-y-1">{sections.filter(([id]) => !form.isGenericProduct || id !== "family").map(([id, label, Icon], index) => <a key={id} href={`#new-${id}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10"><span className="flex h-7 w-7 items-center justify-center rounded-full border border-teal-400/40 text-xs text-teal-300">{index + 1}</span><Icon className="h-4 w-4" />{label}</a>)}</nav>
           </div>
         </aside>
         <div className="flex min-h-0 flex-col bg-muted/20">
@@ -293,11 +288,11 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
               <Section id="new-sale" icon={Barcode} title="Captura, cantidad y balanza" description="Varios códigos de barras y reglas de cantidad en un mismo lugar.">
                 <div className="flex gap-2"><Input value={barcode} onChange={(e) => setBarcode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addBarcode(); } }} placeholder="Escanea o escribe un código" /><Button type="button" variant="outline" onClick={addBarcode}>Agregar</Button></div>
                 <div className="mt-3 flex flex-wrap gap-2">{form.barcodes.map((item, index) => <span key={`${item.value}-${index}`} className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-sm"><Barcode className="h-3.5 w-3.5" />{item.value}{item.isPrimary && <strong className="text-xs text-primary">Principal</strong>}<button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => setForm({ ...form, barcodes: form.barcodes.filter((_, i) => i !== index).map((code, i) => ({ ...code, isPrimary: i === 0 })) })}>×</button></span>)}</div>
-                <div className="mt-4 grid gap-3 md:grid-cols-3"><Toggle label="Controla inventario" detail="Compras, ventas, traslados y ajustes cambian sus unidades disponibles." checked={form.manageInventory} onChange={(checked) => setForm({ ...form, manageInventory: checked })} /><Toggle label="Permitir venta fraccionada" detail={`Acepta cantidades decimales en ${selectedUnit?.name ?? "la unidad seleccionada"}.`} checked={form.allowsFractionalSale} onChange={(checked) => setForm({ ...form, allowsFractionalSale: checked, isWeighable: checked ? form.isWeighable : false })} /><Toggle label="Captura desde balanza" detail={form.allowsFractionalSale ? "Lee peso o cantidad automáticamente." : "Primero habilita la venta fraccionada."} checked={form.isWeighable} disabled={!form.allowsFractionalSale} onChange={(checked) => setForm({ ...form, isWeighable: checked })} /></div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Toggle label="Producto genérico" detail="El costo, margen y precio se definen al agregarlo a la venta." checked={form.isGenericProduct} onChange={(checked) => { if (checked) { setSelectedSupplier(null); setLinkedProducts([]); setConversionMaximumLossPercent(null); } setForm(setGenericProductMode(form, checked)); }} /><Toggle label="Control de inventario" detail="Compras, ventas, traslados y ajustes cambian sus unidades disponibles." checked={form.isGenericProduct ? false : form.manageInventory} disabled={form.isGenericProduct} onChange={(checked) => setForm({ ...form, manageInventory: checked })} /><Toggle label="Permitir venta fraccionada" detail={`Acepta cantidades decimales en ${selectedUnit?.name ?? "la unidad seleccionada"}.`} checked={form.allowsFractionalSale} onChange={(checked) => setForm({ ...form, allowsFractionalSale: checked, isWeighable: checked ? form.isWeighable : false })} /><Toggle label="Captura desde balanza" detail={form.allowsFractionalSale ? "Lee peso o cantidad automáticamente." : "Primero habilita la venta fraccionada."} checked={form.isWeighable} disabled={form.isGenericProduct || !form.allowsFractionalSale} onChange={(checked) => setForm({ ...form, isWeighable: checked })} /></div>
                 {form.isWeighable && <div className="mt-4 grid items-start gap-4 rounded-xl bg-muted/30 p-4 md:grid-cols-3 [&>div>label]:flex [&>div>label]:min-h-10 [&>div>label]:items-center [&>div>p]:min-h-8"><Field label="Código del producto en la balanza"><Input value={form.scaleCode} onChange={(e) => setForm({ ...form, scaleCode: e.target.value })} placeholder="Ej. 125" /><p className="text-xs text-muted-foreground">También conocido como PLU.</p></Field><Field label="Inicio del código de balanza"><Input value={form.scalePrefix} onChange={(e) => setForm({ ...form, scalePrefix: e.target.value })} placeholder="Ej. 20" /><p className="text-xs text-muted-foreground">Identifica las etiquetas generadas por la balanza.</p></Field><Field label="Decimales del peso"><Input type="number" min={0} max={6} value={form.scaleDecimals} onChange={(e) => setForm({ ...form, scaleDecimals: Number(e.target.value) })} /><p className="text-xs text-muted-foreground">3 interpreta 1250 como 1,250 kg.</p></Field></div>}
               </Section>
 
-              <Section id="new-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. El inventario puede compartirse y el costo puede derivarse; cada producto conserva sus precios propios.">
+              {!form.isGenericProduct && <Section id="new-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. El inventario puede compartirse y el costo puede derivarse; cada producto conserva sus precios propios.">
                 {businessId && <div className="rounded-xl border bg-muted/20 p-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(linkedProducts.map((item) => item.childProductId))} excludedProductIds={new Set(linkedProducts.map((item) => item.childProductId))} disabled={create.isPending} label="Agregar producto a la lista" inputId="new-linked-product-search" onSelect={(product) => setLinkedProducts((current) => [...current, { childProductId: product.productId, childProductCode: product.productCode, childProductName: product.productName, sharesInventory: false, inventoryFactor: null, sharesPrice: false, priceFactor: null, allowsConversion: false, conversionFactor: null }])} /></div>}
                 <div className="mt-3 space-y-3">
                   {linkedProducts.length === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavía no has agregado opciones a esta familia.</div>}
@@ -319,14 +314,14 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
                     </div>
                   </article>)}
                 </div>
-              </Section>
+              </Section>}
 
-              <Section id="new-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido para que cada producto tenga trazabilidad de compra desde su creación.">
+              {!form.isGenericProduct && <Section id="new-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido para que cada producto tenga trazabilidad de compra desde su creación.">
                 <div className="grid items-start gap-4 lg:grid-cols-3"><Field label="Proveedor principal *" error={fieldErrors.supplierId}><PartyRoleSelect role="Supplier" value={form.supplierId??""} placeholder="Busca un proveedor" onResolved={(party) => setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" })} onChange={(value, party) => { setForm((current) => ({ ...current, supplierId:value })); if (party) setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" }); }}/></Field><Field label="Código del proveedor"><Input value={form.supplierProductCode} onChange={(e) => setForm({ ...form, supplierProductCode: e.target.value })} /></Field><Field label="Empaque en que lo entrega"><Select value={form.packageName} onValueChange={(value) => setForm({ ...form, packageName: value })}><SelectTrigger><SelectValue placeholder="Selecciona el empaque" /></SelectTrigger><SelectContent>{(purchasePresentations.data ?? []).map((option) => <SelectItem key={option.id} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></Field><Field label="Contenido por empaque"><Input type="number" min="0.000001" step="0.001" value={form.unitsPerPackage} onChange={(e) => setForm({ ...form, unitsPerPackage: Number(e.target.value) })} /></Field></div>
-              </Section>
+              </Section>}
               <Section id="new-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio público. El precio preparado y el público nacen con el mismo valor.">
-                <div className="grid gap-4 md:grid-cols-3"><Field label="IVA de venta *" error={fieldErrors.salesTaxProfileId}><Select value={form.salesTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate ?? 0; const next = recalculateProductPricing("cost", form.cost, { cost: form.cost, margin: form.margin, salePrice: form.salePrice, salesTaxRate: rate }); setForm({ ...form, salesTaxProfileId: value, salePrice: next.salePrice }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.salesTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field><Field label="IVA de compra *" error={fieldErrors.purchaseTaxProfileId}><Select value={form.purchaseTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate; setForm({ ...form, purchaseTaxProfileId: value, purchaseTaxTreatment: normalizeProductPurchaseTaxTreatment(rate, form.purchaseTaxTreatment) }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.purchaseTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field><Field label="Tratamiento del IVA de compra"><Select value={form.purchaseTaxTreatment} disabled={(purchaseTax?.rate ?? 0) === 0} onValueChange={(value) => setForm({ ...form, purchaseTaxTreatment: value as CreateState["purchaseTaxTreatment"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="DeductibleInputVat">IVA descontable</SelectItem><SelectItem value="CapitalizedCost">Mayor valor del costo</SelectItem><SelectItem value="NotApplicable">No aplica</SelectItem></SelectContent></Select></Field></div>
-                <div className="mt-5 space-y-5">
+                <div className={`grid gap-4 ${form.isGenericProduct ? "md:grid-cols-1" : "md:grid-cols-3"}`}><Field label="IVA de venta *" error={fieldErrors.salesTaxProfileId}><Select value={form.salesTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate ?? 0; const next = recalculateProductPricing("cost", form.cost, { cost: form.cost, margin: form.margin, salePrice: form.salePrice, salesTaxRate: rate }); setForm({ ...form, salesTaxProfileId: value, salePrice: next.salePrice }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.salesTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field>{!form.isGenericProduct && <><Field label="IVA de compra *" error={fieldErrors.purchaseTaxProfileId}><Select value={form.purchaseTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate; setForm({ ...form, purchaseTaxProfileId: value, purchaseTaxTreatment: normalizeProductPurchaseTaxTreatment(rate, form.purchaseTaxTreatment) }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.purchaseTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field><Field label="Tratamiento del IVA de compra"><Select value={form.purchaseTaxTreatment} disabled={(purchaseTax?.rate ?? 0) === 0} onValueChange={(value) => setForm({ ...form, purchaseTaxTreatment: value as CreateState["purchaseTaxTreatment"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="DeductibleInputVat">IVA descontable</SelectItem><SelectItem value="CapitalizedCost">Mayor valor del costo</SelectItem><SelectItem value="NotApplicable">No aplica</SelectItem></SelectContent></Select></Field></>}</div>
+                {!form.isGenericProduct && <div className="mt-5 space-y-5">
                   <div><h4 className="font-semibold">Datos para calcular el precio</h4><p className="text-xs text-muted-foreground">Costo y margen determinan el precio antes de IVA.</p></div>
                   <div className="grid gap-4 lg:grid-cols-2"><MoneyField label="Costo base *" kind="currency" value={form.cost} error={fieldErrors.cost} onChange={(value) => changePricing("cost", value)} /><MoneyField label="Margen sobre el precio antes de IVA *" kind="percent" value={form.margin} error={fieldErrors.margin} onChange={(value) => changePricing("margin", value)} /></div>
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 text-emerald-950">
@@ -335,7 +330,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
                     <p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs">Fórmula completa: precio antes de IVA = costo ÷ (1 − margen %). Precio de venta = precio antes de IVA + IVA.</p>
                   </div>
                   <p className="text-xs text-muted-foreground">Al crear el producto, costo, margen, precio preparado y precio público quedan completos.</p>
-                </div>
+                </div>}
               </Section>
               <Section id="new-images" icon={Images} title="Imágenes del producto" description="Añade varias imágenes, revisa su vista previa y elige una portada.">
                 <PendingProductImagePicker images={pendingImages} onChange={setPendingImages} />

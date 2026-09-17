@@ -66,32 +66,6 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Seller_order_is_projected_and_aggregated_by_seller()
-    {
-        var orderId=Guid.NewGuid();var sellerId=Guid.NewGuid();var customerId=Guid.NewGuid();var partySiteId=Guid.NewGuid();
-        var source=new CommercialOrderProjectionSource(fixture.TenantId,fixture.BusinessId,orderId,
-            new DateOnly(2026,7,27),new DateTimeOffset(2026,7,27,14,0,0,TimeSpan.Zero),"PED-REPORT-1",
-            sellerId,"Vendedor proyectado",customerId,"Cliente proyectado",null,125000m,2,false,partySiteId);
-        var payload=System.Text.Json.JsonSerializer.Serialize(source,new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
-        var hash=System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload));
-        await using(var connection=new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString))
-        {await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText="""
-          INSERT reporting.SalesReportingJobs(SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,SourceVersion,SourcePayloadHash,SourcePayloadJson,Status,AttemptCount,CreatedAt)
-          VALUES(NEWID(),@BusinessId,@OrderId,N'SellerOrder',1,@Hash,@Payload,N'Pending',0,SYSDATETIMEOFFSET());
-          """;command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@OrderId",orderId);
-          command.Parameters.Add("@Hash",System.Data.SqlDbType.Binary,32).Value=hash;command.Parameters.AddWithValue("@Payload",payload);await command.ExecuteNonQueryAsync();}
-        await fixture.Services.GetRequiredService<SqlSalesReportingProcessor>().ProcessAsync(orderId,"SellerOrder",fixture.BusinessId,1,CancellationToken.None);
-        using var client=fixture.CreateAdminClient(SalesReportingPermissionCodes.Read);
-        var rows=await client.GetFromJsonAsync<SellerOrderReportRow[]>("/api/commerce/v1/sales-reports/seller-orders?from=2026-07-27&to=2026-07-27");
-        var row=Assert.Single(rows??[],x=>x.SellerId==sellerId);Assert.Equal(1,row.OrderCount);Assert.Equal(125000m,row.OrderAmount);Assert.Equal(1,row.ConfirmedCount);Assert.Equal(0,row.InvoicedCount);
-        await using var verifyConnection=new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString);
-        await verifyConnection.OpenAsync();await using var verify=verifyConnection.CreateCommand();
-        verify.CommandText="SELECT PartySiteId FROM reporting.CommercialReportOrderFacts WHERE OrderId=@OrderId";
-        verify.Parameters.AddWithValue("@OrderId",orderId);
-        Assert.Equal(partySiteId,(Guid)(await verify.ExecuteScalarAsync())!);
-    }
-
-    [Fact]
     public async Task Confirmed_sale_is_projected_and_reported_without_operational_joins()
     {
         var sale = fixture.CreateValidRequest(9_901);
@@ -135,7 +109,7 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
 
             command.CommandText = """
                 SELECT line.AttributionSnapshotVersion,line.SupplierIdSnapshot,line.UnitCostSnapshot,
-                       fact.RecognizedCostAmount,fact.UntaxedAmount
+                       fact.RecognizedCostAmount,fact.TotalAmount
                 FROM dbo.SalesDocumentLines line
                 JOIN reporting.SalesReportLineFacts fact
                   ON fact.SourceDocumentId=line.DocumentId
@@ -152,7 +126,7 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
                 sale.Lines[0].Quantity * sale.Lines[0].DocumentUnitCost,
                 attribution.GetDecimal(3));
             Assert.Equal(
-                sale.Lines[0].UntaxedAmount -
+                sale.Lines[0].LineTotal -
                 sale.Lines[0].Quantity * sale.Lines[0].DocumentUnitCost,
                 attribution.GetDecimal(4) - attribution.GetDecimal(3));
         }
@@ -167,6 +141,8 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(summary);
         Assert.Equal(1, summary.Current.DocumentCount);
         Assert.Equal(11_900m, summary.Current.NetTotalSales);
+        Assert.Equal(5_900m, summary.Current.GrossProfit);
+        Assert.Equal(49.58m, summary.Current.GrossMarginPercent);
         Assert.Single(summary.Trend);
         Assert.NotNull(summary.ProjectedThrough);
 

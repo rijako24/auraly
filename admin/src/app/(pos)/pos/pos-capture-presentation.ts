@@ -1,4 +1,5 @@
 type IdentifiedLine = { lineId: string };
+type PricedLine = { allowsDocumentCostOverride: boolean };
 
 export function capturedLineAfterAddition<T extends IdentifiedLine>(
   previousLines: readonly IdentifiedLine[],
@@ -11,4 +12,10 @@ export function capturedLineAfterAddition<T extends IdentifiedLine>(
   }
 
   return currentLines.at(-1);
+}
+
+export function shouldOpenGenericProductPricing(
+  line: PricedLine | undefined,
+): boolean {
+  return line?.allowsDocumentCostOverride === true;
 }

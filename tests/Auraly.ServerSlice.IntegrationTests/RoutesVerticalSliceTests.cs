@@ -98,13 +98,6 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
                       DateTimeOffset.UtcNow,$"visit-{Guid.NewGuid():N}","Cliente atendido; no realizó pedido.")))
             Assert.Equal(HttpStatusCode.OK,visitedWithoutOrder.StatusCode);
 
-        var projected=await client.GetFromJsonAsync<CommercialVisitReportPage>(
-            $"/api/commerce/v1/sales-reports/visits?from={visitDate:yyyy-MM-dd}&to={visitDate:yyyy-MM-dd}&page=1&pageSize=20");
-        Assert.NotNull(projected);Assert.Equal(2,projected.TotalCount);
-        Assert.Equal(1,projected.VisitedCount);Assert.Equal(0,projected.OrderedCount);
-        Assert.Equal(0m,projected.EffectivenessPercent);
-        Assert.Contains(projected.Items,item=>item.Status=="Visited"&&!item.HasOrder);
-
         var page = await client.GetFromJsonAsync<SalesRoutePage>(
             "/api/commerce/v1/routes?page=1&pageSize=20&search=prueba&dayOfWeek=1&isActive=true");
         var listed = Assert.Single(page!.Items.Where(item => item.RouteId == created.RouteId));

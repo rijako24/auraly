@@ -16,6 +16,76 @@ public sealed class OrderBatchInvoiceTests(
     ITestOutputHelper output)
 {
     [Fact]
+    public async Task Generic_order_line_is_invoiced_from_its_snapshot_without_inventory_reinterpretation()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var freeze = connection.CreateCommand();
+            freeze.CommandText = """
+                UPDATE dbo.OrderItems
+                SET ProductCodeSnapshot=N'GEN-CONGELADO',
+                    ProductNameSnapshot=N'Servicio congelado del pedido',
+                    DescriptionSnapshot=N'Servicio congelado del pedido',
+                    IsGenericProductSnapshot=1
+                WHERE OrderId=@OrderId;
+                """;
+            freeze.Parameters.AddWithValue("@OrderId", orderId);
+            Assert.Equal(1, await freeze.ExecuteNonQueryAsync());
+        }
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        fixture.PauseDocumentProcessing();
+        Guid documentId;
+        try
+        {
+            var response = await InvoiceAsync(
+                client,
+                new InvoiceOrdersRequest(
+                    workSessionId, fixture.WarehouseId, userId, [orderId], "Cash", null),
+                $"generic-order-{Guid.NewGuid():N}");
+            documentId = Assert.Single(response.Results).DocumentId
+                ?? throw new InvalidOperationException("The generic order did not produce a document.");
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+        }
+
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT line.IsGenericProductSnapshot,line.ProductCodeSnapshot,line.ProductNameSnapshot,
+                   (SELECT COUNT(*) FROM dbo.InventoryMovements movement
+                    WHERE movement.DocumentId=line.DocumentId)
+            FROM dbo.SalesDocumentLines line
+            WHERE line.DocumentId=@DocumentId;
+            """;
+        verify.Parameters.AddWithValue("@DocumentId", documentId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.True(reader.GetBoolean(0));
+        Assert.Equal("GEN-CONGELADO", reader.GetString(1));
+        Assert.Equal("Servicio congelado del pedido", reader.GetString(2));
+        Assert.Equal(0, reader.GetInt32(3));
+    }
+
+    [Fact]
     public async Task Accepted_order_finishes_processing_after_its_work_session_closes()
     {
         var userId = Guid.NewGuid();
@@ -533,14 +603,16 @@ public sealed class OrderBatchInvoiceTests(
                   UpdatedByUserId,UpdatedAt)
                 VALUES(@CustomerId,@BusinessId,1000000,30,1,@UserId,SYSDATETIMEOFFSET());
 
+                -- Simula un pedido existente cuyo encabezado quedó un centavo
+                -- por debajo de la suma canónica de sus líneas.
                 UPDATE dbo.Orders
                 SET CustomerId=@CustomerId,PartySiteId=@PartySiteId,
                     CustomerNameSnapshot=N'Cliente crédito lote',
-                    Subtotal=3126.33,Total=3126.33
+                    Subtotal=5908.89,Total=5908.89
                 WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
 
                 UPDATE dbo.OrderItems
-                SET Quantity=.5,UnitPrice=6252.65,LineTotal=3126.33
+                SET Quantity=.5,UnitPrice=11817.83,DiscountAmount=.01,LineTotal=5908.90
                 WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
                 """;
             seedCredit.Parameters.AddWithValue("@PartyId", partyId);
@@ -590,7 +662,7 @@ public sealed class OrderBatchInvoiceTests(
             await verifyConnection.OpenAsync();
             await using var verify = verifyConnection.CreateCommand();
             verify.CommandText = """
-                SELECT document.CreditAmount,document.CustomerPartySiteId,
+                SELECT document.CreditAmount,document.PayableAmount,document.CustomerPartySiteId,
                        receivable.PartySiteId,receivable.OutstandingAmount
                 FROM dbo.SalesDocuments document
                 JOIN dbo.Receivables receivable
@@ -600,10 +672,11 @@ public sealed class OrderBatchInvoiceTests(
             verify.Parameters.AddWithValue("@DocumentId", result.DocumentId.Value);
             await using var reader = await verify.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
-            Assert.Equal(3126.33m, reader.GetDecimal(0));
-            Assert.Equal(partySiteId, reader.GetGuid(1));
+            Assert.Equal(5908.90m, reader.GetDecimal(0));
+            Assert.Equal(5908.90m, reader.GetDecimal(1));
             Assert.Equal(partySiteId, reader.GetGuid(2));
-            Assert.Equal(3126.33m, reader.GetDecimal(3));
+            Assert.Equal(partySiteId, reader.GetGuid(3));
+            Assert.Equal(5908.90m, reader.GetDecimal(4));
         }
         finally
         {
@@ -655,7 +728,10 @@ public sealed class OrderBatchInvoiceTests(
         Assert.Equal(0, first.CompletedCount);
         Assert.Equal(1, first.FailedCount);
         Assert.False(first.IsReplay);
-        Assert.Equal("Failed", Assert.Single(first.Results).Status);
+        var failedResult = Assert.Single(first.Results);
+        Assert.Equal("Failed", failedResult.Status);
+        Assert.Equal("PED-LOTE-01", failedResult.OrderNumber);
+        Assert.False(string.IsNullOrWhiteSpace(failedResult.Error));
         Assert.True(replay.IsReplay);
         Assert.Equal(first.OperationId, replay.OperationId);
 

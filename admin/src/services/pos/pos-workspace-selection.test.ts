@@ -63,3 +63,27 @@ test("keeps a valid explicit selection", () => {
     { businessId: "business-1", warehouseId: "warehouse-2" },
   );
 });
+
+test("an explicit warehouse change wins over the remembered warehouse", () => {
+  assert.deepEqual(
+    resolvePosWorkspaceSelection(
+      [option("business-1", "warehouse-1"), option("business-1", "warehouse-2")],
+      "business-1",
+      "warehouse-2",
+      { businessId: "business-1", warehouseId: "warehouse-1" },
+    ),
+    { businessId: "business-1", warehouseId: "warehouse-2" },
+  );
+});
+
+test("uses the remembered workspace only before an explicit choice exists", () => {
+  assert.deepEqual(
+    resolvePosWorkspaceSelection(
+      [option("business-1", "warehouse-1"), option("business-1", "warehouse-2")],
+      "",
+      "",
+      { businessId: "business-1", warehouseId: "warehouse-1" },
+    ),
+    { businessId: "business-1", warehouseId: "warehouse-1" },
+  );
+});

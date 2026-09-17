@@ -261,6 +261,12 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(1, await CountAsync("PayableTransactions", request.DocumentId));
         Assert.Equal(1, await CountAsync("PriceRevisionProposals", request.DocumentId));
         Assert.Equal(1, await CountAsync("ServerOutboxMessages", request.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            request.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM reporting.PurchaseReportDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            request.DocumentId));
 
         using (var duplicate = CreateMessage(request, idempotencyKey))
         using (var response = await client.SendAsync(duplicate))

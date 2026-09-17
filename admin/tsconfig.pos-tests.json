@@ -43,6 +43,10 @@
     "src/app/(pos)/pos/pos-temporary-name.test.ts",
     "src/app/(pos)/pos/pos-order-save-availability.ts",
     "src/app/(pos)/pos/pos-order-save-availability.test.ts",
+    "src/app/(pos)/pos/pos-order-recovery-url.ts",
+    "src/app/(pos)/pos/pos-order-recovery-url.test.ts",
+    "src/app/(pos)/pos/pos-generic-product-calculation.ts",
+    "src/app/(pos)/pos/pos-generic-product-calculation.test.ts",
     "src/app/(pos)/pos/pos-capture-presentation.ts",
     "src/app/(pos)/pos/pos-capture-presentation.test.ts",
     "src/app/(pos)/pos/pos-barcode-capture.ts",
@@ -125,6 +129,8 @@
     "src/services/orders/order-date-filter.test.ts",
     "src/services/orders/order-http-error.ts",
     "src/services/orders/order-http-error.test.ts",
+    "src/services/orders/order-invoice-result.ts",
+    "src/services/orders/order-invoice-result.test.ts",
     "src/services/orders/seller-order-reliability.ts",
     "src/services/orders/seller-order-reliability.test.ts",
     "src/lib/seller-offline-scope.ts",
@@ -175,5 +181,7 @@
     ,"src/lib/tenant-legal-identity.test.ts"
     ,"src/components/products/product-category-hierarchy.ts"
     ,"src/components/products/product-category-hierarchy.test.ts"
+    ,"src/components/products/product-generic-policy.ts"
+    ,"src/components/products/product-generic-policy.test.ts"
   ]
 }

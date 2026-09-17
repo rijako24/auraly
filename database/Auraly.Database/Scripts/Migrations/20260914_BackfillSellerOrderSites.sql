@@ -10,6 +10,53 @@ SET XACT_ABORT ON;
 
 BEGIN TRANSACTION;
 
+IF OBJECT_ID(N'dbo.TenantLegalProfiles',N'U') IS NOT NULL
+   AND OBJECT_ID(N'dbo.AppUsers',N'U') IS NOT NULL
+BEGIN
+    ;WITH Candidate AS(
+        SELECT site.PartySiteId,profile.CountryId TargetCountryId,
+               profile.AdministrativeDivisionId TargetDivisionId,
+               profile.CityId TargetCityId,profile.Address TargetAddress,
+               ROW_NUMBER() OVER(PARTITION BY site.PartyId ORDER BY
+                   site.IsPrimary DESC,site.CreatedAt,site.PartySiteId) Position
+        FROM dbo.PartySites site
+        JOIN dbo.Parties party ON party.PartyId=site.PartyId
+        JOIN dbo.TenantLegalProfiles profile ON profile.TenantId=party.TenantId
+        WHERE party.IdentificationTypeCode=N'CC'
+          AND party.NormalizedIdentification=N'222222222222'
+          AND party.DisplayName=N'Consumidor final'
+          AND NOT EXISTS(
+              SELECT 1 FROM dbo.PartySites activeSite
+              WHERE activeSite.PartyId=site.PartyId AND activeSite.IsActive=1))
+    UPDATE site
+    SET IsActive=1,IsPrimary=1,CountryId=candidate.TargetCountryId,
+        AdministrativeDivisionId=candidate.TargetDivisionId,
+        CityId=candidate.TargetCityId,AddressLine=candidate.TargetAddress,
+        UpdatedAt=SYSUTCDATETIME()
+    FROM dbo.PartySites site
+    JOIN Candidate candidate ON candidate.PartySiteId=site.PartySiteId
+    WHERE candidate.Position=1;
+
+    INSERT dbo.PartySites(
+        PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+        CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+    SELECT NEWID(),party.PartyId,N'PRINCIPAL',N'Principal',profile.CountryId,
+           profile.AdministrativeDivisionId,profile.CityId,profile.Address,
+           1,1,creator.UserId,SYSUTCDATETIME()
+    FROM dbo.Parties party
+    JOIN dbo.TenantLegalProfiles profile ON profile.TenantId=party.TenantId
+    CROSS APPLY(
+        SELECT TOP(1) userValue.UserId
+        FROM dbo.AppUsers userValue
+        WHERE userValue.TenantId=party.TenantId AND userValue.IsActive=1
+        ORDER BY userValue.CreatedAt,userValue.UserId) creator
+    WHERE party.IdentificationTypeCode=N'CC'
+      AND party.NormalizedIdentification=N'222222222222'
+      AND party.DisplayName=N'Consumidor final'
+      AND NOT EXISTS(
+          SELECT 1 FROM dbo.PartySites site WHERE site.PartyId=party.PartyId);
+END;
+
 IF OBJECT_ID(N'dbo.Orders',N'U') IS NOT NULL
    AND OBJECT_ID(N'dbo.Customers',N'U') IS NOT NULL
    AND OBJECT_ID(N'dbo.PartySites',N'U') IS NOT NULL

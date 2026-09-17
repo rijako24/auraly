@@ -339,7 +339,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 index + 1, line.ProductId, line.Description, line.TaxCode,
                 line.Quantity, fiscal.UnitPrice, fiscal.Discount,
                 line.Tax, line.Net, line.Total,
-                line.TaxRate, line.DocumentUnitCost, fiscal.PromotionDiscount);
+                line.TaxRate, line.DocumentUnitCost, fiscal.PromotionDiscount,
+                line.AllowsDocumentCostOverride, line.ProductCode);
         }).ToArray();
 
     private static PosSaleCreditContract? BuildOrderCredit(

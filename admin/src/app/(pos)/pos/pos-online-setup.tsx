@@ -77,7 +77,12 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
     if (!options.length) return;
     const remembered = rememberedSalesWorkspaceKey();
     const saved = options.find((option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered);
-    const value = resolvePosWorkspaceSelection(options, saved?.businessId ?? businessId, saved?.warehouseId ?? warehouseId);
+    const value = resolvePosWorkspaceSelection(
+      options,
+      businessId,
+      warehouseId,
+      saved ? { businessId: saved.businessId, warehouseId: saved.warehouseId } : null,
+    );
     if (value.businessId !== businessId) setBusinessId(value.businessId);
     if (value.warehouseId !== warehouseId) setWarehouseId(value.warehouseId);
   }, [options, businessId, warehouseId]);

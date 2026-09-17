@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { taxProfilesApi, type ProductTaxConfiguration } from "@/services/api/tax-profiles";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { normalizeProductPurchaseTaxTreatment } from "@/lib/product-purchase-tax-treatment";
+import { productTaxFieldVisibility } from "@/components/products/product-generic-policy";
 
 export interface ProductTaxEditorHandle {
   getValue: () => Omit<ProductTaxConfiguration, "productId">;
@@ -17,7 +18,7 @@ export interface ProductTaxEditorHandle {
 }
 export type ProductTaxEditorDraft = Omit<ProductTaxConfiguration, "productId">;
 
-export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: string; embedded?: boolean; onSalesTaxRateChange?: (rate: number) => void; initialDraft?: ProductTaxEditorDraft; onDraftChange?: (draft: ProductTaxEditorDraft) => void }>(function ProductTaxEditor({ productId, embedded = false, onSalesTaxRateChange, initialDraft, onDraftChange }, ref) {
+export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: string; embedded?: boolean; isGenericProduct?: boolean; onSalesTaxRateChange?: (rate: number) => void; initialDraft?: ProductTaxEditorDraft; onDraftChange?: (draft: ProductTaxEditorDraft) => void }>(function ProductTaxEditor({ productId, embedded = false, isGenericProduct = false, onSalesTaxRateChange, initialDraft, onDraftChange }, ref) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const client = useQueryClient();
   const taxes = useQuery({
@@ -39,20 +40,20 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
   useEffect(() => {
     if (!current.data || initialDraft) return;
     setSalesTaxProfileId(current.data.salesTaxProfileId);
-    setPurchaseTaxProfileId(current.data.purchaseTaxProfileId);
+    setPurchaseTaxProfileId(current.data.purchaseTaxProfileId ?? "");
     setPurchaseTaxTreatment(current.data.purchaseTaxTreatment);
   }, [current.data, initialDraft]);
   useEffect(() => {
     if (!initialDraft) return;
-    setSalesTaxProfileId(initialDraft.salesTaxProfileId);setPurchaseTaxProfileId(initialDraft.purchaseTaxProfileId);setPurchaseTaxTreatment(initialDraft.purchaseTaxTreatment);
+    setSalesTaxProfileId(initialDraft.salesTaxProfileId);setPurchaseTaxProfileId(initialDraft.purchaseTaxProfileId ?? "");setPurchaseTaxTreatment(initialDraft.purchaseTaxTreatment);
   }, [initialDraft]);
-  useEffect(() => { onDraftChange?.({ salesTaxProfileId, purchaseTaxProfileId, purchaseTaxTreatment }); }, [onDraftChange, purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId]);
+  useEffect(() => { onDraftChange?.({ salesTaxProfileId, purchaseTaxProfileId: isGenericProduct ? null : purchaseTaxProfileId || null, purchaseTaxTreatment: isGenericProduct ? "NotApplicable" : purchaseTaxTreatment }); }, [isGenericProduct, onDraftChange, purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId]);
 
   const save = useMutation({
     mutationFn: () => taxProfilesApi.saveProduct(productId, {
       salesTaxProfileId,
-      purchaseTaxProfileId,
-      purchaseTaxTreatment,
+      purchaseTaxProfileId: isGenericProduct ? null : purchaseTaxProfileId || null,
+      purchaseTaxTreatment: isGenericProduct ? "NotApplicable" : purchaseTaxTreatment,
     }),
     onSuccess: async () => {
       await Promise.all([
@@ -67,11 +68,12 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
     onError: () => toast.error("No fue posible actualizar los IVA del producto."),
   });
   const validate = useCallback(() => {
-      if (!salesTaxProfileId || !purchaseTaxProfileId) {
+      if (!salesTaxProfileId || (!isGenericProduct && !purchaseTaxProfileId)) {
         const message = !salesTaxProfileId && !purchaseTaxProfileId ? "Selecciona el IVA de venta y el IVA de compra." : !salesTaxProfileId ? "Selecciona el IVA de venta." : "Selecciona el IVA de compra.";
         setValidationError(message);
         throw new Error(message);
       }
+      if (isGenericProduct) { setValidationError(undefined); return; }
       const selectedPurchaseTax = taxes.data?.find((tax) => tax.taxProfileId === purchaseTaxProfileId);
       if ((selectedPurchaseTax?.rate ?? 0) === 0 && purchaseTaxTreatment !== "NotApplicable") {
         const message = "Un IVA de compra del 0 % debe usar el tratamiento No aplica.";
@@ -84,20 +86,21 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
         throw new Error(message);
       }
       setValidationError(undefined);
-  }, [purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, taxes.data]);
+  }, [isGenericProduct, purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, taxes.data]);
   useImperativeHandle(ref, () => ({
     getValue: () => {
       validate();
-      return { salesTaxProfileId, purchaseTaxProfileId, purchaseTaxTreatment };
+      return { salesTaxProfileId, purchaseTaxProfileId: isGenericProduct ? null : purchaseTaxProfileId || null, purchaseTaxTreatment: isGenericProduct ? "NotApplicable" : purchaseTaxTreatment };
     },
     validate,
     save: async () => {
       validate();
       await save.mutateAsync();
     },
-  }), [purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, save, validate]);
+  }), [isGenericProduct, purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, save, validate]);
   const salesTax = taxes.data?.find((tax) => tax.taxProfileId === salesTaxProfileId);
   const purchaseTax = taxes.data?.find((tax) => tax.taxProfileId === purchaseTaxProfileId);
+  const fieldVisibility = productTaxFieldVisibility(isGenericProduct);
   useEffect(() => {
     setPurchaseTaxTreatment((currentTreatment) =>
       normalizeProductPurchaseTaxTreatment(purchaseTax?.rate, currentTreatment),
@@ -108,28 +111,28 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
   }, [onSalesTaxRateChange, salesTax]);
 return <section className={`space-y-4 ${embedded ? "" : "rounded-xl border bg-muted/15 p-4"}`}>
     <div>
-      <h3 className="text-sm font-semibold">IVA de compra y venta</h3>
-      <p className="text-xs text-muted-foreground">Venta alimenta facturación; compra propone el IVA al recibir mercancía.</p>
+      <h3 className="text-sm font-semibold">{isGenericProduct ? "IVA de venta" : "IVA de compra y venta"}</h3>
+      <p className="text-xs text-muted-foreground">{isGenericProduct ? "El IVA de venta alimenta la facturación." : "Venta alimenta facturación; compra propone el IVA al recibir mercancía."}</p>
     </div>
     {(current.isError || validationError) && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{validationError ?? "No fue posible cargar la configuración tributaria guardada. Puedes seleccionar nuevamente los IVA y guardar."}</div>}
     <div className="grid gap-4 lg:grid-cols-3">
-      <div className="space-y-2">
+      {fieldVisibility.salesTax && <div className="space-y-2">
         <Label>IVA de venta <span className="text-destructive">*</span></Label>
         <Select value={salesTaxProfileId} onValueChange={(value) => { setSalesTaxProfileId(value); setValidationError(undefined); }}>
           <SelectTrigger aria-invalid={Boolean(validationError && !salesTaxProfileId)}><SelectValue placeholder="Selecciona IVA de venta" /></SelectTrigger>
           <SelectContent>{(taxes.data ?? []).map((tax) =>
             <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate.toLocaleString("es-CO")} %</SelectItem>)}</SelectContent>
         </Select>
-      </div>
-      <div className="space-y-2">
+      </div>}
+      {fieldVisibility.purchaseTax && <div className="space-y-2">
         <Label>IVA de compra <span className="text-destructive">*</span></Label>
         <Select value={purchaseTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((tax) => tax.taxProfileId === value)?.rate; setPurchaseTaxProfileId(value); setPurchaseTaxTreatment((current) => normalizeProductPurchaseTaxTreatment(rate, current)); setValidationError(undefined); }}>
           <SelectTrigger aria-invalid={Boolean(validationError && !purchaseTaxProfileId)}><SelectValue placeholder="Selecciona IVA de compra" /></SelectTrigger>
           <SelectContent>{(taxes.data ?? []).map((tax) =>
             <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate.toLocaleString("es-CO")} %</SelectItem>)}</SelectContent>
         </Select>
-      </div>
-      <div className="space-y-2">
+      </div>}
+      {fieldVisibility.purchaseTaxTreatment && <div className="space-y-2">
         <Label>Tratamiento del IVA de compra</Label>
         <Select value={purchaseTaxTreatment} disabled={(purchaseTax?.rate ?? 0) === 0} onValueChange={(value) => setPurchaseTaxTreatment(value as ProductTaxConfiguration["purchaseTaxTreatment"])}>
           <SelectTrigger><SelectValue /></SelectTrigger>
@@ -139,11 +142,11 @@ return <section className={`space-y-4 ${embedded ? "" : "rounded-xl border bg-mu
             <SelectItem value="NotApplicable">No aplica</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </div>}
     </div>
     {!embedded && <div className="flex justify-end">
       <Button type="button" variant="outline" onClick={() => save.mutate()}
-        disabled={!salesTaxProfileId || !purchaseTaxProfileId || save.isPending}>
+        disabled={!salesTaxProfileId || (!isGenericProduct && !purchaseTaxProfileId) || save.isPending}>
         {save.isPending ? "Guardando…" : "Guardar configuración tributaria"}
       </Button>
     </div>}

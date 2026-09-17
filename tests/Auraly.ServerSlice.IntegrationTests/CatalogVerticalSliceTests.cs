@@ -98,6 +98,116 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Generic_product_round_trip_clears_purchase_configuration_and_requires_full_data_when_changed_back_to_ordinary()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var genericRequest = ProductRequest(taxProfileId, [new ProductPriceInput(0m, "COP", 0m, 0m)], []) with
+        {
+            Name = $"Producto genérico {Guid.NewGuid():N}",
+            IsGenericProduct = true,
+            ManageInventory = true,
+            IsWeighable = true,
+            AllowsFractionalSale = true,
+            PurchaseTaxProfileId = null,
+            PurchaseTaxTreatment = "NotApplicable",
+            Suppliers = []
+        };
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create, CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update, CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+
+        using var creation = await admin.PostAsJsonAsync("/api/commerce/v1/products", genericRequest);
+        Assert.True(creation.IsSuccessStatusCode, await creation.Content.ReadAsStringAsync());
+        var generic = (await creation.Content.ReadFromJsonAsync<ProductDetail>())!;
+        Assert.True(generic.IsGenericProduct);
+        Assert.False(generic.ManageInventory);
+        Assert.False(generic.IsWeighable);
+        Assert.Null(generic.PurchaseTaxProfileId);
+        Assert.Empty(generic.Suppliers!);
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Products WHERE ProductId=@Product AND PurchaseTaxProfileId IS NOT NULL;",
+            new SqlParameter("@Product", generic.ProductId)));
+
+        var taxConfiguration = await admin.GetFromJsonAsync<ProductTaxConfiguration>(
+            $"/api/commerce/v1/products/{generic.ProductId:D}/tax-configuration");
+        Assert.NotNull(taxConfiguration);
+        Assert.Null(taxConfiguration.PurchaseTaxProfileId);
+        Assert.Equal("NotApplicable", taxConfiguration.PurchaseTaxTreatment);
+
+        using var incompleteOrdinary = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{generic.ProductId:D}",
+            genericRequest with { ProductCode = generic.ProductCode, IsGenericProduct = false });
+        Assert.Equal(HttpStatusCode.BadRequest, incompleteOrdinary.StatusCode);
+
+        var ordinaryRequest = ProductRequest(taxProfileId,
+            [new ProductPriceInput(11_900m, "COP", 10_000m, 0m)], []) with
+        {
+            ProductCode = generic.ProductCode,
+            Name = generic.Name,
+            IsGenericProduct = false,
+            ManageInventory = true,
+            PurchaseTaxProfileId = taxProfileId
+        };
+        using var ordinaryUpdate = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{generic.ProductId:D}", ordinaryRequest);
+        Assert.True(ordinaryUpdate.IsSuccessStatusCode, await ordinaryUpdate.Content.ReadAsStringAsync());
+        var ordinary = (await ordinaryUpdate.Content.ReadFromJsonAsync<ProductDetail>())!;
+        Assert.False(ordinary.IsGenericProduct);
+        Assert.True(ordinary.ManageInventory);
+        Assert.Equal(taxProfileId, ordinary.PurchaseTaxProfileId);
+        Assert.Single(ordinary.Suppliers!);
+        Assert.Equal(11_900m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId=@Business AND IsActive=1;",
+            new SqlParameter("@Product", generic.ProductId), new SqlParameter("@Business", fixture.BusinessId)));
+
+        using var childCreation = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/products",
+            ProductRequest(taxProfileId, [new ProductPriceInput(8_500m)], []) with
+            {
+                Name = $"Integrante familia {Guid.NewGuid():N}"
+            });
+        Assert.True(childCreation.IsSuccessStatusCode, await childCreation.Content.ReadAsStringAsync());
+        var child = (await childCreation.Content.ReadFromJsonAsync<ProductDetail>())!;
+        var ordinaryWithFamily = ordinaryRequest with
+        {
+            LinkedProducts =
+            [
+                new LinkedProductInput(child.ProductId, false, null, true, 1m, false, null)
+            ]
+        };
+        using var familyUpdate = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{generic.ProductId:D}", ordinaryWithFamily);
+        Assert.True(familyUpdate.IsSuccessStatusCode, await familyUpdate.Content.ReadAsStringAsync());
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE BusinessId=@Business AND ParentProductId=@Product AND IsActive=1;",
+            new SqlParameter("@Business", fixture.BusinessId),
+            new SqlParameter("@Product", generic.ProductId)));
+
+        using var genericAgainUpdate = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{generic.ProductId:D}", ordinaryWithFamily with
+            {
+                IsGenericProduct = true,
+                ManageInventory = true,
+                PurchaseTaxProfileId = taxProfileId,
+                Suppliers = []
+            });
+        Assert.True(genericAgainUpdate.IsSuccessStatusCode, await genericAgainUpdate.Content.ReadAsStringAsync());
+        var genericAgain = (await genericAgainUpdate.Content.ReadFromJsonAsync<ProductDetail>())!;
+        Assert.True(genericAgain.IsGenericProduct);
+        Assert.False(genericAgain.ManageInventory);
+        Assert.Null(genericAgain.PurchaseTaxProfileId);
+        Assert.Empty(genericAgain.Suppliers!);
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SupplierProducts WHERE ProductId=@Product AND IsActive=1;",
+            new SqlParameter("@Product", generic.ProductId)));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE BusinessId=@Business AND IsActive=1 AND (ParentProductId=@Product OR ChildProductId=@Product);",
+            new SqlParameter("@Business", fixture.BusinessId),
+            new SqlParameter("@Product", generic.ProductId)));
+    }
+
+    [Fact]
     public async Task Catalog_delta_coalesces_repeated_product_changes_without_skipping_other_products()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();

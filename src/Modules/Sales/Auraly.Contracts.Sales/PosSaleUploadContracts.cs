@@ -45,7 +45,9 @@ public sealed record PosSaleLineContract(
     decimal LineTotal,
     decimal TaxRate,
     decimal DocumentUnitCost,
-    decimal PromotionDiscountAmount = 0m);
+    decimal PromotionDiscountAmount = 0m,
+    bool IsGenericProductSnapshot = false,
+    string ProductCodeSnapshot = "");
 
 public sealed record PosSalePaymentContract(
     int PaymentNumber,

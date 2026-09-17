@@ -103,6 +103,7 @@ import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDesktopUpdater } from "./pos-desktop-updater";
 import { PosLineEditorDialog } from "./pos-line-editor-dialog";
+import { PosGenericProductDialog } from "./pos-generic-product-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
 import { PosInventoryResolutionDialog } from "./pos-inventory-resolution-dialog";
@@ -131,7 +132,8 @@ import {
   removingLastRecoveredOrderLineCancelsOrder,
   shouldSaveOrderAfterCustomerSelection,
 } from "./pos-order-save-availability";
-import { capturedLineAfterAddition } from "./pos-capture-presentation";
+import { consumeOrderRecoveryUrl } from "./pos-order-recovery-url";
+import { capturedLineAfterAddition, shouldOpenGenericProductPricing } from "./pos-capture-presentation";
 import { capturePosFunctionShortcut, isPosCashDrawerShortcut, isPosDenominationCalculatorShortcut, POS_ACTION_SHORTCUTS } from "./pos-function-shortcut";
 import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
@@ -386,6 +388,7 @@ export default function PosPage() {
   const [priceVerifierMode, setPriceVerifierMode] = useState(false);
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
+  const [genericProductLine, setGenericProductLine] = useState<PosDraft["lines"][number] | null>(null);
   const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false);
   const [documentTypeOpen, setDocumentTypeOpen] = useState(false);
   const [cashMovementDirection, setCashMovementDirection] =
@@ -1023,9 +1026,11 @@ export default function PosPage() {
 
   useEffect(() => {
     if (!client || !edgeReady || !draft || busy || typeof window === "undefined") return;
-    const orderId = new URLSearchParams(window.location.search).get("recoverOrder")?.trim();
+    const recoveryRequest = consumeOrderRecoveryUrl(window.location.href);
+    const orderId = recoveryRequest.orderId;
     if (!orderId || recoveredOrderFromUrl.current === orderId) return;
     recoveredOrderFromUrl.current = orderId;
+    window.history.replaceState(null, "", recoveryRequest.nextUrl);
     setBusy(true);
     setError(null);
     void recoverOrderOnline(orderId)
@@ -1040,9 +1045,6 @@ export default function PosPage() {
         setSelectedLineId(recovered.lines[0]?.lineId ?? null);
         setSidePanel("temporaries");
         setMessage(`Pedido recuperado · ${recovered.lines.length} líneas`);
-        const url = new URL(window.location.href);
-        url.searchParams.delete("recoverOrder");
-        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
       })
       .catch((caught) => {
         recoveredOrderFromUrl.current = null;
@@ -1523,6 +1525,14 @@ export default function PosPage() {
     }
   }
 
+  function beginGenericProductPricing(line: PosDraft["lines"][number] | undefined) {
+    if (!shouldOpenGenericProductPricing(line)) return false;
+    setGenericProductLine(line ?? null);
+    setMessage("Define el precio del producto genérico");
+    setScan("");
+    return true;
+  }
+
   async function captureValue(value: string, requestedQuantity?: number): Promise<boolean> {
     if (!client || !value || busy) return false;
     if (!salesReady) {
@@ -1538,6 +1548,7 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     let quantityToFocus: string | null = null;
+    let restoreScannerFocus = true;
     try {
       const startsNewSale = !draft?.lines.length;
       const result = await client.capture(
@@ -1553,6 +1564,11 @@ export default function PosPage() {
         quantityToFocus = capturedLine?.lineId ?? null;
         setSelectedLineId(quantityToFocus);
         revealLine(quantityToFocus);
+        if (beginGenericProductPricing(capturedLine)) {
+          restoreScannerFocus = false;
+          if (startsNewSale) setLastSettlement(null);
+          return true;
+        }
         setMessage(`${capturedLine?.description ?? "Producto"} agregado · cantidad ${(capturedLine?.quantity ?? requestedQuantity ?? 1).toLocaleString("es-CO")}`);
         if (startsNewSale) setLastSettlement(null);
         setScan("");
@@ -1587,7 +1603,7 @@ export default function PosPage() {
       return false;
     } finally {
       setBusy(false);
-      focusScanner();
+      if (restoreScannerFocus) focusScanner();
     }
   }
 
@@ -2050,6 +2066,49 @@ export default function PosPage() {
     } finally {
       setBusy(false);
       focusScanner();
+    }
+  }
+
+  async function confirmGenericProduct(publicUnitPrice: number, documentUnitCost: number) {
+    if (!client || !draft || !genericProductLine || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await client.updateLines(
+        draft.draftId.value,
+        draft.lines.map(line => ({
+          lineId: line.lineId,
+          description: line.description,
+          publicUnitPrice: line.lineId === genericProductLine.lineId ? publicUnitPrice : line.publicUnitPrice,
+          discount: line.lineId === genericProductLine.lineId ? 0 : line.discount,
+          documentUnitCost: line.lineId === genericProductLine.lineId ? documentUnitCost : line.documentUnitCost,
+        })),
+        false,
+      );
+      setDraft(updated);
+      setGenericProductLine(null);
+      setMessage(`${genericProductLine.description} agregado`);
+      window.setTimeout(focusScanner, 0);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelGenericProduct() {
+    if (!client || !draft || !genericProductLine || busy) return;
+    setBusy(true);
+    try {
+      const updated = await client.discardUnpricedGenericLine(draft.draftId.value, genericProductLine.lineId);
+      setDraft(updated);
+      setGenericProductLine(null);
+      setMessage("Producto genérico cancelado");
+      window.setTimeout(focusScanner, 0);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -2576,6 +2635,7 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     let quantityToFocus: string | null = null;
+    let restoreScannerFocus = true;
     try {
       let scaleWeight: number | null = null;
       let manualWeight = false;
@@ -2623,6 +2683,11 @@ export default function PosPage() {
       quantityToFocus = addedLine?.lineId ?? null;
       setSelectedLineId(quantityToFocus);
       revealLine(quantityToFocus);
+      if (beginGenericProductPricing(addedLine)) {
+        restoreScannerFocus = false;
+        if (startsNewSale) setLastSettlement(null);
+        return true;
+      }
       setMessage(requestedQuantity !== undefined
         ? `${product.name} agregado · cantidad ${requestedQuantity.toLocaleString("es-CO")}`
         : scaleWeight !== null
@@ -2636,7 +2701,7 @@ export default function PosPage() {
       return false;
     } finally {
       setBusy(false);
-      focusScanner();
+      if (restoreScannerFocus) focusScanner();
     }
   }
   function openOrders() {
@@ -3925,6 +3990,13 @@ export default function PosPage() {
           setDiscountOpen(false);
           focusScanner();
         }}
+      />}
+
+      {genericProductLine && <PosGenericProductDialog
+        line={genericProductLine}
+        busy={busy}
+        onConfirm={confirmGenericProduct}
+        onCancel={cancelGenericProduct}
       />}
 
       {sensitiveApproval && (

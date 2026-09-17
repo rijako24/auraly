@@ -60,9 +60,19 @@ public sealed class ProductMerchandisingService(
     public async Task<ProductMerchandisingConfiguration> SaveAsync(CatalogUserIdentity user, Guid productId, SaveProductMerchandisingRequest request, CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Update);
-        Validate(productId, request);
-        var result = await store.SaveAsync(user, productId,
-            request with { BaseUnitCode = request.BaseUnitCode.Trim().ToUpperInvariant() },
+        var normalized = request with {
+                BaseUnitCode = request.BaseUnitCode.Trim().ToUpperInvariant(),
+                ManageInventory = request.IsGenericProduct ? false : request.ManageInventory,
+                IsWeighable = request.IsGenericProduct ? false : request.IsWeighable,
+                Scale = request.IsGenericProduct ? null : request.Scale,
+                Link = request.IsGenericProduct ? null : request.Link,
+                LinkedProducts = request.IsGenericProduct ? [] : request.LinkedProducts,
+                ConversionMaximumLossPercent = request.IsGenericProduct
+                    ? null
+                    : request.ConversionMaximumLossPercent
+            };
+        Validate(productId, normalized);
+        var result = await store.SaveAsync(user, productId, normalized,
             timeProvider.GetUtcNow(), ct);
         await synchronization.DispatchPendingAsync(user.TenantId, user.BusinessId, CancellationToken.None);
         return result;

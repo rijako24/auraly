@@ -73,7 +73,8 @@ public sealed record ProductMerchandisingConfiguration(
     ProductLinkDetail? Link,
     IReadOnlyCollection<LinkedProductDetail> LinkedProducts,
     decimal? ConversionMaximumLossPercent = null,
-    decimal? UnitGrossWeightKg = null);
+    decimal? UnitGrossWeightKg = null,
+    bool IsGenericProduct = false);
 
 public sealed record SaveProductMerchandisingRequest(
     Guid? ProductCategoryId,
@@ -87,4 +88,5 @@ public sealed record SaveProductMerchandisingRequest(
     ProductLinkInput? Link,
     IReadOnlyCollection<LinkedProductInput> LinkedProducts,
     decimal? ConversionMaximumLossPercent = null,
-    decimal? UnitGrossWeightKg = null);
+    decimal? UnitGrossWeightKg = null,
+    bool IsGenericProduct = false);

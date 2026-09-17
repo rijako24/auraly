@@ -329,6 +329,17 @@ group.MapPost("/{draftId:guid}/items", async (
                     draftId, request, IdempotencyKey(context), ct),
                 ct)));
 
+        group.MapPost("/{draftId:guid}/lines/{lineId:guid}/discard-unpriced-generic", async (
+            HttpContext context,
+            Guid draftId,
+            Guid lineId,
+            RemoveOnlineSalesDraftLineRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.DiscardUnpricedGenericLineAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, lineId, request, IdempotencyKey(context), ct)));
+
         group.MapPost("/sales/credit-acknowledgement/render", (
             CreditSaleAcknowledgementRenderRequest request) =>
         {

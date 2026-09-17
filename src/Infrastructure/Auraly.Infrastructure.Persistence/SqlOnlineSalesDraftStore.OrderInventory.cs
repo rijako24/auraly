@@ -96,16 +96,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         }
 
         if (status == 6)
-        {
-            var replayVersion = await orderReportingJobs.EnsureAsync(
-                connection,
-                transaction,
-                actor.TenantId,
-                actor.BusinessId,
-                orderId,
-                cancellationToken);
-            return new(orderId, orderNumber, replayVersion, true);
-        }
+            return new(orderId, orderNumber, true);
         if (status is not (2 or 4 or 5) || hasInvoice)
             throw new OrderConflictException(
                 "Solo se puede eliminar un pedido disponible o en revisión que todavía no haya sido facturado.");
@@ -160,14 +151,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        var reportingVersion = await orderReportingJobs.EnsureAsync(
-            connection,
-            transaction,
-            actor.TenantId,
-            actor.BusinessId,
-            orderId,
-            cancellationToken);
-        return new(orderId, orderNumber, reportingVersion, false);
+        return new(orderId, orderNumber, false);
     }
 
     private async Task ReleaseOrderInventoryCoreAsync(

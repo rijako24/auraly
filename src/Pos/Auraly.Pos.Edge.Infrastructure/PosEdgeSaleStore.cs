@@ -1041,7 +1041,9 @@ public sealed class PosEdgeSaleStore
                     (line.Quantity * line.UnitPrice) - line.TotalDiscount) + line.TaxAmount,
                 line.Product.TaxRate,
                 line.DocumentUnitCost,
-                line.PromotionDiscount))
+                line.PromotionDiscount,
+                line.IsGenericProductSnapshot,
+                line.Product.ProductCode))
             .ToArray();
         var payments = command.Payments is { Count: > 0 }
             ? command.Payments

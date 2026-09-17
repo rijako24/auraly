@@ -29,7 +29,8 @@ BEGIN
              CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,
              '$.PriceSource'),N''),N'Captured'),
            item.DocumentUnitCost,
-           CAST(COALESCE(product.ManageStock,0) AS BIT),item.ProductNameSnapshot
+           CAST(COALESCE(product.ManageStock,0) AS BIT),item.ProductNameSnapshot,
+           item.IsGenericProductSnapshot
     FROM dbo.OrderItems item
     INNER JOIN dbo.Orders orders
       ON orders.OrderId=item.OrderId AND orders.BusinessId=item.BusinessId

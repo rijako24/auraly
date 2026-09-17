@@ -17,15 +17,6 @@ public interface ISalesReportingStore
         CancellationToken cancellationToken);
     Task<SalesReportDocumentDetail?> GetDocumentAsync(SalesReportingUserIdentity user,
         Guid documentId, CancellationToken cancellationToken);
-    Task<CommercialVisitReportPage> ListVisitsAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,Guid? sellerId,Guid? routeId,string? status,bool? hasOrder,
-        int page,int pageSize,CancellationToken cancellationToken);
-    Task<IReadOnlyList<SellerOrderReportRow>> ListSellerOrdersAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,CancellationToken cancellationToken);
-    Task<SellerPerformanceOverview> GetSellerPerformanceAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,CancellationToken cancellationToken);
-    Task<CommercialCoverageOverview> GetCoverageAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,CancellationToken cancellationToken);
     Task<SupplierImpactOverview> GetSupplierImpactAsync(SalesReportingUserIdentity user,
         DateOnly from,DateOnly to,CancellationToken cancellationToken);
 }
@@ -82,30 +73,6 @@ public sealed class SalesReportingService(ISalesReportingStore store)
             throw new SalesReportingValidationException("DocumentId is required.");
         return store.GetDocumentAsync(user, documentId, cancellationToken);
     }
-
-    public Task<CommercialVisitReportPage> ListVisitsAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,Guid? sellerId,Guid? routeId,string? status,bool? hasOrder,
-        int page,int pageSize,CancellationToken cancellationToken=default)
-    {
-        Demand(user);
-        if(from==default||to<from||to.DayNumber-from.DayNumber>366||page<1||pageSize is <1 or >200)
-            throw new SalesReportingValidationException("The visit report range or pagination is invalid.");
-        if(status is not null && status is not ("Visited" or "Skipped"))
-            throw new SalesReportingValidationException("The visit status is invalid.");
-        return store.ListVisitsAsync(user,from,to,sellerId,routeId,status,hasOrder,page,pageSize,cancellationToken);
-    }
-
-    public Task<IReadOnlyList<SellerOrderReportRow>> ListSellerOrdersAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,CancellationToken cancellationToken=default)
-    {Demand(user);if(from==default||to<from||to.DayNumber-from.DayNumber>1827)throw new SalesReportingValidationException("The order report range is invalid.");return store.ListSellerOrdersAsync(user,from,to,cancellationToken);}
-
-    public Task<SellerPerformanceOverview> GetSellerPerformanceAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,CancellationToken cancellationToken=default)
-    {Demand(user);ValidateRange(from,to);return store.GetSellerPerformanceAsync(user,from,to,cancellationToken);}
-
-    public Task<CommercialCoverageOverview> GetCoverageAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,CancellationToken cancellationToken=default)
-    {Demand(user);ValidateRange(from,to);return store.GetCoverageAsync(user,from,to,cancellationToken);}
 
     public Task<SupplierImpactOverview> GetSupplierImpactAsync(SalesReportingUserIdentity user,
         DateOnly from,DateOnly to,CancellationToken cancellationToken=default)

@@ -396,6 +396,8 @@ function Publish-Database {
             '20260914_BackfillSellerOrderSites.sql',
             '20260916_AddCommercialLineSnapshotColumns.sql',
             '20260916_AlignCommercialLineSnapshots.sql',
+            '20260916_AddGenericProductMode.sql',
+            '20260916_RemoveNonOperationalReportingSources.sql',
             '20260907_AlignReceivablesWithAccountingSource.sql')
         foreach ($migration in $reviewedMigrations) {
             Invoke-ReviewedPreDacpacMigration `

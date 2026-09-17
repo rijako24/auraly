@@ -46,13 +46,13 @@ test("changing margin derives final price and its discount against the reference
   });
 });
 
-test("raising final price never produces a negative discount", () => {
+test("raising final price keeps the requested price and moves the document reference", () => {
   assert.deepEqual(lineEconomicsFromFinalPrice(50_000, 1, 100_000, 130_000, 0), {
-    finalUnitPrice: 100_000,
-    documentUnitPrice: 100_000,
+    finalUnitPrice: 130_000,
+    documentUnitPrice: 130_000,
     discount: 0,
     discountPercent: 0,
-    marginPercent: 50,
+    marginPercent: 61.5385,
   });
 });
 
@@ -72,13 +72,23 @@ test("promotion remains separate while every editor control derives the manual d
   });
 });
 
-test("an active promotion caps the final price without being erased or converted", () => {
+test("an active promotion remains separate while an arbitrary final price is honored", () => {
   assert.deepEqual(lineEconomicsFromFinalPrice(50_000, 2, 100_000, 100_000, 0, 10_000), {
-    finalUnitPrice: 95_000,
-    documentUnitPrice: 100_000,
+    finalUnitPrice: 100_000,
+    documentUnitPrice: 105_000,
     discount: 0,
     discountPercent: 0,
-    marginPercent: 47.3684,
+    marginPercent: 50,
+  });
+});
+
+test("changing cost preserves the margin even when the derived sale price exceeds the catalog price", () => {
+  assert.deepEqual(lineEconomicsFromMargin(80_000, 1, 100_000, 50, 0), {
+    finalUnitPrice: 160_000,
+    documentUnitPrice: 160_000,
+    discount: 0,
+    discountPercent: 0,
+    marginPercent: 50,
   });
 });
 

@@ -22,7 +22,8 @@ public sealed record EditableSellerOrderLine(
     string PriceSource,
     decimal DocumentUnitCost,
     bool ManageStock,
-    string Description);
+    string Description,
+    bool IsGenericProductSnapshot);
 
 public sealed record SellerOrderReplacementLine(
     Guid ProductId,
@@ -35,7 +36,8 @@ public sealed record SellerOrderReplacementLine(
     decimal DiscountAmount,
     decimal LineTotal,
     decimal TaxAmount,
-    string RawPayloadJson);
+    string RawPayloadJson,
+    bool IsGenericProductSnapshot);
 
 public static class SellerOrderReviewPersistence
 {
@@ -86,7 +88,8 @@ public static class SellerOrderReviewPersistence
                     reader.GetString(6),
                     reader.GetDecimal(7),
                     reader.GetBoolean(8),
-                    reader.GetString(9));
+                    reader.GetString(9),
+                    reader.GetBoolean(10));
                 lines.Add(line);
             }
         }
@@ -169,6 +172,7 @@ public static class SellerOrderReviewPersistence
                     discountAmount = line.DiscountAmount,
                     lineTotal = line.LineTotal,
                     taxAmount = line.TaxAmount,
+                    isGenericProductSnapshot = line.IsGenericProductSnapshot,
                     rawPayloadJson = line.RawPayloadJson
                 })))
             ]);

@@ -192,7 +192,7 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal(0, reader.GetInt32(3));
         Assert.Equal(0, reader.GetInt32(4));
         Assert.Equal(1, reader.GetInt32(5));
-        Assert.Equal(1, reader.GetInt32(6));
+        Assert.Equal(0, reader.GetInt32(6));
         Assert.Equal(1, reader.GetInt32(7));
         Assert.Equal(1, reader.GetInt32(8));
         await reader.DisposeAsync();

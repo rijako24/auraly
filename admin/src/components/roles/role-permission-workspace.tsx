@@ -60,7 +60,6 @@ const permissionScopes: Record<string, string[]> = {
   "/dashboard/reports/sales": ["sales.reports."],
   "/dashboard/reports/sellers": ["sales.reports."],
   "/dashboard/reports/customers": ["sales.reports."],
-  "/dashboard/reports/visits": ["sales.reports."],
   "/dashboard/reports/supplier-impact": ["sales.reports."],
   "/dashboard/tenants": ["tenants."],
   "/dashboard/businesses": ["businesses."],

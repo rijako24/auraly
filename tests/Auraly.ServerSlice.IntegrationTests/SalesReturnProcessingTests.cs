@@ -165,6 +165,9 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.SalesReturns WHERE ReturnId=@Id", request.ReturnId));
+        Assert.Equal(request.OriginalDocumentId, await ScalarAsync<Guid>(
+            "SELECT OriginalDocumentId FROM dbo.SalesReturns WHERE ReturnId=@Id",
+            request.ReturnId));
         Assert.Equal(afterSale + .5m, await QuantityAsync());
         Assert.Equal(await MovementInventoryValueAfterAsync(request.ReturnId),
             await InventoryValueAsync());
@@ -178,6 +181,12 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
         Assert.Equal(1, await CountAsync("SalesReturnSettlements", "ReturnId", request.ReturnId));
         Assert.Equal(1, await CountAsync("ServerOutboxMessages", "DocumentId", request.ReturnId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesReturn'",
+            request.ReturnId));
+        Assert.Equal(.5m, await ScalarAsync<decimal>(
+            "SELECT -Quantity FROM reporting.SalesReportLineFacts WHERE OriginalSaleDocumentId=@Id AND OriginalLineNumber=1 AND SourceDocumentType=N'SalesReturn'",
+            request.OriginalDocumentId));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'sales-return:',REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))",
             request.ReturnId));

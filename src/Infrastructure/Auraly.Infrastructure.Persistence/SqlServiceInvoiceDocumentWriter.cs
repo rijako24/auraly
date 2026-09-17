@@ -91,11 +91,6 @@ internal static class SqlServiceInvoiceDocumentWriter
                Status,AttemptCount,CreatedAt)
             VALUES(@AccountingJobId,@TenantId,@BusinessId,@DocumentId,
                N'ServiceInvoice',@Hash,@Now,@AccountingEntryRequired,N'Pending',0,@Now);
-            INSERT reporting.SalesReportingJobs
-              (SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,
-               SourceVersion,SourcePayloadHash,SourcePayloadJson,Status,AttemptCount,CreatedAt)
-            VALUES(@ReportingJobId,@BusinessId,@DocumentId,N'ServiceInvoice',1,
-               @Hash,@Payload,N'Pending',0,@Now);
             """, connection, transaction);
         Add(command, "@DocumentId", snapshot.DocumentId);
         Add(command, "@BusinessId", snapshot.BusinessId);
@@ -133,7 +128,6 @@ internal static class SqlServiceInvoiceDocumentWriter
         Add(command, "@Environment", (byte)configuration.Environment);
         Add(command, "@TenantId", write.TenantId);
         Add(command, "@AccountingJobId", ids.NewId());
-        Add(command, "@ReportingJobId", ids.NewId());
         await command.ExecuteNonQueryAsync(cancellationToken);
 
         foreach (var line in snapshot.Lines)

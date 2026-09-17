@@ -117,6 +117,12 @@ public sealed class SqlTenantProvisioningStore(
                 VALUES(@ConsumerPartyId,@TenantId,N'Organization',@CountryId,N'CC',N'222222222222',N'222222222222',N'Consumidor final',N'Consumidor final',N'Complete',1,@ActorUserId,@Now);
                 INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
                 VALUES(@CustomerId,@ConsumerPartyId,@BusinessId,1,@ActorUserId,@Now);
+                INSERT dbo.PartySites(
+                  PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+                  CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                VALUES(
+                  NEWID(),@ConsumerPartyId,N'PRINCIPAL',N'Principal',@CountryId,
+                  @DivisionId,@CityId,@CompanyAddress,1,1,@ActorUserId,@Now);
 
 
                 INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)

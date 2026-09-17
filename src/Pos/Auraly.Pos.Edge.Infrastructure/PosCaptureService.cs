@@ -155,14 +155,14 @@ public sealed class PosCaptureService(
                 captured.Product.TaxCode,
                 captured.Product.TaxRate,
                 captured.Quantity,
-                MonetaryRounding.CeilingLineUnitPrice(captured.Product.UnitPrice),
-                MonetaryRounding.CeilingLineUnitPrice(captured.Product.UnitPrice),
+                MonetaryRounding.CeilingLineUnitPrice(captured.Product.IsGenericProduct ? 0m : captured.Product.UnitPrice),
+                MonetaryRounding.CeilingLineUnitPrice(captured.Product.IsGenericProduct ? 0m : captured.Product.UnitPrice),
                 captured.Product.CurrencyCode,
-                "Base",
+                captured.Product.IsGenericProduct ? "Manual" : "Base",
                 null,
                 AllowsFractionalSale: captured.Product.AllowsFractionalSale,
-                DocumentUnitCost: captured.Product.UnitCost,
-                AllowsDocumentCostOverride: !captured.Product.ManagesStock),
+                DocumentUnitCost: captured.Product.IsGenericProduct ? 0m : captured.Product.UnitCost,
+                AllowsDocumentCostOverride: captured.Product.IsGenericProduct),
             cancellationToken);
         updated = await pricing.RepriceAsync(updated.DraftId, updated.CustomerId, updated.CustomerPartySiteId, cancellationToken);
         return new PosCaptureResult(PosCaptureStatus.Added, updated, captured, inventory.Response);

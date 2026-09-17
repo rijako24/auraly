@@ -790,6 +790,24 @@ public sealed class DatabaseUpgradeMigrationTests
             "Las columnas deben existir en un lote anterior al backfill que las referencia.");
     }
 
+    [Fact]
+    public void Generic_product_and_reporting_cleanup_migrations_run_before_the_dacpac()
+    {
+        var root = FindRepositoryRoot();
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+
+        var genericPosition = pipeline.IndexOf(
+            "20260916_AddGenericProductMode.sql", StringComparison.Ordinal);
+        var reportingPosition = pipeline.IndexOf(
+            "20260916_RemoveNonOperationalReportingSources.sql", StringComparison.Ordinal);
+
+        Assert.True(genericPosition >= 0,
+            "La migración del producto genérico debe ejecutarse en el despliegue oficial.");
+        Assert.True(reportingPosition > genericPosition,
+            "La limpieza de fuentes de reporte debe ejecutarse después de crear los snapshots comerciales.");
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

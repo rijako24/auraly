@@ -48,14 +48,8 @@ public sealed record CaptureRequest(string Value, Guid? CustomerId, decimal? Qua
 public sealed record QuantityRequest(decimal Quantity);
 public sealed record DiscountRequest(decimal Discount);
 public sealed record UpdateDraftLinesRequest(
-    IReadOnlyList<UpdateDraftLineRequest> Lines,
+    IReadOnlyList<UpdateSalesDraftLineRequest> Lines,
     bool IncludesProratedDiscount = false);
-public sealed record UpdateDraftLineRequest(
-    Guid LineId,
-    string Description,
-    decimal UnitPrice,
-    decimal Discount,
-    decimal DocumentUnitCost = 0);
 public sealed record SelectCustomerRequest(Guid? CustomerId, Guid? PartySiteId = null);
 public sealed record SaveTemporaryRequest(string Name, string? Reference, string? Observation);
 public sealed record DirectPrintReceiptRequest(
@@ -1095,12 +1089,14 @@ public static class PosEdgeHostApplication
                 return Results.Forbid();
             if (!session.Permissions.Contains(CommercePermissionCodes.SalesChangePrice) &&
                 request.Lines.Any(line =>
-                    line.UnitPrice != currentByLine[line.LineId].UnitPrice ||
-                    line.Discount != currentByLine[line.LineId].Discount ||
-                    line.DocumentUnitCost != currentByLine[line.LineId].DocumentUnitCost))
+                    !currentByLine[line.LineId].AllowsDocumentCostOverride &&
+                    (line.PublicUnitPrice != currentByLine[line.LineId].PublicUnitPrice ||
+                     line.Discount != currentByLine[line.LineId].Discount ||
+                     line.DocumentUnitCost != currentByLine[line.LineId].DocumentUnitCost)))
                 return Results.Forbid();
             if (!session.Permissions.Contains(CommercePermissionCodes.SalesReadCostAndMargin) &&
                 request.Lines.Any(line =>
+                    !currentByLine[line.LineId].AllowsDocumentCostOverride &&
                     line.DocumentUnitCost != currentByLine[line.LineId].DocumentUnitCost))
                 return Results.Forbid();
             if (request.IncludesProratedDiscount &&
@@ -1109,7 +1105,7 @@ public static class PosEdgeHostApplication
             var result = await drafts.UpdateLinesAsync(
                 new DraftId(draftId),
                 request.Lines.Select(line => new PosDraftLineDocumentUpdate(
-                    line.LineId, line.Description, line.UnitPrice, line.Discount,
+                    line.LineId, line.Description, line.PublicUnitPrice, line.Discount,
                     line.DocumentUnitCost)).ToArray(),
                 ct);
             return Results.Ok(result);
@@ -1137,6 +1133,26 @@ public static class PosEdgeHostApplication
             {
                 return Results.BadRequest(new { detail = error.Message });
             }
+        });
+        edge.MapPost("/drafts/{draftId:guid}/lines/{lineId:guid}/discard-unpriced-generic", async (
+            Guid draftId,
+            Guid lineId,
+            PosDraftStore drafts,
+            PosDraftPricingService pricing,
+            CancellationToken ct) =>
+        {
+            PosDraft result;
+            try
+            {
+                result = await drafts.DiscardUnpricedGenericLineAsync(new DraftId(draftId), lineId, ct);
+            }
+            catch (InvalidOperationException error)
+            {
+                return Results.BadRequest(new { detail = error.Message });
+            }
+            if (result.Lines.Count > 0)
+                result = await pricing.RepriceAsync(result.DraftId, result.CustomerId, result.CustomerPartySiteId, ct);
+            return Results.Ok(result);
         });
         edge.MapDelete("/drafts/{draftId:guid}/lines/{lineId:guid}", async (
             Guid draftId,

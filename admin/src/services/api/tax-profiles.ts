@@ -22,7 +22,7 @@ export interface SaveTaxProfile {
 export interface ProductTaxConfiguration {
   productId: string;
   salesTaxProfileId: string;
-  purchaseTaxProfileId: string;
+  purchaseTaxProfileId: string | null;
   purchaseTaxTreatment: "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
 }
 

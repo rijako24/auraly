@@ -470,7 +470,6 @@ builder.Services.AddScoped<IDispatchDeliveryStore, SqlDispatchDeliveryStore>();
 builder.Services.AddScoped<DispatchDeliveryService>();
 builder.Services.AddSingleton<DispatchSettlementCoordinator>();
 builder.Services.AddScoped<SellerOrderWriter>();
-builder.Services.AddScoped<SqlSellerOrderReportingJobWriter>();
 if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<DispatchSettlementHostedService>();
 builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();

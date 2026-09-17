@@ -3,11 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
 using Auraly.Application.DocumentProcessing;
-using Auraly.Application.Fiscal;
 using Auraly.Application.Receivables;
 using Auraly.Application.Returns;
-using Auraly.Application.Sales;
-using Auraly.Commerce.Accounting.Application;
 using Auraly.Contracts.Receivables;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Dispatching;
@@ -120,9 +117,6 @@ public sealed class DispatchSettlementHostedService(
                 await documentWorker.ProcessOneAsync(new DocumentProcessingSignal(
                     accepted.MovementId, operation.BusinessId, accepted.ReturnId,
                     SalesReturnDocumentTypes.SalesReturn), token);
-                await ActivateDownstreamAsync(scope.ServiceProvider,
-                    operation.BusinessId, accepted.ReturnId,
-                    SalesReturnDocumentTypes.SalesReturn, token);
             }
 
             // Each deterministic document is accepted and immediately executed by the canonical
@@ -144,16 +138,10 @@ public sealed class DispatchSettlementHostedService(
                 await documentWorker.ProcessOneAsync(new DocumentProcessingSignal(
                     accepted.MovementId, operation.BusinessId, accepted.PaymentId,
                     ReceivablesDocumentTypes.Payment), token);
-                await ActivateDownstreamAsync(scope.ServiceProvider,
-                    operation.BusinessId, accepted.PaymentId,
-                    ReceivablesDocumentTypes.Payment, token);
             }
             if (await EnsureCashDifferenceDocumentAsync(operation, token) is { } differenceSignal)
             {
                 await documentWorker.ProcessOneAsync(differenceSignal, token);
-                await ActivateDownstreamAsync(scope.ServiceProvider,
-                    operation.BusinessId, operation.SettlementId,
-                    DispatchAccountingDocumentTypes.CashDifference, token);
             }
             await CompleteAsync(operation, token);
         }
@@ -227,24 +215,6 @@ public sealed class DispatchSettlementHostedService(
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
-    }
-
-    private static async Task ActivateDownstreamAsync(
-        IServiceProvider services,
-        Guid businessId,
-        Guid documentId,
-        string documentType,
-        CancellationToken token)
-    {
-        if (documentType == SalesReturnDocumentTypes.SalesReturn)
-            await services.GetRequiredService<FiscalProcessingCoordinator>()
-                .RequestGenerationAsync(businessId, documentId, token);
-        if (AccountingProcessingPolicy.Supports(documentType))
-            await services.GetRequiredService<AccountingProcessingCoordinator>()
-                .RequestPostingAsync(businessId, documentId, documentType, token);
-        if (SalesReportingProcessingPolicy.Supports(documentType))
-            await services.GetRequiredService<SalesReportingProcessingCoordinator>()
-                .RequestProjectionAsync(businessId, documentId, documentType, token);
     }
 
     private async Task<DocumentProcessingSignal?> EnsureCashDifferenceDocumentAsync(

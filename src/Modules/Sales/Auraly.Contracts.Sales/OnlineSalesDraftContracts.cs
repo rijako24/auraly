@@ -21,14 +21,14 @@ public sealed record SetOnlineSalesDraftDiscountRequest(
     long ExpectedVersion);
 
 public sealed record UpdateOnlineSalesDraftLinesRequest(
-    IReadOnlyList<UpdateOnlineSalesDraftLineRequest> Lines,
+    IReadOnlyList<UpdateSalesDraftLineRequest> Lines,
     long ExpectedVersion,
     bool IncludesProratedDiscount = false);
 
-public sealed record UpdateOnlineSalesDraftLineRequest(
+public sealed record UpdateSalesDraftLineRequest(
     Guid LineId,
     string Description,
-    decimal UnitPrice,
+    decimal PublicUnitPrice,
     decimal Discount,
     decimal DocumentUnitCost = 0);
 

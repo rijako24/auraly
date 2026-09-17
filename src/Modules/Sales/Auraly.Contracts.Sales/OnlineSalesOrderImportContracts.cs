@@ -12,7 +12,8 @@ public sealed record OnlineSalesOrderImportLine(
     string PriceSource,
     decimal DocumentUnitCost,
     string TaxCode,
-    decimal TaxRate);
+    decimal TaxRate,
+    bool IsGenericProductSnapshot = false);
 
 public sealed record ImportOnlineSalesOrderRequest(
     Guid SourceOrderId,

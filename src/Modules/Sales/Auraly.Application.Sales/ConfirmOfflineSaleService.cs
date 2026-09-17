@@ -19,7 +19,8 @@ public sealed record OfflineSaleLine(
     decimal Discount,
     decimal TaxAmount,
     decimal DocumentUnitCost,
-    decimal PromotionDiscount = 0)
+    decimal PromotionDiscount = 0,
+    bool IsGenericProductSnapshot = false)
 {
     public decimal TotalDiscount => Discount + PromotionDiscount;
 }

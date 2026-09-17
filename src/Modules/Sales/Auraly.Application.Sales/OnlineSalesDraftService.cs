@@ -92,7 +92,7 @@ public interface IOnlineSalesDraftStore
     Task<OnlineSalesDraft> UpdateLinesAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
-        IReadOnlyList<UpdateOnlineSalesDraftLineRequest> lines,
+        IReadOnlyList<UpdateSalesDraftLineRequest> lines,
         bool includesProratedDiscount,
         long expectedVersion,
         string idempotencyKey,
@@ -115,6 +115,14 @@ public interface IOnlineSalesDraftStore
         Guid draftId,
         long expectedVersion,
         bool cancelSourceOrder,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesDraft> DiscardUnpricedGenericLineAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid lineId,
+        long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken);
 
@@ -231,7 +239,7 @@ public sealed class OnlineSalesDraftService(
                 line.LineId == Guid.Empty ||
                 string.IsNullOrWhiteSpace(line.Description) ||
                 line.Description.Trim().Length > 250 ||
-                line.UnitPrice < 0 ||
+                line.PublicUnitPrice < 0 ||
                 line.Discount < 0 ||
                 line.DocumentUnitCost < 0))
             throw new OnlineSalesDraftValidationException(
@@ -364,6 +372,23 @@ public sealed class OnlineSalesDraftService(
         ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
         return await drafts.ResetAsync(
             user, draftId, request.ExpectedVersion, cancelSourceOrder: true,
+            idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> DiscardUnpricedGenericLineAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid lineId,
+        RemoveOnlineSalesDraftLineRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (lineId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException("La línea es obligatoria.");
+        return await drafts.DiscardUnpricedGenericLineAsync(
+            user, draftId, lineId, request.ExpectedVersion,
             idempotencyKey, cancellationToken);
     }
 

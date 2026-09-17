@@ -1,6 +1,6 @@
 using System.Security.Claims;
-using Auraly.Application.Sales;
 using Auraly.Application.Fiscal;
+using Auraly.Application.Sales;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Contracts.Sales;
 using QRCoder;
@@ -37,7 +37,6 @@ public static class ServiceInvoiceApi
             ServiceInvoiceWorkspaceService service,
             FiscalProcessingCoordinator fiscal,
             AccountingProcessingCoordinator accounting,
-            SalesReportingProcessingCoordinator reporting,
             CancellationToken ct) =>
         {
             var key = context.Request.Headers["Idempotency-Key"].ToString();
@@ -50,9 +49,6 @@ public static class ServiceInvoiceApi
                     ServiceInvoiceDocumentTypes.ServiceInvoice, ct);
                 await fiscal.RequestGenerationAsync(
                     request.BusinessId, issued.DocumentId, ct);
-                await reporting.RequestProjectionAsync(
-                    request.BusinessId, issued.DocumentId,
-                    ServiceInvoiceDocumentTypes.ServiceInvoice, ct);
                 return issued;
             });
         });

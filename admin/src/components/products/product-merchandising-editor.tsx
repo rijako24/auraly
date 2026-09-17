@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ProductPicker } from "@/components/products/product-picker";
+import { setGenericMerchandisingMode } from "@/components/products/product-generic-policy";
 import { useProductCategories } from "@/hooks/use-products";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import {
@@ -60,11 +61,12 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
 
   useEffect(() => {
     if (!initialDraft && config.data) {
-      setForm({ ...config.data, linkedProducts: config.data.linkedProducts ?? [] });
+      const isGenericProduct = config.data.isGenericProduct ?? false;
+      setForm({ ...config.data, isGenericProduct, link: isGenericProduct ? null : config.data.link, linkedProducts: isGenericProduct ? [] : config.data.linkedProducts ?? [], conversionMaximumLossPercent: isGenericProduct ? null : config.data.conversionMaximumLossPercent });
     }
   }, [config.data, initialDraft]);
   useEffect(() => {
-    if (initialDraft) setForm({ ...initialDraft, linkedProducts: initialDraft.linkedProducts ?? [] });
+    if (initialDraft) { const isGenericProduct = initialDraft.isGenericProduct ?? false; setForm({ ...initialDraft, isGenericProduct, link: isGenericProduct ? null : initialDraft.link, linkedProducts: isGenericProduct ? [] : initialDraft.linkedProducts ?? [], conversionMaximumLossPercent: isGenericProduct ? null : initialDraft.conversionMaximumLossPercent }); }
   }, [initialDraft]);
   useEffect(() => { if (form) onDraftChange?.(form); }, [form, onDraftChange]);
 
@@ -79,14 +81,15 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
       productCategoryId: form!.productCategoryId,
       productBrandId: form!.productBrandId,
       baseUnitCode: form!.baseUnitCode,
-      manageInventory: form!.link?.sharesInventory ? false : form!.manageInventory,
+      isGenericProduct: form!.isGenericProduct,
+      manageInventory: form!.isGenericProduct || form!.link?.sharesInventory ? false : form!.manageInventory,
       allowsFractionalSale: form!.allowsFractionalSale,
       isWeighable: form!.isWeighable,
       unitGrossWeightKg: form!.unitGrossWeightKg,
       scale: form!.isWeighable ? form!.scale : null,
       barcodes: form!.barcodes,
-      conversionMaximumLossPercent: form!.conversionMaximumLossPercent,
-      link: form!.link
+      conversionMaximumLossPercent: form!.isGenericProduct ? null : form!.conversionMaximumLossPercent,
+      link: !form!.isGenericProduct && form!.link
         ? {
             parentProductId: form!.link.parentProductId,
             sharesInventory: form!.link.sharesInventory,
@@ -97,7 +100,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             conversionFactor: form!.link.allowsConversion ? form!.link.conversionFactor : null,
           }
         : null,
-      linkedProducts: form!.linkedProducts.map((item) => ({
+      linkedProducts: (form!.isGenericProduct ? [] : form!.linkedProducts).map((item) => ({
         childProductId: item.childProductId,
         sharesInventory: item.sharesInventory,
         inventoryFactor: item.sharesInventory ? item.inventoryFactor : null,
@@ -127,14 +130,15 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
         productCategoryId: form.productCategoryId,
         productBrandId: form.productBrandId,
         baseUnitCode: form.baseUnitCode,
-        manageInventory: form.link?.sharesInventory ? false : form.manageInventory,
+        isGenericProduct: form.isGenericProduct,
+        manageInventory: form.isGenericProduct || form.link?.sharesInventory ? false : form.manageInventory,
         allowsFractionalSale: form.allowsFractionalSale,
         isWeighable: form.isWeighable,
         unitGrossWeightKg: form.unitGrossWeightKg,
         scale: form.isWeighable ? form.scale : null,
         barcodes: form.barcodes,
-        conversionMaximumLossPercent: form.conversionMaximumLossPercent,
-        link: form.link ? {
+        conversionMaximumLossPercent: form.isGenericProduct ? null : form.conversionMaximumLossPercent,
+        link: !form.isGenericProduct && form.link ? {
           parentProductId: form.link.parentProductId,
           sharesInventory: form.link.sharesInventory,
           inventoryFactor: form.link.sharesInventory ? form.link.inventoryFactor : null,
@@ -143,7 +147,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
           allowsConversion: form.link.allowsConversion,
           conversionFactor: form.link.allowsConversion ? form.link.conversionFactor : null,
         } : null,
-        linkedProducts: form.linkedProducts.map((item) => ({
+        linkedProducts: (form.isGenericProduct ? [] : form.linkedProducts).map((item) => ({
           childProductId: item.childProductId,
           sharesInventory: item.sharesInventory,
           inventoryFactor: item.sharesInventory ? item.inventoryFactor : null,
@@ -325,13 +329,19 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             <Button type="button" size="sm" variant="ghost" onClick={() => setForm({ ...form, barcodes: form.barcodes.filter((_, current) => current !== index).map((code, current) => ({ ...code, isPrimary: current === 0 })) })}>Quitar</Button>
           </div>)}
         </div>
-      <div className="mt-5 grid gap-3 border-t pt-5 md:grid-cols-3">
+      <div className="mt-5 grid gap-3 border-t pt-5 md:grid-cols-2 xl:grid-cols-4">
         <Toggle
-          label="Controla inventario"
-          detail={form.link?.sharesInventory ? `No puede habilitarse porque comparte inventario con ${form.link.parentProductName}. Desactiva esa opcion o desvincula el producto para controlar inventario propio.` : "Compras, ventas, traslados y ajustes cambian sus unidades disponibles."}
-          checked={form.link?.sharesInventory ? false : form.manageInventory}
-          disabled={Boolean(form.link?.sharesInventory)}
-          invalid={Boolean(form.link?.sharesInventory)}
+          label="Producto genérico"
+          detail="El costo, margen y precio se definen al agregarlo a la venta."
+          checked={form.isGenericProduct}
+          onChange={(checked) => setForm(setGenericMerchandisingMode(form, checked))}
+        />
+        <Toggle
+          label="Control de inventario"
+          detail={form.isGenericProduct ? "Los productos genéricos no mueven existencias." : form.link?.sharesInventory ? `No puede habilitarse porque comparte inventario con ${form.link.parentProductName}. Desactiva esa opcion o desvincula el producto para controlar inventario propio.` : "Compras, ventas, traslados y ajustes cambian sus unidades disponibles."}
+          checked={form.isGenericProduct || form.link?.sharesInventory ? false : form.manageInventory}
+          disabled={form.isGenericProduct || Boolean(form.link?.sharesInventory)}
+          invalid={Boolean(form.link?.sharesInventory) && !form.isGenericProduct}
           onChange={(checked) => setForm({ ...form, manageInventory: checked })}
         />
         <Toggle
@@ -344,7 +354,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
           label="Captura desde balanza"
           detail={form.allowsFractionalSale ? "La balanza podrá completar automáticamente la cantidad." : "Primero habilita la venta fraccionada para este producto."}
           checked={form.isWeighable}
-          disabled={!form.allowsFractionalSale}
+          disabled={form.isGenericProduct || !form.allowsFractionalSale}
           onChange={(checked) => setForm({ ...form, isWeighable: checked, scale: checked ? form.scale ?? emptyScale : null })}
         />
         {form.isWeighable && form.scale && <div className="mt-3 grid gap-4 rounded-xl bg-muted/30 p-4 md:col-span-3 md:grid-cols-3">
@@ -354,7 +364,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
         </div>}
       </div></Block>
 
-      <div>
+      {!form.isGenericProduct && <div>
         <Block id="product-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. El inventario puede compartirse y el costo puede derivarse; cada producto conserva sus precios propios.">
           {form.link ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             <p className="font-semibold">Este producto está vinculado a {form.link.parentProductName}</p>
@@ -400,7 +410,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             </div>
           </>}
         </Block>
-      </div>
+      </div>}
     </div>
 
     {!embedded && <footer className="flex justify-end border-t bg-muted/20 p-4">

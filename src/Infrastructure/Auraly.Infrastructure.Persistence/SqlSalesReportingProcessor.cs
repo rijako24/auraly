@@ -72,18 +72,9 @@ public sealed class SqlSalesReportingProcessor(
                     await projectionWriter.ProjectSaleAsync(
                         session, PosSaleContractSerializer.Deserialize(source.Payload),
                         cancellationToken);
-                else if (documentType == ServiceInvoiceDocumentTypes.ServiceInvoice)
-                    await projectionWriter.ProjectServiceInvoiceAsync(
-                        session, ServiceInvoiceSnapshotSerializer.Deserialize(source.Payload),
-                        cancellationToken);
-                else
-                if (documentType == "SalesReturn")
+                else if (documentType == "SalesReturn")
                     await projectionWriter.ProjectReturnAsync(session,
                         SalesReturnContractSerializer.Deserialize(source.Payload),cancellationToken);
-                else if(documentType=="RouteVisit")
-                    await projectionWriter.ProjectVisitAsync(session,source.Payload,sourceVersion,cancellationToken);
-                else if(documentType=="CommercialCoveragePlan")
-                    await projectionWriter.ProjectCoverageAsync(session,source.Payload,sourceVersion,cancellationToken);
                 else if(documentType=="GoodsReceipt")
                     await projectionWriter.ProjectGoodsReceiptAsync(session,
                         GoodsReceiptContractSerializer.Deserialize(source.Payload),cancellationToken);
@@ -91,7 +82,8 @@ public sealed class SqlSalesReportingProcessor(
                     await projectionWriter.ProjectPurchaseReturnAsync(session,
                         PurchaseReturnContractSerializer.Deserialize(source.Payload),cancellationToken);
                 else
-                    await projectionWriter.ProjectOrderAsync(session,source.Payload,sourceVersion,cancellationToken);
+                    throw new InvalidOperationException(
+                        $"Reporting does not own document type '{documentType}'.");
 
                 await using var complete = new SqlCommand("""
                     UPDATE reporting.SalesReportingJobs

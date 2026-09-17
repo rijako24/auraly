@@ -47,6 +47,7 @@ import {
   type OrderCreditValidationIssue,
 } from "@/services/orders/commerce-orders-client";
 import { orderOperationErrorMessage } from "@/services/orders/order-http-error";
+import { orderInvoiceFailureDetails } from "@/services/orders/order-invoice-result";
 import {
   limitInvoiceBatch,
   loadAllMatchingOrders,
@@ -100,6 +101,12 @@ type OrdersWorkspaceProps = {
     failedCount: number;
     printError?: string | null;
     creditValidationIssues?: OrderCreditValidationIssue[] | null;
+    results?: Array<{
+      orderId: string;
+      orderNumber: string;
+      status: string;
+      error?: string | null;
+    }>;
   }>;
   onExpand?: () => void;
   onConfigurePrinting?: () => void;
@@ -201,8 +208,10 @@ export function OrdersWorkspace({
       onCountChange?.(0);
       return;
     }
-    if (!silent) setLoading(true);
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const next = await loadPage({ ...orderFilters, page, pageSize });
       setData(next);
@@ -417,6 +426,9 @@ export function OrdersWorkspace({
       const completed = result.completedCount;
       const failed = result.failedCount;
       const printError = result.printError ?? null;
+      const failedDetails = orderInvoiceFailureDetails(result.results);
+      if (failedDetails.length > 0)
+        setError(failedDetails.join("\n"));
       setInvoiceProgress((current) => current && ({
         ...current,
         processed: completed + failed,
@@ -425,7 +437,8 @@ export function OrdersWorkspace({
         current: failed ? "El lote requiere revisión" : "Lote emitido",
         events: [{
           id: "batch-result",
-          text: failed ? `${failed} pedidos requieren revisión` : `${completed} pedidos emitidos`,
+          text: failedDetails[0]
+            ?? (failed ? `${failed} pedidos requieren revisión` : `${completed} pedidos emitidos`),
           tone: failed ? "error" : "success",
         }],
       }));

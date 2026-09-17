@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { capturedLineAfterAddition } from "./pos-capture-presentation";
+import { capturedLineAfterAddition, shouldOpenGenericProductPricing } from "./pos-capture-presentation";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import {
   capturePosFunctionShortcut,
@@ -38,6 +38,12 @@ test("usa la última línea como respaldo del contrato de captura", () => {
 
 test("no inventa una línea cuando el borrador está vacío", () => {
   assert.equal(capturedLineAfterAddition([], []), undefined);
+});
+
+test("abre la captura de precio para un genérico sin depender del camino de búsqueda", () => {
+  assert.equal(shouldOpenGenericProductPricing({ allowsDocumentCostOverride: true }), true);
+  assert.equal(shouldOpenGenericProductPricing({ allowsDocumentCostOverride: false }), false);
+  assert.equal(shouldOpenGenericProductPricing(undefined), false);
 });
 
 test("la pantalla y el modal comparten reglas de cantidad, fracción e inventario", () => {

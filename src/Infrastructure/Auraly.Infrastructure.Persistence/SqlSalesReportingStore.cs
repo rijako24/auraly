@@ -10,90 +10,6 @@ public sealed class SqlSalesReportingStore(
     TimeProvider timeProvider)
     : ISalesReportingStore
 {
-    public async Task<SellerPerformanceOverview> GetSellerPerformanceAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,CancellationToken ct)
-    {
-        await using var connection=connections.Create();await connection.OpenAsync(ct);
-        var access=await ResolveAccessAsync(connection,user,ct);
-        if(access.SupplierId is not null)throw new SalesReportingForbiddenException("A supplier cannot access seller performance data.");
-        await using var command=new SqlCommand("""
-          ;WITH Dates AS(SELECT @From d UNION ALL SELECT DATEADD(day,1,d) FROM Dates WHERE d<@To),
-          Planned AS(SELECT c.SellerId,COUNT_BIG(*) Planned FROM reporting.CommercialCoverageAssignmentFacts c
-            INNER JOIN Dates d ON ((DATEDIFF(day,'19000101',d.d)%7)+1)=c.DayOfWeek
-              AND d.d>=c.ValidFromBusinessDate AND (c.ValidToBusinessDateExclusive IS NULL OR d.d<c.ValidToBusinessDateExclusive)
-            WHERE c.TenantId=@TenantId AND c.BusinessId=@BusinessId GROUP BY c.SellerId),
-          Visits AS(SELECT SellerId,SUM(CONVERT(bigint,CASE WHEN Status=N'Visited' THEN 1 ELSE 0 END)) Visited,
-            SUM(CONVERT(bigint,CASE WHEN Status=N'Skipped' THEN 1 ELSE 0 END)) Skipped
-            FROM reporting.CommercialReportVisitFacts WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND VisitDate BETWEEN @From AND @To GROUP BY SellerId),
-          Orders AS(SELECT SellerId,COUNT_BIG(*) Orders,COUNT_BIG(DISTINCT CustomerId) Customers,SUM(TotalAmount) Amount,
-            SUM(CONVERT(bigint,CASE WHEN InvoiceDocumentId IS NOT NULL THEN 1 ELSE 0 END)) Invoiced
-            FROM reporting.CommercialReportOrderFacts WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND CreatedDate BETWEEN @From AND @To GROUP BY SellerId),
-          Sales AS(SELECT SellerId,SUM(TotalAmount) NetSales,SUM(UntaxedAmount-RecognizedCostAmount) Profit
-            FROM reporting.SalesReportLineFacts WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND BusinessLocalDate BETWEEN @From AND @To GROUP BY SellerId)
-          SELECT seller.SellerId,COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),seller.Code),
-            COALESCE(pl.Planned,0),COALESCE(v.Visited,0),COALESCE(v.Skipped,0),COALESCE(o.Orders,0),COALESCE(o.Invoiced,0),
-            COALESCE(o.Customers,0),COALESCE(o.Amount,0),COALESCE(s.NetSales,0),COALESCE(s.Profit,0)
-          FROM dbo.CommerceSellers seller INNER JOIN dbo.Parties p ON p.PartyId=seller.PartyId
-          LEFT JOIN Planned pl ON pl.SellerId=seller.SellerId LEFT JOIN Visits v ON v.SellerId=seller.SellerId
-          LEFT JOIN Orders o ON o.SellerId=seller.SellerId LEFT JOIN Sales s ON s.SellerId=seller.SellerId
-          WHERE seller.BusinessId=@BusinessId AND seller.IsActive=1 AND (@SellerId IS NULL OR seller.SellerId=@SellerId)
-          ORDER BY COALESCE(s.NetSales,0) DESC,p.DisplayName OPTION(MAXRECURSION 0);
-          """,connection);
-        Scope(command,user);Date(command,"@From",from);Date(command,"@To",to);
-        command.Parameters.AddWithValue("@SellerId",(object?)access.SellerId??DBNull.Value);
-        var rows=new List<SellerPerformanceRow>();await using var reader=await command.ExecuteReaderAsync(ct);
-        while(await reader.ReadAsync(ct))
-        {
-            var planned=reader.GetInt64(2);var visited=reader.GetInt64(3);var orders=reader.GetInt64(5);var invoiced=reader.GetInt64(6);
-            rows.Add(new(reader.GetGuid(0),reader.GetString(1),planned,visited,reader.GetInt64(4),orders,invoiced,reader.GetInt64(7),
-                reader.GetDecimal(8),reader.GetDecimal(9),reader.GetDecimal(10),Percent(visited,planned),Percent(orders,visited),Percent(invoiced,orders)));
-        }
-        await reader.CloseAsync();
-        return new(rows.Sum(x=>x.PlannedVisits),rows.Sum(x=>x.VisitedCount),rows.Sum(x=>x.SkippedCount),rows.Sum(x=>x.OrderCount),
-            rows.Sum(x=>x.InvoicedCount),rows.Sum(x=>x.NetSales),rows.Sum(x=>x.GrossProfit),Percent(rows.Sum(x=>x.VisitedCount),rows.Sum(x=>x.PlannedVisits)),
-            Percent(rows.Sum(x=>x.OrderCount),rows.Sum(x=>x.VisitedCount)),Percent(rows.Sum(x=>x.InvoicedCount),rows.Sum(x=>x.OrderCount)),
-            rows,await ReadProjectedThroughAsync(connection,user,ct));
-    }
-
-    public async Task<CommercialCoverageOverview> GetCoverageAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,CancellationToken ct)
-    {
-        await using var connection=connections.Create();await connection.OpenAsync(ct);
-        var access=await ResolveAccessAsync(connection,user,ct);
-        if(access.SupplierId is not null)throw new SalesReportingForbiddenException("A supplier cannot access commercial coverage data.");
-        await using var command=new SqlCommand("""
-          ;WITH Dates AS(SELECT @From d UNION ALL SELECT DATEADD(day,1,d) FROM Dates WHERE d<@To),
-          Planned AS(SELECT c.SellerId,MAX(c.SellerName) SellerName,c.RouteId,MAX(c.RouteName) RouteName,c.ZoneId,MAX(c.ZoneName) ZoneName,COUNT_BIG(*) Planned
-            FROM reporting.CommercialCoverageAssignmentFacts c INNER JOIN Dates d ON ((DATEDIFF(day,'19000101',d.d)%7)+1)=c.DayOfWeek
-              AND d.d>=c.ValidFromBusinessDate AND (c.ValidToBusinessDateExclusive IS NULL OR d.d<c.ValidToBusinessDateExclusive)
-            WHERE c.TenantId=@TenantId AND c.BusinessId=@BusinessId AND (@SellerId IS NULL OR c.SellerId=@SellerId)
-            GROUP BY c.SellerId,c.RouteId,c.ZoneId),
-          Visits AS(SELECT SellerId,RouteId,SUM(CONVERT(bigint,CASE WHEN Status=N'Visited' THEN 1 ELSE 0 END)) Visited,
-            SUM(CONVERT(bigint,CASE WHEN Status=N'Skipped' THEN 1 ELSE 0 END)) Skipped,
-            SUM(CONVERT(bigint,CASE WHEN HasOrder=1 THEN 1 ELSE 0 END)) Ordered
-            FROM reporting.CommercialReportVisitFacts WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND VisitDate BETWEEN @From AND @To
-              AND (@SellerId IS NULL OR SellerId=@SellerId) GROUP BY SellerId,RouteId)
-          SELECT p.SellerId,p.SellerName,p.RouteId,p.RouteName,p.ZoneId,p.ZoneName,p.Planned,
-            COALESCE(v.Visited,0),COALESCE(v.Skipped,0),CASE WHEN p.Planned>COALESCE(v.Visited,0)+COALESCE(v.Skipped,0)
-              THEN p.Planned-COALESCE(v.Visited,0)-COALESCE(v.Skipped,0) ELSE 0 END,COALESCE(v.Ordered,0)
-          FROM Planned p LEFT JOIN Visits v ON v.SellerId=p.SellerId AND v.RouteId=p.RouteId
-          ORDER BY p.SellerName,p.RouteName OPTION(MAXRECURSION 0);
-          """,connection);
-        Scope(command,user);Date(command,"@From",from);Date(command,"@To",to);command.Parameters.AddWithValue("@SellerId",(object?)access.SellerId??DBNull.Value);
-        var rows=new List<CommercialCoverageRow>();await using var reader=await command.ExecuteReaderAsync(ct);
-        while(await reader.ReadAsync(ct))
-        {var planned=reader.GetInt64(6);var visited=reader.GetInt64(7);var skipped=reader.GetInt64(8);var ordered=reader.GetInt64(10);
-            rows.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetGuid(2),reader.GetString(3),reader.IsDBNull(4)?null:reader.GetGuid(4),
-                reader.IsDBNull(5)?null:reader.GetString(5),planned,visited,skipped,reader.GetInt64(9),ordered,
-                Percent(visited+skipped,planned),Percent(visited,planned),Percent(ordered,planned)));}
-        await reader.CloseAsync();
-        var totalPlanned=rows.Sum(x=>x.PlannedVisits);var totalVisited=rows.Sum(x=>x.VisitedCount);var totalSkipped=rows.Sum(x=>x.SkippedCount);var totalOrdered=rows.Sum(x=>x.OrderedCount);
-        DateOnly? available=null;await using(var first=new SqlCommand("SELECT MIN(ValidFromBusinessDate) FROM reporting.CommercialCoverageAssignmentFacts WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND (@SellerId IS NULL OR SellerId=@SellerId);",connection))
-        {Scope(first,user);first.Parameters.AddWithValue("@SellerId",(object?)access.SellerId??DBNull.Value);var result=await first.ExecuteScalarAsync(ct);if(result is DateTime date)available=DateOnly.FromDateTime(date);}
-        return new(totalPlanned,totalVisited,totalSkipped,rows.Sum(x=>x.MissingCount),totalOrdered,Percent(totalVisited+totalSkipped,totalPlanned),
-            Percent(totalVisited,totalPlanned),Percent(totalOrdered,totalPlanned),available,rows,await ReadProjectedThroughAsync(connection,user,ct));
-    }
-
     public async Task<SupplierImpactOverview> GetSupplierImpactAsync(SalesReportingUserIdentity user,
         DateOnly from,DateOnly to,CancellationToken ct)
     {
@@ -102,11 +18,10 @@ public sealed class SqlSalesReportingStore(
             throw new SalesReportingForbiddenException("A seller cannot access supplier impact data.");
         var days=to.DayNumber-from.DayNumber+1;var comparisonTo=from.AddDays(-1);var comparisonFrom=comparisonTo.AddDays(1-days);
         await using var command=new SqlCommand("""
-          ;WITH Covered AS(SELECT CONVERT(bigint,COUNT(DISTINCT CustomerId)) Customers FROM reporting.CommercialCoverageAssignmentFacts
-              WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND ValidFromBusinessDate<=@To
-                AND (ValidToBusinessDateExclusive IS NULL OR ValidToBusinessDateExclusive>@From)),
+          ;WITH Covered AS(SELECT CONVERT(bigint,COUNT(DISTINCT CustomerId)) Customers FROM reporting.SalesReportLineFacts
+              WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND BusinessLocalDate BETWEEN @From AND @To),
           CurrentSales AS(SELECT SupplierId,MAX(SupplierName) SupplierName,CONVERT(bigint,COUNT(DISTINCT CustomerId)) Impacted,
-              SUM(TotalAmount) Sales,SUM(UntaxedAmount-RecognizedCostAmount) Profit FROM reporting.SalesReportLineFacts
+              SUM(TotalAmount) Sales,SUM(TotalAmount-RecognizedCostAmount) Profit FROM reporting.SalesReportLineFacts
               WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND BusinessLocalDate BETWEEN @From AND @To AND SupplierId IS NOT NULL GROUP BY SupplierId),
           PreviousSales AS(SELECT SupplierId,SUM(TotalAmount) Sales FROM reporting.SalesReportLineFacts
               WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND BusinessLocalDate BETWEEN @ComparisonFrom AND @ComparisonTo AND SupplierId IS NOT NULL GROUP BY SupplierId),
@@ -133,67 +48,6 @@ public sealed class SqlSalesReportingStore(
         return new(rows.Select(x=>x.CoveredCustomers).DefaultIfEmpty().Max(),rows.Sum(x=>x.ImpactedCustomers),rows.Sum(x=>x.NetSales),rows.Sum(x=>x.NetPurchases),rows,
             await ReadProjectedThroughAsync(connection,user,ct));
     }
-    public async Task<IReadOnlyList<SellerOrderReportRow>> ListSellerOrdersAsync(SalesReportingUserIdentity user,DateOnly from,DateOnly to,CancellationToken ct)
-    {
-        await using var connection=connections.Create();await connection.OpenAsync(ct);
-        var access=await ResolveAccessAsync(connection,user,ct);
-        if(access.SupplierId is not null)throw new SalesReportingForbiddenException("A supplier cannot access seller performance data.");
-        await using var command=new SqlCommand("""
-          SELECT SellerId,SellerName,COUNT_BIG(*),COUNT_BIG(DISTINCT CustomerId),SUM(TotalAmount),
-            SUM(CONVERT(bigint,CASE WHEN Status IN(2,3,4) THEN 1 ELSE 0 END)),SUM(CONVERT(bigint,CASE WHEN RequiresStockReview=1 OR Status=5 THEN 1 ELSE 0 END)),
-            SUM(CONVERT(bigint,CASE WHEN InvoiceDocumentId IS NOT NULL THEN 1 ELSE 0 END))
-          FROM reporting.CommercialReportOrderFacts WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND CreatedDate BETWEEN @From AND @To
-            AND SellerId IS NOT NULL
-            AND (@AccessSellerId IS NULL OR SellerId=@AccessSellerId)
-          GROUP BY SellerId,SellerName ORDER BY SUM(TotalAmount) DESC,SellerName;
-          """,connection);
-        command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
-        command.Parameters.AddWithValue("@AccessSellerId",(object?)access.SellerId??DBNull.Value);
-        command.Parameters.Add("@From",SqlDbType.Date).Value=from.ToDateTime(TimeOnly.MinValue);command.Parameters.Add("@To",SqlDbType.Date).Value=to.ToDateTime(TimeOnly.MinValue);
-        var rows=new List<SellerOrderReportRow>();await using var reader=await command.ExecuteReaderAsync(ct);
-        while(await reader.ReadAsync(ct))rows.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetInt64(2),reader.GetInt64(3),reader.GetDecimal(4),reader.GetInt64(5),reader.GetInt64(6),reader.GetInt64(7)));
-        return rows;
-    }
-
-    public async Task<CommercialVisitReportPage> ListVisitsAsync(SalesReportingUserIdentity user,
-        DateOnly from,DateOnly to,Guid? sellerId,Guid? routeId,string? status,bool? hasOrder,
-        int page,int pageSize,CancellationToken cancellationToken)
-    {
-        await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
-        var access=await ResolveAccessAsync(connection,user,cancellationToken);
-        if(access.SupplierId is not null)throw new SalesReportingForbiddenException("A supplier cannot access commercial visit data.");
-        sellerId=Constrain(sellerId,access.SellerId,"seller");
-        await using var command=new SqlCommand("""
-            SELECT RouteVisitId,VisitDate,OccurredAt,SellerId,SellerName,RouteId,RouteName,ZoneName,
-              CustomerId,CustomerName,Status,HasOrder,OrderId,SkipReason,VisitObservation,
-              COUNT(*) OVER(),SUM(CONVERT(bigint,CASE WHEN Status=N'Visited' THEN 1 ELSE 0 END)) OVER(),
-              SUM(CONVERT(bigint,CASE WHEN HasOrder=1 THEN 1 ELSE 0 END)) OVER()
-            FROM reporting.CommercialReportVisitFacts
-            WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND VisitDate BETWEEN @From AND @To
-              AND (@SellerId IS NULL OR SellerId=@SellerId) AND (@RouteId IS NULL OR RouteId=@RouteId)
-              AND (@Status IS NULL OR Status=@Status) AND (@HasOrder IS NULL OR HasOrder=@HasOrder)
-            ORDER BY VisitDate DESC,OccurredAt DESC,RouteVisitId
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
-            """,connection);
-        Scope(command,user);Date(command,"@From",from);Date(command,"@To",to);
-        command.Parameters.AddWithValue("@SellerId",(object?)sellerId??DBNull.Value);
-        command.Parameters.AddWithValue("@RouteId",(object?)routeId??DBNull.Value);
-        command.Parameters.AddWithValue("@Status",(object?)status??DBNull.Value);
-        command.Parameters.AddWithValue("@HasOrder",(object?)hasOrder??DBNull.Value);
-        command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);command.Parameters.AddWithValue("@PageSize",pageSize);
-        var rows=new List<CommercialVisitReportRow>();var total=0;long visited=0,ordered=0;
-        await using var reader=await command.ExecuteReaderAsync(cancellationToken);
-        while(await reader.ReadAsync(cancellationToken))
-        {
-            rows.Add(new(reader.GetGuid(0),DateOnly.FromDateTime(reader.GetDateTime(1)),reader.GetDateTimeOffset(2),
-                reader.GetGuid(3),reader.GetString(4),reader.GetGuid(5),reader.GetString(6),reader.IsDBNull(7)?null:reader.GetString(7),
-                reader.GetGuid(8),reader.GetString(9),reader.GetString(10),reader.GetBoolean(11),reader.IsDBNull(12)?null:reader.GetGuid(12),
-                reader.IsDBNull(13)?null:reader.GetString(13),reader.IsDBNull(14)?null:reader.GetString(14)));
-            total=reader.GetInt32(15);visited=reader.GetInt64(16);ordered=reader.GetInt64(17);
-        }
-        return new(rows,page,pageSize,total,visited,ordered,visited==0?0:decimal.Round(ordered*100m/visited,2));
-    }
-
     public async Task<SalesTodayOverview> GetTodayAsync(
         SalesReportingUserIdentity user, CancellationToken cancellationToken)
     {
@@ -353,7 +207,7 @@ public sealed class SqlSalesReportingStore(
               GROUP BY DimensionKey
             )
             SELECT TOP(@Limit) [Key],Label,Documents,Quantity,Gross,Discounts,Returns,Untaxed,
-              Tax,Net,Cost,Profit,CASE WHEN Untaxed=0 THEN 0 ELSE Profit/Untaxed*100 END,
+              Tax,Net,Cost,Profit,CASE WHEN Net=0 THEN 0 ELSE Profit/Net*100 END,
               CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END
             FROM grouped ORDER BY Net DESC,Label;
             """;
@@ -373,7 +227,7 @@ public sealed class SqlSalesReportingStore(
                    d.CustomerName,d.SellerName,d.WarehouseName,d.GrossAmount,d.DiscountAmount,
                    d.UntaxedAmount,d.TaxAmount,d.TotalAmount,d.ReturnedTotalAmount,
                    d.TotalAmount-d.ReturnedTotalAmount,
-                   (d.UntaxedAmount-d.ReturnedUntaxedAmount)-
+                   (d.TotalAmount-d.ReturnedTotalAmount)-
                      (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus,
                    COUNT(*) OVER()
             FROM reporting.SalesReportDocuments d
@@ -428,7 +282,7 @@ public sealed class SqlSalesReportingStore(
                    d.CustomerName,d.SellerName,d.WarehouseName,d.GrossAmount,d.DiscountAmount,
                    d.UntaxedAmount,d.TaxAmount,d.TotalAmount,d.ReturnedTotalAmount,
                    d.TotalAmount-d.ReturnedTotalAmount,
-                   (d.UntaxedAmount-d.ReturnedUntaxedAmount)-
+                   (d.TotalAmount-d.ReturnedTotalAmount)-
                      (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus
             FROM reporting.SalesReportDocuments d
             WHERE d.DocumentId=@DocumentId AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId
@@ -488,7 +342,7 @@ public sealed class SqlSalesReportingStore(
             """, connection);
         Scope(command,user); Date(command,"@From",from); Date(command,"@To",to);
         await using var r=await command.ExecuteReaderAsync(token); await r.ReadAsync(token);
-        var profit=r.GetDecimal(10);var net=r.GetDecimal(6);
+        var profit=r.GetDecimal(10);var net=r.GetDecimal(8);
         return new(r.GetInt64(0),r.GetDecimal(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),
             r.GetDecimal(5),net,r.GetDecimal(7),r.GetDecimal(8),r.GetDecimal(9),profit,
             net==0?0:decimal.Round(profit/net*100m,2),r.GetDecimal(11),r.GetDecimal(12),r.GetDecimal(13));
@@ -506,7 +360,7 @@ public sealed class SqlSalesReportingStore(
               COALESCE(-SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END),0),
               COALESCE(SUM(f.UntaxedAmount),0),COALESCE(SUM(f.TaxAmount),0),
               COALESCE(SUM(f.TotalAmount),0),COALESCE(SUM(f.RecognizedCostAmount),0),
-              COALESCE(SUM(f.UntaxedAmount-f.RecognizedCostAmount),0)
+              COALESCE(SUM(f.TotalAmount-f.RecognizedCostAmount),0)
             FROM reporting.SalesReportLineFacts f
             INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
             WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId
@@ -521,10 +375,10 @@ public sealed class SqlSalesReportingStore(
             """, connection);
         AddFilter(command,user,filter);
         await using var r=await command.ExecuteReaderAsync(token);await r.ReadAsync(token);
-        var untaxed=r.GetDecimal(6);var profit=r.GetDecimal(10);
+        var untaxed=r.GetDecimal(6);var net=r.GetDecimal(8);var profit=r.GetDecimal(10);
         return new(r.GetInt32(0),r.GetDecimal(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),
             r.GetDecimal(5),untaxed,r.GetDecimal(7),r.GetDecimal(8),r.GetDecimal(9),profit,
-            untaxed==0?0:decimal.Round(profit/untaxed*100m,2),0,0,0);
+            net==0?0:decimal.Round(profit/net*100m,2),0,0,0);
     }
 
     private static async Task<IReadOnlyList<SalesReportTrendPoint>> ReadFilteredTrendAsync(
@@ -534,7 +388,7 @@ public sealed class SqlSalesReportingStore(
           SELECT f.BusinessLocalDate,COUNT(DISTINCT f.OriginalSaleDocumentId),
             SUM(CASE WHEN f.MovementType=N'Sale' THEN f.GrossAmount ELSE 0 END),
             -SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END),
-            SUM(f.TotalAmount),SUM(f.UntaxedAmount-f.RecognizedCostAmount)
+            SUM(f.TotalAmount),SUM(f.TotalAmount-f.RecognizedCostAmount)
           FROM reporting.SalesReportLineFacts f INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
           WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId AND f.BusinessLocalDate BETWEEN @From AND @To
             AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId) AND (@SellerId IS NULL OR f.SellerId=@SellerId)
@@ -584,7 +438,7 @@ public sealed class SqlSalesReportingStore(
             SUM(CASE WHEN f.MovementType=N'Sale' THEN f.DiscountAmount ELSE 0 END) Discounts,
             -SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END) Returns,
             SUM(f.UntaxedAmount) Untaxed,SUM(f.TaxAmount) Tax,SUM(f.TotalAmount) Net,
-            SUM(f.RecognizedCostAmount) Cost,SUM(f.UntaxedAmount-f.RecognizedCostAmount) Profit
+            SUM(f.RecognizedCostAmount) Cost,SUM(f.TotalAmount-f.RecognizedCostAmount) Profit
           FROM reporting.SalesReportLineFacts f INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
           WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId AND f.BusinessLocalDate BETWEEN @From AND @To
             AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId) AND (@SellerId IS NULL OR f.SellerId=@SellerId)
@@ -594,7 +448,7 @@ public sealed class SqlSalesReportingStore(
             AND (@WarehouseId IS NULL OR f.WarehouseId=@WarehouseId)
             AND (@DocumentType IS NULL OR d.DocumentType=@DocumentType) GROUP BY {key},{label})
           SELECT TOP(@Limit) [Key],Label,Documents,Quantity,Gross,Discounts,Returns,Untaxed,Tax,Net,Cost,Profit,
-            CASE WHEN Untaxed=0 THEN 0 ELSE Profit/Untaxed*100 END,
+            CASE WHEN Net=0 THEN 0 ELSE Profit/Net*100 END,
             CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END
           FROM grouped ORDER BY Net DESC,Label;
           """;

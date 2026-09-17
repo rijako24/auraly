@@ -38,30 +38,39 @@ FROM reporting.SalesReportLineFacts fact
 JOIN dbo.SalesDocuments document ON document.DocumentId=fact.OriginalSaleDocumentId
 WHERE fact.PartySiteId IS NULL AND document.CustomerPartySiteId IS NOT NULL;
 
-UPDATE fact
-SET PartySiteId=document.CustomerPartySiteId
-FROM reporting.ServiceInvoiceFacts fact
-JOIN dbo.SalesDocuments document ON document.DocumentId=fact.DocumentId
-WHERE fact.PartySiteId IS NULL AND document.CustomerPartySiteId IS NOT NULL;
+IF OBJECT_ID(N'reporting.ServiceInvoiceFacts', N'U') IS NOT NULL
+   AND OBJECT_ID(N'reporting.ServiceInvoiceLineFacts', N'U') IS NOT NULL
+BEGIN
+    EXEC sys.sp_executesql N'
+        UPDATE fact
+        SET PartySiteId=document.CustomerPartySiteId
+        FROM reporting.ServiceInvoiceFacts fact
+        JOIN dbo.SalesDocuments document ON document.DocumentId=fact.DocumentId
+        WHERE fact.PartySiteId IS NULL AND document.CustomerPartySiteId IS NOT NULL;
 
-UPDATE line
-SET PartySiteId=header.PartySiteId
-FROM reporting.ServiceInvoiceLineFacts line
-JOIN reporting.ServiceInvoiceFacts header ON header.DocumentId=line.DocumentId
-WHERE line.PartySiteId IS NULL AND header.PartySiteId IS NOT NULL;
+        UPDATE line
+        SET PartySiteId=header.PartySiteId
+        FROM reporting.ServiceInvoiceLineFacts line
+        JOIN reporting.ServiceInvoiceFacts header ON header.DocumentId=line.DocumentId
+        WHERE line.PartySiteId IS NULL AND header.PartySiteId IS NOT NULL;';
+END;
 
-UPDATE fact
-SET PartySiteId=orders.PartySiteId
-FROM reporting.CommercialReportOrderFacts fact
-JOIN dbo.Orders orders ON orders.OrderId=fact.OrderId
-WHERE fact.PartySiteId IS NULL AND orders.PartySiteId IS NOT NULL;
+IF OBJECT_ID(N'reporting.CommercialReportOrderFacts', N'U') IS NOT NULL
+BEGIN
+    EXEC sys.sp_executesql N'
+        UPDATE fact
+        SET PartySiteId=orders.PartySiteId
+        FROM reporting.CommercialReportOrderFacts fact
+        JOIN dbo.Orders orders ON orders.OrderId=fact.OrderId
+        WHERE fact.PartySiteId IS NULL AND orders.PartySiteId IS NOT NULL;
 
-IF EXISTS(
-    SELECT 1
-    FROM reporting.CommercialReportOrderFacts fact
-    JOIN dbo.Orders orders ON orders.OrderId=fact.OrderId
-    WHERE orders.Source=1 AND fact.PartySiteId IS NULL)
-    THROW 51322, 'Seller order reporting facts still exist without a customer site.', 1;
+        IF EXISTS(
+            SELECT 1
+            FROM reporting.CommercialReportOrderFacts fact
+            JOIN dbo.Orders orders ON orders.OrderId=fact.OrderId
+            WHERE orders.Source=1 AND fact.PartySiteId IS NULL)
+            THROW 51322, ''Seller order reporting facts still exist without a customer site.'', 1;';
+END;
 
 IF EXISTS(
     SELECT 1

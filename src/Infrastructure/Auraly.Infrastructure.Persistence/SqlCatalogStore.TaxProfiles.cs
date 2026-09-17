@@ -121,13 +121,14 @@ public sealed partial class SqlCatalogStore
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
-            SELECT p.ProductId,p.TaxProfileId,COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId),
-                   CASE WHEN purchaseTax.Rate=0 THEN N'NotApplicable'
+            SELECT p.ProductId,p.TaxProfileId,p.PurchaseTaxProfileId,
+                   CASE WHEN p.IsGenericProduct=1 THEN N'NotApplicable'
+                        WHEN purchaseTax.Rate=0 THEN N'NotApplicable'
                         WHEN p.PurchaseTaxTreatment=N'NotApplicable' THEN N'DeductibleInputVat'
                         ELSE COALESCE(p.PurchaseTaxTreatment,N'DeductibleInputVat') END
             FROM dbo.Products p
-            JOIN dbo.TaxProfiles purchaseTax
-              ON purchaseTax.TaxProfileId=COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId)
+            LEFT JOIN dbo.TaxProfiles purchaseTax
+              ON purchaseTax.TaxProfileId=p.PurchaseTaxProfileId
              AND purchaseTax.BusinessId=@BusinessId
             WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId
               AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId);
@@ -136,8 +137,8 @@ public sealed partial class SqlCatalogStore
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct) || reader.IsDBNull(1) || reader.IsDBNull(2)) return null;
-        return new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),
+        if (!await reader.ReadAsync(ct) || reader.IsDBNull(1)) return null;
+        return new(reader.GetGuid(0),reader.GetGuid(1),reader.IsDBNull(2) ? null : reader.GetGuid(2),
             reader.IsDBNull(3) ? "DeductibleInputVat" : reader.GetString(3));
     }
 
@@ -151,17 +152,27 @@ public sealed partial class SqlCatalogStore
             (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            await using var productKind = new SqlCommand("SELECT IsGenericProduct FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=@TenantId;", connection, transaction);
+            productKind.Parameters.AddWithValue("@ProductId", productId);
+            productKind.Parameters.AddWithValue("@TenantId", user.TenantId);
+            var genericValue = await productKind.ExecuteScalarAsync(ct);
+            if (genericValue is null)
+                throw new CatalogValidationException("The product was not found.");
+            var isGenericProduct = Convert.ToBoolean(genericValue);
+            var purchaseTaxProfileId = isGenericProduct ? null : request.PurchaseTaxProfileId;
+            var purchaseTaxTreatment = isGenericProduct ? "NotApplicable" : request.PurchaseTaxTreatment;
             await using var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles
                   WHERE TaxProfileId=@SalesTaxProfileId AND BusinessId=@BusinessId AND IsActive=1)
                   THROW 51021,'The sales VAT profile is invalid.',1;
-                IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles
+                IF @IsGenericProduct=0 AND (@PurchaseTaxProfileId IS NULL OR NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles
                   WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND IsActive=1)
+                )
                   THROW 51021,'The purchase VAT profile is invalid.',1;
 
-                IF EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND Rate=0) AND @PurchaseTaxTreatment<>N'NotApplicable'
+                IF @IsGenericProduct=0 AND EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND Rate=0) AND @PurchaseTaxTreatment<>N'NotApplicable'
                   THROW 51024,'A zero-rated purchase VAT profile must use NotApplicable treatment.',1;
-                IF EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND Rate>0) AND @PurchaseTaxTreatment=N'NotApplicable'
+                IF @IsGenericProduct=0 AND EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND Rate>0) AND @PurchaseTaxTreatment=N'NotApplicable'
                   THROW 51024,'A positive purchase VAT profile must use DeductibleInputVat or CapitalizedCost treatment.',1;
 
                 UPDATE p SET TaxProfileId=@SalesTaxProfileId,
@@ -182,8 +193,9 @@ public sealed partial class SqlCatalogStore
                   SELECT @NotificationId,@BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
                 """, connection, transaction);
             command.Parameters.AddWithValue("@SalesTaxProfileId", request.SalesTaxProfileId);
-            command.Parameters.AddWithValue("@PurchaseTaxProfileId", request.PurchaseTaxProfileId);
-            command.Parameters.AddWithValue("@PurchaseTaxTreatment", request.PurchaseTaxTreatment);
+            command.Parameters.AddWithValue("@PurchaseTaxProfileId", (object?)purchaseTaxProfileId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@PurchaseTaxTreatment", purchaseTaxTreatment);
+            command.Parameters.AddWithValue("@IsGenericProduct", isGenericProduct);
             command.Parameters.AddWithValue("@ProductId", productId);
             command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             command.Parameters.AddWithValue("@TenantId", user.TenantId);
@@ -192,8 +204,8 @@ public sealed partial class SqlCatalogStore
             command.Parameters.AddWithValue("@Now", now);
             await command.ExecuteNonQueryAsync(ct);
             await transaction.CommitAsync(ct);
-            return new(productId,request.SalesTaxProfileId,request.PurchaseTaxProfileId,
-                request.PurchaseTaxTreatment);
+            return new(productId,request.SalesTaxProfileId,purchaseTaxProfileId,
+                purchaseTaxTreatment);
         }
         catch (SqlException exception) when (exception.Number == 51024)
         {

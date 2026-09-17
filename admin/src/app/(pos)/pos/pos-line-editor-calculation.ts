@@ -37,13 +37,17 @@ export function lineEconomicsFromFinalPrice(
   taxRate: number,
   promotionDiscountWithTax = 0,
 ): ReactiveLineEconomics {
-  const documentUnitPrice = round(Math.max(0, referenceUnitPriceWithTax), 6);
-  const maximumFinalUnitPrice = quantity <= 0
+  const requestedFinalUnitPrice = round(Math.max(0, finalUnitPriceWithTax), 6);
+  const referenceFinalUnitPrice = quantity <= 0
     ? 0
-    : Math.max(0, documentUnitPrice - promotionDiscountWithTax / quantity);
-  const finalUnitPrice = round(
-    Math.min(maximumFinalUnitPrice, Math.max(0, finalUnitPriceWithTax)), 6,
+    : Math.max(0, referenceUnitPriceWithTax - promotionDiscountWithTax / quantity);
+  const documentUnitPrice = round(
+    requestedFinalUnitPrice > referenceFinalUnitPrice && quantity > 0
+      ? requestedFinalUnitPrice + promotionDiscountWithTax / quantity
+      : Math.max(0, referenceUnitPriceWithTax),
+    6,
   );
+  const finalUnitPrice = requestedFinalUnitPrice;
   const discount = round(Math.max(
     0,
     quantity * (documentUnitPrice - finalUnitPrice) - promotionDiscountWithTax,

@@ -100,8 +100,9 @@ export interface CreateCatalogProductRequest {
   description: string | null;
   baseUnitCode: string;
   taxProfileId: string;
-  purchaseTaxProfileId: string;
+  purchaseTaxProfileId: string | null;
   purchaseTaxTreatment: "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
+  isGenericProduct: boolean;
   manageInventory: boolean;
   isWeighable: boolean;
   unitGrossWeightKg?: number | null;
@@ -169,8 +170,8 @@ export const productsApi = {
     isActive: boolean; barcodes: string[]; prices: Array<{ amount: number; currencyCode: string; costBasisAmount: number | null; targetMarginPercent: number | null }>;
     suppliers: Array<{ supplierId: string; identification: string; name: string; supplierProductCode: string | null;
       baseUnitCost: number; isPrimary: boolean; purchasePresentationName: string; unitsPerPresentation: number }> | null;
-    salesTaxProfileId: string; purchaseTaxProfileId: string; purchaseTaxTreatment: string; description: string | null;
-    baseUnitCode: string; manageInventory: boolean; isWeighable: boolean; unitGrossWeightKg: number | null;
+    salesTaxProfileId: string; purchaseTaxProfileId: string | null; purchaseTaxTreatment: string; description: string | null;
+    baseUnitCode: string; manageInventory: boolean; isWeighable: boolean; unitGrossWeightKg: number | null; isGenericProduct: boolean;
   }>(`/commerce/v1/products/${productId}`),
   rotation: (productId: string) => apiClient.get<ProductRotationDetail[]>(`/commerce/v1/products/${productId}/rotation`),
   listCategories: (businessId: string, includeInactive = false) => apiClient.get<ProductCategory[]>(`/businesses/${businessId}/product-categories`, { includeInactive }),

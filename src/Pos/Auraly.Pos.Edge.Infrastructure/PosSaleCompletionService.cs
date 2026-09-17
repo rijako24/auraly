@@ -272,7 +272,8 @@ public sealed class PosSaleCompletionService(
             ExclusiveFromPublished(line.Discount, line.TaxRate),
             line.Tax,
             line.DocumentUnitCost,
-            ExclusiveFromPublished(line.PromotionDiscount, line.TaxRate))).ToArray();
+            ExclusiveFromPublished(line.PromotionDiscount, line.TaxRate),
+            line.AllowsDocumentCostOverride)).ToArray();
         var issued = await sales.IssueAsync(
             new PosEdgeIssueCommand(
                 command.UserId,

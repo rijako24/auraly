@@ -64,6 +64,59 @@ public sealed class CatalogRequiredProductFieldsTests
         result.Should().Be(saved);
     }
 
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    public async Task Generic_product_requires_only_sales_vat_and_clears_purchase_inventory_and_supplier_data(string operation)
+    {
+        var (service, store, user) = CreateService();
+        var productId = Guid.NewGuid();
+        var request = ValidRequest() with
+        {
+            IsGenericProduct = true,
+            PurchaseTaxProfileId = null,
+            PurchaseTaxTreatment = "NotApplicable",
+            Prices = [new ProductPriceInput(0m, "COP", 0m, 0m)],
+            Suppliers = []
+        };
+        SaveProductRequest? persisted = null;
+        store.Setup(value => value.CreateAsync(user, It.IsAny<Guid>(), It.IsAny<SaveProductRequest>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .Callback<CatalogUserIdentity, Guid, SaveProductRequest, DateTimeOffset, CancellationToken>((_, _, value, _, _) => persisted = value)
+            .ReturnsAsync(() => Detail(productId, persisted!));
+        store.Setup(value => value.UpdateAsync(user, productId, It.IsAny<SaveProductRequest>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .Callback<CatalogUserIdentity, Guid, SaveProductRequest, DateTimeOffset, CancellationToken>((_, _, value, _, _) => persisted = value)
+            .ReturnsAsync(() => Detail(productId, persisted!));
+
+        await (operation == "create"
+            ? service.CreateAsync(user, request, CancellationToken.None)
+            : service.UpdateAsync(user, productId, request, CancellationToken.None));
+
+        persisted.Should().NotBeNull();
+        persisted!.IsGenericProduct.Should().BeTrue();
+        persisted.ManageInventory.Should().BeFalse();
+        persisted.IsWeighable.Should().BeFalse();
+        persisted.PurchaseTaxProfileId.Should().BeNull();
+        persisted.PurchaseTaxTreatment.Should().Be("NotApplicable");
+        persisted.Suppliers.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Product_changed_back_from_generic_requires_the_complete_ordinary_configuration()
+    {
+        var (service, store, user) = CreateService();
+        var request = ValidRequest() with
+        {
+            IsGenericProduct = false,
+            PurchaseTaxProfileId = null,
+            Prices = [new ProductPriceInput(0m, "COP", 0m, 0m)],
+            Suppliers = []
+        };
+
+        await service.Invoking(value => value.UpdateAsync(user, Guid.NewGuid(), request, CancellationToken.None))
+            .Should().ThrowAsync<CatalogValidationException>();
+        store.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public void Pricing_engine_accepts_zero_margin_with_positive_cost_and_sale_price()
     {

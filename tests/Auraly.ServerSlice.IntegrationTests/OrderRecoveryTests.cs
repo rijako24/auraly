@@ -227,10 +227,10 @@ public sealed class OrderRecoveryTests(
 
             INSERT dbo.Products(
               ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,
-              ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+              ManageStock,IsWeighable,IsGenericProduct,IsActive,Source,Currency,CreatedAt)
             VALUES
-              (@FirstProductId,@TenantId,@BusinessId,@FirstCode,@FirstCode,N'Producto disparador',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET()),
-              (@SecondProductId,@TenantId,@BusinessId,@SecondCode,@SecondCode,N'Producto beneficiado',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
+              (@FirstProductId,@TenantId,@BusinessId,@FirstCode,@FirstCode,N'Producto disparador',N'EA',@TaxProfileId,0,0,1,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@SecondProductId,@TenantId,@BusinessId,@SecondCode,@SecondCode,N'Producto beneficiado',N'EA',@TaxProfileId,0,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(
               ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
               RoundingIncrement,RoundingMode,IsActive,CreatedAt)
@@ -298,19 +298,19 @@ public sealed class OrderRecoveryTests(
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ProductId,UnitPrice,ProductNameSnapshot
+            SELECT ProductId,UnitPrice,ProductNameSnapshot,IsGenericProductSnapshot
             FROM dbo.OrderItems
             WHERE OrderId=@OrderId
             ORDER BY ProductId;
             """;
         command.Parameters.AddWithValue("@OrderId", orderId);
         await using var reader = await command.ExecuteReaderAsync();
-        var persistedLines = new Dictionary<Guid, (decimal Price, string Name)>();
+        var persistedLines = new Dictionary<Guid, (decimal Price, string Name, bool Generic)>();
         while (await reader.ReadAsync())
-            persistedLines.Add(reader.GetGuid(0), (reader.GetDecimal(1), reader.GetString(2)));
+            persistedLines.Add(reader.GetGuid(0), (reader.GetDecimal(1), reader.GetString(2), reader.GetBoolean(3)));
         await reader.CloseAsync();
-        Assert.Equal((111m, "Nombre capturado A"), persistedLines[firstProductId]);
-        Assert.Equal((99m, "Nombre capturado B"), persistedLines[secondProductId]);
+        Assert.Equal((111m, "Nombre capturado A", true), persistedLines[firstProductId]);
+        Assert.Equal((99m, "Nombre capturado B", false), persistedLines[secondProductId]);
 
         using var printResponse = await client.PostAsJsonAsync(
             "/api/commerce/v1/orders/print-batch",
@@ -347,7 +347,7 @@ public sealed class OrderRecoveryTests(
         {
             deactivate.CommandText = """
                 UPDATE dbo.Products
-                SET IsActive=0,Name=N'Nombre posterior del catálogo'
+                SET IsActive=0,IsGenericProduct=0,Name=N'Nombre posterior del catálogo'
                 WHERE ProductId IN (@FirstProductId,@SecondProductId);
                 """;
             deactivate.Parameters.AddWithValue("@FirstProductId", firstProductId);
@@ -363,6 +363,8 @@ public sealed class OrderRecoveryTests(
             ["Nombre capturado A", "Nombre capturado B"],
             recovered.Lines.OrderBy(line => line.Description).Select(line => line.Description));
         Assert.All(recovered.Lines, line => Assert.Equal("EA", line.UnitCode));
+        Assert.True(recovered.Lines.Single(line => line.ProductId == firstProductId).AllowsDocumentCostOverride);
+        Assert.False(recovered.Lines.Single(line => line.ProductId == secondProductId).AllowsDocumentCostOverride);
     }
 
     [Fact]
@@ -797,22 +799,6 @@ public sealed class OrderRecoveryTests(
             await client.GetFromJsonAsync<OrderDetail>(
                 $"/api/commerce/v1/orders/{removalOrderId:D}"));
         Assert.Equal("Cancelled", cancelledRecovered.Status);
-        await using (var reportingConnection = new SqlConnection(fixture.ConnectionString))
-        {
-            await reportingConnection.OpenAsync();
-            await using var reporting = reportingConnection.CreateCommand();
-            reporting.CommandText = """
-                SELECT Status,CancelledAt
-                FROM reporting.CommercialReportOrderFacts
-                WHERE OrderId=@OrderId;
-                """;
-            reporting.Parameters.AddWithValue("@OrderId", removalOrderId);
-            await using var reportingReader = await reporting.ExecuteReaderAsync();
-            Assert.True(await reportingReader.ReadAsync());
-            Assert.Equal(6, reportingReader.GetInt32(0));
-            Assert.False(reportingReader.IsDBNull(1));
-        }
-
         using var createForInvoice = await client.PostAsJsonAsync("/api/commerce/v1/seller-orders", new
         {
             businessId = fixture.BusinessId,
@@ -1313,9 +1299,7 @@ public sealed class OrderRecoveryTests(
         command.CommandText = """
             SELECT o.CustomerId,o.PartySiteId,o.CustomerNameSnapshot,o.Subtotal,o.DiscountTotal,o.Total,
                    i.Quantity,i.UnitPrice,i.DiscountAmount,i.LineTotal,
-                   b.QuantityOnHand,o.Notes,
-                   (SELECT PartySiteId FROM reporting.CommercialReportOrderFacts fact
-                    WHERE fact.OrderId=o.OrderId)
+                   b.QuantityOnHand,o.Notes
             FROM dbo.Orders o
             JOIN dbo.OrderItems i ON i.OrderId=o.OrderId
             JOIN dbo.InventoryBalances b
@@ -1339,7 +1323,6 @@ public sealed class OrderRecoveryTests(
         Assert.Equal(22_500m, reader.GetDecimal(9));
         Assert.Equal(2m, reader.GetDecimal(10));
         Assert.Equal("Pedido actualizado desde el POS", reader.GetString(11));
-        Assert.Equal(updatedPartySiteId, reader.GetGuid(12));
         await reader.DisposeAsync();
         await command.DisposeAsync();
         await connection.DisposeAsync();

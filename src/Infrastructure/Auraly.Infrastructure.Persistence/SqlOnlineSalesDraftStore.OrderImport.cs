@@ -20,7 +20,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         var payload = string.Join(
             "|",
             request.Lines.Select(line =>
-                $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.PublicUnitPrice)}:{Invariant(line.DiscountAmount)}:{Invariant(line.PublicLineTotal)}:{NormalizePriceSource(line.PriceSource)}:{Invariant(line.DocumentUnitCost)}"));
+                $"{line.ProductId:D}:{Invariant(line.Quantity)}:{Invariant(line.PublicUnitPrice)}:{Invariant(line.DiscountAmount)}:{Invariant(line.PublicLineTotal)}:{NormalizePriceSource(line.PriceSource)}:{Invariant(line.DocumentUnitCost)}:{line.IsGenericProductSnapshot}"));
         var requestHash = Hash(
             $"{operation}|{draftId:D}|{request.SourceOrderId:D}|{request.CustomerId:D}|{request.PartySiteId:D}|{request.ExpectedVersion}|{payload}");
 
@@ -102,6 +102,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                     : 0m,
                 PublicLineTotal = Money(line.PublicLineTotal),
                 DocumentUnitCost = line.DocumentUnitCost,
+                line.IsGenericProductSnapshot,
                 CurrencyCode = request.Currency,
                 PriceSource = NormalizePriceSource(line.PriceSource),
                 Position = index + 1
@@ -114,10 +115,11 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
             INSERT dbo.SalesDraftLines(
               SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
               UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,PublicUnitPrice,PublicLineTotal,DocumentUnitCost,
-              CurrencyCode,PriceSource,DiscountAmount,PromotionDiscountAmount,Position)
+              CurrencyCode,PriceSource,IsGenericProductSnapshot,DiscountAmount,PromotionDiscountAmount,Position)
             SELECT input.LineId,@DraftId,input.ProductId,input.ProductCode,input.Description,
                    input.UnitCode,input.TaxCode,input.TaxRate,input.Quantity,input.BaseUnitPrice,
                    input.UnitPrice,input.PublicUnitPrice,input.PublicLineTotal,input.DocumentUnitCost,input.CurrencyCode,input.PriceSource,
+                   input.IsGenericProductSnapshot,
                    input.DiscountAmount,input.PromotionDiscountAmount,input.Position
             FROM OPENJSON(@LinesJson) WITH(
               LineId uniqueidentifier '$.LineId',ProductId uniqueidentifier '$.ProductId',
@@ -128,6 +130,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
               PublicUnitPrice decimal(18,2) '$.PublicUnitPrice',
               PublicLineTotal decimal(18,2) '$.PublicLineTotal',
               DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',CurrencyCode nvarchar(3) '$.CurrencyCode',
+              IsGenericProductSnapshot bit '$.IsGenericProductSnapshot',
               PriceSource nvarchar(64) '$.PriceSource',DiscountAmount decimal(18,2) '$.DiscountAmount',
               PromotionDiscountAmount decimal(18,2) '$.PromotionDiscountAmount',
               Position int '$.Position') input;

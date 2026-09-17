@@ -77,16 +77,18 @@ public sealed class PosDraftStoreTests
             var updated = await store.UpdateLinesAsync(
                 draft.DraftId,
                 [
-                    new(first.Lines.Single().LineId, "Descripción puntual", 10_000m, 1_000m, 4_500m),
+                    new(first.Lines.Single().LineId, "Descripción puntual", 13_000m, 0m, 4_500m),
                     new(draft.Lines[1].LineId, "Segunda línea", 10_000m, 0m, 4_000m)
                 ]);
 
-            Assert.Equal(29_000m, updated.PayableAmount);
+            Assert.Equal(33_000m, updated.PayableAmount);
             Assert.Equal("Descripción puntual", updated.Lines[0].Description);
-            Assert.Equal(10_000m, updated.Lines[0].UnitPrice);
+            Assert.Equal(13_000m, updated.Lines[0].UnitPrice);
+            Assert.Equal(13_000m, updated.Lines[0].PublicUnitPrice);
             Assert.Equal(10_000m, updated.Lines[0].BaseUnitPrice);
             Assert.Equal(4_500m, updated.Lines[0].DocumentUnitCost);
-            Assert.False(updated.Lines[0].IsPriceOverridden);
+            Assert.True(updated.Lines[0].IsPriceOverridden);
+            Assert.Equal("Manual", updated.Lines[0].PriceSource);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 store.UpdateLinesAsync(
@@ -111,6 +113,33 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
+    public async Task Only_an_unpriced_generic_line_can_be_discarded_without_sensitive_authorization()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var generic = await store.AddOrIncrementLineAsync(scope, Line(1m) with
+            {
+                UnitPrice = 0m,
+                BaseUnitPrice = 0m,
+                DocumentUnitCost = 0m,
+                AllowsDocumentCostOverride = true
+            });
+            var discarded = await store.DiscardUnpricedGenericLineAsync(
+                generic.DraftId, generic.Lines.Single().LineId);
+            Assert.Empty(discarded.Lines);
+
+            var priced = await store.AddOrIncrementLineAsync(scope, Line(1m) with
+            {
+                DocumentUnitCost = 4_000m,
+                AllowsDocumentCostOverride = true
+            });
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                store.DiscardUnpricedGenericLineAsync(
+                    priced.DraftId, priced.Lines.Single().LineId));
+        });
+    }
+
+    [Fact]
     public async Task Temporary_sale_is_durable_recoverable_once_and_keeps_commercial_snapshot()
     {
         await WithStoreAsync(async (store, path, scope, ids) =>
@@ -121,13 +150,13 @@ public sealed class PosDraftStoreTests
                 scope,
                 Line(quantity: 2m) with
                 {
-                    Discount = 500m,
+                    Discount = 0m,
                     DocumentUnitCost = 4_000m,
                     AllowsDocumentCostOverride = true
                 });
             active = await store.UpdateLinesAsync(
                 active.DraftId,
-                [new(active.Lines.Single().LineId, "Nombre editado antes de pausar", 10_000m, 750m, 4_500m)]);
+                [new(active.Lines.Single().LineId, "Nombre editado antes de pausar", 10_000m, 0m, 4_500m)]);
             var customerPartySiteId = Guid.NewGuid();
             await store.AssignPartiesAsync(
                 active.DraftId, customerId, sellerId, customerPartySiteId);
@@ -154,8 +183,8 @@ public sealed class PosDraftStoreTests
             Assert.Equal("Nombre editado antes de pausar", recoveredLine.Description);
             Assert.Equal(4_500m, recoveredLine.DocumentUnitCost);
             Assert.Equal(10_000m, recoveredLine.UnitPrice);
-            Assert.Equal(750m, recoveredLine.Discount);
-            Assert.Equal(19_250m, recovered.PayableAmount);
+            Assert.Equal(0m, recoveredLine.Discount);
+            Assert.Equal(20_000m, recovered.PayableAmount);
 
             await Assert.ThrowsAsync<InvalidOperationException>(
                 () => reopened.RecoverTemporaryAsync(temporary.DraftId, scope));

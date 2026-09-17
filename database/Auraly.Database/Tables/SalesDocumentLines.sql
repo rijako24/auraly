@@ -17,6 +17,8 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     [Quantity] DECIMAL(19, 6) NOT NULL,
     [UnitPrice] DECIMAL(19, 4) NOT NULL,
     [UnitCostSnapshot] DECIMAL(19, 6) NULL,
+    [IsGenericProductSnapshot] BIT NOT NULL
+        CONSTRAINT [DF_SalesDocumentLines_IsGenericProductSnapshot] DEFAULT (0),
     [DiscountAmount] DECIMAL(19, 4) NOT NULL,
     [PromotionDiscountAmount] DECIMAL(19, 4) NOT NULL
         CONSTRAINT [DF_SalesDocumentLines_PromotionDiscountAmount] DEFAULT (0),

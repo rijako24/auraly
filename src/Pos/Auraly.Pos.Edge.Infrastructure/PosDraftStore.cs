@@ -65,6 +65,8 @@ public sealed record PosDraftLine(
     bool IsPriceOverridden = false,
     decimal PromotionDiscount = 0)
 {
+    public decimal PublicUnitPrice => UnitPrice;
+    public decimal PublicLineTotal => Total;
     public decimal Gross => Round(Quantity * UnitPrice);
     public decimal TotalDiscount => Discount + PromotionDiscount;
     public decimal Total => Round(Gross - TotalDiscount);
@@ -115,7 +117,7 @@ public sealed record PosDraftLinePriceUpdate(
 public sealed record PosDraftLineDocumentUpdate(
     Guid LineId,
     string Description,
-    decimal UnitPrice,
+    decimal PublicUnitPrice,
     decimal Discount,
     decimal DocumentUnitCost = 0);
 
@@ -303,7 +305,7 @@ public sealed class PosDraftStore
             updates.Select(value => value.LineId).Distinct().Count() != updates.Count ||
             updates.Any(value => string.IsNullOrWhiteSpace(value.Description) ||
                                  value.Description.Trim().Length > 250 ||
-                                 value.UnitPrice < 0 || value.Discount < 0 || value.DocumentUnitCost < 0))
+                                 value.PublicUnitPrice < 0 || value.Discount < 0 || value.DocumentUnitCost < 0))
             throw new ArgumentException("Every line requires a unique id, description and non-negative values.", nameof(updates));
 
         await using var connection = await OpenAsync(cancellationToken);
@@ -318,12 +320,14 @@ public sealed class PosDraftStore
         foreach (var update in updates)
         {
             var line = currentByLine[update.LineId];
-            if (update.UnitPrice != line.UnitPrice)
-                throw new InvalidOperationException("El precio fiscal de la línea no se edita; el valor final se expresa como descuento sobre el precio público.");
             if (update.DocumentUnitCost != line.DocumentUnitCost &&
                 !line.AllowsDocumentCostOverride)
                 throw new InvalidOperationException("El costo de inventario de la línea queda congelado cuando se agrega el producto.");
-            if (update.Discount > line.Gross - line.PromotionDiscount)
+            if (!line.AllowsDocumentCostOverride && update.PublicUnitPrice != line.PublicUnitPrice)
+                throw new InvalidOperationException("El precio público base solo se puede reemplazar en un producto genérico.");
+            if (line.AllowsDocumentCostOverride && update.Discount != 0)
+                throw new InvalidOperationException("Un producto genérico siempre tiene descuento cero.");
+            if (update.Discount > line.Quantity * update.PublicUnitPrice - line.PromotionDiscount)
                 throw new ArgumentOutOfRangeException(nameof(updates), "Discount cannot exceed line value.");
         }
 
@@ -331,14 +335,21 @@ public sealed class PosDraftStore
         {
             update.LineId,
             Description = update.Description.Trim(),
+            update.PublicUnitPrice,
             update.DocumentUnitCost,
-            update.Discount
+            update.Discount,
+            CommercialChanged = update.PublicUnitPrice != currentByLine[update.LineId].PublicUnitPrice ||
+                update.Discount != currentByLine[update.LineId].Discount
         }).ToArray();
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE PosDraftLines AS target
             SET Description=json_extract(input.value,'$.Description'),
+                UnitPrice=json_extract(input.value,'$.PublicUnitPrice'),
                 DocumentUnitCost=json_extract(input.value,'$.DocumentUnitCost'),
-                Discount=json_extract(input.value,'$.Discount')
+                Discount=json_extract(input.value,'$.Discount'),
+                IsPriceOverridden=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN 1 ELSE IsPriceOverridden END,
+                PriceSource=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN 'Manual' ELSE PriceSource END,
+                PriceChannelId=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN NULL ELSE PriceChannelId END
             FROM json_each(@UpdatesJson) input
             WHERE target.DraftId=@DraftId
               AND target.LineId=json_extract(input.value,'$.LineId');
@@ -367,6 +378,22 @@ public sealed class PosDraftStore
             null,
             cancellationToken);
         return await GetRequiredAsync(draftId, cancellationToken);
+    }
+
+    public async Task<PosDraft> DiscardUnpricedGenericLineAsync(
+        DraftId draftId,
+        Guid lineId,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await GetAsync(draftId, cancellationToken)
+            ?? throw new InvalidOperationException("La venta activa no existe.");
+        var line = current.Lines.SingleOrDefault(value => value.LineId == lineId);
+        if (line is null || !line.AllowsDocumentCostOverride ||
+            line.PublicUnitPrice != 0 || line.DocumentUnitCost != 0 ||
+            line.Discount != 0 || line.PromotionDiscount != 0)
+            throw new InvalidOperationException(
+                "Solo se puede descartar sin autorización un producto genérico que aún no tiene valor.");
+        return await RemoveLineAsync(draftId, lineId, cancellationToken);
     }
 
     public async Task CancelAsync(
@@ -752,12 +779,12 @@ public sealed class PosDraftStore
               LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,
               Quantity,BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,
               PriceChannelId,Discount,Note,AllowsFractionalSale,DocumentUnitCost,AllowsDocumentCostOverride,Position,
-              PromotionDiscount)
+              IsPriceOverridden,PromotionDiscount)
             VALUES(
               @LineId,@DraftId,@ProductId,@ProductCode,@Description,@UnitCode,@TaxCode,@TaxRate,
               @Quantity,@BaseUnitPrice,@UnitPrice,@CurrencyCode,@PriceSource,
               @PriceChannelId,@Discount,@Note,@AllowsFractionalSale,@DocumentUnitCost,@AllowsDocumentCostOverride,@Position,
-              @PromotionDiscount);
+              @IsPriceOverridden,@PromotionDiscount);
             """,
             LineParameters(lineId, draftId, input, position),
             ct);
@@ -1091,6 +1118,7 @@ public sealed class PosDraftStore
         P("@DocumentUnitCost", input.DocumentUnitCost),
         P("@AllowsDocumentCostOverride", input.AllowsDocumentCostOverride ? 1 : 0),
         P("@Position", position),
+        P("@IsPriceOverridden", input.AllowsDocumentCostOverride ? 1 : 0),
         P("@PromotionDiscount", input.PromotionDiscount)
     ];
 

@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "./pos-money-input";
 import { isPositiveWholeSaleValue, lineEconomicsFromDiscount, lineEconomicsFromDiscountPercent, lineEconomicsFromFinalPrice, lineEconomicsFromMargin, lineMarginPercent, nextFocusableIndex, nextGridPosition, prorateSaleDiscount, type GridDirection, type ReactiveLineEconomics } from "./pos-line-editor-calculation";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
+import { genericProductFromMargin, genericProductFromSalePrice } from "./pos-generic-product-calculation";
 
 type EditableLine = {
   lineId: string;
@@ -19,7 +20,6 @@ type EditableLine = {
   taxRate: number;
   originalDocumentUnitCost: number;
   allowsDocumentCostOverride: boolean;
-  originalUnitPrice: number;
   promotionDiscount: number;
   description: string;
   unitCost: string;
@@ -69,18 +69,20 @@ export function PosLineEditorDialog({
   const parsed = useMemo(() => drafts.map((line) => ({
     lineId: line.lineId,
     description: line.description.trim(),
-    unitPrice: line.originalUnitPrice,
+    publicUnitPrice: line.documentUnitPrice,
     discount: parseMoneyDraft(line.discount),
     documentUnitCost: line.allowsDocumentCostOverride
       ? parseMoneyDraft(line.unitCost)
       : line.originalDocumentUnitCost,
   })), [drafts]);
+  const discountableAvailable = drafts.filter(line => !line.allowsDocumentCostOverride).reduce((sum, line) =>
+    sum + Math.max(0, line.quantity * line.documentUnitPrice - parseMoneyDraft(line.discount) - line.promotionDiscount), 0);
   const valid = parsed.every((line, index) =>
     Boolean(line.description) &&
-    Number.isFinite(line.unitPrice) && line.unitPrice >= 0 &&
+    Number.isFinite(line.publicUnitPrice) && line.publicUnitPrice >= 0 &&
     Number.isFinite(line.documentUnitCost) && line.documentUnitCost >= 0 &&
     Number.isFinite(line.discount) && line.discount >= 0 &&
-    line.discount <= drafts[index].quantity * drafts[index].referenceUnitPrice -
+    line.discount <= drafts[index].quantity * line.publicUnitPrice -
       drafts[index].promotionDiscount &&
     parseMoneyDraft(drafts[index].unitPrice) >= 0);
 
@@ -94,6 +96,24 @@ export function PosLineEditorDialog({
     let cost = currentCost;
     let margin = Number(line.margin.replace(",", ".")) || 0;
     let economics: ReactiveLineEconomics;
+    if (line.allowsDocumentCostOverride) {
+      if (field === "discount" || field === "percentage") return;
+      const generic = field === "price"
+        ? genericProductFromSalePrice(parseMoneyDraft(raw), currentCost, line.taxRate)
+        : genericProductFromMargin(
+            field === "cost" ? parseMoneyDraft(raw) : currentCost,
+            field === "margin" ? Number(raw.replace(",", ".")) : margin,
+            line.taxRate,
+          );
+      change(line.lineId, {
+        unitCost: formatMoneyValue(generic.documentUnitCost),
+        unitPrice: formatMoneyValue(generic.publicSalePrice),
+        documentUnitPrice: generic.publicSalePrice,
+        discount: "0",
+        margin: decimalDraft(generic.marginPercent),
+      });
+      return;
+    }
     if (field === "cost") {
       cost = parseMoneyDraft(raw);
       economics = lineEconomicsFromMargin(
@@ -159,10 +179,11 @@ export function PosLineEditorDialog({
     event.preventDefault();
     const available = drafts.map((line) => [
       ...(canEditDescription ? [0] : []),
-      ...(canReadCostAndMargin && canEditCommercialValues && line.allowsDocumentCostOverride
+      ...(line.allowsDocumentCostOverride
         ? [1, 2]
         : []),
-      ...(canEditCommercialValues ? [3, 4, 5] : []),
+      ...(canEditCommercialValues && !line.allowsDocumentCostOverride ? [3, 4, 5] : []),
+      ...(line.allowsDocumentCostOverride ? [5] : []),
     ]);
     const next = nextGridPosition(row, column, available, event.key as GridDirection);
     const target = next ? event.currentTarget.querySelector<HTMLInputElement>(`input[data-editor-row="${next.row}"][data-editor-column="${next.column}"]:not(:disabled)`) : null;
@@ -177,12 +198,12 @@ export function PosLineEditorDialog({
 
   const distributeDiscount = () => {
     const amount = parseMoneyDraft(proratedDiscount);
-    const available = drafts.reduce((sum, line) =>
+    const available = drafts.filter(line => !line.allowsDocumentCostOverride).reduce((sum, line) =>
       sum + Math.max(0, line.quantity * line.documentUnitPrice -
         parseMoneyDraft(line.discount) - line.promotionDiscount), 0);
     if (!isPositiveWholeSaleValue(amount) || amount > available) return;
     const allocations = new Map(prorateSaleDiscount(
-      drafts.map(line => ({
+      drafts.filter(line => !line.allowsDocumentCostOverride).map(line => ({
         lineId: line.lineId,
         quantity: line.quantity,
         unitPrice: line.documentUnitPrice,
@@ -191,7 +212,8 @@ export function PosLineEditorDialog({
       amount,
     ).map(line => [line.lineId, line]));
     setDrafts(current => current.map(line => {
-      const allocation = allocations.get(line.lineId)!;
+      const allocation = allocations.get(line.lineId);
+      if (!allocation) return line;
       const cost = parseMoneyDraft(line.unitCost);
       const economics = lineEconomicsFromDiscount(
         cost, line.quantity, line.documentUnitPrice,
@@ -229,13 +251,13 @@ export function PosLineEditorDialog({
       }
     }} className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:rounded-3xl">
       <header className="flex shrink-0 items-start justify-between gap-4 bg-gradient-to-r from-slate-950 to-teal-950 px-5 py-5 text-white sm:px-6">
-        <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/10 text-teal-200"><PencilLine className="h-5 w-5"/></span><div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-300">Cambio puntual</p><h2 id="pos-line-editor-title" className="text-xl font-bold">Editar líneas de esta venta</h2><p className="mt-1 text-sm text-slate-300">El costo solo se puede cambiar en productos sin inventario; los cambios de valor se guardan como descuento.</p></div></div>
+        <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/10 text-teal-200"><PencilLine className="h-5 w-5"/></span><div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-300">Cambio puntual</p><h2 id="pos-line-editor-title" className="text-xl font-bold">Editar líneas de esta venta</h2><p className="mt-1 text-sm text-slate-300">Costo y margen solo se editan en productos genéricos; su descuento permanece en cero.</p></div></div>
         <span className="hidden items-center gap-2 rounded-full border border-teal-300/30 bg-teal-300/10 px-3 py-1.5 text-xs font-semibold text-teal-100 sm:flex"><ShieldCheck className="h-4 w-4"/>Solo este documento</span>
       </header>
       <div data-testid="pos-line-editor-scroll-region" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">
         <section className="flex flex-col gap-4 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-teal-50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-700 text-white"><CircleDollarSign className="h-5 w-5" /></span><div><strong className="text-slate-950">Distribuir descuento general</strong><p className="mt-1 text-sm text-slate-600">Reparte un descuento adicional proporcionalmente entre todos los productos de esta venta.</p></div></div>
-          <Button type="button" variant="outline" className="shrink-0 border-teal-300 bg-white" disabled={!canApplyProratedDiscount || !canEditCommercialValues} onClick={() => setDiscountOpen(true)}>Agregar y distribuir</Button>
+          <Button type="button" variant="outline" className="shrink-0 border-teal-300 bg-white" disabled={!canApplyProratedDiscount || !canEditCommercialValues || discountableAvailable <= 0} onClick={() => setDiscountOpen(true)}>Agregar y distribuir</Button>
         </section>
         {drafts.map((line, index) => {
           const price = parseMoneyDraft(line.unitPrice);
@@ -247,11 +269,11 @@ export function PosLineEditorDialog({
             <div className="flex items-center justify-between gap-3 border-b bg-slate-50 px-4 py-3"><div><p className="text-xs font-bold uppercase tracking-wide text-teal-700">Línea {index + 1} · {line.productCode}</p><p className="text-xs text-slate-500">Cantidad: {line.quantity}</p></div><strong className="tabular-nums text-slate-950">{formatMoneyValue(total)}</strong></div>
             <div className="grid gap-x-4 gap-y-3 p-4 sm:grid-cols-2 xl:grid-cols-[minmax(240px,2fr)_repeat(5,minmax(120px,1fr))]">
               <label className="space-y-1.5 text-sm font-semibold text-slate-700 sm:col-span-2 xl:col-span-1">Nombre del producto en el documento<input data-editor-row={index} data-editor-column={0} disabled={!canEditDescription} maxLength={250} value={line.description} onChange={(event)=>change(line.lineId,{description:event.target.value})} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 font-normal text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Costo<input data-editor-row={index} data-editor-column={1} aria-label={canReadCostAndMargin ? "Costo" : "Costo oculto"} inputMode="decimal" disabled={!canReadCostAndMargin||!canEditCommercialValues||!line.allowsDocumentCostOverride} value={canReadCostAndMargin?line.unitCost:"— — —"} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"cost",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/><span className="block text-xs font-normal text-slate-500">{line.allowsDocumentCostOverride?"Costo propio de esta línea.":"Costo de inventario congelado."}</span></label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Margen %<input data-editor-row={index} data-editor-column={2} aria-label={canReadCostAndMargin ? "Margen" : "Margen oculto"} inputMode="decimal" disabled={!canReadCostAndMargin||!canEditCommercialValues||!line.allowsDocumentCostOverride} value={canReadCostAndMargin?line.margin:"— — —"} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"margin",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento<input data-editor-row={index} data-editor-column={3} ref={(element)=>{discountInputs.current[index]=element;}} inputMode="decimal" disabled={!canEditCommercialValues} value={line.discount} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"discount",event.target.value)} className={`h-11 w-full rounded-xl border bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:ring-4 ${invalidDiscount?"border-red-500 focus:ring-red-500/10":"border-slate-300 focus:border-teal-600 focus:ring-teal-600/10"}`}/>{invalidDiscount&&<span className="block text-xs font-normal text-red-700">No puede superar el valor de la línea.</span>}</label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento %<input data-editor-row={index} data-editor-column={4} inputMode="decimal" disabled={!canEditCommercialValues} value={percentage(discount, line.quantity * line.documentUnitPrice)} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"percentage",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
-              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Precio de venta<input data-editor-row={index} data-editor-column={5} inputMode="decimal" disabled={!canEditCommercialValues} value={line.unitPrice} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"price",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/><span className="block text-xs font-normal text-slate-500">Precio original con IVA: <strong className="font-semibold text-slate-700">{formatMoneyValue(line.referenceUnitPrice)}</strong></span></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Costo<input data-editor-row={index} data-editor-column={1} aria-label={canReadCostAndMargin || line.allowsDocumentCostOverride ? "Costo" : "Costo oculto"} inputMode="decimal" disabled={!line.allowsDocumentCostOverride} value={canReadCostAndMargin||line.allowsDocumentCostOverride?line.unitCost:"— — —"} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"cost",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/><span className="block text-xs font-normal text-slate-500">{line.allowsDocumentCostOverride?"Costo sin IVA propio de esta línea.":"Costo del producto bloqueado."}</span></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Margen %<input data-editor-row={index} data-editor-column={2} aria-label={canReadCostAndMargin || line.allowsDocumentCostOverride ? "Margen" : "Margen oculto"} inputMode="decimal" disabled={!line.allowsDocumentCostOverride} value={canReadCostAndMargin||line.allowsDocumentCostOverride?line.margin:"— — —"} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"margin",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento<input data-editor-row={index} data-editor-column={3} ref={(element)=>{discountInputs.current[index]=element;}} inputMode="decimal" disabled={line.allowsDocumentCostOverride||!canEditCommercialValues} value={line.allowsDocumentCostOverride?"0":line.discount} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"discount",event.target.value)} className={`h-11 w-full rounded-xl border bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:ring-4 ${invalidDiscount?"border-red-500 focus:ring-red-500/10":"border-slate-300 focus:border-teal-600 focus:ring-teal-600/10"}`}/>{invalidDiscount&&<span className="block text-xs font-normal text-red-700">No puede superar el valor de la línea.</span>}</label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Descuento %<input data-editor-row={index} data-editor-column={4} inputMode="decimal" disabled={line.allowsDocumentCostOverride||!canEditCommercialValues} value={line.allowsDocumentCostOverride?"0":percentage(discount, line.quantity * line.documentUnitPrice)} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"percentage",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/></label>
+              <label className="space-y-1.5 text-sm font-semibold text-slate-700">Precio de venta<input data-editor-row={index} data-editor-column={5} inputMode="decimal" disabled={!line.allowsDocumentCostOverride&&!canEditCommercialValues} value={line.unitPrice} onFocus={(event)=>event.currentTarget.select()} onChange={(event)=>changeEconomics(line,"price",event.target.value)} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-right font-semibold tabular-nums text-slate-950 outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10"/><span className="block text-xs font-normal text-slate-500">{line.allowsDocumentCostOverride?"Precio libre · IVA incluido.":<>Precio original con IVA: <strong className="font-semibold text-slate-700">{formatMoneyValue(line.referenceUnitPrice)}</strong></>}</span></label>
             </div>
           </article>;
         })}
@@ -273,8 +295,8 @@ export function PosLineEditorDialog({
       <DialogContent className="max-w-md" onKeyDown={event => event.stopPropagation()}>
         <DialogHeader><DialogTitle>Distribuir descuento general</DialogTitle><DialogDescription>El valor se reparte proporcionalmente al valor disponible de todas las líneas y se suma a sus descuentos.</DialogDescription></DialogHeader>
         <div className="space-y-2"><Label htmlFor="prorated-sale-discount">Valor entero del descuento</Label><Input id="prorated-sale-discount" autoFocus inputMode="numeric" value={proratedDiscount} onChange={event => { if (!/[,-]/.test(event.target.value)) setProratedDiscount(formatMoneyDraft(event.target.value)); }} onKeyDown={event => { if (["-", ",", ".", "Decimal"].includes(event.key)) event.preventDefault(); if (event.key === "Enter") { event.preventDefault(); distributeDiscount(); } }} placeholder="0" className="h-12 text-lg font-bold" /></div>
-        <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">Disponible antes del nuevo descuento: <strong>{formatMoneyValue(drafts.reduce((sum, line) => sum + Math.max(0, line.quantity * line.documentUnitPrice - parseMoneyDraft(line.discount) - line.promotionDiscount), 0))}</strong></div>
-        <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setDiscountOpen(false)}>Cancelar</Button><Button type="button" disabled={!isPositiveWholeSaleValue(parseMoneyDraft(proratedDiscount)) || parseMoneyDraft(proratedDiscount) > drafts.reduce((sum, line) => sum + Math.max(0, line.quantity * line.documentUnitPrice - parseMoneyDraft(line.discount) - line.promotionDiscount), 0)} onClick={distributeDiscount}>Distribuir en las líneas</Button></div>
+        <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">Disponible antes del nuevo descuento: <strong>{formatMoneyValue(discountableAvailable)}</strong></div>
+        <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setDiscountOpen(false)}>Cancelar</Button><Button type="button" disabled={!isPositiveWholeSaleValue(parseMoneyDraft(proratedDiscount)) || parseMoneyDraft(proratedDiscount) > discountableAvailable} onClick={distributeDiscount}>Distribuir en las líneas</Button></div>
       </DialogContent>
     </Dialog>
   </div>;
@@ -291,7 +313,7 @@ function toEditable(line: PosDraftLine): EditableLine {
   const referenceUnitPrice = line.publicUnitPrice ?? inclusive(line.unitPrice, line.taxRate);
   const discount = line.discount;
   const promotionDiscount = line.promotionDiscount ?? 0;
-  const finalUnitPrice = Math.max(
+  const finalUnitPrice = line.allowsDocumentCostOverride ? referenceUnitPrice : Math.max(
     0,
     referenceUnitPrice - (discount + promotionDiscount) / line.quantity,
   );
@@ -302,7 +324,6 @@ function toEditable(line: PosDraftLine): EditableLine {
     taxRate: line.taxRate,
     originalDocumentUnitCost: line.documentUnitCost,
     allowsDocumentCostOverride: line.allowsDocumentCostOverride,
-    originalUnitPrice: line.unitPrice,
     promotionDiscount,
     description: line.description,
     unitCost: formatMoneyValue(line.documentUnitCost),

@@ -50,7 +50,7 @@ public sealed class ServiceInvoiceWorkspaceTests
         Assert.Contains("INSERT dbo.SalesDocuments", writer, StringComparison.Ordinal);
         Assert.Contains("INSERT sales.SalesDocumentServiceLines", writer, StringComparison.Ordinal);
         Assert.Contains("INSERT dbo.AccountingPostingJobs", writer, StringComparison.Ordinal);
-        Assert.Contains("INSERT reporting.SalesReportingJobs", writer, StringComparison.Ordinal);
+        Assert.DoesNotContain("SalesReportingJobs", writer, StringComparison.Ordinal);
         Assert.DoesNotContain("DocumentProcessingJobs", writer, StringComparison.Ordinal);
         Assert.DoesNotContain("InventoryMovements", writer, StringComparison.Ordinal);
         Assert.True(

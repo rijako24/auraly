@@ -1,4 +1,3 @@
-using Auraly.Application.Sales;
 using Auraly.Contracts.Orders;
 
 namespace Auraly.Application.Orders;
@@ -6,7 +5,6 @@ namespace Auraly.Application.Orders;
 public sealed record StoredOrderCancellation(
     Guid OrderId,
     string OrderNumber,
-    long ReportingVersion,
     bool IsReplay);
 
 public interface IOrderCancellationStore
@@ -20,9 +18,7 @@ public interface IOrderCancellationStore
         CancellationToken cancellationToken);
 }
 
-public sealed class OrderCancellationService(
-    IOrderCancellationStore cancellations,
-    SalesReportingProcessingCoordinator reporting)
+public sealed class OrderCancellationService(IOrderCancellationStore cancellations)
 {
     public async Task<CancelOrderResponse> CancelAsync(
         OrderActor actor,
@@ -66,12 +62,6 @@ public sealed class OrderCancellationService(
             request.Reason.Trim(),
             idempotencyKey.Trim(),
             cancellationToken);
-        await reporting.RequestProjectionAsync(
-            actor.BusinessId,
-            orderId,
-            "SellerOrder",
-            cancellationToken,
-            result.ReportingVersion);
         return new(
             result.OrderId,
             result.OrderNumber,

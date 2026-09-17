@@ -84,7 +84,8 @@ public sealed record OrderLine(
     decimal ReservedQuantity = 0m,
     decimal TaxAmount = 0m,
     string TaxCode = "01",
-    decimal TaxRate = 0m);
+    decimal TaxRate = 0m,
+    bool IsGenericProductSnapshot = false);
 
 public sealed record OrderDetail(
     Guid OrderId,

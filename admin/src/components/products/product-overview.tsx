@@ -8,6 +8,7 @@ import { ProductPublishedPriceHistory } from "@/components/pricing/product-publi
 import { ProductFormSection } from "@/components/products/product-create-workspace";
 import { ProductImageGallery } from "@/components/products/product-image-gallery";
 import { ProductInventoryByWarehouse } from "@/components/products/product-inventory-by-warehouse";
+import { productModeCapabilities } from "@/components/products/product-generic-policy";
 import { useProductCategories } from "@/hooks/use-products";
 import { formatCurrency } from "@/lib/utils";
 import { productMerchandisingApi } from "@/services/api/product-merchandising";
@@ -20,19 +21,24 @@ export function ProductOverview({ product }: { product: Product }) {
   const canReadPriceHistory = useAuthStore((state) => state.user?.permissions.includes("pricing.history.read") ?? false);
   const detail = useQuery({ queryKey: ["catalog-product-detail", product.productId], queryFn: () => productsApi.getCatalog(product.productId) });
   const merchandising = useQuery({ queryKey: ["product-merchandising", product.productId], queryFn: () => productMerchandisingApi.get(product.productId) });
-  const pricing = useQuery({ queryKey: ["product-pricing-context", product.productId], queryFn: () => pricingApi.getProductContext(product.productId) });
+  const pricing = useQuery({
+    queryKey: ["product-pricing-context", product.productId],
+    queryFn: () => pricingApi.getProductContext(product.productId),
+    enabled: merchandising.isSuccess && !merchandising.data.isGenericProduct,
+  });
   const brands = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands });
   const units = useQuery({ queryKey: ["product-units"], queryFn: productMerchandisingApi.units });
   const taxes = useQuery({ queryKey: ["tax-profiles"], queryFn: () => taxProfilesApi.list(false) });
   const categories = useProductCategories(false);
   const info = detail.data;
   const merch = merchandising.data;
+  const capabilities = productModeCapabilities(merch?.isGenericProduct ?? info?.isGenericProduct ?? false);
   const brand = brands.data?.find((item) => item.productBrandId === merch?.productBrandId);
   const unit = units.data?.find((item) => item.code === merch?.baseUnitCode);
   const salesTax = taxes.data?.find((item) => item.taxProfileId === info?.salesTaxProfileId);
   const purchaseTax = taxes.data?.find((item) => item.taxProfileId === info?.purchaseTaxProfileId);
   const classification = useMemo(() => categoryChain(categories.data ?? [], merch?.productCategoryId ?? null), [categories.data, merch?.productCategoryId]);
-  const isLoading = detail.isLoading || merchandising.isLoading || pricing.isLoading;
+  const isLoading = detail.isLoading || merchandising.isLoading || (capabilities.catalogPricing && pricing.isLoading);
 
   if (isLoading) return <div className="space-y-5">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-44 animate-pulse rounded-2xl bg-muted" />)}</div>;
 
@@ -69,36 +75,38 @@ export function ProductOverview({ product }: { product: Product }) {
         <Summary label="Cantidad de venta" value={merch?.allowsFractionalSale ? "Permite cantidades decimales" : "Solo cantidades completas"} />
         <Summary label="Balanza" value={merch?.isWeighable ? `Habilitada${merch.scale?.scaleCode ? ` - codigo ${merch.scale.scaleCode}` : ""}` : "No utiliza balanza"} />
       </div>
-      <div className="mt-5"><ProductInventoryByWarehouse productId={product.productId} manageInventory={info?.manageInventory ?? product.manageStock} /></div>
+      {capabilities.inventory && <div className="mt-5"><ProductInventoryByWarehouse productId={product.productId} manageInventory={info?.manageInventory ?? product.manageStock} /></div>}
     </ProductFormSection>
 
-    <ProductFormSection id="product-family" icon={Link2} title="Familia de productos" description="Presentaciones, colores o tallas vinculados a este producto.">
+    {capabilities.family && <ProductFormSection id="product-family" icon={Link2} title="Familia de productos" description="Presentaciones, colores o tallas vinculados a este producto.">
       {merch?.link && <div className="rounded-xl border bg-muted/20 p-4 text-sm"><p>Producto principal: <strong>{merch.link.parentProductName}</strong></p><p className="mt-1 text-xs text-muted-foreground">Inventario {merch.link.sharesInventory ? `x ${merch.link.inventoryFactor}` : "propio"} · costo {merch.link.sharesPrice ? `x ${merch.link.priceFactor}` : "propio"} · conversión {merch.link.allowsConversion ? `x ${merch.link.conversionFactor}` : "no habilitada"}</p></div>}
       {!merch?.link && (merch?.linkedProducts?.length ?? 0) > 0 && <div className="space-y-2">{merch!.linkedProducts.map((linked) => <div key={linked.childProductId} className="rounded-lg border bg-background p-3 text-sm"><strong>{linked.childProductName}</strong><p className="text-xs text-muted-foreground">{linked.childProductCode} · inventario {linked.sharesInventory ? `x ${linked.inventoryFactor}` : "propio"} · costo {linked.sharesPrice ? `x ${linked.priceFactor}` : "propio"} · conversión {linked.allowsConversion ? `x ${linked.conversionFactor}` : "no habilitada"}</p></div>)}</div>}
       {!merch?.link && (merch?.linkedProducts?.length ?? 0) === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavía no hay productos vinculados a esta familia.</div>}
       {(merch?.linkedProducts?.some((item) => item.allowsConversion) || merch?.link?.allowsConversion) && <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4"><p className="text-xs text-emerald-900/70">Merma máxima permitida en conversiones</p><p className="mt-1 font-semibold">{merch?.conversionMaximumLossPercent ?? 0} %</p></div>}
-    </ProductFormSection>
+    </ProductFormSection>}
 
-    <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Cómo se compra y se convierte a la unidad del producto.">
+    {capabilities.supplier && <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Cómo se compra y se convierte a la unidad del producto.">
       {(info?.suppliers ?? []).length ? <div className="grid gap-3 md:grid-cols-2">{info!.suppliers!.map((supplier) => <div key={supplier.supplierId} className="rounded-xl border p-4"><div className="flex items-center justify-between gap-3"><strong>{supplier.name}</strong>{supplier.isPrimary && <Badge>Principal</Badge>}</div><p className="mt-2 text-xs text-muted-foreground">1 {supplier.purchasePresentationName} = {supplier.unitsPerPresentation} {unit?.name ?? merch?.baseUnitCode ?? "unidades"}</p><p className="mt-1 text-xs text-muted-foreground">Costo: {formatCurrency(supplier.baseUnitCost)}</p></div>)}</div> : <p className="text-sm text-muted-foreground">No tiene proveedores asociados.</p>}
-    </ProductFormSection>
+    </ProductFormSection>}
 
     <ProductFormSection id="product-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decisión explícita.">
-      {pricing.data?.isCostLinked && <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+      {capabilities.catalogPricing && pricing.data?.isCostLinked && <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
         <strong>El costo está vinculado a {pricing.data.costSourceProductName ?? "su producto principal"}.</strong>
         <p className="mt-1 text-xs">Se calcula con el factor {pricing.data.costFactor?.toLocaleString("es-CO") ?? "configurado"} y no se puede editar desde este producto. Su margen, precio preparado y precio público siguen siendo independientes.</p>
       </div>}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Summary label="IVA de venta" value={salesTax ? `${salesTax.name} - ${salesTax.rate}%` : "Sin configurar"} />
-        <Summary label="IVA de compra" value={purchaseTax ? `${purchaseTax.name} - ${purchaseTax.rate}%` : "Sin configurar"} />
-        <Summary label="Costo base" value={formatCurrency(pricing.data?.costBasisAmount ?? 0)} />
-        <Summary label="Margen" value={pricing.data?.currentMarginPercent == null ? "Sin calcular" : `${pricing.data.currentMarginPercent.toLocaleString("es-CO")}%`} />
-        <Summary label="Precio preparado" value={formatCurrency(pricing.data?.preparedSalePrice ?? 0)} />
-        <Summary label="Precio publico" value={formatCurrency(pricing.data?.publicSalePrice ?? product.unitPrice)} accent />
-        <Summary label="Tratamiento IVA compra" value={taxTreatment(info?.purchaseTaxTreatment)} />
+        {capabilities.purchaseTax && <Summary label="IVA de compra" value={purchaseTax ? `${purchaseTax.name} - ${purchaseTax.rate}%` : "Sin configurar"} />}
+        {capabilities.catalogPricing && <>
+          <Summary label="Costo base" value={formatCurrency(pricing.data?.costBasisAmount ?? 0)} />
+          <Summary label="Margen" value={pricing.data?.currentMarginPercent == null ? "Sin calcular" : `${pricing.data.currentMarginPercent.toLocaleString("es-CO")}%`} />
+          <Summary label="Precio preparado" value={formatCurrency(pricing.data?.preparedSalePrice ?? 0)} />
+          <Summary label="Precio publico" value={formatCurrency(pricing.data?.publicSalePrice ?? product.unitPrice)} accent />
+        </>}
+        {capabilities.purchaseTax && <Summary label="Tratamiento IVA compra" value={taxTreatment(info?.purchaseTaxTreatment)} />}
       </div>
     </ProductFormSection>
-    {canReadPriceHistory && <ProductPublishedPriceHistory productId={product.productId} />}
+    {canReadPriceHistory && capabilities.catalogPricing && <ProductPublishedPriceHistory productId={product.productId} />}
     <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="La portada y las demás vistas disponibles para reconocerlo.">
       <ProductImageGallery productId={product.productId} readOnly />
     </ProductFormSection>

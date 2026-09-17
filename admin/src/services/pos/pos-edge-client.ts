@@ -124,7 +124,7 @@ export type PosDraftLine = {
   net: number;
   tax: number;
   total: number;
-  publicUnitPrice?: number | null;
+  publicUnitPrice: number;
 };
 
 
@@ -172,7 +172,7 @@ export type PosSensitiveAuthorization = {
 
 export type PosDraftLineUpdate = Pick<
   PosDraftLine,
-  "lineId" | "description" | "unitPrice" | "discount" | "documentUnitCost"
+  "lineId" | "description" | "publicUnitPrice" | "discount" | "documentUnitCost"
 >;
 
 export type PosDraft = {
@@ -644,6 +644,7 @@ export interface PosClient {
   updateLines(draftId: string, lines: PosDraftLineUpdate[], includesProratedDiscount?: boolean): Promise<PosDraft>;
   selectCustomer(draftId: string, customerId: string | null, partySiteId?: string | null): Promise<PosCustomerSelection>;
   removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
+  discardUnpricedGenericLine(draftId: string, lineId: string): Promise<PosDraft>;
   cancelDraft(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   saveTemporary(
     draftId: string,
@@ -1311,6 +1312,13 @@ export class PosEdgeClient implements PosClient {
       printPreviewOpened: false,
       printCompletion,
     } satisfies PosCompleteSaleResult;
+  }
+
+  discardUnpricedGenericLine(draftId: string, lineId: string) {
+    return this.request<PosDraft>(
+      `/edge/v1/drafts/${draftId}/lines/${lineId}/discard-unpriced-generic`,
+      { method: "POST" },
+    );
   }
 
   searchIssuedSales(search = "", skip = 0, take = 50) {

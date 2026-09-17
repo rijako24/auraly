@@ -22,15 +22,22 @@ public sealed partial class SqlOnlineSalesDraftStore
               SELECT DISTINCT TRY_CONVERT(uniqueidentifier,[value]) OrderId
               FROM OPENJSON(@OrderIds)
               WHERE TRY_CONVERT(uniqueidentifier,[value]) IS NOT NULL
+            ), OrderTotals AS (
+              SELECT item.OrderId,item.BusinessId,SUM(item.LineTotal) RequestedAmount
+              FROM dbo.OrderItems item
+              JOIN Requested requested ON requested.OrderId=item.OrderId
+              GROUP BY item.OrderId,item.BusinessId
             ), Eligible AS (
               SELECT o.CustomerId,
                      COALESCE(NULLIF(MAX(o.CustomerNameSnapshot),N''),N'Cliente sin nombre') CustomerName,
                      NULLIF(MAX(o.CustomerDocumentSnapshot),N'') CustomerIdentification,
-                     SUM(o.Total) RequestedAmount
+                     SUM(orderTotal.RequestedAmount) RequestedAmount
               FROM Requested requested
               JOIN dbo.Orders o ON o.OrderId=requested.OrderId AND o.BusinessId=@BusinessId
               JOIN dbo.Businesses business ON business.BusinessId=o.BusinessId
                                         AND business.TenantId=@TenantId AND business.IsActive=1
+              JOIN OrderTotals orderTotal
+                ON orderTotal.OrderId=o.OrderId AND orderTotal.BusinessId=o.BusinessId
               LEFT JOIN dbo.PaymentTransactions payment ON payment.PaymentTransactionId=o.PaymentTransactionId
               LEFT JOIN dbo.OrderInvoiceLinks invoiceLink ON invoiceLink.OrderId=o.OrderId
               WHERE o.CustomerConfirmed=1 AND o.Status IN(2,4)

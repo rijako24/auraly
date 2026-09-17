@@ -176,6 +176,7 @@ export default function OrdersPage() {
                   failedCount: response.failedCount,
                   printError: response.printError,
                   creditValidationIssues: response.creditValidationIssues,
+                  results: response.results,
                 };
               }
             : undefined

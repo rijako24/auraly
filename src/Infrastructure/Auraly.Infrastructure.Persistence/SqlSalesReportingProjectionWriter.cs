@@ -1,5 +1,4 @@
 using System.Data;
-using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Returns;
@@ -22,162 +21,6 @@ public sealed class SqlSalesReportingProjectionWriter(
     TimeProvider timeProvider)
 {
     private const short ProjectionVersion = 2;
-
-    public async Task ProjectServiceInvoiceAsync(
-        SalesReportingSqlSession session,
-        ServiceInvoiceSnapshot value,
-        CancellationToken cancellationToken)
-    {
-        if (value.Lines.Count == 0 || value.DocumentId == Guid.Empty ||
-            value.CommercialSnapshot.DocumentType != ServiceInvoiceDocumentTypes.ServiceInvoice)
-            throw new InvalidOperationException("The service invoice reporting source is invalid.");
-        var localDate = await ResolveLocalDateAsync(
-            session, value.BusinessId, value.CommercialSnapshot.IssuedAt, cancellationToken);
-        var now = timeProvider.GetUtcNow();
-        var discount = value.Lines.Sum(line => line.DiscountAmount);
-        await using (var header = new SqlCommand("""
-            INSERT reporting.ServiceInvoiceFacts
-              (DocumentId,TenantId,BusinessId,CustomerId,PartySiteId,DocumentNumber,FiscalNumber,
-               IssuedAt,BusinessLocalDate,CurrencyCode,UntaxedAmount,DiscountAmount,
-               TaxAmount,TotalAmount,SourcePayloadHash,ProjectionVersion,ProjectedAt)
-            VALUES(@DocumentId,@TenantId,@BusinessId,@CustomerId,@PartySiteId,@DocumentNumber,@FiscalNumber,
-               @IssuedAt,@LocalDate,@Currency,@Untaxed,@Discount,@Tax,@Total,@Hash,@Version,@Now);
-            """, session.Connection, session.Transaction))
-        {
-            header.Parameters.AddWithValue("@DocumentId", value.DocumentId);
-            header.Parameters.AddWithValue("@TenantId", value.TenantId);
-            header.Parameters.AddWithValue("@BusinessId", value.BusinessId);
-            header.Parameters.AddWithValue("@CustomerId", value.CustomerId);
-            header.Parameters.AddWithValue("@PartySiteId", (object?)value.CustomerPartySiteId ?? DBNull.Value);
-            header.Parameters.AddWithValue("@DocumentNumber", value.DocumentNumber.FullNumber);
-            header.Parameters.AddWithValue("@FiscalNumber", value.FiscalSnapshot.FiscalNumber);
-            header.Parameters.AddWithValue("@IssuedAt", value.CommercialSnapshot.IssuedAt);
-            header.Parameters.Add("@LocalDate", SqlDbType.Date).Value = localDate.Date.ToDateTime(TimeOnly.MinValue);
-            header.Parameters.AddWithValue("@Currency", value.UblSnapshot.CurrencyCode);
-            AddDecimal(header, "@Untaxed", value.CommercialSnapshot.UntaxedAmount, 19, 4);
-            AddDecimal(header, "@Discount", discount, 19, 4);
-            AddDecimal(header, "@Tax", value.CommercialSnapshot.TaxAmount, 19, 4);
-            AddDecimal(header, "@Total", value.CommercialSnapshot.PayableAmount, 19, 4);
-            header.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = ServiceInvoiceSnapshotSerializer.Hash(value);
-            header.Parameters.AddWithValue("@Version", ProjectionVersion);
-            header.Parameters.AddWithValue("@Now", now);
-            await header.ExecuteNonQueryAsync(cancellationToken);
-        }
-        foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
-        {
-            await using var detail = new SqlCommand("""
-                INSERT reporting.ServiceInvoiceLineFacts
-                  (DocumentId,LineNumber,TenantId,BusinessId,CustomerId,PartySiteId,BillableServiceId,
-                   ServiceCode,Description,Quantity,UntaxedAmount,DiscountAmount,TaxAmount,
-                   TotalAmount,BusinessLocalDate,ProjectedAt)
-                VALUES(@DocumentId,@Line,@TenantId,@BusinessId,@CustomerId,@PartySiteId,@ServiceId,
-                   @Code,@Description,@Quantity,@Untaxed,@Discount,@Tax,@Total,@LocalDate,@Now);
-                """, session.Connection, session.Transaction);
-            detail.Parameters.AddWithValue("@DocumentId", value.DocumentId);
-            detail.Parameters.AddWithValue("@Line", line.LineNumber);
-            detail.Parameters.AddWithValue("@TenantId", value.TenantId);
-            detail.Parameters.AddWithValue("@BusinessId", value.BusinessId);
-            detail.Parameters.AddWithValue("@CustomerId", value.CustomerId);
-            detail.Parameters.AddWithValue("@PartySiteId", (object?)value.CustomerPartySiteId ?? DBNull.Value);
-            detail.Parameters.AddWithValue("@ServiceId", line.BillableServiceId);
-            detail.Parameters.AddWithValue("@Code", line.ServiceCode);
-            detail.Parameters.AddWithValue("@Description", line.Description);
-            AddDecimal(detail, "@Quantity", line.Quantity, 19, 6);
-            AddDecimal(detail, "@Untaxed", line.UntaxedAmount, 19, 4);
-            AddDecimal(detail, "@Discount", line.DiscountAmount, 19, 4);
-            AddDecimal(detail, "@Tax", line.TaxAmount, 19, 4);
-            AddDecimal(detail, "@Total", line.LineTotal, 19, 4);
-            detail.Parameters.Add("@LocalDate", SqlDbType.Date).Value = localDate.Date.ToDateTime(TimeOnly.MinValue);
-            detail.Parameters.AddWithValue("@Now", now);
-            await detail.ExecuteNonQueryAsync(cancellationToken);
-        }
-    }
-
-    public async Task ProjectOrderAsync(SalesReportingSqlSession session,string payload,long sourceVersion,CancellationToken ct)
-    {
-        var v=JsonSerializer.Deserialize<CommercialOrderProjectionSource>(payload,new JsonSerializerOptions(JsonSerializerDefaults.Web))
-            ?? throw new InvalidOperationException("The seller order reporting source is invalid.");
-        if(v.PartySiteId is null)
-            throw new InvalidOperationException("The seller order reporting source does not contain a customer site.");
-        await using var c=new SqlCommand("""
-          MERGE reporting.CommercialReportOrderFacts WITH(HOLDLOCK) AS target
-          USING (SELECT @Id AS OrderId) AS source ON target.OrderId=source.OrderId
-          WHEN MATCHED AND target.SourceVersion<@SourceVersion THEN UPDATE SET
-            CreatedDate=@Date,CreatedAt=@At,OrderNumber=@Number,SellerId=@Seller,SellerName=@SellerName,
-            CustomerId=@Customer,CustomerName=@CustomerName,RouteId=@Route,RouteName=@RouteName,
-            ZoneId=@ZoneId,ZoneName=@ZoneName,RouteStopId=@RouteStopId,PartySiteId=@PartySiteId,
-            SourceChannel=@SourceChannel,CapturedOffline=@CapturedOffline,TotalAmount=@Total,
-            Status=@Status,RequiresStockReview=@Review,ConfirmedAt=@ConfirmedAt,CancelledAt=@CancelledAt,
-            InvoiceDocumentId=COALESCE(@InvoiceDocumentId,target.InvoiceDocumentId),
-            InvoicedAt=COALESCE(@InvoicedAt,target.InvoicedAt),SourceVersion=@SourceVersion,
-            ProjectionVersion=@Version,ProjectedAt=SYSDATETIMEOFFSET()
-          WHEN NOT MATCHED THEN INSERT(OrderId,TenantId,BusinessId,CreatedDate,CreatedAt,OrderNumber,
-            SellerId,SellerName,CustomerId,CustomerName,RouteId,RouteName,ZoneId,ZoneName,RouteStopId,PartySiteId,
-            SourceChannel,CapturedOffline,TotalAmount,Status,RequiresStockReview,ConfirmedAt,CancelledAt,
-            InvoiceDocumentId,InvoicedAt,SourceVersion,ProjectionVersion,ProjectedAt)
-          VALUES(@Id,@Tenant,@Business,@Date,@At,@Number,@Seller,@SellerName,@Customer,@CustomerName,
-            @Route,@RouteName,@ZoneId,@ZoneName,@RouteStopId,@PartySiteId,@SourceChannel,@CapturedOffline,
-            @Total,@Status,@Review,@ConfirmedAt,@CancelledAt,@InvoiceDocumentId,@InvoicedAt,
-            @SourceVersion,@Version,SYSDATETIMEOFFSET());
-          """,session.Connection,session.Transaction);
-        c.Parameters.AddWithValue("@Id",v.OrderId);c.Parameters.AddWithValue("@Tenant",v.TenantId);c.Parameters.AddWithValue("@Business",v.BusinessId);
-        c.Parameters.Add("@Date",SqlDbType.Date).Value=v.CreatedDate.ToDateTime(TimeOnly.MinValue);c.Parameters.AddWithValue("@At",v.CreatedAt);
-        c.Parameters.AddWithValue("@Number",v.OrderNumber);c.Parameters.AddWithValue("@Seller",(object?)v.SellerId??DBNull.Value);c.Parameters.AddWithValue("@SellerName",(object?)v.SellerName??DBNull.Value);
-        c.Parameters.AddWithValue("@Customer",v.CustomerId);c.Parameters.AddWithValue("@CustomerName",v.CustomerName);c.Parameters.AddWithValue("@Route",(object?)v.RouteId??DBNull.Value);
-        c.Parameters.AddWithValue("@RouteName",(object?)v.RouteName??DBNull.Value);c.Parameters.AddWithValue("@ZoneId",(object?)v.ZoneId??DBNull.Value);
-        c.Parameters.AddWithValue("@ZoneName",(object?)v.ZoneName??DBNull.Value);c.Parameters.AddWithValue("@RouteStopId",(object?)v.RouteStopId??DBNull.Value);
-        c.Parameters.AddWithValue("@PartySiteId",(object?)v.PartySiteId??DBNull.Value);c.Parameters.AddWithValue("@SourceChannel",v.SourceChannel);
-        c.Parameters.AddWithValue("@CapturedOffline",v.CapturedOffline);c.Parameters.AddWithValue("@ConfirmedAt",(object?)v.ConfirmedAt??DBNull.Value);
-        c.Parameters.AddWithValue("@CancelledAt",(object?)v.CancelledAt??DBNull.Value);c.Parameters.AddWithValue("@InvoiceDocumentId",(object?)v.InvoiceDocumentId??DBNull.Value);
-        c.Parameters.AddWithValue("@InvoicedAt",(object?)v.InvoicedAt??DBNull.Value);c.Parameters.AddWithValue("@SourceVersion",sourceVersion);
-        AddDecimal(c,"@Total",v.TotalAmount,19,4);c.Parameters.AddWithValue("@Status",v.Status);c.Parameters.AddWithValue("@Review",v.RequiresStockReview);
-        c.Parameters.AddWithValue("@Version",ProjectionVersion);await c.ExecuteNonQueryAsync(ct);
-    }
-
-    public async Task ProjectVisitAsync(SalesReportingSqlSession session,string payload,
-        long sourceVersion,CancellationToken cancellationToken)
-    {
-        var value=JsonSerializer.Deserialize<CommercialVisitProjectionSource>(payload,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))
-            ?? throw new InvalidOperationException("The commercial visit reporting source is invalid.");
-        await using var command=new SqlCommand("""
-            INSERT reporting.CommercialReportVisitFacts
-              (RouteVisitId,TenantId,BusinessId,VisitDate,OccurredAt,RouteId,RouteCode,RouteName,
-               ZoneId,ZoneName,SellerId,SellerName,RouteStopId,CustomerId,CustomerName,PartySiteId,
-               Status,HasOrder,OrderId,SkipReason,VisitObservation,RecordedByUserId,
-               ProjectionVersion,SourceVersion,ProjectedAt)
-            VALUES(@VisitId,@TenantId,@BusinessId,@VisitDate,@OccurredAt,@RouteId,@RouteCode,@RouteName,
-               @ZoneId,@ZoneName,@SellerId,@SellerName,@StopId,@CustomerId,@CustomerName,@SiteId,
-               @Status,@HasOrder,@OrderId,@Reason,@Observation,@RecordedBy,@ProjectionVersion,@SourceVersion,@Now);
-            """,session.Connection,session.Transaction);
-        command.Parameters.AddWithValue("@VisitId",value.RouteVisitId);
-        command.Parameters.AddWithValue("@TenantId",value.TenantId);
-        command.Parameters.AddWithValue("@BusinessId",value.BusinessId);
-        command.Parameters.Add("@VisitDate",SqlDbType.Date).Value=value.VisitDate.ToDateTime(TimeOnly.MinValue);
-        command.Parameters.AddWithValue("@OccurredAt",value.OccurredAt);
-        command.Parameters.AddWithValue("@RouteId",value.RouteId);
-        command.Parameters.AddWithValue("@RouteCode",value.RouteCode);
-        command.Parameters.AddWithValue("@RouteName",value.RouteName);
-        command.Parameters.AddWithValue("@ZoneId",(object?)value.ZoneId??DBNull.Value);
-        command.Parameters.AddWithValue("@ZoneName",(object?)value.ZoneName??DBNull.Value);
-        command.Parameters.AddWithValue("@SellerId",value.SellerId);
-        command.Parameters.AddWithValue("@SellerName",value.SellerName);
-        command.Parameters.AddWithValue("@StopId",value.RouteStopId);
-        command.Parameters.AddWithValue("@CustomerId",value.CustomerId);
-        command.Parameters.AddWithValue("@CustomerName",value.CustomerName);
-        command.Parameters.AddWithValue("@SiteId",value.PartySiteId);
-        command.Parameters.AddWithValue("@Status",value.Status);
-        command.Parameters.AddWithValue("@HasOrder",value.OrderId.HasValue);
-        command.Parameters.AddWithValue("@OrderId",(object?)value.OrderId??DBNull.Value);
-        command.Parameters.AddWithValue("@Reason",(object?)value.SkipReason??DBNull.Value);
-        command.Parameters.AddWithValue("@Observation",(object?)value.VisitObservation??DBNull.Value);
-        command.Parameters.AddWithValue("@RecordedBy",value.RecordedByUserId);
-        command.Parameters.AddWithValue("@ProjectionVersion",ProjectionVersion);
-        command.Parameters.AddWithValue("@SourceVersion",sourceVersion);
-        command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
-        if(await command.ExecuteNonQueryAsync(cancellationToken)!=1)
-            throw new InvalidOperationException("The commercial visit could not be projected.");
-    }
 
     public async Task ProjectSaleAsync(
         SalesReportingSqlSession session,
@@ -202,9 +45,6 @@ public sealed class SqlSalesReportingProjectionWriter(
 
         await InsertSaleDocumentAsync(
             session, value, seller, localDate, recognizedCost, now, cancellationToken);
-        if(value.SourceOrderId is not null)
-            await MarkOrderInvoicedAsync(session,value.SourceOrderId.Value,value.DocumentId,
-                value.CommercialSnapshot.IssuedAt,cancellationToken);
         await InsertSalePaymentFactsAsync(session, value, localDate.Date, now, cancellationToken);
         await InsertSaleTaxFactsAsync(session, value, localDate.Date, now, cancellationToken);
         await ApplyDimensionDeltasAsync(session, value.BusinessId, value.DocumentId,
@@ -225,7 +65,7 @@ public sealed class SqlSalesReportingProjectionWriter(
             netTax: value.CommercialSnapshot.TaxAmount,
             netTotal: value.CommercialSnapshot.PayableAmount,
             netCost: recognizedCost,
-            grossProfit: value.CommercialSnapshot.UntaxedAmount - recognizedCost,
+            grossProfit: value.CommercialSnapshot.PayableAmount - recognizedCost,
             creditSales: credit,
             collected: value.Payments.Sum(payment => payment.Amount),
             refunded: 0,
@@ -278,7 +118,7 @@ public sealed class SqlSalesReportingProjectionWriter(
             netTax: -value.TaxAmount,
             netTotal: -value.TotalAmount,
             netCost: -returnedCost,
-            grossProfit: returnedCost - value.UntaxedAmount,
+            grossProfit: returnedCost - value.TotalAmount,
             creditSales: 0,
             collected: 0,
             refunded: value.EconomicResolution == ReturnEconomicResolutions.Refund
@@ -291,137 +131,176 @@ public sealed class SqlSalesReportingProjectionWriter(
             SalesReturnDocumentTypes.SalesReturn, now, cancellationToken);
     }
 
-    public async Task ProjectCoverageAsync(SalesReportingSqlSession session,string payload,
-        long sourceVersion,CancellationToken cancellationToken)
+    public Task ProjectGoodsReceiptAsync(
+        SalesReportingSqlSession session,
+        GoodsReceiptDocumentPayload value,
+        CancellationToken cancellationToken) =>
+        ProjectPurchaseAsync(
+            session, value.TenantId, value.BusinessId, value.DocumentId,
+            "GoodsReceipt", null, value.DocumentNumber, value.ReceivedAt,
+            value.SupplierId, value.SupplierNameSnapshot, value.WarehouseId,
+            value.WarehouseNameSnapshot, value.CurrencyCode, value.NetAmount,
+            value.TaxAmount, value.GrandTotal,
+            value.Lines.Select(line => new PurchaseProjectionLine(
+                line.LineNumber, null, line.ProductId, line.Description,
+                line.Quantity, line.UnitCost, line.DiscountAmount,
+                line.NetAmount, line.TaxAmount, line.LineTotal)).ToArray(),
+            1, cancellationToken);
+
+    public Task ProjectPurchaseReturnAsync(
+        SalesReportingSqlSession session,
+        PurchaseReturnDocumentPayload value,
+        CancellationToken cancellationToken) =>
+        ProjectPurchaseAsync(
+            session, value.TenantId, value.BusinessId, value.ReturnId,
+            "PurchaseReturn", value.OriginalGoodsReceiptId, value.DocumentNumber,
+            value.ReturnedAt, value.SupplierId, value.SupplierNameSnapshot,
+            value.WarehouseId, value.WarehouseNameSnapshot, value.CurrencyCode,
+            value.NetAmount, value.TaxAmount, value.TotalAmount,
+            value.Lines.Select(line => new PurchaseProjectionLine(
+                line.LineNumber, line.OriginalLineNumber, line.ProductId,
+                line.Description, line.Quantity, line.UnitCost,
+                line.DiscountAmount, line.NetAmount, line.TaxAmount,
+                line.LineTotal)).ToArray(), -1, cancellationToken);
+
+    private async Task ProjectPurchaseAsync(
+        SalesReportingSqlSession session,
+        Guid tenantId,
+        Guid businessId,
+        Guid documentId,
+        string documentType,
+        Guid? originalReceiptId,
+        string documentNumber,
+        DateTimeOffset occurredAt,
+        Guid supplierId,
+        string? supplierName,
+        Guid warehouseId,
+        string? warehouseName,
+        string currencyCode,
+        decimal net,
+        decimal tax,
+        decimal total,
+        IReadOnlyList<PurchaseProjectionLine> lines,
+        int sign,
+        CancellationToken cancellationToken)
     {
-        var value=JsonSerializer.Deserialize<CommercialCoveragePlanProjectionSource>(payload,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))
-            ?? throw new InvalidOperationException("The commercial coverage source is invalid.");
-        var effectiveDate=(await ResolveLocalDateAsync(session,value.BusinessId,value.EffectiveAt,cancellationToken)).Date;
-        await using(var close=new SqlCommand("""
-          DELETE reporting.CommercialCoverageAssignmentFacts
-          WHERE BusinessId=@BusinessId AND RouteId=@RouteId AND ValidFromBusinessDate=@EffectiveDate;
-          UPDATE reporting.CommercialCoverageAssignmentFacts SET ValidToBusinessDateExclusive=@EffectiveDate
-          WHERE BusinessId=@BusinessId AND RouteId=@RouteId AND ValidToBusinessDateExclusive IS NULL
-            AND ValidFromBusinessDate<@EffectiveDate;
-          """,session.Connection,session.Transaction))
+        var local = await ResolveLocalDateAsync(
+            session, businessId, occurredAt, cancellationToken);
+        var names = await ResolvePurchaseNamesAsync(
+            session, supplierId, warehouseId, supplierName, warehouseName,
+            cancellationToken);
+        await using (var document = new SqlCommand("""
+            INSERT reporting.PurchaseReportDocuments
+              (SourceDocumentId,TenantId,BusinessId,SourceDocumentType,OriginalGoodsReceiptId,
+               DocumentNumber,OccurredAt,BusinessLocalDate,TimeZoneId,SupplierId,SupplierName,
+               WarehouseId,WarehouseName,CurrencyCode,NetAmount,TaxAmount,TotalAmount,
+               ProjectionVersion,ProjectedAt)
+            VALUES(@Id,@Tenant,@Business,@Type,@Original,@Number,@At,@Date,@TimeZone,
+               @Supplier,@SupplierName,@Warehouse,@WarehouseName,@Currency,@Net,@Tax,@Total,
+               @Version,SYSDATETIMEOFFSET());
+            """, session.Connection, session.Transaction))
         {
-            close.Parameters.AddWithValue("@BusinessId",value.BusinessId);close.Parameters.AddWithValue("@RouteId",value.RouteId);
-            close.Parameters.Add("@EffectiveDate",SqlDbType.Date).Value=effectiveDate.ToDateTime(TimeOnly.MinValue);
-            await close.ExecuteNonQueryAsync(cancellationToken);
+            document.Parameters.AddWithValue("@Id", documentId);
+            document.Parameters.AddWithValue("@Tenant", tenantId);
+            document.Parameters.AddWithValue("@Business", businessId);
+            document.Parameters.AddWithValue("@Type", documentType);
+            document.Parameters.AddWithValue("@Original", (object?)originalReceiptId ?? DBNull.Value);
+            document.Parameters.AddWithValue("@Number", documentNumber);
+            document.Parameters.AddWithValue("@At", occurredAt);
+            document.Parameters.Add("@Date", SqlDbType.Date).Value = local.Date.ToDateTime(TimeOnly.MinValue);
+            document.Parameters.AddWithValue("@TimeZone", local.TimeZoneId);
+            document.Parameters.AddWithValue("@Supplier", supplierId);
+            document.Parameters.AddWithValue("@SupplierName", names.Supplier);
+            document.Parameters.AddWithValue("@Warehouse", warehouseId);
+            document.Parameters.AddWithValue("@WarehouseName", names.Warehouse);
+            document.Parameters.AddWithValue("@Currency", currencyCode);
+            AddDecimal(document, "@Net", sign * net, 19, 4);
+            AddDecimal(document, "@Tax", sign * tax, 19, 4);
+            AddDecimal(document, "@Total", sign * total, 19, 4);
+            document.Parameters.AddWithValue("@Version", ProjectionVersion);
+            await document.ExecuteNonQueryAsync(cancellationToken);
         }
-        if(!value.IsActive)
+
+        foreach (var line in lines)
         {
-            await UpdateCheckpointAsync(session,value.BusinessId,value.RouteId,"CommercialCoveragePlan",timeProvider.GetUtcNow(),cancellationToken);
-            return;
+            await using var item = new SqlCommand("""
+                INSERT reporting.PurchaseReportLineFacts
+                  (PurchaseFactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+                   SourceLineNumber,OriginalGoodsReceiptId,OriginalLineNumber,OccurredAt,
+                   BusinessLocalDate,SupplierId,SupplierName,WarehouseId,WarehouseName,
+                   ProductId,ProductName,Quantity,UnitCost,DiscountAmount,NetAmount,TaxAmount,
+                   TotalAmount,CurrencyCode,ProjectionVersion,ProjectedAt)
+                VALUES(@Fact,@Tenant,@Business,@Document,@Type,@Line,@Original,@OriginalLine,
+                   @At,@Date,@Supplier,@SupplierName,@Warehouse,@WarehouseName,@Product,
+                   @ProductName,@Quantity,@UnitCost,@Discount,@Net,@Tax,@Total,@Currency,
+                   @Version,SYSDATETIMEOFFSET());
+                """, session.Connection, session.Transaction);
+            item.Parameters.AddWithValue("@Fact", ids.NewId());
+            item.Parameters.AddWithValue("@Tenant", tenantId);
+            item.Parameters.AddWithValue("@Business", businessId);
+            item.Parameters.AddWithValue("@Document", documentId);
+            item.Parameters.AddWithValue("@Type", documentType);
+            item.Parameters.AddWithValue("@Line", line.LineNumber);
+            item.Parameters.AddWithValue("@Original", (object?)originalReceiptId ?? DBNull.Value);
+            item.Parameters.AddWithValue("@OriginalLine", (object?)line.OriginalLineNumber ?? DBNull.Value);
+            item.Parameters.AddWithValue("@At", occurredAt);
+            item.Parameters.Add("@Date", SqlDbType.Date).Value = local.Date.ToDateTime(TimeOnly.MinValue);
+            item.Parameters.AddWithValue("@Supplier", supplierId);
+            item.Parameters.AddWithValue("@SupplierName", names.Supplier);
+            item.Parameters.AddWithValue("@Warehouse", warehouseId);
+            item.Parameters.AddWithValue("@WarehouseName", names.Warehouse);
+            item.Parameters.AddWithValue("@Product", line.ProductId);
+            item.Parameters.AddWithValue("@ProductName", line.ProductName);
+            AddDecimal(item, "@Quantity", sign * line.Quantity, 19, 6);
+            AddDecimal(item, "@UnitCost", line.UnitCost, 19, 6);
+            AddDecimal(item, "@Discount", sign * line.Discount, 19, 4);
+            AddDecimal(item, "@Net", sign * line.Net, 19, 4);
+            AddDecimal(item, "@Tax", sign * line.Tax, 19, 4);
+            AddDecimal(item, "@Total", sign * line.Total, 19, 4);
+            item.Parameters.AddWithValue("@Currency", currencyCode);
+            item.Parameters.AddWithValue("@Version", ProjectionVersion);
+            await item.ExecuteNonQueryAsync(cancellationToken);
         }
-        foreach(var schedule in value.Schedules)
-        foreach(var stop in value.Stops)
-        {
-            await using var insert=new SqlCommand("""
-              INSERT reporting.CommercialCoverageAssignmentFacts
-              (CoverageAssignmentFactId,TenantId,BusinessId,RouteId,RouteCode,RouteName,RouteScheduleId,DayOfWeek,RunOrder,
-               PlannedStartTime,ZoneId,ZoneName,SellerId,SellerName,RouteStopId,CustomerId,CustomerName,PartySiteId,
-               PartySiteName,Sequence,PlannedVisitTime,CityName,Neighborhood,Latitude,Longitude,TimeZoneId,
-               ValidFromBusinessDate,SourceVersion,ProjectionVersion,ProjectedAt)
-              VALUES(@FactId,@TenantId,@BusinessId,@RouteId,@RouteCode,@RouteName,@ScheduleId,@Day,@RunOrder,
-               @StartTime,@ZoneId,@ZoneName,@SellerId,@SellerName,@StopId,@CustomerId,@CustomerName,@SiteId,
-               @SiteName,@Sequence,@VisitTime,@City,@Neighborhood,@Latitude,@Longitude,@TimeZoneId,
-               @EffectiveDate,@SourceVersion,@ProjectionVersion,SYSDATETIMEOFFSET());
-              """,session.Connection,session.Transaction);
-            insert.Parameters.AddWithValue("@FactId",ids.NewId());insert.Parameters.AddWithValue("@TenantId",value.TenantId);
-            insert.Parameters.AddWithValue("@BusinessId",value.BusinessId);insert.Parameters.AddWithValue("@RouteId",value.RouteId);
-            insert.Parameters.AddWithValue("@RouteCode",value.RouteCode);insert.Parameters.AddWithValue("@RouteName",value.RouteName);
-            insert.Parameters.AddWithValue("@ScheduleId",schedule.RouteScheduleId);insert.Parameters.AddWithValue("@Day",schedule.DayOfWeek);
-            insert.Parameters.AddWithValue("@RunOrder",schedule.RunOrder);insert.Parameters.AddWithValue("@StartTime",(object?)schedule.PlannedStartTime??DBNull.Value);
-            insert.Parameters.AddWithValue("@ZoneId",(object?)value.ZoneId??DBNull.Value);insert.Parameters.AddWithValue("@ZoneName",(object?)value.ZoneName??DBNull.Value);
-            insert.Parameters.AddWithValue("@SellerId",value.SellerId);insert.Parameters.AddWithValue("@SellerName",value.SellerName);
-            insert.Parameters.AddWithValue("@StopId",stop.RouteStopId);insert.Parameters.AddWithValue("@CustomerId",stop.CustomerId);
-            insert.Parameters.AddWithValue("@CustomerName",stop.CustomerName);insert.Parameters.AddWithValue("@SiteId",stop.PartySiteId);
-            insert.Parameters.AddWithValue("@SiteName",stop.PartySiteName);insert.Parameters.AddWithValue("@Sequence",stop.Sequence);
-            insert.Parameters.AddWithValue("@VisitTime",(object?)stop.PlannedVisitTime??DBNull.Value);insert.Parameters.AddWithValue("@City",(object?)stop.CityName??DBNull.Value);
-            insert.Parameters.AddWithValue("@Neighborhood",(object?)stop.Neighborhood??DBNull.Value);AddNullableDecimal(insert,"@Latitude",stop.Latitude,9,6);
-            AddNullableDecimal(insert,"@Longitude",stop.Longitude,9,6);insert.Parameters.AddWithValue("@TimeZoneId",value.TimeZoneId);
-            insert.Parameters.Add("@EffectiveDate",SqlDbType.Date).Value=effectiveDate.ToDateTime(TimeOnly.MinValue);
-            insert.Parameters.AddWithValue("@SourceVersion",sourceVersion);insert.Parameters.AddWithValue("@ProjectionVersion",ProjectionVersion);
-            await insert.ExecuteNonQueryAsync(cancellationToken);
-        }
-        await UpdateCheckpointAsync(session,value.BusinessId,value.RouteId,"CommercialCoveragePlan",timeProvider.GetUtcNow(),cancellationToken);
+        await UpdateCheckpointAsync(
+            session, businessId, documentId, documentType,
+            timeProvider.GetUtcNow(), cancellationToken);
     }
 
-    public Task ProjectGoodsReceiptAsync(SalesReportingSqlSession session,GoodsReceiptDocumentPayload value,
-        CancellationToken cancellationToken)=>ProjectPurchaseAsync(session,value.TenantId,value.BusinessId,value.DocumentId,
-            "GoodsReceipt",null,value.DocumentNumber,value.ReceivedAt,value.SupplierId,value.SupplierNameSnapshot,
-            value.WarehouseId,value.WarehouseNameSnapshot,value.CurrencyCode,value.NetAmount,value.TaxAmount,value.GrandTotal,
-            value.Lines.Select(x=>new PurchaseProjectionLine(x.LineNumber,null,x.ProductId,x.Description,x.Quantity,x.UnitCost,
-                x.DiscountAmount,x.NetAmount,x.TaxAmount,x.LineTotal)).ToArray(),1,cancellationToken);
-
-    public Task ProjectPurchaseReturnAsync(SalesReportingSqlSession session,PurchaseReturnDocumentPayload value,
-        CancellationToken cancellationToken)=>ProjectPurchaseAsync(session,value.TenantId,value.BusinessId,value.ReturnId,
-            "PurchaseReturn",value.OriginalGoodsReceiptId,value.DocumentNumber,value.ReturnedAt,value.SupplierId,value.SupplierNameSnapshot,
-            value.WarehouseId,value.WarehouseNameSnapshot,value.CurrencyCode,value.NetAmount,value.TaxAmount,value.TotalAmount,
-            value.Lines.Select(x=>new PurchaseProjectionLine(x.LineNumber,x.OriginalLineNumber,x.ProductId,x.Description,x.Quantity,x.UnitCost,
-                x.DiscountAmount,x.NetAmount,x.TaxAmount,x.LineTotal)).ToArray(),-1,cancellationToken);
-
-    private async Task ProjectPurchaseAsync(SalesReportingSqlSession session,Guid tenantId,Guid businessId,
-        Guid documentId,string documentType,Guid? originalReceiptId,string documentNumber,DateTimeOffset occurredAt,
-        Guid supplierId,string? supplierName,Guid warehouseId,string? warehouseName,string currencyCode,
-        decimal net,decimal tax,decimal total,IReadOnlyList<PurchaseProjectionLine> lines,int sign,CancellationToken ct)
+    private static async Task<(string Supplier, string Warehouse)> ResolvePurchaseNamesAsync(
+        SalesReportingSqlSession session,
+        Guid supplierId,
+        Guid warehouseId,
+        string? supplierName,
+        string? warehouseName,
+        CancellationToken cancellationToken)
     {
-        var local=await ResolveLocalDateAsync(session,businessId,occurredAt,ct);
-        var names=await ResolvePurchaseNamesAsync(session,supplierId,warehouseId,supplierName,warehouseName,ct);
-        await using(var document=new SqlCommand("""
-          INSERT reporting.PurchaseReportDocuments(SourceDocumentId,TenantId,BusinessId,SourceDocumentType,OriginalGoodsReceiptId,
-            DocumentNumber,OccurredAt,BusinessLocalDate,TimeZoneId,SupplierId,SupplierName,WarehouseId,WarehouseName,CurrencyCode,
-            NetAmount,TaxAmount,TotalAmount,ProjectionVersion,ProjectedAt)
-          VALUES(@Id,@Tenant,@Business,@Type,@Original,@Number,@At,@Date,@TimeZone,@Supplier,@SupplierName,@Warehouse,@WarehouseName,
-            @Currency,@Net,@Tax,@Total,@Version,SYSDATETIMEOFFSET());
-          """,session.Connection,session.Transaction))
-        {
-            document.Parameters.AddWithValue("@Id",documentId);document.Parameters.AddWithValue("@Tenant",tenantId);document.Parameters.AddWithValue("@Business",businessId);
-            document.Parameters.AddWithValue("@Type",documentType);document.Parameters.AddWithValue("@Original",(object?)originalReceiptId??DBNull.Value);
-            document.Parameters.AddWithValue("@Number",documentNumber);document.Parameters.AddWithValue("@At",occurredAt);
-            document.Parameters.Add("@Date",SqlDbType.Date).Value=local.Date.ToDateTime(TimeOnly.MinValue);document.Parameters.AddWithValue("@TimeZone",local.TimeZoneId);
-            document.Parameters.AddWithValue("@Supplier",supplierId);document.Parameters.AddWithValue("@SupplierName",names.Supplier);
-            document.Parameters.AddWithValue("@Warehouse",warehouseId);document.Parameters.AddWithValue("@WarehouseName",names.Warehouse);
-            document.Parameters.AddWithValue("@Currency",currencyCode);AddDecimal(document,"@Net",sign*net,19,4);AddDecimal(document,"@Tax",sign*tax,19,4);
-            AddDecimal(document,"@Total",sign*total,19,4);document.Parameters.AddWithValue("@Version",ProjectionVersion);await document.ExecuteNonQueryAsync(ct);
-        }
-        foreach(var line in lines)
-        {
-            await using var item=new SqlCommand("""
-              INSERT reporting.PurchaseReportLineFacts(PurchaseFactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
-                SourceLineNumber,OriginalGoodsReceiptId,OriginalLineNumber,OccurredAt,BusinessLocalDate,SupplierId,SupplierName,
-                WarehouseId,WarehouseName,ProductId,ProductName,Quantity,UnitCost,DiscountAmount,NetAmount,TaxAmount,TotalAmount,
-                CurrencyCode,ProjectionVersion,ProjectedAt)
-              VALUES(@Fact,@Tenant,@Business,@Document,@Type,@Line,@Original,@OriginalLine,@At,@Date,@Supplier,@SupplierName,
-                @Warehouse,@WarehouseName,@Product,@ProductName,@Quantity,@UnitCost,@Discount,@Net,@Tax,@Total,@Currency,@Version,SYSDATETIMEOFFSET());
-              """,session.Connection,session.Transaction);
-            item.Parameters.AddWithValue("@Fact",ids.NewId());item.Parameters.AddWithValue("@Tenant",tenantId);item.Parameters.AddWithValue("@Business",businessId);
-            item.Parameters.AddWithValue("@Document",documentId);item.Parameters.AddWithValue("@Type",documentType);item.Parameters.AddWithValue("@Line",line.LineNumber);
-            item.Parameters.AddWithValue("@Original",(object?)originalReceiptId??DBNull.Value);item.Parameters.AddWithValue("@OriginalLine",(object?)line.OriginalLineNumber??DBNull.Value);
-            item.Parameters.AddWithValue("@At",occurredAt);item.Parameters.Add("@Date",SqlDbType.Date).Value=local.Date.ToDateTime(TimeOnly.MinValue);
-            item.Parameters.AddWithValue("@Supplier",supplierId);item.Parameters.AddWithValue("@SupplierName",names.Supplier);item.Parameters.AddWithValue("@Warehouse",warehouseId);
-            item.Parameters.AddWithValue("@WarehouseName",names.Warehouse);item.Parameters.AddWithValue("@Product",line.ProductId);item.Parameters.AddWithValue("@ProductName",line.ProductName);
-            AddDecimal(item,"@Quantity",sign*line.Quantity,19,6);AddDecimal(item,"@UnitCost",line.UnitCost,19,6);AddDecimal(item,"@Discount",sign*line.Discount,19,4);
-            AddDecimal(item,"@Net",sign*line.Net,19,4);AddDecimal(item,"@Tax",sign*line.Tax,19,4);AddDecimal(item,"@Total",sign*line.Total,19,4);
-            item.Parameters.AddWithValue("@Currency",currencyCode);item.Parameters.AddWithValue("@Version",ProjectionVersion);await item.ExecuteNonQueryAsync(ct);
-        }
-        await UpdateCheckpointAsync(session,businessId,documentId,documentType,timeProvider.GetUtcNow(),ct);
+        await using var command = new SqlCommand("""
+            SELECT supplier.Name,warehouse.Name
+            FROM dbo.Suppliers supplier
+            CROSS JOIN dbo.Warehouses warehouse
+            WHERE supplier.SupplierId=@SupplierId AND warehouse.WarehouseId=@WarehouseId;
+            """, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@SupplierId", supplierId);
+        command.Parameters.AddWithValue("@WarehouseId", warehouseId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) &&
+            (supplierName is null || warehouseName is null))
+            throw new InvalidOperationException(
+                "The purchase reporting dimensions could not be resolved.");
+        return (supplierName ?? reader.GetString(0), warehouseName ?? reader.GetString(1));
     }
 
-    private static async Task<(string Supplier,string Warehouse)> ResolvePurchaseNamesAsync(SalesReportingSqlSession session,
-        Guid supplierId,Guid warehouseId,string? supplierName,string? warehouseName,CancellationToken ct)
-    {
-        await using var command=new SqlCommand("SELECT s.Name,w.Name FROM dbo.Suppliers s CROSS JOIN dbo.Warehouses w WHERE s.SupplierId=@SupplierId AND w.WarehouseId=@WarehouseId;",session.Connection,session.Transaction);
-        command.Parameters.AddWithValue("@SupplierId",supplierId);command.Parameters.AddWithValue("@WarehouseId",warehouseId);
-        await using var reader=await command.ExecuteReaderAsync(ct);
-        if(!await reader.ReadAsync(ct) && (supplierName is null||warehouseName is null))throw new InvalidOperationException("The purchase reporting dimensions could not be resolved.");
-        return (supplierName??reader.GetString(0),warehouseName??reader.GetString(1));
-    }
-
-    private sealed record PurchaseProjectionLine(int LineNumber,int? OriginalLineNumber,Guid ProductId,string ProductName,
-        decimal Quantity,decimal UnitCost,decimal Discount,decimal Net,decimal Tax,decimal Total);
+    private sealed record PurchaseProjectionLine(
+        int LineNumber,
+        int? OriginalLineNumber,
+        Guid ProductId,
+        string ProductName,
+        decimal Quantity,
+        decimal UnitCost,
+        decimal Discount,
+        decimal Net,
+        decimal Tax,
+        decimal Total);
 
     private static async Task<(DateOnly Date, string TimeZoneId)> ResolveLocalDateAsync(
         SalesReportingSqlSession session,
@@ -447,15 +326,6 @@ public sealed class SqlSalesReportingProjectionWriter(
         var local = TimeZoneInfo.ConvertTime(occurredAt, timeZone);
         return (DateOnly.FromDateTime(local.Date), timeZoneId);
     }
-
-    private static async Task MarkOrderInvoicedAsync(SalesReportingSqlSession session,Guid orderId,
-        Guid documentId,DateTimeOffset invoicedAt,CancellationToken ct)
-    {await using var command=new SqlCommand("""
-       UPDATE reporting.CommercialReportOrderFacts SET InvoiceDocumentId=@DocumentId,InvoicedAt=@InvoicedAt,ProjectedAt=SYSDATETIMEOFFSET()
-       WHERE OrderId=@OrderId AND (InvoiceDocumentId IS NULL OR InvoiceDocumentId=@DocumentId);
-       """,session.Connection,session.Transaction);command.Parameters.AddWithValue("@OrderId",orderId);
-       command.Parameters.AddWithValue("@DocumentId",documentId);command.Parameters.AddWithValue("@InvoicedAt",invoicedAt);
-       await command.ExecuteNonQueryAsync(ct);}
 
     private static async Task<SellerAttribution> ResolveSellerAttributionAsync(
         SalesReportingSqlSession session,
@@ -858,14 +728,14 @@ public sealed class SqlSalesReportingProjectionWriter(
         const string sql = """
             WITH dimensions AS
             (
-              SELECT f.BusinessLocalDate,v.DimensionType,v.DimensionKey,v.DimensionLabel,
+              SELECT f.BusinessLocalDate,v.DimensionType,v.DimensionKey,MAX(v.DimensionLabel) DimensionLabel,
                      @DocumentCount DocumentCount,SUM(f.Quantity) Quantity,
                      SUM(CASE WHEN f.MovementType=N'Sale' THEN f.GrossAmount ELSE 0 END) GrossSales,
                      SUM(CASE WHEN f.MovementType=N'Sale' THEN f.DiscountAmount ELSE 0 END) Discounts,
                      -SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END) Returns,
                      SUM(f.UntaxedAmount) NetUntaxed,SUM(f.TaxAmount) NetTax,
                      SUM(f.TotalAmount) NetTotal,SUM(f.RecognizedCostAmount) NetCost,
-                     SUM(f.UntaxedAmount-f.RecognizedCostAmount) GrossProfit
+                     SUM(f.TotalAmount-f.RecognizedCostAmount) GrossProfit
               FROM reporting.SalesReportLineFacts f
               INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
               CROSS APPLY(VALUES
@@ -878,7 +748,7 @@ public sealed class SqlSalesReportingProjectionWriter(
               ) v(DimensionType,DimensionKey,DimensionLabel)
               WHERE f.BusinessId=@BusinessId AND f.SourceDocumentId=@SourceDocumentId
                 AND f.SourceDocumentType=@SourceDocumentType
-              GROUP BY f.BusinessLocalDate,v.DimensionType,v.DimensionKey,v.DimensionLabel
+              GROUP BY f.BusinessLocalDate,v.DimensionType,v.DimensionKey
             )
             MERGE reporting.SalesReportDailyDimensionTotals WITH(HOLDLOCK) AS target
             USING dimensions source

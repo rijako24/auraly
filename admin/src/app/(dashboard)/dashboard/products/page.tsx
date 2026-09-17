@@ -53,6 +53,7 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCatalogDraft } from "@/hooks/use-catalog-draft";
 import { catalogDraftKey } from "@/lib/catalog-draft-store";
+import { genericProductCatalogPrice, productModeCapabilities } from "@/components/products/product-generic-policy";
 
 interface ProductFormState {
   name: string;
@@ -147,6 +148,7 @@ export default function ProductsPage() {
   const [editingSalesTaxRate, setEditingSalesTaxRate] = useState<number>();
   const [restoredEditDraft,setRestoredEditDraft]=useState<ProductEditDraft>();
   const [merchandisingDraft,setMerchandisingDraft]=useState<ProductMerchandisingEditorDraft>();
+  const editCapabilities = productModeCapabilities(Boolean(merchandisingDraft?.isGenericProduct));
   const [pricingDraft,setPricingDraft]=useState<ProductPricingEditorDraft>();
   const [supplierDraft,setSupplierDraft]=useState<ProductSupplierEditorDraft>();
   const [taxDraft,setTaxDraft]=useState<ProductTaxEditorDraft>();
@@ -258,13 +260,17 @@ export default function ProductsPage() {
     }
     setSavingProduct(true);
     try {
-      if (!businessId || !merchandisingEditorRef.current || !taxEditorRef.current
-          || !pricingEditorRef.current || !supplierEditorRef.current)
+      if (!businessId || !merchandisingEditorRef.current || !taxEditorRef.current)
         throw new Error("Espera a que termine de cargar la ficha del producto.");
       const merchandising = merchandisingEditorRef.current.getValue();
+      const capabilities = productModeCapabilities(merchandising.isGenericProduct);
+      if (capabilities.supplier && !supplierEditorRef.current)
+        throw new Error("Espera a que termine de cargar el proveedor del producto.");
+      if (capabilities.catalogPricing && !pricingEditorRef.current)
+        throw new Error("Espera a que termine de cargar los precios del producto.");
       const taxes = taxEditorRef.current.getValue();
-      const pricing = pricingEditorRef.current.getValue();
-      const supplier = supplierEditorRef.current.getValue();
+      const pricing = capabilities.catalogPricing ? pricingEditorRef.current!.getValue() : null;
+      const supplier = capabilities.supplier ? supplierEditorRef.current!.getValue() : null;
       const images = imageEditorRef.current ? await imageEditorRef.current.stage() : [];
       const aliases = recognitionEditorRef.current?.getValue().map((alias) => ({ alias })) ?? [];
       await productsApi.updateCatalog(selectedProduct.productId, {
@@ -277,12 +283,13 @@ export default function ProductsPage() {
         taxProfileId: taxes.salesTaxProfileId,
         purchaseTaxProfileId: taxes.purchaseTaxProfileId,
         purchaseTaxTreatment: taxes.purchaseTaxTreatment,
+        isGenericProduct: merchandising.isGenericProduct,
         manageInventory: merchandising.manageInventory,
         isWeighable: merchandising.isWeighable,
         unitGrossWeightKg: merchandising.unitGrossWeightKg,
         barcodes: merchandising.barcodes,
         identifiers: [],
-        prices: [{
+        prices: pricing ? [{
           amount: pricing.publicAmount,
           preparedAmount: pricing.amount,
           currencyCode: selectedProduct.currency || "COP",
@@ -291,8 +298,8 @@ export default function ProductsPage() {
           inputMode: pricing.inputMode,
           roundingIncrement: pricing.roundingIncrement,
           roundingMode: pricing.roundingMode,
-        }],
-        suppliers: [{ ...supplier, baseUnitCost: pricing.costBasisAmount, isPrimary: true }],
+        }] : [genericProductCatalogPrice(selectedProduct.currency || "COP")],
+        suppliers: supplier && pricing ? [{ ...supplier, baseUnitCost: pricing.costBasisAmount, isPrimary: true }] : [],
         scale: merchandising.scale,
         productCategoryId: merchandising.productCategoryId,
         productBrandId: merchandising.productBrandId,
@@ -561,14 +568,16 @@ export default function ProductsPage() {
 
                 <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} initialDraft={restoredEditDraft?.merchandising} onDraftChange={setMerchandisingDraft} />
 
-                <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
+                {editCapabilities.supplier && <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
                   <ProductSupplierEditor ref={supplierEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} initialDraft={restoredEditDraft?.supplier} onDraftChange={setSupplierDraft} />
-                </ProductFormSection>
+                </ProductFormSection>}
 
                 <ProductFormSection id="product-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decisión explícita.">
                   <div className="space-y-5">
-                    <ProductTaxEditor ref={taxEditorRef} embedded productId={selectedProduct.productId} onSalesTaxRateChange={setEditingSalesTaxRate} initialDraft={restoredEditDraft?.taxes} onDraftChange={setTaxDraft} />
-                    <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} initialDraft={restoredEditDraft?.pricing} onDraftChange={setPricingDraft} />
+                    <ProductTaxEditor ref={taxEditorRef} embedded productId={selectedProduct.productId} isGenericProduct={Boolean(merchandisingDraft?.isGenericProduct)} onSalesTaxRateChange={setEditingSalesTaxRate} initialDraft={restoredEditDraft?.taxes} onDraftChange={setTaxDraft} />
+                    {editCapabilities.catalogPricing && <div>
+                      <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} initialDraft={restoredEditDraft?.pricing} onDraftChange={setPricingDraft} />
+                    </div>}
                   </div>
                 </ProductFormSection>
                 <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Los archivos se transfieren al almacenamiento y su metadata se confirma con el único guardado del producto.">

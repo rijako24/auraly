@@ -11,8 +11,10 @@ facturación no calculan indicadores para la interfaz. El motor de reporting es
 el único propietario de agregados, costo, utilidad e impacto.
 
 No se crea una tabla por informe. Las vistas reutilizan documentos, hechos de
-línea, pagos y totales diarios existentes. Una nueva proyección física solo se
-agrega para un grano nuevo, como pedido, visita o asignación planificada.
+línea, pagos y totales diarios existentes. Solamente el motor documental de
+operaciones crea el trabajo durable y, al completar, solicita la proyección.
+Pedidos, rutas, visitas, despachos, contabilidad, servicios y sus APIs no llaman
+directamente al motor de reporting.
 
 ## Atribución histórica de una venta
 
@@ -23,10 +25,23 @@ Al confirmar cada línea de factura, `SalesDocumentLines` fija una vez:
 - proveedor atribuido, usando primero la relación principal activa;
 - costo unitario reconocido por el kardex.
 
+Código, nombre y valores comerciales provienen del snapshot de la línea vendida
+(incluido el pedido recuperado); el catálogo vigente no los reinterpreta.
+Categoría y proveedor sí se consultan al confirmar, exclusivamente para fijar
+la atribución histórica de reporting. Una línea marcada como producto genérico
+conserva ese indicador y no genera movimiento de inventario aunque el producto
+sea reconfigurado después en el catálogo.
+
 `AttributionSnapshotVersion=1` distingue un snapshot capturado, incluso cuando
 no existe proveedor o categoría. Las filas heredadas conservan versión `0` y
 pueden usar el catálogo vigente durante una reconstrucción. Las proyecciones
 nuevas se escriben con versión `2` y nunca reinterpretan un snapshot versión 1.
+
+La utilidad realizada por línea se calcula exclusivamente desde el snapshot de
+la venta: `TotalAmount - (Quantity * DocumentUnitCost)`. `TotalAmount` ya es el
+valor efectivo de la línea después del descuento. El margen es esa utilidad
+dividida por `TotalAmount`. Ni la utilidad ni el margen consultan el costo o el
+precio vigente del catálogo.
 
 ## Atribución nativa del pedido
 
@@ -50,25 +65,6 @@ comercial del pedido y su nombre histórico. Para una venta sin pedido, resuelve
 el vendedor por el tercero de la cuenta que registró la venta. El usuario de
 caja nunca reemplaza silenciosamente al vendedor que originó el pedido.
 
-## Visitas comerciales
-
-Cada visita confirmada escribe, dentro de su transacción operativa, una fuente
-inmutable `RouteVisit` en el inbox existente `SalesReportingJobs`. Después del
-commit se publica la señal en `auraly-sales-reporting`; un replay idempotente
-republica un trabajo durable pendiente sin duplicar el hecho.
-
-`reporting.CommercialReportVisitFacts` conserva vendedor, ruta, zona, cliente,
-sede, resultado, observación y pedido asociado. La API y la pantalla de visitas
-leen exclusivamente este grano proyectado.
-
-## Pedidos por vendedor
-
-La creación de un pedido captura una fuente inmutable `SellerOrder` en el mismo
-commit operativo y publica, después del commit, sobre la cola existente de
-reporting. `reporting.CommercialReportOrderFacts` conserva el grano pedido con
-vendedor, cliente, ruta, valor y estado; el informe de vendedores obtiene de
-allí pedidos, clientes atendidos, confirmados y pendientes de revisión.
-
 ## Informes semánticos cerrados
 
 Los informes no son variantes visuales de una misma consulta:
@@ -76,24 +72,13 @@ Los informes no son variantes visuales de una misma consulta:
 - **Ventas** explica venta bruta, devoluciones, venta neta, costo, utilidad,
   recaudo y comprobantes; permite navegar por producto, categoría, cliente,
   vendedor, sede y proveedor.
-- **Vendedores** presenta el embudo agenda → visita → pedido → factura, sus
-  conversiones y la utilidad resultante. No incluye metas ni comisiones.
-- **Clientes y cobertura** compara la visita planeada, el cierre operativo
-  (visitada u omitida), el faltante sin cierre y la visita que produjo pedido,
-  por ruta, zona y vendedor.
+- **Vendedores** atribuye las ventas facturadas al vendedor histórico del
+  documento. No proyecta agendas, visitas ni pedidos.
 - **Impacto de proveedores** relaciona sell-in (recepciones menos devoluciones
   de compra) con sell-out, utilidad, penetración en clientes y crecimiento
   contra el período anterior equivalente.
-- **Visitas** conserva su grano de evento y su trazabilidad individual.
 
 ## Granos físicos necesarios
-
-`CommercialCoveragePlan` se captura dentro de cada mutación transaccional de
-ruta y se proyecta en `CommercialCoverageAssignmentFacts`. Cada fila representa
-una combinación horario–parada con snapshots de ruta, zona, vendedor, cliente,
-sede y coordenadas, además del intervalo
-`[ValidFromBusinessDate, ValidToBusinessDateExclusive)`. Así una edición futura
-no reescribe el plan histórico.
 
 `GoodsReceipt` y `PurchaseReturn` reutilizan la tubería documental y la única
 cola de reporting. Sus fuentes inmutables se proyectan en
@@ -101,11 +86,6 @@ cola de reporting. Sus fuentes inmutables se proyectan en
 guardan con signo negativo. Se conservan proveedor, bodega, producto, moneda,
 cantidades y valores históricos. Los agregados se calculan desde estos hechos;
 no se crea una tabla por pantalla.
-
-`SellerOrder` evoluciona por versiones de fuente. Una nueva versión solo se
-crea cuando cambia el hash del snapshot y actualiza idempotentemente el mismo
-hecho de pedido. Conserva ruta, zona, parada, sede, canal, captura offline y
-marcas de confirmación, cancelación y facturación.
 
 ## Aislamiento por identidad
 

@@ -139,7 +139,7 @@ type OnlineDraftLine = {
   net: number;
   tax: number;
   total: number;
-  publicUnitPrice?: number | null;
+  publicUnitPrice: number;
 };
 
 type OnlineDraft = {
@@ -903,6 +903,18 @@ export class OnlinePosClient implements PosClient {
           "POST",
           authorization?.operationId,
           authorization?.approvalRequestId,
+        ),
+      ),
+    );
+  }
+
+  async discardUnpricedGenericLine(draftId: string, lineId: string) {
+    return this.mapDraft(
+      await request<OnlineDraft>(
+        `/api/commerce/v1/pos/drafts/${draftId}/lines/${lineId}/discard-unpriced-generic`,
+        this.mutation(
+          { expectedVersion: this.version(draftId) },
+          "POST",
         ),
       ),
     );

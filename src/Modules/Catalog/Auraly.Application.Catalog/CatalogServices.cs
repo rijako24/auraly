@@ -49,9 +49,9 @@ public sealed class CatalogService(
         CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Create);
+        request = NormalizeRelatedData(request);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
-        request = NormalizeRelatedData(request);
         Validate(request);
         var product = await store.CreateAsync(
             user, ids.NewId(), request, timeProvider.GetUtcNow(), ct);
@@ -67,9 +67,9 @@ public sealed class CatalogService(
         CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Update);
+        request = NormalizeRelatedData(request);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
-        request = NormalizeRelatedData(request);
         Validate(request);
         var product = await store.UpdateAsync(
             user, productId, request, timeProvider.GetUtcNow(), ct);
@@ -191,6 +191,18 @@ public sealed class CatalogService(
         value is "DeductibleInputVat" or "CapitalizedCost" or "NotApplicable";
     private static SaveProductRequest NormalizeRelatedData(SaveProductRequest request) => request with
     {
+        ManageInventory = request.IsGenericProduct ? false : request.ManageInventory,
+        IsWeighable = request.IsGenericProduct ? false : request.IsWeighable,
+        Scale = request.IsGenericProduct ? null : request.Scale,
+        PurchaseTaxProfileId = request.IsGenericProduct ? null : request.PurchaseTaxProfileId,
+        PurchaseTaxTreatment = request.IsGenericProduct ? "NotApplicable" : request.PurchaseTaxTreatment,
+        Suppliers = request.IsGenericProduct ? [] : request.Suppliers,
+        Prices = request.IsGenericProduct
+            ? [new ProductPriceInput(0m, request.Prices.FirstOrDefault()?.CurrencyCode ?? "COP", 0m, 0m, 0m)]
+            : request.Prices,
+        Link = request.IsGenericProduct ? null : request.Link,
+        LinkedProducts = request.IsGenericProduct ? [] : request.LinkedProducts,
+        ConversionMaximumLossPercent = request.IsGenericProduct ? null : request.ConversionMaximumLossPercent,
         Aliases = request.Aliases is null ? null : request.Aliases
             .Select(value => new ProductAliasInput(value.Alias.Trim(), ProductAliasNormalizer.Normalize(value.Alias)))
             .Where(value => value.NormalizedAlias!.Length > 0)
@@ -206,23 +218,23 @@ public sealed class CatalogService(
     {
         if (string.IsNullOrWhiteSpace(request.Name) ||
             string.IsNullOrWhiteSpace(request.BaseUnitCode) || request.TaxProfileId == Guid.Empty ||
-            request.PurchaseTaxProfileId == Guid.Empty)
-            throw new CatalogValidationException("Name, base unit, sales VAT and purchase VAT are required.");
+            (!request.IsGenericProduct && (!request.PurchaseTaxProfileId.HasValue || request.PurchaseTaxProfileId.Value == Guid.Empty)))
+            throw new CatalogValidationException("Name, base unit, sales VAT and purchase VAT are required for ordinary products.");
         if (!PurchasingTaxTreatmentIsSupported(request.PurchaseTaxTreatment))
             throw new CatalogValidationException("The purchase VAT treatment is invalid.");
         if (request.Scale is not null && !request.IsWeighable)
             throw new CatalogValidationException("A scale configuration requires a product sold by weight.");
         if (request.UnitGrossWeightKg is <= 0)
             throw new CatalogValidationException("Product weight must be greater than zero when provided.");
-        if (request.Prices.Count != 1 || request.Prices.Any(price => price.Amount <= 0))
+        if (request.Prices.Count != 1 || (!request.IsGenericProduct && request.Prices.Any(price => price.Amount <= 0)))
             throw new CatalogValidationException(
                 "Every sellable product requires exactly one positive base price for its business.");
-        if (request.Prices.Any(price =>
+        if (!request.IsGenericProduct && request.Prices.Any(price =>
                 price.CostBasisAmount is null or <= 0 ||
                 price.TargetMarginPercent is null or < 0 or >= 100))
             throw new CatalogValidationException(
                 "Every product requires a positive cost and a margin between zero and less than 100 percent.");
-        if (request.Prices.Any(price =>
+        if (!request.IsGenericProduct && request.Prices.Any(price =>
                 (price.PreparedAmount ?? price.Amount) <= 0 ||
                 price.RoundingIncrement <= 0 ||
                 price.InputMode is not ("Margin" or "SalePrice") ||
@@ -235,7 +247,7 @@ public sealed class CatalogService(
                 || image.AltText?.Length > 300
                 || image.DisplayOrder < 0))
             throw new CatalogValidationException("The product image configuration is invalid.");
-        if (request.Suppliers.Count == 0 || request.Suppliers.Count(supplier => supplier.IsPrimary) != 1)
+        if (!request.IsGenericProduct && (request.Suppliers.Count == 0 || request.Suppliers.Count(supplier => supplier.IsPrimary) != 1))
             throw new CatalogValidationException("Every product requires exactly one primary supplier.");
         if (request.Suppliers.Any(supplier => supplier.SupplierId == Guid.Empty || supplier.BaseUnitCost <= 0))
             throw new CatalogValidationException("Every product supplier requires an identifier and a positive cost.");
@@ -250,6 +262,8 @@ public sealed class CatalogService(
             throw new CatalogValidationException("The scale barcode positions are invalid.");
         if (request.IsWeighable && !request.AllowsFractionalSale)
             throw new CatalogValidationException("A weighable product must allow fractional quantities.");
+        if (request.IsGenericProduct && request.ManageInventory)
+            throw new CatalogValidationException("A generic product cannot control inventory.");
         if (request.Link is { SharesInventory: true } && request.ManageInventory)
             throw new CatalogValidationException("A product that shares its parent's inventory cannot control a separate inventory.");
         if (request.Link is { SharesInventory: true, InventoryFactor: null or <= 0 })

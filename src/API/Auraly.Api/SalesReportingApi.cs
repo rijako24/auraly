@@ -37,20 +37,6 @@ public static class SalesReportingApi
                 var value=await service.GetDocumentAsync(Identity(context.User),documentId,token);
                 return value is null?Results.NotFound():Results.Ok(value);
             }));
-        group.MapGet("/visits",async(HttpContext context,DateOnly from,DateOnly to,Guid? sellerId,
-            Guid? routeId,string? status,bool? hasOrder,int? page,int? pageSize,
-            SalesReportingService service,CancellationToken token)=>await Execute(
-                ()=>service.ListVisitsAsync(Identity(context.User),from,to,sellerId,routeId,status,
-                    hasOrder,page??1,pageSize??50,token),Results.Ok));
-        group.MapGet("/seller-orders",async(HttpContext context,DateOnly from,DateOnly to,
-            SalesReportingService service,CancellationToken token)=>await Execute(
-                ()=>service.ListSellerOrdersAsync(Identity(context.User),from,to,token),Results.Ok));
-        group.MapGet("/seller-performance",async(HttpContext context,DateOnly from,DateOnly to,
-            SalesReportingService service,CancellationToken token)=>await Execute(
-                ()=>service.GetSellerPerformanceAsync(Identity(context.User),from,to,token),Results.Ok));
-        group.MapGet("/coverage",async(HttpContext context,DateOnly from,DateOnly to,
-            SalesReportingService service,CancellationToken token)=>await Execute(
-                ()=>service.GetCoverageAsync(Identity(context.User),from,to,token),Results.Ok));
         group.MapGet("/supplier-impact",async(HttpContext context,DateOnly from,DateOnly to,
             SalesReportingService service,CancellationToken token)=>await Execute(
                 ()=>service.GetSupplierImpactAsync(Identity(context.User),from,to,token),Results.Ok));

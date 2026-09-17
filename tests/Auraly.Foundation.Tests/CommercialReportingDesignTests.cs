@@ -6,17 +6,44 @@ public sealed class CommercialReportingDesignTests
 {
     [Theory]
     [InlineData("SalesInvoice")]
-    [InlineData("ServiceInvoice")]
     [InlineData("SalesReceipt")]
     [InlineData("SalesReturn")]
+    [InlineData("GoodsReceipt")]
+    [InlineData("PurchaseReturn")]
+    public void Reporting_policy_accepts_only_operationally_projected_sources(string sourceType)
+    {
+        Assert.True(SalesReportingProcessingPolicy.Supports(sourceType));
+    }
+
+    [Theory]
+    [InlineData("ServiceInvoice")]
     [InlineData("RouteVisit")]
     [InlineData("SellerOrder")]
     [InlineData("CommercialCoveragePlan")]
-    [InlineData("GoodsReceipt")]
-    [InlineData("PurchaseReturn")]
-    public void Reporting_policy_accepts_every_canonical_commercial_source(string sourceType)
+    public void Reporting_policy_rejects_sources_outside_the_operations_engine(string sourceType)
     {
-        Assert.True(SalesReportingProcessingPolicy.Supports(sourceType));
+        Assert.False(SalesReportingProcessingPolicy.Supports(sourceType));
+    }
+
+    [Fact]
+    public void Only_operational_document_handlers_create_reporting_jobs()
+    {
+        var persistence = Path.Combine(FindRepositoryRoot(), "src", "Infrastructure",
+            "Auraly.Infrastructure.Persistence");
+        var owners = Directory.EnumerateFiles(persistence, "*.cs")
+            .Where(path => File.ReadAllText(path).Contains(
+                "SqlSalesReportingJobWriter.InsertAsync", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(new[]
+        {
+            "SqlGoodsReceiptDocumentHandler.cs",
+            "SqlPosSaleDocumentHandler.cs",
+            "SqlPurchaseReturnDocumentHandler.cs",
+            "SqlSalesReturnDocumentHandler.cs"
+        }, owners);
     }
 
     [Fact]
@@ -36,19 +63,6 @@ public sealed class CommercialReportingDesignTests
         Assert.DoesNotContain("ProductId", serviceLines, StringComparison.Ordinal);
         Assert.Contains("ProductId", productLines, StringComparison.Ordinal);
         Assert.DoesNotContain("BillableServiceId", productLines, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Semantic_reports_are_not_aliases_of_the_sales_analytics_page()
-    {
-        var root=FindRepositoryRoot();
-        foreach(var report in new[]{"sellers","customers","supplier-impact"})
-        {
-            var page=File.ReadAllText(Path.Combine(root,"admin","src","app","(dashboard)",
-                "dashboard","reports",report,"page.tsx"));
-            Assert.DoesNotContain("../../analytics/page",page,StringComparison.Ordinal);
-            Assert.Contains("commercial-semantic-reports",page,StringComparison.Ordinal);
-        }
     }
 
     [Fact]

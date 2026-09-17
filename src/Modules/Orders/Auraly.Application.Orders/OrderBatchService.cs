@@ -157,7 +157,7 @@ public sealed class OrderBatchService(
             {
                 results.Add(new(
                     orderId,
-                    orderId.ToString("D"),
+                    ResultOrderNumber(orderId),
                     "Failed",
                     null,
                     null,
@@ -222,7 +222,9 @@ public sealed class OrderBatchService(
                         line.LineTotal,
                         line.DocumentUnitCost,
                         order.Currency,
-                        line.PriceSource)).ToArray());
+                        line.PriceSource,
+                        line.IsGenericProductSnapshot)).ToArray());
+                var payableAmount = source.Lines.Sum(line => line.PublicLineTotal);
                 var issued = await checkout.CompleteOrderAsync(
                     identity,
                     source,
@@ -233,13 +235,13 @@ public sealed class OrderBatchService(
                             : [
                                 new OnlineSalesPayment(
                                     paymentMethod,
-                                    order.Total,
+                                    payableAmount,
                                     paymentReference,
                                     BankAccountId: request.BankAccountId,
                                     Notes: request.PaymentNotes)
                             ],
                         Credit: creditSale
-                            ? new OnlineSalesCreditTerms(order.Total)
+                            ? new OnlineSalesCreditTerms(payableAmount)
                             : null,
                         DocumentType: documentType),
                     OperationKey(lease.OperationId, orderId, "invoice"),
@@ -258,7 +260,7 @@ public sealed class OrderBatchService(
             {
                 results.Add(new(
                     orderId,
-                    orderId.ToString("D"),
+                    ResultOrderNumber(orderId),
                     "Failed",
                     null,
                     null,
@@ -307,6 +309,11 @@ public sealed class OrderBatchService(
         bool ShouldCheckpointProgress() =>
             results.Count < normalizedOrders.Length &&
             (failed > 0 || results.Count % ProgressCheckpointSize == 0);
+
+        string ResultOrderNumber(Guid orderId) =>
+            batchOrders.TryGetValue(orderId, out var order)
+                ? order.OrderNumber
+                : orderId.ToString("D");
     }
 
     private static OrderCreditValidationIssue MapCreditIssue(

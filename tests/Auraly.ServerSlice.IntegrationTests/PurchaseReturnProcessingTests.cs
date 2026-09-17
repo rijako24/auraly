@@ -41,6 +41,12 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(1,await CountAsync("PurchaseReturnFinancialEffects","PurchaseReturnId",request.ReturnId));
         Assert.Equal(1,await CountAsync("AccountingPostingJobs","SourceDocumentId",request.ReturnId));
         Assert.Equal(1,await CountAsync("ServerOutboxMessages","DocumentId",request.ReturnId));
+        Assert.Equal(1,await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PurchaseReturn'",
+            request.ReturnId));
+        Assert.Equal(1,await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM reporting.PurchaseReportDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PurchaseReturn'",
+            request.ReturnId));
 
         using(var replayResponse=await SendAsync(client,request,$"return-{request.ReturnId:N}"))
         {

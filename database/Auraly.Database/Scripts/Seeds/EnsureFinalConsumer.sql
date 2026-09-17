@@ -68,4 +68,41 @@ WHERE NOT EXISTS(
     SELECT 1 FROM dbo.Customers c
     WHERE c.PartyId=f.PartyId AND c.BusinessId=b.BusinessId);
 
+;WITH Candidate AS(
+    SELECT s.PartySiteId,profile.CountryId TargetCountryId,
+           profile.AdministrativeDivisionId TargetDivisionId,
+           profile.CityId TargetCityId,profile.Address TargetAddress,
+           ROW_NUMBER() OVER(PARTITION BY s.PartyId ORDER BY
+               s.IsPrimary DESC,s.CreatedAt,s.PartySiteId) Position
+    FROM dbo.PartySites s
+    JOIN @FinalConsumers f ON f.PartyId=s.PartyId
+    JOIN dbo.TenantLegalProfiles profile ON profile.TenantId=f.TenantId
+    WHERE NOT EXISTS(
+        SELECT 1 FROM dbo.PartySites activeSite
+        WHERE activeSite.PartyId=s.PartyId AND activeSite.IsActive=1))
+UPDATE site
+SET IsActive=1,IsPrimary=1,CountryId=candidate.TargetCountryId,
+    AdministrativeDivisionId=candidate.TargetDivisionId,
+    CityId=candidate.TargetCityId,AddressLine=candidate.TargetAddress,
+    UpdatedAt=@Now
+FROM dbo.PartySites site
+JOIN Candidate candidate ON candidate.PartySiteId=site.PartySiteId
+WHERE candidate.Position=1;
+
+INSERT dbo.PartySites(
+    PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+    CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+SELECT NEWID(),f.PartyId,N'PRINCIPAL',N'Principal',profile.CountryId,
+       profile.AdministrativeDivisionId,profile.CityId,profile.Address,
+       1,1,creator.UserId,@Now
+FROM @FinalConsumers f
+JOIN dbo.TenantLegalProfiles profile ON profile.TenantId=f.TenantId
+CROSS APPLY(
+    SELECT TOP(1) userValue.UserId
+    FROM dbo.AppUsers userValue
+    WHERE userValue.TenantId=f.TenantId AND userValue.IsActive=1
+    ORDER BY userValue.CreatedAt,userValue.UserId) creator
+WHERE NOT EXISTS(
+    SELECT 1 FROM dbo.PartySites site WHERE site.PartyId=f.PartyId);
+
 PRINT N'Consumidor final DIAN garantizado para todos los negocios.';

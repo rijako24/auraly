@@ -62,7 +62,7 @@ public sealed record SaveProductRequest(
     IReadOnlyCollection<ProductPriceInput> Prices,
     IReadOnlyCollection<SupplierCostInput> Suppliers,
     ScaleConfigurationInput? Scale,
-    Guid PurchaseTaxProfileId = default,
+    Guid? PurchaseTaxProfileId = null,
     string PurchaseTaxTreatment = "DeductibleInputVat",
     Guid? ProductCategoryId = null,
     Guid? ProductBrandId = null,
@@ -72,7 +72,8 @@ public sealed record SaveProductRequest(
     decimal? ConversionMaximumLossPercent = null,
     IReadOnlyCollection<ProductAliasInput>? Aliases = null,
     IReadOnlyCollection<ProductImageInput>? Images = null,
-    decimal? UnitGrossWeightKg = null);
+    decimal? UnitGrossWeightKg = null,
+    bool IsGenericProduct = false);
 
 public sealed record ProductDetail(
     Guid ProductId,
@@ -85,13 +86,14 @@ public sealed record ProductDetail(
     IReadOnlyCollection<ProductPriceInput> Prices,
     IReadOnlyCollection<SupplierCostInput>? Suppliers,
     Guid SalesTaxProfileId = default,
-    Guid PurchaseTaxProfileId = default,
+    Guid? PurchaseTaxProfileId = null,
     string PurchaseTaxTreatment = "DeductibleInputVat",
     string? Description = null,
     string BaseUnitCode = "EA",
     bool ManageInventory = true,
     bool IsWeighable = false,
-    decimal? UnitGrossWeightKg = null);
+    decimal? UnitGrossWeightKg = null,
+    bool IsGenericProduct = false);
 
 public sealed record ProductPageRequest(
     int PageSize = 50,
@@ -154,7 +156,8 @@ public sealed record PosCatalogItem(
     decimal LatestUnitCost = 0,
     decimal? TargetMarginPercent = null,
     Guid? InventoryProductId = null,
-    decimal InventoryFactor = 1m)
+    decimal InventoryFactor = 1m,
+    bool IsGenericProduct = false)
 {
     public PosCatalogItem(
         Guid productId,
@@ -236,10 +239,10 @@ public sealed record SaveTaxProfileRequest(
     Guid BusinessId, string Code, string Name, decimal Rate, bool IsActive = true,
     string DianTaxCode = "01");
 public sealed record ProductTaxConfiguration(
-    Guid ProductId, Guid SalesTaxProfileId, Guid PurchaseTaxProfileId,
+    Guid ProductId, Guid SalesTaxProfileId, Guid? PurchaseTaxProfileId,
     string PurchaseTaxTreatment);
 
 public sealed record SaveProductTaxConfigurationRequest(
-    Guid SalesTaxProfileId, Guid PurchaseTaxProfileId, string PurchaseTaxTreatment);
+    Guid SalesTaxProfileId, Guid? PurchaseTaxProfileId, string PurchaseTaxTreatment);
 
 public sealed record SetProductStatusRequest(bool IsActive);
