@@ -306,6 +306,7 @@ public sealed class FiscalOnboardingServiceTests
 
         public Task ImportNumberingRangesAsync(
             Guid tenantId,
+            Guid userId,
             string documentPurpose,
             IReadOnlyList<ImportedDianNumberingRange> ranges,
             CancellationToken cancellationToken) => throw new NotSupportedException();

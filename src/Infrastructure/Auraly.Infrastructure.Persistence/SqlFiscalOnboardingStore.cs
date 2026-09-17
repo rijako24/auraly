@@ -336,6 +336,7 @@ public sealed class SqlFiscalOnboardingStore(
 
     public async Task ImportNumberingRangesAsync(
         Guid tenantId,
+        Guid userId,
         string documentPurpose,
         IReadOnlyList<ImportedDianNumberingRange> ranges,
         CancellationToken cancellationToken)
@@ -415,7 +416,8 @@ public sealed class SqlFiscalOnboardingStore(
                          AND currentRange.DocumentPurpose=N'SupportDocument');
 
                 UPDATE range
-                SET AssignedBusinessId=existingAuthorization.BusinessId,AssignedAt=@Now
+                SET AssignedBusinessId=existingAuthorization.BusinessId,AssignedAt=@Now,
+                    AssignedByUserId=COALESCE(range.AssignedByUserId,@UserId)
                 FROM fiscal.DianNumberingRanges range
                 JOIN dbo.FiscalAuthorizations existingAuthorization
                   ON existingAuthorization.DianNumberingRangeId=range.DianNumberingRangeId
@@ -439,6 +441,7 @@ public sealed class SqlFiscalOnboardingStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand(sql, connection);
         Add(command, "@TenantId", tenantId);
+        Add(command, "@UserId", userId);
         Add(command, "@Purpose", documentPurpose);
         Add(command, "@Ranges", JsonSerializer.Serialize(payload));
         Add(command, "@Now", timeProvider.GetUtcNow());

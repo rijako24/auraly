@@ -78,6 +78,7 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 await scope.ServiceProvider.GetRequiredService<IFiscalOnboardingStore>()
                     .ImportNumberingRangesAsync(
                         fixture.TenantId,
+                        fixture.UserId,
                         FiscalNumberingPurposes.SupportDocument,
                         [
                             new("18769900001", today, "DS", 501, 900,
@@ -103,14 +104,8 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                     futureBody, StringComparison.Ordinal);
             }
 
-            using var response = await client.PostAsJsonAsync(
-                $"/api/commerce/v1/fiscal/configuration/onboarding/activate-support-document?businessId={businessId:D}",
-                new ActivateFiscalProductionRequest(validRangeId));
-            var body = await response.Content.ReadAsStringAsync();
-            Assert.True(response.StatusCode == HttpStatusCode.OK,
-                $"Expected support resolution activation, got {response.StatusCode}: {body}");
-            var value = await response.Content
-                .ReadFromJsonAsync<FiscalOnboardingConfiguration>();
+            var value = await client.GetFromJsonAsync<FiscalOnboardingConfiguration>(
+                $"/api/commerce/v1/fiscal/configuration/onboarding?businessId={businessId:D}");
 
             Assert.NotNull(value?.AssignedSupportDocumentRange);
             Assert.Equal("18769900001",
@@ -130,7 +125,7 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 SELECT COUNT(*) FROM dbo.FiscalSeries
                 WHERE BusinessId=@BusinessId AND DocumentType=N'SalesInvoice' AND IsActive=1;
                 """, businessId));
-            Assert.Equal(501, await ScalarAsync("""
+            Assert.Equal(502, await ScalarAsync("""
                 SELECT seriesCursor.NextConsecutive FROM dbo.FiscalSeriesCursors seriesCursor
                 INNER JOIN dbo.FiscalSeries series ON series.SeriesId=seriesCursor.SeriesId
                 WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
@@ -481,7 +476,8 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                DATEADD(day,30,CONVERT(date,SYSDATETIMEOFFSET())),0x04,
                NULL,NULL,NULL,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
 
-            DECLARE @SalesAuthorizationId uniqueidentifier=NEWID(),@SalesSeriesId uniqueidentifier=NEWID();
+            DECLARE @SalesAuthorizationId uniqueidentifier=NEWID(),@SalesSeriesId uniqueidentifier=NEWID(),
+                    @SupportAuthorizationId uniqueidentifier=NEWID(),@SupportSeriesId uniqueidentifier=NEWID();
             INSERT dbo.FiscalAuthorizations(
                 FiscalAuthorizationId,BusinessId,DianNumberingRangeId,AuthorizationNumber,
                 SupplierTaxId,Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
@@ -497,6 +493,22 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 N'SalesInvoice',N'FES',1,500,1,SYSDATETIMEOFFSET());
             INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt)
             VALUES(@SalesSeriesId,1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.FiscalAuthorizations(
+                FiscalAuthorizationId,BusinessId,DianNumberingRangeId,AuthorizationNumber,
+                SupplierTaxId,Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
+                AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
+            VALUES(@SupportAuthorizationId,@BusinessId,@ValidRangeId,N'18769900001',@SupplierTaxId,1,
+                N'https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=',N'cuds-sha384',
+                DATEADD(day,-1,CONVERT(date,SYSDATETIMEOFFSET())),
+                DATEADD(day,30,CONVERT(date,SYSDATETIMEOFFSET())),501,900,1,SYSDATETIMEOFFSET());
+            INSERT dbo.FiscalSeries(
+                SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
+                DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+            VALUES(@SupportSeriesId,@BusinessId,NULL,N'Server',@SupportAuthorizationId,
+                N'SupportDocument',N'DS',501,900,1,SYSDATETIMEOFFSET());
+            INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt)
+            VALUES(@SupportSeriesId,502,SYSDATETIMEOFFSET());
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);

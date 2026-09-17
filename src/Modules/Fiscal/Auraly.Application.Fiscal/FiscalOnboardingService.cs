@@ -27,6 +27,7 @@ public interface IFiscalOnboardingStore
 
     Task ImportNumberingRangesAsync(
         Guid tenantId,
+        Guid userId,
         string documentPurpose,
         IReadOnlyList<ImportedDianNumberingRange> ranges,
         CancellationToken cancellationToken);
@@ -185,7 +186,8 @@ public sealed class FiscalOnboardingService(
             throw new FiscalConfigurationValidationException(
                 "La DIAN no devolvió resoluciones asociadas al software. Verifica la asociación en el portal DIAN.");
         await store.ImportNumberingRangesAsync(
-            user.TenantId, FiscalNumberingPurposes.SalesInvoice, ranges, cancellationToken);
+            user.TenantId, user.UserId, FiscalNumberingPurposes.SalesInvoice, ranges,
+            cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
     }
 
@@ -261,7 +263,7 @@ public sealed class FiscalOnboardingService(
             throw new FiscalConfigurationValidationException(
                 "La DIAN no devolvió resoluciones de documento soporte asociadas a este Software ID.");
         await store.ImportNumberingRangesAsync(
-            user.TenantId, FiscalNumberingPurposes.SupportDocument, ranges,
+            user.TenantId, user.UserId, FiscalNumberingPurposes.SupportDocument, ranges,
             cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
     }
