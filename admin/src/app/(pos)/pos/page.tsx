@@ -2166,7 +2166,6 @@ export default function PosPage() {
 
   async function reprintSale(sale: PosIssuedSaleSummary) {
     if (!client || busy) return;
-    setBusy(true);
     setError(null);
     try {
       const receipt = await loadServerIssuedSaleReceipt(
@@ -2175,12 +2174,8 @@ export default function PosPage() {
       );
       await client.printHistoricalReceipt(receipt);
       setMessage(`${sale.documentNumber} reimpresa desde su snapshot original`);
-      setInvoiceSearchOpen(false);
     } catch (caught) {
       showError(caught);
-    } finally {
-      setBusy(false);
-      focusScanner();
     }
   }
 

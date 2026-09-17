@@ -81,6 +81,8 @@
     "src/services/pos/pos-receipt-line-markup.test.ts",
     "src/services/pos/pos-receipt-print-routing.ts",
     "src/services/pos/pos-receipt-print-routing.test.ts",
+    "src/services/pos/pos-browser-print.ts",
+    "src/services/pos/pos-browser-print.test.ts",
     "src/services/pos/pos-order-print-routing.ts",
     "src/services/pos/pos-order-print-routing.test.ts",
     "src/services/pos/pos-order-print-document.ts",
