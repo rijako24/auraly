@@ -240,6 +240,13 @@ public sealed class ArchitectureDebtRatchetTests
             Assert.Contains("CommandType", source, StringComparison.Ordinal);
             Assert.Contains("CommandType.StoredProcedure", source, StringComparison.Ordinal);
         }
+
+        var reporting = File.ReadAllText(Path.Combine(
+            RepositoryRoot, paths[1]));
+        Assert.DoesNotContain(
+            "CompletedAt=SYSDATETIMEOFFSET()", reporting, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "CompletedAt=@CompletedAt", reporting, StringComparison.Ordinal);
     }
 
     [Fact]

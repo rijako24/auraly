@@ -85,9 +85,10 @@ public sealed class SqlSalesReportingProcessor(
                     throw new InvalidOperationException(
                         $"Reporting does not own document type '{documentType}'.");
 
+                var completedAt = timeProvider.GetUtcNow();
                 await using var complete = new SqlCommand("""
                     UPDATE reporting.SalesReportingJobs
-                    SET Status=N'Projected',CompletedAt=SYSDATETIMEOFFSET(),LastError=NULL
+                    SET Status=N'Projected',CompletedAt=@CompletedAt,LastError=NULL
                     WHERE SourceDocumentId=@DocumentId
                       AND SourceDocumentType=@DocumentType
                       AND BusinessId=@BusinessId AND Status=N'Processing'
@@ -97,6 +98,7 @@ public sealed class SqlSalesReportingProcessor(
                 complete.Parameters.AddWithValue("@DocumentType", documentType);
                 complete.Parameters.AddWithValue("@BusinessId", businessId);
                 complete.Parameters.AddWithValue("@SourceVersion", sourceVersion);
+                complete.Parameters.AddWithValue("@CompletedAt", completedAt);
                 if (await complete.ExecuteNonQueryAsync(cancellationToken) != 1)
                     throw new DBConcurrencyException(
                         "The sales reporting job could not be completed.");
@@ -104,9 +106,10 @@ public sealed class SqlSalesReportingProcessor(
             catch (Exception error) when (error is not OperationCanceledException)
             {
                 transaction.Rollback("BeforeProjection");
+                var completedAt = timeProvider.GetUtcNow();
                 await using var fail = new SqlCommand("""
                     UPDATE reporting.SalesReportingJobs
-                    SET Status=N'Failed',CompletedAt=SYSDATETIMEOFFSET(),LastError=@Error
+                    SET Status=N'Failed',CompletedAt=@CompletedAt,LastError=@Error
                     WHERE SourceDocumentId=@DocumentId
                       AND SourceDocumentType=@DocumentType
                       AND BusinessId=@BusinessId AND Status=N'Processing'
@@ -116,6 +119,7 @@ public sealed class SqlSalesReportingProcessor(
                 fail.Parameters.AddWithValue("@DocumentType", documentType);
                 fail.Parameters.AddWithValue("@BusinessId", businessId);
                 fail.Parameters.AddWithValue("@SourceVersion", sourceVersion);
+                fail.Parameters.AddWithValue("@CompletedAt", completedAt);
                 fail.Parameters.AddWithValue(
                     "@Error", error.Message.Length <= 2000
                         ? error.Message : error.Message[..2000]);
