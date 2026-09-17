@@ -1326,6 +1326,52 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosIssuedSaleSearchPage>(`/edge/v1/sales?${query}`);
   }
 
+  searchServerIssuedSales(
+    context: { businessId: string; warehouseId: string; workSessionId: string },
+    filters: PosIssuedSaleFilters,
+    skip = 0,
+    take = 20,
+  ) {
+    return this.request<PosIssuedSaleSearchPage>(
+      "/edge/v1/server-history/sales/search",
+      { method: "POST", body: JSON.stringify({ context, ...filters, skip, take }) },
+    );
+  }
+
+  searchServerHistoryCustomers(
+    context: { businessId: string; warehouseId: string; workSessionId: string },
+    search: string,
+    skip = 0,
+    take = 10,
+  ) {
+    return this.request<PosCustomerSearchPage>(
+      "/edge/v1/server-history/customers/search",
+      { method: "POST", body: JSON.stringify({ context, search, skip, take }) },
+    );
+  }
+
+  searchServerHistoryProducts(
+    context: { businessId: string; warehouseId: string; workSessionId: string },
+    search: string,
+    skip = 0,
+    take = 10,
+  ) {
+    return this.request<PosCatalogSearchPage>(
+      "/edge/v1/server-history/products/search",
+      { method: "POST", body: JSON.stringify({ context, search, skip, take, customerId: null, publicPriceOnly: false }) },
+    );
+  }
+
+  loadServerIssuedSaleReceipt(
+    context: { businessId: string; warehouseId: string; workSessionId: string },
+    documentId: string,
+  ) {
+    return this.request<PosPrintableReceipt>(
+      `/edge/v1/server-history/sales/${documentId}/receipt`,
+      { method: "POST", body: JSON.stringify(context) },
+    );
+  }
+
   reprint(documentId: string) {
     return this.requestVoid(`/edge/v1/sales/${documentId}/reprint`, { method: "POST" });
   }

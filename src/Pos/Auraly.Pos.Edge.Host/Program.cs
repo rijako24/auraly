@@ -209,6 +209,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosProductAvailabilityServerClient>();
         builder.Services.AddSingleton<PosCreditServerClient>();
         builder.Services.AddSingleton<PosRemoteApprovalClient>();
+        builder.Services.AddSingleton<PosSalesHistoryServerClient>();
         builder.Services.AddSingleton<PosSensitiveActionAuthorizer>();
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
@@ -990,6 +991,45 @@ public static class PosEdgeHostApplication
             });
         });
 
+        edge.MapPost("/server-history/customers/search", async (
+            SearchOnlineSalesRequest request,
+            PosSalesHistoryServerClient server,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+            await ServerHistoryResult(() => server.SearchCustomersAsync(
+                request,
+                RequiredSalesHistoryUser(sessions),
+                ct)));
+        edge.MapPost("/server-history/products/search", async (
+            SearchOnlineSalesRequest request,
+            PosSalesHistoryServerClient server,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+            await ServerHistoryResult(() => server.SearchProductsAsync(
+                request,
+                RequiredSalesHistoryUser(sessions),
+                ct)));
+        edge.MapPost("/server-history/sales/search", async (
+            SearchOnlineSalesIssuedSalesRequest request,
+            PosSalesHistoryServerClient server,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+            await ServerHistoryResult(() => server.SearchSalesAsync(
+                request,
+                RequiredSalesHistoryUser(sessions),
+                ct)));
+        edge.MapPost("/server-history/sales/{documentId:guid}/receipt", async (
+            Guid documentId,
+            OnlineSalesDraftContext request,
+            PosSalesHistoryServerClient server,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+            await ServerHistoryResult(() => server.GetReceiptAsync(
+                documentId,
+                request,
+                RequiredSalesHistoryUser(sessions),
+                ct)));
+
         edge.MapPost("/capture", async (
             CaptureRequest request,
             PosCaptureService capture,
@@ -1268,6 +1308,35 @@ public static class PosEdgeHostApplication
         edge.MapPosSaleCompletion();
         edge.MapPosWorkSessionClosure();
         return app;
+    }
+
+    private static async Task<IResult> ServerHistoryResult<T>(Func<Task<T>> action)
+    {
+        try
+        {
+            return Results.Ok(await action());
+        }
+        catch (PosSalesHistoryServerException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: exception.StatusCode,
+                title: exception.Code);
+        }
+    }
+
+    private static PosLocalUserSession RequiredSalesHistoryUser(
+        PosLocalSessionAccessor sessions)
+    {
+        var user = sessions.Required();
+        if (!user.Permissions.Contains(
+                CommercePermissionCodes.SalesCreate,
+                StringComparer.Ordinal))
+            throw new PosSalesHistoryServerException(
+                StatusCodes.Status403Forbidden,
+                "Forbidden",
+                "El usuario local no tiene permiso para consultar ventas.");
+        return user;
     }
 
     private static WebApplication BuildEnrollmentRequired(

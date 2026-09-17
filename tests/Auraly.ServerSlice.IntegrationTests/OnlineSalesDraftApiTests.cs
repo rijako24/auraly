@@ -10,6 +10,36 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Enrolled_device_history_uses_the_local_cashier_session_and_rejects_another_device()
+    {
+        var request = new SearchOnlineSalesIssuedSalesRequest(
+            new OnlineSalesDraftContext(
+                fixture.BusinessId,
+                fixture.WarehouseId,
+                fixture.WorkSessionId),
+            Take: 20);
+
+        using (var client = fixture.CreateClient())
+        using (var message = DeviceHistoryRequest(
+                   request,
+                   fixture.DeviceId,
+                   ServerSliceFixture.DeviceSecret))
+        using (var response = await client.SendAsync(message))
+        {
+            response.EnsureSuccessStatusCode();
+            Assert.NotNull(await response.Content.ReadFromJsonAsync<OnlineSalesIssuedSalePage>());
+        }
+
+        using (var client = fixture.CreateClient())
+        using (var message = DeviceHistoryRequest(
+                   request,
+                   fixture.DeniedDeviceId,
+                   ServerSliceFixture.DeniedDeviceSecret))
+        using (var response = await client.SendAsync(message))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Changing_workspace_updates_the_active_draft_warehouse_and_its_inventory_policy()
     {
         var warehouseId = Guid.NewGuid();
@@ -809,5 +839,23 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         };
         request.Headers.Add("Idempotency-Key", idempotencyKey);
         return request;
+    }
+
+    private HttpRequestMessage DeviceHistoryRequest(
+        SearchOnlineSalesIssuedSalesRequest request,
+        Guid deviceId,
+        string deviceSecret)
+    {
+        var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/pos/v1/history/sales/search")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("X-Auraly-Device-Id", deviceId.ToString("D"));
+        message.Headers.Add("X-Auraly-Device-Secret", deviceSecret);
+        message.Headers.Add("X-Auraly-User-Id", fixture.UserId.ToString("D"));
+        message.Headers.Add("X-Auraly-Work-Session-Id", fixture.WorkSessionId.ToString("D"));
+        return message;
     }
 }

@@ -947,6 +947,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
              AND s.BusinessId=b.BusinessId
              AND s.TenantId=@TenantId
              AND s.UserId=@UserId
+             AND (@DeviceId IS NULL OR s.DeviceId=@DeviceId)
              AND s.Status=N'Open'
             WHERE b.TenantId=@TenantId
               AND b.BusinessId=@BusinessId
@@ -957,7 +958,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             P("@BusinessId", requested.BusinessId),
             P("@WarehouseId", requested.WarehouseId),
             P("@WorkSessionId", requested.WorkSessionId),
-            P("@UserId", user.UserId)
+            P("@UserId", user.UserId),
+            P("@DeviceId", user.DeviceId)
         ]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))

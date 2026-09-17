@@ -2529,20 +2529,28 @@ export default function PosPage() {
   );
   const searchIssuedSales = useCallback(
     (filters: import("@/services/pos/pos-edge-client").PosIssuedSaleFilters, skip: number) =>
-      searchServerIssuedSales(salesHistoryScope, filters, skip, 20),
-    [salesHistoryScope],
+      client instanceof PosEdgeClient
+        ? client.searchServerIssuedSales(salesHistoryScope, filters, skip, 20)
+        : searchServerIssuedSales(salesHistoryScope, filters, skip, 20),
+    [client, salesHistoryScope],
   );
   const searchHistoryCustomers = useCallback(
-    (search: string, skip: number) => searchServerHistoryCustomers(salesHistoryScope, search, skip, 10),
-    [salesHistoryScope],
+    (search: string, skip: number) => client instanceof PosEdgeClient
+      ? client.searchServerHistoryCustomers(salesHistoryScope, search, skip, 10)
+      : searchServerHistoryCustomers(salesHistoryScope, search, skip, 10),
+    [client, salesHistoryScope],
   );
   const searchHistoryProducts = useCallback(
-    (search: string, skip: number) => searchServerHistoryProducts(salesHistoryScope, search, skip, 10),
-    [salesHistoryScope],
+    (search: string, skip: number) => client instanceof PosEdgeClient
+      ? client.searchServerHistoryProducts(salesHistoryScope, search, skip, 10)
+      : searchServerHistoryProducts(salesHistoryScope, search, skip, 10),
+    [client, salesHistoryScope],
   );
   const loadIssuedSaleDetail = useCallback(
-    (sale: PosIssuedSaleSummary) => loadServerIssuedSaleReceipt(salesHistoryScope, sale.documentId.value),
-    [salesHistoryScope],
+    (sale: PosIssuedSaleSummary) => client instanceof PosEdgeClient
+      ? client.loadServerIssuedSaleReceipt(salesHistoryScope, sale.documentId.value)
+      : loadServerIssuedSaleReceipt(salesHistoryScope, sale.documentId.value),
+    [client, salesHistoryScope],
   );
 
   async function selectSearchProduct(product: PosCatalogProduct) {

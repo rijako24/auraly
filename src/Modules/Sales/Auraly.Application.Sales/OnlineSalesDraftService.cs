@@ -7,7 +7,8 @@ public sealed record OnlineSalesUserIdentity(
     Guid UserId,
     Guid TenantId,
     IReadOnlySet<string> Permissions,
-    string UserName = "Usuario");
+    string UserName = "Usuario",
+    Guid? DeviceId = null);
 
 public interface IOnlineSalesDraftStore
 {

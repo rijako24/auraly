@@ -68,6 +68,51 @@ public static class OnlineSalesDraftApi
                 documentId,
                 ct)));
 
+        var deviceHistory = endpoints.MapGroup("/api/pos/v1/history")
+            .RequireAuthorization("pos.enrolled");
+
+        deviceHistory.MapPost("/customers/search", async (
+            HttpContext context,
+            SearchOnlineSalesRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SearchCustomersAsync(
+                context.User.ToDeviceOnlineSalesUserIdentity(context, request.Context),
+                request,
+                ct)));
+
+        deviceHistory.MapPost("/products/search", async (
+            HttpContext context,
+            SearchOnlineSalesRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SearchProductsAsync(
+                context.User.ToDeviceOnlineSalesUserIdentity(context, request.Context),
+                request,
+                ct)));
+
+        deviceHistory.MapPost("/sales/search", async (
+            HttpContext context,
+            SearchOnlineSalesIssuedSalesRequest request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SearchAsync(
+                context.User.ToDeviceOnlineSalesUserIdentity(context, request.Context),
+                request,
+                ct)));
+
+        deviceHistory.MapPost("/sales/{documentId:guid}/receipt", async (
+            HttpContext context,
+            Guid documentId,
+            OnlineSalesDraftContext request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await HandleNullable(() => service.GetReceiptAsync(
+                context.User.ToDeviceOnlineSalesUserIdentity(context, request),
+                request,
+                documentId,
+                ct)));
+
         group.MapGet("/sales/{documentId:guid}/qr", async (
             HttpContext context,
             Guid documentId,
@@ -375,6 +420,31 @@ group.MapPost("/{draftId:guid}/items", async (
                 draftId, request, IdempotencyKey(context), ct)));
 
         return endpoints;
+    }
+
+    private static OnlineSalesUserIdentity ToDeviceOnlineSalesUserIdentity(
+        this ClaimsPrincipal principal,
+        HttpContext context,
+        OnlineSalesDraftContext requested)
+    {
+        if (!Guid.TryParse(context.Request.Headers["X-Auraly-User-Id"], out var userId) ||
+            !Guid.TryParse(context.Request.Headers["X-Auraly-Work-Session-Id"], out var workSessionId) ||
+            workSessionId != requested.WorkSessionId)
+            throw new OnlineSalesDraftForbiddenException(
+                "El dispositivo no identificó el usuario y su sesión de trabajo.");
+        if (!Guid.TryParse(
+                principal.FindFirstValue(PosAuthenticationDefaults.TenantIdClaim),
+                out var tenantId) ||
+            !Guid.TryParse(
+                principal.FindFirstValue(PosAuthenticationDefaults.DeviceIdClaim),
+                out var deviceId))
+            throw new OnlineSalesDraftForbiddenException(
+                "El dispositivo enrolado no tiene un contexto válido.");
+        return new OnlineSalesUserIdentity(
+            userId,
+            tenantId,
+            new HashSet<string>([CommercePermissionCodes.SalesCreate], StringComparer.Ordinal),
+            DeviceId: deviceId);
     }
 
     private static string IdempotencyKey(HttpContext context) =>
