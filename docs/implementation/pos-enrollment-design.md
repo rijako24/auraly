@@ -44,6 +44,10 @@ enrolado.
     Solo entonces lo consume. Si la respuesta local se pierde antes de esa
     confirmación, el mismo enrolamiento se puede completar nuevamente sin crear
     otro dispositivo ni depender de `sessionStorage`.
+    El navegador retira cualquier token local del enrolamiento anterior y no
+    crea el nuevo cliente Edge hasta que el host reiniciado responde con la
+    identidad nueva; por tanto, no existen llamadas a borradores, temporales o
+    numeración durante la ventana de reinicio.
 13. La preparación completa, sin depender de un cliente seleccionado, descarga
     por páginas todos los productos y todos los clientes del negocio, además de
     promociones, canales, parámetros y catálogos operativos. El snapshot del
@@ -116,6 +120,12 @@ La experiencia visual es la misma:
 - **Edge conectado:** la caja usa sus capacidades locales y sincroniza con el
   servidor.
 - **Edge sin red:** usa catálogo, series, factura, impresión y outbox locales.
+
+`serverConnected` significa que Auraly Server aceptó la identidad vigente del
+dispositivo. Una respuesta `401` prueba que el transporte existe, pero deja el
+estado desconectado porque ninguna capacidad remota autenticada está disponible.
+El canal push mantiene su indicador independiente; ninguno de los dos condiciona
+el login local ni la lectura de la proyección SQLite.
 
 Los modales personalizados del POS comparten una pila de foco: el control
 inicial gana el foco al abrir, `Escape` cierra solo la ventana superior y el

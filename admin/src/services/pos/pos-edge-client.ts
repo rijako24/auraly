@@ -1468,6 +1468,10 @@ export function readEdgeUserSession(): string | null {
   return window.localStorage.getItem("auraly.pos.user-session");
 }
 
+export function clearEdgeUserSession(): void {
+  window.localStorage.removeItem("auraly.pos.user-session");
+}
+
 export function readEdgeTokenFromLaunch(): string | null {
   const fragment = new URLSearchParams(window.location.hash.slice(1));
   const launched = fragment.get("edgeToken");

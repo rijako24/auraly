@@ -57,6 +57,7 @@ import {
   type PosInventoryValidation,
   type PosSensitiveAuthorization,
   type PosDraftLineUpdate,
+  clearEdgeUserSession,
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
@@ -86,6 +87,7 @@ import {
   waitForRedeemedPosEdge,
 } from "@/services/pos/pos-enrollment";
 import {
+  connectRedeemedPosEdge,
   completePendingPosEnrollment,
   isPosPreparationPending,
   shouldCompletePosEnrollment,
@@ -2838,12 +2840,15 @@ export default function PosPage() {
       setSetupNotice("Guardando la identidad segura de la caja…");
       await redeemPosEnrollment(edgeEnrollmentToken, enrollment);
       setSetupNotice("Reiniciando el servicio local y preparando usuarios, permisos y catálogo…");
-      const edgeClient = new PosEdgeClient(edgeEnrollmentToken, readEdgeUserSession());
       setEdgeLoginState("preparing");
-      setClient(edgeClient);
-      await waitForRedeemedPosEdge(edgeEnrollmentToken);
-      const health = await edgeClient.health();
+      setClient(null);
+      const { client: edgeClient, health } = await connectRedeemedPosEdge(
+        clearEdgeUserSession,
+        () => waitForRedeemedPosEdge(edgeEnrollmentToken),
+        () => new PosEdgeClient(edgeEnrollmentToken),
+      );
       setPreparationHealth(health);
+      setClient(edgeClient);
       setSetupNotice(null);
     } catch (caught) {
       const message = caught instanceof Error

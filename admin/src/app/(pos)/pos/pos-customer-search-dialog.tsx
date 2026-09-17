@@ -16,6 +16,7 @@ import type {
   PosCustomerSearchPage,
 } from "@/services/pos/pos-edge-client";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
+import { selectableCustomerPage } from "./pos-customer-search";
 
 export function PosCustomerSearchDialog({
   busy,
@@ -71,11 +72,13 @@ export function PosCustomerSearchDialog({
       void onSearch(term.trim(), 0)
         .then((page) => {
           if (requestVersion.current !== version) return;
-          page.items.forEach(requireCustomerSiteKey);
-          setResults(page.items);
+          const selectable = selectableCustomerPage(page);
+          setResults(selectable.items);
           setSelected(0);
-          setHasMore(page.hasMore);
-          setNextOffset(page.nextOffset);
+          setHasMore(selectable.hasMore);
+          setNextOffset(selectable.nextOffset);
+          if (!selectable.items.length && selectable.omittedWithoutSite)
+            setError("Los clientes sincronizados no tienen una sede operativa disponible.");
         })
         .catch(() => {
           if (requestVersion.current !== version) return;
@@ -103,13 +106,13 @@ export function PosCustomerSearchDialog({
     setLoadingMore(true);
     try {
       const page = await onSearch(term.trim(), nextOffset);
-      page.items.forEach(requireCustomerSiteKey);
+      const selectable = selectableCustomerPage(page);
       setResults((current) => {
-        const known = new Set(current.map(requireCustomerSiteKey));
-        return [...current, ...page.items.filter((customer) => !known.has(requireCustomerSiteKey(customer)))];
+        const known = new Set(current.map((customer) => customer.partySiteId));
+        return [...current, ...selectable.items.filter((customer) => !known.has(customer.partySiteId))];
       });
-      setHasMore(page.hasMore);
-      setNextOffset(page.nextOffset);
+      setHasMore(selectable.hasMore);
+      setNextOffset(selectable.nextOffset);
     } catch {
       setError("No fue posible cargar más clientes.");
     } finally {
@@ -218,12 +221,6 @@ export function PosCustomerSearchDialog({
       </section>
     </div>
   );
-}
-
-function requireCustomerSiteKey(customer: PosCustomer): string {
-  if (!customer.partySiteId)
-    throw new Error(`El cliente ${customer.name} no tiene una sede operativa.`);
-  return customer.partySiteId;
 }
 
 function PosCustomerCreateForm({ busy, onCountries, onDivisions, onCities, onCreate, onBack }: {

@@ -3,10 +3,39 @@ import { describe, it } from "node:test";
 
 import { posEnrollmentProblemDetail } from "./pos-enrollment-error";
 import {
+  connectRedeemedPosEdge,
   completePendingPosEnrollment,
   isPosPreparationPending,
   shouldCompletePosEnrollment,
 } from "./pos-enrollment-transition";
+
+describe("connectRedeemedPosEdge", () => {
+  it("retires the old session and waits for the restarted host before issuing requests", async () => {
+    const calls: string[] = [];
+
+    const result = await connectRedeemedPosEdge(
+      () => calls.push("retire-session"),
+      async () => { calls.push("wait-for-restart"); },
+      () => {
+        calls.push("create-client");
+        return {
+          async health() {
+            calls.push("fresh-health");
+            return { status: "IdentitySynchronizing" };
+          },
+        };
+      },
+    );
+
+    assert.deepEqual(calls, [
+      "retire-session",
+      "wait-for-restart",
+      "create-client",
+      "fresh-health",
+    ]);
+    assert.equal(result.health.status, "IdentitySynchronizing");
+  });
+});
 
 describe("posEnrollmentProblemDetail", () => {
   it("never exposes an internal server stack to the cashier", async () => {

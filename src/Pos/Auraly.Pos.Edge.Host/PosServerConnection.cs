@@ -1,5 +1,7 @@
 namespace Auraly.Pos.Edge.Host;
 
+using System.Net;
+
 public sealed class PosServerConnectionState
 {
     private int _connected;
@@ -33,7 +35,10 @@ public sealed class PosServerConnectionHandler(
         try
         {
             var response = await base.SendAsync(request, cancellationToken);
-            state.MarkConnected();
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+                state.MarkDisconnected();
+            else
+                state.MarkConnected();
             return response;
         }
         catch (Exception exception)
