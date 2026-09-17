@@ -141,6 +141,7 @@ import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-c
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
 import {
+  enrolledWorkspaceOption,
   shouldAutoActivateRememberedWorkspace,
   shouldUseEnrolledPosRuntime,
   workspaceActivationMode,
@@ -2890,6 +2891,13 @@ export default function PosPage() {
     setWorkspaceConfigurationOffline(false);
     setWorkspaceChanging(true);
     setSetupLoading(true);
+    if (client.mode === "edge") {
+      setCanEnrollOffline(false);
+      setEnrollmentAvailability(null);
+      setOnlineOptions([enrolledWorkspaceOption(workstation)]);
+      setSetupLoading(false);
+      return;
+    }
     try {
       const serverBootstrap = await loadSalesWorkspaceBootstrap();
       applyWorkspaceBootstrap(
@@ -2911,7 +2919,7 @@ export default function PosPage() {
             warehouseCode: "",
             warehouseName: workstation.warehouseName,
             warehouseAllowsNegativeStockSales: workstation.warehouseAllowsNegativeStockSales,
-            hasActiveEdgeEnrollment: client.mode === "edge",
+            hasActiveEdgeEnrollment: false,
           }]);
       setSetupError(message);
     } finally {

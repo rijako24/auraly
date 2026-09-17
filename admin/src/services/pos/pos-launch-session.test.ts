@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import {
+  enrolledWorkspaceOption,
   installedPosLaunchDestination,
   shouldAutoActivateRememberedWorkspace,
   shouldUseEnrolledPosRuntime,
@@ -121,6 +122,33 @@ test("configuration never changes an enrolled installation to the online adapter
   assert.equal(
     workspaceActivationMode("online", "business-a", "warehouse-a", "business-b", "warehouse-b"),
     "activate-online",
+  );
+});
+test("enrolled configuration is projected from Edge without a cloud bootstrap", () => {
+  assert.deepEqual(
+    enrolledWorkspaceOption({
+      businessId: "business-a",
+      businessName: "Auraly",
+      warehouseId: "warehouse-a",
+      warehouseName: "Bodega principal",
+      warehouseAllowsNegativeStockSales: true,
+      fiscalReady: true,
+      fiscalWarnings: ["warning"],
+      dianQuotaAvailable: null,
+    }),
+    {
+      businessId: "business-a",
+      businessName: "Auraly",
+      warehouseId: "warehouse-a",
+      warehouseCode: "",
+      warehouseName: "Bodega principal",
+      warehouseAllowsNegativeStockSales: true,
+      hasActiveEdgeEnrollment: true,
+      fiscalReadyForOnlineSales: true,
+      fiscalReadyForEnrollment: true,
+      hasDianDocumentQuota: true,
+      fiscalWarningMessages: ["warning"],
+    },
   );
 });
 test("order printing selects the installed transport without changing issuance ownership", () => {

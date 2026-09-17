@@ -86,6 +86,13 @@ enrolamiento; intentar seleccionar otro alcance exige reenrolar. Por tanto, entr
 directamente a Facturación o regresar desde Administración produce el mismo modo
 operativo y las mismas reglas.
 
+La vista de sede, bodega y documento de un equipo enrolado proyecta el alcance
+autoritativo que ya entrega POS Edge. No intenta reconstruirlo mediante la sesión
+web —que se retira al establecer la identidad local— ni interpreta la ausencia de
+esa cookie como una caída de Auraly. Consultar o cambiar el documento
+predeterminado dentro del mismo alcance no realiza viajes de red; cambiar sede o
+bodega continúa exigiendo un nuevo enrolamiento controlado.
+
 ## Habilitación del respaldo offline
 
 “Habilitar operación sin conexión” es una acción administrativa, no un interruptor
