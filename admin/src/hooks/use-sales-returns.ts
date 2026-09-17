@@ -4,6 +4,12 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { salesReturnsApi, type ConfirmSalesReturnRequest } from "@/services/api/sales-returns";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { resolveSalesReturnBusinessId } from "@/lib/sales-return-business-context";
+import type { PosClient, PosSalesReturnContext } from "@/services/pos/pos-edge-client";
+
+export type PosSalesReturnRuntime = {
+  client: PosClient;
+  context: PosSalesReturnContext;
+};
 
 export function useReturnableSales(params: {
   page: number;
@@ -13,25 +19,36 @@ export function useReturnableSales(params: {
   from?: string;
   to?: string;
   withAvailableQuantity?: boolean;
-}, businessIdOverride?: string | null) {
+}, businessIdOverride?: string | null, runtime?: PosSalesReturnRuntime) {
   const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const businessId = resolveSalesReturnBusinessId(businessIdOverride, selectedBusinessId);
   return useQuery({
-    queryKey: ["returnable-sales", businessId, params],
-    queryFn: () => salesReturnsApi.listSales({ ...params, businessId: businessId! }),
+    queryKey: ["returnable-sales", runtime?.client.mode ?? "dashboard", businessId, params],
+    queryFn: () => runtime
+      ? runtime.client.searchServerReturnableSales(runtime.context, params)
+      : salesReturnsApi.listSales({ ...params, businessId: businessId! }),
     enabled: !!businessId,
     placeholderData: keepPreviousData,
   });
 }
 
-export function useConfirmSalesReturn(businessIdOverride?: string | null) {
+export function useConfirmSalesReturn(
+  businessIdOverride?: string | null,
+  runtime?: PosSalesReturnRuntime,
+) {
   const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const businessId = resolveSalesReturnBusinessId(businessIdOverride, selectedBusinessId);
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (request: ConfirmSalesReturnRequest) => salesReturnsApi.confirm(request),
+    mutationFn: (request: ConfirmSalesReturnRequest) => runtime
+      ? runtime.client.confirmServerSalesReturn({
+          ...request,
+          businessId: runtime.context.businessId,
+          workSessionId: runtime.context.workSessionId,
+        })
+      : salesReturnsApi.confirm(request),
     onSuccess: () => {
-      client.invalidateQueries({ queryKey: ["returnable-sales", businessId] });
+      client.invalidateQueries({ queryKey: ["returnable-sales"] });
       client.invalidateQueries({ queryKey: ["sales-returns", businessId] });
       client.invalidateQueries({ queryKey: ["receivables", businessId] });
     },

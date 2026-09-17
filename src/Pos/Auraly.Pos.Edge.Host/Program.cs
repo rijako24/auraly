@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
 using Auraly.Contracts.Catalog;
@@ -210,6 +211,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosCreditServerClient>();
         builder.Services.AddSingleton<PosRemoteApprovalClient>();
         builder.Services.AddSingleton<PosSalesHistoryServerClient>();
+        builder.Services.AddSingleton<PosSalesReturnServerClient>();
         builder.Services.AddSingleton<PosSensitiveActionAuthorizer>();
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
@@ -1030,6 +1032,24 @@ public static class PosEdgeHostApplication
                 RequiredSalesHistoryUser(sessions),
                 ct)));
 
+        edge.MapPost("/server-returns/search", async (JsonElement request,
+            PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerReturnResult(() => server.SearchAsync(request,
+                RequiredSalesReturnUser(sessions, false), ct)));
+        edge.MapPost("/server-returns/sales/{documentId:guid}", async (Guid documentId,
+            JsonElement request, PosSalesReturnServerClient server,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerReturnResult(() => server.GetAsync(documentId, request,
+                RequiredSalesReturnUser(sessions, false), ct)));
+        edge.MapPost("/server-returns/bootstrap", async (JsonElement request,
+            PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerReturnResult(() => server.BootstrapAsync(request,
+                RequiredSalesReturnUser(sessions, false), ct)));
+        edge.MapPost("/server-returns/confirm", async (JsonElement request,
+            PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerReturnResult(() => server.ConfirmAsync(request,
+                RequiredSalesReturnUser(sessions, true), ct)));
+
         edge.MapPost("/capture", async (
             CaptureRequest request,
             PosCaptureService capture,
@@ -1336,6 +1356,29 @@ public static class PosEdgeHostApplication
                 StatusCodes.Status403Forbidden,
                 "Forbidden",
                 "El usuario local no tiene permiso para consultar ventas.");
+        return user;
+    }
+
+    private static async Task<IResult> ServerReturnResult<T>(Func<Task<T>> action)
+    {
+        try { return Results.Ok(await action()); }
+        catch (PosSalesReturnServerException exception)
+        {
+            return Results.Problem(exception.Message,
+                statusCode: exception.StatusCode, title: exception.Code);
+        }
+    }
+
+    private static PosLocalUserSession RequiredSalesReturnUser(
+        PosLocalSessionAccessor sessions, bool confirm)
+    {
+        var user = sessions.Required();
+        var required = confirm
+            ? new[] { "sales.returns.create", "sales.returns.confirm" }
+            : new[] { "sales.returns.read" };
+        if (required.Any(permission => !user.Permissions.Contains(permission, StringComparer.Ordinal)))
+            throw new PosSalesReturnServerException(403, "Forbidden",
+                "El usuario local no tiene permiso para procesar devoluciones.");
         return user;
     }
 

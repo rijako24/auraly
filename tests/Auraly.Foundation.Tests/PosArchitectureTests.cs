@@ -352,6 +352,26 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
+    public void Pos_connected_history_and_returns_use_the_selected_runtime_adapter()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var page = File.ReadAllText(Path.Combine(repositoryRoot, "admin", "src", "app",
+            "(pos)", "pos", "page.tsx"));
+        var returns = File.ReadAllText(Path.Combine(repositoryRoot, "admin", "src",
+            "components", "returns", "sales-return-workspace.tsx"));
+        var contract = File.ReadAllText(Path.Combine(repositoryRoot, "admin", "src",
+            "services", "pos", "pos-edge-client.ts"));
+
+        Assert.Contains("client.loadServerIssuedSaleReceipt(", page, StringComparison.Ordinal);
+        Assert.Contains("client.searchServerIssuedSales(", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("client instanceof PosEdgeClient\n        ? client.searchServerIssuedSales", page,
+            StringComparison.Ordinal);
+        Assert.Contains("posClient?: PosClient", returns, StringComparison.Ordinal);
+        Assert.Contains("runtime.client.loadServerReturnableSale", returns, StringComparison.Ordinal);
+        Assert.Contains("searchServerReturnableSales(", contract, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Sensitive_approval_is_realtime_on_register_bell_and_mobile_sheet()
     {
         var repositoryRoot = FindRepositoryRoot();

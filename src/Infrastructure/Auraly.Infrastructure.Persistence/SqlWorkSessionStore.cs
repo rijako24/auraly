@@ -142,7 +142,7 @@ public sealed partial class SqlWorkSessionStore(
             // not visible through CurrentAsync(identity).
             var winner = await CurrentAsync(identity, cancellationToken);
             if (request.DeviceId is not null)
-                winner = await ReadCurrentForDeviceAsync(
+                winner = await CurrentForDeviceAsync(
                     identity, request.BusinessId, request.DeviceId.Value, cancellationToken);
             if (winner is not null &&
                 winner.BusinessId == request.BusinessId &&
@@ -224,7 +224,7 @@ public sealed partial class SqlWorkSessionStore(
         }
     }
 
-    private async Task<WorkSessionView?> ReadCurrentForDeviceAsync(
+    public async Task<WorkSessionView?> CurrentForDeviceAsync(
         WorkSessionIdentity identity,
         Guid businessId,
         Guid deviceId,

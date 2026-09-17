@@ -695,6 +695,7 @@ app.MapExpensesApi();
 app.MapPayrollApi();
 app.MapReturnsApi();
 app.MapSalesReturnQueryApi();
+app.MapPosSalesReturnApi();
 app.MapInventoryApi();
 app.MapRoutesApi();
 app.MapDispatchingApi();

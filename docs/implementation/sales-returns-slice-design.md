@@ -47,6 +47,13 @@ Esto evita la pérdida contable que produciría marcar un artículo como recibid
 
 ## Límites explícitos
 
-La primera conexión POS de esta rebanada es online. La devolución offline en POS Edge requiere persistencia local del documento, historial sincronizado de devoluciones, resolución de conflictos y outbox propia; se construirá como rebanada separada y no se simula llamando al servidor.
+La primera conexión POS de esta rebanada es online. El navegador web llega mediante
+su sesión HttpOnly; una caja enrolada llega a la misma API y a los mismos servicios
+canónicos a través del transporte autenticado de Edge. Edge no persiste ni decide
+la devolución: sin conexión al servidor, la operación se rechaza explícitamente.
+
+La devolución offline en POS Edge requiere persistencia local del documento,
+historial sincronizado de devoluciones, resolución de conflictos y outbox propia;
+se construirá como rebanada separada y no se simula llamando al servidor.
 
 Los reversos reales a tarjeta, intereses, cambios de mercancía y devoluciones sin factura original quedan fuera de este corte.

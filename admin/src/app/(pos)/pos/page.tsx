@@ -75,10 +75,6 @@ import {
   closePrintPreview,
   openHalfLetterPrintPreview,
   renderReceiptsReceipt,
-  loadServerIssuedSaleReceipt,
-  searchServerHistoryCustomers,
-  searchServerHistoryProducts,
-  searchServerIssuedSales,
 } from "@/services/pos/online-pos-client";
 import type { OrderInvoiceSequenceProgress } from "@/services/pos/pos-order-print-routing";
 import {
@@ -2164,7 +2160,7 @@ export default function PosPage() {
     if (!client || busy) return;
     setError(null);
     try {
-      const receipt = await loadServerIssuedSaleReceipt(
+      const receipt = await client.loadServerIssuedSaleReceipt(
         salesHistoryScope,
         sale.documentId.value,
       );
@@ -2528,28 +2524,28 @@ export default function PosPage() {
     [workstation.businessId, workstation.warehouseId, workstation.workSessionId],
   );
   const searchIssuedSales = useCallback(
-    (filters: import("@/services/pos/pos-edge-client").PosIssuedSaleFilters, skip: number) =>
-      client instanceof PosEdgeClient
-        ? client.searchServerIssuedSales(salesHistoryScope, filters, skip, 20)
-        : searchServerIssuedSales(salesHistoryScope, filters, skip, 20),
+    (filters: import("@/services/pos/pos-edge-client").PosIssuedSaleFilters, skip: number) => {
+      if (!client) return Promise.reject(new Error("El punto de venta no está disponible."));
+      return client.searchServerIssuedSales(salesHistoryScope, filters, skip, 20);
+    },
     [client, salesHistoryScope],
   );
   const searchHistoryCustomers = useCallback(
-    (search: string, skip: number) => client instanceof PosEdgeClient
+    (search: string, skip: number) => client
       ? client.searchServerHistoryCustomers(salesHistoryScope, search, skip, 10)
-      : searchServerHistoryCustomers(salesHistoryScope, search, skip, 10),
+      : Promise.reject(new Error("El punto de venta no está disponible.")),
     [client, salesHistoryScope],
   );
   const searchHistoryProducts = useCallback(
-    (search: string, skip: number) => client instanceof PosEdgeClient
+    (search: string, skip: number) => client
       ? client.searchServerHistoryProducts(salesHistoryScope, search, skip, 10)
-      : searchServerHistoryProducts(salesHistoryScope, search, skip, 10),
+      : Promise.reject(new Error("El punto de venta no está disponible.")),
     [client, salesHistoryScope],
   );
   const loadIssuedSaleDetail = useCallback(
-    (sale: PosIssuedSaleSummary) => client instanceof PosEdgeClient
+    (sale: PosIssuedSaleSummary) => client
       ? client.loadServerIssuedSaleReceipt(salesHistoryScope, sale.documentId.value)
-      : loadServerIssuedSaleReceipt(salesHistoryScope, sale.documentId.value),
+      : Promise.reject(new Error("El punto de venta no está disponible.")),
     [client, salesHistoryScope],
   );
 
@@ -3802,7 +3798,14 @@ export default function PosPage() {
               aria-label="Cerrar devoluciones"><X className="h-5 w-5" /></button>
           </header>
           <main className="min-h-0 flex-1 overflow-auto p-5">
-            <SalesReturnWorkspace embedded businessId={workstation.businessId} onCashRefundConfirmed={openCashDrawer} />
+            <SalesReturnWorkspace
+              embedded
+              businessId={workstation.businessId}
+              workSessionId={workstation.workSessionId}
+              posClient={client}
+              permissions={activePosPermissions}
+              onCashRefundConfirmed={openCashDrawer}
+            />
           </main>
         </div>
       )}

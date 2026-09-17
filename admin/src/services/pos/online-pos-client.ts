@@ -36,6 +36,10 @@ import {
   readEdgeUserSession,
   PosIssuedSaleSearchPage,
   PosIssuedSaleFilters,
+  type PosServerHistoryScope,
+  type PosSalesReturnContext,
+  type PosSalesReturnQuery,
+  type PosSalesReturnBootstrap,
   PosNextNumbers,
   PosPaymentInput,
   PosCreditTerms,
@@ -56,6 +60,11 @@ import {
   type PosSettlementConfiguration,
   loadBrowserPrinterConfiguration,
 } from "./pos-edge-client";
+import { inventoryApi } from "@/services/api/inventory";
+import {
+  salesReturnsApi,
+  type ConfirmSalesReturnRequest,
+} from "@/services/api/sales-returns";
 import {
   invoiceOrdersInSequence,
   orderReceiptsFromEmission,
@@ -206,12 +215,6 @@ type OnlineIssuedSalePage = {
   }>;
   hasMore: boolean;
   nextOffset: number | null;
-};
-
-export type PosServerHistoryScope = {
-  businessId: string;
-  warehouseId: string;
-  workSessionId: string;
 };
 
 function mapIssuedSales(page: OnlineIssuedSalePage): PosIssuedSaleSearchPage {
@@ -1056,6 +1059,70 @@ export class OnlinePosClient implements PosClient {
       this.post({ context: this.scope(), search, skip, take }),
     );
     return mapIssuedSales(page);
+  }
+
+  searchServerIssuedSales(
+    context: PosServerHistoryScope,
+    filters: PosIssuedSaleFilters,
+    skip = 0,
+    take = 20,
+  ) {
+    return searchServerIssuedSales(context, filters, skip, take);
+  }
+
+  searchServerHistoryCustomers(
+    context: PosServerHistoryScope,
+    search: string,
+    skip = 0,
+    take = 10,
+  ) {
+    return searchServerHistoryCustomers(context, search, skip, take);
+  }
+
+  searchServerHistoryProducts(
+    context: PosServerHistoryScope,
+    search: string,
+    skip = 0,
+    take = 10,
+  ) {
+    return searchServerHistoryProducts(context, search, skip, take);
+  }
+
+  loadServerIssuedSaleReceipt(
+    context: PosServerHistoryScope,
+    documentId: string,
+  ) {
+    return loadServerIssuedSaleReceipt(context, documentId);
+  }
+
+  searchServerReturnableSales(
+    context: PosSalesReturnContext,
+    query: PosSalesReturnQuery,
+  ) {
+    return salesReturnsApi.listSales({ ...query, businessId: context.businessId });
+  }
+
+  loadServerReturnableSale(context: PosSalesReturnContext, documentId: string) {
+    return salesReturnsApi.getSale(documentId, context.businessId);
+  }
+
+  async loadServerSalesReturnBootstrap(): Promise<PosSalesReturnBootstrap> {
+    const [reasons, resolutionMethods, scopes, settlementConfiguration] =
+      await Promise.all([
+        inventoryApi.businessReasons("SalesReturn"),
+        referenceOptionsApi.list("sales-return-resolution-method"),
+        referenceOptionsApi.list("sales-return-scope"),
+        salesReturnsApi.settlementConfiguration(),
+      ]);
+    return { reasons, resolutionMethods, scopes, settlementConfiguration };
+  }
+
+  async resolveSalesReturnWorkSession(context: PosSalesReturnContext) {
+    return (await salesReturnsApi.openWorkSession(context.businessId)).workSessionId;
+  }
+
+  confirmServerSalesReturn(request: ConfirmSalesReturnRequest) {
+    return salesReturnsApi.confirm(request);
   }
 
   async reprint(documentId: string) {

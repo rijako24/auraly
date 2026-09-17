@@ -16,7 +16,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useConfirmSalesReturn, useReturnableSales } from "@/hooks/use-sales-returns";
+import { useConfirmSalesReturn, useReturnableSales, type PosSalesReturnRuntime } from "@/hooks/use-sales-returns";
 import { calculateSalesReturnSelection, salesReturnPurchasedUnitPrice } from "./sales-return-calculation";
 import { salesReturnsApi, type ReturnableSale, type ReturnableSaleListItem, type SalesReturnRefundMethod, type SalesReturnResolution, type SalesReturnScope } from "@/services/api/sales-returns";
 import { useAuthStore } from "@/stores/auth-store";
@@ -24,13 +24,15 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { inventoryApi } from "@/services/api/inventory";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
+import type { PosClient, PosSalesReturnContext } from "@/services/pos/pos-edge-client";
 
 const DEFAULT_VISIBLE_PRODUCT_LINES = 10;
 const PRODUCT_GRID_HEADER_HEIGHT_REM = 3;
 const PRODUCT_GRID_LINE_HEIGHT_REM = 4.25;
 
-export function SalesReturnWorkspace({ embedded = false, businessId, onCashRefundConfirmed }: { embedded?: boolean; businessId?: string; onCashRefundConfirmed?: () => void | Promise<void> }) {
-  const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
+export function SalesReturnWorkspace({ embedded = false, businessId, workSessionId, posClient, permissions: permissionOverride, onCashRefundConfirmed }: { embedded?: boolean; businessId?: string; workSessionId?: string | null; posClient?: PosClient; permissions?: string[]; onCashRefundConfirmed?: () => void | Promise<void> }) {
+  const storedPermissions = useAuthStore((state) => state.user?.permissions ?? []);
+  const permissions = new Set(permissionOverride ?? storedPermissions);
   const canCreate = permissions.has("sales.returns.create");
   const canConfirm = permissions.has("sales.returns.confirm");
   const [page, setPage] = useState(1);
@@ -41,12 +43,15 @@ export function SalesReturnWorkspace({ embedded = false, businessId, onCashRefun
   const [to, setTo] = useState("");
   const [onlyAvailable, setOnlyAvailable] = useState(true);
   const [selected, setSelected] = useState<ReturnableSale>();
+  const runtime = posClient && businessId
+    ? { client: posClient, context: { businessId, workSessionId: workSessionId ?? null } satisfies PosSalesReturnContext } satisfies PosSalesReturnRuntime
+    : undefined;
   const list = useReturnableSales({
     page, pageSize, search: search.trim() || undefined,
     customer: customer.trim() || undefined,
     from: from || undefined, to: to || undefined,
     withAvailableQuantity: onlyAvailable || undefined,
-  }, businessId);
+  }, businessId, runtime);
 
   const columns = useMemo<ColumnDef<ReturnableSaleListItem>[]>(() => [
     { accessorKey: "documentNumber", header: "Factura", cell: ({ row }) => <div><p className="font-semibold">{row.original.documentNumber}</p><p className="text-xs text-muted-foreground">DIAN {row.original.fiscalNumber}</p></div> },
@@ -62,7 +67,9 @@ export function SalesReturnWorkspace({ embedded = false, businessId, onCashRefun
     try {
       const selectedBusinessId = businessId || useBusinessContextStore.getState().selectedBusinessId;
       if (!selectedBusinessId) throw new Error("La sede es obligatoria.");
-      setSelected(await salesReturnsApi.getSale(item.documentId, selectedBusinessId));
+      setSelected(runtime
+        ? await runtime.client.loadServerReturnableSale(runtime.context, item.documentId)
+        : await salesReturnsApi.getSale(item.documentId, selectedBusinessId));
     }
     catch { toast.error("No fue posible consultar el snapshot de la factura."); }
   };
@@ -79,20 +86,21 @@ export function SalesReturnWorkspace({ embedded = false, businessId, onCashRefun
     </section>
     {list.isError && <section role="alert" className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><AlertCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">No fue posible consultar las facturas disponibles.</p><p className="text-sm">{list.error instanceof Error ? list.error.message : "Verifica la conexión y los permisos de devoluciones."}</p></div></div><Button type="button" variant="outline" className="shrink-0 border-red-300 bg-white" onClick={() => void list.refetch()}>Reintentar</Button></section>}
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={list.data?.page} pageSize={list.data?.pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }} onRowClick={canCreate ? open : undefined} />
-    <SalesReturnEditor key={selected?.documentId ?? "none"} sale={selected} open={!!selected} businessId={businessId} canConfirm={canConfirm} onCashRefundConfirmed={onCashRefundConfirmed} onClose={() => setSelected(undefined)} />
+    <SalesReturnEditor key={selected?.documentId ?? "none"} sale={selected} open={!!selected} businessId={businessId} runtime={runtime} canConfirm={canConfirm} onCashRefundConfirmed={onCashRefundConfirmed} onClose={() => setSelected(undefined)} />
   </div>;
 }
 
-function SalesReturnEditor({ sale, open, businessId: businessIdOverride, canConfirm, onCashRefundConfirmed, onClose }: { sale?: ReturnableSale; open: boolean; businessId?: string; canConfirm: boolean; onCashRefundConfirmed?: () => void | Promise<void>; onClose: () => void }) {
+function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime, canConfirm, onCashRefundConfirmed, onClose }: { sale?: ReturnableSale; open: boolean; businessId?: string; runtime?: PosSalesReturnRuntime; canConfirm: boolean; onCashRefundConfirmed?: () => void | Promise<void>; onClose: () => void }) {
   const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const businessId = businessIdOverride || selectedBusinessId;
-  const confirm = useConfirmSalesReturn(businessId);
-  const reasonsQuery = useQuery({queryKey:["business-reasons","SalesReturn"],queryFn:()=>inventoryApi.businessReasons("SalesReturn"),enabled:open});
+  const confirm = useConfirmSalesReturn(businessId, runtime);
+  const bootstrap = useQuery({queryKey:["pos-sales-return-bootstrap",runtime?.client.mode,runtime?.context.businessId,runtime?.context.workSessionId],queryFn:()=>runtime!.client.loadServerSalesReturnBootstrap(runtime!.context),enabled:open&&!!runtime,staleTime:5*60*1000});
+  const reasonsQuery = useQuery({queryKey:["business-reasons","SalesReturn"],queryFn:()=>inventoryApi.businessReasons("SalesReturn"),enabled:open&&!runtime});
   const [reasonCode, setReasonCode] = useState("");
   const [notes, setNotes] = useState("");
-  const resolutionMethods = useReferenceOptions("sales-return-resolution-method", open);
-  const settlementConfiguration = useQuery({queryKey:["sales-settlement-configuration"],queryFn:salesReturnsApi.settlementConfiguration,enabled:open});
-  const returnScopes = useReferenceOptions("sales-return-scope", open);
+  const resolutionMethods = useReferenceOptions("sales-return-resolution-method", open&&!runtime);
+  const settlementConfiguration = useQuery({queryKey:["sales-settlement-configuration"],queryFn:salesReturnsApi.settlementConfiguration,enabled:open&&!runtime});
+  const returnScopes = useReferenceOptions("sales-return-scope", open&&!runtime);
   const [returnScopeCode, setReturnScopeCode] = useState<SalesReturnScope>("Partial");
   const [lineSearch, setLineSearch] = useState("");
   const [resolutionMethod, setResolutionMethod] = useState<string>(sale?.receivableOutstanding ? "CustomerCredit" : "Cash");
@@ -111,12 +119,17 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, canConf
   const reversibleCardMethods = new Set(sale.payments
     .filter(payment => ["DebitCard","CreditCard"].includes(payment.methodCode) && payment.availableAmount > 0)
     .map(payment => payment.methodCode));
-  const availableMethods = (resolutionMethods.data ?? []).filter((method) =>
+  const reasons = runtime ? bootstrap.data?.reasons : reasonsQuery.data;
+  const configuredResolutionMethods = runtime ? bootstrap.data?.resolutionMethods : resolutionMethods.data;
+  const configuredScopes = runtime ? bootstrap.data?.scopes : returnScopes.data;
+  const configuredSettlement = runtime ? bootstrap.data?.settlementConfiguration : settlementConfiguration.data;
+  const resolutionMethodsLoading = runtime ? bootstrap.isLoading : resolutionMethods.isLoading;
+  const availableMethods = (configuredResolutionMethods ?? []).filter((method) =>
     ["Cash", "CustomerCredit", "Transfer"].includes(method.code) || reversibleCardMethods.has(method.code));
   const cardRefund = resolutionMethod === "DebitCard" || resolutionMethod === "CreditCard";
   const transferRefund = resolutionMethod === "Transfer";
-  const accountingEnabled = settlementConfiguration.data?.isAccountingEnabled ?? false;
-  const bankAccounts = settlementConfiguration.data?.bankAccounts ?? [];
+  const accountingEnabled = configuredSettlement?.isAccountingEnabled ?? false;
+  const bankAccounts = configuredSettlement?.bankAccounts ?? [];
   const principalBankAccountId = bankAccounts.find(account => account.isPrimary)?.bankAccountId ?? "";
   const cardPayments = sale.payments.filter(payment =>
     payment.methodCode === resolutionMethod && payment.availableAmount > 0);
@@ -144,11 +157,11 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, canConf
     setSettlementReference("");
     setSettlementNotes("");
     if (value === "Transfer") {
-      if (settlementConfiguration.isError || !settlementConfiguration.data) {
+      if ((runtime ? bootstrap.isError : settlementConfiguration.isError) || !configuredSettlement) {
         toast.error("No fue posible consultar la configuración de transferencias.");
         return;
       }
-      if (settlementConfiguration.data.isAccountingEnabled && bankAccounts.length === 0) {
+      if (configuredSettlement.isAccountingEnabled && bankAccounts.length === 0) {
         toast.error("Configura una cuenta bancaria activa en Contabilidad antes de devolver por transferencia.");
         return;
       }
@@ -163,14 +176,16 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, canConf
     if (chosen.length === 0) { toast.error("Indica al menos una cantidad por devolver."); return; }
     if (!selection.isValid) { toast.error("Una cantidad supera el saldo disponible."); return; }
     if (economicResolution === "CustomerCredit" && (!sale.customerId || sale.receivableOutstanding <= 0 || estimated > sale.receivableOutstanding)) { toast.error("El abono no puede superar el saldo pendiente de la cuenta por cobrar."); return; }
-    let workSessionId: string | null = null;
+    let workSessionId: string | null = runtime?.context.workSessionId ?? null;
     if (cardRefund && !originalPaymentNumber) { toast.error("Selecciona la transacción de tarjeta que se va a reversar."); return; }
     if (cardRefund && estimated > (cardPayments.find(payment => payment.paymentNumber === Number(originalPaymentNumber))?.availableAmount ?? 0)) { toast.error("El valor supera el saldo de la transacción seleccionada."); return; }
     const selectedBankAccountId = bankAccountId || principalBankAccountId;
     if (transferRefund && !settlementReference.trim()) { toast.error("Registra la referencia de la transferencia."); setTransferDialogOpen(true); return; }
     if (transferRefund && accountingEnabled && !selectedBankAccountId) { toast.error("Configura o selecciona la cuenta bancaria de salida."); return; }
     if (economicResolution === "Refund") {
-      try { workSessionId = (await salesReturnsApi.openWorkSession(businessId)).workSessionId; }
+      try { workSessionId = runtime
+        ? await runtime.client.resolveSalesReturnWorkSession(runtime.context)
+        : (await salesReturnsApi.openWorkSession(businessId)).workSessionId; }
       catch { toast.error("No fue posible abrir la sesión operativa del usuario para registrar la devolución."); return; }
     }
     try {
@@ -179,7 +194,7 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, canConf
         originalDocumentId: sale.documentId, returnedAt: new Date().toISOString(),
         returnScopeCode,
         economicResolution, refundMethodCode: economicResolution === "Refund" ? resolutionMethod as SalesReturnRefundMethod : null,
-        reasonDescription: reasonsQuery.data?.find(reason => reason.code === reasonCode)?.name ?? reasonCode,
+        reasonDescription: reasons?.find(reason => reason.code === reasonCode)?.name ?? reasonCode,
         reasonCode, notes: notes.trim() || null,
         workSessionId, originalPaymentNumber: cardRefund ? Number(originalPaymentNumber) : null,
         bankAccountId: transferRefund && accountingEnabled ? selectedBankAccountId : null,
@@ -201,11 +216,11 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, canConf
       </DialogHeader>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
         <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
-          <Field label="Motivo"><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue placeholder="Selecciona un motivo" /></SelectTrigger><SelectContent>{(reasonsQuery.data??[]).map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
-          <Field label="Cómo devolver el valor"><Select value={resolutionMethod} onValueChange={changeResolutionMethod}><SelectTrigger><SelectValue placeholder={resolutionMethods.isLoading ? "Cargando opciones…" : "Selecciona"} /></SelectTrigger><SelectContent>{availableMethods.map(method => <SelectItem key={method.id} value={method.code} disabled={method.code === "CustomerCredit" && sale.receivableOutstanding <= 0}>{method.label}{method.code === "CustomerCredit" && sale.receivableOutstanding <= 0 ? " · sin saldo" : ""}</SelectItem>)}</SelectContent></Select>{resolutionMethod === "CustomerCredit" && <p className="text-xs text-muted-foreground">Máximo disponible para abonar: {formatCurrency(sale.receivableOutstanding)}. Si la devolución es mayor, registra operaciones separadas.</p>}</Field>
+          <Field label="Motivo"><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue placeholder="Selecciona un motivo" /></SelectTrigger><SelectContent>{(reasons??[]).map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="Cómo devolver el valor"><Select value={resolutionMethod} onValueChange={changeResolutionMethod}><SelectTrigger><SelectValue placeholder={resolutionMethodsLoading ? "Cargando opciones…" : "Selecciona"} /></SelectTrigger><SelectContent>{availableMethods.map(method => <SelectItem key={method.id} value={method.code} disabled={method.code === "CustomerCredit" && sale.receivableOutstanding <= 0}>{method.label}{method.code === "CustomerCredit" && sale.receivableOutstanding <= 0 ? " · sin saldo" : ""}</SelectItem>)}</SelectContent></Select>{resolutionMethod === "CustomerCredit" && <p className="text-xs text-muted-foreground">Máximo disponible para abonar: {formatCurrency(sale.receivableOutstanding)}. Si la devolución es mayor, registra operaciones separadas.</p>}</Field>
           {cardRefund && <Field label="Pago de tarjeta por reversar"><Select value={originalPaymentNumber} onValueChange={setOriginalPaymentNumber}><SelectTrigger><SelectValue placeholder="Selecciona la transacción original" /></SelectTrigger><SelectContent>{cardPayments.map(payment => <SelectItem key={payment.paymentNumber} value={String(payment.paymentNumber)}>{payment.cardFranchiseCode ?? payment.methodCode} · {payment.approvalNumber ?? `pago ${payment.paymentNumber}`} · disponible {formatCurrency(payment.availableAmount)}</SelectItem>)}</SelectContent></Select></Field>}
           {transferRefund && <Field label="Transferencia"><Button type="button" variant="outline" className="w-full justify-start" onClick={() => setTransferDialogOpen(true)}><Landmark className="mr-2 h-4 w-4"/>{settlementReference ? `${accountingEnabled ? `${bankAccounts.find(account => account.bankAccountId === (bankAccountId || principalBankAccountId))?.displayName ?? "Cuenta"} · ` : ""}${settlementReference}` : "Registrar cuenta y soporte"}</Button></Field>}
-          <Field label="Alcance"><Select value={returnScopeCode} onValueChange={changeReturnScope}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(returnScopes.data ?? []).map((scope) => <SelectItem key={scope.id} value={scope.code}>{scope.label}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="Alcance"><Select value={returnScopeCode} onValueChange={changeReturnScope}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(configuredScopes ?? []).map((scope) => <SelectItem key={scope.id} value={scope.code}>{scope.label}</SelectItem>)}</SelectContent></Select></Field>
         </section>
         <Field label="Buscar producto en la factura"><div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={lineSearch} onChange={(event) => setLineSearch(event.target.value)} placeholder="Nombre, código, referencia o código de barras" /></div></Field>
         <div className="overflow-auto rounded-2xl border" style={{ maxHeight: `${PRODUCT_GRID_HEADER_HEIGHT_REM + DEFAULT_VISIBLE_PRODUCT_LINES * PRODUCT_GRID_LINE_HEIGHT_REM}rem` }}>

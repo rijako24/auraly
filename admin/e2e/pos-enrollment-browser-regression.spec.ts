@@ -53,6 +53,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   let redeemAttempts = 0;
   let completeCalls = 0;
   let workSessionCalls = 0;
+  let cookieReturnCalls = 0;
 
   await page.context().addCookies([{
     name: "auth_token",
@@ -133,7 +134,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
           userId: completed ? userId : null,
           workSessionId: workSessionOpened ? workSessionId : null,
           deviceId: redeemed ? "77777777-7777-7777-7777-777777777777" : null,
-          permissions: completed ? ["sales.create"] : [],
+          permissions: completed ? user.permissions : [],
           fiscalReady: false,
           fiscalWarnings: [],
           dianQuotaAvailable: null,
@@ -183,6 +184,35 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
       await route.fulfill({ status: 200, contentType: "application/json", body: "null" });
       return;
     }
+    if (path === "/edge/v1/server-returns/search") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [{
+            documentId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            documentNumber: "VTA-EDGE-001",
+            fiscalNumber: "CVI-EDGE-001",
+            cufe: "CUDE-EDGE-001",
+            issuedAt: "2026-09-15T14:00:00-05:00",
+            customerId: null,
+            customerName: "Consumidor final",
+            customerIdentification: "222222222222",
+            warehouseId,
+            warehouseName: "Principal",
+            totalAmount: 11_900,
+            returnedAmount: 0,
+            hasAvailableQuantity: true,
+            fiscalStatus: "Accepted",
+          }],
+          page: 1,
+          pageSize: 25,
+          totalCount: 1,
+          totalPages: 1,
+        }),
+      });
+      return;
+    }
     await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
   });
 
@@ -208,30 +238,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         workspace,
       };
-    } else if (path === "/api/commerce/v1/sales-returns/sales") {
-      body = {
-        items: [{
-          documentId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-          documentNumber: "VTA-EDGE-001",
-          fiscalNumber: "CVI-EDGE-001",
-          cufe: "CUDE-EDGE-001",
-          issuedAt: "2026-09-15T14:00:00-05:00",
-          customerId: null,
-          customerName: "Consumidor final",
-          customerIdentification: "222222222222",
-          warehouseId,
-          warehouseName: "Principal",
-          totalAmount: 11_900,
-          returnedAmount: 0,
-          hasAvailableQuantity: true,
-          fiscalStatus: "Accepted",
-        }],
-        page: 1,
-        pageSize: 25,
-        totalCount: 1,
-        totalPages: 1,
-      };
-    }
+    } else if (path === "/api/commerce/v1/sales-returns/sales") cookieReturnCalls += 1;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
 
@@ -272,6 +279,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   await returns.click();
   await expect(page.getByRole("heading", { name: "Devoluciones de venta" })).toBeVisible();
   await expect(page.getByText("VTA-EDGE-001")).toBeVisible();
+  expect(cookieReturnCalls).toBe(0);
 
   function localSession(opened: boolean) {
     return {

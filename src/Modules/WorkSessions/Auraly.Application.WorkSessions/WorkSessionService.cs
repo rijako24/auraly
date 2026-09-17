@@ -12,6 +12,12 @@ public interface IWorkSessionStore
         WorkSessionIdentity identity,
         CancellationToken cancellationToken);
 
+    Task<WorkSessionView?> CurrentForDeviceAsync(
+        WorkSessionIdentity identity,
+        Guid businessId,
+        Guid deviceId,
+        CancellationToken cancellationToken);
+
     Task<WorkSessionView> OpenOrResumeAsync(
         WorkSessionIdentity identity,
         OpenWorkSessionRequest request,

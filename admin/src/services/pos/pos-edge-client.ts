@@ -1,4 +1,13 @@
 import type { TenantBranding } from "@/services/api/tenants";
+import type { InventoryReasonItem } from "@/services/api/inventory";
+import type { ReferenceOption } from "@/services/api/reference-options";
+import type {
+  ConfirmSalesReturnRequest,
+  ReturnableSale,
+  ReturnableSalePage,
+  SalesSettlementConfiguration,
+  SalesReturnAcceptance,
+} from "@/services/api/sales-returns";
 import { printWorkSessionClosure } from "./pos-work-session-close";
 import {
   announceSessionReplacement,
@@ -220,6 +229,12 @@ export type PosIssuedSaleFilters = {
   productId: string | null;
   minimumTotal: number | null;
   maximumTotal: number | null;
+};
+
+export type PosServerHistoryScope = {
+  businessId: string;
+  warehouseId: string;
+  workSessionId: string;
 };
 
 export type PosFiscalNumberPreview = {
@@ -666,6 +681,45 @@ export interface PosClient {
     authorization?: PosSensitiveAuthorization,
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
+  searchServerIssuedSales(
+    context: PosServerHistoryScope,
+    filters: PosIssuedSaleFilters,
+    skip?: number,
+    take?: number,
+  ): Promise<PosIssuedSaleSearchPage>;
+  searchServerHistoryCustomers(
+    context: PosServerHistoryScope,
+    search: string,
+    skip?: number,
+    take?: number,
+  ): Promise<PosCustomerSearchPage>;
+  searchServerHistoryProducts(
+    context: PosServerHistoryScope,
+    search: string,
+    skip?: number,
+    take?: number,
+  ): Promise<PosCatalogSearchPage>;
+  loadServerIssuedSaleReceipt(
+    context: PosServerHistoryScope,
+    documentId: string,
+  ): Promise<PosPrintableReceipt>;
+  searchServerReturnableSales(
+    context: PosSalesReturnContext,
+    query: PosSalesReturnQuery,
+  ): Promise<ReturnableSalePage>;
+  loadServerReturnableSale(
+    context: PosSalesReturnContext,
+    documentId: string,
+  ): Promise<ReturnableSale>;
+  loadServerSalesReturnBootstrap(
+    context: PosSalesReturnContext,
+  ): Promise<PosSalesReturnBootstrap>;
+  resolveSalesReturnWorkSession(
+    context: PosSalesReturnContext,
+  ): Promise<string>;
+  confirmServerSalesReturn(
+    request: ConfirmSalesReturnRequest,
+  ): Promise<SalesReturnAcceptance>;
   reprint(documentId: string): Promise<void>;
   printHistoricalReceipt(receipt: PosPrintableReceipt): Promise<void>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
@@ -714,6 +768,28 @@ export type PosPrinterConfiguration = {
   orderOutputFormat: PosPrintTemplateFormat;
   orderPrinterName?: string | null;
   orderReceiptPaperWidthMillimeters?: 58 | 80;
+};
+
+export type PosSalesReturnContext = {
+  businessId: string;
+  workSessionId: string | null;
+};
+
+export type PosSalesReturnQuery = {
+  page: number;
+  pageSize: number;
+  search?: string;
+  customer?: string;
+  from?: string;
+  to?: string;
+  withAvailableQuantity?: boolean;
+};
+
+export type PosSalesReturnBootstrap = {
+  reasons: InventoryReasonItem[];
+  resolutionMethods: ReferenceOption[];
+  scopes: ReferenceOption[];
+  settlementConfiguration: SalesSettlementConfiguration;
 };
 
 export type PosPrintTemplateFormat =
@@ -1369,6 +1445,47 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosPrintableReceipt>(
       `/edge/v1/server-history/sales/${documentId}/receipt`,
       { method: "POST", body: JSON.stringify(context) },
+    );
+  }
+
+  searchServerReturnableSales(
+    context: PosSalesReturnContext,
+    query: PosSalesReturnQuery,
+  ) {
+    return this.request<ReturnableSalePage>("/edge/v1/server-returns/search", {
+      method: "POST",
+      body: JSON.stringify({ context, query }),
+    });
+  }
+
+  loadServerReturnableSale(context: PosSalesReturnContext, documentId: string) {
+    return this.request<ReturnableSale>(
+      `/edge/v1/server-returns/sales/${documentId}`,
+      { method: "POST", body: JSON.stringify(context) },
+    );
+  }
+
+  loadServerSalesReturnBootstrap(context: PosSalesReturnContext) {
+    return this.request<PosSalesReturnBootstrap>(
+      "/edge/v1/server-returns/bootstrap",
+      { method: "POST", body: JSON.stringify(context) },
+    );
+  }
+
+  resolveSalesReturnWorkSession(context: PosSalesReturnContext) {
+    if (!context.workSessionId)
+      return Promise.reject(new PosEdgeError(
+        "La caja enrolada no tiene una sesión de trabajo activa.",
+        409,
+        "WorkSessionRequired",
+      ));
+    return Promise.resolve(context.workSessionId);
+  }
+
+  confirmServerSalesReturn(request: ConfirmSalesReturnRequest) {
+    return this.request<SalesReturnAcceptance>(
+      "/edge/v1/server-returns/confirm",
+      { method: "POST", body: JSON.stringify(request) },
     );
   }
 
