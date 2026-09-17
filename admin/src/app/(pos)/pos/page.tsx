@@ -1726,7 +1726,7 @@ export default function PosPage() {
     });
     const activeClient = client;
     if (serverConnected && activeClient) {
-      const businessId = window.localStorage.getItem("selected_business_id");
+      const businessId = workstation.businessId;
       if (!businessId || !draft)
         throw new Error("No fue posible identificar el negocio de esta venta.");
       try {

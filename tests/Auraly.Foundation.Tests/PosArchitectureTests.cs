@@ -367,6 +367,13 @@ public sealed class PosArchitectureTests
             repositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "PosSynchronization.cs"));
         var serviceWorker = File.ReadAllText(Path.Combine(
             repositoryRoot, "admin", "public", "app-sw.js"));
+        var page = File.ReadAllText(Path.Combine(posDirectory, "page.tsx"));
+        var requestApprovalStart = page.IndexOf(
+            "async function requestSensitiveApproval(", StringComparison.Ordinal);
+        var requestApprovalEnd = page.IndexOf(
+            "async function authorizeSensitiveEntry(", requestApprovalStart, StringComparison.Ordinal);
+        Assert.True(requestApprovalStart >= 0 && requestApprovalEnd > requestApprovalStart);
+        var requestApproval = page[requestApprovalStart..requestApprovalEnd];
 
         Assert.Contains("Credencial del usuario autorizador", dialog, StringComparison.Ordinal);
         Assert.DoesNotContain("animate-spin", dialog, StringComparison.Ordinal);
@@ -384,6 +391,8 @@ public sealed class PosArchitectureTests
         Assert.DoesNotContain("PosSynchronizationStreams.Approvals =>", synchronization, StringComparison.Ordinal);
         Assert.Contains("self.addEventListener(\"push\"", serviceWorker, StringComparison.Ordinal);
         Assert.Contains("client.postMessage({ type: \"auraly:pos-approvals-changed\" })", serviceWorker, StringComparison.Ordinal);
+        Assert.Contains("const businessId = workstation.businessId", requestApproval, StringComparison.Ordinal);
+        Assert.DoesNotContain("selected_business_id", requestApproval, StringComparison.Ordinal);
     }
 
     [Fact]
