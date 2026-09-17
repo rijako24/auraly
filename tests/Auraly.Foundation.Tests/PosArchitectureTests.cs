@@ -387,7 +387,7 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
-    public void Workspace_configuration_refreshes_without_cache_and_keeps_current_values_read_only_offline()
+    public void Workspace_configuration_uses_edge_authority_when_enrolled_and_refreshes_web_without_cache()
     {
         var repositoryRoot = FindRepositoryRoot();
         var page = File.ReadAllText(Path.Combine(
@@ -404,8 +404,10 @@ public sealed class PosArchitectureTests
         Assert.True(changeWorkspaceStart >= 0 && changeWorkspaceEnd > changeWorkspaceStart);
         var changeWorkspace = page[changeWorkspaceStart..changeWorkspaceEnd];
 
+        Assert.Contains("if (client.mode === \"edge\")", changeWorkspace, StringComparison.Ordinal);
+        Assert.Contains("setOnlineOptions([enrolledWorkspaceOption(workstation)])", changeWorkspace, StringComparison.Ordinal);
+        Assert.Contains("setCanEnrollOffline(false)", changeWorkspace, StringComparison.Ordinal);
         Assert.Contains("await loadSalesWorkspaceBootstrap()", changeWorkspace, StringComparison.Ordinal);
-        Assert.DoesNotContain("if (client.mode === \"edge\")", changeWorkspace, StringComparison.Ordinal);
         Assert.Contains("setWorkspaceConfigurationOffline(true)", changeWorkspace, StringComparison.Ordinal);
         Assert.Contains("workstation.businessId", changeWorkspace, StringComparison.Ordinal);
         Assert.Contains("workstation.warehouseId", changeWorkspace, StringComparison.Ordinal);
