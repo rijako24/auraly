@@ -393,6 +393,7 @@ public sealed class PosArchitectureTests
         Assert.Contains("client.postMessage({ type: \"auraly:pos-approvals-changed\" })", serviceWorker, StringComparison.Ordinal);
         Assert.Contains("const businessId = workstation.businessId", requestApproval, StringComparison.Ordinal);
         Assert.DoesNotContain("selected_business_id", requestApproval, StringComparison.Ordinal);
+        Assert.Contains("setError(null)", requestApproval, StringComparison.Ordinal);
     }
 
     [Fact]

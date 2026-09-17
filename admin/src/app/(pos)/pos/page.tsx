@@ -1715,6 +1715,7 @@ export default function PosPage() {
     operationId: string,
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>,
   ) {
+    setError(null);
     setSensitiveApprovalError(null);
     setSensitiveApproval({
       approval: null,
