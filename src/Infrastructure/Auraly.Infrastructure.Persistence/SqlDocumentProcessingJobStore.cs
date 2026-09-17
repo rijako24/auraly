@@ -110,15 +110,21 @@ public sealed class SqlDocumentProcessingJobStore(
         {
             var completedAt = timeProvider.GetUtcNow();
             await using var command = new SqlCommand("""
+                DECLARE @EffectiveCompletedAt datetimeoffset=(
+                  SELECT CASE WHEN StartedAt>@CompletedAt THEN StartedAt ELSE @CompletedAt END
+                  FROM dbo.DocumentProcessingJobs
+                  WHERE JobId=@JobId AND Status=N'Processing');
+
                 UPDATE dbo.DocumentProcessingJobs
-                SET Status=N'Completed',CompletedAt=@CompletedAt,
+                SET Status=N'Completed',CompletedAt=@EffectiveCompletedAt,
                     LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=NULL
                 WHERE JobId=@JobId AND Status=N'Processing';
 
                 UPDATE dbo.BusinessProcessingCursors
-                SET LastCompletedSequence=@ProcessingSequence,UpdatedAt=@CompletedAt
+                SET LastCompletedSequence=@ProcessingSequence,UpdatedAt=@EffectiveCompletedAt
                 WHERE BusinessId=@BusinessId
-                  AND LastCompletedSequence=@PreviousSequence;
+                  AND LastCompletedSequence=@PreviousSequence
+                  AND @EffectiveCompletedAt IS NOT NULL;
                 """, session.Connection, session.Transaction);
             command.Parameters.AddWithValue("@JobId", session.JobId);
             command.Parameters.AddWithValue("@BusinessId", context.BusinessId.Value);

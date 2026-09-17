@@ -24,7 +24,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
                   IsInventoryVisible,IsActive,CreatedAt)
                 VALUES(
                   @WarehouseId,@BusinessId,@Code,N'Bodega alterna sin negativos',0,
-                  N'AverageCost',0,1,1,1,1,SYSDATETIMEOFFSET());
+                  N'WeightedAverageCost',0,1,1,1,1,SYSDATETIMEOFFSET());
                 """, connection);
             seed.Parameters.AddWithValue("@WarehouseId", warehouseId);
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
