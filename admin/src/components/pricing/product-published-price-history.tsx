@@ -1,14 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import { History } from "lucide-react";
+import { DataTablePagination } from "@/components/tables/data-table-pagination";
 import { ProductFormSection } from "@/components/products/product-create-workspace";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useProductPriceHistory } from "@/hooks/use-pricing";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 
 export function ProductPublishedPriceHistory({ productId }: { productId: string }) {
-  const history = useProductPriceHistory(productId);
-  const publications = history.data?.filter((item) => item.activityType === "Publication") ?? [];
+  const [page, setPage] = useState(1);
+  const history = useProductPriceHistory(productId, true, page, 5, "Publication");
+  const publications = history.data?.items ?? [];
 
   return <ProductFormSection
     id="product-price-history"
@@ -41,6 +44,9 @@ export function ProductPublishedPriceHistory({ productId }: { productId: string 
           </TableBody>
         </Table>
       </div>}
+    <DataTablePagination pageIndex={Math.max(0,(history.data?.page??page)-1)} pageSize={5}
+      pageCount={history.data?.totalPages??0} totalItems={history.data?.totalCount??0}
+      pageSizeOptions={[5]} onPageChange={index=>setPage(index+1)} onPageSizeChange={()=>{}} />
   </ProductFormSection>;
 }
 

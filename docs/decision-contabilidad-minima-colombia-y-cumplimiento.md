@@ -82,6 +82,14 @@ Un asiento contabilizado es inmutable. Los errores se corrigen mediante reversi�
 
 Auraly ofrecerá plantillas colombianas, pero no codificará un PUC rígido. Cada empresa mapea categorías como `Cash`, `Bank`, `AccountsReceivable`, `AccountsPayable`, `Inventory`, `CostOfGoodsSold`, `SalesRevenue`, `SalesReturns`, `OutputVat`, `InputVat`, `WithholdingPayable` y `DamagedInventoryExpense` a sus cuentas reales.
 
+La configuración conserva la estructura de codificación del catálogo colombiano:
+clase (1 dígito), grupo (2), cuenta (4), subcuenta (6) y auxiliar propio (más
+de 6). Clase, grupo y cuenta son nodos de presentación; las subcuentas y
+auxiliares son los únicos niveles que pueden recibir movimientos. El primer
+dígito también debe ser compatible con la naturaleza configurada. Esto no
+convierte la plantilla en un PUC rígido: los nombres, auxiliares y mappings
+siguen perteneciendo a cada tenant.
+
 Las reglas se versionan por vigencia y pueden depender de tipo documental, categoría de producto, impuesto, medio de pago, tercero y negocio.
 
 ## 8. Centros de costos

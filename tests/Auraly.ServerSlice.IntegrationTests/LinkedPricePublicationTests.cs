@@ -81,9 +81,9 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
         Assert.Equal(childVersionsAfterOwnPublication, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.ProductPrices WHERE ProductId=@Product", childId));
 
-        var childHistory = await pricing.GetFromJsonAsync<ProductPriceHistoryItem[]>(
+        var childHistory = await pricing.GetFromJsonAsync<ProductPriceHistoryPage>(
             $"/api/commerce/v1/pricing/products/{childId:D}/history");
-        var childPublication = Assert.Single(childHistory!.Where(item => item.ActivityType == "Publication"));
+        var childPublication = Assert.Single(childHistory!.Items.Where(item => item.ActivityType == "Publication"));
         Assert.Equal(8_000m, childPublication.CostBasisAmount);
         Assert.Equal(25.002344m, childPublication.EffectiveMarginPercent);
         Assert.Equal(10_667m, childPublication.PreparedAmount);

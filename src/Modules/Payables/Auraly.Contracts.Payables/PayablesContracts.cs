@@ -133,6 +133,14 @@ public sealed record SupplierPaymentAcceptance(
     string Status,
     long ProcessingSequence,
     bool IdempotentReplay);
+public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentNumber,
+    DateTimeOffset PaidAt, string CurrencyCode, string PaymentMethod, string? Reference,
+    decimal TotalAmount, string Status, int AppliedDocumentCount);
+public sealed record SupplierPaymentHistoryPage(IReadOnlyList<SupplierPaymentHistoryItem> Items,
+    int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
 
 public static class SupplierPaymentContractSerializer
 {

@@ -205,6 +205,16 @@ public sealed record ProductPriceHistoryItem(
     string UserName,
     DateTimeOffset OccurredAt);
 
+public sealed record ProductPriceHistoryPage(
+    IReadOnlyList<ProductPriceHistoryItem> Items,
+    int Page,
+    int PageSize,
+    int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 :
+        (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
+
 public sealed record PriceChannelProductReport(
     Guid PriceChannelId,
     string Code,

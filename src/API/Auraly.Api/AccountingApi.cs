@@ -122,6 +122,12 @@ public static class AccountingApi
             await ExecuteAsync(() => service.ListDocumentsAsync(context.User.ToAccountingIdentity(),
                 from, to, documentType, status, search, page ?? 1, pageSize ?? 25, token),
                 Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/reports/financial-traceability-lines", async (HttpContext context,
+            DateOnly from, DateOnly to, string? documentType, string? status, string? search,
+            int? page, int? pageSize, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListFinancialTraceabilityLinesAsync(context.User.ToAccountingIdentity(),
+                from, to, documentType, status, search, page ?? 1, pageSize ?? 250, token),
+                Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/compliance/definitions", async (HttpContext context, short? taxYear, ComplianceReportingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListDefinitionsAsync(context.User.ToAccountingIdentity(), taxYear, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/compliance/mappings", async (HttpContext context, short taxYear, string? formatCode, ComplianceReportingService service, CancellationToken token) =>

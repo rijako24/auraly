@@ -48,7 +48,10 @@ documento físico pendiente ni se crea un hueco que bloquee la sede.
 
 La API y la vista de Contabilidad exponen:
 
-- balance de comprobación y auxiliar por cuenta con drill-down;
+- balance de comprobación jerárquico por clase, grupo, cuenta, subcuenta y
+  auxiliar, con saldo inicial débito/crédito, movimientos del periodo y saldo
+  final débito/crédito; el auxiliar permanece como drill-down separado y solo
+  se abre desde niveles contabilizables;
 - libro diario;
 - mayor y balances con saldo inicial, débitos, créditos y saldo final;
 - estado de situación financiera;
@@ -58,6 +61,8 @@ La API y la vista de Contabilidad exponen:
 
 Todos esos informes leen `AccountingEntries` y `AccountingEntryLines`. No
 reconstruyen cifras consultando facturas, compras o movimientos operacionales.
+Los totales del balance se calculan una vez sobre las clases; los niveles
+inferiores son desgloses y no se vuelven a sumar, evitando duplicar saldos.
 Los cambios en patrimonio y flujo de efectivo permanecen como evolución del
 juego completo de estados. La base fiscal y
 exógena versionada sí queda implementada con definiciones normativas, mapeos

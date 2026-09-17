@@ -88,6 +88,42 @@ public sealed class SqlPayablesStore(
             items, query.Page, query.PageSize, totalCount, totalOutstanding, totalOverdue);
     }
 
+    public async Task<SupplierPaymentHistoryPage> PaymentHistoryAsync(PayablesUserIdentity user,
+        Guid supplierId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        await using var connection=connections.Create(); await connection.OpenAsync(cancellationToken);
+        await using var command=new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.SupplierPayments payment
+            INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
+            WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
+              AND payment.SupplierId=@SupplierId;
+            SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
+              payment.PaymentMethod,payment.Reference,payment.TotalAmount,payment.Status,
+              COUNT(application.PayableId) AppliedDocumentCount
+            FROM dbo.SupplierPayments payment
+            INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
+            LEFT JOIN dbo.SupplierPaymentApplications application ON application.PaymentId=payment.PaymentId
+            WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
+              AND payment.SupplierId=@SupplierId
+            GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
+              payment.PaymentMethod,payment.Reference,payment.TotalAmount,payment.Status
+            ORDER BY payment.PaidAt DESC,payment.PaymentId DESC
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """,connection);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
+        command.Parameters.AddWithValue("@TenantId",user.TenantId);
+        command.Parameters.AddWithValue("@SupplierId",supplierId);
+        command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);
+        command.Parameters.AddWithValue("@PageSize",pageSize);
+        await using var reader=await command.ExecuteReaderAsync(cancellationToken); await reader.ReadAsync(cancellationToken);
+        var total=reader.GetInt32(0); await reader.NextResultAsync(cancellationToken);
+        var items=new List<SupplierPaymentHistoryItem>();
+        while(await reader.ReadAsync(cancellationToken)) items.Add(new(reader.GetGuid(0),reader.GetString(1),
+            reader.GetDateTimeOffset(2),reader.GetString(3),reader.GetString(4),
+            reader.IsDBNull(5)?null:reader.GetString(5),reader.GetDecimal(6),reader.GetString(7),reader.GetInt32(8)));
+        return new(items,page,pageSize,total);
+    }
+
     public async Task<PayableDetail?> GetAsync(
         PayablesUserIdentity user,
         Guid payableId,

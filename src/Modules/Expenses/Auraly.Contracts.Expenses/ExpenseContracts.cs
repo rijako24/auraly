@@ -18,7 +18,7 @@ public static class ExpenseDocumentTypes
 
 public sealed record ExpenseUserIdentity(Guid UserId, Guid TenantId, Guid BusinessId, IReadOnlySet<string> Permissions);
 
-public sealed record SaveExpenseConceptRequest(Guid ConceptId, Guid BusinessId, string Code, string Name,
+public sealed record SaveExpenseConceptRequest(Guid ConceptId, Guid BusinessId, string Name,
     Guid ExpenseAccountId, Guid? DefaultCostCenterId, string? WithholdingConceptCode, bool IsActive);
 
 public sealed record ExpenseConceptView(Guid ConceptId, Guid BusinessId, string Code, string Name,

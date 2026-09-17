@@ -73,6 +73,42 @@ public sealed class SqlReceivablesStore(
         return new(items,query.Page,query.PageSize,count,outstanding,overdue);
     }
 
+    public async Task<CustomerPaymentHistoryPage> PaymentHistoryAsync(ReceivablesUserIdentity user,
+        Guid customerId, int page, int pageSize, CancellationToken token)
+    {
+        await using var connection=connections.Create(); await connection.OpenAsync(token);
+        await using var command=new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.CustomerPayments payment
+            INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
+            WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
+              AND payment.CustomerId=@CustomerId;
+            SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
+              payment.PaymentMethod,payment.Reference,payment.TotalAmount,payment.Status,
+              COUNT(application.ReceivableId) AppliedDocumentCount
+            FROM dbo.CustomerPayments payment
+            INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
+            LEFT JOIN dbo.CustomerPaymentApplications application ON application.PaymentId=payment.PaymentId
+            WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
+              AND payment.CustomerId=@CustomerId
+            GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
+              payment.PaymentMethod,payment.Reference,payment.TotalAmount,payment.Status
+            ORDER BY payment.PaidAt DESC,payment.PaymentId DESC
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """,connection);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
+        command.Parameters.AddWithValue("@TenantId",user.TenantId);
+        command.Parameters.AddWithValue("@CustomerId",customerId);
+        command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);
+        command.Parameters.AddWithValue("@PageSize",pageSize);
+        await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token);
+        var total=reader.GetInt32(0); await reader.NextResultAsync(token);
+        var items=new List<CustomerPaymentHistoryItem>();
+        while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),
+            reader.GetDateTimeOffset(2),reader.GetString(3),reader.GetString(4),
+            reader.IsDBNull(5)?null:reader.GetString(5),reader.GetDecimal(6),reader.GetString(7),reader.GetInt32(8)));
+        return new(items,page,pageSize,total);
+    }
+
     public async Task<ReceivableDetail?> GetAsync(ReceivablesUserIdentity user, Guid id, CancellationToken token)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token);

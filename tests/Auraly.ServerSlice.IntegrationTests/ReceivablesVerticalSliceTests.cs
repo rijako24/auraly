@@ -174,6 +174,12 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             }
             Assert.Equal(1, await CountAsync(
                 "ReceivableTransactions", "SourceDocumentId", payment.PaymentId));
+            var paymentHistory = await client.GetFromJsonAsync<CustomerPaymentHistoryPage>(
+                $"/api/commerce/v1/customers/{customerId:D}/payments?page=1&pageSize=5");
+            Assert.NotNull(paymentHistory);
+            Assert.Equal(5, paymentHistory.PageSize);
+            Assert.Contains(paymentHistory.Items, item => item.PaymentId == payment.PaymentId
+                && item.AppliedDocumentCount == 1);
 
             var returnRequest = new ConfirmSalesReturnRequest(
                 Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,

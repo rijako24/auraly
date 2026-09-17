@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FileSearch, FileText } from "lucide-react";
 import { toast } from "sonner";
-import { accountingApi, type AccountingDocumentRow } from "@/services/api/accounting";
+import { accountingApi, type FinancialTraceabilityLineRow } from "@/services/api/accounting";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { ReportViewer } from "@/components/reports/report-viewer";
@@ -32,7 +32,7 @@ export default function FinancialTraceabilityPage() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string>();
-  const [reportRows, setReportRows] = useState<AccountingDocumentRow[] | null>(null);
+  const [reportRows, setReportRows] = useState<FinancialTraceabilityLineRow[] | null>(null);
   const [loadingReport, setLoadingReport] = useState(false);
   const documentTypes = useReferenceOptions("accounting-document-type", Boolean(tenantId && businessId));
   const contextKey = `${tenantId ?? "none"}:${businessId ?? "none"}`;
@@ -46,11 +46,11 @@ export default function FinancialTraceabilityPage() {
   async function openReport() {
     setLoadingReport(true);
     try {
-      const rows: AccountingDocumentRow[] = [];
+      const rows: FinancialTraceabilityLineRow[] = [];
       let nextPage = 1;
       let totalPages = 1;
       do {
-        const result = await accountingApi.documents({ ...filters, page: nextPage, pageSize: 100 });
+        const result = await accountingApi.financialTraceabilityLines({ ...filters, page: nextPage, pageSize: 500 });
         rows.push(...result.items);
         totalPages = result.totalPages;
         nextPage += 1;
@@ -72,19 +72,26 @@ export default function FinancialTraceabilityPage() {
     description={`Documentos, estado fiscal y efecto contable · ${from} a ${to}${documentType === "all" ? "" : ` · ${accountingDocumentTypeLabel(documentType)}`}`}
     fileName={`trazabilidad-financiera-${from}-${to}`}
     rows={reportRows.map(row => ({
-      id: row.sourceDocumentId,
+      id: `${row.sourceDocumentId}-${row.lineNumber ?? "status"}`,
       fecha: new Date(row.occurredAt).toLocaleDateString("es-CO"), tipo: accountingDocumentTypeLabel(row.sourceDocumentType),
       documento: row.sourceDocumentNumber ?? row.sourceDocumentId,
       documentoFiscal: row.fiscalDocumentType ?? "", numeroDian: row.dianNumber ?? "",
       estadoFiscal: row.fiscalStatus ? fiscalStatusLabel(row.fiscalStatus) : "Sin envío fiscal", comprobante: row.entryNumber ?? "",
-      estadoContable: accountingStatusLabel(row.status), debito: row.debitTotal ?? 0,
-      credito: row.creditTotal ?? 0, observacion: row.errorMessage ?? "",
+      estadoContable: accountingStatusLabel(row.status), cuenta: row.accountCode ?? "",
+      nombreCuenta: row.accountName ?? "", tercero: row.partyName ?? "",
+      identificacion: row.partyIdentification ?? "",
+      centroCosto: row.costCenterCode ? `${row.costCenterCode} · ${row.costCenterName ?? ""}` : "",
+      detalle: row.description ?? "", debito: row.debit ?? 0,
+      credito: row.credit ?? 0, observacion: row.errorMessage ?? "",
     }))}
     columns={[
       { key: "fecha", label: "Fecha" }, { key: "tipo", label: "Tipo" },
       { key: "documento", label: "Documento" }, { key: "documentoFiscal", label: "Documento fiscal" },
       { key: "numeroDian", label: "Número DIAN" }, { key: "estadoFiscal", label: "Estado DIAN" },
       { key: "comprobante", label: "Comprobante" }, { key: "estadoContable", label: "Estado contable" },
+      { key: "cuenta", label: "Cuenta PUC" }, { key: "nombreCuenta", label: "Nombre de la cuenta" },
+      { key: "tercero", label: "Tercero" }, { key: "identificacion", label: "Identificación" },
+      { key: "centroCosto", label: "Centro de costo" }, { key: "detalle", label: "Detalle" },
       { key: "debito", label: "Débito", align: "right", format: value => money.format(Number(value ?? 0)) },
       { key: "credito", label: "Crédito", align: "right", format: value => money.format(Number(value ?? 0)) },
       { key: "observacion", label: "Observación" },

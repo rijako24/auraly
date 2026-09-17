@@ -122,6 +122,13 @@ export interface ProductPriceHistoryItem {
   userName: string;
   occurredAt: string;
 }
+export interface ProductPriceHistoryPage {
+  items: ProductPriceHistoryItem[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+}
 export interface PublishPricesResult {
   items: Array<{
     productPriceId: string;
@@ -167,6 +174,6 @@ export const pricingApi = {
     apiClient.get<ProductPricingContext>(`/commerce/v1/pricing/products/${productId}/context`),
   savePreparedProduct: (productId: string, request: PublishProductPriceRequest) =>
     apiClient.put<PreparedProductPrice>(`/commerce/v1/pricing/products/${productId}/prepared-price`, request),
-  getProductHistory: (productId: string) =>
-    apiClient.get<ProductPriceHistoryItem[]>(`/commerce/v1/pricing/products/${productId}/history`),
+  getProductHistory: (productId: string, page = 1, pageSize = 5, activityType?:"Preparation"|"Publication") =>
+    apiClient.get<ProductPriceHistoryPage>(`/commerce/v1/pricing/products/${productId}/history`, {page, pageSize, activityType}),
 };

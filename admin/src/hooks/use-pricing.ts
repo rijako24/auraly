@@ -71,11 +71,11 @@ export function useSavePreparedProductPrice() {
   }) => pricingApi.savePreparedProduct(productId, request));
 }
 
-export function useProductPriceHistory(productId?: string, enabled = true) {
+export function useProductPriceHistory(productId?: string, enabled = true, page = 1, pageSize = 5, activityType?:"Preparation"|"Publication") {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
-    queryKey: ["product-price-history", businessId, productId],
-    queryFn: () => pricingApi.getProductHistory(productId!),
+    queryKey: ["product-price-history", businessId, productId, page, pageSize, activityType],
+    queryFn: () => pricingApi.getProductHistory(productId!, page, pageSize, activityType),
     enabled: enabled && !!businessId && !!productId,
   });
 }

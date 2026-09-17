@@ -51,7 +51,7 @@ public interface IPricingStore
     Task<PricePublicationStoreResult> PublishAsync(PricingUserIdentity user, IReadOnlyList<PreparedPricePublication> values, DateTimeOffset now, CancellationToken ct);
     Task<ProductPricingContext?> GetProductContextAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
     Task<PreparedProductPrice> SavePreparedProductAsync(PricingUserIdentity user, PreparedDirectProductPricePublication value, DateTimeOffset now, CancellationToken ct);
-    Task<IReadOnlyList<ProductPriceHistoryItem>> HistoryAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
+    Task<ProductPriceHistoryPage> HistoryAsync(PricingUserIdentity user, Guid productId, int page, int pageSize, string? activityType, CancellationToken ct);
     Task<PriceChannelReportSource?> GetChannelReportSourceAsync(
         PricingUserIdentity user, Guid priceChannelId, CancellationToken ct);
 }
@@ -211,10 +211,14 @@ public sealed class PricingService(
             calculation.RoundingMode), timeProvider.GetUtcNow(), ct);
         return prepared;
     }
-    public Task<IReadOnlyList<ProductPriceHistoryItem>> HistoryAsync(PricingUserIdentity user, Guid productId, CancellationToken ct)
+    public Task<ProductPriceHistoryPage> HistoryAsync(PricingUserIdentity user, Guid productId, int page, int pageSize, string? activityType, CancellationToken ct)
     {
         Require(user, PricingPermissionCodes.ReadHistory);
-        return store.HistoryAsync(user, productId, ct);
+        if (page < 1 || pageSize is < 1 or > 100)
+            throw new PricingValidationException("Page and PageSize are outside the allowed range.");
+        if (activityType is not null && activityType is not ("Preparation" or "Publication"))
+            throw new PricingValidationException("ActivityType must be Preparation or Publication.");
+        return store.HistoryAsync(user, productId, page, pageSize, activityType, ct);
     }
 
     public async Task<PriceChannelProductReport> ChannelProductReportAsync(

@@ -92,7 +92,8 @@ public sealed record AccountingAccountView(
     string AccountType,
     bool AllowsPosting,
     bool RequiresParty,
-    bool IsActive);
+    bool IsActive,
+    string Level);
 
 public sealed record SaveBankAccountRequest(
     Guid BankAccountId,
@@ -391,9 +392,13 @@ public sealed record AccountingEntryView(
 public sealed record TrialBalanceRow(
     string AccountCode,
     string AccountName,
+    string Level,
+    decimal OpeningDebit,
+    decimal OpeningCredit,
     decimal Debit,
     decimal Credit,
-    decimal Balance);
+    decimal ClosingDebit,
+    decimal ClosingCredit);
 
 public sealed record AccountMovementRow(
     Guid EntryId,
@@ -436,6 +441,23 @@ public sealed record AccountingDocumentRow(
 
 public sealed record AccountingDocumentPage(
     IReadOnlyList<AccountingDocumentRow> Items, int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 :
+        (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
+
+public sealed record FinancialTraceabilityLineRow(
+    Guid SourceDocumentId, string SourceDocumentType, string? SourceDocumentNumber,
+    DateTimeOffset OccurredAt, string Status, string? ErrorMessage,
+    string? EntryNumber, DateTimeOffset? PostedAt,
+    string? FiscalDocumentType, string? DianNumber, string? FiscalStatus,
+    int? LineNumber, string? AccountCode, string? AccountName,
+    string? PartyIdentification, string? PartyName,
+    string? CostCenterCode, string? CostCenterName, string? Description,
+    decimal? Debit, decimal? Credit);
+
+public sealed record FinancialTraceabilityLinePage(
+    IReadOnlyList<FinancialTraceabilityLineRow> Items, int Page, int PageSize, int TotalCount)
 {
     public int TotalPages => TotalCount == 0 ? 0 :
         (int)Math.Ceiling(TotalCount / (decimal)PageSize);

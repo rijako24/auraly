@@ -77,15 +77,15 @@ public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAur
                   THROW 51601,'La cuenta debe ser una cuenta de gasto activa que permita movimientos.',1;
                 IF @CenterId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WHERE CostCenterId=@CenterId AND BusinessId=@BusinessId AND IsActive=1)
                   THROW 51602,'El centro de costo está fuera de la empresa.',1;
-                UPDATE dbo.ExpenseConcepts WITH(UPDLOCK,HOLDLOCK) SET Code=@Code,Name=@Name,ExpenseAccountId=@AccountId,
+                UPDATE dbo.ExpenseConcepts WITH(UPDLOCK,HOLDLOCK) SET Name=@Name,ExpenseAccountId=@AccountId,
                   DefaultCostCenterId=@CenterId,WithholdingConceptCode=@WithholdingCode,IsActive=@Active,UpdatedAt=@Now
                   WHERE ExpenseConceptId=@Id AND BusinessId=@BusinessId;
                 IF @@ROWCOUNT=0 INSERT dbo.ExpenseConcepts(ExpenseConceptId,BusinessId,Code,Name,ExpenseAccountId,
                   DefaultCostCenterId,WithholdingConceptCode,IsActive,CreatedAt,UpdatedAt)
-                  VALUES(@Id,@BusinessId,@Code,@Name,@AccountId,@CenterId,@WithholdingCode,@Active,@Now,@Now);
+                  VALUES(@Id,@BusinessId,CONCAT(N'EXP-',UPPER(LEFT(REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''),12))),@Name,@AccountId,@CenterId,@WithholdingCode,@Active,@Now,@Now);
                 """, connection, tx);
             command.Parameters.AddWithValue("@Id", request.ConceptId); command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-            command.Parameters.AddWithValue("@TenantId", user.TenantId); command.Parameters.AddWithValue("@Code", request.Code);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
             command.Parameters.AddWithValue("@Name", request.Name); command.Parameters.AddWithValue("@AccountId", request.ExpenseAccountId);
             command.Parameters.AddWithValue("@CenterId", (object?)request.DefaultCostCenterId ?? DBNull.Value);
             command.Parameters.AddWithValue("@WithholdingCode", (object?)request.WithholdingConceptCode ?? DBNull.Value);

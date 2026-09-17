@@ -122,14 +122,15 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.ProductPrices WHERE ProductId=@Product", productId));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product", productId));
-        var history = await pricing.GetFromJsonAsync<ProductPriceHistoryItem[]>(
+        var history = await pricing.GetFromJsonAsync<ProductPriceHistoryPage>(
             $"/api/commerce/v1/pricing/products/{productId:D}/history");
         Assert.NotNull(history);
-        Assert.Contains(history!, item => item.ActivityType == "Preparation"
+        Assert.Equal(5, history!.PageSize);
+        Assert.Contains(history.Items, item => item.ActivityType == "Preparation"
             && item.Origin == "GoodsReceipt" && item.Status == "Superseded");
-        Assert.Contains(history!, item => item.ActivityType == "Preparation"
+        Assert.Contains(history.Items, item => item.ActivityType == "Preparation"
             && item.Origin == "ProposalReview" && item.Status == "Published");
-        Assert.Contains(history!, item => item.ActivityType == "Publication"
+        Assert.Contains(history.Items, item => item.ActivityType == "Publication"
             && item.PublicAmount == 10_000m && item.PreparedAmount == 10_650m);
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@Business AND Stream=N'Catalog' AND AvailableThroughCursor=@Cursor",
@@ -363,19 +364,20 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
 
         Assert.Equal(11_250m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", productId));
-        var history = await pricing.GetFromJsonAsync<ProductPriceHistoryItem[]>(
-            $"/api/commerce/v1/pricing/products/{productId:D}/history");
+        var history = await pricing.GetFromJsonAsync<ProductPriceHistoryPage>(
+            $"/api/commerce/v1/pricing/products/{productId:D}/history?page=1&pageSize=5");
         Assert.NotNull(history);
-        Assert.Contains(history!, item => item.ActivityType == "Preparation"
+        Assert.True(history!.TotalCount >= history.Items.Count);
+        Assert.Contains(history.Items, item => item.ActivityType == "Preparation"
             && item.Origin == "GoodsReceipt" && item.PreparedAmount == 10_000m
             && item.Status == "Superseded");
-        Assert.Contains(history!, item => item.ActivityType == "Preparation"
+        Assert.Contains(history.Items, item => item.ActivityType == "Preparation"
             && item.Origin == "Product" && item.PreparedAmount == 8_750m
             && item.Status == "Superseded");
-        Assert.Contains(history!, item => item.ActivityType == "Preparation"
+        Assert.Contains(history.Items, item => item.ActivityType == "Preparation"
             && item.Origin == "GoodsReceipt" && item.PreparedAmount == 11_250m
             && item.Status == "Published");
-        Assert.Contains(history!, item => item.ActivityType == "Publication"
+        Assert.Contains(history.Items, item => item.ActivityType == "Publication"
             && item.PreparedAmount == 11_250m && item.Status == "Published");
     }
 

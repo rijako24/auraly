@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { History, PackageOpen, Send } from "lucide-react";
+import { DataTablePagination } from "@/components/tables/data-table-pagination";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useProductPriceHistory } from "@/hooks/use-pricing";
@@ -13,7 +15,9 @@ export function ProductPriceHistoryDialog({ productId, productName, open, onOpen
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const history = useProductPriceHistory(productId, open);
+  const [page,setPage]=useState(1);
+  useEffect(()=>{if(open)setPage(1)},[open,productId]);
+  const history = useProductPriceHistory(productId, open, page, 5);
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
       <DialogHeader>
@@ -22,10 +26,13 @@ export function ProductPriceHistoryDialog({ productId, productName, open, onOpen
       </DialogHeader>
       {history.isLoading ? <p className="py-10 text-center text-sm text-muted-foreground">Cargando historial…</p>
         : history.isError ? <p className="rounded-xl border border-destructive/30 p-5 text-sm text-destructive">No fue posible cargar el historial.</p>
-        : !history.data?.length ? <p className="py-10 text-center text-sm text-muted-foreground">Este producto todavía no tiene movimientos de preparación o publicación.</p>
+        : !history.data?.items.length ? <p className="py-10 text-center text-sm text-muted-foreground">Este producto todavía no tiene movimientos de preparación o publicación.</p>
         : <div className="space-y-3">
-          {history.data.map((item) => <HistoryRow key={item.activityId} item={item} />)}
+          {history.data.items.map((item) => <HistoryRow key={item.activityId} item={item} />)}
         </div>}
+      <DataTablePagination pageIndex={Math.max(0,(history.data?.page??page)-1)} pageSize={5}
+        pageCount={history.data?.totalPages??0} totalItems={history.data?.totalCount??0}
+        pageSizeOptions={[5]} onPageChange={index=>setPage(index+1)} onPageSizeChange={()=>{}} />
     </DialogContent>
   </Dialog>;
 }

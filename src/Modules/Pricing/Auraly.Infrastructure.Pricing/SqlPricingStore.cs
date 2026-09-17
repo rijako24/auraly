@@ -1021,8 +1021,8 @@ public sealed class SqlPricingStore(
         }
     }
 
-    public async Task<IReadOnlyList<ProductPriceHistoryItem>> HistoryAsync(
-        PricingUserIdentity user, Guid productId, CancellationToken ct)
+    public async Task<ProductPriceHistoryPage> HistoryAsync(
+        PricingUserIdentity user, Guid productId, int page, int pageSize, string? activityType, CancellationToken ct)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -1033,7 +1033,8 @@ public sealed class SqlPricingStore(
               activity.TargetMarginPercent,activity.EffectiveMarginPercent,
               activity.InputMode,activity.RoundingIncrement,activity.RoundingMode,
               activity.SourceDocumentId,activity.SourceLineNumber,activity.SourceProductId,
-              activity.UserId,activity.UserName,activity.OccurredAt
+              activity.UserId,activity.UserName,activity.OccurredAt,
+              COUNT_BIG(1) OVER() TotalCount
             FROM (
               SELECT preparation.ProductPricePreparationId ActivityId,
                 preparation.ProductId,N'Preparation' ActivityType,
@@ -1075,13 +1076,21 @@ public sealed class SqlPricingStore(
               WHERE publication.ProductId=@ProductId
                 AND publication.BusinessId=@BusinessId AND business.TenantId=@TenantId
             ) activity
-            ORDER BY activity.OccurredAt DESC,activity.ActivityId DESC;
+            WHERE @ActivityType IS NULL OR activity.ActivityType=@ActivityType
+            ORDER BY activity.OccurredAt DESC,activity.ActivityId DESC
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """, connection);
         AddScope(command, user);
         command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@ActivityType", (object?)activityType ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+        command.Parameters.AddWithValue("@PageSize", pageSize);
         var items = new List<ProductPriceHistoryItem>();
+        var totalCount = 0;
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
+        {
+            totalCount = checked((int)reader.GetInt64(20));
             items.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),
                 reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.GetDecimal(6),
                 reader.IsDBNull(7) ? null : reader.GetDecimal(7),
@@ -1096,7 +1105,8 @@ public sealed class SqlPricingStore(
                 reader.IsDBNull(16) ? null : reader.GetGuid(16),
                 reader.IsDBNull(17) ? null : reader.GetGuid(17),reader.GetString(18),
                 reader.GetDateTimeOffset(19)));
-        return items;
+        }
+        return new(items, page, pageSize, totalCount);
     }
 
     public async Task<PriceChannelReportSource?> GetChannelReportSourceAsync(

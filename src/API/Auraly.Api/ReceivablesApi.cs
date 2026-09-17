@@ -14,6 +14,8 @@ public static class ReceivablesApi
             await Execute(async()=>{var value=await service.GetAsync(context.User.ToReceivablesIdentity(),receivableId,token);return value is null?Results.NotFound():Results.Ok(value);})).RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/customers/{customerId:guid}/credit",async(HttpContext context,Guid customerId,ReceivablesService service,CancellationToken token)=>
             await Execute(async()=>{var value=await service.GetCreditProfileAsync(context.User.ToReceivablesIdentity(),customerId,token);return value is null?Results.NotFound():Results.Ok(value);})).RequireAuthorization("receivables.user");
+        endpoints.MapGet("/api/commerce/v1/customers/{customerId:guid}/payments",async(HttpContext context,Guid customerId,int? page,int? pageSize,ReceivablesService service,CancellationToken token)=>
+            await Execute(()=>service.PaymentHistoryAsync(context.User.ToReceivablesIdentity(),customerId,page??1,pageSize??5,token),Results.Ok)).RequireAuthorization("receivables.user");
         endpoints.MapPut("/api/commerce/v1/customers/{customerId:guid}/credit",async(HttpContext context,Guid customerId,UpdateCustomerCreditProfileRequest request,ReceivablesService service,CancellationToken token)=>
             await Execute(()=>service.UpdateCreditProfileAsync(context.User.ToReceivablesIdentity(),customerId,request,token),Results.Ok)).RequireAuthorization("receivables.user");
         endpoints.MapPost("/api/commerce/v1/receivable-payments/confirm",async(HttpContext context,ConfirmCustomerPaymentRequest request,ReceivablesService service,CancellationToken token)=>

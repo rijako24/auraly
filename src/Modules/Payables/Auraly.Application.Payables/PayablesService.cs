@@ -16,6 +16,10 @@ public interface IPayablesStore
         Guid payableId,
         CancellationToken cancellationToken);
 
+    Task<SupplierPaymentHistoryPage> PaymentHistoryAsync(
+        PayablesUserIdentity user, Guid supplierId, int page, int pageSize,
+        CancellationToken cancellationToken);
+
     Task<SupplierPaymentAcceptance> AcceptPaymentAsync(
         PayablesUserIdentity user,
         string idempotencyKey,
@@ -50,6 +54,15 @@ public sealed class PayablesService(
         Require(user, PayablesPermissionCodes.Read);
         if (payableId == Guid.Empty) throw new PayablesValidationException("PayableId is required.");
         return store.GetAsync(user, payableId, cancellationToken);
+    }
+
+    public Task<SupplierPaymentHistoryPage> PaymentHistoryAsync(PayablesUserIdentity user,
+        Guid supplierId, int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        Require(user, PayablesPermissionCodes.Read);
+        if (supplierId == Guid.Empty || page < 1 || pageSize is < 1 or > 100)
+            throw new PayablesValidationException("Los filtros del historial de abonos no son válidos.");
+        return store.PaymentHistoryAsync(user, supplierId, page, pageSize, cancellationToken);
     }
 
     public async Task<SupplierPaymentAcceptance> ConfirmPaymentAsync(

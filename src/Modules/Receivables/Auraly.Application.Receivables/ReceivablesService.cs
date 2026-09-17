@@ -9,6 +9,8 @@ public interface IReceivablesStore
     Task<ReceivablePage> ListAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token);
     Task<ReceivableDetail?> GetAsync(ReceivablesUserIdentity user, Guid receivableId, CancellationToken token);
     Task<CustomerCreditProfile?> GetCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId, CancellationToken token);
+    Task<CustomerPaymentHistoryPage> PaymentHistoryAsync(ReceivablesUserIdentity user, Guid customerId,
+        int page, int pageSize, CancellationToken token);
     Task<CustomerCreditProfile> UpdateCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId,
         UpdateCustomerCreditProfileRequest request, CancellationToken token);
     Task<CustomerPaymentAcceptance> AcceptPaymentAsync(ReceivablesUserIdentity user, string idempotencyKey,
@@ -41,6 +43,15 @@ public sealed class ReceivablesService(
         Require(user, ReceivablesPermissionCodes.Read);
         if (customerId == Guid.Empty) throw new ReceivablesValidationException("CustomerId is required.");
         return store.GetCreditProfileAsync(user, customerId, token);
+    }
+
+    public Task<CustomerPaymentHistoryPage> PaymentHistoryAsync(ReceivablesUserIdentity user,
+        Guid customerId, int page, int pageSize, CancellationToken token = default)
+    {
+        Require(user, ReceivablesPermissionCodes.Read);
+        if (customerId == Guid.Empty || page < 1 || pageSize is < 1 or > 100)
+            throw new ReceivablesValidationException("Los filtros del historial de abonos no son válidos.");
+        return store.PaymentHistoryAsync(user, customerId, page, pageSize, token);
     }
 
     public async Task<CustomerCreditProfile> UpdateCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId,

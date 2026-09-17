@@ -643,7 +643,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             using (var concept = await client.PutAsJsonAsync(
                        $"/api/commerce/v1/expenses/concepts/{conceptId:D}",
                        new SaveExpenseConceptRequest(conceptId, fixture.BusinessId,
-                           $"DS-{conceptId:N}"[..16], "Servicio documento soporte",
+                           "Servicio documento soporte",
                            account.AccountId, center.CostCenterId, null, true)))
                 Assert.Equal(HttpStatusCode.OK, concept.StatusCode);
 

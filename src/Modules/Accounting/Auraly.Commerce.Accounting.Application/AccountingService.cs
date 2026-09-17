@@ -43,6 +43,7 @@ public interface IAccountingStore
     Task<IReadOnlyList<FinancialStatementRow>> GetIncomeStatementAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingExceptionRow>> GetExceptionsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<AccountingDocumentPage> ListDocumentsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken);
+    Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken);
 }
 
 public interface IBankReconciliationStore
@@ -375,9 +376,32 @@ public sealed class AccountingService(
             throw new AccountingForbiddenException("La cuenta pertenece a otra entidad legal o no tiene identificador.");
         ValidateText(request.Code, 32, "Código de cuenta");
         ValidateText(request.Name, 200, "Nombre de cuenta");
+        var code = request.Code.Trim();
+        if (code.Any(character => !char.IsAsciiDigit(character)) ||
+            code.Length is 3 or 5 || code.Length < 1)
+            throw new AccountingValidationException(
+                "El código PUC debe tener 1 dígito para clase, 2 para grupo, 4 para cuenta, 6 para subcuenta o más de 6 para auxiliar.");
+        var allowsPosting = code.Length >= 6;
+        if (request.AllowsPosting != allowsPosting)
+            throw new AccountingValidationException(
+                allowsPosting
+                    ? "Las subcuentas y auxiliares deben permitir movimientos."
+                    : "Las clases, grupos y cuentas son niveles de agrupación y no permiten movimientos.");
         if (request.AccountType is not ("Asset" or "Liability" or "Equity" or "Revenue" or "Expense" or "ContraRevenue"))
             throw new AccountingValidationException("El tipo de cuenta no es válido.");
-        return store.CreateAccountAsync(user, request with { Code = request.Code.Trim(), Name = request.Name.Trim() }, cancellationToken);
+        var compatibleType = code[0] switch
+        {
+            '1' => request.AccountType == "Asset",
+            '2' => request.AccountType == "Liability",
+            '3' => request.AccountType == "Equity",
+            '4' => request.AccountType is "Revenue" or "ContraRevenue",
+            '5' or '6' or '7' => request.AccountType == "Expense",
+            _ => false
+        };
+        if (!compatibleType)
+            throw new AccountingValidationException(
+                "La naturaleza no corresponde a la clase PUC indicada por el primer dígito.");
+        return store.CreateAccountAsync(user, request with { Code = code, Name = request.Name.Trim() }, cancellationToken);
     }
 
     public Task<AccountingCostCenterView> CreateCostCenterAsync(AccountingUserIdentity user, CreateCostCenterRequest request, CancellationToken cancellationToken = default)
@@ -533,6 +557,18 @@ public sealed class AccountingService(
         if (page < 1 || pageSize is < 1 or > 100)
             throw new AccountingValidationException("La paginación de documentos contables no es válida.");
         return store.ListDocumentsAsync(user, from, to, Normalize(documentType),
+            Normalize(status), Normalize(search), page, pageSize, cancellationToken);
+    }
+
+    public Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(
+        AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
+        string? status, string? search, int page, int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateReport(user, from, to);
+        if (page < 1 || pageSize is < 1 or > 500)
+            throw new AccountingValidationException("La paginación de la trazabilidad financiera no es válida.");
+        return store.ListFinancialTraceabilityLinesAsync(user, from, to, Normalize(documentType),
             Normalize(status), Normalize(search), page, pageSize, cancellationToken);
     }
 

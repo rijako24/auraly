@@ -218,7 +218,8 @@ public sealed class SqlAccountingStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             values.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), reader.GetBoolean(4), reader.GetBoolean(5), reader.GetBoolean(6)));
+                reader.GetString(3), reader.GetBoolean(4), reader.GetBoolean(5), reader.GetBoolean(6),
+                PucLevel(reader.GetString(1))));
         return values;
     }
 
@@ -428,7 +429,8 @@ public sealed class SqlAccountingStore(
         command.Parameters.AddWithValue("@AccountType", request.AccountType); command.Parameters.AddWithValue("@AllowsPosting", request.AllowsPosting);
         command.Parameters.AddWithValue("@RequiresParty", request.RequiresParty); command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         await ExecuteMutationAsync(command, cancellationToken, "An account with the same ID or code already exists.");
-        return new(request.AccountId, request.Code, request.Name, request.AccountType, request.AllowsPosting, request.RequiresParty, true);
+        return new(request.AccountId, request.Code, request.Name, request.AccountType,
+            request.AllowsPosting, request.RequiresParty, true, PucLevel(request.Code));
     }
 
     public async Task<AccountingCostCenterView> CreateCostCenterAsync(
@@ -827,20 +829,81 @@ public sealed class SqlAccountingStore(
     {
         await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT a.Code,a.Name,SUM(l.Debit),SUM(l.Credit),SUM(l.Debit-l.Credit)
-            FROM dbo.AccountingEntries e
-            INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
-            INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
-            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
-              AND CAST(e.OccurredAt AS date) BETWEEN @From AND @To
-            GROUP BY a.Code,a.Name ORDER BY a.Code;
+            WITH Leaf AS (
+              SELECT a.Code,a.Name,
+                SUM(CASE WHEN CAST(e.OccurredAt AS date)<@From THEN l.Debit-l.Credit ELSE 0 END) OpeningBalance,
+                SUM(CASE WHEN CAST(e.OccurredAt AS date) BETWEEN @From AND @To THEN l.Debit ELSE 0 END) Debit,
+                SUM(CASE WHEN CAST(e.OccurredAt AS date) BETWEEN @From AND @To THEN l.Credit ELSE 0 END) Credit,
+                SUM(CASE WHEN CAST(e.OccurredAt AS date)<=@To THEN l.Debit-l.Credit ELSE 0 END) ClosingBalance
+              FROM dbo.AccountingEntries e
+              INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+              INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+              WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
+                AND CAST(e.OccurredAt AS date)<=@To
+              GROUP BY a.Code,a.Name
+            ), Expanded AS (
+              SELECT levelValue.Code,levelValue.Level,levelValue.SortOrder,
+                MAX(CASE WHEN leaf.Code=levelValue.Code THEN leaf.Name END) LeafName,
+                SUM(leaf.OpeningBalance) OpeningBalance,SUM(leaf.Debit) Debit,
+                SUM(leaf.Credit) Credit,SUM(leaf.ClosingBalance) ClosingBalance
+              FROM Leaf leaf
+              CROSS APPLY (VALUES
+                (LEFT(leaf.Code,1),N'Class',1),
+                (LEFT(leaf.Code,2),N'Group',2),
+                (LEFT(leaf.Code,4),N'Account',3),
+                (LEFT(leaf.Code,6),N'Subaccount',4),
+                (leaf.Code,N'Auxiliary',5)
+              ) levelValue(Code,Level,SortOrder)
+              WHERE (levelValue.Level<>N'Auxiliary' OR LEN(leaf.Code)>6)
+              GROUP BY levelValue.Code,levelValue.Level,levelValue.SortOrder
+            )
+            SELECT expanded.Code,
+              COALESCE(configured.Name,expanded.LeafName,
+                CASE expanded.Code
+                  WHEN N'1' THEN N'ACTIVO' WHEN N'2' THEN N'PASIVO'
+                  WHEN N'3' THEN N'PATRIMONIO' WHEN N'4' THEN N'INGRESOS'
+                  WHEN N'5' THEN N'GASTOS' WHEN N'6' THEN N'COSTOS DE VENTAS'
+                  WHEN N'7' THEN N'COSTOS DE PRODUCCIÓN O DE OPERACIÓN'
+                  WHEN N'11' THEN N'DISPONIBLE' WHEN N'13' THEN N'DEUDORES'
+                  WHEN N'14' THEN N'INVENTARIOS' WHEN N'22' THEN N'PROVEEDORES'
+                  WHEN N'23' THEN N'CUENTAS POR PAGAR'
+                  WHEN N'24' THEN N'IMPUESTOS, GRAVÁMENES Y TASAS'
+                  WHEN N'25' THEN N'OBLIGACIONES LABORALES'
+                  WHEN N'26' THEN N'PASIVOS ESTIMADOS Y PROVISIONES'
+                  WHEN N'41' THEN N'OPERACIONALES'
+                  WHEN N'51' THEN N'OPERACIONALES DE ADMINISTRACIÓN'
+                  WHEN N'61' THEN N'COSTO DE VENTAS Y DE PRESTACIÓN DE SERVICIOS'
+                  ELSE CONCAT(N'Nivel ',expanded.Code) END),
+              expanded.Level,expanded.OpeningBalance,expanded.Debit,expanded.Credit,
+              expanded.ClosingBalance
+            FROM Expanded expanded
+            LEFT JOIN dbo.AccountingAccounts configured
+              ON configured.TenantId=@TenantId AND configured.Code=expanded.Code
+            ORDER BY expanded.Code,expanded.SortOrder;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId); command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue)); command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
         var rows = new List<TrialBalanceRow>(); await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken)) rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetDecimal(2), reader.GetDecimal(3), reader.GetDecimal(4)));
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var opening = reader.GetDecimal(3);
+            var closing = reader.GetDecimal(6);
+            rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                Math.Max(opening, 0), Math.Max(-opening, 0), reader.GetDecimal(4),
+                reader.GetDecimal(5), Math.Max(closing, 0), Math.Max(-closing, 0)));
+        }
         return rows;
     }
+
+    private static string PucLevel(string code) => code.Length switch
+    {
+        1 => "Class",
+        2 => "Group",
+        4 => "Account",
+        6 => "Subaccount",
+        > 6 => "Auxiliary",
+        _ => "Invalid"
+    };
 
     public async Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(
         AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to,
@@ -1145,6 +1208,119 @@ public sealed class SqlAccountingStore(
                 reader.IsDBNull(15) ? null : reader.GetString(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16),
                 reader.IsDBNull(17) ? null : reader.GetString(17)));
+        }
+        return new(rows, page, pageSize, total);
+    }
+
+    public async Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(
+        AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
+        string? status, string? search, int page, int pageSize,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            WITH posting AS (
+              SELECT SourceDocumentId,SourceDocumentType,OccurredAt,Status,
+                     LastErrorMessage,TenantId,BusinessId
+              FROM dbo.AccountingPostingJobs
+              UNION ALL
+              SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
+                     N'MissingAccountingJob',N'The immutable accounting source has no durable posting job.',
+                     source.TenantId,source.BusinessId
+              FROM dbo.AccountingSourceDocuments source
+              WHERE NOT EXISTS(
+                  SELECT 1 FROM dbo.AccountingPostingJobs job
+                  WHERE job.SourceDocumentId=source.SourceDocumentId
+                    AND job.SourceDocumentType=source.SourceDocumentType
+                    AND job.BusinessId=source.BusinessId
+                    AND job.TenantId=source.TenantId)
+            )
+            SELECT job.SourceDocumentId,job.SourceDocumentType,sourceNumber.DocumentNumber,
+                   job.OccurredAt,job.Status,job.LastErrorMessage,
+                   entry.EntryNumber,entry.PostedAt,
+                   fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.FiscalStatus,
+                   line.LineNumber,account.Code,account.Name,
+                   line.PartyIdentificationSnapshot,line.PartyNameSnapshot,
+                   line.CostCenterCodeSnapshot,line.CostCenterNameSnapshot,line.Description,
+                   line.Debit,line.Credit,COUNT_BIG(1) OVER()
+            FROM posting job
+            LEFT JOIN dbo.AccountingEntries entry
+              ON entry.SourceDocumentId=job.SourceDocumentId
+             AND entry.SourceDocumentType=job.SourceDocumentType
+             AND entry.TenantId=job.TenantId AND entry.BusinessId=job.BusinessId
+            LEFT JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+            LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId
+            LEFT JOIN dbo.FiscalDocuments fiscal
+              ON fiscal.DocumentId=job.SourceDocumentId
+             AND fiscal.BusinessId=job.BusinessId
+            OUTER APPLY(SELECT TOP(1) candidate.DocumentNumber FROM (
+              SELECT sale.DocumentNumber FROM dbo.SalesDocuments sale
+               WHERE sale.DocumentId=job.SourceDocumentId
+              UNION ALL SELECT saleReturn.DocumentNumber FROM dbo.SalesReturns saleReturn
+               WHERE saleReturn.ReturnId=job.SourceDocumentId
+              UNION ALL SELECT debitNote.DocumentNumber FROM dbo.SalesDebitNotes debitNote
+               WHERE debitNote.DebitNoteId=job.SourceDocumentId
+              UNION ALL SELECT receipt.DocumentNumber FROM dbo.GoodsReceipts receipt
+               WHERE receipt.GoodsReceiptId=job.SourceDocumentId
+              UNION ALL SELECT purchaseReturn.DocumentNumber FROM dbo.PurchaseReturns purchaseReturn
+               WHERE purchaseReturn.PurchaseReturnId=job.SourceDocumentId
+              UNION ALL SELECT expense.DocumentNumber FROM dbo.Expenses expense
+               WHERE expense.ExpenseId=job.SourceDocumentId
+              UNION ALL SELECT supplierPayment.DocumentNumber FROM dbo.SupplierPayments supplierPayment
+               WHERE supplierPayment.PaymentId=job.SourceDocumentId
+              UNION ALL SELECT customerPayment.DocumentNumber FROM dbo.CustomerPayments customerPayment
+               WHERE customerPayment.PaymentId=job.SourceDocumentId
+              UNION ALL SELECT cashMovement.DocumentNumber FROM dbo.CashMovementDocuments cashMovement
+               WHERE cashMovement.DocumentId=job.SourceDocumentId
+              UNION ALL SELECT operation.DocumentNumber FROM dbo.InventoryOperations operation
+               WHERE operation.InventoryOperationId=job.SourceDocumentId
+              UNION ALL SELECT cost.DocumentNumber FROM purchasing.GoodsReceiptCostDocuments cost
+               WHERE cost.CostDocumentId=job.SourceDocumentId
+            ) candidate) sourceNumber
+            WHERE job.TenantId=@TenantId AND job.BusinessId=@BusinessId
+              AND CAST(job.OccurredAt AS date) BETWEEN @From AND @To
+              AND (@DocumentType IS NULL OR job.SourceDocumentType=@DocumentType)
+              AND (@Status IS NULL OR job.Status=@Status)
+              AND (@Search IS NULL OR sourceNumber.DocumentNumber LIKE N'%'+@Search+N'%'
+                   OR entry.EntryNumber LIKE N'%'+@Search+N'%'
+                   OR CONVERT(nvarchar(36),job.SourceDocumentId) LIKE N'%'+@Search+N'%')
+            ORDER BY job.OccurredAt DESC,job.SourceDocumentId,line.LineNumber
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@DocumentType", (object?)documentType ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+        command.Parameters.AddWithValue("@PageSize", pageSize);
+        var rows = new List<FinancialTraceabilityLineRow>();
+        var total = 0;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            total = checked((int)reader.GetInt64(21));
+            rows.Add(new(reader.GetGuid(0), reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetDateTimeOffset(3),
+                reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetDateTimeOffset(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.IsDBNull(11) ? null : reader.GetInt32(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14),
+                reader.IsDBNull(15) ? null : reader.GetString(15),
+                reader.IsDBNull(16) ? null : reader.GetString(16),
+                reader.IsDBNull(17) ? null : reader.GetString(17),
+                reader.IsDBNull(18) ? null : reader.GetString(18),
+                reader.IsDBNull(19) ? null : reader.GetDecimal(19),
+                reader.IsDBNull(20) ? null : reader.GetDecimal(20)));
         }
         return new(rows, page, pageSize, total);
     }

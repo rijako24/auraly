@@ -75,6 +75,10 @@ export interface CustomerPaymentAcceptance {
   processingSequence: number;
   idempotentReplay: boolean;
 }
+export interface CustomerPaymentHistoryPage {
+  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;paymentMethod:string;reference:string|null;totalAmount:number;status:string;appliedDocumentCount:number}>;
+  page:number;pageSize:number;totalCount:number;totalPages:number;
+}
 
 export interface PaymentSettlementConfiguration {
   bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean }>;
@@ -94,6 +98,8 @@ export const receivablesApi = {
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   getCreditProfile: (customerId: string) =>
     apiClient.get<CustomerCreditProfile>(`/commerce/v1/customers/${customerId}/credit`),
+  paymentHistory: (customerId:string,page=1,pageSize=5) =>
+    apiClient.get<CustomerPaymentHistoryPage>(`/commerce/v1/customers/${customerId}/payments`,{page,pageSize}),
   updateCreditProfile: (customerId: string, request: {
     businessId: string;
     creditLimit: number | null;

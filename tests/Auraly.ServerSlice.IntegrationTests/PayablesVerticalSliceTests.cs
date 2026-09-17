@@ -90,6 +90,12 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             "ServerOutboxMessages", "DocumentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", payment.PaymentId));
+        var paymentHistory = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
+            $"/api/commerce/v1/suppliers/{fixture.SupplierId:D}/payments?page=1&pageSize=5");
+        Assert.NotNull(paymentHistory);
+        Assert.Equal(5, paymentHistory.PageSize);
+        Assert.Contains(paymentHistory.Items, item => item.PaymentId == payment.PaymentId
+            && item.AppliedDocumentCount == 1);
         Assert.True(await PayloadHashMatchesAsync(payment.PaymentId));
         Assert.Equal(40_000m, await AccountAmountAsync(payment.PaymentId, "220505", true));
         var settlementAccountCode = await ScalarAsync<string>(

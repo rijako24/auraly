@@ -62,6 +62,14 @@ public sealed record CustomerPaymentDocumentPayload(Guid TenantId, Guid Business
     Guid? BankAccountId = null);
 public sealed record CustomerPaymentAcceptance(Guid PaymentId, Guid MovementId, string DocumentNumber,
     string Status, long ProcessingSequence, bool IdempotentReplay);
+public sealed record CustomerPaymentHistoryItem(Guid PaymentId, string DocumentNumber,
+    DateTimeOffset PaidAt, string CurrencyCode, string PaymentMethod, string? Reference,
+    decimal TotalAmount, string Status, int AppliedDocumentCount);
+public sealed record CustomerPaymentHistoryPage(IReadOnlyList<CustomerPaymentHistoryItem> Items,
+    int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
 
 public static class CustomerPaymentContractSerializer
 {

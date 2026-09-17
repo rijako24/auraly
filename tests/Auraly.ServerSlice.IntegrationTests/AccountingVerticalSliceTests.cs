@@ -1362,8 +1362,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using (var conceptResponse = await expenseUser.PutAsJsonAsync(
                    $"/api/commerce/v1/expenses/concepts/{expenseConceptId:D}",
                    new SaveExpenseConceptRequest(
-                       expenseConceptId, fixture.BusinessId, "SERVICIOS",
-                       "Servicios operativos", expenseAccount.AccountId,
+                       expenseConceptId, fixture.BusinessId, "Servicios operativos",
+                       expenseAccount.AccountId,
                        expenseCenter.CostCenterId, "MERCANCIA", true)))
             Assert.Equal(HttpStatusCode.OK, conceptResponse.StatusCode);
 
@@ -1570,7 +1570,28 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.OK, report.StatusCode);
             var rows = await report.Content.ReadFromJsonAsync<IReadOnlyList<TrialBalanceRow>>();
             Assert.NotNull(rows); Assert.NotEmpty(rows);
-            Assert.Equal(rows.Sum(row => row.Debit), rows.Sum(row => row.Credit));
+            var classes = rows.Where(row => row.Level == "Class").ToArray();
+            Assert.NotEmpty(classes);
+            Assert.Equal(classes.Sum(row => row.Debit), classes.Sum(row => row.Credit));
+            Assert.Contains(rows, row => row.Level == "Group" && row.AccountCode == "14");
+            Assert.Contains(rows, row => row.Level == "Group" && row.AccountCode == "61");
+        }
+        using (var response = await accounting.GetAsync(
+                   $"/api/commerce/v1/accounting/reports/financial-traceability-lines?from=2026-01-01&to=2026-12-31&search={invoice.DocumentId:D}&page=1&pageSize=25"))
+        {
+            response.EnsureSuccessStatusCode();
+            var page = Assert.IsType<FinancialTraceabilityLinePage>(
+                await response.Content.ReadFromJsonAsync<FinancialTraceabilityLinePage>());
+            Assert.Equal(1, page.Page);
+            Assert.Equal(25, page.PageSize);
+            Assert.Equal(page.TotalCount, page.Items.Count);
+            Assert.All(page.Items, row => Assert.Equal(invoice.DocumentId, row.SourceDocumentId));
+            Assert.Equal(await ScalarAsync<int>("""
+                SELECT COUNT(*) FROM dbo.AccountingEntries entry
+                JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+                WHERE entry.SourceDocumentId=@Id
+                """, invoice.DocumentId), page.Items.Count);
+            Assert.Equal(page.Items.Sum(row => row.Debit), page.Items.Sum(row => row.Credit));
         }
         using (var response = await accounting.GetAsync(
                    "/api/commerce/v1/accounting/reports/journal?from=2026-01-01&to=2026-12-31"))
@@ -2336,7 +2357,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                    new ActivateAccountingRequest(new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
             activate.EnsureSuccessStatusCode();
 
-        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var suffix = RandomNumberGenerator.GetInt32(10_000_000, 100_000_000).ToString();
         var bankLedgerId = Guid.NewGuid();
         using (var account = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
                    new CreateAccountingAccountRequest(bankLedgerId, fixture.TenantId,
@@ -2483,7 +2504,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                    new ActivateAccountingRequest(new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
             activate.EnsureSuccessStatusCode();
 
-        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var suffix = RandomNumberGenerator.GetInt32(10_000_000, 100_000_000).ToString();
         var bankLedgerId = Guid.NewGuid();
         using (var account = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
                    new CreateAccountingAccountRequest(bankLedgerId, fixture.TenantId,

@@ -35,7 +35,7 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
             throw new ExpenseForbiddenException("El concepto está fuera de la empresa autenticada.");
         return store.SaveConceptAsync(user, request with
         {
-            Code = Text(request.Code, 32, "Código"), Name = Text(request.Name, 120, "Nombre"),
+            Name = Text(request.Name, 120, "Nombre"),
             WithholdingConceptCode = Optional(request.WithholdingConceptCode, 32)
         }, ct);
     }

@@ -75,10 +75,16 @@ export interface SupplierPaymentAcceptance {
   processingSequence: number;
   idempotentReplay: boolean;
 }
+export interface SupplierPaymentHistoryPage {
+  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;paymentMethod:string;reference:string|null;totalAmount:number;status:string;appliedDocumentCount:number}>;
+  page:number;pageSize:number;totalCount:number;totalPages:number;
+}
 
 export const payablesApi = {
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
+  paymentHistory: (supplierId:string,page=1,pageSize=5) =>
+    apiClient.get<SupplierPaymentHistoryPage>(`/commerce/v1/suppliers/${supplierId}/payments`,{page,pageSize}),
   list: (params: {
     page?: number;
     pageSize?: number;

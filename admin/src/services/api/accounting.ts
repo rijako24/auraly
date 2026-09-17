@@ -3,6 +3,7 @@ import { apiClient } from "./client";
 export interface AccountingAccount {
   accountId: string; code: string; name: string; accountType: string;
   allowsPosting: boolean; requiresParty: boolean; isActive: boolean;
+  level: "Class"|"Group"|"Account"|"Subaccount"|"Auxiliary";
 }
 export interface AccountingCostCenter {
   costCenterId: string; businessId: string; code: string; name: string;
@@ -54,7 +55,7 @@ export interface AccountingOpeningBalanceLine { lineNumber:number;accountId:stri
 export interface AccountingOpeningBalance { batchId:string;businessId:string;effectiveOn:string;currencyCode:string;description:string;status:"Draft"|"Approved"|"Posted";debitTotal:number;creditTotal:number;rowVersion:string;updatedAt:string;approvedAt:string|null;postedAt:string|null;lines:AccountingOpeningBalanceLine[]; }
 export interface SaveAccountingOpeningBalance { batchId:string;businessId:string;effectiveOn:string;currencyCode:"COP";description:string;rowVersion:string|null;lines:Array<Omit<AccountingOpeningBalanceLine,"lineNumber">>; }
 export interface AccountingCategoryDefinition { category: string; displayName: string; accountType: string; isRequired: boolean; displayOrder: number; }
-export interface TrialBalanceRow { accountCode: string; accountName: string; debit: number; credit: number; balance: number; }
+export interface TrialBalanceRow { accountCode: string; accountName: string; level:"Class"|"Group"|"Account"|"Subaccount"|"Auxiliary"; openingDebit:number; openingCredit:number; debit:number; credit:number; closingDebit:number; closingCredit:number; }
 export interface AccountMovementRow { lineNumber:number;costCenterId:string|null;costCenterCode:string|null;costCenterName:string|null;entryId: string; entryNumber: string; sourceDocumentId: string; sourceDocumentType: string; occurredAt: string; description: string; debit: number; credit: number; balance: number; }
 export interface CreateAccount {
   accountId: string; tenantId: string; code: string; name: string;
@@ -91,6 +92,8 @@ export interface FinancialStatementRow { section:string;accountCode:string;accou
 export interface AccountingExceptionRow { sourceDocumentId:string;sourceDocumentType:string;occurredAt:string;status:string;errorCode:string|null;errorMessage:string|null; }
 export interface AccountingDocumentRow { sourceDocumentId:string;sourceDocumentType:string;sourceDocumentNumber:string|null;occurredAt:string;status:string;attemptCount:number;errorCode:string|null;errorMessage:string|null;entryId:string|null;entryNumber:string|null;debitTotal:number|null;creditTotal:number|null;postedAt:string|null;fiscalDocumentType:string|null;dianNumber:string|null;uniqueCodeType:string|null;uniqueCode:string|null;fiscalStatus:string|null; }
 export interface AccountingDocumentPage { items:AccountingDocumentRow[];page:number;pageSize:number;totalCount:number;totalPages:number; }
+export interface FinancialTraceabilityLineRow { sourceDocumentId:string;sourceDocumentType:string;sourceDocumentNumber:string|null;occurredAt:string;status:string;errorMessage:string|null;entryNumber:string|null;postedAt:string|null;fiscalDocumentType:string|null;dianNumber:string|null;fiscalStatus:string|null;lineNumber:number|null;accountCode:string|null;accountName:string|null;partyIdentification:string|null;partyName:string|null;costCenterCode:string|null;costCenterName:string|null;description:string|null;debit:number|null;credit:number|null; }
+export interface FinancialTraceabilityLinePage { items:FinancialTraceabilityLineRow[];page:number;pageSize:number;totalCount:number;totalPages:number; }
 export interface ComplianceReportDefinition { authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;name:string;reportKind:"Exogenous"|"FiscalDraft";resolutionNumber:string;resolutionDate:string;technicalAnnex:string;sourceUrl:string;sourceSha256:string; }
 export interface ComplianceConceptMapping { mappingId:string;tenantId:string;businessId:string|null;authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;accountId:string;accountCode:string;accountName:string;conceptCode:string;targetField:string; }
 export interface ComplianceValidation { severity:"Error"|"Warning";code:string;message:string;partyId:string|null;accountId:string|null; }
@@ -134,6 +137,7 @@ export const accountingApi = {
   retryPosting: (documentId:string) => apiClient.post<AccountingPosting>(`/commerce/v1/accounting/postings/${documentId}/retry`,{}),
   entry: (documentId:string) => apiClient.get<AccountingEntry>(`/commerce/v1/accounting/entries/by-document/${documentId}`),
   documents: (params:{from:string;to:string;documentType?:string;status?:string;search?:string;page?:number;pageSize?:number}) => apiClient.get<AccountingDocumentPage>("/commerce/v1/accounting/documents",params),
+  financialTraceabilityLines: (params:{from:string;to:string;documentType?:string;status?:string;search?:string;page?:number;pageSize?:number}) => apiClient.get<FinancialTraceabilityLinePage>("/commerce/v1/accounting/reports/financial-traceability-lines",params),
   trialBalance: (from: string, to: string) => apiClient.get<TrialBalanceRow[]>(`/commerce/v1/accounting/reports/trial-balance?from=${from}&to=${to}`),
   accountMovements: (accountCode: string, from: string, to: string, costCenterId?:string) => apiClient.get<AccountMovementRow[]>(`/commerce/v1/accounting/reports/account-movements?accountCode=${encodeURIComponent(accountCode)}&from=${from}&to=${to}${costCenterId?`&costCenterId=${encodeURIComponent(costCenterId)}`:""}`),
   journal: (from:string,to:string) => apiClient.get<AccountingJournalRow[]>(`/commerce/v1/accounting/reports/journal?from=${from}&to=${to}`),

@@ -31,6 +31,15 @@ public static class PayablesApi
                     }))
             .RequireAuthorization("payables.user");
 
+        endpoints.MapGet(
+                "/api/commerce/v1/suppliers/{supplierId:guid}/payments",
+                async (HttpContext context, Guid supplierId, int? page, int? pageSize,
+                    PayablesService service, CancellationToken cancellationToken) =>
+                    await ExecuteAsync(() => service.PaymentHistoryAsync(
+                        context.User.ToPayablesIdentity(), supplierId, page ?? 1, pageSize ?? 5,
+                        cancellationToken), Results.Ok))
+            .RequireAuthorization("payables.user");
+
         endpoints.MapPost(
                 "/api/commerce/v1/payable-payments/confirm",
                 async (HttpContext context, ConfirmSupplierPaymentRequest request,
