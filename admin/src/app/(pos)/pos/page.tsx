@@ -433,7 +433,6 @@ export default function PosPage() {
   useEffect(() => {
     documentTypeRef.current = documentType;
   }, [documentType]);
-  const [habilitationMode, setHabilitationMode] = useState(false);
 
   const clearScanRejection = useCallback(() => {
     if (rejectionTimer.current !== null) window.clearTimeout(rejectionTimer.current);
@@ -476,11 +475,6 @@ export default function PosPage() {
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>;
   } | null>(null);
   const [sensitiveApprovalError, setSensitiveApprovalError] = useState<string | null>(null);
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("fiscalHabilitation") !== "1") return;
-    setHabilitationMode(true);
-    setDocumentType("SalesInvoice");
-  }, []);
   const salesSessionButton = useRef<HTMLButtonElement>(null);
   const [lastSettlement, setLastSettlement] = useState<{
     documentId: string;
@@ -730,9 +724,7 @@ export default function PosPage() {
                 setError(dianQuotaExhaustedMessage);
             }
 
-            const fiscalHabilitationRequested = new URLSearchParams(window.location.search)
-              .get("fiscalHabilitation") === "1";
-            if (shouldUseEnrolledPosRuntime(health, workspaceChangeRequested, fiscalHabilitationRequested)) {
+            if (shouldUseEnrolledPosRuntime(health, workspaceChangeRequested)) {
               if (active) {
                 initialEdgeHealth.current = { client: edgeClient, health };
                 setEdgeLoginState(
@@ -2305,7 +2297,7 @@ export default function PosPage() {
   }
   async function changeDocumentType(value: PosSaleDocumentType) {
     if (!client || busy) return;
-    if (!canIssuePosDocument(value, workstation.fiscalReady, workstation.dianQuotaAvailable !== false, habilitationMode)) {
+    if (!canIssuePosDocument(value, workstation.fiscalReady, workstation.dianQuotaAvailable !== false)) {
       setDocumentTypeOpen(false);
       setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
         ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
@@ -2352,7 +2344,7 @@ export default function PosPage() {
       ? "SalesInvoice"
       : documentType;
     if (!canIssuePosDocument(effectiveDocumentType, workstation.fiscalReady,
-      workstation.dianQuotaAvailable !== false, habilitationMode)) {
+      workstation.dianQuotaAvailable !== false)) {
       setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
         ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
       return;
@@ -2390,7 +2382,6 @@ export default function PosPage() {
         checkout.payments,
         effectiveDocumentType,
         checkout.credit,
-        habilitationMode,
         authorization ?? undefined,
       );
       if (client.mode === "edge" && (result.printedDirectly || result.printCompletion))
@@ -2449,19 +2440,12 @@ export default function PosPage() {
         ? "emitida e impresa directamente"
         : "emitida; impresión enviada";
       setMessage(
-        habilitationMode
-          ? `${result.issuedSale.documentNumber} enviado únicamente a habilitación DIAN. No registró venta, inventario ni contabilidad.`
-          : settlement.change > 0
+        settlement.change > 0
           ? `${result.issuedSale.documentNumber} ${issuedLabel}. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`
           : effectiveDocumentType === "SalesInvoice"
             ? `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`
             : `${result.issuedSale.documentNumber} ${issuedLabel}. Pago registrado. Nueva venta lista.`,
       );
-      if (habilitationMode && effectiveDocumentType === "SalesInvoice") {
-        window.setTimeout(() => {
-          router.push("/dashboard/settings/fiscal?habilitationSubmitted=1");
-        }, 900);
-      }
     } catch (caught) {
       closePrintPreview(localPrintPreview);
       showError(caught);
@@ -2992,8 +2976,6 @@ export default function PosPage() {
         enrollmentUnavailableReason={enrollmentAvailability?.reason}
         enrollmentCapacity={enrollmentAvailability}
         onEnroll={prepareInstalledPos}
-        forcedDocumentType={habilitationMode ? "SalesInvoice" : undefined}
-        fiscalHabilitationOnly={habilitationMode}
         enrollmentState={client?.mode === "edge" ? "enrolled" : edgeEnrollmentRequired ? "available" : "web"}
         configurationOffline={workspaceConfigurationOffline}
         configuredDocumentType={workspaceChanging ? documentType : undefined}
@@ -3141,14 +3123,7 @@ export default function PosPage() {
         </div>
       </header>
 
-      {habilitationMode && (
-        <div className="flex items-center justify-between gap-4 border-b border-violet-200 bg-gradient-to-r from-violet-950 via-indigo-950 to-teal-950 px-5 py-2 text-sm text-white">
-          <span className="font-semibold">Asistente DIAN · documento técnico de prueba, sin inventario, ventas ni contabilidad</span>
-          <button type="button" onClick={() => router.push("/dashboard/settings/fiscal")} className="rounded-lg border border-white/20 px-3 py-1 text-xs font-bold hover:bg-white/10">Volver a configuración</button>
-        </div>
-      )}
-
-      {!habilitationMode && workstation.fiscalWarnings.length > 0 && (
+      {workstation.fiscalWarnings.length > 0 && (
         <div role="alert" className="flex items-start gap-3 border-b border-amber-300/40 bg-amber-100 px-5 py-3 text-sm text-amber-950">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div><strong className="block">Atención con la resolución DIAN</strong><ul className="mt-1 list-disc pl-5">{workstation.fiscalWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>
@@ -3920,7 +3895,6 @@ export default function PosPage() {
             selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType,
             workstation.fiscalReady,
             workstation.dianQuotaAvailable !== false,
-            habilitationMode,
           )}
           customer={selectedCustomer}
           focusRequest={paymentFocusRequest}

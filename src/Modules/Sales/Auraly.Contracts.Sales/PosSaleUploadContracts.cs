@@ -244,7 +244,6 @@ public sealed record PosSaleUploadRequest(
     string SourceMode = SaleSourceModes.PosEdge,
     Guid? SourceOrderId = null,
     PosSaleCreditContract? Credit = null,
-    bool FiscalHabilitationOnly = false,
     Guid? CustomerPartySiteId = null);
 
 public sealed record PosSaleUploadResponse(

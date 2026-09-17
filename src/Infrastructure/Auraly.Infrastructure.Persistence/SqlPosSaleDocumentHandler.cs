@@ -34,6 +34,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         ConfirmedDocument document,
         CancellationToken cancellationToken)
     {
+        var legacyHabilitation = IsLegacyFiscalHabilitation(document.Payload);
         var request = PosSaleContractSerializer.Deserialize(document.Payload);
         if (request.DocumentId != document.DocumentId.Value ||
             request.TenantId != document.TenantId.Value ||
@@ -43,7 +44,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
 
         var session = _sessions.Current;
-        if (request.FiscalHabilitationOnly)
+        // Safety tombstone for already persisted payloads from the retired sales-based
+        // habilitation route. They must never be reinterpreted as economic sales.
+        if (legacyHabilitation)
         {
             await MarkDocumentProcessedAsync(session, request, cancellationToken);
             return;
@@ -78,6 +81,15 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             session, document, _idGenerator, _timeProvider, cancellationToken);
         await InsertOutboxAsync(session, request, document.Payload, cancellationToken);
         await MarkDocumentProcessedAsync(session, request, cancellationToken);
+    }
+
+    private static bool IsLegacyFiscalHabilitation(string payload)
+    {
+        using var json = JsonDocument.Parse(payload);
+        return (json.RootElement.TryGetProperty("fiscalHabilitationOnly", out var camel) &&
+                camel.ValueKind == JsonValueKind.True) ||
+               (json.RootElement.TryGetProperty("FiscalHabilitationOnly", out var pascal) &&
+                pascal.ValueKind == JsonValueKind.True);
     }
 
     private static async Task PersistWithholdingSnapshotAsync(

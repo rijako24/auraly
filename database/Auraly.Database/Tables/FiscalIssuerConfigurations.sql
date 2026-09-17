@@ -23,6 +23,7 @@ CREATE TABLE [dbo].[FiscalIssuerConfigurations]
     [SoftwarePinSecretReference] NVARCHAR(512) NOT NULL,
     [SupportDocumentSoftwareIdentificationCode] NVARCHAR(64) NULL,
     [SupportDocumentSoftwarePinSecretReference] NVARCHAR(512) NULL,
+    [SupportDocumentTestSetId] UNIQUEIDENTIFIER NULL,
     [Environment] TINYINT NOT NULL,
     [TestSetId] UNIQUEIDENTIFIER NULL,
     [CertificateProvider] NVARCHAR(32) NOT NULL,

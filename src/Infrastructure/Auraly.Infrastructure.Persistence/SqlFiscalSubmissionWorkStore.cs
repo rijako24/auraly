@@ -46,7 +46,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
 
             SELECT p.DocumentId,p.BusinessId,d.FiscalNumber,d.FiscalDocumentType,
                    CASE WHEN d.FiscalDocumentType=N'ElectronicPayroll'
-                     THEN payrollDocument.TestSetId ELSE c.TestSetId END,a.Content,p.TrackId,
+                     THEN payrollDocument.TestSetId
+                     ELSE COALESCE(p.TestSetId,CASE WHEN c.Environment=2 THEN c.TestSetId END)
+                   END,a.Content,p.TrackId,
                    CONVERT(bit,CASE WHEN EXISTS(
                      SELECT 1 FROM dbo.FiscalTransmissionAttempts x
                      WHERE x.DocumentId=p.DocumentId
@@ -377,9 +379,13 @@ public sealed class SqlFiscalSubmissionWorkStore(
                 FiscalDocumentTypeCodes.SupportDocument or
                     FiscalDocumentTypeCodes.SupportDocumentAdjustment => 3,
                 FiscalDocumentTypeCodes.ElectronicPayroll => 5,
+                FiscalDocumentTypeCodes.Invoice when work.TestSetId is not null => 3,
                 _ => 4
             };
-            if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
+            var committedRows = await command.ExecuteNonQueryAsync(cancellationToken);
+            var validLegacyInvoiceRows = work.FiscalDocumentType == FiscalDocumentTypeCodes.Invoice &&
+                work.TestSetId is not null && committedRows == expectedRows + 1;
+            if (committedRows != expectedRows && !validLegacyInvoiceRows)
                 throw new InvalidOperationException("The fiscal transmission result could not be committed.");
         }
 
@@ -463,8 +469,12 @@ public sealed class SqlFiscalSubmissionWorkStore(
         command.Parameters.AddWithValue("@PermanentFailure", FiscalDocumentStatusCodes.PermanentFailure);
         command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
         var expectedRows = work.FiscalDocumentType is FiscalDocumentTypeCodes.SupportDocument or
-            FiscalDocumentTypeCodes.SupportDocumentAdjustment ? 2 : 3;
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
+            FiscalDocumentTypeCodes.SupportDocumentAdjustment ||
+            work.TestSetId is not null ? 2 : 3;
+        var releasedRows = await command.ExecuteNonQueryAsync(cancellationToken);
+        var validLegacyInvoiceRows = work.FiscalDocumentType == FiscalDocumentTypeCodes.Invoice &&
+            work.TestSetId is not null && releasedRows == expectedRows + 1;
+        if (releasedRows != expectedRows && !validLegacyInvoiceRows)
             throw new InvalidOperationException("The fiscal submission lease could not be released.");
         if (status == FiscalDocumentStatusCodes.PermanentFailure)
             await SqlFiscalStatusSynchronizationOutbox.InsertAsync(

@@ -34,7 +34,8 @@ public sealed record FiscalGenerationWorkItem(
     PurchaseSupportFiscalSnapshot? SupportDocument = null,
     ElectronicPayrollSnapshot? ElectronicPayroll = null,
     ServiceInvoiceSnapshot? ServiceInvoice = null,
-    bool IsCorrection = false);
+    bool IsCorrection = false,
+    bool IsFiscalHabilitation = false);
 
 public sealed record FiscalGeneratedArtifacts(
     byte[] UnsignedXml, string UnsignedSha256Hex, byte[] SignedXml, string SignedSha256Hex,

@@ -1,7 +1,6 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, FileKey2, FlaskConical, Loader2, LockKeyhole, Pencil, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -19,7 +18,6 @@ import { habilitationFeedbackKind } from "@/services/api/fiscal-onboarding-event
 type Props = { businessId: string; canManage: boolean };
 
 export function FiscalOnboardingCard({ businessId, canManage }: Props) {
-  const router = useRouter();
   const [value, setValue] = useState<FiscalOnboardingConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -28,6 +26,8 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const [activatingSupport, setActivatingSupport] = useState(false);
   const [savingSupportCredentials, setSavingSupportCredentials] = useState(false);
   const [syncingSupport, setSyncingSupport] = useState(false);
+  const [sendingInvoiceHabilitation, setSendingInvoiceHabilitation] = useState(false);
+  const [sendingSupportHabilitation, setSendingSupportHabilitation] = useState(false);
   const [softwareId, setSoftwareId] = useState("");
   const [softwarePin, setSoftwarePin] = useState("");
   const [testSetId, setTestSetId] = useState("");
@@ -36,6 +36,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const [credentialError, setCredentialError] = useState("");
   const [supportSoftwareId, setSupportSoftwareId] = useState("");
   const [supportSoftwarePin, setSupportSoftwarePin] = useState("");
+  const [supportTestSetId, setSupportTestSetId] = useState("");
   const [selectedSupportRangeId, setSelectedSupportRangeId] = useState("");
   const [supportConfirmed, setSupportConfirmed] = useState(false);
   const [editingCredentials, setEditingCredentials] = useState(false);
@@ -49,6 +50,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
       setSoftwareId(result.softwareIdentificationCode ?? "");
       setTestSetId(result.testSetId ?? "");
       setSupportSoftwareId(result.supportDocumentSoftwareIdentificationCode ?? "");
+      setSupportTestSetId(result.supportDocumentTestSetId ?? "");
       setEditingCredentials(!result.hasCertificate);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No fue posible cargar la configuración fiscal.";
@@ -101,6 +103,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
       const result = await fiscalConfigurationApi.configureSupportDocumentSoftware(businessId, {
         softwareIdentificationCode: supportSoftwareId,
         softwarePin: supportSoftwarePin,
+        testSetId: supportTestSetId,
       });
       setValue(result);
       setSupportSoftwarePin("");
@@ -154,8 +157,34 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
     }
   }
 
-  function startHabilitationInvoice() {
-    router.push("/pos?fiscalHabilitation=1");
+  async function startHabilitationInvoice() {
+    setSendingInvoiceHabilitation(true);
+    try {
+      const result = await fiscalConfigurationApi.sendInvoiceHabilitation(businessId);
+      setValue(result.configuration);
+      toast.success(result.isReplay
+        ? "La prueba de factura ya está siendo procesada por el motor fiscal."
+        : "Factura técnica enviada al motor fiscal para habilitación.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible iniciar la habilitación de factura.");
+    } finally {
+      setSendingInvoiceHabilitation(false);
+    }
+  }
+
+  async function startSupportHabilitation() {
+    setSendingSupportHabilitation(true);
+    try {
+      const result = await fiscalConfigurationApi.sendSupportDocumentHabilitation(businessId);
+      setValue(result.configuration);
+      toast.success(result.isReplay
+        ? "La prueba de documento soporte ya está siendo procesada."
+        : "Documento soporte técnico enviado al motor fiscal para habilitación.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible iniciar la habilitación de documento soporte.");
+    } finally {
+      setSendingSupportHabilitation(false);
+    }
   }
 
   if (loading) {
@@ -168,6 +197,9 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
 
   const missingLegalProfile = value.missingRequirements.includes("PerfilLegal");
   const feedbackKind = habilitationFeedbackKind(value.latestHabilitationAttempt);
+  const supportFeedbackKind = habilitationFeedbackKind(
+    value.latestSupportDocumentHabilitationAttempt,
+  );
 
   return (
     <div className="space-y-5">
@@ -231,7 +263,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
             <p className="flex items-center gap-2 rounded-xl bg-emerald-50 p-4 text-sm font-medium text-emerald-900"><CheckCircle2 className="h-5 w-5" /> Set de pruebas aceptado por la DIAN {value.habilitationAcceptedAt ? `el ${formatDate(value.habilitationAcceptedAt)}` : ""}.</p>
           ) : value.stage === "HabilitationReady" ? (
             <div className="overflow-hidden rounded-2xl border border-violet-200 bg-white p-5">
-              <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center"><div><p className="flex items-center gap-2 font-bold text-violet-950"><FlaskConical className="h-5 w-5" />Asistente de habilitación</p><p className="mt-1 max-w-2xl text-sm text-slate-600">Abre la caja con factura electrónica protegida en ambiente de pruebas. La venta recorre numeración, UBL, firma, worker y envío real al TestSetId.</p></div><Button disabled={!canManage} onClick={startHabilitationInvoice} className="h-11 shrink-0 bg-violet-700 px-5 hover:bg-violet-800"><Rocket className="mr-2 h-4 w-4" />Emitir factura de habilitación</Button></div>
+              <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center"><div><p className="flex items-center gap-2 font-bold text-violet-950"><FlaskConical className="h-5 w-5" />Asistente de habilitación</p><p className="mt-1 max-w-2xl text-sm text-slate-600">Arma una factura técnica y la entrega directamente al motor fiscal. No crea venta, pago, inventario, contabilidad ni reporting.</p></div><Button disabled={!canManage || sendingInvoiceHabilitation || feedbackKind === "processing"} onClick={() => void startHabilitationInvoice()} className="h-11 shrink-0 bg-violet-700 px-5 hover:bg-violet-800">{sendingInvoiceHabilitation ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Rocket className="mr-2 h-4 w-4" />}{sendingInvoiceHabilitation ? "Enviando…" : "Enviar prueba de factura"}</Button></div>
               {feedbackKind === "failure" ? (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-950">
                   <p className="flex items-center gap-2 font-bold"><AlertTriangle className="h-5 w-5" />La prueba de habilitación falló</p>
@@ -274,10 +306,11 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
             <CardDescription>Software ID, PIN y resoluciones independientes de facturación electrónica. Las recepciones y gastos configurados como documento soporte comparten este mismo motor.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <form className="grid gap-4 rounded-xl border border-slate-200 p-4 md:grid-cols-2" onSubmit={saveSupportSoftware}>
+            <form className="grid gap-4 rounded-xl border border-slate-200 p-4 md:grid-cols-3" onSubmit={saveSupportSoftware}>
               <Field label="Software ID · Documento soporte"><Input required value={supportSoftwareId} onChange={event => setSupportSoftwareId(event.target.value)} /></Field>
               <Field label="PIN · Documento soporte"><Input required type="password" autoComplete="new-password" value={supportSoftwarePin} placeholder={value.hasSupportDocumentSoftwarePin ? "Escribe el nuevo PIN para actualizar" : "PIN entregado por la DIAN"} onChange={event => setSupportSoftwarePin(event.target.value)} /></Field>
-              <div className="md:col-span-2"><Button disabled={!canManage || !supportSoftwareId || !supportSoftwarePin || savingSupportCredentials} type="submit">{savingSupportCredentials ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <FileKey2 className="mr-2 h-4 w-4"/>}{value.hasSupportDocumentSoftwarePin ? "Actualizar credenciales de documento soporte" : "Guardar credenciales de documento soporte"}</Button></div>
+              <Field label="TestSetId · Documento soporte"><Input required value={supportTestSetId} onChange={event => setSupportTestSetId(event.target.value)} /></Field>
+              <div className="md:col-span-3"><Button disabled={!canManage || !supportSoftwareId || !supportSoftwarePin || !supportTestSetId || savingSupportCredentials} type="submit">{savingSupportCredentials ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <FileKey2 className="mr-2 h-4 w-4"/>}{value.hasSupportDocumentSoftwarePin ? "Actualizar credenciales de documento soporte" : "Guardar credenciales de documento soporte"}</Button></div>
             </form>
             {value.assignedSupportDocumentRange && <div className="grid gap-3 rounded-xl bg-emerald-50 p-4 text-sm md:grid-cols-3"><Detail label="Resolución" value={value.assignedSupportDocumentRange.authorizationNumber}/><Detail label="Prefijo y rango" value={`${value.assignedSupportDocumentRange.prefix}${value.assignedSupportDocumentRange.rangeStart}–${value.assignedSupportDocumentRange.rangeEnd}`}/><Detail label="Vigencia" value={`${value.assignedSupportDocumentRange.validFrom} a ${value.assignedSupportDocumentRange.validUntil}`}/></div>}
             <div className="flex flex-col gap-3 md:flex-row">
@@ -286,6 +319,20 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
             </div>
             {(value.assignedRange || value.assignedSupportDocumentRange) && <p className="text-xs text-muted-foreground">Al cambiar una resolución, la anterior se cierra y conserva su numeración e historial; no vuelve al pool disponible.</p>}
             {!value.hasSupportDocumentSoftwarePin && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-950">Guarda primero el Software ID y PIN creados en la modalidad Documento soporte para habilitar su consulta DIAN.</p>}
+            {value.hasSupportDocumentSoftwarePin && value.assignedSupportDocumentRange && (
+              <div className="rounded-xl border border-violet-200 p-4">
+                {value.supportDocumentHabilitationAccepted ? (
+                  <p className="flex items-center gap-2 text-sm font-medium text-emerald-900"><CheckCircle2 className="h-5 w-5" /> Set de documento soporte aceptado por la DIAN {value.supportDocumentHabilitationAcceptedAt ? `el ${formatDate(value.supportDocumentHabilitationAcceptedAt)}` : ""}.</p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-600">Genera el documento técnico con la resolución de soporte de esta sede y lo entrega directamente al motor fiscal; no crea gasto, recepción, cuenta por pagar ni asiento.</p>
+                    <Button type="button" disabled={!canManage || sendingSupportHabilitation || supportFeedbackKind === "processing"} onClick={() => void startSupportHabilitation()}>{sendingSupportHabilitation ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FlaskConical className="mr-2 h-4 w-4" />}{sendingSupportHabilitation ? "Enviando…" : "Enviar prueba de documento soporte"}</Button>
+                    {supportFeedbackKind === "processing" && <p className="flex items-center gap-2 text-xs text-slate-600"><Loader2 className="h-4 w-4 animate-spin" />Procesando: {value.latestSupportDocumentHabilitationAttempt?.status}.</p>}
+                    {supportFeedbackKind === "failure" && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-900">{value.latestSupportDocumentHabilitationAttempt?.errorMessage ?? "La prueba de documento soporte falló."}</p>}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

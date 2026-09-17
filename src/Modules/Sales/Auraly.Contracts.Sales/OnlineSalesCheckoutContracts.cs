@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Auraly.Commerce.Taxation.Contracts;
 
 namespace Auraly.Contracts.Sales;
@@ -15,12 +16,12 @@ public sealed record OnlineSalesPayment(
 public sealed record OnlineSalesCreditTerms(
     decimal Amount);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record CompleteOnlineSalesDraftRequest(
     long ExpectedVersion,
     IReadOnlyList<OnlineSalesPayment> Payments,
     OnlineSalesCreditTerms? Credit = null,
-    string DocumentType = PosSaleDocumentTypes.Invoice,
-    bool FiscalHabilitationOnly = false);
+    string DocumentType = PosSaleDocumentTypes.Invoice);
 
 public sealed record OnlineSalesReceiptLine(
     string ProductCode,

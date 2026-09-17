@@ -260,7 +260,7 @@ public sealed class ReceivePosSaleService(
                 request.BusinessId,
                 request.DocumentId,
                 request.CommercialSnapshot.DocumentType,
-                EconomicEffectsEnabled: !request.FiscalHabilitationOnly),
+                EconomicEffectsEnabled: true),
             cancellationToken);
         return ToResponse(stored, isDuplicate: existing is not null);
     }

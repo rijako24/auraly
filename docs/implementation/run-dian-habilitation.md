@@ -54,6 +54,8 @@ Protegida por `X-Auraly-Edge-Session` y limitada a loopback/origen configurado:
 
 `FiscalIssuerConfigurations` debe contener endpoint DIAN de habilitación, `TestSetId`, software, referencia de PIN y referencia de certificado. Para on-premise:
 
+Desde el onboarding, **Enviar prueba** crea directamente un documento técnico dentro del motor fiscal y publica una señal de generación. No debe abrir POS ni crear efectos comerciales. Factura y documento soporte tienen Software ID, PIN y `TestSetId` independientes; el valor resuelto para la sede y la familia se conserva en `FiscalDocumentProcesses.TestSetId` para todos los reintentos de ese envío.
+
 - `CertificateProvider = WindowsCertificateStore`.
 - `CertificateKeyReference = StoreLocation/StoreName`.
 - `CertificateThumbprint` identifica el certificado.

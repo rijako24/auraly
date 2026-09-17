@@ -51,6 +51,14 @@ public interface IFiscalOnboardingStore
         Guid userId,
         string softwareIdentificationCode,
         string softwarePinSecretReference,
+        Guid testSetId,
+        CancellationToken cancellationToken);
+
+    Task<(Guid DocumentId, bool IsReplay)> CreateHabilitationDocumentAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
+        string family,
         CancellationToken cancellationToken);
 
     Task ActivateSupportDocumentAsync(
@@ -98,7 +106,8 @@ public sealed class FiscalOnboardingService(
     IFiscalOnboardingStore store,
     IFiscalCredentialVault credentials,
     IDianNumberingRangeClient numberingRanges,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    FiscalProcessingCoordinator? processing = null)
 {
     private const int MaximumCertificateBytes = 2 * 1024 * 1024;
 
@@ -233,9 +242,10 @@ public sealed class FiscalOnboardingService(
         ArgumentNullException.ThrowIfNull(request);
         var softwareId = request.SoftwareIdentificationCode.Trim();
         var pin = request.SoftwarePin.Trim();
-        if (!Guid.TryParse(softwareId, out _) || pin.Length is 0 or > 128)
+        if (!Guid.TryParse(softwareId, out _) || pin.Length is 0 or > 128 ||
+            request.TestSetId == Guid.Empty)
             throw new FiscalConfigurationValidationException(
-                "Software ID y PIN de documento soporte son obligatorios; el Software ID debe ser un UUID válido.");
+                "Software ID, PIN y TestSetId de documento soporte son obligatorios; los identificadores deben ser UUID válidos.");
         var current = await store.GetAsync(user.TenantId, businessId, cancellationToken);
         if (!current.ProductionActive)
             throw new FiscalConfigurationValidationException(
@@ -244,8 +254,45 @@ public sealed class FiscalOnboardingService(
             user.TenantId, businessId, pin, cancellationToken);
         await store.SaveSupportDocumentSoftwareAsync(
             user.TenantId, businessId, user.UserId, softwareId, pinReference,
+            request.TestSetId,
             cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
+    }
+
+    public async Task<FiscalHabilitationDispatch> SendHabilitationTestAsync(
+        FiscalConfigurationUser user,
+        Guid businessId,
+        string family,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.ConfigurationManage);
+        ValidateBusiness(businessId);
+        if (family is not (FiscalHabilitationFamilies.SalesInvoice or
+            FiscalHabilitationFamilies.SupportDocument))
+            throw new FiscalConfigurationValidationException(
+                "La familia de documento fiscal no es válida.");
+        var current = await store.GetAsync(user.TenantId, businessId, cancellationToken);
+        if (family == FiscalHabilitationFamilies.SalesInvoice &&
+            (current.SoftwareIdentificationCode is null || current.TestSetId is null ||
+             !current.HasCertificate))
+            throw new FiscalConfigurationValidationException(
+                "Completa las credenciales de habilitación de factura electrónica.");
+        if (family == FiscalHabilitationFamilies.SupportDocument &&
+            (current.SupportDocumentSoftwareIdentificationCode is null ||
+             current.SupportDocumentTestSetId is null ||
+             !current.HasSupportDocumentSoftwarePin || current.AssignedSupportDocumentRange is null))
+            throw new FiscalConfigurationValidationException(
+                "Completa las credenciales, el TestSetId y la resolución de documento soporte.");
+        var created = await store.CreateHabilitationDocumentAsync(
+            user.TenantId, businessId, user.UserId, family, cancellationToken);
+        if (processing is null)
+            throw new InvalidOperationException("The fiscal processing coordinator is unavailable.");
+        await processing.RequestGenerationAsync(
+            businessId, created.DocumentId, cancellationToken);
+        return new FiscalHabilitationDispatch(
+            await store.GetAsync(user.TenantId, businessId, cancellationToken),
+            created.DocumentId,
+            created.IsReplay);
     }
 
     public async Task<FiscalOnboardingConfiguration> SynchronizeSupportDocumentNumberingRangesAsync(

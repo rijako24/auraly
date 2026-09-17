@@ -19,120 +19,30 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Habilitation_invoice_keeps_only_fiscal_evidence_and_has_no_economic_effects()
+    public async Task Sales_checkout_rejects_the_retired_habilitation_property()
     {
-        var userId = await CreateUserAsync("habilitation-only");
+        var userId = await CreateUserAsync("retired-habilitation-property");
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate);
-        client.Timeout = TimeSpan.FromSeconds(60);
-
         var captured = await CaptureAsync(client, await OpenAsync(client));
-        await SetHabilitationRegressionSeriesStateAsync(useFixtureSeries: false);
-        CompleteOnlineSalesDraftResponse completed;
-        try
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{captured.DraftId:D}/complete")
         {
-            using (var productionRequest = Mutation(
-                       captured.DraftId,
-                       new CompleteOnlineSalesDraftRequest(
-                           captured.Version,
-                           [new OnlineSalesPayment("Cash", captured.PayableAmount, null)]),
-                       $"production-without-resolution-{Guid.NewGuid():N}"))
-            using (var productionResponse = await client.SendAsync(productionRequest))
+            Content = JsonContent.Create(new
             {
-                Assert.Equal(HttpStatusCode.BadRequest, productionResponse.StatusCode);
-                Assert.Contains(
-                    "resolución fiscal activa",
-                    await productionResponse.Content.ReadAsStringAsync(),
-                    StringComparison.OrdinalIgnoreCase);
-            }
+                expectedVersion = captured.Version,
+                payments = new[] { new { methodCode = "Cash", amount = captured.PayableAmount } },
+                documentType = PosSaleDocumentTypes.Invoice,
+                fiscalHabilitationOnly = true
+            })
+        };
+        request.Headers.Add("Idempotency-Key", $"retired-habilitation-{Guid.NewGuid():N}");
 
-            completed = await CompleteAsync(
-                client,
-                captured.DraftId,
-                new CompleteOnlineSalesDraftRequest(
-                    captured.Version,
-                    [new OnlineSalesPayment("Cash", captured.PayableAmount, null)],
-                    FiscalHabilitationOnly: true),
-                $"habilitation-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(request);
 
-            Assert.StartsWith(
-                DianFiscalDefaults.HabilitationPrefix,
-                completed.Receipt.FiscalNumber);
-        }
-        finally
-        {
-            await SetHabilitationRegressionSeriesStateAsync(useFixtureSeries: true);
-        }
-
-        var persisted = await ReadPersistenceAsync(completed.Receipt.DocumentId);
-        Assert.Equal(1, persisted.DocumentCount);
-        Assert.Equal(0, persisted.LineCount);
-        Assert.Equal(0, persisted.PaymentCount);
-        Assert.Equal(0, persisted.InventoryMovementCount);
-        Assert.Equal(0, persisted.WorkSessionMovementCount);
-        Assert.Equal(0, persisted.ServerOutboxCount);
-        Assert.Equal(1, persisted.ProcessingJobCount);
-
-        using (var scope = fixture.CreateScope())
-        {
-            var worker = scope.ServiceProvider.GetRequiredService<FiscalGenerationWorker>();
-            Assert.True(await worker.ProcessAsync(
-                fixture.BusinessId,
-                completed.Receipt.DocumentId,
-                $"habilitation-regression-{Guid.NewGuid():N}"));
-        }
-
-        var unsigned = await ReadFiscalArtifactAsync(
-            completed.Receipt.DocumentId,
-            FiscalArtifactTypeCodes.UnsignedXml);
-        var signed = await ReadFiscalArtifactAsync(
-            completed.Receipt.DocumentId,
-            FiscalArtifactTypeCodes.SignedXml);
-        var xml = XDocument.Parse(Encoding.UTF8.GetString(unsigned));
-        var provider = xml.Descendants(DianUblNamespaces.Sts + "ProviderID").Single();
-        Assert.Equal("0", provider.Attribute("schemeID")?.Value);
-        Assert.Equal("31", provider.Attribute("schemeName")?.Value);
-        var finalConsumer = xml
-            .Descendants(DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
-        var finalConsumerId = finalConsumer
-            .Descendants(DianUblNamespaces.Cac + "PartyIdentification")
-            .Elements(DianUblNamespaces.Cbc + "ID").Single();
-        Assert.Equal("222222222222", finalConsumerId.Value);
-        Assert.Equal("13", finalConsumerId.Attribute("schemeName")?.Value);
-        Assert.Null(finalConsumerId.Attribute("schemeID"));
-        Assert.Equal("R-99-PN", finalConsumer
-            .Descendants(DianUblNamespaces.Cbc + "TaxLevelCode").Single().Value);
-        var finalConsumerTaxScheme = finalConsumer
-            .Descendants(DianUblNamespaces.Cac + "TaxScheme").Single();
-        Assert.Equal("ZZ", finalConsumerTaxScheme
-            .Element(DianUblNamespaces.Cbc + "ID")?.Value);
-        Assert.Equal("No aplica", finalConsumerTaxScheme
-            .Element(DianUblNamespaces.Cbc + "Name")?.Value);
-        var signedValidation = new DianSchemaValidator().Validate(signed);
-        Assert.True(signedValidation.IsValid,
-            string.Join(Environment.NewLine, signedValidation.Errors));
-
-        await using (var connection = new SqlConnection(fixture.ConnectionString))
-        {
-            await connection.OpenAsync();
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT
-                  (SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@DocumentId),
-                  (SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@DocumentId),
-                  (SELECT COUNT(*) FROM reporting.SalesReportDocuments WHERE DocumentId=@DocumentId);
-                """;
-            command.Parameters.AddWithValue("@DocumentId", completed.Receipt.DocumentId);
-            await using var reader = await command.ExecuteReaderAsync();
-            Assert.True(await reader.ReadAsync());
-            Assert.Equal(0, reader.GetInt32(0));
-            Assert.Equal(0, reader.GetInt32(1));
-            Assert.Equal(0, reader.GetInt32(2));
-        }
-
-        var page = await SearchAsync(client, captured.WorkSessionId, completed.Receipt.DocumentNumber);
-        Assert.Empty(page.Items);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
@@ -1334,31 +1244,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@ArtifactType", artifactType);
         return (byte[])(await command.ExecuteScalarAsync())!;
-    }
-
-    private async Task SetHabilitationRegressionSeriesStateAsync(
-        bool useFixtureSeries)
-    {
-        await ExecuteAsync(
-            """
-            UPDATE series SET IsActive=CASE WHEN auth.AuthorizationNumber=@FixtureAuthorization THEN @FixtureActive ELSE 0 END
-            FROM dbo.FiscalSeries series
-            JOIN dbo.FiscalAuthorizations auth
-              ON auth.FiscalAuthorizationId=series.FiscalAuthorizationId
-            WHERE series.BusinessId=@BusinessId
-              AND series.DeviceId IS NULL AND series.EmitterKind=N'Server'
-              AND series.DocumentType=N'SalesInvoice'
-              AND auth.AuthorizationNumber IN(@FixtureAuthorization,@HabilitationAuthorization);
-
-            UPDATE dbo.FiscalAuthorizations
-            SET IsActive=CASE WHEN AuthorizationNumber=@FixtureAuthorization THEN @FixtureActive ELSE 0 END
-            WHERE BusinessId=@BusinessId
-              AND AuthorizationNumber IN(@FixtureAuthorization,@HabilitationAuthorization);
-            """,
-            new("@BusinessId", fixture.BusinessId),
-            new("@FixtureAuthorization", ServerSliceFixture.AuthorizationNumber),
-            new("@HabilitationAuthorization", DianFiscalDefaults.HabilitationAuthorizationNumber),
-            new("@FixtureActive", useFixtureSeries));
     }
 
     private sealed record PersistenceEvidence(

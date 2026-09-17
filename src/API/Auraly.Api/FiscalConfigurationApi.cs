@@ -136,6 +136,15 @@ public static class FiscalConfigurationApi
                     MultipartBodyLengthLimit = 3 * 1024 * 1024
                 });
 
+        group.MapPost("/onboarding/habilitation/send", async (
+            HttpContext context,
+            Guid businessId,
+            FiscalOnboardingService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SendHabilitationTestAsync(
+                context.User.ToFiscalConfigurationUser(), businessId,
+                FiscalHabilitationFamilies.SalesInvoice, ct)));
+
         group.MapPost("/onboarding/numbering-ranges/synchronize", async (
             HttpContext context,
             Guid businessId,
@@ -170,6 +179,15 @@ public static class FiscalConfigurationApi
             CancellationToken ct) =>
             await Handle(() => service.ConfigureSupportDocumentSoftwareAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
+
+        group.MapPost("/onboarding/support-document/habilitation/send", async (
+            HttpContext context,
+            Guid businessId,
+            FiscalOnboardingService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SendHabilitationTestAsync(
+                context.User.ToFiscalConfigurationUser(), businessId,
+                FiscalHabilitationFamilies.SupportDocument, ct)));
 
         group.MapPost("/onboarding/support-document/numbering-ranges/synchronize", async (
             HttpContext context,

@@ -94,22 +94,10 @@ test("enrollment is the single owner of installed runtime selection", () => {
   );
 });
 
-test("a DIAN habilitation invoice bypasses only the production readiness guard", () => {
-  assert.equal(canIssuePosDocument("SalesInvoice", false, false, true), true);
-  assert.equal(
-    fiscalLaunchReadinessError("online", {
-      isReadyForOnlineSales: false,
-      hasDianDocumentQuota: false,
-    }, true),
-    null,
-  );
-  assert.equal(canIssuePosDocument("SalesInvoice", false, false), false);
-});
-
-test("DIAN habilitation always uses the online test circuit even on an enrolled computer", () => {
+test("an enrolled computer keeps the enrolled runtime outside workspace changes", () => {
   const enrolled = { status: "Ready", identityReady: true };
-  assert.equal(shouldUseEnrolledPosRuntime(enrolled, false, false), true);
-  assert.equal(shouldUseEnrolledPosRuntime(enrolled, false, true), false);
+  assert.equal(shouldUseEnrolledPosRuntime(enrolled, false), true);
+  assert.equal(shouldUseEnrolledPosRuntime(enrolled, true), false);
 });
 
 test("online invoices report an exhausted DIAN quota without a technical error", () => {

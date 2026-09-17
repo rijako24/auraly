@@ -15,6 +15,12 @@ public static class FiscalNumberingPurposes
     public const string SupportDocument = nameof(SupportDocument);
 }
 
+public static class FiscalHabilitationFamilies
+{
+    public const string SalesInvoice = nameof(SalesInvoice);
+    public const string SupportDocument = nameof(SupportDocument);
+}
+
 public sealed record FiscalOnboardingConfiguration(
     Guid BusinessId,
     string BusinessName,
@@ -38,7 +44,11 @@ public sealed record FiscalOnboardingConfiguration(
     SupportDocumentNumberingConfiguration? AssignedSupportDocumentRange = null,
     string? SupportDocumentSoftwareIdentificationCode = null,
     bool HasSupportDocumentSoftwarePin = false,
-    IReadOnlyList<DianNumberingRangeOption>? AvailableSupportDocumentRanges = null);
+    IReadOnlyList<DianNumberingRangeOption>? AvailableSupportDocumentRanges = null,
+    Guid? SupportDocumentTestSetId = null,
+    bool SupportDocumentHabilitationAccepted = false,
+    DateTimeOffset? SupportDocumentHabilitationAcceptedAt = null,
+    FiscalHabilitationAttempt? LatestSupportDocumentHabilitationAttempt = null);
 
 public sealed record SupportDocumentNumberingConfiguration(
     string AuthorizationNumber,
@@ -51,7 +61,13 @@ public sealed record SupportDocumentNumberingConfiguration(
 
 public sealed record SaveSupportDocumentSoftwareConfiguration(
     string SoftwareIdentificationCode,
-    string SoftwarePin);
+    string SoftwarePin,
+    Guid TestSetId);
+
+public sealed record FiscalHabilitationDispatch(
+    FiscalOnboardingConfiguration Configuration,
+    Guid DocumentId,
+    bool IsReplay);
 
 public sealed record FiscalHabilitationAttempt(
     Guid DocumentId,

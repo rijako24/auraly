@@ -13,9 +13,7 @@ type FiscalReadiness = {
 export function fiscalLaunchReadinessError(
   mode: "online" | "enroll",
   readiness: FiscalReadiness,
-  fiscalHabilitationOnly = false,
 ): string | null {
-  if (fiscalHabilitationOnly) return null;
   if (mode === "enroll") return null;
   if (!readiness.isReadyForOnlineSales) return fiscalConfigurationRequiredMessage;
   return readiness.hasDianDocumentQuota === false
@@ -27,7 +25,6 @@ export function canIssuePosDocument(
   documentType: PosSaleDocumentType,
   fiscalReady: boolean,
   dianQuotaAvailable = true,
-  fiscalHabilitationOnly = false,
 ): boolean {
-  return documentType === "SalesReceipt" || fiscalHabilitationOnly || fiscalReady && dianQuotaAvailable;
+  return documentType === "SalesReceipt" || fiscalReady && dianQuotaAvailable;
 }

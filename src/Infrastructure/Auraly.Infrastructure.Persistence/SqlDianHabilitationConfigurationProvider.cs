@@ -6,15 +6,19 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlDianHabilitationConfigurationProvider(
     SqlServerConnectionFactory connections) : IDianHabilitationConfigurationProvider
 {
+    private static readonly Uri HabilitationEndpoint = new(
+        "https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc",
+        UriKind.Absolute);
+
     public async Task<DianHabilitationConfiguration> ResolveAsync(
         Guid businessId,
         CancellationToken cancellationToken = default)
     {
         const string sql = """
-            SELECT DianEndpoint, CertificateProvider, CertificateKeyReference,
+            SELECT CertificateProvider, CertificateKeyReference,
                    CertificateThumbprint
             FROM dbo.FiscalIssuerConfigurations
-            WHERE BusinessId=@BusinessId AND IsActive=1 AND Environment=2;
+            WHERE BusinessId=@BusinessId AND IsActive=1;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -23,22 +27,19 @@ public sealed class SqlDianHabilitationConfigurationProvider(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             throw new InvalidOperationException(
-                "No active DIAN habilitation issuer configuration exists for the business.");
+                "No active DIAN issuer certificate exists for the business.");
 
-        var endpointText = reader.GetString(0);
-        if (!Uri.TryCreate(endpointText, UriKind.Absolute, out var endpoint))
-            throw new InvalidOperationException("The DIAN habilitation endpoint is invalid.");
         var certificate = new FiscalCertificateReference(
             businessId,
+            reader.GetString(0),
             reader.GetString(1),
-            reader.GetString(2),
-            reader.GetString(3));
+            reader.GetString(2));
         if (await reader.ReadAsync(cancellationToken))
             throw new InvalidOperationException(
-                "More than one active DIAN habilitation issuer configuration exists.");
+                "More than one active DIAN issuer configuration exists for the business.");
 
         return new DianHabilitationConfiguration(
-            endpoint,
+            HabilitationEndpoint,
             certificate,
             TimeSpan.FromSeconds(15),
             TimeSpan.FromSeconds(60),

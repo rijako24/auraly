@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Auraly.Application.Fiscal;
+using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Fiscal;
 using Org.BouncyCastle.Asn1.Pkcs;
 using Org.BouncyCastle.Pkcs;
@@ -11,6 +12,41 @@ namespace Auraly.Foundation.Tests;
 public sealed class FiscalOnboardingServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 25, 18, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task Direct_habilitation_resolves_the_authenticated_business_and_signals_only_fiscal_generation()
+    {
+        var tenantId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var businessId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var store = new TestOnboardingStore(Configuration("100226966") with
+        {
+            BusinessId = businessId,
+            Stage = FiscalOnboardingStages.HabilitationReady,
+            SoftwareIdentificationCode = Guid.NewGuid().ToString(),
+            TestSetId = Guid.NewGuid(),
+            HasCertificate = true
+        }) { HabilitationDocumentId = documentId };
+        var publisher = new RecordingFiscalPublisher();
+        var service = new FiscalOnboardingService(
+            store, new TestCredentialVault(), new TestNumberingRangeClient(),
+            new FixedTimeProvider(Now),
+            new FiscalProcessingCoordinator(publisher, new FixedIds(Guid.NewGuid())));
+        var user = new FiscalConfigurationUser(userId, tenantId,
+            new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
+
+        var result = await service.SendHabilitationTestAsync(
+            user, businessId, FiscalHabilitationFamilies.SalesInvoice);
+
+        Assert.Equal((tenantId, businessId, userId, FiscalHabilitationFamilies.SalesInvoice),
+            store.CreatedScope);
+        Assert.Equal(documentId, result.DocumentId);
+        var signal = Assert.Single(publisher.Signals);
+        Assert.Equal(businessId, signal.BusinessId);
+        Assert.Equal(documentId, signal.DocumentId);
+        Assert.Equal(FiscalProcessingStage.Generation, signal.Stage);
+    }
 
     [Fact]
     public async Task Loading_an_untrusted_self_signed_certificate_is_accepted()
@@ -204,7 +240,7 @@ public sealed class FiscalOnboardingServiceTests
     }
 
     private static SaveSupportDocumentSoftwareConfiguration SupportSoftwareRequest() =>
-        new(Guid.NewGuid().ToString(), "support-pin");
+        new(Guid.NewGuid().ToString(), "support-pin", Guid.NewGuid());
 
     private static byte[] CreatePfx(
         string certificateIdentity,
@@ -276,6 +312,8 @@ public sealed class FiscalOnboardingServiceTests
         public string? SavedSupplierCheckDigit { get; private set; }
         public bool SupportSoftwareSaved { get; private set; }
         public int GetCallCount { get; private set; }
+        public Guid HabilitationDocumentId { get; init; } = Guid.NewGuid();
+        public (Guid TenantId, Guid BusinessId, Guid UserId, string Family)? CreatedScope { get; private set; }
 
         public Task<FiscalOnboardingConfiguration> GetAsync(
             Guid tenantId, Guid businessId, CancellationToken cancellationToken)
@@ -330,6 +368,7 @@ public sealed class FiscalOnboardingServiceTests
             Guid userId,
             string softwareIdentificationCode,
             string softwarePinSecretReference,
+            Guid testSetId,
             CancellationToken cancellationToken)
         {
             if (!Configuration.ProductionActive)
@@ -337,6 +376,17 @@ public sealed class FiscalOnboardingServiceTests
                     "Activa primero la configuración DIAN de producción.");
             SupportSoftwareSaved = true;
             return Task.CompletedTask;
+        }
+
+        public Task<(Guid DocumentId, bool IsReplay)> CreateHabilitationDocumentAsync(
+            Guid tenantId,
+            Guid businessId,
+            Guid userId,
+            string family,
+            CancellationToken cancellationToken)
+        {
+            CreatedScope = (tenantId, businessId, userId, family);
+            return Task.FromResult((HabilitationDocumentId, false));
         }
 
         public Task ActivateSupportDocumentAsync(
@@ -393,6 +443,25 @@ public sealed class FiscalOnboardingServiceTests
         public Task<IReadOnlyList<ImportedDianNumberingRange>> GetAsync(
             DianNumberingRangeContext context,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class RecordingFiscalPublisher : IFiscalProcessingSignalPublisher
+    {
+        public List<FiscalProcessingSignal> Signals { get; } = [];
+
+        public Task PublishAsync(
+            FiscalProcessingSignal signal,
+            DateTimeOffset? scheduledEnqueueTime = null,
+            CancellationToken cancellationToken = default)
+        {
+            Signals.Add(signal);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FixedIds(Guid value) : IAuralyIdGenerator
+    {
+        public Guid NewId() => value;
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

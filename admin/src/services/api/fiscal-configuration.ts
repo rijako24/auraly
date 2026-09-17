@@ -81,6 +81,7 @@ export type SupportDocumentNumberingConfiguration = {
 export type SaveSupportDocumentSoftwareConfiguration = {
   softwareIdentificationCode: string;
   softwarePin: string;
+  testSetId: string;
 };
 
 export type FiscalOnboardingConfiguration = {
@@ -107,6 +108,16 @@ export type FiscalOnboardingConfiguration = {
   supportDocumentSoftwareIdentificationCode: string | null;
   hasSupportDocumentSoftwarePin: boolean;
   availableSupportDocumentRanges: DianNumberingRangeOption[];
+  supportDocumentTestSetId: string | null;
+  supportDocumentHabilitationAccepted: boolean;
+  supportDocumentHabilitationAcceptedAt: string | null;
+  latestSupportDocumentHabilitationAttempt: FiscalHabilitationAttempt | null;
+};
+
+export type FiscalHabilitationDispatch = {
+  configuration: FiscalOnboardingConfiguration;
+  documentId: string;
+  isReplay: boolean;
 };
 
 export type FiscalHabilitationAttempt = {
@@ -222,6 +233,10 @@ export const fiscalConfigurationApi = {
       body,
     );
   },
+  sendInvoiceHabilitation: (businessId: string) =>
+    apiClient.post<FiscalHabilitationDispatch>(
+      `/commerce/v1/fiscal/configuration/onboarding/habilitation/send?businessId=${encodeURIComponent(businessId)}`,
+    ),
   synchronizeNumberingRanges: (businessId: string) =>
     apiClient.post<FiscalOnboardingConfiguration>(
       `/commerce/v1/fiscal/configuration/onboarding/numbering-ranges/synchronize?businessId=${encodeURIComponent(businessId)}`,
@@ -242,6 +257,10 @@ export const fiscalConfigurationApi = {
     apiClient.post<FiscalOnboardingConfiguration>(
       `/commerce/v1/fiscal/configuration/onboarding/support-document/software?businessId=${encodeURIComponent(businessId)}`,
       request,
+    ),
+  sendSupportDocumentHabilitation: (businessId: string) =>
+    apiClient.post<FiscalHabilitationDispatch>(
+      `/commerce/v1/fiscal/configuration/onboarding/support-document/habilitation/send?businessId=${encodeURIComponent(businessId)}`,
     ),
   synchronizeSupportDocumentNumberingRanges: (businessId: string) =>
     apiClient.post<FiscalOnboardingConfiguration>(

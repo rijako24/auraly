@@ -3,6 +3,7 @@ CREATE TABLE [dbo].[FiscalDocumentProcesses]
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [FiscalIssuerConfigurationId] UNIQUEIDENTIFIER NULL,
+    [TestSetId] UNIQUEIDENTIFIER NULL,
     [Status] NVARCHAR(48) NOT NULL,
     [AttemptCount] INT NOT NULL CONSTRAINT [DF_FiscalDocumentProcesses_AttemptCount] DEFAULT (0),
     [TrackId] NVARCHAR(128) NULL,

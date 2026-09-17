@@ -16,12 +16,8 @@ public sealed partial class SqlOnlineSalesDraftStore
     public async Task<OnlineSalesFiscalKeyContext> ResolveOrderFiscalKeyContextAsync(
         OnlineSalesUserIdentity user,
         OnlineSalesOrderCheckoutSource source,
-        bool fiscalHabilitationOnly,
         CancellationToken cancellationToken)
     {
-        if (fiscalHabilitationOnly)
-            throw new OnlineSalesDraftValidationException(
-                "La facturación de pedidos no admite numeración de habilitación.");
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();

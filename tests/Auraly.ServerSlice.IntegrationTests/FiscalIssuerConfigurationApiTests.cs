@@ -13,6 +13,60 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Direct_invoice_habilitation_creates_only_a_tenant_scoped_fiscal_process()
+    {
+        var businessId = Guid.NewGuid();
+        var configurationId = Guid.NewGuid();
+        var testSetId = Guid.NewGuid();
+        var legalScope = await InsertBusinessAsync(businessId);
+        await InsertHabilitationIssuerAsync(businessId, configurationId, testSetId);
+        Guid documentId = Guid.Empty;
+        try
+        {
+            using var scope = fixture.CreateScope();
+            var store = scope.ServiceProvider.GetRequiredService<IFiscalOnboardingStore>();
+
+            var created = await store.CreateHabilitationDocumentAsync(
+                fixture.TenantId, businessId, fixture.UserId,
+                FiscalHabilitationFamilies.SalesInvoice, CancellationToken.None);
+            documentId = created.DocumentId;
+            var replay = await store.CreateHabilitationDocumentAsync(
+                fixture.TenantId, businessId, fixture.UserId,
+                FiscalHabilitationFamilies.SalesInvoice, CancellationToken.None);
+
+            Assert.False(created.IsReplay);
+            Assert.True(replay.IsReplay);
+            Assert.Equal(documentId, replay.DocumentId);
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*)
+                FROM dbo.FiscalDocumentProcesses process
+                JOIN dbo.FiscalDocuments document ON document.DocumentId=process.DocumentId
+                JOIN dbo.FiscalSnapshots snapshot ON snapshot.DocumentId=document.DocumentId
+                WHERE process.DocumentId=@DocumentId AND process.BusinessId=@BusinessId
+                  AND process.TestSetId=@TestSetId
+                  AND document.SourceDocumentType=N'FiscalHabilitation'
+                  AND document.FiscalDocumentType=N'Invoice'
+                  AND snapshot.Environment=2;
+                """, businessId, documentId: documentId, testSetId: testSetId));
+            Assert.Equal(0, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.SalesDocuments
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+                """, businessId, documentId: documentId));
+            Assert.Equal(0, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.SalesDocumentLines WHERE DocumentId=@DocumentId;
+                """, businessId, documentId: documentId));
+            Assert.Equal(0, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@DocumentId;
+                """, businessId, documentId: documentId));
+        }
+        finally
+        {
+            await DeleteDirectHabilitationAsync(businessId, documentId);
+            await DeleteBusinessAsync(businessId, legalScope);
+        }
+    }
+
+    [Fact]
     public async Task Production_activation_switches_the_active_issuer_without_violating_the_unique_index()
     {
         var businessId = Guid.NewGuid();
@@ -67,6 +121,7 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
         var validRangeId = Guid.NewGuid();
         var futureRangeId = Guid.NewGuid();
         var replacementRangeId = Guid.NewGuid();
+        Guid supportHabilitationDocumentId = Guid.Empty;
         var legalScope = await InsertBusinessAsync(businessId);
         await InsertProductionIssuerAndSupportRangesAsync(
             businessId, salesRangeId, validRangeId, futureRangeId, replacementRangeId);
@@ -160,9 +215,36 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
                   AND series.IsActive=1;
                 """, businessId));
+
+            using (var scope = fixture.CreateScope())
+            {
+                var created = await scope.ServiceProvider.GetRequiredService<IFiscalOnboardingStore>()
+                    .CreateHabilitationDocumentAsync(
+                        fixture.TenantId, businessId, fixture.UserId,
+                        FiscalHabilitationFamilies.SupportDocument, CancellationToken.None);
+                supportHabilitationDocumentId = created.DocumentId;
+                Assert.False(created.IsReplay);
+            }
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*)
+                FROM dbo.FiscalDocumentProcesses process
+                JOIN dbo.FiscalDocuments document ON document.DocumentId=process.DocumentId
+                JOIN fiscal.PurchaseSupportFiscalSnapshots snapshot
+                  ON snapshot.DocumentId=document.DocumentId
+                WHERE process.DocumentId=@DocumentId AND process.BusinessId=@BusinessId
+                  AND process.TestSetId IS NOT NULL
+                  AND document.SourceDocumentType=N'FiscalHabilitation'
+                  AND document.FiscalDocumentType=N'SupportDocument'
+                  AND snapshot.Environment=2;
+                """, businessId, documentId: supportHabilitationDocumentId));
+            Assert.Equal(0, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.Expenses WHERE ExpenseId=@DocumentId;
+                """, businessId, documentId: supportHabilitationDocumentId));
         }
         finally
         {
+            if (supportHabilitationDocumentId != Guid.Empty)
+                await DeleteDirectHabilitationAsync(businessId, supportHabilitationDocumentId);
             await DeleteSupportConfigurationAsync(
                 businessId, salesRangeId, validRangeId, futureRangeId, replacementRangeId);
             await DeleteBusinessAsync(businessId, legalScope);
@@ -421,7 +503,8 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
     }
 
     private async Task<int> ScalarAsync(
-        string sql, Guid businessId, Guid? rangeId = null)
+        string sql, Guid businessId, Guid? rangeId = null,
+        Guid? documentId = null, Guid? testSetId = null)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -429,7 +512,61 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
         command.Parameters.AddWithValue("@BusinessId", businessId);
         if (rangeId is not null)
             command.Parameters.AddWithValue("@RangeId", rangeId.Value);
+        if (documentId is not null)
+            command.Parameters.AddWithValue("@DocumentId", documentId.Value);
+        if (testSetId is not null)
+            command.Parameters.AddWithValue("@TestSetId", testSetId.Value);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task InsertHabilitationIssuerAsync(
+        Guid businessId, Guid configurationId, Guid testSetId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.FiscalIssuerConfigurations(
+                FiscalIssuerConfigurationId,BusinessId,Version,SupplierTaxId,SupplierCheckDigit,
+                LegalName,TradeName,TaxLevelCode,TaxSchemeId,TaxSchemeName,IdentificationTypeCode,
+                AddressLine,CityCode,CityName,DepartmentCode,DepartmentName,CountryCode,CountryName,
+                SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,TestSetId,
+                CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
+                TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,IsActive,CreatedAt)
+            VALUES(@ConfigurationId,@BusinessId,1,N'900123456',N'8',N'DIAN E2E SAS',N'DIAN E2E',
+                N'R-99-PN',N'01',N'IVA',N'31',N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá',
+                N'CO',N'Colombia',CONVERT(nvarchar(64),NEWID()),N'fiscal://pin',2,@TestSetId,
+                N'ProtectedDatabase',N'fiscal://certificate',N'ABCDEF1234567890',
+                N'https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc',N'1.9',N'Auraly.Commerce',
+                DATEADD(day,-1,SYSDATETIMEOFFSET()),DATEADD(day,30,SYSDATETIMEOFFSET()),1,
+                SYSDATETIMEOFFSET());
+            """, connection);
+        command.Parameters.AddWithValue("@ConfigurationId", configurationId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@TestSetId", testSetId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task DeleteDirectHabilitationAsync(Guid businessId, Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            IF @DocumentId<>CONVERT(uniqueidentifier,N'00000000-0000-0000-0000-000000000000')
+            BEGIN
+              DELETE fiscal.PurchaseSupportFiscalSnapshots WHERE DocumentId=@DocumentId;
+              DELETE dbo.FiscalSnapshots WHERE DocumentId=@DocumentId;
+              DELETE dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId;
+              DELETE dbo.FiscalDocuments WHERE DocumentId=@DocumentId;
+            END
+            DELETE cursorValue FROM dbo.FiscalSeriesCursors cursorValue
+            JOIN dbo.FiscalSeries series ON series.SeriesId=cursorValue.SeriesId
+            WHERE series.BusinessId=@BusinessId;
+            DELETE dbo.FiscalSeries WHERE BusinessId=@BusinessId;
+            DELETE dbo.FiscalAuthorizations WHERE BusinessId=@BusinessId;
+            """, connection);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private async Task InsertProductionIssuerAndSupportRangesAsync(
@@ -445,12 +582,14 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 AddressLine,CityCode,CityName,DepartmentCode,DepartmentName,CountryCode,CountryName,
                 SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,
                 SupportDocumentSoftwareIdentificationCode,SupportDocumentSoftwarePinSecretReference,
+                SupportDocumentTestSetId,
                 CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
                 TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,IsActive,CreatedAt)
             VALUES(NEWID(),@BusinessId,1,@SupplierTaxId,N'0',N'DIAN E2E SAS',N'R-99-PN',
                 N'01',N'IVA',N'31',N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá',N'CO',N'Colombia',
                 CONVERT(nvarchar(64),NEWID()),N'env://AURALY_TEST_SOFTWARE_PIN',1,
                 CONVERT(nvarchar(64),NEWID()),N'env://AURALY_TEST_SUPPORT_SOFTWARE_PIN',
+                NEWID(),
                 N'Test',N'Test',N'TEST',N'https://vpfe.dian.gov.co',N'1.9',N'Auraly.Tests',
                 DATEADD(day,-1,SYSDATETIMEOFFSET()),DATEADD(day,30,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
 

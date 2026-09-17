@@ -10,9 +10,8 @@ export function usesEnrolledPosRuntime(health: PosLaunchHealth) {
 export function shouldUseEnrolledPosRuntime(
   health: PosLaunchHealth,
   workspaceChangeRequested: boolean,
-  fiscalHabilitationRequested: boolean,
 ) {
-  return usesEnrolledPosRuntime(health) && !workspaceChangeRequested && !fiscalHabilitationRequested;
+  return usesEnrolledPosRuntime(health) && !workspaceChangeRequested;
 }
 
 export function workspaceActivationMode(

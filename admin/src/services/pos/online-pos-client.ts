@@ -995,18 +995,14 @@ export class OnlinePosClient implements PosClient {
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
     credit: PosCreditTerms | null = null,
-    fiscalHabilitationOnly = false,
     authorization?: PosSensitiveAuthorization,
   ) {
-    const printRoute = resolvePosReceiptPrintRoute(
-      this.edgeSessionToken,
-      fiscalHabilitationOnly,
-    );
+    const printRoute = resolvePosReceiptPrintRoute(this.edgeSessionToken);
     const browserPreview = printRoute === "browser" ? openHalfLetterPrintPreview() : null;
     try {
       const mutation = this.mutation({
         expectedVersion: this.version(draftId),
-        payments, credit, documentType, fiscalHabilitationOnly,
+        payments, credit, documentType,
       }, "POST", `online-sale-${draftId}`, authorization?.approvalRequestId);
       mutation.headers = {
         ...mutation.headers,
@@ -1019,18 +1015,16 @@ export class OnlinePosClient implements PosClient {
         mutation,
       );
       const nextDraft = this.mapDraft(result.nextDraft);
-      const printCompletion = fiscalHabilitationOnly
-        ? undefined
-        : new Promise<void>((resolve, reject) => {
-            window.setTimeout(() => {
-              void this.printDirect(
-                [result.receipt],
-                !result.isDuplicate,
-                "pos",
-                browserPreview,
-              ).then(resolve, reject);
-            }, 0);
-          });
+      const printCompletion = new Promise<void>((resolve, reject) => {
+        window.setTimeout(() => {
+          void this.printDirect(
+            [result.receipt],
+            !result.isDuplicate,
+            "pos",
+            browserPreview,
+          ).then(resolve, reject);
+        }, 0);
+      });
       return {
         issuedSale: {
           documentId: { value: result.receipt.documentId },

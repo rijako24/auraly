@@ -212,8 +212,10 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@WorkerId", work.WorkerId);
         command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
         var expectedRows = work.FiscalDocumentType is FiscalDocumentTypeCodes.SupportDocument or
-            FiscalDocumentTypeCodes.SupportDocumentAdjustment ? 2 : 3;
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
+            FiscalDocumentTypeCodes.SupportDocumentAdjustment ||
+            work.IsFiscalHabilitation ? 2 : 3;
+        var failedRows = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (failedRows != expectedRows)
             throw new InvalidOperationException("The fiscal generation failure could not release its lease.");
         await SqlFiscalStatusSynchronizationOutbox.InsertAsync(
             connection, transaction, ids, work.BusinessId, failedAt, cancellationToken);
@@ -238,7 +240,9 @@ public sealed class SqlFiscalGenerationWorkStore(
                    CASE WHEN fd.FiscalDocumentType IN(N'SupportDocument',N'SupportDocumentAdjustment')
                         THEN COALESCE(c.SupportDocumentSoftwarePinSecretReference,c.SoftwarePinSecretReference)
                         ELSE c.SoftwarePinSecretReference END,
-                   c.Environment, c.CertificateProvider, c.CertificateKeyReference,
+                   CASE WHEN p.TestSetId IS NOT NULL THEN CONVERT(tinyint,2)
+                        ELSE c.Environment END,
+                   c.CertificateProvider, c.CertificateKeyReference,
                    c.CertificateThumbprint, c.TechnicalAnnexVersion, c.GeneratorVersion,
                    a.AuthorizationNumber, a.ValidFrom, a.ValidUntil,
                    fs.Prefix, a.AuthorizedRangeStart, a.AuthorizedRangeEnd,
@@ -250,6 +254,8 @@ public sealed class SqlFiscalGenerationWorkStore(
                      SELECT 1 FROM dbo.FiscalArtifacts existingArtifact
                      WHERE existingArtifact.DocumentId=p.DocumentId
                        AND existingArtifact.ArtifactType=N'SignedXml')
+                     THEN 1 ELSE 0 END)
+                   ,CONVERT(bit,CASE WHEN fd.SourceDocumentType=N'FiscalHabilitation'
                      THEN 1 ELSE 0 END)
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId
@@ -321,6 +327,14 @@ public sealed class SqlFiscalGenerationWorkStore(
                 reader.GetString(29), DateOnly.FromDateTime(reader.GetDateTime(30)),
                 DateOnly.FromDateTime(reader.GetDateTime(31)), reader.GetString(32),
                 reader.GetInt64(33), reader.GetInt64(34));
+        authorization ??= sale?.UblSnapshot is null ? null :
+            new FiscalAuthorizationWorkConfiguration(
+                sale.UblSnapshot.Authorization.Number,
+                sale.UblSnapshot.Authorization.ValidFrom,
+                sale.UblSnapshot.Authorization.ValidUntil,
+                sale.UblSnapshot.Authorization.Prefix,
+                sale.UblSnapshot.Authorization.RangeStart,
+                sale.UblSnapshot.Authorization.RangeEnd);
         return new FiscalGenerationWorkItem(
             documentId, businessId, workerId, documentType, fiscalNumber,
             sale, creditNote, debitNote, issuer,
@@ -328,7 +342,8 @@ public sealed class SqlFiscalGenerationWorkStore(
                 supportDocument.Authorization.Number, supportDocument.Authorization.ValidFrom,
                 supportDocument.Authorization.ValidUntil, supportDocument.Authorization.Prefix,
                 supportDocument.Authorization.RangeStart, supportDocument.Authorization.RangeEnd)),
-            supportDocument, electronicPayroll, serviceInvoice, reader.GetBoolean(43));
+            supportDocument, electronicPayroll, serviceInvoice, reader.GetBoolean(43),
+            reader.GetBoolean(44));
     }
 
     private async Task InsertArtifactAsync(SqlConnection connection, SqlTransaction transaction,

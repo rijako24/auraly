@@ -9,7 +9,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlFiscalOnboardingStore(
+public sealed partial class SqlFiscalOnboardingStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     IConfiguration configuration,
@@ -46,7 +46,13 @@ public sealed class SqlFiscalOnboardingStore(
                    supportAssigned.RangeStart,supportAssigned.RangeEnd,
                    supportAssigned.ValidFrom,supportAssigned.ValidUntil,
                    i.SupportDocumentSoftwareIdentificationCode,
-                   i.SupportDocumentSoftwarePinSecretReference
+                   i.SupportDocumentSoftwarePinSecretReference,
+                   i.SupportDocumentTestSetId,
+                   supportAccepted.AcceptedAt,
+                   supportLatest.DocumentId,supportLatest.Status,
+                   supportLatest.LastStatusCode,supportLatest.LastStatusDescription,
+                   supportLatest.LastErrorCode,supportLatest.LastErrorMessage,
+                   supportLatest.UpdatedAt
             FROM dbo.Businesses b
             LEFT JOIN dbo.TenantLegalProfiles p ON p.TenantId=b.TenantId
             OUTER APPLY(
@@ -54,7 +60,8 @@ public sealed class SqlFiscalOnboardingStore(
                        SupplierCheckDigit,
                        ValidFrom,ValidTo,Environment,
                        SupportDocumentSoftwareIdentificationCode,
-                       SupportDocumentSoftwarePinSecretReference
+                       SupportDocumentSoftwarePinSecretReference,
+                       SupportDocumentTestSetId
                 FROM dbo.FiscalIssuerConfigurations configuration
                 JOIN dbo.Businesses configuredBusiness
                   ON configuredBusiness.BusinessId=configuration.BusinessId
@@ -69,15 +76,30 @@ public sealed class SqlFiscalOnboardingStore(
             OUTER APPLY(
                 SELECT MAX(attempt.CompletedAt) AcceptedAt
                 FROM dbo.FiscalDocumentProcesses fp
-                JOIN dbo.FiscalIssuerConfigurations hi
-                  ON hi.FiscalIssuerConfigurationId=fp.FiscalIssuerConfigurationId
-                JOIN dbo.Businesses processBusiness ON processBusiness.BusinessId=fp.BusinessId
+                JOIN dbo.FiscalIssuerConfigurations configuration
+                  ON configuration.FiscalIssuerConfigurationId=fp.FiscalIssuerConfigurationId
                 JOIN dbo.FiscalTransmissionAttempts attempt
                   ON attempt.DocumentId=fp.DocumentId
                  AND attempt.Operation=N'GetStatusZip'
                  AND attempt.Disposition=N'Accepted'
                  AND attempt.StatusCode=N'2'
-                WHERE processBusiness.TenantId=b.TenantId AND hi.Environment=2) accepted
+                JOIN dbo.FiscalDocuments acceptedDocument
+                  ON acceptedDocument.DocumentId=fp.DocumentId
+                 AND acceptedDocument.FiscalDocumentType=N'Invoice'
+                WHERE fp.BusinessId=b.BusinessId
+                  AND (fp.TestSetId IS NOT NULL OR configuration.Environment=2)) accepted
+            OUTER APPLY(
+                SELECT MAX(attempt.CompletedAt) AcceptedAt
+                FROM dbo.FiscalDocumentProcesses fp
+                JOIN dbo.FiscalDocuments acceptedDocument
+                  ON acceptedDocument.DocumentId=fp.DocumentId
+                 AND acceptedDocument.FiscalDocumentType=N'SupportDocument'
+                JOIN dbo.FiscalTransmissionAttempts attempt
+                  ON attempt.DocumentId=fp.DocumentId
+                 AND attempt.Operation=N'GetStatusZip'
+                 AND attempt.Disposition=N'Accepted'
+                 AND attempt.StatusCode=N'2'
+                WHERE fp.BusinessId=b.BusinessId AND fp.TestSetId IS NOT NULL) supportAccepted
             OUTER APPLY(
                 SELECT TOP(1) r.DianNumberingRangeId,r.AuthorizationNumber,r.ResolutionDate,
                        r.Prefix,r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil
@@ -98,8 +120,22 @@ public sealed class SqlFiscalOnboardingStore(
                 FROM dbo.FiscalDocumentProcesses fp
                 JOIN dbo.FiscalIssuerConfigurations configuration
                   ON configuration.FiscalIssuerConfigurationId=fp.FiscalIssuerConfigurationId
-                WHERE fp.BusinessId=b.BusinessId AND configuration.Environment=2
+                JOIN dbo.FiscalDocuments latestDocument
+                  ON latestDocument.DocumentId=fp.DocumentId
+                 AND latestDocument.FiscalDocumentType=N'Invoice'
+                WHERE fp.BusinessId=b.BusinessId
+                  AND (fp.TestSetId IS NOT NULL OR configuration.Environment=2)
                 ORDER BY fp.CreatedAt DESC,fp.DocumentId DESC) latest
+            OUTER APPLY(
+                SELECT TOP(1) fp.DocumentId,fp.Status,fp.LastStatusCode,
+                       fp.LastStatusDescription,fp.LastErrorCode,
+                       fp.LastErrorMessage,fp.UpdatedAt
+                FROM dbo.FiscalDocumentProcesses fp
+                JOIN dbo.FiscalDocuments latestDocument
+                  ON latestDocument.DocumentId=fp.DocumentId
+                 AND latestDocument.FiscalDocumentType=N'SupportDocument'
+                WHERE fp.BusinessId=b.BusinessId AND fp.TestSetId IS NOT NULL
+                ORDER BY fp.CreatedAt DESC,fp.DocumentId DESC) supportLatest
             OUTER APPLY(
                 SELECT TOP(1) a.AuthorizationNumber,COALESCE(a.ResolutionDate,r.ResolutionDate) ResolutionDate,
                        series.Prefix,series.RangeStart,series.RangeEnd,a.ValidFrom,a.ValidUntil
@@ -169,6 +205,20 @@ public sealed class SqlFiscalOnboardingStore(
         var supportSoftwareId = Text(reader, 33);
         var hasSupportSoftwarePin = !reader.IsDBNull(34) &&
             !string.IsNullOrWhiteSpace(reader.GetString(34));
+        Guid? supportTestSetId = reader.IsDBNull(35) ? null : reader.GetGuid(35);
+        DateTimeOffset? supportAcceptedAt = reader.IsDBNull(36)
+            ? null : reader.GetDateTimeOffset(36);
+        FiscalHabilitationAttempt? latestSupportAttempt = null;
+        if (!reader.IsDBNull(37))
+        {
+            var status = reader.GetString(38);
+            var terminalFailure = IsTerminalFailure(status);
+            latestSupportAttempt = new FiscalHabilitationAttempt(
+                reader.GetGuid(37), status, terminalFailure,
+                terminalFailure ? Text(reader, 41) ?? Text(reader, 39) : null,
+                terminalFailure ? Text(reader, 42) ?? Text(reader, 40) : null,
+                reader.GetDateTimeOffset(43));
+        }
 
         var ranges = new List<DianNumberingRangeOption>();
         var supportRanges = new List<DianNumberingRangeOption>();
@@ -211,7 +261,9 @@ public sealed class SqlFiscalOnboardingStore(
             thumbprint is null ? null : thumbprint[^Math.Min(8, thumbprint.Length)..],
             certificateFrom, certificateTo, acceptedAt is not null, acceptedAt,
             productionActive, assigned, ranges, missing, latestAttempt, assignedSupport,
-            supportSoftwareId, hasSupportSoftwarePin, supportRanges);
+            supportSoftwareId, hasSupportSoftwarePin, supportRanges,
+            supportTestSetId, supportAcceptedAt is not null, supportAcceptedAt,
+            latestSupportAttempt);
     }
 
     private static bool IsTerminalFailure(string status) => status is
@@ -467,9 +519,11 @@ public sealed class SqlFiscalOnboardingStore(
                  AND attempt.Operation=N'GetStatusZip'
                  AND attempt.Disposition=N'Accepted'
                  AND attempt.StatusCode=N'2'
-                JOIN dbo.Businesses processBusiness ON processBusiness.BusinessId=fp.BusinessId
-                WHERE processBusiness.TenantId=@TenantId AND hi.Environment=2)
-                THROW 51022,'La DIAN todavía no ha aceptado el set de pruebas del tenant.',1;
+                JOIN dbo.FiscalDocuments document ON document.DocumentId=fp.DocumentId
+                WHERE fp.BusinessId=@BusinessId
+                  AND document.FiscalDocumentType=N'SalesInvoice'
+                  AND (fp.TestSetId IS NOT NULL OR hi.Environment=2))
+                THROW 51022,'La DIAN todavía no ha aceptado el set de pruebas del negocio.',1;
 
             DECLARE @AuthorizationNumber nvarchar(64),@Prefix nvarchar(16),@RangeStart bigint,
                     @RangeEnd bigint,@ValidFrom date,@ValidUntil date,@ProtectedTechnicalKey varbinary(max),
@@ -597,8 +651,7 @@ public sealed class SqlFiscalOnboardingStore(
                    @ProductionEndpoint,TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,
                    0,@Now,@UserId
             FROM dbo.FiscalIssuerConfigurations configuration
-            JOIN dbo.Businesses configuredBusiness ON configuredBusiness.BusinessId=configuration.BusinessId
-            WHERE configuredBusiness.TenantId=@TenantId AND configuration.Environment=2
+            WHERE configuration.BusinessId=@BusinessId AND configuration.Environment=2
               AND configuration.IsActive=1 AND configuration.ValidFrom<=@Now
               AND (configuration.ValidTo IS NULL OR configuration.ValidTo>@Now)
             ORDER BY configuration.CreatedAt DESC,configuration.Version DESC;
@@ -650,6 +703,7 @@ public sealed class SqlFiscalOnboardingStore(
         Guid userId,
         string softwareIdentificationCode,
         string softwarePinSecretReference,
+        Guid testSetId,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -657,7 +711,8 @@ public sealed class SqlFiscalOnboardingStore(
                 THROW 51021,'Business is outside the authenticated tenant.',1;
             UPDATE dbo.FiscalIssuerConfigurations
             SET SupportDocumentSoftwareIdentificationCode=@SoftwareId,
-                SupportDocumentSoftwarePinSecretReference=@PinReference
+                SupportDocumentSoftwarePinSecretReference=@PinReference,
+                SupportDocumentTestSetId=@TestSetId
             WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1;
             IF @@ROWCOUNT<>1
                 THROW 51022,'Activa primero la configuración DIAN de producción.',1;
@@ -669,6 +724,7 @@ public sealed class SqlFiscalOnboardingStore(
         Add(command, "@BusinessId", businessId);
         Add(command, "@SoftwareId", softwareIdentificationCode);
         Add(command, "@PinReference", softwarePinSecretReference);
+        Add(command, "@TestSetId", testSetId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

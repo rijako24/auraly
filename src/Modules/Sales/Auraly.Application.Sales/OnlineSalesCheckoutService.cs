@@ -126,7 +126,6 @@ public interface IOnlineSalesCheckoutStore
     Task<OnlineSalesFiscalKeyContext> ResolveFiscalKeyContextAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
-        bool fiscalHabilitationOnly,
         CancellationToken cancellationToken);
 
     Task<PreparedOnlineSalesCheckout> PrepareAsync(
@@ -141,7 +140,6 @@ public interface IOnlineSalesCheckoutStore
     Task<OnlineSalesFiscalKeyContext> ResolveOrderFiscalKeyContextAsync(
         OnlineSalesUserIdentity user,
         OnlineSalesOrderCheckoutSource source,
-        bool fiscalHabilitationOnly,
         CancellationToken cancellationToken);
 
     Task<PreparedOnlineOrderCheckout> PrepareOrderAsync(
@@ -180,7 +178,7 @@ public sealed class OnlineSalesCheckoutService(
     // instead of performing a secret/database read for every document.
     private readonly Dictionary<FiscalKeyReference, FiscalVerificationMaterial?>
         _fiscalMaterialByReference = [];
-    private readonly Dictionary<(Guid BusinessId, bool Habilitation), OnlineSalesFiscalKeyContext>
+    private readonly Dictionary<Guid, OnlineSalesFiscalKeyContext>
         _fiscalKeyContextByBusiness = [];
 
     private static readonly HashSet<string> PaymentMethods =
@@ -297,11 +295,11 @@ public sealed class OnlineSalesCheckoutService(
         FiscalVerificationMaterial? material = null;
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
         {
-            var cacheKey = (source.BusinessId, request.FiscalHabilitationOnly);
+            var cacheKey = source.BusinessId;
             if (!_fiscalKeyContextByBusiness.TryGetValue(cacheKey, out var keyContext))
             {
                 keyContext = await checkouts.ResolveOrderFiscalKeyContextAsync(
-                    user, source, request.FiscalHabilitationOnly, cancellationToken);
+                    user, source, cancellationToken);
                 _fiscalKeyContextByBusiness.Add(cacheKey, keyContext);
             }
             material = await ResolveFiscalMaterialAsync(
@@ -348,21 +346,17 @@ public sealed class OnlineSalesCheckoutService(
         FiscalVerificationMaterial? material = null;
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
         {
-            var cacheKey = (
-                settlement.Context.BusinessId,
-                request.FiscalHabilitationOnly);
+            var cacheKey = settlement.Context.BusinessId;
             if (!_fiscalKeyContextByBusiness.TryGetValue(cacheKey, out var keyContext))
             {
                 keyContext = await checkouts.ResolveFiscalKeyContextAsync(
-                    user, draftId, request.FiscalHabilitationOnly, cancellationToken);
+                    user, draftId, cancellationToken);
                 _fiscalKeyContextByBusiness.Add(cacheKey, keyContext);
             }
             material = await ResolveFiscalMaterialAsync(
                 keyContext.Reference, cancellationToken)
                 ?? throw new OnlineSalesDraftValidationException(
-                    request.FiscalHabilitationOnly
-                        ? "No fue posible preparar la numeración técnica de habilitación DIAN."
-                        : "La clave técnica de la resolución fiscal activa no está disponible.");
+                    "La clave técnica de la resolución fiscal activa no está disponible.");
         }
         var prepared = await checkouts.PrepareAsync(
             user, draftId, request, idempotencyKey.Trim(),
@@ -443,11 +437,6 @@ public sealed class OnlineSalesCheckoutService(
         if (!PosSaleDocumentTypes.IsSupported(request.DocumentType))
             throw new OnlineSalesDraftValidationException(
                 "El tipo de documento de venta no es valido.");
-        if (request.FiscalHabilitationOnly &&
-            request.DocumentType != PosSaleDocumentTypes.Invoice)
-            throw new OnlineSalesDraftValidationException(
-                "La habilitación DIAN sólo admite factura electrónica.");
-
         if (draftId == Guid.Empty || request.ExpectedVersion < 1)
             throw new OnlineSalesDraftValidationException(
                 "Borrador y versión esperada son obligatorios.");
