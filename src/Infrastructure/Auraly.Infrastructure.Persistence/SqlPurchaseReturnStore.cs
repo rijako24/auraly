@@ -558,7 +558,8 @@ public sealed class SqlPurchaseReturnStore(
             allocation.Authorization, metadata, Adjustment: adjustment,
             OriginalSupportNumber: original.FiscalNumber,
             OriginalSupportCuds: original.Cuds,
-            OriginalSupportIssuedOn: original.IssuedOn);
+            OriginalSupportIssuedOn: original.IssuedOn,
+            SellerPostalZone: allocation.SellerPostalZone);
         await using var command = new SqlCommand("""
             INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
               AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)

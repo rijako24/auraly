@@ -35,12 +35,21 @@ Los tres tipos causan la compra mediante el motor contable actual. La recepción
 
 Documento soporte usa `FiscalDocuments`, `FiscalDocumentProcesses`, el emisor fiscal activo y una `FiscalSeries` productiva con `DocumentType = SupportDocument`. Su resolución se asigna explícitamente desde el onboarding DIAN y es independiente de la serie de facturas de venta. El código único se calcula como CUDS SHA-384 y el UBL identifica al proveedor como vendedor y al negocio como comprador/emisor.
 
-La consulta oficial `GetNumberingRange` entrega número, prefijo, rango, vigencia
-y clave técnica, pero no clasifica el propósito del rango. Por eso Auraly no
-adivina “factura” o “documento soporte” por el prefijo: el onboarding presenta
-una sección separada y exige confirmar el propósito al reservarlo. La reserva es
-atómica y exclusiva, valida tanto `ValidFrom` como `ValidUntil` y crea una serie
-y cursor de documento soporte distintos de `SalesInvoice`.
+La proyección XML de documento soporte tiene un builder tipado independiente de
+la factura electrónica. Comparte el worker, la firma y el transporte canónicos,
+pero aplica solamente el perfil DIAN de soporte: dirección postal del vendedor,
+NIT y dígito de verificación para residente, periodo de adquisición por línea y
+cantidad base propia. El builder de factura de venta no se reutiliza ni se
+ramifica para estas reglas.
+
+La consulta oficial `GetNumberingRange` no clasifica el propósito del rango y
+puede no devolver la numeración de modalidad documento soporte. Por eso Auraly
+no ofrece resoluciones de factura en la sección de soporte ni adivina el tipo por
+el prefijo. Esa sección registra los datos de la resolución oficial 1876,
+confirma explícitamente su modalidad y crea de forma atómica una autorización,
+serie y cursor `SupportDocument` sin clave técnica de factura. La validación
+comprueba `ValidFrom`, `ValidUntil`, rango y prefijo; `SalesInvoice` conserva su
+propia configuración y consecutivo.
 
 Un gasto sólo genera documento soporte cuando el proveedor está clasificado con
 `BuyerElectronicSupportDocument`; un comprobante o nota manual no se envía por

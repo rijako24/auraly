@@ -129,6 +129,7 @@ export const salesReturnsApi = {
   settlementConfiguration: () =>
     apiClient.get<SalesSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   listSales: (params: {
+    businessId: string;
     page?: number;
     pageSize?: number;
     search?: string;
@@ -140,8 +141,8 @@ export const salesReturnsApi = {
     "/commerce/v1/sales-returns/sales",
     withPagedDefaults(params),
   ),
-  getSale: (documentId: string) =>
-    apiClient.get<ReturnableSale>(`/commerce/v1/sales-returns/sales/${documentId}`),
+  getSale: (documentId: string, businessId: string) =>
+    apiClient.get<ReturnableSale>(`/commerce/v1/sales-returns/sales/${documentId}`, { businessId }),
   openWorkSession: (businessId: string, warehouseId?: string) =>
     apiClient.post<WorkSessionView>("/commerce/v1/work-sessions/current", {
       businessId,

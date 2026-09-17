@@ -147,6 +147,7 @@ builder.Services.AddScoped<IDianHabilitationTransport, DianHabilitationTransport
 builder.Services.AddScoped<IDianProductionTransport, DianProductionTransport>();
 builder.Services.AddScoped<IDianNumberingRangeClient, DianNumberingRangeClient>();
 builder.Services.AddSingleton<DianInvoiceUblBuilder>();
+builder.Services.AddSingleton<DianSupportDocumentUblBuilder>();
 builder.Services.AddSingleton<DianCreditNoteUblBuilder>();
 builder.Services.AddSingleton<DianDebitNoteUblBuilder>();
 builder.Services.AddSingleton<DianAttachedDocumentBuilder>();

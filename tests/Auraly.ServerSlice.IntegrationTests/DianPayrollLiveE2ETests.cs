@@ -76,7 +76,8 @@ public sealed class DianPayrollLiveE2ETests(ITestOutputHelper output)
         var generation = new FiscalGenerationWorker(
             new SqlFiscalGenerationWorkStore(connections, ids),
             new EnvironmentFiscalSoftwarePinProvider(),
-            new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
+            new DianInvoiceUblBuilder(), new DianSupportDocumentUblBuilder(),
+            new DianCreditNoteUblBuilder(),
             new DianDebitNoteUblBuilder(), new DianSchemaValidator(),
             new DianPayrollXmlBuilder(), new DianPayrollSchemaValidator(),
             new DianXadesSigner(certificateProvider), TimeProvider.System);

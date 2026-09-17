@@ -79,8 +79,8 @@ function CreateDebitNote({ open, onClose }: { open: boolean; onClose: () => void
   const [notes, setNotes] = useState("");
   const sales = useQuery({
     queryKey: ["debit-note-invoices", invoiceSearch],
-    queryFn: () => salesReturnsApi.listSales({ page: 1, pageSize: 20, search: invoiceSearch.trim() || undefined }),
-    enabled: open && !invoice,
+    queryFn: () => salesReturnsApi.listSales({ businessId: businessId!, page: 1, pageSize: 20, search: invoiceSearch.trim() || undefined }),
+    enabled: open && !invoice && !!businessId,
   });
   const confirm = useMutation({ mutationFn: salesDebitNotesApi.confirm, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sales-debit-notes"] }) });
   const close = () => { setInvoice(undefined); setReason(""); setDescription(""); setBase(""); setNotes(""); onClose(); };

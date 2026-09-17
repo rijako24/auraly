@@ -232,7 +232,12 @@ public sealed class SqlFiscalGenerationWorkStore(
                    c.TaxSchemeId, c.TaxSchemeName, c.IdentificationTypeCode,
                    c.CityCode, c.CityName, c.DepartmentName, c.DepartmentCode,
                    c.AddressLine, c.CountryCode, c.CountryName,
-                   c.SoftwareIdentificationCode, c.SoftwarePinSecretReference,
+                   CASE WHEN fd.FiscalDocumentType IN(N'SupportDocument',N'SupportDocumentAdjustment')
+                        THEN COALESCE(c.SupportDocumentSoftwareIdentificationCode,c.SoftwareIdentificationCode)
+                        ELSE c.SoftwareIdentificationCode END,
+                   CASE WHEN fd.FiscalDocumentType IN(N'SupportDocument',N'SupportDocumentAdjustment')
+                        THEN COALESCE(c.SupportDocumentSoftwarePinSecretReference,c.SoftwarePinSecretReference)
+                        ELSE c.SoftwarePinSecretReference END,
                    c.Environment, c.CertificateProvider, c.CertificateKeyReference,
                    c.CertificateThumbprint, c.TechnicalAnnexVersion, c.GeneratorVersion,
                    a.AuthorizationNumber, a.ValidFrom, a.ValidUntil,

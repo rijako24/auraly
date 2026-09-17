@@ -22,10 +22,12 @@ public interface IFiscalOnboardingStore
         CancellationToken cancellationToken);
 
     Task<DianNumberingRangeContext> GetNumberingRangeContextAsync(
-        Guid tenantId, Guid businessId, CancellationToken cancellationToken);
+        Guid tenantId, Guid businessId, string documentPurpose,
+        CancellationToken cancellationToken);
 
     Task ImportNumberingRangesAsync(
         Guid tenantId,
+        string documentPurpose,
         IReadOnlyList<ImportedDianNumberingRange> ranges,
         CancellationToken cancellationToken);
 
@@ -40,6 +42,14 @@ public interface IFiscalOnboardingStore
         Guid tenantId,
         Guid businessId,
         Guid userId,
+        CancellationToken cancellationToken);
+
+    Task SaveSupportDocumentSoftwareAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
+        string softwareIdentificationCode,
+        string softwarePinSecretReference,
         CancellationToken cancellationToken);
 
     Task ActivateSupportDocumentAsync(
@@ -61,6 +71,12 @@ public interface IFiscalCredentialVault
         DateTimeOffset validFrom,
         DateTimeOffset validTo,
         string thumbprint,
+        CancellationToken cancellationToken);
+
+    Task<string> StoreSupportDocumentSoftwarePinAsync(
+        Guid tenantId,
+        Guid businessId,
+        string softwarePin,
         CancellationToken cancellationToken);
 
     Task<string> ResolveSoftwarePinAsync(
@@ -162,12 +178,14 @@ public sealed class FiscalOnboardingService(
             throw new FiscalConfigurationValidationException(
                 "La DIAN debe aceptar primero el set de pruebas de habilitación.");
         var context = await store.GetNumberingRangeContextAsync(
-            user.TenantId, businessId, cancellationToken);
+            user.TenantId, businessId, FiscalNumberingPurposes.SalesInvoice,
+            cancellationToken);
         var ranges = await numberingRanges.GetAsync(context, cancellationToken);
         if (ranges.Count == 0)
             throw new FiscalConfigurationValidationException(
                 "La DIAN no devolvió resoluciones asociadas al software. Verifica la asociación en el portal DIAN.");
-        await store.ImportNumberingRangesAsync(user.TenantId, ranges, cancellationToken);
+        await store.ImportNumberingRangesAsync(
+            user.TenantId, FiscalNumberingPurposes.SalesInvoice, ranges, cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
     }
 
@@ -202,6 +220,52 @@ public sealed class FiscalOnboardingService(
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
     }
 
+    public async Task<FiscalOnboardingConfiguration> ConfigureSupportDocumentSoftwareAsync(
+        FiscalConfigurationUser user,
+        Guid businessId,
+        SaveSupportDocumentSoftwareConfiguration request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.ConfigurationManage);
+        ValidateBusiness(businessId);
+        ArgumentNullException.ThrowIfNull(request);
+        var softwareId = request.SoftwareIdentificationCode.Trim();
+        var pin = request.SoftwarePin.Trim();
+        if (!Guid.TryParse(softwareId, out _) || pin.Length is 0 or > 128)
+            throw new FiscalConfigurationValidationException(
+                "Software ID y PIN de documento soporte son obligatorios; el Software ID debe ser un UUID válido.");
+        var current = await store.GetAsync(user.TenantId, businessId, cancellationToken);
+        if (!current.ProductionActive)
+            throw new FiscalConfigurationValidationException(
+                "Activa primero la configuración DIAN de producción.");
+        var pinReference = await credentials.StoreSupportDocumentSoftwarePinAsync(
+            user.TenantId, businessId, pin, cancellationToken);
+        await store.SaveSupportDocumentSoftwareAsync(
+            user.TenantId, businessId, user.UserId, softwareId, pinReference,
+            cancellationToken);
+        return await store.GetAsync(user.TenantId, businessId, cancellationToken);
+    }
+
+    public async Task<FiscalOnboardingConfiguration> SynchronizeSupportDocumentNumberingRangesAsync(
+        FiscalConfigurationUser user,
+        Guid businessId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.ConfigurationManage);
+        ValidateBusiness(businessId);
+        var context = await store.GetNumberingRangeContextAsync(
+            user.TenantId, businessId, FiscalNumberingPurposes.SupportDocument,
+            cancellationToken);
+        var ranges = await numberingRanges.GetAsync(context, cancellationToken);
+        if (ranges.Count == 0)
+            throw new FiscalConfigurationValidationException(
+                "La DIAN no devolvió resoluciones de documento soporte asociadas a este Software ID.");
+        await store.ImportNumberingRangesAsync(
+            user.TenantId, FiscalNumberingPurposes.SupportDocument, ranges,
+            cancellationToken);
+        return await store.GetAsync(user.TenantId, businessId, cancellationToken);
+    }
+
     public async Task<FiscalOnboardingConfiguration> ActivateSupportDocumentAsync(
         FiscalConfigurationUser user,
         Guid businessId,
@@ -214,7 +278,8 @@ public sealed class FiscalOnboardingService(
             throw new FiscalConfigurationValidationException(
                 "Selecciona una resolución DIAN de documento soporte disponible.");
         await store.ActivateSupportDocumentAsync(
-            user.TenantId, businessId, user.UserId, dianNumberingRangeId, cancellationToken);
+            user.TenantId, businessId, user.UserId, dianNumberingRangeId,
+            cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
     }
 

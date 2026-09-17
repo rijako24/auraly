@@ -2,6 +2,7 @@ CREATE TABLE [fiscal].[FiscalCredentialSecrets]
 (
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [ProtectedSoftwarePin] VARBINARY(MAX) NOT NULL,
+    [ProtectedSupportDocumentSoftwarePin] VARBINARY(MAX) NULL,
     [ProtectedCertificatePfx] VARBINARY(MAX) NOT NULL,
     [CertificateThumbprint] NVARCHAR(128) NOT NULL,
     [CertificateValidFrom] DATETIMEOFFSET(7) NOT NULL,

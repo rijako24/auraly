@@ -59,7 +59,11 @@ export function SalesReturnWorkspace({ embedded = false, businessId, onCashRefun
 
   const open = async (item: ReturnableSaleListItem) => {
     if (!item.hasAvailableQuantity) { toast.info("La factura ya no tiene cantidades disponibles para devolver."); return; }
-    try { setSelected(await salesReturnsApi.getSale(item.documentId)); }
+    try {
+      const selectedBusinessId = businessId || useBusinessContextStore.getState().selectedBusinessId;
+      if (!selectedBusinessId) throw new Error("La sede es obligatoria.");
+      setSelected(await salesReturnsApi.getSale(item.documentId, selectedBusinessId));
+    }
     catch { toast.error("No fue posible consultar el snapshot de la factura."); }
   };
 

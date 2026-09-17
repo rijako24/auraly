@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Api;
+using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -64,11 +66,28 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
         var salesRangeId = Guid.NewGuid();
         var validRangeId = Guid.NewGuid();
         var futureRangeId = Guid.NewGuid();
+        var replacementRangeId = Guid.NewGuid();
         var legalScope = await InsertBusinessAsync(businessId);
         await InsertProductionIssuerAndSupportRangesAsync(
-            businessId, salesRangeId, validRangeId, futureRangeId);
+            businessId, salesRangeId, validRangeId, futureRangeId, replacementRangeId);
         try
         {
+            using (var scope = fixture.CreateScope())
+            {
+                var today = DateOnly.FromDateTime(DateTime.UtcNow);
+                await scope.ServiceProvider.GetRequiredService<IFiscalOnboardingStore>()
+                    .ImportNumberingRangesAsync(
+                        fixture.TenantId,
+                        FiscalNumberingPurposes.SupportDocument,
+                        [
+                            new("18769900001", today, "DS", 501, 900,
+                                today.AddDays(-1), today.AddDays(30), "support-key-1"),
+                            new("18769900002", today, "DSF", 901, 1200,
+                                today.AddDays(10), today.AddDays(40), "support-key-2")
+                        ],
+                        CancellationToken.None);
+            }
+
             using var client = fixture.CreateUserClient(
                 fixture.UserId,
                 FiscalPermissionCodes.ConfigurationRead,
@@ -77,9 +96,11 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                        $"/api/commerce/v1/fiscal/configuration/onboarding/activate-support-document?businessId={businessId:D}",
                        new ActivateFiscalProductionRequest(futureRangeId)))
             {
-                Assert.Equal(HttpStatusCode.Conflict, future.StatusCode);
-                Assert.Contains("aún no está vigente",
-                    await future.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+                var futureBody = await future.Content.ReadAsStringAsync();
+                Assert.True(future.StatusCode == HttpStatusCode.Conflict,
+                    $"Expected future range conflict, got {future.StatusCode}: {futureBody}");
+                Assert.Contains("venció o no existe",
+                    futureBody, StringComparison.Ordinal);
             }
 
             using var response = await client.PostAsJsonAsync(
@@ -92,8 +113,9 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 .ReadFromJsonAsync<FiscalOnboardingConfiguration>();
 
             Assert.NotNull(value?.AssignedSupportDocumentRange);
-            Assert.Equal(validRangeId,
-                value.AssignedSupportDocumentRange.DianNumberingRangeId);
+            Assert.Equal("18769900001",
+                value.AssignedSupportDocumentRange.AuthorizationNumber);
+            Assert.Equal("DS", value.AssignedSupportDocumentRange.Prefix);
             Assert.Equal(salesRangeId, value.AssignedRange?.DianNumberingRangeId);
             Assert.Equal(1, await ScalarAsync("""
                 SELECT COUNT(*) FROM dbo.FiscalSeries series
@@ -101,14 +123,8 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                   ON fiscalAuthorization.FiscalAuthorizationId=series.FiscalAuthorizationId
                 WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
                   AND series.EmitterKind=N'Server' AND series.IsActive=1
-                  AND fiscalAuthorization.DianNumberingRangeId=@RangeId;
-                """, businessId, validRangeId));
-            Assert.Equal(1, await ScalarAsync("""
-                SELECT COUNT(*) FROM dbo.FiscalTechnicalKeySecrets secret
-                INNER JOIN dbo.FiscalAuthorizations fiscalAuthorization
-                  ON fiscalAuthorization.FiscalAuthorizationId=secret.FiscalAuthorizationId
-                WHERE secret.BusinessId=@BusinessId
-                  AND fiscalAuthorization.DianNumberingRangeId=@RangeId;
+                  AND fiscalAuthorization.DianNumberingRangeId=@RangeId
+                  AND fiscalAuthorization.AuthorizationNumber=N'18769900001';
                 """, businessId, validRangeId));
             Assert.Equal(1, await ScalarAsync("""
                 SELECT COUNT(*) FROM dbo.FiscalSeries
@@ -120,11 +136,40 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
                   AND series.IsActive=1;
                 """, businessId));
+
+            using var replacement = await client.PostAsJsonAsync(
+                $"/api/commerce/v1/fiscal/configuration/onboarding/activate-support-document?businessId={businessId:D}",
+                new ActivateFiscalProductionRequest(replacementRangeId));
+            var replacementBody = await replacement.Content.ReadAsStringAsync();
+            Assert.True(replacement.StatusCode == HttpStatusCode.OK,
+                $"Expected support resolution replacement, got {replacement.StatusCode}: {replacementBody}");
+            var replacementValue = await replacement.Content
+                .ReadFromJsonAsync<FiscalOnboardingConfiguration>();
+            Assert.Equal("18769900003",
+                replacementValue?.AssignedSupportDocumentRange?.AuthorizationNumber);
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalSeries
+                WHERE BusinessId=@BusinessId AND DocumentType=N'SupportDocument' AND IsActive=1;
+                """, businessId));
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalAuthorizations
+                WHERE BusinessId=@BusinessId AND DianNumberingRangeId=@RangeId AND IsActive=0;
+                """, businessId, validRangeId));
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM fiscal.DianNumberingRanges
+                WHERE DianNumberingRangeId=@RangeId AND AssignedBusinessId=@BusinessId;
+                """, businessId, validRangeId));
+            Assert.Equal(1201, await ScalarAsync("""
+                SELECT seriesCursor.NextConsecutive FROM dbo.FiscalSeriesCursors seriesCursor
+                INNER JOIN dbo.FiscalSeries series ON series.SeriesId=seriesCursor.SeriesId
+                WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
+                  AND series.IsActive=1;
+                """, businessId));
         }
         finally
         {
             await DeleteSupportConfigurationAsync(
-                businessId, salesRangeId, validRangeId, futureRangeId);
+                businessId, salesRangeId, validRangeId, futureRangeId, replacementRangeId);
             await DeleteBusinessAsync(businessId, legalScope);
         }
     }
@@ -393,7 +438,8 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
     }
 
     private async Task InsertProductionIssuerAndSupportRangesAsync(
-        Guid businessId, Guid salesRangeId, Guid validRangeId, Guid futureRangeId)
+        Guid businessId, Guid salesRangeId, Guid validRangeId, Guid futureRangeId,
+        Guid replacementRangeId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -403,30 +449,36 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 LegalName,TaxLevelCode,TaxSchemeId,TaxSchemeName,IdentificationTypeCode,
                 AddressLine,CityCode,CityName,DepartmentCode,DepartmentName,CountryCode,CountryName,
                 SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,
+                SupportDocumentSoftwareIdentificationCode,SupportDocumentSoftwarePinSecretReference,
                 CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
                 TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,IsActive,CreatedAt)
             VALUES(NEWID(),@BusinessId,1,@SupplierTaxId,N'0',N'DIAN E2E SAS',N'R-99-PN',
                 N'01',N'IVA',N'31',N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá',N'CO',N'Colombia',
                 CONVERT(nvarchar(64),NEWID()),N'env://AURALY_TEST_SOFTWARE_PIN',1,
+                CONVERT(nvarchar(64),NEWID()),N'env://AURALY_TEST_SUPPORT_SOFTWARE_PIN',
                 N'Test',N'Test',N'TEST',N'https://vpfe.dian.gov.co',N'1.9',N'Auraly.Tests',
                 DATEADD(day,-1,SYSDATETIMEOFFSET()),DATEADD(day,30,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
 
             INSERT fiscal.DianNumberingRanges(
-                DianNumberingRangeId,TenantId,AuthorizationNumber,ResolutionDate,Prefix,
+                DianNumberingRangeId,TenantId,DocumentPurpose,AuthorizationNumber,ResolutionDate,Prefix,
                 RangeStart,RangeEnd,ValidFrom,ValidUntil,ProtectedTechnicalKey,
                 AssignedBusinessId,AssignedAt,AssignedByUserId,ImportedAt,LastSeenAt)
             VALUES
-              (@SalesRangeId,@TenantId,N'18769900001',CONVERT(date,SYSDATETIMEOFFSET()),N'FES',
+              (@SalesRangeId,@TenantId,N'SalesInvoice',N'18769900001',CONVERT(date,SYSDATETIMEOFFSET()),N'FES',
                1,500,DATEADD(day,-1,CONVERT(date,SYSDATETIMEOFFSET())),
                DATEADD(day,30,CONVERT(date,SYSDATETIMEOFFSET())),0x01,
                @BusinessId,SYSDATETIMEOFFSET(),@UserId,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET()),
-              (@ValidRangeId,@TenantId,N'18769900001',CONVERT(date,SYSDATETIMEOFFSET()),N'DS',
+              (@ValidRangeId,@TenantId,N'SalesInvoice',N'18769900001',CONVERT(date,SYSDATETIMEOFFSET()),N'DS',
                501,900,DATEADD(day,-1,CONVERT(date,SYSDATETIMEOFFSET())),
                DATEADD(day,30,CONVERT(date,SYSDATETIMEOFFSET())),0x02,
                NULL,NULL,NULL,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET()),
-              (@FutureRangeId,@TenantId,N'18769900002',CONVERT(date,SYSDATETIMEOFFSET()),N'DSF',
+              (@FutureRangeId,@TenantId,N'SupportDocument',N'18769900002',CONVERT(date,SYSDATETIMEOFFSET()),N'DSF',
                901,1200,DATEADD(day,10,CONVERT(date,SYSDATETIMEOFFSET())),
                DATEADD(day,40,CONVERT(date,SYSDATETIMEOFFSET())),0x03,
+               NULL,NULL,NULL,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET()),
+              (@ReplacementRangeId,@TenantId,N'SupportDocument',N'18769900003',CONVERT(date,SYSDATETIMEOFFSET()),N'DSR',
+               1201,1500,DATEADD(day,-1,CONVERT(date,SYSDATETIMEOFFSET())),
+               DATEADD(day,30,CONVERT(date,SYSDATETIMEOFFSET())),0x04,
                NULL,NULL,NULL,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
 
             DECLARE @SalesAuthorizationId uniqueidentifier=NEWID(),@SalesSeriesId uniqueidentifier=NEWID();
@@ -453,11 +505,13 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
         command.Parameters.AddWithValue("@SalesRangeId", salesRangeId);
         command.Parameters.AddWithValue("@ValidRangeId", validRangeId);
         command.Parameters.AddWithValue("@FutureRangeId", futureRangeId);
+        command.Parameters.AddWithValue("@ReplacementRangeId", replacementRangeId);
         await command.ExecuteNonQueryAsync();
     }
 
     private async Task DeleteSupportConfigurationAsync(
-        Guid businessId, Guid salesRangeId, Guid validRangeId, Guid futureRangeId)
+        Guid businessId, Guid salesRangeId, Guid validRangeId, Guid futureRangeId,
+        Guid replacementRangeId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -469,12 +523,13 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
             DELETE dbo.FiscalSeries WHERE BusinessId=@BusinessId;
             DELETE dbo.FiscalAuthorizations WHERE BusinessId=@BusinessId;
             DELETE fiscal.DianNumberingRanges
-            WHERE DianNumberingRangeId IN(@SalesRangeId,@ValidRangeId,@FutureRangeId);
+            WHERE DianNumberingRangeId IN(@SalesRangeId,@ValidRangeId,@FutureRangeId,@ReplacementRangeId);
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@SalesRangeId", salesRangeId);
         command.Parameters.AddWithValue("@ValidRangeId", validRangeId);
         command.Parameters.AddWithValue("@FutureRangeId", futureRangeId);
+        command.Parameters.AddWithValue("@ReplacementRangeId", replacementRangeId);
         await command.ExecuteNonQueryAsync();
     }
 

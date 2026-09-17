@@ -9,6 +9,12 @@ public static class FiscalOnboardingStages
     public const string ProductionActive = nameof(ProductionActive);
 }
 
+public static class FiscalNumberingPurposes
+{
+    public const string SalesInvoice = nameof(SalesInvoice);
+    public const string SupportDocument = nameof(SupportDocument);
+}
+
 public sealed record FiscalOnboardingConfiguration(
     Guid BusinessId,
     string BusinessName,
@@ -29,7 +35,23 @@ public sealed record FiscalOnboardingConfiguration(
     IReadOnlyList<DianNumberingRangeOption> AvailableRanges,
     IReadOnlyList<string> MissingRequirements,
     FiscalHabilitationAttempt? LatestHabilitationAttempt,
-    DianNumberingRangeOption? AssignedSupportDocumentRange = null);
+    SupportDocumentNumberingConfiguration? AssignedSupportDocumentRange = null,
+    string? SupportDocumentSoftwareIdentificationCode = null,
+    bool HasSupportDocumentSoftwarePin = false,
+    IReadOnlyList<DianNumberingRangeOption>? AvailableSupportDocumentRanges = null);
+
+public sealed record SupportDocumentNumberingConfiguration(
+    string AuthorizationNumber,
+    DateOnly? ResolutionDate,
+    string Prefix,
+    long RangeStart,
+    long RangeEnd,
+    DateOnly ValidFrom,
+    DateOnly ValidUntil);
+
+public sealed record SaveSupportDocumentSoftwareConfiguration(
+    string SoftwareIdentificationCode,
+    string SoftwarePin);
 
 public sealed record FiscalHabilitationAttempt(
     Guid DocumentId,

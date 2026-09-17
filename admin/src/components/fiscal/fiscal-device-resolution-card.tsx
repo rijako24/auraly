@@ -26,6 +26,7 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
   const [syncing, setSyncing] = useState(false);
   const [savingDeviceId, setSavingDeviceId] = useState<string>();
   const [savingOnline, setSavingOnline] = useState(false);
+  const [editingOnline, setEditingOnline] = useState(false);
   const [savingAlerts, setSavingAlerts] = useState(false);
   const [unassigningDeviceId, setUnassigningDeviceId] = useState<string>();
   const [confirmUnassign, setConfirmUnassign] = useState<{ deviceId: string; name: string }>();
@@ -71,6 +72,7 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
       setOnboarding(await fiscalConfigurationApi.assignOnlineResolution(businessId, selectedOnline));
       setWorkspace(await fiscalConfigurationApi.getDevices(businessId));
       setSelectedOnline("");
+      setEditingOnline(false);
       toast.success(onboarding?.productionActive
         ? "Resolución online asignada. La caja web ya puede emitir facturas electrónicas."
         : "Resolución online reservada. Quedará disponible en la caja web al activar producción.");
@@ -144,7 +146,7 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
         <div><CardTitle className="flex items-center gap-2"><Cpu className="h-5 w-5 text-teal-300" />Resoluciones por emisor</CardTitle><CardDescription className="mt-2 text-slate-300">La caja online y cada equipo enrolado reciben una resolución completa y exclusiva. Una resolución asignada desaparece de todos los combos.</CardDescription></div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="border-white/20 bg-white/5 text-white hover:bg-white/10" disabled={syncing || !canManage || !canAssign} onClick={() => void synchronize()}>{syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Consultar DIAN</Button>
+          <Button variant="outline" size="sm" className="border-white/20 bg-white/5 text-white hover:bg-white/10" disabled={syncing || !canManage || !canAssign} onClick={() => void synchronize()}>{syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Consultar DIAN · Facturación electrónica</Button>
           <Button variant="outline" size="sm" className="border-white/20 bg-white/5 text-white hover:bg-white/10" disabled={loading} onClick={() => void load()}>{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Actualizar</Button>
         </div>
       </div>
@@ -161,8 +163,8 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
 
       <section className="grid items-center gap-4 rounded-2xl border-2 border-teal-100 p-4 lg:grid-cols-[minmax(14rem,1fr)_minmax(20rem,1.4fr)_auto]">
         <div className="min-w-0"><strong className="flex items-center gap-2"><Globe2 className="h-5 w-5 text-teal-700" />Caja online</strong><small className="text-muted-foreground">Emisión desde el navegador conectado a Auraly</small></div>
-        {workspace?.onlineAssignment ? <AssignedResolution authorizationNumber={workspace.onlineAssignment.authorizationNumber} prefix={workspace.onlineAssignment.prefix} rangeStart={workspace.onlineAssignment.rangeStart} rangeEnd={workspace.onlineAssignment.rangeEnd} detail={`${workspace.onlineAssignment.remainingConsecutives} números disponibles · vence ${workspace.onlineAssignment.validUntil}`} /> : <ResolutionSelect value={selectedOnline} onChange={setSelectedOnline} available={available} disabled={!canManage || !canAssign} />}
-        <Button className="justify-self-end" disabled={!canManage || !canAssign || !!workspace?.onlineAssignment || !selectedOnline || savingOnline} onClick={() => void assignOnline()}>{savingOnline && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Asignar resolución</Button>
+        <div className="space-y-2">{workspace?.onlineAssignment && <AssignedResolution authorizationNumber={workspace.onlineAssignment.authorizationNumber} prefix={workspace.onlineAssignment.prefix} rangeStart={workspace.onlineAssignment.rangeStart} rangeEnd={workspace.onlineAssignment.rangeEnd} detail={`${workspace.onlineAssignment.remainingConsecutives} números disponibles · vence ${workspace.onlineAssignment.validUntil}`} />}{(!workspace?.onlineAssignment || editingOnline) && <ResolutionSelect value={selectedOnline} onChange={setSelectedOnline} available={available} disabled={!canManage || !canAssign} />}</div>
+        {workspace?.onlineAssignment && !editingOnline ? <Button className="justify-self-end" disabled={!canManage || !canAssign || savingOnline} onClick={() => setEditingOnline(true)}>Cambiar</Button> : <Button className="justify-self-end" disabled={!canManage || !canAssign || !selectedOnline || savingOnline} onClick={() => void assignOnline()}>{savingOnline && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{workspace?.onlineAssignment ? "Guardar cambio" : "Asignar resolución"}</Button>}
       </section>
 
       {loading && !workspace ? <div className="grid min-h-32 place-items-center"><Loader2 className="h-7 w-7 animate-spin text-teal-600" /></div> : null}

@@ -10,23 +10,23 @@ public static class SalesReturnQueryApi
         this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/commerce/v1/sales-returns/sales", async (
-                HttpContext context, int page, int pageSize, string? search,
+                HttpContext context, Guid? businessId, int page, int pageSize, string? search,
                 string? customer,
                 DateOnly? from, DateOnly? to, bool? withAvailableQuantity,
                 SalesReturnQueryService service, CancellationToken token) =>
             await Execute(() => service.ListReturnableSalesAsync(
-                context.User.ToSalesReturnQueryIdentity(),
+                context.User.ToSalesReturnQueryIdentity(businessId),
                 new(page, pageSize, search, customer, from, to, withAvailableQuantity), token),
                 Results.Ok))
             .RequireAuthorization("returns.user");
 
         endpoints.MapGet("/api/commerce/v1/sales-returns/sales/{documentId:guid}",
-            async (HttpContext context, Guid documentId,
+            async (HttpContext context, Guid documentId, Guid? businessId,
                 SalesReturnQueryService service, CancellationToken token) =>
                 await Execute(async () =>
                 {
                     var value = await service.GetReturnableSaleAsync(
-                        context.User.ToSalesReturnQueryIdentity(), documentId, token);
+                        context.User.ToSalesReturnQueryIdentity(businessId), documentId, token);
                     return value is null ? Results.NotFound() : Results.Ok(value);
                 }))
             .RequireAuthorization("returns.user");
@@ -74,10 +74,12 @@ public static class SalesReturnQueryApi
     }
 
     private static SalesReturnUserIdentity ToSalesReturnQueryIdentity(
-        this ClaimsPrincipal principal) => new(
+        this ClaimsPrincipal principal, Guid? businessId = null) => new(
             RequiredGuid(principal, ClaimTypes.NameIdentifier),
             RequiredGuid(principal, "tenant_id"),
-            RequiredGuid(principal, "business_id"),
+            businessId is { } selected && selected != Guid.Empty
+                ? selected
+                : RequiredGuid(principal, "business_id"),
             principal.FindAll("permission")
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));

@@ -18,7 +18,7 @@ export function useReturnableSales(params: {
   const businessId = resolveSalesReturnBusinessId(businessIdOverride, selectedBusinessId);
   return useQuery({
     queryKey: ["returnable-sales", businessId, params],
-    queryFn: () => salesReturnsApi.listSales(params),
+    queryFn: () => salesReturnsApi.listSales({ ...params, businessId: businessId! }),
     enabled: !!businessId,
     placeholderData: keepPreviousData,
   });

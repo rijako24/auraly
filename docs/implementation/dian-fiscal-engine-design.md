@@ -51,6 +51,15 @@ pueden despertar generación; el coordinador, workers, procesos, artefactos,
 intentos y transporte siguen siendo los mismos para factura, notas y documento
 soporte.
 
+Factura electrónica y documento soporte comparten el proceso fiscal, firma,
+transporte, artefactos e idempotencia, pero no comparten el constructor XML. La
+factura continúa en `DianInvoiceUblBuilder`; el documento soporte usa
+`DianSupportDocumentUblBuilder` y su contrato propio del anexo 1.1. Ese contrato
+congela el código postal DIAN del vendedor, emite la identificación NIT exigida
+para la operación con residente, incluye `InvoicePeriod` por línea y conserva
+la cantidad base específica del documento soporte. Una corrección de ese perfil
+no modifica la estructura UBL de factura de venta.
+
 La prueba de habilitación de devolución recorre la venta original, devolución parcial, `CreditNote` tipo `91`, concepto de corrección `1`, `ProfileExecutionID=2`, CUDE, firma, `SendTestSetAsync` y `GetStatusZip`. También verifica que el transporte productivo no sea invocado. La activación de producción exige evidencia durable de aceptación del set (`GetStatusZip`, código `2`); la aceptación individual de un documento con código `00` no abre esa puerta.
 
 ## Prueba real de nota crédito contra DIAN
@@ -111,12 +120,14 @@ La configuración fiscal visible se concentra en un solo onboarding. Razón soci
 Después de que el motor registra la aceptación del set de habilitación, Auraly usa `GetNumberingRange` contra producción. Las resoluciones devueltas forman un pool por tenant y conservan su clave técnica cifrada. La activación exige seleccionar una resolución libre para la sede activa. La reserva y la creación de emisor, autorización, series y cursores productivos ocurren en una sola transacción con bloqueo SQL, por lo que dos sedes no pueden tomar la misma resolución. Una asignación activa no se traslada desde la interfaz; una corrección excepcional debe tratarse como operación administrativa auditada y sólo antes de emitir documentos.
 
 El onboarding contiene una configuración independiente para documento soporte.
-La respuesta de `GetNumberingRange` no informa el tipo documental, por lo que se
-exige confirmación explícita del propósito y no se clasifica por prefijos. Una
-resolución libre sólo puede reservarse una vez. La activación valida inicio y fin
-de vigencia, crea `FiscalAuthorization`, `FiscalSeries(DocumentType =
-SupportDocument)` y cursor propios; nunca comparte el consecutivo de
-`SalesInvoice`.
+La respuesta de `GetNumberingRange` no informa el tipo documental y puede omitir
+la modalidad de soporte, por lo que sus resultados se reservan para el flujo de
+factura. La sección de soporte captura la resolución oficial 1876 y exige
+confirmación explícita de la modalidad; no clasifica por prefijos ni presenta
+rangos de factura. La activación valida inicio y fin de vigencia, crea una
+`FiscalAuthorization` sin clave técnica de factura, una
+`FiscalSeries(DocumentType = SupportDocument)` y cursor propios; nunca comparte
+el consecutivo de `SalesInvoice`.
 
 El onboarding presenta los ambientes como una progresión, no como un interruptor reversible. El asistente de habilitación abre el POS con factura electrónica fijada y reutiliza la captura, snapshot, firma y workers fiscales canónicos; la intención queda marcada como `FiscalHabilitationOnly`, conserva exclusivamente la evidencia técnica durable exigida para firma, transmisión y auditoría DIAN, y no genera líneas de venta, pagos, cartera, movimientos de inventario, movimientos de sesión, outbox comercial, trabajos contables ni proyecciones de analítica. Para ese único camino, el checkout aprovisiona de forma idempotente la numeración pública estándar de habilitación `SETP` dentro de las mismas tablas canónicas de autorizaciones, series y cursores; una venta ordinaria sigue exigiendo una resolución configurada. Al activar producción se desactivan el emisor, las autorizaciones y las series de prueba, de modo que nunca compitan con la numeración productiva. Producción permanece bloqueada hasta la aceptación durable del set, la consulta de numeración y la selección explícita de una resolución disponible para la sede.
 

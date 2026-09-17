@@ -668,6 +668,7 @@ export interface PosClient {
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
   reprint(documentId: string): Promise<void>;
+  printHistoricalReceipt(receipt: PosPrintableReceipt): Promise<void>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
   printCashMovement(ticket: PosCashMovementTicket): Promise<void>;
@@ -1332,6 +1333,10 @@ export class PosEdgeClient implements PosClient {
 
   reprint(documentId: string) {
     return this.requestVoid(`/edge/v1/sales/${documentId}/reprint`, { method: "POST" });
+  }
+
+  printHistoricalReceipt(receipt: PosPrintableReceipt) {
+    return this.printReceipt(receipt, null, "pos");
   }
 
   validateDraftInventory(draftId: string) {

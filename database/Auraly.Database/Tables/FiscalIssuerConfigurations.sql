@@ -21,6 +21,8 @@ CREATE TABLE [dbo].[FiscalIssuerConfigurations]
     [CountryName] NVARCHAR(64) NOT NULL CONSTRAINT [DF_FiscalIssuerConfigurations_CountryName] DEFAULT ('Colombia'),
     [SoftwareIdentificationCode] NVARCHAR(64) NOT NULL,
     [SoftwarePinSecretReference] NVARCHAR(512) NOT NULL,
+    [SupportDocumentSoftwareIdentificationCode] NVARCHAR(64) NULL,
+    [SupportDocumentSoftwarePinSecretReference] NVARCHAR(512) NULL,
     [Environment] TINYINT NOT NULL,
     [TestSetId] UNIQUEIDENTIFIER NULL,
     [CertificateProvider] NVARCHAR(32) NOT NULL,

@@ -3,6 +3,7 @@ using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Commerce.Payroll.Contracts;
+using Auraly.BuildingBlocks.Domain.Identity;
 using Auraly.Fiscal.Core;
 using Auraly.Fiscal.Ubl;
 
@@ -65,6 +66,7 @@ public sealed class FiscalGenerationWorker(
     IFiscalGenerationWorkStore store,
     IFiscalSoftwarePinProvider pins,
     DianInvoiceUblBuilder builder,
+    DianSupportDocumentUblBuilder supportDocumentBuilder,
     DianCreditNoteUblBuilder creditNoteBuilder,
     DianDebitNoteUblBuilder debitNoteBuilder,
     DianSchemaValidator validator,
@@ -582,20 +584,19 @@ public sealed class FiscalGenerationWorker(
             snapshot.Seller.Identification, work.Issuer.SupplierTaxId, pin,
             (FiscalEnvironment)snapshot.Environment), snapshot.QrValidationUrl);
         var auth = snapshot.Authorization;
-        var invoice = new DianInvoice(snapshot.FiscalNumber, cuds.Cuds, issuedAt,
-            currencyCode, "05", snapshot.Environment,
+        var document = new DianSupportDocument(snapshot.FiscalNumber, cuds.Cuds, issuedAt,
+            currencyCode, snapshot.Environment,
             new DianAuthorization(auth.Number, auth.ValidFrom, auth.ValidUntil,
                 auth.Prefix, auth.RangeStart, auth.RangeEnd),
             new DianSoftware(work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
-                work.Issuer.SoftwareId, pin), Party(snapshot.Seller), IssuerParty(work.Issuer),
+                work.Issuer.SoftwareId, pin), SupportSeller(snapshot), IssuerParty(work.Issuer),
+            snapshot.SellerOriginCode, snapshot.SellerPostalZone ?? string.Empty,
             lines, taxes, new DianPayment(createsPayable ? "2" : "1", "42",
                 DateOnly.FromDateTime(dueAt.Date), null),
             untaxedAmount, untaxedAmount, untaxedAmount + taxAmount,
-            discountAmount, totalAmount, cuds.QrPayload,
-            snapshot.SellerOriginCode,
-            "DIAN 2.1: documento soporte en adquisiciones efectuadas a no obligados a facturar.",
-            "CUDS-SHA384", true);
-        return new FiscalUblBuildResult(builder.Build(invoice), cuds.Cuds, cuds.QrPayload);
+            discountAmount, totalAmount, cuds.QrPayload);
+        return new FiscalUblBuildResult(
+            supportDocumentBuilder.Build(document), cuds.Cuds, cuds.QrPayload);
     }
 
     private async Task<FiscalUblBuildResult> BuildSupportAdjustmentAsync(
@@ -694,6 +695,21 @@ public sealed class FiscalGenerationWorker(
         value.OrganizationTypeCode, value.RegistrationName, value.TradeName,
         value.TaxResponsibilityCode, value.TaxSchemeId, value.TaxSchemeName,
         Address(value.Address), value.Email, value.Telephone);
+
+    private static DianParty SupportSeller(PurchaseSupportFiscalSnapshot snapshot)
+    {
+        var seller = Party(snapshot.Seller);
+        if (snapshot.SellerOriginCode != "10") return seller;
+        if (!ColombianNit.TryCalculateVerificationDigit(
+                seller.Identification, out var verificationDigit))
+            throw new FiscalSnapshotDataException(
+                "A resident support-document seller requires a numeric Colombian NIT.");
+        return seller with
+        {
+            CheckDigit = verificationDigit.ToString(),
+            IdentificationTypeCode = "31"
+        };
+    }
 
     private static DianParty SupplierParty(
         PosSaleUblPartyContract value,

@@ -13,7 +13,8 @@ BEGIN
     SELECT r.DianNumberingRangeId,r.AuthorizationNumber,r.Prefix,
            r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil
     FROM fiscal.DianNumberingRanges r
-    WHERE r.TenantId=@TenantId AND r.AssignedBusinessId IS NULL
+    WHERE r.TenantId=@TenantId AND r.DocumentPurpose=N'SalesInvoice'
+      AND r.AssignedBusinessId IS NULL
       AND r.ValidFrom<=CONVERT(date,SYSUTCDATETIME())
       AND r.ValidUntil>=CONVERT(date,SYSUTCDATETIME())
     ORDER BY r.ValidUntil,r.Prefix,r.RangeStart;

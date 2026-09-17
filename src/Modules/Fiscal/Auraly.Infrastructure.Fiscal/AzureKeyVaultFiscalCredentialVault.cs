@@ -67,9 +67,35 @@ public sealed class AzureKeyVaultFiscalCredentialVault(
     public async Task<string> ResolveSoftwarePinAsync(
         Guid businessId, string secretReference, CancellationToken cancellationToken)
     {
-        var pinName = ParseName(secretReference, "akv-secret://", "-pin");
+        var suffix = secretReference.EndsWith("-support-pin", StringComparison.OrdinalIgnoreCase)
+            ? "-support-pin"
+            : "-pin";
+        var pinName = ParseName(secretReference, "akv-secret://", suffix);
         var response = await secrets.GetSecretAsync(pinName, cancellationToken: cancellationToken);
         return response.Value.Value;
+    }
+
+    public async Task<string> StoreSupportDocumentSoftwarePinAsync(
+        Guid tenantId,
+        Guid businessId,
+        string softwarePin,
+        CancellationToken cancellationToken)
+    {
+        var pinName = SupportDocumentPinName(tenantId);
+        await secrets.SetSecretAsync(
+            new KeyVaultSecret(pinName, softwarePin)
+            {
+                Properties =
+                {
+                    Tags =
+                    {
+                        ["tenant-id"] = tenantId.ToString("N"),
+                        ["purpose"] = "dian-support-document-software-pin"
+                    }
+                }
+            },
+            cancellationToken);
+        return $"akv-secret://{pinName}";
     }
 
     public async Task<byte[]> ResolveCertificatePfxAsync(
@@ -91,6 +117,8 @@ public sealed class AzureKeyVaultFiscalCredentialVault(
 
     private static string CertificateName(Guid tenantId) => $"dian-tenant-{tenantId:N}";
     private static string PinName(Guid tenantId) => $"dian-tenant-{tenantId:N}-pin";
+    private static string SupportDocumentPinName(Guid tenantId) =>
+        $"dian-tenant-{tenantId:N}-support-pin";
 
     private static string ParseName(string reference, string scheme, string? suffix)
     {

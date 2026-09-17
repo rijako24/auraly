@@ -10,6 +10,7 @@ CREATE TABLE [fiscal].[DianNumberingRanges]
     [ValidFrom] DATE NOT NULL,
     [ValidUntil] DATE NOT NULL,
     [ProtectedTechnicalKey] VARBINARY(MAX) NOT NULL,
+    [DocumentPurpose] NVARCHAR(32) NOT NULL CONSTRAINT [DF_DianNumberingRanges_DocumentPurpose] DEFAULT N'SalesInvoice',
     [AssignedBusinessId] UNIQUEIDENTIFIER NULL,
     [AssignedAt] DATETIMEOFFSET(7) NULL,
     [AssignedByUserId] UNIQUEIDENTIFIER NULL,
@@ -21,8 +22,9 @@ CREATE TABLE [fiscal].[DianNumberingRanges]
     CONSTRAINT [FK_DianNumberingRanges_Businesses] FOREIGN KEY ([AssignedBusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_DianNumberingRanges_Users] FOREIGN KEY ([AssignedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
     CONSTRAINT [UQ_DianNumberingRanges_Tenant_Range] UNIQUE
-        ([TenantId],[AuthorizationNumber],[Prefix],[RangeStart],[RangeEnd]),
+        ([TenantId],[DocumentPurpose],[AuthorizationNumber],[Prefix],[RangeStart],[RangeEnd]),
     CONSTRAINT [CK_DianNumberingRanges_Range] CHECK ([RangeStart] > 0 AND [RangeEnd] >= [RangeStart]),
+    CONSTRAINT [CK_DianNumberingRanges_DocumentPurpose] CHECK ([DocumentPurpose] IN (N'SalesInvoice',N'SupportDocument')),
     CONSTRAINT [CK_DianNumberingRanges_Validity] CHECK ([ValidUntil] >= [ValidFrom]),
     CONSTRAINT [CK_DianNumberingRanges_Assignment] CHECK
         (([AssignedBusinessId] IS NULL AND [AssignedAt] IS NULL AND [AssignedByUserId] IS NULL)
@@ -31,5 +33,5 @@ CREATE TABLE [fiscal].[DianNumberingRanges]
 GO
 
 CREATE INDEX [IX_DianNumberingRanges_Tenant_Available]
-    ON [fiscal].[DianNumberingRanges]([TenantId],[AssignedBusinessId],[ValidUntil],[Prefix]);
+    ON [fiscal].[DianNumberingRanges]([TenantId],[DocumentPurpose],[AssignedBusinessId],[ValidUntil],[Prefix]);
 GO

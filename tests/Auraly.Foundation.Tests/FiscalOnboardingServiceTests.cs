@@ -174,7 +174,7 @@ public sealed class FiscalOnboardingServiceTests
     }
 
     [Fact]
-    public async Task Support_document_range_requires_production_and_uses_the_onboarding_store()
+    public async Task Support_document_software_requires_production_and_is_stored_separately()
     {
         var inactiveStore = new TestOnboardingStore(Configuration("100226966"));
         var user = new FiscalConfigurationUser(
@@ -185,10 +185,10 @@ public sealed class FiscalOnboardingServiceTests
             new FixedTimeProvider(Now));
 
         await Assert.ThrowsAsync<FiscalConfigurationValidationException>(() =>
-            inactiveService.ActivateSupportDocumentAsync(
-                user, inactiveStore.Configuration.BusinessId, Guid.NewGuid()));
-        Assert.False(inactiveStore.SupportActivationCalled);
-        Assert.Equal(0, inactiveStore.GetCallCount);
+            inactiveService.ConfigureSupportDocumentSoftwareAsync(
+                user, inactiveStore.Configuration.BusinessId, SupportSoftwareRequest()));
+        Assert.False(inactiveStore.SupportSoftwareSaved);
+        Assert.Equal(1, inactiveStore.GetCallCount);
 
         var activeStore = new TestOnboardingStore(
             Configuration("100226966") with { ProductionActive = true });
@@ -196,12 +196,15 @@ public sealed class FiscalOnboardingServiceTests
             activeStore, new TestCredentialVault(), new TestNumberingRangeClient(),
             new FixedTimeProvider(Now));
 
-        await activeService.ActivateSupportDocumentAsync(
-            user, activeStore.Configuration.BusinessId, Guid.NewGuid());
+        await activeService.ConfigureSupportDocumentSoftwareAsync(
+            user, activeStore.Configuration.BusinessId, SupportSoftwareRequest());
 
-        Assert.True(activeStore.SupportActivationCalled);
-        Assert.Equal(1, activeStore.GetCallCount);
+        Assert.True(activeStore.SupportSoftwareSaved);
+        Assert.Equal(2, activeStore.GetCallCount);
     }
+
+    private static SaveSupportDocumentSoftwareConfiguration SupportSoftwareRequest() =>
+        new(Guid.NewGuid().ToString(), "support-pin");
 
     private static byte[] CreatePfx(
         string certificateIdentity,
@@ -271,7 +274,7 @@ public sealed class FiscalOnboardingServiceTests
         public FiscalOnboardingConfiguration Configuration { get; } = configuration;
         public bool SaveCalled { get; private set; }
         public string? SavedSupplierCheckDigit { get; private set; }
-        public bool SupportActivationCalled { get; private set; }
+        public bool SupportSoftwareSaved { get; private set; }
         public int GetCallCount { get; private set; }
 
         public Task<FiscalOnboardingConfiguration> GetAsync(
@@ -297,11 +300,13 @@ public sealed class FiscalOnboardingServiceTests
         }
 
         public Task<DianNumberingRangeContext> GetNumberingRangeContextAsync(
-            Guid tenantId, Guid businessId, CancellationToken cancellationToken) =>
+            Guid tenantId, Guid businessId, string documentPurpose,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task ImportNumberingRangesAsync(
             Guid tenantId,
+            string documentPurpose,
             IReadOnlyList<ImportedDianNumberingRange> ranges,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -318,19 +323,27 @@ public sealed class FiscalOnboardingServiceTests
             Guid userId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task ActivateSupportDocumentAsync(
+        public Task SaveSupportDocumentSoftwareAsync(
             Guid tenantId,
             Guid businessId,
             Guid userId,
-            Guid dianNumberingRangeId,
+            string softwareIdentificationCode,
+            string softwarePinSecretReference,
             CancellationToken cancellationToken)
         {
             if (!Configuration.ProductionActive)
                 throw new FiscalConfigurationValidationException(
                     "Activa primero la configuración DIAN de producción.");
-            SupportActivationCalled = true;
+            SupportSoftwareSaved = true;
             return Task.CompletedTask;
         }
+
+        public Task ActivateSupportDocumentAsync(
+            Guid tenantId,
+            Guid businessId,
+            Guid userId,
+            Guid dianNumberingRangeId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class TestCredentialVault : IFiscalCredentialVault
@@ -363,6 +376,11 @@ public sealed class FiscalOnboardingServiceTests
         public Task<string> ResolveSoftwarePinAsync(
             Guid businessId, string secretReference, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<string> StoreSupportDocumentSoftwarePinAsync(
+            Guid tenantId, Guid businessId, string softwarePin,
+            CancellationToken cancellationToken) =>
+            Task.FromResult("fiscal://test/support-document");
 
         public Task<byte[]> ResolveCertificatePfxAsync(
             Guid businessId, string certificateKeyReference, CancellationToken cancellationToken) =>

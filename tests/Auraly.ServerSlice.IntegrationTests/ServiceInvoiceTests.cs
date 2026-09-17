@@ -330,7 +330,8 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         var generatedAt = DateTimeOffset.UtcNow.AddMinutes(1);
         var generator = new FiscalGenerationWorker(
             new SqlFiscalGenerationWorkStore(connections, ids), new TestPin(),
-            new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
+            new DianInvoiceUblBuilder(), new DianSupportDocumentUblBuilder(),
+            new DianCreditNoteUblBuilder(),
             new DianDebitNoteUblBuilder(), new DianSchemaValidator(),
             new DianPayrollXmlBuilder(), new DianPayrollSchemaValidator(),
             new TestSigner(), new FixedTimeProvider(generatedAt));

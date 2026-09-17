@@ -1078,6 +1078,16 @@ export class OnlinePosClient implements PosClient {
     }
   }
 
+  async printHistoricalReceipt(receipt: PosPrintableReceipt) {
+    const browserPreview = this.edgeSessionToken ? null : openHalfLetterPrintPreview();
+    try {
+      await this.printDirect([receipt], false, "pos", browserPreview);
+    } catch (error) {
+      closePrintPreview(browserPreview);
+      throw error;
+    }
+  }
+
   readScaleWeight() {
     return this.localEdge().readScaleWeight();
   }

@@ -210,7 +210,7 @@ public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAur
             support.IssuerConfigurationId, support.FiscalNumber, support.Environment,
             support.QrValidationUrl, support.Seller, support.Authorization,
             [new PurchaseSupportLineMetadata(1, $"GASTO-{expense.ConceptId:N}", "999", "EA", "IVA", "01")],
-            Expense: expense);
+            Expense: expense, SellerPostalZone: support.SellerPostalZone);
         await using var command = new SqlCommand("""
             INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
               AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)

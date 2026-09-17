@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, FileKey2, FlaskConical, Loader2, LockKeyhole, Pencil, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import {
   fiscalConfigurationApi,
   type FiscalOnboardingConfiguration,
@@ -25,15 +24,18 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [activatingProduction, setActivatingProduction] = useState(false);
   const [activatingSupport, setActivatingSupport] = useState(false);
+  const [savingSupportCredentials, setSavingSupportCredentials] = useState(false);
+  const [syncingSupport, setSyncingSupport] = useState(false);
   const [softwareId, setSoftwareId] = useState("");
   const [softwarePin, setSoftwarePin] = useState("");
   const [testSetId, setTestSetId] = useState("");
   const [certificatePassword, setCertificatePassword] = useState("");
   const [certificate, setCertificate] = useState<File | null>(null);
   const [credentialError, setCredentialError] = useState("");
+  const [supportSoftwareId, setSupportSoftwareId] = useState("");
+  const [supportSoftwarePin, setSupportSoftwarePin] = useState("");
   const [selectedSupportRangeId, setSelectedSupportRangeId] = useState("");
   const [supportConfirmed, setSupportConfirmed] = useState(false);
   const [editingCredentials, setEditingCredentials] = useState(false);
@@ -46,6 +48,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
       setValue(result);
       setSoftwareId(result.softwareIdentificationCode ?? "");
       setTestSetId(result.testSetId ?? "");
+      setSupportSoftwareId(result.supportDocumentSoftwareIdentificationCode ?? "");
       setEditingCredentials(!result.hasCertificate);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No fue posible cargar la configuración fiscal.";
@@ -62,11 +65,6 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
     businessId,
     () => { void load(true); },
   ), [businessId, load]);
-
-  const available = useMemo(
-    () => value?.availableRanges.filter((item) => item.isAvailable) ?? [],
-    [value],
-  );
 
   async function saveHabilitation(event: React.FormEvent) {
     event.preventDefault();
@@ -96,28 +94,44 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
     }
   }
 
-  async function synchronize() {
-    setSyncing(true);
+  async function saveSupportSoftware(event: React.FormEvent) {
+    event.preventDefault();
+    setSavingSupportCredentials(true);
     try {
-      const result = await fiscalConfigurationApi.synchronizeNumberingRanges(businessId);
+      const result = await fiscalConfigurationApi.configureSupportDocumentSoftware(businessId, {
+        softwareIdentificationCode: supportSoftwareId,
+        softwarePin: supportSoftwarePin,
+      });
       setValue(result);
-      toast.success("Resoluciones sincronizadas directamente desde la DIAN.");
+      setSupportSoftwarePin("");
+      toast.success("Software ID y PIN de documento soporte guardados de forma independiente.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible consultar las resoluciones DIAN.");
+      toast.error(error instanceof Error ? error.message : "No fue posible guardar las credenciales de documento soporte.");
     } finally {
-      setSyncing(false);
+      setSavingSupportCredentials(false);
+    }
+  }
+
+  async function synchronizeSupportRanges() {
+    setSyncingSupport(true);
+    try {
+      const result = await fiscalConfigurationApi.synchronizeSupportDocumentNumberingRanges(businessId);
+      setValue(result);
+      toast.success("Resoluciones de documento soporte consultadas en la DIAN.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible consultar las resoluciones de documento soporte.");
+    } finally {
+      setSyncingSupport(false);
     }
   }
 
   async function activateSupportDocument() {
-    if (!selectedSupportRangeId || !supportConfirmed) return;
+    if (!supportConfirmed) return;
     setActivatingSupport(true);
     try {
-      const result = await fiscalConfigurationApi.activateSupportDocument(
-        businessId,
-        selectedSupportRangeId,
-      );
+      const result = await fiscalConfigurationApi.activateSupportDocument(businessId, selectedSupportRangeId);
       setValue(result);
+      setSelectedSupportRangeId("");
       setSupportConfirmed(false);
       toast.success("Resolución de documento soporte activada para esta sede.");
     } catch (error) {
@@ -245,8 +259,11 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
 
       {value.productionActive && (
         <Card className="border-emerald-200 bg-emerald-50/50">
-          <CardHeader><CardTitle className="flex items-center gap-2 text-emerald-950"><CheckCircle2 className="h-5 w-5" /> Producción DIAN activa</CardTitle></CardHeader>
-          <CardContent>{value.assignedRange ? <div className="grid gap-3 text-sm md:grid-cols-3"><Detail label="Resolución online" value={value.assignedRange.authorizationNumber} /><Detail label="Prefijo y rango" value={`${value.assignedRange.prefix}${value.assignedRange.rangeStart}–${value.assignedRange.rangeEnd}`} /><Detail label="Vigencia" value={`${value.assignedRange.validFrom} a ${value.assignedRange.validUntil}`} /></div> : <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-950">Producción está activa, pero la caja online todavía no tiene resolución. Solo podrá usar comprobantes hasta asignarle una.</p>}</CardContent>
+          <CardHeader><CardTitle className="flex items-center gap-2 text-emerald-950"><CheckCircle2 className="h-5 w-5" /> Facturación electrónica</CardTitle><CardDescription>Software y resoluciones exclusivos de factura electrónica.</CardDescription></CardHeader>
+          <CardContent className="space-y-4">
+            {value.assignedRange ? <div className="grid gap-3 text-sm md:grid-cols-3"><Detail label="Resolución online" value={value.assignedRange.authorizationNumber} /><Detail label="Prefijo y rango" value={`${value.assignedRange.prefix}${value.assignedRange.rangeStart}–${value.assignedRange.rangeEnd}`} /><Detail label="Vigencia" value={`${value.assignedRange.validFrom} a ${value.assignedRange.validUntil}`} /></div> : <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-950">Producción está activa, pero la caja online todavía no tiene resolución. Solo podrá usar comprobantes hasta asignarle una.</p>}
+            <p className="text-xs text-muted-foreground">La consulta DIAN y la asignación a la caja online o a equipos enrolados se administran en “Resoluciones por emisor”.</p>
+          </CardContent>
         </Card>
       )}
 
@@ -254,17 +271,21 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
         <Card>
           <CardHeader>
             <CardTitle>Documento soporte electrónico</CardTitle>
-            <CardDescription>Usa una resolución DIAN independiente. Las recepciones configuradas como documento soporte consumirán esta numeración y recorrerán el motor fiscal existente.</CardDescription>
+            <CardDescription>Software ID, PIN y resoluciones independientes de facturación electrónica. Las recepciones y gastos configurados como documento soporte comparten este mismo motor.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {value.assignedSupportDocumentRange ? (
-              <div className="grid gap-3 rounded-xl bg-emerald-50 p-4 text-sm md:grid-cols-3"><Detail label="Resolución" value={value.assignedSupportDocumentRange.authorizationNumber}/><Detail label="Prefijo y rango" value={`${value.assignedSupportDocumentRange.prefix}${value.assignedSupportDocumentRange.rangeStart}–${value.assignedSupportDocumentRange.rangeEnd}`}/><Detail label="Vigencia" value={`${value.assignedSupportDocumentRange.validFrom} a ${value.assignedSupportDocumentRange.validUntil}`}/></div>
-            ) : (
-              <>
-                <Button variant="outline" disabled={!canManage || syncing} onClick={() => void synchronize()}>{syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RefreshCw className="mr-2 h-4 w-4"/>} Consultar resoluciones en DIAN</Button>
-                {available.length > 0 ? <><Field label="Resolución de documento soporte"><Select value={selectedSupportRangeId||undefined} onValueChange={item=>{setSelectedSupportRangeId(item);setSupportConfirmed(false)}}><SelectTrigger><SelectValue placeholder="Selecciona la resolución de documento soporte"/></SelectTrigger><SelectContent>{available.map(item=><SelectItem key={item.dianNumberingRangeId} value={item.dianNumberingRangeId}>{item.authorizationNumber} · {item.prefix}{item.rangeStart}–{item.rangeEnd} · vence {item.validUntil}</SelectItem>)}</SelectContent></Select></Field><label className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><span>Confirmo que la resolución seleccionada corresponde a <b>documento soporte</b> para {value.businessName}.</span><Switch checked={supportConfirmed} onCheckedChange={setSupportConfirmed}/></label><Button disabled={!canManage||!selectedSupportRangeId||!supportConfirmed||activatingSupport} onClick={() => void activateSupportDocument()}>{activatingSupport&&<Loader2 className="mr-2 h-4 w-4 animate-spin"/>} Activar documento soporte</Button></> : <p className="text-sm text-muted-foreground">No hay resoluciones libres. Solicita y asocia la numeración de documento soporte en el portal DIAN, luego vuelve a consultar.</p>}
-              </>
-            )}
+            <form className="grid gap-4 rounded-xl border border-slate-200 p-4 md:grid-cols-2" onSubmit={saveSupportSoftware}>
+              <Field label="Software ID · Documento soporte"><Input required value={supportSoftwareId} onChange={event => setSupportSoftwareId(event.target.value)} /></Field>
+              <Field label="PIN · Documento soporte"><Input required type="password" autoComplete="new-password" value={supportSoftwarePin} placeholder={value.hasSupportDocumentSoftwarePin ? "Escribe el nuevo PIN para actualizar" : "PIN entregado por la DIAN"} onChange={event => setSupportSoftwarePin(event.target.value)} /></Field>
+              <div className="md:col-span-2"><Button disabled={!canManage || !supportSoftwareId || !supportSoftwarePin || savingSupportCredentials} type="submit">{savingSupportCredentials ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <FileKey2 className="mr-2 h-4 w-4"/>}{value.hasSupportDocumentSoftwarePin ? "Actualizar credenciales de documento soporte" : "Guardar credenciales de documento soporte"}</Button></div>
+            </form>
+            {value.assignedSupportDocumentRange && <div className="grid gap-3 rounded-xl bg-emerald-50 p-4 text-sm md:grid-cols-3"><Detail label="Resolución" value={value.assignedSupportDocumentRange.authorizationNumber}/><Detail label="Prefijo y rango" value={`${value.assignedSupportDocumentRange.prefix}${value.assignedSupportDocumentRange.rangeStart}–${value.assignedSupportDocumentRange.rangeEnd}`}/><Detail label="Vigencia" value={`${value.assignedSupportDocumentRange.validFrom} a ${value.assignedSupportDocumentRange.validUntil}`}/></div>}
+            <div className="flex flex-col gap-3 md:flex-row">
+              <Button type="button" variant="outline" disabled={!canManage || !value.hasSupportDocumentSoftwarePin || syncingSupport} onClick={() => void synchronizeSupportRanges()}>{syncingSupport ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RefreshCw className="mr-2 h-4 w-4"/>}Consultar DIAN · Documento soporte</Button>
+              {value.availableSupportDocumentRanges.some(range => range.isAvailable) && <><Select value={selectedSupportRangeId} onValueChange={next => { setSelectedSupportRangeId(next); setSupportConfirmed(false); }}><SelectTrigger className="md:max-w-md"><SelectValue placeholder={value.assignedSupportDocumentRange ? "Selecciona la nueva resolución" : "Selecciona una resolución de documento soporte"}/></SelectTrigger><SelectContent>{value.availableSupportDocumentRanges.filter(range => range.isAvailable).map(range => <SelectItem key={range.dianNumberingRangeId} value={range.dianNumberingRangeId}>{range.authorizationNumber} · {range.prefix}{range.rangeStart}–{range.rangeEnd}</SelectItem>)}</SelectContent></Select><Button type="button" variant={supportConfirmed ? "default" : "outline"} onClick={() => setSupportConfirmed(current => !current)}>{supportConfirmed ? "Confirmado" : "Confirmar resolución"}</Button><Button disabled={!canManage || !selectedSupportRangeId || !supportConfirmed || activatingSupport} onClick={() => void activateSupportDocument()}>{activatingSupport && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}{value.assignedSupportDocumentRange ? "Cambiar resolución" : "Activar documento soporte"}</Button></>}
+            </div>
+            {(value.assignedRange || value.assignedSupportDocumentRange) && <p className="text-xs text-muted-foreground">Al cambiar una resolución, la anterior se cierra y conserva su numeración e historial; no vuelve al pool disponible.</p>}
+            {!value.hasSupportDocumentSoftwarePin && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-950">Guarda primero el Software ID y PIN creados en la modalidad Documento soporte para habilitar su consulta DIAN.</p>}
           </CardContent>
         </Card>
       )}

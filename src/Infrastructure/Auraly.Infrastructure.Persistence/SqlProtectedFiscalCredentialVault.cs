@@ -74,16 +74,42 @@ public sealed class SqlProtectedFiscalCredentialVault(
     public async Task<string> ResolveSoftwarePinAsync(
         Guid businessId, string secretReference, CancellationToken cancellationToken)
     {
-        var tenantId = ParseTenantReference(secretReference);
+        var (tenantId, supportDocument) = ParseTenantReference(secretReference);
         var payload = await ReadAsync(
-            tenantId, businessId, "ProtectedSoftwarePin", cancellationToken);
+            tenantId, businessId,
+            supportDocument ? "ProtectedSupportDocumentSoftwarePin" : "ProtectedSoftwarePin",
+            cancellationToken);
         return Encoding.UTF8.GetString(Unprotect(payload));
+    }
+
+    public async Task<string> StoreSupportDocumentSoftwarePinAsync(
+        Guid tenantId, Guid businessId, string softwarePin,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
+                THROW 51021,'Business is outside the authenticated tenant.',1;
+            UPDATE fiscal.FiscalCredentialSecrets
+            SET ProtectedSupportDocumentSoftwarePin=@Pin,UpdatedAt=@Now
+            WHERE TenantId=@TenantId;
+            IF @@ROWCOUNT<>1
+                THROW 51022,'Configura primero las credenciales DIAN de facturación electrónica.',1;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        Add(command, "@TenantId", tenantId);
+        Add(command, "@BusinessId", businessId);
+        Add(command, "@Pin", Protect(Encoding.UTF8.GetBytes(softwarePin)));
+        Add(command, "@Now", DateTimeOffset.UtcNow);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return $"fiscal://tenant/{tenantId:N}/support-document";
     }
 
     public async Task<byte[]> ResolveCertificatePfxAsync(
         Guid businessId, string certificateKeyReference, CancellationToken cancellationToken)
     {
-        var tenantId = ParseTenantReference(certificateKeyReference);
+        var (tenantId, _) = ParseTenantReference(certificateKeyReference);
         var payload = await ReadAsync(
             tenantId, businessId, "ProtectedCertificatePfx", cancellationToken);
         return Unprotect(payload);
@@ -108,13 +134,18 @@ public sealed class SqlProtectedFiscalCredentialVault(
             ?? throw new InvalidOperationException("The configured fiscal credential is unavailable.");
     }
 
-    private static Guid ParseTenantReference(string reference)
+    private static (Guid TenantId, bool SupportDocument) ParseTenantReference(string reference)
     {
         const string prefix = "fiscal://tenant/";
-        if (!reference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
-            !Guid.TryParseExact(reference[prefix.Length..], "N", out var tenantId))
+        const string supportSuffix = "/support-document";
+        if (!reference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The fiscal credential reference is invalid for this tenant.");
-        return tenantId;
+        var value = reference[prefix.Length..];
+        var supportDocument = value.EndsWith(supportSuffix, StringComparison.OrdinalIgnoreCase);
+        if (supportDocument) value = value[..^supportSuffix.Length];
+        if (!Guid.TryParseExact(value, "N", out var tenantId))
+            throw new InvalidOperationException("The fiscal credential reference is invalid for this tenant.");
+        return (tenantId, supportDocument);
     }
 
     private byte[] Protect(byte[] plaintext)

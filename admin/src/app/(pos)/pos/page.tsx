@@ -2169,7 +2169,11 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
-      await client.reprint(sale.documentId.value);
+      const receipt = await loadServerIssuedSaleReceipt(
+        salesHistoryScope,
+        sale.documentId.value,
+      );
+      await client.printHistoricalReceipt(receipt);
       setMessage(`${sale.documentNumber} reimpresa desde su snapshot original`);
       setInvoiceSearchOpen(false);
     } catch (caught) {

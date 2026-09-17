@@ -46,7 +46,8 @@ BEGIN
            @ProtectedTechnicalKey=r.ProtectedTechnicalKey
     FROM fiscal.DianNumberingRanges r WITH (UPDLOCK,HOLDLOCK)
     WHERE r.DianNumberingRangeId=@DianNumberingRangeId
-      AND r.TenantId=@TenantId AND r.AssignedBusinessId IS NULL
+      AND r.TenantId=@TenantId AND r.DocumentPurpose=N'SalesInvoice'
+      AND r.AssignedBusinessId IS NULL
       AND r.ValidFrom<=CONVERT(date,@Now) AND r.ValidUntil>=CONVERT(date,@Now);
 
     IF @AuthorizationNumber IS NULL

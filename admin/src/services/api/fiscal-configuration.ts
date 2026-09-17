@@ -68,6 +68,21 @@ export type DianNumberingRangeOption = {
   assignedBusinessName: string | null;
 };
 
+export type SupportDocumentNumberingConfiguration = {
+  authorizationNumber: string;
+  resolutionDate: string | null;
+  prefix: string;
+  rangeStart: number;
+  rangeEnd: number;
+  validFrom: string;
+  validUntil: string;
+};
+
+export type SaveSupportDocumentSoftwareConfiguration = {
+  softwareIdentificationCode: string;
+  softwarePin: string;
+};
+
 export type FiscalOnboardingConfiguration = {
   businessId: string;
   businessName: string;
@@ -88,7 +103,10 @@ export type FiscalOnboardingConfiguration = {
   availableRanges: DianNumberingRangeOption[];
   missingRequirements: string[];
   latestHabilitationAttempt: FiscalHabilitationAttempt | null;
-  assignedSupportDocumentRange: DianNumberingRangeOption | null;
+  assignedSupportDocumentRange: SupportDocumentNumberingConfiguration | null;
+  supportDocumentSoftwareIdentificationCode: string | null;
+  hasSupportDocumentSoftwarePin: boolean;
+  availableSupportDocumentRanges: DianNumberingRangeOption[];
 };
 
 export type FiscalHabilitationAttempt = {
@@ -216,6 +234,18 @@ export const fiscalConfigurationApi = {
   activateProduction: (businessId: string) =>
     apiClient.post<FiscalOnboardingConfiguration>(
       `/commerce/v1/fiscal/configuration/onboarding/activate-production?businessId=${encodeURIComponent(businessId)}`,
+    ),
+  configureSupportDocumentSoftware: (
+    businessId: string,
+    request: SaveSupportDocumentSoftwareConfiguration,
+  ) =>
+    apiClient.post<FiscalOnboardingConfiguration>(
+      `/commerce/v1/fiscal/configuration/onboarding/support-document/software?businessId=${encodeURIComponent(businessId)}`,
+      request,
+    ),
+  synchronizeSupportDocumentNumberingRanges: (businessId: string) =>
+    apiClient.post<FiscalOnboardingConfiguration>(
+      `/commerce/v1/fiscal/configuration/onboarding/support-document/numbering-ranges/synchronize?businessId=${encodeURIComponent(businessId)}`,
     ),
   activateSupportDocument: (businessId: string, dianNumberingRangeId: string) =>
     apiClient.post<FiscalOnboardingConfiguration>(

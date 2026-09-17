@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Fiscal;
@@ -40,16 +41,20 @@ public sealed class SqlFiscalOnboardingStore(
                    latest.DocumentId,latest.Status,latest.LastStatusCode,
                    latest.LastStatusDescription,latest.LastErrorCode,
                    latest.LastErrorMessage,latest.UpdatedAt,
-                   supportAssigned.DianNumberingRangeId,supportAssigned.AuthorizationNumber,
+                   supportAssigned.AuthorizationNumber,
                    supportAssigned.ResolutionDate,supportAssigned.Prefix,
                    supportAssigned.RangeStart,supportAssigned.RangeEnd,
-                   supportAssigned.ValidFrom,supportAssigned.ValidUntil
+                   supportAssigned.ValidFrom,supportAssigned.ValidUntil,
+                   i.SupportDocumentSoftwareIdentificationCode,
+                   i.SupportDocumentSoftwarePinSecretReference
             FROM dbo.Businesses b
             LEFT JOIN dbo.TenantLegalProfiles p ON p.TenantId=b.TenantId
             OUTER APPLY(
                 SELECT TOP(1) SoftwareIdentificationCode,TestSetId,CertificateThumbprint,
                        SupplierCheckDigit,
-                       ValidFrom,ValidTo,Environment
+                       ValidFrom,ValidTo,Environment,
+                       SupportDocumentSoftwareIdentificationCode,
+                       SupportDocumentSoftwarePinSecretReference
                 FROM dbo.FiscalIssuerConfigurations configuration
                 JOIN dbo.Businesses configuredBusiness
                   ON configuredBusiness.BusinessId=configuration.BusinessId
@@ -96,22 +101,22 @@ public sealed class SqlFiscalOnboardingStore(
                 WHERE fp.BusinessId=b.BusinessId AND configuration.Environment=2
                 ORDER BY fp.CreatedAt DESC,fp.DocumentId DESC) latest
             OUTER APPLY(
-                SELECT TOP(1) r.DianNumberingRangeId,r.AuthorizationNumber,r.ResolutionDate,
-                       r.Prefix,r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil
-                FROM fiscal.DianNumberingRanges r
-                JOIN dbo.FiscalAuthorizations a
-                  ON a.BusinessId=b.BusinessId AND a.DianNumberingRangeId=r.DianNumberingRangeId
-                 AND a.Environment=1 AND a.IsActive=1
+                SELECT TOP(1) a.AuthorizationNumber,COALESCE(a.ResolutionDate,r.ResolutionDate) ResolutionDate,
+                       series.Prefix,series.RangeStart,series.RangeEnd,a.ValidFrom,a.ValidUntil
+                FROM dbo.FiscalAuthorizations a
                 JOIN dbo.FiscalSeries series
                   ON series.FiscalAuthorizationId=a.FiscalAuthorizationId
                  AND series.DocumentType=N'SupportDocument' AND series.EmitterKind=N'Server'
                  AND series.DeviceId IS NULL AND series.IsActive=1
-                WHERE r.TenantId=b.TenantId AND r.AssignedBusinessId=b.BusinessId
-                ORDER BY r.AssignedAt DESC) supportAssigned
+                LEFT JOIN fiscal.DianNumberingRanges r
+                  ON r.DianNumberingRangeId=a.DianNumberingRangeId
+                WHERE a.BusinessId=b.BusinessId AND a.Environment=1 AND a.IsActive=1
+                ORDER BY series.CreatedAt DESC) supportAssigned
             WHERE b.BusinessId=@BusinessId;
 
             SELECT r.DianNumberingRangeId,r.AuthorizationNumber,r.ResolutionDate,r.Prefix,
-                   r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil,r.AssignedBusinessId,b.Name
+                   r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil,r.AssignedBusinessId,b.Name,
+                   r.DocumentPurpose
             FROM fiscal.DianNumberingRanges r
             LEFT JOIN dbo.Businesses b ON b.BusinessId=r.AssignedBusinessId
             WHERE r.TenantId=@TenantId AND r.ValidUntil>=CONVERT(date,@Now)
@@ -157,21 +162,30 @@ public sealed class SqlFiscalOnboardingStore(
                 terminalFailure ? Text(reader, 24) ?? Text(reader, 22) : null,
                 reader.GetDateTimeOffset(25));
         }
-        DianNumberingRangeOption? assignedSupport = reader.IsDBNull(26) ? null : new(
-            reader.GetGuid(26), reader.GetString(27), Date(reader, 28), reader.GetString(29),
-            reader.GetInt64(30), reader.GetInt64(31), reader.GetFieldValue<DateOnly>(32),
-            reader.GetFieldValue<DateOnly>(33), false, businessId, businessName);
+        SupportDocumentNumberingConfiguration? assignedSupport = reader.IsDBNull(26) ? null : new(
+            reader.GetString(26), Date(reader, 27), reader.GetString(28),
+            reader.GetInt64(29), reader.GetInt64(30), reader.GetFieldValue<DateOnly>(31),
+            reader.GetFieldValue<DateOnly>(32));
+        var supportSoftwareId = Text(reader, 33);
+        var hasSupportSoftwarePin = !reader.IsDBNull(34) &&
+            !string.IsNullOrWhiteSpace(reader.GetString(34));
 
         var ranges = new List<DianNumberingRangeOption>();
+        var supportRanges = new List<DianNumberingRangeOption>();
         await reader.NextResultAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             Guid? assignedBusinessId = reader.IsDBNull(8) ? null : reader.GetGuid(8);
-            ranges.Add(new DianNumberingRangeOption(
+            var option = new DianNumberingRangeOption(
                 reader.GetGuid(0), reader.GetString(1), Date(reader, 2), reader.GetString(3),
                 reader.GetInt64(4), reader.GetInt64(5), reader.GetFieldValue<DateOnly>(6),
                 reader.GetFieldValue<DateOnly>(7), assignedBusinessId is null,
-                assignedBusinessId, Text(reader, 9)));
+                assignedBusinessId, Text(reader, 9));
+            if (string.Equals(reader.GetString(10), FiscalNumberingPurposes.SupportDocument,
+                    StringComparison.Ordinal))
+                supportRanges.Add(option);
+            else
+                ranges.Add(option);
         }
 
         var now = timeProvider.GetUtcNow();
@@ -196,7 +210,8 @@ public sealed class SqlFiscalOnboardingStore(
             testSetId, thumbprint is not null,
             thumbprint is null ? null : thumbprint[^Math.Min(8, thumbprint.Length)..],
             certificateFrom, certificateTo, acceptedAt is not null, acceptedAt,
-            productionActive, assigned, ranges, missing, latestAttempt, assignedSupport);
+            productionActive, assigned, ranges, missing, latestAttempt, assignedSupport,
+            supportSoftwareId, hasSupportSoftwarePin, supportRanges);
     }
 
     private static bool IsTerminalFailure(string status) => status is
@@ -276,17 +291,24 @@ public sealed class SqlFiscalOnboardingStore(
     }
 
     public async Task<DianNumberingRangeContext> GetNumberingRangeContextAsync(
-        Guid tenantId, Guid businessId, CancellationToken cancellationToken)
+        Guid tenantId, Guid businessId, string documentPurpose,
+        CancellationToken cancellationToken)
     {
         const string sql = """
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
                 THROW 51021,'Business is outside the authenticated tenant.',1;
 
-            SELECT TOP(1) i.SupplierTaxId,i.SoftwareIdentificationCode,
+            SELECT TOP(1) i.SupplierTaxId,
+                   CASE WHEN @Purpose=N'SupportDocument'
+                        THEN i.SupportDocumentSoftwareIdentificationCode
+                        ELSE i.SoftwareIdentificationCode END,
                    i.CertificateProvider,i.CertificateKeyReference,i.CertificateThumbprint
             FROM dbo.FiscalIssuerConfigurations i
             JOIN dbo.Businesses b ON b.BusinessId=i.BusinessId
-            WHERE b.TenantId=@TenantId AND i.Environment=2
+            WHERE b.TenantId=@TenantId
+              AND ((@Purpose=N'SalesInvoice' AND i.Environment=2)
+                OR (@Purpose=N'SupportDocument' AND i.BusinessId=@BusinessId
+                    AND i.Environment=1 AND i.IsActive=1))
               AND i.ValidFrom<=@Now AND (i.ValidTo IS NULL OR i.ValidTo>@Now)
             ORDER BY i.CreatedAt DESC,i.Version DESC;
             """;
@@ -295,10 +317,17 @@ public sealed class SqlFiscalOnboardingStore(
         await using var command = new SqlCommand(sql, connection);
         Add(command, "@TenantId", tenantId);
         Add(command, "@BusinessId", businessId);
+        Add(command, "@Purpose", documentPurpose);
         Add(command, "@Now", timeProvider.GetUtcNow());
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            throw new FiscalConfigurationValidationException("No existe una configuración DIAN de habilitación.");
+            throw new FiscalConfigurationValidationException(
+                documentPurpose == FiscalNumberingPurposes.SupportDocument
+                    ? "Configura primero el Software ID y PIN de documento soporte."
+                    : "No existe una configuración DIAN de habilitación.");
+        if (reader.IsDBNull(1) || string.IsNullOrWhiteSpace(reader.GetString(1)))
+            throw new FiscalConfigurationValidationException(
+                "Configura primero el Software ID y PIN de documento soporte.");
         return new DianNumberingRangeContext(
             businessId, reader.GetString(0), reader.GetString(0), reader.GetString(1),
             new FiscalCertificateReference(
@@ -307,48 +336,113 @@ public sealed class SqlFiscalOnboardingStore(
 
     public async Task ImportNumberingRangesAsync(
         Guid tenantId,
+        string documentPurpose,
         IReadOnlyList<ImportedDianNumberingRange> ranges,
         CancellationToken cancellationToken)
     {
         const string sql = """
+            IF @Purpose=N'SupportDocument'
+            BEGIN
+                UPDATE existingRange
+                SET DocumentPurpose=N'SupportDocument'
+                FROM fiscal.DianNumberingRanges existingRange
+                JOIN dbo.FiscalAuthorizations existingAuthorization
+                  ON existingAuthorization.DianNumberingRangeId=existingRange.DianNumberingRangeId
+                JOIN dbo.FiscalSeries series
+                  ON series.FiscalAuthorizationId=existingAuthorization.FiscalAuthorizationId
+                 AND series.DocumentType=N'SupportDocument'
+                WHERE existingRange.TenantId=@TenantId
+                  AND existingRange.DocumentPurpose<>N'SupportDocument';
+            END;
+
+            ;WITH source AS (
+                SELECT @TenantId TenantId,@Purpose DocumentPurpose,
+                       CONVERT(uniqueidentifier,j.Id) DianNumberingRangeId,
+                       j.AuthorizationNumber,CONVERT(date,j.ResolutionDate) ResolutionDate,
+                       j.Prefix,j.RangeStart,j.RangeEnd,
+                       CONVERT(date,j.ValidFrom) ValidFrom,CONVERT(date,j.ValidUntil) ValidUntil,
+                       CONVERT(varbinary(max),j.TechnicalKeyBase64,1) ProtectedTechnicalKey
+                FROM OPENJSON(@Ranges) WITH(
+                    Id nvarchar(36) '$.id',
+                    AuthorizationNumber nvarchar(64) '$.authorizationNumber',
+                    ResolutionDate nvarchar(10) '$.resolutionDate',
+                    Prefix nvarchar(16) '$.prefix',
+                    RangeStart bigint '$.rangeStart',RangeEnd bigint '$.rangeEnd',
+                    ValidFrom nvarchar(10) '$.validFrom',ValidUntil nvarchar(10) '$.validUntil',
+                    TechnicalKeyBase64 varchar(max) '$.technicalKeyHex') j
+            )
             MERGE fiscal.DianNumberingRanges WITH(HOLDLOCK) AS target
-            USING (SELECT @TenantId TenantId,@AuthorizationNumber AuthorizationNumber,
-                          @Prefix Prefix,@RangeStart RangeStart,@RangeEnd RangeEnd) AS source
+            USING source
             ON target.TenantId=source.TenantId
+              AND target.DocumentPurpose=source.DocumentPurpose
               AND target.AuthorizationNumber=source.AuthorizationNumber
               AND target.Prefix=source.Prefix
               AND target.RangeStart=source.RangeStart
               AND target.RangeEnd=source.RangeEnd
             WHEN MATCHED AND target.AssignedBusinessId IS NULL THEN UPDATE SET
-                ResolutionDate=@ResolutionDate,ValidFrom=@ValidFrom,ValidUntil=@ValidUntil,
-                ProtectedTechnicalKey=@TechnicalKey,LastSeenAt=@Now
+                ResolutionDate=source.ResolutionDate,ValidFrom=source.ValidFrom,
+                ValidUntil=source.ValidUntil,
+                ProtectedTechnicalKey=source.ProtectedTechnicalKey,LastSeenAt=@Now
             WHEN NOT MATCHED THEN INSERT(
-                DianNumberingRangeId,TenantId,AuthorizationNumber,ResolutionDate,Prefix,
+                DianNumberingRangeId,TenantId,DocumentPurpose,AuthorizationNumber,ResolutionDate,Prefix,
                 RangeStart,RangeEnd,ValidFrom,ValidUntil,ProtectedTechnicalKey,
                 ImportedAt,LastSeenAt)
-              VALUES(@Id,@TenantId,@AuthorizationNumber,@ResolutionDate,@Prefix,
-                     @RangeStart,@RangeEnd,@ValidFrom,@ValidUntil,@TechnicalKey,@Now,@Now);
+              VALUES(source.DianNumberingRangeId,source.TenantId,source.DocumentPurpose,
+                     source.AuthorizationNumber,source.ResolutionDate,source.Prefix,
+                     source.RangeStart,source.RangeEnd,source.ValidFrom,source.ValidUntil,
+                     source.ProtectedTechnicalKey,@Now,@Now);
+
+            IF @Purpose=N'SupportDocument'
+            BEGIN
+                UPDATE existingAuthorization
+                SET DianNumberingRangeId=range.DianNumberingRangeId,
+                    ResolutionDate=COALESCE(existingAuthorization.ResolutionDate,range.ResolutionDate)
+                FROM dbo.FiscalAuthorizations existingAuthorization
+                JOIN dbo.FiscalSeries series
+                  ON series.FiscalAuthorizationId=existingAuthorization.FiscalAuthorizationId
+                 AND series.DocumentType=N'SupportDocument' AND series.IsActive=1
+                JOIN dbo.Businesses business
+                  ON business.BusinessId=existingAuthorization.BusinessId AND business.TenantId=@TenantId
+                JOIN fiscal.DianNumberingRanges range
+                  ON range.TenantId=@TenantId AND range.DocumentPurpose=N'SupportDocument'
+                 AND range.AuthorizationNumber=existingAuthorization.AuthorizationNumber
+                 AND range.Prefix=series.Prefix AND range.RangeStart=series.RangeStart
+                 AND range.RangeEnd=series.RangeEnd
+                WHERE existingAuthorization.DianNumberingRangeId IS NULL
+                   OR NOT EXISTS(
+                       SELECT 1 FROM fiscal.DianNumberingRanges currentRange
+                       WHERE currentRange.DianNumberingRangeId=existingAuthorization.DianNumberingRangeId
+                         AND currentRange.DocumentPurpose=N'SupportDocument');
+
+                UPDATE range
+                SET AssignedBusinessId=existingAuthorization.BusinessId,AssignedAt=@Now
+                FROM fiscal.DianNumberingRanges range
+                JOIN dbo.FiscalAuthorizations existingAuthorization
+                  ON existingAuthorization.DianNumberingRangeId=range.DianNumberingRangeId
+                WHERE range.TenantId=@TenantId AND range.DocumentPurpose=N'SupportDocument'
+                  AND range.AssignedBusinessId IS NULL;
+            END;
             """;
+        var payload = ranges.Select(range => new
+        {
+            id = ids.NewId(),
+            authorizationNumber = range.AuthorizationNumber.Trim(),
+            resolutionDate = range.ResolutionDate?.ToString("yyyy-MM-dd"),
+            prefix = range.Prefix.Trim().ToUpperInvariant(),
+            rangeStart = range.RangeStart,
+            rangeEnd = range.RangeEnd,
+            validFrom = range.ValidFrom.ToString("yyyy-MM-dd"),
+            validUntil = range.ValidUntil.ToString("yyyy-MM-dd"),
+            technicalKeyHex = "0x" + Convert.ToHexString(Protect(range.TechnicalKey.Trim()))
+        });
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
-        foreach (var range in ranges)
-        {
-            await using var command = new SqlCommand(sql, connection, transaction);
-            Add(command, "@Id", ids.NewId());
-            Add(command, "@TenantId", tenantId);
-            Add(command, "@AuthorizationNumber", range.AuthorizationNumber.Trim());
-            AddNullable(command, "@ResolutionDate", range.ResolutionDate);
-            Add(command, "@Prefix", range.Prefix.Trim().ToUpperInvariant());
-            Add(command, "@RangeStart", range.RangeStart);
-            Add(command, "@RangeEnd", range.RangeEnd);
-            Add(command, "@ValidFrom", range.ValidFrom);
-            Add(command, "@ValidUntil", range.ValidUntil);
-            Add(command, "@TechnicalKey", Protect(range.TechnicalKey.Trim()));
-            Add(command, "@Now", timeProvider.GetUtcNow());
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-        await transaction.CommitAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        Add(command, "@TenantId", tenantId);
+        Add(command, "@Purpose", documentPurpose);
+        Add(command, "@Ranges", JsonSerializer.Serialize(payload));
+        Add(command, "@Now", timeProvider.GetUtcNow());
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task AssignOnlineResolutionAsync(
@@ -362,10 +456,6 @@ public sealed class SqlFiscalOnboardingStore(
             SET XACT_ABORT ON;
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
                 THROW 51021,'Business is outside the authenticated tenant.',1;
-            IF EXISTS(SELECT 1 FROM dbo.FiscalSeries
-                      WHERE BusinessId=@BusinessId AND DeviceId IS NULL
-                        AND EmitterKind=N'Server' AND DocumentType=N'SalesInvoice' AND IsActive=1)
-                THROW 51022,'La caja online ya tiene una resolución DIAN asignada.',1;
             IF NOT EXISTS(
                 SELECT 1 FROM dbo.FiscalDocumentProcesses fp
                 JOIN dbo.FiscalIssuerConfigurations hi ON hi.FiscalIssuerConfigurationId=fp.FiscalIssuerConfigurationId
@@ -386,6 +476,7 @@ public sealed class SqlFiscalOnboardingStore(
                    @ProtectedTechnicalKey=ProtectedTechnicalKey
             FROM fiscal.DianNumberingRanges WITH(UPDLOCK,HOLDLOCK)
             WHERE DianNumberingRangeId=@RangeId AND TenantId=@TenantId
+              AND DocumentPurpose=N'SalesInvoice'
               AND AssignedBusinessId IS NULL
               AND ValidFrom<=CONVERT(date,@Now)
               AND ValidUntil>=CONVERT(date,@Now);
@@ -409,6 +500,21 @@ public sealed class SqlFiscalOnboardingStore(
                      configuration.CreatedAt DESC,Version DESC;
             IF @SupplierTaxId IS NULL
                 THROW 51022,'El certificado o la configuración de habilitación ya no están vigentes.',1;
+
+            DECLARE @PreviousAuthorizations TABLE(FiscalAuthorizationId uniqueidentifier PRIMARY KEY);
+            UPDATE series SET IsActive=0
+            OUTPUT deleted.FiscalAuthorizationId INTO @PreviousAuthorizations
+            FROM dbo.FiscalSeries series
+            WHERE series.BusinessId=@BusinessId AND series.DeviceId IS NULL
+              AND series.EmitterKind=N'Server' AND series.DocumentType=N'SalesInvoice'
+              AND series.IsActive=1;
+            UPDATE existingAuthorization SET IsActive=0
+            FROM dbo.FiscalAuthorizations existingAuthorization
+            JOIN @PreviousAuthorizations previous
+              ON previous.FiscalAuthorizationId=existingAuthorization.FiscalAuthorizationId
+            WHERE NOT EXISTS(SELECT 1 FROM dbo.FiscalSeries activeSeries
+                             WHERE activeSeries.FiscalAuthorizationId=existingAuthorization.FiscalAuthorizationId
+                               AND activeSeries.IsActive=1);
 
             INSERT dbo.FiscalAuthorizations(
                 FiscalAuthorizationId,BusinessId,DianNumberingRangeId,AuthorizationNumber,SupplierTaxId,Environment,
@@ -535,6 +641,34 @@ public sealed class SqlFiscalOnboardingStore(
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task SaveSupportDocumentSoftwareAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
+        string softwareIdentificationCode,
+        string softwarePinSecretReference,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
+                THROW 51021,'Business is outside the authenticated tenant.',1;
+            UPDATE dbo.FiscalIssuerConfigurations
+            SET SupportDocumentSoftwareIdentificationCode=@SoftwareId,
+                SupportDocumentSoftwarePinSecretReference=@PinReference
+            WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1;
+            IF @@ROWCOUNT<>1
+                THROW 51022,'Activa primero la configuración DIAN de producción.',1;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        Add(command, "@TenantId", tenantId);
+        Add(command, "@BusinessId", businessId);
+        Add(command, "@SoftwareId", softwareIdentificationCode);
+        Add(command, "@PinReference", softwarePinSecretReference);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task ActivateSupportDocumentAsync(
         Guid tenantId,
         Guid businessId,
@@ -546,47 +680,57 @@ public sealed class SqlFiscalOnboardingStore(
             SET XACT_ABORT ON;
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
                 THROW 51021,'Business is outside the authenticated tenant.',1;
-            IF NOT EXISTS(SELECT 1 FROM dbo.FiscalIssuerConfigurations WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1)
-                THROW 51022,'Activa primero la configuración DIAN de producción.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.FiscalIssuerConfigurations
+                          WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1
+                            AND SupportDocumentSoftwareIdentificationCode IS NOT NULL
+                            AND SupportDocumentSoftwarePinSecretReference IS NOT NULL)
+                THROW 51022,'Configura primero el Software ID y PIN de documento soporte.',1;
 
-            DECLARE @AuthorizationNumber nvarchar(64),@Prefix nvarchar(16),
-                    @RangeStart bigint,@RangeEnd bigint,@ValidFrom date,@ValidUntil date,
-                    @ProtectedTechnicalKey varbinary(max),@SupplierTaxId nvarchar(32),
+            DECLARE @AuthorizationNumber nvarchar(64),@ResolutionDate date,
+                    @Prefix nvarchar(16),@RangeStart bigint,@RangeEnd bigint,
+                    @ValidFrom date,@ValidUntil date,@SupplierTaxId nvarchar(32),
                     @AuthorizationId uniqueidentifier=@NewAuthorizationId;
-            SELECT @AuthorizationNumber=AuthorizationNumber,@Prefix=Prefix,
-                   @RangeStart=RangeStart,@RangeEnd=RangeEnd,
-                   @ValidFrom=ValidFrom,@ValidUntil=ValidUntil,
-                   @ProtectedTechnicalKey=ProtectedTechnicalKey
+            SELECT @AuthorizationNumber=AuthorizationNumber,@ResolutionDate=ResolutionDate,
+                   @Prefix=Prefix,@RangeStart=RangeStart,@RangeEnd=RangeEnd,
+                   @ValidFrom=ValidFrom,@ValidUntil=ValidUntil
             FROM fiscal.DianNumberingRanges WITH(UPDLOCK,HOLDLOCK)
             WHERE DianNumberingRangeId=@RangeId AND TenantId=@TenantId
+              AND DocumentPurpose=N'SupportDocument'
               AND AssignedBusinessId IS NULL
-              AND ValidFrom<=CONVERT(date,@Now)
-              AND ValidUntil>=CONVERT(date,@Now);
+              AND ValidFrom<=CONVERT(date,@Now) AND ValidUntil>=CONVERT(date,@Now);
             IF @AuthorizationNumber IS NULL
-                THROW 51022,'La resolución de documento soporte ya fue asignada, aún no está vigente, venció o no existe.',1;
+                THROW 51022,'La resolución de documento soporte ya fue asignada, venció o no existe.',1;
+
             SELECT @SupplierTaxId=SupplierTaxId
             FROM dbo.FiscalIssuerConfigurations
             WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1;
 
             UPDATE fiscal.DianNumberingRanges
             SET AssignedBusinessId=@BusinessId,AssignedAt=@Now,AssignedByUserId=@UserId
-            WHERE DianNumberingRangeId=@RangeId AND AssignedBusinessId IS NULL;
+            WHERE DianNumberingRangeId=@RangeId AND TenantId=@TenantId
+              AND DocumentPurpose=N'SupportDocument' AND AssignedBusinessId IS NULL;
             IF @@ROWCOUNT<>1
                 THROW 51022,'La resolución fue asignada simultáneamente a otra sede.',1;
 
-            UPDATE dbo.FiscalSeries SET IsActive=0
-            WHERE BusinessId=@BusinessId AND DocumentType=N'SupportDocument' AND IsActive=1;
+            DECLARE @PreviousAuthorizations TABLE(FiscalAuthorizationId uniqueidentifier PRIMARY KEY);
+            UPDATE series SET IsActive=0
+            OUTPUT deleted.FiscalAuthorizationId INTO @PreviousAuthorizations
+            FROM dbo.FiscalSeries series
+            WHERE series.BusinessId=@BusinessId
+              AND series.DocumentType=N'SupportDocument' AND series.IsActive=1;
+            UPDATE existingAuthorization SET IsActive=0
+            FROM dbo.FiscalAuthorizations existingAuthorization
+            JOIN @PreviousAuthorizations previous
+              ON previous.FiscalAuthorizationId=existingAuthorization.FiscalAuthorizationId
+            WHERE NOT EXISTS(SELECT 1 FROM dbo.FiscalSeries activeSeries
+                             WHERE activeSeries.FiscalAuthorizationId=existingAuthorization.FiscalAuthorizationId
+                               AND activeSeries.IsActive=1);
             INSERT dbo.FiscalAuthorizations(
-                FiscalAuthorizationId,BusinessId,DianNumberingRangeId,AuthorizationNumber,SupplierTaxId,Environment,
+                FiscalAuthorizationId,BusinessId,DianNumberingRangeId,AuthorizationNumber,ResolutionDate,SupplierTaxId,Environment,
                 QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
                 AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
-            VALUES(@AuthorizationId,@BusinessId,@RangeId,@AuthorizationNumber,@SupplierTaxId,1,
+            VALUES(@AuthorizationId,@BusinessId,@RangeId,@AuthorizationNumber,@ResolutionDate,@SupplierTaxId,1,
                    @QrUrl,N'cuds-sha384',@ValidFrom,@ValidUntil,@RangeStart,@RangeEnd,1,@Now);
-            INSERT dbo.FiscalTechnicalKeySecrets(
-                FiscalTechnicalKeySecretId,BusinessId,FiscalAuthorizationId,TechnicalKeyVersion,
-                Environment,ProtectedValue,CreatedAt,UpdatedAt)
-            VALUES(@TechnicalKeySecretId,@BusinessId,@AuthorizationId,N'cuds-sha384',
-                   1,@ProtectedTechnicalKey,@Now,@Now);
             INSERT dbo.FiscalSeries(
                 SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
                 DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
@@ -604,7 +748,6 @@ public sealed class SqlFiscalOnboardingStore(
         Add(command, "@UserId", userId);
         Add(command, "@RangeId", dianNumberingRangeId);
         Add(command, "@NewAuthorizationId", ids.NewId());
-        Add(command, "@TechnicalKeySecretId", ids.NewId());
         Add(command, "@SeriesId", ids.NewId());
         Add(command, "@QrUrl", QrValidationUrl);
         Add(command, "@Now", timeProvider.GetUtcNow());

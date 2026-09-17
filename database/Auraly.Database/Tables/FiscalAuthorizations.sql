@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[FiscalAuthorizations]
     [DianNumberingRangeId] UNIQUEIDENTIFIER NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [AuthorizationNumber] NVARCHAR(64) NOT NULL,
+    [ResolutionDate] DATE NULL,
     [SupplierTaxId] NVARCHAR(32) NOT NULL,
     [Environment] TINYINT NOT NULL,
     [QrValidationUrl] NVARCHAR(500) NOT NULL,

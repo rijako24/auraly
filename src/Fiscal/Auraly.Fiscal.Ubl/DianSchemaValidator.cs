@@ -399,6 +399,10 @@ public sealed class DianSchemaValidator
 
     private static void ValidatePartyIdentifications(XDocument document, List<string> errors)
     {
+        var isSupportDocument = string.Equals(
+            document.Root?.Element(Cbc + "ProfileID")?.Value,
+            DianSupportDocument.Profile,
+            StringComparison.Ordinal);
         foreach (var partyElementName in new[]
                  {
                      "AccountingSupplierParty",
@@ -412,7 +416,9 @@ public sealed class DianSchemaValidator
                 var partyIdentification = party?
                     .Element(Cac + "PartyIdentification")?
                     .Element(Cbc + "ID");
-                if (string.Equals(organizationType, "2", StringComparison.Ordinal) &&
+                if (!(isSupportDocument &&
+                      partyElementName == "AccountingSupplierParty") &&
+                    string.Equals(organizationType, "2", StringComparison.Ordinal) &&
                     string.IsNullOrWhiteSpace(partyIdentification?.Value))
                     errors.Add(
                         $"Error: FAK61/FAK62 {partyElementName}/PartyIdentification es obligatorio cuando AdditionalAccountID es '2'.");

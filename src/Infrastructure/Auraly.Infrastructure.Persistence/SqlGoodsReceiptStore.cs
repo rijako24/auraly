@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Auraly.Application.Purchasing;
 using Auraly.BuildingBlocks.Domain.Documents;
+using Auraly.BuildingBlocks.Domain.Identity;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Fiscal;
@@ -657,7 +658,7 @@ public sealed class SqlGoodsReceiptStore(
                    p.PartyType,p.Identification,p.VerificationDigit,p.IdentificationTypeCode,
                    COALESCE(p.LegalName,p.DisplayName),COALESCE(p.DisplayName,p.LegalName),
                    country.Code,country.Name,division.Code,division.Name,city.Code,city.Name,site.AddressLine,
-                   email.Value,phone.Value
+                   email.Value,phone.Value,site.PostalCode
             FROM dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=fs.FiscalAuthorizationId
             JOIN dbo.FiscalIssuerConfigurations c ON c.BusinessId=fs.BusinessId AND c.IsActive=1
@@ -706,16 +707,19 @@ public sealed class SqlGoodsReceiptStore(
         if (reader.IsDBNull(14) || Enumerable.Range(17, 7).Any(reader.IsDBNull))
             throw new PurchasingValidationException(
                 "El proveedor necesita tipo de identificación y una sede principal con dirección DIAN completa para generar el documento soporte.");
-        var sourceIdentificationType = reader.GetString(14);
-        var dianIdentificationType =
-            PosSaleFiscalMappings.DianIdentificationTypeCode(sourceIdentificationType)
-            ?? throw new PurchasingValidationException(
-                $"El tipo de identificación '{sourceIdentificationType}' del proveedor no tiene equivalencia DIAN.");
+        var sellerIdentification = reader.GetString(12);
+        if (!ColombianNit.TryCalculateVerificationDigit(
+                sellerIdentification, out var sellerVerificationDigit))
+            throw new PurchasingValidationException(
+                "El proveedor residente necesita un NIT numérico válido para generar el documento soporte.");
+        if (reader.IsDBNull(26) || reader.GetString(26).Trim() is not { Length: 6 } postalZone ||
+            !postalZone.All(char.IsDigit))
+            throw new PurchasingValidationException(
+                "El proveedor residente necesita un código postal DIAN de seis dígitos para generar el documento soporte.");
         var seller = new PosSaleUblPartyContract(
-            reader.GetString(12), reader.IsDBNull(13) ? "0" : reader.GetString(13),
-            dianIdentificationType,
+            sellerIdentification, sellerVerificationDigit.ToString(), "31",
             reader.GetString(11) == "Organization" ? "1" : "2",
-            reader.GetString(15), reader.GetString(16), "R-99-PN", "01", "IVA",
+            reader.GetString(15), reader.GetString(16), "R-99-PN", "ZZ", "No aplica",
             new PosSaleUblAddressContract(
                 reader.GetString(21), reader.GetString(22), reader.GetString(20),
                 reader.GetString(19), reader.GetString(23), reader.GetString(17),
@@ -740,7 +744,7 @@ public sealed class SqlGoodsReceiptStore(
         if (consecutive > rangeEnd)
             throw new PurchasingValidationException("La numeración DIAN de documento soporte está agotada.");
         return new(seriesId, authorizationId, issuerId, prefix + consecutive,
-            environment, qrUrl, authorization, seller);
+            environment, qrUrl, authorization, seller, postalZone);
     }
 
     private static async Task InsertSupportFiscalAsync(
@@ -791,7 +795,7 @@ public sealed class SqlGoodsReceiptStore(
                     line, taxProfiles, taxProfilesByDianCode);
                 return new PurchaseSupportLineMetadata(line.LineNumber, product.Code, "999",
                     product.Unit, PosSaleFiscalMappings.TaxName(dianTaxCode), dianTaxCode);
-            }).ToArray());
+            }).ToArray(), SellerPostalZone: support.SellerPostalZone);
         const string sql = """
             INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
               AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
@@ -916,5 +920,6 @@ public sealed class SqlGoodsReceiptStore(
     internal sealed record SupportFiscalAllocation(
         Guid SeriesId, Guid AuthorizationId, Guid IssuerConfigurationId,
         string FiscalNumber, int Environment, string QrValidationUrl,
-        PosSaleUblAuthorizationContract Authorization, PosSaleUblPartyContract Seller);
+        PosSaleUblAuthorizationContract Authorization, PosSaleUblPartyContract Seller,
+        string SellerPostalZone);
 }

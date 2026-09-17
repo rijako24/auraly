@@ -806,9 +806,9 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             WHERE supplier.SupplierId=@SupplierId;
             IF NOT EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@PartyId AND IsPrimary=1 AND IsActive=1)
               INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
-                AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                AddressLine,PostalCode,IsPrimary,IsActive,CreatedBy,CreatedAt)
               VALUES(NEWID(),@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,@DivisionId,@CityId,
-                N'Carrera 1 # 2-3',1,1,@UserId,SYSDATETIMEOFFSET());
+                N'Carrera 1 # 2-3',N'200001',1,1,@UserId,SYSDATETIMEOFFSET());
 
             IF NOT EXISTS(
               SELECT 1 FROM dbo.FiscalSeries

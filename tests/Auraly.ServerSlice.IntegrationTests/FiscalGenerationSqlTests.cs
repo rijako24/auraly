@@ -304,7 +304,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
     }
 
     private FiscalGenerationWorker CreateWorker(IFiscalGenerationWorkStore store, TimeProvider clock) =>
-        new(store, new TestPin(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
+        new(store, new TestPin(), new DianInvoiceUblBuilder(),
+            new DianSupportDocumentUblBuilder(), new DianCreditNoteUblBuilder(),
             new DianDebitNoteUblBuilder(), new DianSchemaValidator(),
             new DianPayrollXmlBuilder(), new DianPayrollSchemaValidator(),
             new TestSigner(), clock);

@@ -213,7 +213,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         }
 
         using (var salesResponse = await user.GetAsync(
-                   $"/api/commerce/v1/sales-returns/sales?page=1&pageSize=20&search={Uri.EscapeDataString(original.DocumentNumber.FullNumber)}&withAvailableQuantity=true"))
+                   $"/api/commerce/v1/sales-returns/sales?businessId={fixture.BusinessId:D}&page=1&pageSize=20&search={Uri.EscapeDataString(original.DocumentNumber.FullNumber)}&withAvailableQuantity=true"))
         {
             Assert.True(salesResponse.IsSuccessStatusCode,
                 await salesResponse.Content.ReadAsStringAsync());
@@ -222,7 +222,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.Contains(page.Items, item => item.DocumentId == original.DocumentId);
         }
         using (var saleResponse = await user.GetAsync(
-                   $"/api/commerce/v1/sales-returns/sales/{original.DocumentId:D}"))
+                   $"/api/commerce/v1/sales-returns/sales/{original.DocumentId:D}?businessId={fixture.BusinessId:D}"))
         {
             saleResponse.EnsureSuccessStatusCode();
             var sale = await saleResponse.Content.ReadFromJsonAsync<ReturnableSale>();

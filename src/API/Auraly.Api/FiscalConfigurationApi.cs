@@ -162,6 +162,23 @@ public static class FiscalConfigurationApi
             await Handle(() => service.ActivateProductionAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, ct)));
 
+        group.MapPost("/onboarding/support-document/software", async (
+            HttpContext context,
+            Guid businessId,
+            SaveSupportDocumentSoftwareConfiguration request,
+            FiscalOnboardingService service,
+            CancellationToken ct) =>
+            await Handle(() => service.ConfigureSupportDocumentSoftwareAsync(
+                context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
+
+        group.MapPost("/onboarding/support-document/numbering-ranges/synchronize", async (
+            HttpContext context,
+            Guid businessId,
+            FiscalOnboardingService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SynchronizeSupportDocumentNumberingRangesAsync(
+                context.User.ToFiscalConfigurationUser(), businessId, ct)));
+
         group.MapPost("/onboarding/activate-support-document", async (
             HttpContext context,
             Guid businessId,
