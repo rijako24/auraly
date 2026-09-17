@@ -242,7 +242,9 @@ public sealed class ArchitectureDebtRatchetTests
         }
 
         var reporting = File.ReadAllText(Path.Combine(
-            RepositoryRoot, paths[1]));
+            RepositoryRoot,
+            "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlSalesReportingProcessor.cs"));
         Assert.DoesNotContain(
             "CompletedAt=SYSDATETIMEOFFSET()", reporting, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
