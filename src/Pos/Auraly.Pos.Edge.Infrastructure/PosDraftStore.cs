@@ -40,7 +40,8 @@ public sealed record PosDraftLineInput(
     bool AllowsFractionalSale = false,
     decimal DocumentUnitCost = 0,
     bool AllowsDocumentCostOverride = false,
-    decimal PromotionDiscount = 0);
+    decimal PromotionDiscount = 0,
+    decimal? PublicLineTotal = null);
 
 public sealed record PosDraftLine(
     Guid LineId,
@@ -63,13 +64,13 @@ public sealed record PosDraftLine(
     bool AllowsDocumentCostOverride,
     int Position,
     bool IsPriceOverridden = false,
-    decimal PromotionDiscount = 0)
+    decimal PromotionDiscount = 0,
+    decimal PublicLineTotal = 0)
 {
     public decimal PublicUnitPrice => UnitPrice;
-    public decimal PublicLineTotal => Total;
     public decimal Gross => Round(Quantity * UnitPrice);
     public decimal TotalDiscount => Discount + PromotionDiscount;
-    public decimal Total => Round(Gross - TotalDiscount);
+    public decimal Total => PublicLineTotal;
     public decimal Net => TaxRate == 0 ? Total : Round(Total / (1m + TaxRate / 100m));
     public decimal Tax => Total - Net;
 
@@ -202,6 +203,43 @@ public sealed class PosDraftStore
             command.CommandText = "ALTER TABLE PosDraftLines ADD COLUMN PromotionDiscount TEXT NOT NULL DEFAULT '0';";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+        if (!columns.Contains("PublicLineTotal"))
+        {
+            command.CommandText =
+                "ALTER TABLE PosDraftLines ADD COLUMN PublicLineTotal TEXT NOT NULL DEFAULT '0';";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            command.CommandText = """
+                SELECT LineId,Quantity,UnitPrice,Discount,PromotionDiscount
+                FROM PosDraftLines;
+                """;
+            var totals = new List<object>();
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    var total = CloseLineTotal(
+                        Decimal(reader, 1), Decimal(reader, 2),
+                        Decimal(reader, 3), Decimal(reader, 4));
+                    totals.Add(new
+                    {
+                        LineId = reader.GetString(0),
+                        PublicLineTotal = total.ToString(CultureInfo.InvariantCulture)
+                    });
+                }
+            }
+            if (totals.Count > 0)
+            {
+                command.CommandText = """
+                    UPDATE PosDraftLines AS target
+                    SET PublicLineTotal=json_extract(input.value,'$.PublicLineTotal')
+                    FROM json_each(@TotalsJson) input
+                    WHERE target.LineId=json_extract(input.value,'$.LineId');
+                    """;
+                command.Parameters.Add(P("@TotalsJson", JsonSerializer.Serialize(totals)));
+                await command.ExecuteNonQueryAsync(cancellationToken);
+                command.Parameters.Clear();
+            }
+        }
         command.CommandText = """
             CREATE UNIQUE INDEX IF NOT EXISTS UX_PosDrafts_SourceOrder
               ON PosDrafts(BusinessId,SourceOrderId)
@@ -266,11 +304,20 @@ public sealed class PosDraftStore
         CancellationToken cancellationToken = default)
     {
         if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity));
+        var current = await GetRequiredAsync(draftId, cancellationToken);
+        var line = current.Lines.SingleOrDefault(value => value.LineId == lineId)
+            ?? throw new KeyNotFoundException("The draft line does not exist.");
+        var total = CloseLineTotal(
+            quantity, line.UnitPrice, line.Discount, line.PromotionDiscount);
         await MutateLineAsync(
             draftId,
             lineId,
-            "UPDATE PosDraftLines SET Quantity=@Value WHERE DraftId=@DraftId AND LineId=@LineId;",
-            P("@Value", quantity),
+            """
+                UPDATE PosDraftLines
+                SET Quantity=@Quantity,PublicLineTotal=@PublicLineTotal
+                WHERE DraftId=@DraftId AND LineId=@LineId;
+                """,
+            [P("@Quantity", quantity), P("@PublicLineTotal", total)],
             cancellationToken);
         return await GetRequiredAsync(draftId, cancellationToken);
     }
@@ -290,8 +337,16 @@ public sealed class PosDraftStore
         await MutateLineAsync(
             draftId,
             lineId,
-            "UPDATE PosDraftLines SET Discount=@Value WHERE DraftId=@DraftId AND LineId=@LineId;",
-            P("@Value", discount),
+            """
+                UPDATE PosDraftLines
+                SET Discount=@Discount,PublicLineTotal=@PublicLineTotal
+                WHERE DraftId=@DraftId AND LineId=@LineId;
+                """,
+            [
+                P("@Discount", discount),
+                P("@PublicLineTotal", CloseLineTotal(
+                    line.Quantity, line.UnitPrice, discount, line.PromotionDiscount))
+            ],
             cancellationToken);
         return await GetRequiredAsync(draftId, cancellationToken);
     }
@@ -338,6 +393,11 @@ public sealed class PosDraftStore
             update.PublicUnitPrice,
             update.DocumentUnitCost,
             update.Discount,
+            PublicLineTotal = CloseLineTotal(
+                currentByLine[update.LineId].Quantity,
+                update.PublicUnitPrice,
+                update.Discount,
+                currentByLine[update.LineId].PromotionDiscount),
             CommercialChanged = update.PublicUnitPrice != currentByLine[update.LineId].PublicUnitPrice ||
                 update.Discount != currentByLine[update.LineId].Discount
         }).ToArray();
@@ -347,6 +407,7 @@ public sealed class PosDraftStore
                 UnitPrice=json_extract(input.value,'$.PublicUnitPrice'),
                 DocumentUnitCost=json_extract(input.value,'$.DocumentUnitCost'),
                 Discount=json_extract(input.value,'$.Discount'),
+                PublicLineTotal=json_extract(input.value,'$.PublicLineTotal'),
                 IsPriceOverridden=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN 1 ELSE IsPriceOverridden END,
                 PriceSource=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN 'Manual' ELSE PriceSource END,
                 PriceChannelId=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN NULL ELSE PriceChannelId END
@@ -375,7 +436,7 @@ public sealed class PosDraftStore
             draftId,
             lineId,
             "DELETE FROM PosDraftLines WHERE DraftId=@DraftId AND LineId=@LineId;",
-            null,
+            [],
             cancellationToken);
         return await GetRequiredAsync(draftId, cancellationToken);
     }
@@ -489,7 +550,12 @@ public sealed class PosDraftStore
             CurrencyCode = price.CurrencyCode.Trim().ToUpperInvariant(),
             price.PriceSource,
             price.PriceChannelId,
-            price.PromotionDiscount
+            price.PromotionDiscount,
+            PublicLineTotal = CloseLineTotal(
+                currentByLine[price.LineId].Quantity,
+                price.UnitPrice,
+                currentByLine[price.LineId].Discount,
+                price.PromotionDiscount)
         }).ToArray();
         await ExecuteAsync(connection, transaction, """
             UPDATE PosDraftLines AS target
@@ -498,7 +564,8 @@ public sealed class PosDraftStore
                 CurrencyCode=json_extract(input.value,'$.CurrencyCode'),
                 PriceSource=json_extract(input.value,'$.PriceSource'),
                 PriceChannelId=json_extract(input.value,'$.PriceChannelId'),
-                PromotionDiscount=json_extract(input.value,'$.PromotionDiscount')
+                PromotionDiscount=json_extract(input.value,'$.PromotionDiscount'),
+                PublicLineTotal=json_extract(input.value,'$.PublicLineTotal')
             FROM json_each(@PricesJson) input
             WHERE target.DraftId=@DraftId
               AND target.LineId=json_extract(input.value,'$.LineId');
@@ -779,12 +846,12 @@ public sealed class PosDraftStore
               LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,
               Quantity,BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,
               PriceChannelId,Discount,Note,AllowsFractionalSale,DocumentUnitCost,AllowsDocumentCostOverride,Position,
-              IsPriceOverridden,PromotionDiscount)
+              IsPriceOverridden,PromotionDiscount,PublicLineTotal)
             VALUES(
               @LineId,@DraftId,@ProductId,@ProductCode,@Description,@UnitCode,@TaxCode,@TaxRate,
               @Quantity,@BaseUnitPrice,@UnitPrice,@CurrencyCode,@PriceSource,
               @PriceChannelId,@Discount,@Note,@AllowsFractionalSale,@DocumentUnitCost,@AllowsDocumentCostOverride,@Position,
-              @IsPriceOverridden,@PromotionDiscount);
+              @IsPriceOverridden,@PromotionDiscount,@PublicLineTotal);
             """,
             LineParameters(lineId, draftId, input, position),
             ct);
@@ -793,7 +860,7 @@ public sealed class PosDraftStore
         DraftId draftId,
         Guid lineId,
         string sql,
-        SqliteParameter? value,
+        SqliteParameter[] values,
         CancellationToken ct)
     {
         await using var connection = await OpenAsync(ct);
@@ -804,7 +871,7 @@ public sealed class PosDraftStore
             P("@DraftId", draftId.Value),
             P("@LineId", lineId)
         };
-        if (value is not null) parameters.Add(value);
+        parameters.AddRange(values);
         var affected = await ExecuteAsync(connection, transaction, sql, [.. parameters], ct);
         if (affected == 0) throw new KeyNotFoundException("The draft line does not exist.");
         await TouchAsync(connection, transaction, draftId, ct);
@@ -822,11 +889,23 @@ public sealed class PosDraftStore
         if (input.UnitPrice < 0 || input.BaseUnitPrice < 0 || input.DocumentUnitCost < 0 ||
             input.Discount < 0 || input.PromotionDiscount < 0 || input.TaxRate < 0)
             throw new ArgumentOutOfRangeException(nameof(input));
+        if (input.PublicLineTotal is { } total &&
+            (total < 0 || total != MonetaryRounding.RoundLineAmount(total)))
+            throw new ArgumentOutOfRangeException(
+                nameof(input), "The line total must be a closed monetary amount.");
         if (input.Discount + input.PromotionDiscount > input.Quantity * input.UnitPrice)
             throw new ArgumentOutOfRangeException(
                 nameof(input),
                 "Discount cannot exceed gross value.");
     }
+
+    private static decimal CloseLineTotal(
+        decimal quantity,
+        decimal unitPrice,
+        decimal discount,
+        decimal promotionDiscount) =>
+        MonetaryRounding.RoundLineAmount(
+            quantity * unitPrice - discount - promotionDiscount);
 
     private static async Task UpgradeScopeAsync(
         SqliteConnection connection,
@@ -1040,7 +1119,7 @@ public sealed class PosDraftStore
             SELECT line.LineId,line.ProductId,line.ProductCode,line.Description,line.UnitCode,line.TaxCode,line.TaxRate,line.Quantity,
                    line.BaseUnitPrice,line.UnitPrice,line.CurrencyCode,line.PriceSource,line.PriceChannelId,
                    line.Discount,line.Note,line.AllowsFractionalSale,line.DocumentUnitCost,line.AllowsDocumentCostOverride,line.Position,
-                   line.IsPriceOverridden,line.PromotionDiscount
+                   line.IsPriceOverridden,line.PromotionDiscount,line.PublicLineTotal
             FROM PosDraftLines line
             WHERE line.DraftId=@DraftId ORDER BY line.Position,line.LineId;
             """;
@@ -1069,7 +1148,8 @@ public sealed class PosDraftStore
                 reader.GetInt64(17) == 1,
                 reader.GetInt32(18),
                 reader.GetInt64(19) == 1,
-                Decimal(reader, 20)));
+                Decimal(reader, 20),
+                Decimal(reader, 21)));
         return lines;
     }
 
@@ -1119,7 +1199,9 @@ public sealed class PosDraftStore
         P("@AllowsDocumentCostOverride", input.AllowsDocumentCostOverride ? 1 : 0),
         P("@Position", position),
         P("@IsPriceOverridden", input.AllowsDocumentCostOverride ? 1 : 0),
-        P("@PromotionDiscount", input.PromotionDiscount)
+        P("@PromotionDiscount", input.PromotionDiscount),
+        P("@PublicLineTotal", input.PublicLineTotal ?? CloseLineTotal(
+            input.Quantity, input.UnitPrice, input.Discount, input.PromotionDiscount))
     ];
 
     private static PosDraftLineInput ToInput(PosDraftLine line) =>
@@ -1141,7 +1223,8 @@ public sealed class PosDraftStore
             line.AllowsFractionalSale,
             line.DocumentUnitCost,
             line.AllowsDocumentCostOverride,
-            line.PromotionDiscount);
+            line.PromotionDiscount,
+            line.PublicLineTotal);
 
     private DateTimeOffset Now() => _timeProvider.GetUtcNow();
 
@@ -1216,6 +1299,7 @@ public sealed class PosDraftStore
           Position INTEGER NOT NULL,
           IsPriceOverridden INTEGER NOT NULL DEFAULT 0,
           PromotionDiscount TEXT NOT NULL DEFAULT '0',
+          PublicLineTotal TEXT NOT NULL,
           FOREIGN KEY(DraftId) REFERENCES PosDrafts(DraftId) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS IX_PosDraftLines_Draft
           ON PosDraftLines(DraftId,Position);

@@ -19,6 +19,8 @@ public sealed record OfflineSaleLine(
     decimal Discount,
     decimal TaxAmount,
     decimal DocumentUnitCost,
+    decimal UntaxedAmount,
+    decimal LineTotal,
     decimal PromotionDiscount = 0,
     bool IsGenericProductSnapshot = false)
 {
@@ -156,7 +158,9 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
                 line.Quantity,
                 line.UnitPrice,
                 line.TotalDiscount,
-                line.TaxAmount));
+                line.TaxAmount,
+                line.UntaxedAmount,
+                line.LineTotal));
         }
 
         return invoice;

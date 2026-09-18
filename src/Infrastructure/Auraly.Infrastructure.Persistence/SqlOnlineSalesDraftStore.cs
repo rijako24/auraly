@@ -3,11 +3,13 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Auraly.Application.Fiscal;
 using Auraly.Application.Sales;
 using Auraly.Application.Inventory;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Domain.Money;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Authorization;
 using Auraly.Application.Orders;
 using Auraly.Contracts.Orders;
@@ -1426,19 +1428,26 @@ public sealed partial class SqlOnlineSalesDraftStore(
 
     private static FiscalLineAmounts Fiscalize(OnlineSalesDraftLine line)
     {
-        var fiscalGross = MonetaryRounding.RoundLineAmount(line.Quantity * line.UnitPrice);
-        var fiscalDiscount = MonetaryRounding.RoundLineAmount(fiscalGross - line.Net);
-        if (fiscalDiscount < 0)
+        var amounts = SaleLineMonetaryPolicy.FromClosedPublishedAmounts(
+            line.Quantity,
+            line.Net,
+            line.Discount,
+            line.PromotionDiscount,
+            line.TaxRate);
+        return new(
+            amounts.UnitPrice,
+            amounts.DiscountAmount,
+            amounts.PromotionDiscountAmount);
+    }
+
+    private static void DemandValidPreparedFiscalSnapshot(
+        PosSaleUploadRequest request,
+        FiscalVerificationMaterial material)
+    {
+        var result = FiscalSnapshotValidator.Verify(request, material);
+        if (!result.IsVerified)
             throw new OnlineSalesDraftValidationException(
-                "El precio fiscal base no alcanza el total público de la línea.");
-        var publicDiscount = line.TotalDiscount;
-        var promotionDiscount = publicDiscount <= 0 || line.PromotionDiscount <= 0
-            ? 0
-            : Math.Min(
-                fiscalDiscount,
-                MonetaryRounding.RoundLineAmount(
-                    fiscalDiscount * line.PromotionDiscount / publicDiscount));
-        return new(line.UnitPrice, fiscalDiscount, promotionDiscount);
+                $"La factura no superó la validación fiscal interna: {result.ConflictReason}");
     }
 
     private sealed record DraftState(

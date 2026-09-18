@@ -16,7 +16,9 @@ public sealed class SalesInvoiceTests
             2m,
             10_000m,
             1_000m,
-            3_610m));
+            3_610m,
+            19_000m,
+            22_610m));
         var snapshot = new ImmutableFiscalSnapshot(
             "FV011",
             "FV01",
@@ -43,7 +45,9 @@ public sealed class SalesInvoiceTests
                 1m,
                 1m,
                 0m,
-                0m)));
+                0m,
+                1m,
+                1m)));
     }
 
     [Fact]
@@ -56,7 +60,9 @@ public sealed class SalesInvoiceTests
             1m,
             10_000m,
             0m,
-            1_900m));
+            1_900m,
+            10_000m,
+            11_900m));
         var changed = new ImmutableFiscalSnapshot(
             "FV011",
             "FV01",

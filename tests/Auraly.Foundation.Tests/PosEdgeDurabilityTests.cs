@@ -329,7 +329,8 @@ public sealed class PosEdgeDurabilityTests
                 new FiscalTechnicalKey("unused-for-receipt", "v1"),
                 FiscalEnvironment.Test,
                 "https://example.test/qr",
-                [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m, 6_000m)],
+                [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m, 6_000m,
+                    10_000m, 11_900m)],
                 DocumentType: PosSaleDocumentTypes.Receipt);
 
             var issued = await store.IssueAsync(command);
@@ -393,7 +394,8 @@ public sealed class PosEdgeDurabilityTests
             new FiscalTechnicalKey("CLAVE-TECNICA", "v1"),
             FiscalEnvironment.Test,
             "https://catalogo-vpfe.dian.gov.co/document/searchqr",
-            [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m, 6_000m)]);
+            [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m, 6_000m,
+                10_000m, 11_900m)]);
     }
 
     private static void DeleteIfPresent(string path)

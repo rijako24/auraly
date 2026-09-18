@@ -32,10 +32,13 @@ dominio de ventas— usan una sola regla canónica: dos decimales con
 `MidpointRounding.ToEven`, expuesta por `MonetaryRounding.RoundLineAmount`. El
 verificador fiscal no reconstruye cada línea a partir de cantidad y precio: valida su
 estructura y concilia los totales congelados del documento contra la suma de sus
-detalles y resúmenes tributarios. Cuando un checkout online detecta un conflicto real,
-conserva el documento y
-su snapshot bloqueados como evidencia, descarta el borrador `Issuing`, libera el
-pedido y mantiene el siguiente borrador limpio para una reemisión explícita.
+detalles y resúmenes tributarios. El checkout online ejecuta esa misma validación
+completa antes de confirmar su transacción. Si falla, revierte numeración, recibo,
+documento, cambio de borrador y vínculo con el pedido; no conserva un conflicto ni
+un recibo transitorio y la operación queda disponible para un intento nuevo. Un
+`FiscalIntegrityConflict` durable sólo corresponde a una venta que POS Edge ya
+emitió localmente y posteriormente sincronizó: en ese caso el documento fiscal ya
+existe fuera de la transacción del servidor y se conserva para recuperación explícita.
 
 La prueba SQL modifica nombres maestros después de recibir la venta y demuestra que el UBL conserva los datos históricos. Si falta un dato obligatorio, el proceso pasa a `MissingMandatoryFiscalData`; el servidor no inventa ni corrige silenciosamente la factura emitida.
 

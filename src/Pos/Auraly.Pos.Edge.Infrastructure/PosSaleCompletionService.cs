@@ -257,23 +257,31 @@ public sealed class PosSaleCompletionService(
         }
 
         var identity = await issuance.GetOrCreateAsync(draftId, ct);
-        var lines = draft.Lines.Select(line => new OfflineSaleLine(
-            new PosCatalogProduct(
-                line.ProductId,
-                line.ProductCode,
-                line.Description,
-                [],
-                true,
-                false,
-                line.TaxCode,
-                line.TaxRate),
-            line.Quantity,
-            ExclusiveFromPublished(line.UnitPrice, line.TaxRate),
-            ExclusiveFromPublished(line.Discount, line.TaxRate),
-            line.Tax,
-            line.DocumentUnitCost,
-            ExclusiveFromPublished(line.PromotionDiscount, line.TaxRate),
-            line.AllowsDocumentCostOverride)).ToArray();
+        var lines = draft.Lines.Select(line =>
+        {
+            var fiscal = SaleLineMonetaryPolicy.FromClosedPublishedAmounts(
+                line.Quantity, line.Net, line.Discount,
+                line.PromotionDiscount, line.TaxRate);
+            return new OfflineSaleLine(
+                new PosCatalogProduct(
+                    line.ProductId,
+                    line.ProductCode,
+                    line.Description,
+                    [],
+                    true,
+                    false,
+                    line.TaxCode,
+                    line.TaxRate),
+                line.Quantity,
+                fiscal.UnitPrice,
+                fiscal.DiscountAmount - fiscal.PromotionDiscountAmount,
+                line.Tax,
+                line.DocumentUnitCost,
+                line.Net,
+                line.Total,
+                fiscal.PromotionDiscountAmount,
+                line.AllowsDocumentCostOverride);
+        }).ToArray();
         var issued = await sales.IssueAsync(
             new PosEdgeIssueCommand(
                 command.UserId,
@@ -372,13 +380,6 @@ public sealed class PosSaleCompletionService(
             PrintedDirectly: false,
             PrintError: null);
     }
-    private static decimal ExclusiveFromPublished(decimal amount, decimal taxRate) =>
-        taxRate == 0m
-            ? amount
-            : decimal.Round(amount / (1m + taxRate / 100m), 6,
-                MidpointRounding.AwayFromZero);
-
-
     public async Task ReprintAsync(
         DocumentId documentId,
         UserId userId,

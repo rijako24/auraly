@@ -21,7 +21,7 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             return Conflict(string.Empty, null, "The fiscal snapshot is required.");
         }
 
-        var structuralConflict = ValidateStructure(request);
+        var structuralConflict = FiscalSnapshotValidator.ValidateStructure(request);
         if (structuralConflict is not null)
         {
             return Conflict(snapshot.Cufe, null, structuralConflict);
@@ -42,10 +42,36 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             return Conflict(snapshot.Cufe, null, "Fiscal verification material was not found.");
         }
 
+        return FiscalSnapshotValidator.Verify(request, material);
+    }
+
+    private static FiscalSnapshotVerificationResult Conflict(
+        string received,
+        string? calculated,
+        string reason) =>
+        new(false, received, calculated, reason);
+}
+
+public static class FiscalSnapshotValidator
+{
+    public static FiscalSnapshotVerificationResult Verify(
+        PosSaleUploadRequest request,
+        FiscalVerificationMaterial material)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(material);
+        var snapshot = request.FiscalSnapshot;
+        var structuralConflict = ValidateStructure(request);
+        if (snapshot is null || structuralConflict is not null)
+            return Conflict(snapshot?.Cufe ?? string.Empty, null,
+                structuralConflict ?? "The fiscal snapshot is required.");
+
+        var environment = (FiscalEnvironment)snapshot.Environment;
         if (!string.Equals(material.SupplierTaxId, snapshot.SupplierTaxId, StringComparison.Ordinal) ||
             material.Environment != environment)
         {
-            return Conflict(snapshot.Cufe, null, "The fiscal issuer or environment differs from the server configuration.");
+            return Conflict(snapshot.Cufe, null,
+                "The fiscal issuer or environment differs from the server configuration.");
         }
 
         var taxes = request.Lines
@@ -66,23 +92,17 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             material.QrValidationUrl);
 
         if (!FixedTimeEquals(snapshot.Cufe, calculated.Cufe))
-        {
-            return Conflict(snapshot.Cufe, calculated.Cufe, "The received CUFE differs from the server calculation.");
-        }
-
+            return Conflict(snapshot.Cufe, calculated.Cufe,
+                "The received CUFE differs from the server calculation.");
         if (!string.Equals(snapshot.QrPayload, calculated.QrPayload, StringComparison.Ordinal))
-        {
-            return Conflict(snapshot.Cufe, calculated.Cufe, "The received QR payload differs from the server calculation.");
-        }
+            return Conflict(snapshot.Cufe, calculated.Cufe,
+                "The received QR payload differs from the server calculation.");
 
         return new FiscalSnapshotVerificationResult(
-            true,
-            snapshot.Cufe,
-            calculated.Cufe,
-            null);
+            true, snapshot.Cufe, calculated.Cufe, null);
     }
 
-    private static string? ValidateStructure(PosSaleUploadRequest request)
+    public static string? ValidateStructure(PosSaleUploadRequest request)
     {
         var snapshot = request.FiscalSnapshot;
         if (snapshot is null)
@@ -148,17 +168,19 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
                 line.UnitPrice < 0 ||
                 line.DiscountAmount < 0 ||
                 line.TaxAmount < 0 ||
+                line.UntaxedAmount < 0 ||
+                line.LineTotal < 0 ||
                 line.TaxRate < 0)
             {
                 return $"Line {line.LineNumber} contains invalid values.";
             }
 
-            var expectedUntaxed = MonetaryRounding.RoundLineAmount(
-                (line.Quantity * line.UnitPrice) - line.DiscountAmount);
-            if (line.UntaxedAmount != expectedUntaxed ||
-                line.LineTotal != expectedUntaxed + line.TaxAmount)
+            if (line.UntaxedAmount != MonetaryRounding.RoundLineAmount(line.UntaxedAmount) ||
+                line.TaxAmount != MonetaryRounding.RoundLineAmount(line.TaxAmount) ||
+                line.LineTotal != MonetaryRounding.RoundLineAmount(line.LineTotal) ||
+                line.LineTotal != line.UntaxedAmount + line.TaxAmount)
             {
-                return $"Line {line.LineNumber} totals do not match its quantity, price and discounts.";
+                return $"Line {line.LineNumber} does not contain closed monetary totals.";
             }
         }
 
@@ -168,6 +190,10 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
         if (snapshot.UntaxedAmount != untaxedTotal ||
             snapshot.TaxAmount != taxTotal ||
             snapshot.PayableAmount != payableTotal + snapshot.PayableRoundingAmount ||
+            request.CommercialSnapshot.UntaxedAmount != untaxedTotal ||
+            request.CommercialSnapshot.TaxAmount != taxTotal ||
+            request.CommercialSnapshot.PayableAmount !=
+                payableTotal + request.CommercialSnapshot.PayableRoundingAmount ||
             snapshot.PayableRoundingAmount !=
                 request.CommercialSnapshot.PayableRoundingAmount)
         {

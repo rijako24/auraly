@@ -195,6 +195,32 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
+    public async Task Temporary_sale_preserves_the_closed_line_total_without_reconstructing_it()
+    {
+        await WithStoreAsync(async (store, path, scope, ids) =>
+        {
+            var active = await store.AddOrIncrementLineAsync(
+                scope,
+                Line(0.3m) with
+                {
+                    UnitPrice = 15_340.45m,
+                    PublicLineTotal = 4_602.13m
+                });
+            var temporary = await store.SaveTemporaryAsync(
+                active.DraftId, "Fracción", null, null);
+
+            var reopened = Store(path, ids);
+            await reopened.InitializeAsync();
+            var recovered = await reopened.RecoverTemporaryAsync(
+                temporary.DraftId, scope);
+
+            var line = Assert.Single(recovered.Lines);
+            Assert.Equal(4_602.13m, line.PublicLineTotal);
+            Assert.Equal(4_602.13m, recovered.PayableAmount);
+        });
+    }
+
+    [Fact]
     public async Task Temporary_cannot_replace_a_non_empty_active_sale()
     {
         await WithStoreAsync(async (store, _, scope, _) =>

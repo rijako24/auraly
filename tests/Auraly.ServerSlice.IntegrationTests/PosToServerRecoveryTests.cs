@@ -457,7 +457,8 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
                 ServerSliceFixture.TechnicalKeyVersion),
             FiscalEnvironment.Test,
             ServerSliceFixture.QrValidationUrl,
-            [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m, 6_000m)],
+            [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m, 6_000m,
+                10_000m, 11_900m)],
             [new OfflineSalePayment("Cash", 11_900m)]);
     }
 
@@ -485,7 +486,11 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             var line = request.Lines.Single();
             var changed = request with
             {
-                Lines = [line with { Quantity = line.Quantity + 1 }]
+                Lines = [line with
+                {
+                    UntaxedAmount = line.UntaxedAmount + 1m,
+                    LineTotal = line.LineTotal + 1m
+                }]
             };
             return inner.UploadAsync(changed, idempotencyKey, cancellationToken);
         }

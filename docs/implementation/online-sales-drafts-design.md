@@ -78,6 +78,12 @@ snapshot sin recalcularlo. Al recuperar un pedido conserva también código, nom
 unidad, costo, impuesto y moneda de esa fotografía; no exige que el producto siga
 activo. Una mutación comercial posterior vuelve a resolver las reglas vigentes.
 
+POS Edge conserva también `PublicLineTotal` en cada línea SQLite. Captura, cambio de
+cantidad, descuento y edición F2 de costo, margen o precio cierran ese total una sola
+vez al aplicar la mutación. Pausar, reiniciar, recuperar, guardar como pedido y
+facturar transportan el valor cerrado; ninguna etapa posterior vuelve a obtenerlo
+multiplicando cantidad por precio ni crea un descuento para absorber redondeos.
+
 Al completar una venta, la respuesta autoritativa instala inmediatamente el
 `nextDraft` vacío y retira de la interfaz cliente, líneas, pagos y pedido de
 origen. La impresión consume en paralelo el comprobante emitido: no prolonga el

@@ -50,24 +50,44 @@ public sealed class OnlineSalesOrderCheckoutLineMapperTests
     }
 
     [Fact]
-    public void Normalize_UsesTheCanonicalUpwardUnitPriceWhenDecimalsRequireIt()
+    public void Normalize_PreservesTheClosedLineTotalAtAMonetaryMidpoint()
     {
         var line = CreateLine(
-            quantity: 0.333m,
-            publicUnitPrice: 7_580m,
+            quantity: 0.3m,
+            publicUnitPrice: 15_340.45m,
             discount: 0m,
-            publicLineTotal: 2_524.14m,
-            taxRate: 19m,
-            cost: 5_283.43m);
+            publicLineTotal: 4_602.13m,
+            taxRate: 0m,
+            cost: 10_000m);
 
         var normalized = Assert.Single(
             OnlineSalesOrderCheckoutLineMapper.Normalize([line]));
+        var fiscal = SaleLineMonetaryPolicy.FromClosedPublishedAmounts(
+            normalized.Quantity,
+            normalized.Net,
+            normalized.Discount,
+            normalized.PromotionDiscount,
+            normalized.TaxRate);
 
-        Assert.True(decimal.Round(
-            normalized.Quantity * normalized.UnitPrice,
-            2,
-            MidpointRounding.ToEven) >= normalized.Net);
-        Assert.Equal(2_524.14m, normalized.Total);
+        Assert.Equal(4_602.13m, normalized.Net);
+        Assert.Equal(4_602.13m, normalized.Total);
+        Assert.Equal(0m, fiscal.DiscountAmount);
+        Assert.Equal(15_340.4333m, fiscal.UnitPrice);
+    }
+
+    [Fact]
+    public void FiscalProjection_UsesOnlyRealDiscountsAndDerivesItsUnitPriceFromTheClosedAmount()
+    {
+        var fiscal = SaleLineMonetaryPolicy.FromClosedPublishedAmounts(
+            quantity: 2m,
+            untaxedAmount: 20_000m,
+            discountAmount: 1_190m,
+            promotionDiscountAmount: 595m,
+            taxRate: 19m);
+
+        Assert.Equal(10_750m, fiscal.UnitPrice);
+        Assert.Equal(1_500m, fiscal.DiscountAmount);
+        Assert.Equal(500m, fiscal.PromotionDiscountAmount);
     }
 
     private static OnlineSalesOrderCheckoutLine CreateLine(

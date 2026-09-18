@@ -92,7 +92,8 @@ public sealed class ConnectedOfflineSaleSliceTests
             new FiscalTechnicalKey("CLAVE-TECNICA", "v1"),
             FiscalEnvironment.Test,
             "https://catalogo-vpfe.dian.gov.co/document/searchqr",
-            [new OfflineSaleLine(posProduct, 2m, 10_000m, 1_000m, 3_610m, 6_000m)]));
+            [new OfflineSaleLine(posProduct, 2m, 10_000m, 1_000m, 3_610m, 6_000m,
+                19_000m, 22_610m)]));
 
         Assert.Equal(SalesInvoiceStatus.LocallyIssuedPendingSync, result.Invoice.Status);
         Assert.Equal("VTA01-00000001", result.Contract.DocumentNumber);
@@ -157,7 +158,8 @@ public sealed class ConnectedOfflineSaleSliceTests
                 new FiscalTechnicalKey("CLAVE-TECNICA", "v1"),
                 FiscalEnvironment.Test,
                 "https://catalogo-vpfe.dian.gov.co/document/searchqr",
-                [new OfflineSaleLine(product, 1m, 10_000m, 1_000m, 1_710m, 6_000m)])));
+                [new OfflineSaleLine(product, 1m, 10_000m, 1_000m, 1_710m, 6_000m,
+                    9_000m, 10_710m)])));
     }
 
     [Fact]
@@ -177,6 +179,7 @@ public sealed class ConnectedOfflineSaleSliceTests
         var invoice = service.Prepare(new PrepareOfflineSaleCommand(
             userId, new DocumentId(Guid.NewGuid()), context,
             [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_710m, 6_000m,
+                9_000m, 10_710m,
                 PromotionDiscount: 1_000m)]));
 
         Assert.Equal(10_710m, invoice.PayableAmount);

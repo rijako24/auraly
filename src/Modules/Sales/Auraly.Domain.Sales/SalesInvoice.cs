@@ -19,11 +19,12 @@ public sealed record SalesInvoiceLine(
     decimal Quantity,
     decimal UnitPrice,
     decimal Discount,
-    decimal Tax)
+    decimal Tax,
+    decimal UntaxedAmount,
+    decimal LineTotal)
 {
-    public decimal Subtotal => MonetaryRounding.RoundLineAmount(
-        (Quantity * UnitPrice) - Discount);
-    public decimal Total => Subtotal + Tax;
+    public decimal Subtotal => UntaxedAmount;
+    public decimal Total => LineTotal;
 }
 
 public sealed record ImmutableFiscalSnapshot(
@@ -83,8 +84,14 @@ public sealed class SalesInvoice
         EnsureDraft();
         if (line.ProductId.Value == Guid.Empty) throw new ArgumentException("A product ID is required.", nameof(line));
         if (line.Quantity <= 0) throw new ArgumentOutOfRangeException(nameof(line), "Quantity must be positive.");
-        if (line.UnitPrice < 0 || line.Discount < 0 || line.Tax < 0) throw new ArgumentOutOfRangeException(nameof(line));
-        if (line.Discount > line.Quantity * line.UnitPrice) throw new ArgumentOutOfRangeException(nameof(line), "Discount cannot exceed gross value.");
+        if (line.UnitPrice < 0 || line.Discount < 0 || line.Tax < 0 ||
+            line.UntaxedAmount < 0 || line.LineTotal < 0)
+            throw new ArgumentOutOfRangeException(nameof(line));
+        if (line.UntaxedAmount != MonetaryRounding.RoundLineAmount(line.UntaxedAmount) ||
+            line.Tax != MonetaryRounding.RoundLineAmount(line.Tax) ||
+            line.LineTotal != MonetaryRounding.RoundLineAmount(line.LineTotal) ||
+            line.LineTotal != line.UntaxedAmount + line.Tax)
+            throw new ArgumentException("Line totals must be closed monetary amounts.", nameof(line));
         _lines.Add(line);
     }
 

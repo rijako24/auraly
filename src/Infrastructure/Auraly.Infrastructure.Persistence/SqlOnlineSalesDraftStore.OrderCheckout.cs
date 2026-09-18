@@ -256,6 +256,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                 CustomerPartySiteId: source.CustomerPartySiteId);
         }
 
+        if (upload.FiscalSnapshot is not null)
+            DemandValidPreparedFiscalSnapshot(upload, fiscalMaterial!);
+
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.OnlineSalesCheckoutReceipts(
               OnlineSalesCheckoutReceiptId,BusinessId,SalesDraftId,NextSalesDraftId,

@@ -16,6 +16,89 @@ public sealed class OrderBatchInvoiceTests(
     ITestOutputHelper output)
 {
     [Fact]
+    public async Task Fractional_order_uses_its_closed_line_total_without_a_rounding_discount()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var arrange = connection.CreateCommand();
+            arrange.CommandText = """
+                UPDATE dbo.Orders
+                SET Subtotal=4602.13,DiscountTotal=0,TaxTotal=0,Total=4602.13
+                WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+
+                UPDATE dbo.OrderItems
+                SET Quantity=.3,UnitPrice=15340.45,DiscountAmount=0,
+                    TaxAmount=0,LineTotal=4602.13,
+                    RawPayloadJson=JSON_MODIFY(
+                        JSON_MODIFY(RawPayloadJson,'$.TaxCode','01'),
+                        '$.TaxRate',0)
+                WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+                """;
+            arrange.Parameters.AddWithValue("@OrderId", orderId);
+            arrange.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(2, await arrange.ExecuteNonQueryAsync());
+        }
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        fixture.PauseDocumentProcessing();
+        Guid documentId;
+        try
+        {
+            var response = await InvoiceAsync(
+                client,
+                new InvoiceOrdersRequest(
+                    workSessionId, fixture.WarehouseId, userId, [orderId], "Cash", null),
+                $"closed-line-total-{Guid.NewGuid():N}");
+            Assert.Equal("Completed", response.Status);
+            var result = Assert.Single(response.Results);
+            Assert.Equal("Invoiced", result.Status);
+            documentId = result.DocumentId
+                ?? throw new InvalidOperationException("The order did not produce a document.");
+
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+        }
+
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT line.UnitPrice,line.DiscountAmount,line.UntaxedAmount,line.LineTotal,
+                   document.FiscalStatus,receipt.Status
+            FROM dbo.SalesDocumentLines line
+            JOIN dbo.SalesDocuments document ON document.DocumentId=line.DocumentId
+            JOIN dbo.OnlineSalesCheckoutReceipts receipt ON receipt.DocumentId=line.DocumentId
+            WHERE line.DocumentId=@DocumentId;
+            """;
+        verify.Parameters.AddWithValue("@DocumentId", documentId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(15_340.4333m, reader.GetDecimal(0));
+        Assert.Equal(0m, reader.GetDecimal(1));
+        Assert.Equal(4_602.13m, reader.GetDecimal(2));
+        Assert.Equal(4_602.13m, reader.GetDecimal(3));
+        Assert.NotEqual("FiscalIntegrityConflict", reader.GetString(4));
+        Assert.Equal("Completed", reader.GetString(5));
+    }
+
+    [Fact]
     public async Task Generic_order_line_is_invoiced_from_its_snapshot_without_inventory_reinterpretation()
     {
         var userId = Guid.NewGuid();

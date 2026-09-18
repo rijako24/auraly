@@ -56,8 +56,6 @@ public static class OnlineSalesOrderCheckoutLineMapper
             var net = decimal.Round(
                 line.PublicLineTotal / (1m + line.TaxRate / 100m),
                 2, MidpointRounding.ToEven);
-            if (decimal.Round(line.Quantity * unitPrice, 2, MidpointRounding.ToEven) < net)
-                unitPrice = decimal.Ceiling(net / line.Quantity * 100m) / 100m;
             var promotion = string.Equals(
                 line.PriceSource, "Promotion", StringComparison.OrdinalIgnoreCase);
             return new OnlineSalesDraftLine(
