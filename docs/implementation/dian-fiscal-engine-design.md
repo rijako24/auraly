@@ -63,6 +63,13 @@ para la operación con residente, incluye `InvoicePeriod` por línea y conserva
 la cantidad base específica del documento soporte. Una corrección de ese perfil
 no modifica la estructura UBL de factura de venta.
 
+El QR de documento soporte conserva el texto detallado del anexo y termina en
+la URL de consulta DIAN `.../document/searchqr?documentkey=<CUDS>`. La
+autorización fiscal almacena únicamente el endpoint DIAN base, sin query ni
+fragmento; el motor agrega `documentkey` exactamente una vez y rechaza cualquier
+configuración que incumpla ese contrato. La misma regla aplica a la nota de
+ajuste tipo `95`; no altera el contrato QR de factura de venta.
+
 La prueba de habilitación de devolución recorre la venta original, devolución parcial, `CreditNote` tipo `91`, concepto de corrección `1`, `ProfileExecutionID=2`, CUDE, firma, `SendTestSetAsync` y `GetStatusZip`. También verifica que el transporte productivo no sea invocado. La activación de producción exige evidencia durable de aceptación del set (`GetStatusZip`, código `2`); la aceptación individual de un documento con código `00` no abre esa puerta.
 
 ## Prueba real de nota crédito contra DIAN

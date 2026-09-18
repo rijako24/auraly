@@ -544,6 +544,12 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         var fiscal = await ReadFiscalGenerationAsync(request.DocumentId);
         Assert.Equal(FiscalDocumentStatusCodes.PendingSubmission, fiscal.Status);
         Assert.False(string.IsNullOrWhiteSpace(fiscal.UniqueCode));
+        var signedXml = await ReadArtifactTextAsync(request.DocumentId, "SignedXml");
+        Assert.Contains(
+            $"https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey={fiscal.UniqueCode}</sts:QRCode>",
+            signedXml, StringComparison.Ordinal);
+        Assert.DoesNotContain("?documentkey=?documentkey=", signedXml,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -819,7 +825,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                 Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,AuthorizedRangeStart,
                 AuthorizedRangeEnd,IsActive,CreatedAt)
               VALUES(@AuthorizationId,@BusinessId,@AuthorizationNumber,@IssuerTaxId,2,
-                N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=',N'1',
+                N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr',N'1',
                 '2026-01-01','2028-12-31',1,999,1,SYSDATETIMEOFFSET());
               INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
                 DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)

@@ -43,7 +43,7 @@ IF NOT EXISTS (
         ValidFrom,ValidUntil,AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
     VALUES(
         @FiscalAuthorizationId,@BusinessId,N'AURALY-VISUAL-2026',N'900123456',
-        2,N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=',
+        2,N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr',
         N'visual-v1','2026-01-01','2028-12-31',1,99999999,1,@Now);
 
 IF NOT EXISTS (

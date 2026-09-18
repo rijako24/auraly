@@ -622,7 +622,7 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 SupplierTaxId,Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
                 AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
             VALUES(@SalesAuthorizationId,@BusinessId,@SalesRangeId,N'18769900001',@SupplierTaxId,1,
-                N'https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=',N'cufe-sha384',
+                N'https://catalogo-vpfe.dian.gov.co/document/searchqr',N'cufe-sha384',
                 DATEADD(day,-1,CONVERT(date,SYSDATETIMEOFFSET())),
                 DATEADD(day,30,CONVERT(date,SYSDATETIMEOFFSET())),1,500,1,SYSDATETIMEOFFSET());
             INSERT dbo.FiscalSeries(
@@ -638,7 +638,7 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 SupplierTaxId,Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
                 AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
             VALUES(@SupportAuthorizationId,@BusinessId,@ValidRangeId,N'18769900001',@SupplierTaxId,1,
-                N'https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=',N'cuds-sha384',
+                N'https://catalogo-vpfe.dian.gov.co/document/searchqr',N'cuds-sha384',
                 DATEADD(day,-1,CONVERT(date,SYSDATETIMEOFFSET())),
                 DATEADD(day,30,CONVERT(date,SYSDATETIMEOFFSET())),501,900,1,SYSDATETIMEOFFSET());
             INSERT dbo.FiscalSeries(

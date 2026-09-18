@@ -35,6 +35,7 @@ public static class CudsCalculator
             ((int)input.Environment).ToString(CultureInfo.InvariantCulture));
         var cuds = Convert.ToHexString(
             SHA384.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        var validationUrl = BuildValidationUrl(qrBaseUrl, cuds);
         var qr = string.Join("\n",
             $"NumDS: {input.DocumentNumber}",
             $"FecDS: {issuedAt:yyyy-MM-dd}",
@@ -45,8 +46,21 @@ public static class CudsCalculator
             $"ValIva: {Money(input.VatAmount)}",
             $"ValTolDS: {Money(input.PayableAmount)}",
             $"CUDS: {cuds}",
-            $"{qrBaseUrl.TrimEnd('/')}?documentkey={cuds}");
+            validationUrl);
         return new(cuds, qr);
+    }
+
+    private static string BuildValidationUrl(string qrBaseUrl, string cuds)
+    {
+        var endpoint = qrBaseUrl.TrimEnd('/');
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(uri.Query) ||
+            !string.IsNullOrEmpty(uri.Fragment))
+            throw new ArgumentException(
+                "The QR validation URL must be an absolute HTTPS endpoint without query or fragment.",
+                nameof(qrBaseUrl));
+        return $"{endpoint}?documentkey={cuds}";
     }
 
     private static string Money(decimal value) =>

@@ -21,6 +21,9 @@ CREATE TABLE [dbo].[FiscalAuthorizations]
     CONSTRAINT [UQ_FiscalAuthorizations_Business_Number_Range] UNIQUE
         ([BusinessId], [AuthorizationNumber], [DianNumberingRangeId]),
     CONSTRAINT [CK_FiscalAuthorizations_Environment] CHECK ([Environment] IN (1, 2)),
+    CONSTRAINT [CK_FiscalAuthorizations_QrValidationUrl] CHECK (
+        ([Environment] = 1 AND [QrValidationUrl] = N'https://catalogo-vpfe.dian.gov.co/document/searchqr')
+        OR ([Environment] = 2 AND [QrValidationUrl] = N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr')),
     CONSTRAINT [CK_FiscalAuthorizations_Validity] CHECK ([ValidUntil] >= [ValidFrom]),
     CONSTRAINT [CK_FiscalAuthorizations_Range] CHECK (
         ([AuthorizedRangeStart] IS NULL AND [AuthorizedRangeEnd] IS NULL)

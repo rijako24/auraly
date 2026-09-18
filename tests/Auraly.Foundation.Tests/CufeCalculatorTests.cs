@@ -136,6 +136,53 @@ public sealed class CufeCalculatorTests
     }
 
     [Fact]
+    public void Support_document_appends_the_key_once_to_the_native_dian_endpoint()
+    {
+        var input = new CudsInput(
+            "DS123",
+            new DateTimeOffset(2026, 8, 25, 10, 20, 30, TimeSpan.FromHours(-5)),
+            100_000m,
+            19_000m,
+            119_000m,
+            "222",
+            "900",
+            "PIN",
+            FiscalEnvironment.Production);
+
+        var result = CudsCalculator.Calculate(input,
+            "https://catalogo-vpfe.dian.gov.co/document/searchqr");
+
+        Assert.EndsWith(
+            $"https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey={result.Cuds}",
+            result.QrPayload, StringComparison.Ordinal);
+        Assert.DoesNotContain("?documentkey=?documentkey=", result.QrPayload,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=")]
+    [InlineData("https://catalogo-vpfe.dian.gov.co/document/searchqr#fragment")]
+    [InlineData("http://catalogo-vpfe.dian.gov.co/document/searchqr")]
+    public void Support_document_rejects_a_non_native_validation_endpoint(string configuredUrl)
+    {
+        var input = new CudsInput(
+            "DS123",
+            new DateTimeOffset(2026, 8, 25, 10, 20, 30, TimeSpan.FromHours(-5)),
+            100_000m,
+            19_000m,
+            119_000m,
+            "222",
+            "900",
+            "PIN",
+            FiscalEnvironment.Production);
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            CudsCalculator.Calculate(input, configuredUrl));
+
+        Assert.Equal("qrBaseUrl", exception.ParamName);
+    }
+
+    [Fact]
     public void Support_document_normalizes_the_same_instant_to_colombia_time()
     {
         var colombia = new DateTimeOffset(2026, 8, 25, 10, 20, 30, TimeSpan.FromHours(-5));

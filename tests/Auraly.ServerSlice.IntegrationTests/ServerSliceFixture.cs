@@ -68,7 +68,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public const string JwtSigningKey = "Auraly-Catalog-Integration-Tests-Key-2026";
     public const string OfflineLeaseKeyId = "integration-test-offline-lease";
     public const string QrValidationUrl =
-        "https://catalogo-vpfe.dian.gov.co/document/searchqr";
+        "https://catalogo-vpfe-hab.dian.gov.co/document/searchqr";
     public static readonly byte[] FiscalSecretProtectionKey =
         SHA256.HashData(Encoding.UTF8.GetBytes("Auraly.ServerSlice fiscal secret protection key"));
 
