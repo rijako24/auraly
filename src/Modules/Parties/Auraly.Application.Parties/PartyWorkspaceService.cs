@@ -165,9 +165,10 @@ public sealed class PartyWorkspaceService(
             throw new PartyValidationException("Legal name is required for an organization.");
         if (request.Sites is not null)
         {
-            if (request.Sites.Count == 0) throw new PartyValidationException("A customer must keep at least one site.");
+            Require(actor, PartyPermissionCodes.ManageSites);
+            if (request.Sites.Count == 0) throw new PartyValidationException("A third party must keep at least one site.");
             if (request.Sites.Count(site => site.Site.IsPrimary) != 1)
-                throw new PartyValidationException("Exactly one customer site must be primary.");
+                throw new PartyValidationException("Exactly one third-party site must be primary.");
             foreach (var site in request.Sites) ValidateSite(site.Site);
         }
         if (request.Customer?.PriceChannelId == Guid.Empty)

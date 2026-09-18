@@ -398,6 +398,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             PartyPermissionCodes.GeographyManage,
             PartyPermissionCodes.CustomerRead,
             PartyPermissionCodes.CustomerCreate,
+            PartyPermissionCodes.ManageSites,
             PartyWorkspacePermissionCodes.Read,
             PartyWorkspacePermissionCodes.Update,
             PartyWorkspacePermissionCodes.Deactivate,
@@ -547,11 +548,30 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(customer.PartyId, anyPartyOption.RoleId);
         Assert.Equal("Any", anyPartyOption.Role);
 
+        var workspaceDetail = await admin.GetFromJsonAsync<PartyWorkspaceDetail>(
+            $"/api/commerce/v1/parties/{item.PartyId:D}");
+        Assert.NotNull(workspaceDetail);
+        var site = Assert.Single(workspaceDetail.Sites!);
+        var siteUpdates = new[]
+        {
+            new PartySiteSaveInput(
+                site.PartySiteId,
+                site.RowVersion,
+                new PartySiteInput(
+                    site.Code, site.Name, site.CountryId, site.AdministrativeDivisionId, site.CityId,
+                    site.AddressLine, site.Neighborhood, "110111", site.Email, site.Phone, site.IsPrimary,
+                    site.GoogleMapsUrl, site.GooglePlaceId, site.Latitude, site.Longitude))
+        };
         var update = new UpdatePartyRequest(
             PartyTypes.Organization, "Comercial unificada renovada",
             "Comercial unificada S.A.S.", null, null, "4",
             "compras@unificada.test", "3007773311", item.RowVersion,
+            Sites: siteUpdates,
             Supplier: new UpdateSupplierRoleRequest(null, 45));
+        using var noSitePermission = fixture.CreateAdminClient(PartyWorkspacePermissionCodes.Update);
+        using var forbiddenSiteUpdate = await noSitePermission.PutAsJsonAsync(
+            $"/api/commerce/v1/parties/{item.PartyId:D}", update);
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenSiteUpdate.StatusCode);
         using var updateResponse = await admin.PutAsJsonAsync(
             $"/api/commerce/v1/parties/{item.PartyId:D}", update);
         Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
@@ -560,6 +580,9 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal("Comercial unificada renovada", updated.DisplayName);
         Assert.Equal("4", updated.VerificationDigit);
         Assert.Equal(45, updated.SupplierDefaultPaymentDueDays);
+        var updatedDetail = await admin.GetFromJsonAsync<PartyWorkspaceDetail>(
+            $"/api/commerce/v1/parties/{item.PartyId:D}");
+        Assert.Equal("110111", Assert.Single(updatedDetail!.Sites!).PostalCode);
 
         using var staleResponse = await admin.PutAsJsonAsync(
             $"/api/commerce/v1/parties/{item.PartyId:D}", update);

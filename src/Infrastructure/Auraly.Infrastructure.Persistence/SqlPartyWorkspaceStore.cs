@@ -391,7 +391,7 @@ public sealed partial class SqlPartyWorkspaceStore(
         catch(SqlException ex) when(ex.Number is 51062 or 51063 or 51064 or 51065 or 51066)
         { await transaction.RollbackAsync(ct); throw new PartyConflictException(ex.Message); }
         catch(SqlException ex) when(ex.Number is 2601 or 2627)
-        { await transaction.RollbackAsync(ct); throw new PartyConflictException("A site code is already used by this customer."); }
+        { await transaction.RollbackAsync(ct); throw new PartyConflictException("A site code is already used by this third party."); }
         catch { await transaction.RollbackAsync(ct); throw; }
     }
 
@@ -549,7 +549,7 @@ public sealed partial class SqlPartyWorkspaceStore(
             if(string.IsNullOrWhiteSpace(value.RowVersion)) throw new FormatException();
             await using var check=c.CreateCommand();check.Transaction=t;check.CommandText="""
                 IF NOT EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartySiteId=@SiteId AND PartyId=@PartyId AND RowVersion=@RowVersion)
-                  THROW 51065,'A customer site changed after it was loaded.',1;
+                  THROW 51065,'A third-party site changed after it was loaded.',1;
                 """;
             check.Parameters.AddRange([P("@SiteId",value.PartySiteId),P("@PartyId",partyId),P("@RowVersion",Convert.FromBase64String(value.RowVersion))]);
             await check.ExecuteNonQueryAsync(ct);
