@@ -328,7 +328,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     }
 
     [Fact]
-    public async Task Physical_count_draft_discard_is_atomic_versioned_and_idempotent()
+    public async Task Physical_count_draft_discard_is_atomic_versioned_and_repeated_discard_succeeds()
     {
         var product = Guid.NewGuid();
         await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());

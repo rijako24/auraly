@@ -52,7 +52,6 @@ import {
 } from "@/services/api/inventory";
 import {
   inventoryDraftKey,
-  inventoryOperationOccurredAt,
   type DurableInventoryOperationDraft,
   loadActiveInventoryOperationKind,
   loadInventoryOperationDraft,
@@ -167,7 +166,6 @@ export function InventoryOperationWorkspace({
   const [valuationBasis, setValuationBasis] = useState<"Cost" | "SalePrice">("Cost");
   const [conversionType, setConversionType] = useState<"SPLIT" | "MERGE">("SPLIT");
   const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
-  const [occurredAt, setOccurredAt] = useState(() => new Date().toISOString());
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [activeKindHydrated, setActiveKindHydrated] = useState(Boolean(physicalCountDraft));
   const latestDraft = useRef<DurableInventoryOperationDraft | null>(null);
@@ -202,7 +200,6 @@ export function InventoryOperationWorkspace({
     businessId,
     kind,
     documentId,
-    occurredAt,
     warehouseId,
     destinationId,
     reason,
@@ -257,7 +254,6 @@ export function InventoryOperationWorkspace({
         if (!active) return;
         if (draft) {
           setDocumentId(draft.documentId);
-          setOccurredAt(inventoryOperationOccurredAt(draft));
           setWarehouseId(draft.warehouseId);
           setDestinationId(draft.destinationId);
           setReason(draft.reason);
@@ -267,7 +263,6 @@ export function InventoryOperationWorkspace({
           setLines(draft.lines.map((line) => ({ ...line, salePrice: line.salePrice ?? "" })));
         } else {
           setDocumentId(crypto.randomUUID());
-          setOccurredAt(new Date().toISOString());
           setWarehouseId(initialWarehouseId);
           setDestinationId("");
           setReason("");
@@ -305,7 +300,6 @@ export function InventoryOperationWorkspace({
         businessId,
         kind,
         documentId,
-        occurredAt,
         warehouseId,
         destinationId,
         reason,
@@ -326,7 +320,6 @@ export function InventoryOperationWorkspace({
     destinationId,
     valuationBasis,
     documentId,
-    occurredAt,
     draftKey,
     hydratedKey,
     hasLocalCapture,
@@ -444,6 +437,7 @@ export function InventoryOperationWorkspace({
 
   const mutation = useMutation({
     mutationFn: async () => {
+      const now = new Date().toISOString();
       if (kind === "count")
         throw new Error("El conteo físico se crea desde su flujo unificado de listas.");
       let result: InventoryAcceptance;
@@ -452,7 +446,7 @@ export function InventoryOperationWorkspace({
           documentId,
           businessId,
           warehouseId,
-          occurredAt,
+          occurredAt: now,
           reasonCode: reason.trim(),
           costCenterId: null,
           notes: notes.trim() || null,
@@ -469,7 +463,7 @@ export function InventoryOperationWorkspace({
           businessId,
           sourceWarehouseId: warehouseId,
           destinationWarehouseId: destinationId,
-          occurredAt,
+          occurredAt: now,
           reasonCode: reason.trim(),
           notes: notes.trim() || null,
           lines: lines.map((line, index) => ({
@@ -483,7 +477,7 @@ export function InventoryOperationWorkspace({
           documentId,
           businessId,
           warehouseId,
-          occurredAt,
+          occurredAt: now,
           conversionType,
           reasonCode: reason.trim(),
           costCenterId: null,
@@ -501,7 +495,7 @@ export function InventoryOperationWorkspace({
           documentId,
           businessId,
           warehouseId,
-          occurredAt,
+          occurredAt: now,
           reasonCode: reason.trim(),
           costCenterId: null,
           notes: notes.trim() || null,

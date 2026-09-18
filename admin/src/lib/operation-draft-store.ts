@@ -26,7 +26,6 @@ export type DurableInventoryOperationDraft = {
   businessId: string;
   kind: "count" | "adjustment" | "transfer" | "conversion" | "damage";
   documentId: string;
-  occurredAt?: string;
   warehouseId: string;
   destinationId: string;
   reason: string;
@@ -52,12 +51,6 @@ type DurableInventoryOperationSelection = {
   kind: InventoryOperationKind;
   updatedAt: string;
 };
-
-export function inventoryOperationOccurredAt(
-  draft: Pick<DurableInventoryOperationDraft, "occurredAt" | "updatedAt">,
-) {
-  return draft.occurredAt ?? draft.updatedAt;
-}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
