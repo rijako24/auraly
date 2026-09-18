@@ -57,6 +57,23 @@ El mismo usuario de Windows y el mismo directorio de llaves deben ejecutar POS E
 
 ## Ejecutar
 
+Para una iteración rápida de interfaz puede usarse `next dev`, pero esa ejecución
+no constituye evidencia del instalador. La prueba local de aceptación genera el
+mismo payload del MSI —frontend `standalone`, Node empacado, Edge autocontenido y
+launcher de escritorio— sin construir WiX en cada cambio:
+
+```powershell
+.\scripts\Build-AuralyPosInstaller.ps1 `
+  -ApiUrl https://api-auraly-dev-w5usmo6w.azurewebsites.net `
+  -Version 0.0.0-local `
+  -PayloadOnly
+```
+
+Luego se ejecuta `artifacts\auraly-pos\payload\Auraly.Desktop.exe`. Solo después
+de superar ese recorrido se construye y firma el instalador final.
+
+Para diagnóstico aislado de Edge todavía puede ejecutarse:
+
 ```powershell
 dotnet run --project src\Pos\Auraly.Pos.Edge.Host
 ```

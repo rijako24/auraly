@@ -11,7 +11,8 @@ param(
     [ValidateSet('CurrentUser', 'LocalMachine')]
     [string]$SigningCertificateStoreLocation = 'CurrentUser',
     [string]$SignToolPath,
-    [switch]$RequireSignature
+    [switch]$RequireSignature,
+    [switch]$PayloadOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -232,6 +233,15 @@ if ($auralyBinaries.Count -eq 0) {
     throw 'La publicación del POS no produjo binarios Auraly para firmar.'
 }
 Invoke-AuralySigning $auralyBinaries
+
+if ($PayloadOnly) {
+    [pscustomobject]@{
+        PayloadPath = $payload
+        Version = $Version
+        ApiUrl = $ApiUrl
+    }
+    return
+}
 
 dotnet tool restore
 if ($LASTEXITCODE -ne 0) { throw 'No fue posible restaurar WiX Toolset.' }

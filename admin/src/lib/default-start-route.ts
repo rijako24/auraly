@@ -26,9 +26,15 @@ export function requiresCloudWorkspace(permissions: readonly string[]): boolean 
 
 export function canOpenPosAdministrativeMenu(
   cloudAuthenticated: boolean,
-  permissions: readonly string[],
+  enrolledRuntime: boolean,
 ): boolean {
-  return cloudAuthenticated && requiresCloudWorkspace(permissions);
+  return cloudAuthenticated || enrolledRuntime;
+}
+
+export function posAdministrativeMenuTarget(cloudAuthenticated: boolean): string {
+  return cloudAuthenticated
+    ? "/dashboard"
+    : "/login?cloud=1&redirect=%2Fdashboard";
 }
 
 export function shouldRestoreOperationalStart(pathname: string, target: string): boolean {

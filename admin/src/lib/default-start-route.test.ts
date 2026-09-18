@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   canOpenPosAdministrativeMenu,
   defaultStartRoute,
+  posAdministrativeMenuTarget,
   requiresCloudWorkspace,
   shouldRestoreOperationalStart,
 } from "./default-start-route";
@@ -40,10 +41,15 @@ test("installed login distinguishes local POS access from administrative workspa
   assert.equal(requiresCloudWorkspace(["catalog.read"]), true);
 });
 
-test("POS menu requires both a cloud session and another authorized module", () => {
-  assert.equal(canOpenPosAdministrativeMenu(true, ["sales.create", "catalog.read"]), true);
-  assert.equal(canOpenPosAdministrativeMenu(true, ["sales.create"]), false);
-  assert.equal(canOpenPosAdministrativeMenu(false, ["sales.create", "catalog.read"]), false);
+test("the POS menu button is available in web and enrolled runtimes", () => {
+  assert.equal(canOpenPosAdministrativeMenu(true, false), true);
+  assert.equal(canOpenPosAdministrativeMenu(false, true), true);
+  assert.equal(canOpenPosAdministrativeMenu(false, false), false);
+  assert.equal(posAdministrativeMenuTarget(true), "/dashboard");
+  assert.equal(
+    posAdministrativeMenuTarget(false),
+    "/login?cloud=1&redirect=%2Fdashboard",
+  );
 });
 
 test("the dashboard root remains available after the initial login redirect", () => {

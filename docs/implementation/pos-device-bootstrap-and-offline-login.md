@@ -112,6 +112,9 @@ Después del login el menú se deriva de permisos efectivos:
 - el login de una instalación enrolada abre Facturación con la sesión local; el
   acceso a módulos administrativos requiere entrar explícitamente en modo Cloud
   y crear allí la sesión web;
+- dentro de Facturación, el único botón de salida abre el menú Cloud cuando el
+  servidor está disponible y se convierte en `Cerrar sesión` cuando el equipo
+  está trabajando únicamente con el runtime local;
 - un navegador no enrolado puede usar módulos online, pero no simula impresión,
   periféricos, outbox ni venta offline.
 

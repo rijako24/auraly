@@ -29,7 +29,10 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useRouter } from "next/navigation";
-import { canOpenPosAdministrativeMenu } from "@/lib/default-start-route";
+import {
+  canOpenPosAdministrativeMenu,
+  posAdministrativeMenuTarget,
+} from "@/lib/default-start-route";
 import { realtimeReconnectDelay } from "@/lib/realtime-reconnect-policy";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
@@ -350,7 +353,7 @@ export default function PosPage() {
   });
   const canOpenAdministrativeMenu = canOpenPosAdministrativeMenu(
     cloudAuthenticated,
-    permissions,
+    client?.mode === "edge",
   );
   const canChangeWorkspace = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.workspace.change");
@@ -3006,7 +3009,14 @@ export default function PosPage() {
       <PosDesktopUpdater />
       <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
         <div className="flex items-center gap-2">
-          {canOpenAdministrativeMenu && <PosExitMenuButton />}
+          {canOpenAdministrativeMenu && (
+            <PosExitMenuButton
+              target={posAdministrativeMenuTarget(cloudAuthenticated)}
+              localOnly={client.mode === "edge" && !serverConnected}
+              disabled={busy}
+              onLocalLogout={() => void logoutLocal()}
+            />
+          )}
           <StatusChip
             ok={serverConnected}
             label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}
@@ -3119,18 +3129,6 @@ export default function PosPage() {
             >
               <Printer className="h-4 w-4" />
               <span className="hidden lg:inline">Periféricos</span>
-            </button>
-          )}
-          {client.mode === "edge" && (
-            <button
-              type="button"
-              onClick={() => void logoutLocal()}
-              disabled={busy}
-              title="Cambiar cajero"
-              className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-              aria-label="Cerrar sesión del cajero"
-            >
-              <LogOut className="h-4 w-4" />
             </button>
           )}
           <span className="h-4 w-px bg-white/20" aria-hidden="true" />
