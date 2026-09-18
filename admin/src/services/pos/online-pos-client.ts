@@ -34,7 +34,6 @@ import {
   PosEdgeError,
   PosEdgeClient,
   readEdgeUserSession,
-  PosIssuedSaleSearchPage,
   PosIssuedSaleFilters,
   type PosServerHistoryScope,
   type PosSalesReturnContext,
@@ -60,6 +59,11 @@ import {
   type PosSettlementConfiguration,
   loadBrowserPrinterConfiguration,
 } from "./pos-edge-client";
+import {
+  buildServerIssuedSalesSearchRequest,
+  mapServerIssuedSalesPage,
+  type ServerIssuedSalePage,
+} from "./pos-server-history-request";
 import { inventoryApi } from "@/services/api/inventory";
 import {
   salesReturnsApi,
@@ -201,63 +205,25 @@ type OnlineCustomerSelection = {
   customer: OnlineCustomerPage["items"][number] | null;
 };
 
-type OnlineIssuedSalePage = {
-  items: Array<{
-    documentId: string;
-    documentType: PosSaleDocumentType;
-    documentNumber: string;
-    fiscalNumber: string | null;
-    issuedAt: string;
-    total: number;
-    customerIdentification: string;
-    customerName: string;
-    fiscalStatus: string | null;
-  }>;
-  hasMore: boolean;
-  nextOffset: number | null;
-};
-
-function mapIssuedSales(page: OnlineIssuedSalePage): PosIssuedSaleSearchPage {
-  return {
-    items: page.items.map((sale) => ({
-      documentId: { value: sale.documentId },
-      documentType: sale.documentType,
-      documentNumber: sale.documentNumber,
-      fiscalNumber: sale.fiscalNumber,
-      issuedAt: sale.issuedAt,
-      total: sale.total,
-      customerIdentification: sale.customerIdentification,
-      customerName: sale.customerName,
-      fiscalStatus: sale.fiscalStatus,
-    })),
-    hasMore: page.hasMore,
-    nextOffset: page.nextOffset,
-  };
-}
-
 export async function searchServerIssuedSales(
   context: PosServerHistoryScope,
   filters: PosIssuedSaleFilters,
   skip = 0,
   take = 20,
 ) {
-  const page = await request<OnlineIssuedSalePage>(
+  const page = await request<ServerIssuedSalePage>(
     "/api/commerce/v1/pos/drafts/sales/search",
-    { method: "POST", body: JSON.stringify({
-      context,
-      search: filters.search,
-      skip,
-      take,
-      customerId: filters.customerId,
-      partySiteId: filters.partySiteId,
-      from: filters.from || null,
-      to: filters.to || null,
-      productId: filters.productId,
-      minimumTotal: filters.minimumTotal,
-      maximumTotal: filters.maximumTotal,
-    }) },
+    {
+      method: "POST",
+      body: JSON.stringify(buildServerIssuedSalesSearchRequest(
+        context,
+        filters,
+        skip,
+        take,
+      )),
+    },
   );
-  return mapIssuedSales(page);
+  return mapServerIssuedSalesPage(page);
 }
 
 export async function searchServerHistoryCustomers(

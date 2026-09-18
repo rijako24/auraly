@@ -64,6 +64,8 @@
     "src/app/(pos)/pos/pos-preparation-progress.ts",
     "src/app/(pos)/pos/pos-preparation-progress.test.ts",
     "src/services/pos/pos-edge-client.ts",
+    "src/services/pos/pos-server-history-request.ts",
+    "src/services/pos/pos-server-history-request.test.ts",
     "src/services/pos/pos-state-invalidation.ts",
     "src/services/pos/pos-edge-state-watch.test.ts",
     "src/services/pos/pos-edge-session.ts",

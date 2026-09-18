@@ -8,6 +8,11 @@ import type {
   SalesSettlementConfiguration,
   SalesReturnAcceptance,
 } from "@/services/api/sales-returns";
+import {
+  buildServerIssuedSalesSearchRequest,
+  mapServerIssuedSalesPage,
+  type ServerIssuedSalePage,
+} from "./pos-server-history-request";
 import { printWorkSessionClosure } from "./pos-work-session-close";
 import {
   announceSessionReplacement,
@@ -1408,10 +1413,18 @@ export class PosEdgeClient implements PosClient {
     skip = 0,
     take = 20,
   ) {
-    return this.request<PosIssuedSaleSearchPage>(
+    return this.request<ServerIssuedSalePage>(
       "/edge/v1/server-history/sales/search",
-      { method: "POST", body: JSON.stringify({ context, ...filters, skip, take }) },
-    );
+      {
+        method: "POST",
+        body: JSON.stringify(buildServerIssuedSalesSearchRequest(
+          context,
+          filters,
+          skip,
+          take,
+        )),
+      },
+    ).then(mapServerIssuedSalesPage);
   }
 
   searchServerHistoryCustomers(
