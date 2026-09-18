@@ -15,10 +15,21 @@ export function fiscalLaunchReadinessError(
   readiness: FiscalReadiness,
 ): string | null {
   if (mode === "enroll") return null;
-  if (!readiness.isReadyForOnlineSales) return fiscalConfigurationRequiredMessage;
-  return readiness.hasDianDocumentQuota === false
-    ? dianQuotaExhaustedMessage
-    : null;
+  return posDocumentReadinessError(
+    "SalesInvoice",
+    readiness.isReadyForOnlineSales,
+    readiness.hasDianDocumentQuota !== false,
+  );
+}
+
+export function posDocumentReadinessError(
+  documentType: PosSaleDocumentType,
+  fiscalReady: boolean,
+  dianQuotaAvailable = true,
+): string | null {
+  if (documentType === "SalesReceipt") return null;
+  if (!fiscalReady) return fiscalConfigurationRequiredMessage;
+  return dianQuotaAvailable ? null : dianQuotaExhaustedMessage;
 }
 
 export function canIssuePosDocument(
@@ -26,5 +37,9 @@ export function canIssuePosDocument(
   fiscalReady: boolean,
   dianQuotaAvailable = true,
 ): boolean {
-  return documentType === "SalesReceipt" || fiscalReady && dianQuotaAvailable;
+  return posDocumentReadinessError(
+    documentType,
+    fiscalReady,
+    dianQuotaAvailable,
+  ) === null;
 }

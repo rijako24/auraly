@@ -51,11 +51,8 @@ export function usesEnrolledPosRuntime(health: PosLaunchHealth) {
   return health.status !== "EnrollmentRequired";
 }
 
-export function shouldUseEnrolledPosRuntime(
-  health: PosLaunchHealth,
-  workspaceChangeRequested: boolean,
-) {
-  return usesEnrolledPosRuntime(health) && !workspaceChangeRequested;
+export function shouldUseEnrolledPosRuntime(health: PosLaunchHealth) {
+  return usesEnrolledPosRuntime(health);
 }
 
 export function workspaceActivationMode(

@@ -199,6 +199,14 @@ POS Edge debe exponer un estado consumible por la interfaz:
 Incluye etapa, cursor, marcador, procesados, total, porcentaje, último éxito,
 error sanitizado y si puede reanudar.
 
+En la preparación inicial, `Ready` solo se publica después de descargar y confirmar
+geografía, motivos de caja, configuración y catálogos operativos, clientes y el
+catálogo completo de productos con todos sus códigos de barras. La promoción atómica
+del catálogo es el último checkpoint durable; una cantidad distinta al total anunciado
+invalida el bootstrap. La identidad local sigue siendo un requisito independiente de
+acceso. La ausencia de configuración fiscal no impide terminar la preparación, pero
+bloquea explícitamente la entrada a factura electrónica hasta que exista resolución.
+
 ## Pruebas obligatorias
 
 - primera activación requiere Internet y código válido;

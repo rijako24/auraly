@@ -28,9 +28,14 @@ async function transaction<T>(
   const database = await openDatabase();
   try {
     return await new Promise<T>((resolve, reject) => {
-      const request = action(database.transaction(STORE, mode).objectStore(STORE));
-      request.onsuccess = () => resolve(request.result);
+      const indexedDbTransaction = database.transaction(STORE, mode);
+      const request = action(indexedDbTransaction.objectStore(STORE));
+      let result: T;
+      request.onsuccess = () => { result = request.result; };
       request.onerror = () => reject(request.error);
+      indexedDbTransaction.oncomplete = () => resolve(result);
+      indexedDbTransaction.onerror = () => reject(indexedDbTransaction.error);
+      indexedDbTransaction.onabort = () => reject(indexedDbTransaction.error);
     });
   } finally {
     database.close();

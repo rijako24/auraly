@@ -15,6 +15,7 @@ import {
   dianQuotaExhaustedMessage,
   fiscalConfigurationRequiredMessage,
   fiscalLaunchReadinessError,
+  posDocumentReadinessError,
 } from "./pos-fiscal-guard";
 
 test("a delayed response from an old Edge login cannot clear the new login", () => {
@@ -75,6 +76,14 @@ test("an unenrolled installation opens the same shared Auraly login", () => {
   assert.equal(installedPosLaunchDestination(null), "/login");
 });
 
+test("entering an electronic invoice reports the missing local resolution", () => {
+  assert.equal(
+    posDocumentReadinessError("SalesInvoice", false, true),
+    fiscalConfigurationRequiredMessage,
+  );
+  assert.equal(posDocumentReadinessError("SalesReceipt", false, true), null);
+});
+
 test("an unenrolled installation resumes its remembered online workspace", () => {
   assert.equal(shouldAutoActivateRememberedWorkspace(null), false);
   assert.equal(shouldAutoActivateRememberedWorkspace("business-a:warehouse-a"), true);
@@ -95,10 +104,9 @@ test("enrollment is the single owner of installed runtime selection", () => {
   );
 });
 
-test("an enrolled computer keeps the enrolled runtime outside workspace changes", () => {
+test("an enrolled computer always keeps the enrolled runtime", () => {
   const enrolled = { status: "Ready", identityReady: true };
-  assert.equal(shouldUseEnrolledPosRuntime(enrolled, false), true);
-  assert.equal(shouldUseEnrolledPosRuntime(enrolled, true), false);
+  assert.equal(shouldUseEnrolledPosRuntime(enrolled), true);
 });
 
 test("online invoices report an exhausted DIAN quota without a technical error", () => {

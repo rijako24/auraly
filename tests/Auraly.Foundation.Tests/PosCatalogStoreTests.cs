@@ -126,6 +126,33 @@ public sealed class PosCatalogStoreTests
     }
 
     [Fact]
+    public async Task Incomplete_bootstrap_is_invalidated_and_never_reported_ready()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-incomplete-catalog-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new PosCatalogStore($"Data Source={path}");
+            await store.InitializeAsync();
+            var session = new CatalogSyncSessionResponse(
+                Guid.NewGuid(), 7, 2, DateTimeOffset.UtcNow.AddHours(1));
+            await store.BeginBootstrapAsync(session);
+            await store.ApplyBootstrapPageAsync(Page(session, [Product()], false, null));
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(
+                () => store.PromoteBootstrapAsync());
+
+            Assert.Contains("1 of 2", error.Message, StringComparison.Ordinal);
+            Assert.Equal("Invalid", (await store.StatusAsync()).Status);
+            Assert.Null(await store.CaptureAsync("7701234567890"));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Product_ids_are_loaded_as_one_batch_and_missing_products_are_omitted()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-catalog-batch-{Guid.NewGuid():N}.db");
@@ -133,7 +160,7 @@ public sealed class PosCatalogStoreTests
         {
             var store = new PosCatalogStore($"Data Source={path}");
             await store.InitializeAsync();
-            var session = new CatalogSyncSessionResponse(Guid.NewGuid(), 2, 1, DateTimeOffset.UtcNow.AddHours(1));
+            var session = new CatalogSyncSessionResponse(Guid.NewGuid(), 2, 2, DateTimeOffset.UtcNow.AddHours(1));
             var first = Product();
             var second = Product() with
             {

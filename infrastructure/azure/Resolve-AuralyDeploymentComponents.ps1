@@ -73,5 +73,7 @@ if ($Persist) {
     Csv = $selected -join ','
     DeployCloud = @($selected | Where-Object { $_ -in @('database', 'function', 'api', 'pos-installer') }).Count -gt 0
     DeployAdmin = $selected -contains 'admin'
-    NeedsSqlPackage = $selected -contains 'database'
+    # API-only releases do not publish the database, but they still compare the
+    # release DACPAC with the target before replacing the running API.
+    NeedsSqlPackage = $selected -contains 'database' -or $selected -contains 'api'
 }

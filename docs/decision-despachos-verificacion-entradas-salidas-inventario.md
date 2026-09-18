@@ -932,19 +932,27 @@ Otra estación puede consultar, pero no editar mientras el claim esté vigente. 
 Transacción:
 
 ```text
-GoodsReceipt
-GoodsReceiptLines
-InventoryTransactions
-InventoryTransactionLines
-InventoryBalances
-CostLedger
-AccountsPayable, si aplica
-SupplierCostHistory
-Audit
-Outbox
+GoodsReceipt (encabezado aceptado)
+GoodsReceiptLines (detalle)
+GoodsReceiptCostDocuments, líneas y distribuciones, si aplican
+DocumentProcessingJob con el payload inmutable para el motor
+eliminación de GoodsReceiptDraft y sus líneas, si existía
 ```
 
-Si falla un efecto obligatorio, no se confirma parcialmente.
+Si falla cualquiera de esas escrituras, la transacción completa hace rollback y no
+queda encabezado, detalle, trabajo de motor ni eliminación parcial del borrador. La
+confirmación no mueve inventario ni crea cuentas por pagar: el motor documental toma
+el trabajo durable después del commit y aplica esos efectos en su propia etapa
+idempotente y ordenada. La señal publicada después del commit solo despierta el
+procesador; `DocumentProcessingJob` es la autoridad durable del trabajo.
+
+La captura asigna una identidad de documento y una fecha de recepción estables antes
+del primer intento. Un reintento técnico conserva ambos valores y el mismo payload;
+una nueva entrada recibe otra identidad. Después de una aceptación, la interfaz espera
+la eliminación durable de su recuperación local antes de cerrar el editor. Si recupera
+una captura cuya identidad ya pertenece a una entrada aceptada, elimina esa
+recuperación local: la entrada ya fue confirmada y no se transforma silenciosamente
+en otra operación.
 
 ### 10.2 Confirmar movimiento manual
 
@@ -1289,6 +1297,9 @@ Para operación:
 - CxP;
 - costo promedio;
 - confirmación idempotente;
+- reintento conserva identidad, fecha y payload;
+- aceptación limpia durablemente la recuperación local;
+- captura local obsoleta de una entrada aceptada se elimina;
 - reversión;
 - permisos;
 - concurrencia;

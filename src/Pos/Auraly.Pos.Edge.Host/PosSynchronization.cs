@@ -155,12 +155,16 @@ internal sealed class PosSynchronizationWork(
                     "catálogo",
                     async () =>
                     {
-                        await catalog.SynchronizeAsync(cancellationToken);
                         if (initialPreparation)
                         {
-                            await customerDirectory.RefreshGeographyAsync(cancellationToken);
-                            await cashMovements.RefreshReasonsAsync(cancellationToken);
+                            await PosInitialPreparation.SynchronizeAsync(
+                                customerDirectory.RefreshGeographyAsync,
+                                cashMovements.RefreshReasonsAsync,
+                                catalog.SynchronizeAsync,
+                                cancellationToken);
+                            return;
                         }
+                        await catalog.SynchronizeAsync(cancellationToken);
                     }));
             }
             if (!initialPreparation && trigger.HasFlag(PosSynchronizationTrigger.Configuration))
@@ -209,6 +213,23 @@ internal sealed class PosSynchronizationWork(
             return result;
         }
         finally { uiState.Publish(); }
+    }
+}
+
+internal static class PosInitialPreparation
+{
+    public static async Task SynchronizeAsync(
+        Func<CancellationToken, Task> synchronizeGeography,
+        Func<CancellationToken, Task> synchronizeCashMovementReasons,
+        Func<CancellationToken, Task> synchronizeCatalog,
+        CancellationToken cancellationToken)
+    {
+        // Catalog promotion is the durable readiness checkpoint. Keep it last so
+        // Ready cannot be observed while another required offline projection is
+        // still downloading or has failed.
+        await synchronizeGeography(cancellationToken);
+        await synchronizeCashMovementReasons(cancellationToken);
+        await synchronizeCatalog(cancellationToken);
     }
 }
 

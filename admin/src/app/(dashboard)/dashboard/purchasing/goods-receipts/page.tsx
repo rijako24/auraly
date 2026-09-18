@@ -58,6 +58,10 @@ import {
 import {
   goodsReceiptDraftKey, loadGoodsReceiptDraft, removeGoodsReceiptDraft, saveGoodsReceiptDraft,
 } from "@/lib/goods-receipt-draft-store";
+import {
+  discardGoodsReceiptDraft,
+  goodsReceiptConfirmationReceivedAt,
+} from "@/lib/goods-receipt-confirmation";
 
 type PendingSupplierChange = { supplier: PartyRoleSelection };
 type GoodsReceiptCostLine = GoodsReceiptCostDocument["lines"][number];
@@ -119,11 +123,21 @@ export default function GoodsReceiptsPage() {
   const rememberLocalDraft = (next: EditorDraft) => {
     setEditor(next);
   };
-  const clearLocalDraft = () => {
-    if (localDraftKey) localWriteQueue.current = localWriteQueue.current
-      .then(() => removeGoodsReceiptDraft(localDraftKey))
-      .catch(() => { toast.error("No fue posible limpiar la recuperación local de esta recepción."); });
-    setEditor(undefined);
+  const clearLocalDraft = async () => {
+    if (!localDraftKey) {
+      setEditor(undefined);
+      return;
+    }
+    const cleanup = localWriteQueue.current
+      .then(() => removeGoodsReceiptDraft(localDraftKey));
+    localWriteQueue.current = cleanup.catch(() => undefined);
+    try {
+      await cleanup;
+      setEditor(undefined);
+    } catch (error) {
+      toast.error("No fue posible limpiar la recuperación local de esta recepción.");
+      throw error;
+    }
   };
 
   useEffect(() => {
@@ -460,7 +474,7 @@ function ReceiptEditor({
 }: {
   open: boolean; draft?: EditorDraft; businessId: string | null; canConfirm: boolean;
   canAssociateProducts: boolean;
-  onChange: (draft: EditorDraft) => void; onClose: () => void; onClear: () => void;
+  onChange: (draft: EditorDraft) => void; onClose: () => void; onClear: () => Promise<void>;
 }) {
   const options = useGoodsReceiptOptions();
   const availableOrders = useQuery({
@@ -716,7 +730,7 @@ function ReceiptEditor({
     supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
       ? draft.supplierInvoiceNumber.trim() || null : null,
     supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
-    receivedAt: new Date().toISOString(), createsPayable: draft.createsPayable,
+    receivedAt: goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: draft.createsPayable,
     dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
     currencyCode: draft.currencyCode, notes: draft.notes.trim() || null,
     lines: draft.lines.map(withDerivedWeight), concurrencyToken: draft.concurrencyToken,
@@ -728,8 +742,8 @@ function ReceiptEditor({
   });
 
   const persistOnce = async (notify: boolean) => {
-    const desired = request();
     try {
+      const desired = request();
       let saved: GoodsReceiptDraft;
       try {
         saved = await save.mutateAsync(desired);
@@ -743,8 +757,8 @@ function ReceiptEditor({
       }
       change({ concurrencyToken: saved.concurrencyToken });
       if (notify) {
+        await onClear();
         toast.success("Borrador guardado y disponible para recuperar.");
-        onClear();
       }
       return saved;
     } catch (error) {
@@ -889,11 +903,13 @@ function ReceiptEditor({
       line.productId === productId ? withDerivedWeight({ ...line, ...values }) : line) });
 
   const deleteDraft = async () => {
-    if (!draft.concurrencyToken) return;
     try {
-      await remove.mutateAsync({ draftId: draft.draftId, concurrencyToken: draft.concurrencyToken });
+      await discardGoodsReceiptDraft(
+        draft.concurrencyToken,
+        (concurrencyToken) => remove.mutateAsync({ draftId: draft.draftId, concurrencyToken }),
+        onClear,
+      );
       toast.success("El borrador fue eliminado.");
-      onClear();
     } catch { toast.error("No fue posible eliminar el borrador."); }
   };
 
@@ -917,7 +933,7 @@ function ReceiptEditor({
         supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
           ? draft.supplierInvoiceNumber.trim() || null : null,
         supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
-        receivedAt: new Date().toISOString(), createsPayable: draft.createsPayable,
+        receivedAt: goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: draft.createsPayable,
         dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
         currencyCode: draft.currencyCode, notes: draft.notes.trim() || null, lines: draft.lines.map(withDerivedWeight),
         draftConcurrencyToken: null,
@@ -929,6 +945,11 @@ function ReceiptEditor({
         exchangeRateSource: draft.exchangeRateSource,
         additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments),
       });
+      try {
+        await onClear();
+      } catch {
+        return;
+      }
       toast.success(`${accepted.documentNumber} fue confirmada y enviada al motor.`, {
         duration: 12000,
         action: {
@@ -936,8 +957,24 @@ function ReceiptEditor({
           onClick: () => router.push(`/dashboard/products/pricing?sourceDocumentId=${accepted.documentId}`),
         },
       });
-      onClear();
     } catch (error) {
+      if (apiStatusCode(error) === 409) {
+        try {
+          await goodsReceiptsApi.getDetail(draft.draftId);
+          try {
+            await onClear();
+          } catch {
+            return;
+          }
+          toast.error("Esta entrada ya había sido confirmada. Se eliminó la recuperación local que había quedado abierta.");
+          return;
+        } catch (lookupError) {
+          if (apiStatusCode(lookupError) !== 404) {
+            toast.error(apiErrorMessage(lookupError, "No fue posible verificar la entrada ya confirmada."));
+            return;
+          }
+        }
+      }
       const message = error && typeof error === "object" && "message" in error
         ? String(error.message)
         : "No fue posible confirmar. Revisa factura duplicada, permisos y datos.";

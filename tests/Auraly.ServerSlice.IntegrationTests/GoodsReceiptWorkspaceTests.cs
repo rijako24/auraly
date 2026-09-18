@@ -270,6 +270,10 @@ public sealed class GoodsReceiptWorkspaceTests(
             $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}" +
             $"?concurrencyToken={Uri.EscapeDataString(changed.ConcurrencyToken)}");
         Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+        using var alreadyDeleted = await client.DeleteAsync(
+            $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}" +
+            $"?concurrencyToken={Uri.EscapeDataString(changed.ConcurrencyToken)}");
+        Assert.Equal(HttpStatusCode.OK, alreadyDeleted.StatusCode);
         using var missing = await client.GetAsync(
             $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}");
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
@@ -421,6 +425,77 @@ public sealed class GoodsReceiptWorkspaceTests(
         using var wrongSupplier = await client.GetAsync(
             $"/api/commerce/v1/goods-receipts/products?supplierId={Guid.NewGuid():D}&page=1&pageSize=50");
         Assert.Equal(HttpStatusCode.BadRequest, wrongSupplier.StatusCode);
+    }
+
+    [Fact]
+    public async Task Confirmation_rolls_back_header_job_and_draft_deletion_when_detail_write_fails()
+    {
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.ReadGoodsReceipts,
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var draftRequest = CreateDraft();
+
+        try
+        {
+            using var savedResponse = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/goods-receipts/drafts/{draftRequest.DraftId:D}", draftRequest);
+            Assert.Equal(HttpStatusCode.OK, savedResponse.StatusCode);
+            var savedDraft = await savedResponse.Content.ReadFromJsonAsync<GoodsReceiptDraft>();
+            Assert.NotNull(savedDraft);
+
+            var invalidDetail = draftRequest.Lines.Single() with
+            {
+                Description = new string('X', 251)
+            };
+            var confirmation = new ConfirmGoodsReceiptRequest(
+                draftRequest.DraftId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+                draftRequest.SupplierInvoiceNumber, draftRequest.SupplierInvoiceDate,
+                draftRequest.ReceivedAt, draftRequest.CreatesPayable, draftRequest.DueDate,
+                draftRequest.CurrencyCode, draftRequest.Notes, [invalidDetail],
+                savedDraft.ConcurrencyToken,
+                PurchaseEvidenceType: PurchaseEvidenceTypes.SupplierElectronicInvoice);
+            using var message = new HttpRequestMessage(
+                HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
+            {
+                Content = JsonContent.Create(confirmation)
+            };
+            message.Headers.Add("Idempotency-Key", $"atomic-failure-{draftRequest.DraftId:N}");
+
+            using var response = await client.SendAsync(message);
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                SELECT
+                  (SELECT COUNT(*) FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id),
+                  (SELECT COUNT(*) FROM dbo.GoodsReceiptLines WHERE GoodsReceiptId=@Id),
+                  (SELECT COUNT(*) FROM dbo.DocumentProcessingJobs
+                    WHERE DocumentId=@Id AND DocumentType=N'GoodsReceipt'),
+                  (SELECT COUNT(*) FROM dbo.GoodsReceiptDrafts WHERE GoodsReceiptDraftId=@Id),
+                  (SELECT COUNT(*) FROM dbo.GoodsReceiptDraftLines WHERE GoodsReceiptDraftId=@Id);
+                """, connection);
+            command.Parameters.AddWithValue("@Id", draftRequest.DraftId);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(0, reader.GetInt32(0));
+            Assert.Equal(0, reader.GetInt32(1));
+            Assert.Equal(0, reader.GetInt32(2));
+            Assert.Equal(1, reader.GetInt32(3));
+            Assert.Equal(1, reader.GetInt32(4));
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var cleanup = new SqlCommand("""
+                DELETE dbo.GoodsReceiptDraftLines WHERE GoodsReceiptDraftId=@Id;
+                DELETE dbo.GoodsReceiptDrafts WHERE GoodsReceiptDraftId=@Id;
+                """, connection);
+            cleanup.Parameters.AddWithValue("@Id", draftRequest.DraftId);
+            await cleanup.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]

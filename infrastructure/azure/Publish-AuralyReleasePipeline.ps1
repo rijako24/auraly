@@ -339,6 +339,8 @@ function Test-Release {
 }
 
 function Publish-Database {
+    param([switch]$ValidateOnly)
+
     $dacpac = Join-Path $releasePath "auraly-database-$ReleaseVersion.dacpac"
     $firewallRule = "github-$Environment-$([guid]::NewGuid().ToString('N').Substring(0, 10))"
     $reportPath = Join-Path ([IO.Path]::GetTempPath()) "auraly-$Environment-$ReleaseVersion-deploy-report.xml"
@@ -399,10 +401,12 @@ function Publish-Database {
             '20260916_AddGenericProductMode.sql',
             '20260916_RemoveNonOperationalReportingSources.sql',
             '20260907_AlignReceivablesWithAccountingSource.sql')
-        foreach ($migration in $reviewedMigrations) {
-            Invoke-ReviewedPreDacpacMigration `
-                -MigrationPath (Join-Path $repoRoot "database/Auraly.Database/Scripts/Migrations/$migration") `
-                -AccessToken $accessToken
+        if (-not $ValidateOnly) {
+            foreach ($migration in $reviewedMigrations) {
+                Invoke-ReviewedPreDacpacMigration `
+                    -MigrationPath (Join-Path $repoRoot "database/Auraly.Database/Scripts/Migrations/$migration") `
+                    -AccessToken $accessToken
+            }
         }
 
         $whatsAppAccessTokenArgument = if ([string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_ACCESS_TOKEN)) {
@@ -437,6 +441,30 @@ function Publish-Database {
         [xml]$report = Get-Content -LiteralPath $reportPath -Raw
         $namespace = [Xml.XmlNamespaceManager]::new($report.NameTable)
         $namespace.AddNamespace('d', 'http://schemas.microsoft.com/sqlserver/dac/DeployReport/2012/02')
+        if ($ValidateOnly) {
+            $contractTypes = @(
+                'SqlTable',
+                'SqlColumn',
+                'SqlProcedure',
+                'SqlView',
+                'SqlFunction',
+                'SqlScalarFunction',
+                'SqlTableValuedFunction',
+                'SqlUserDefinedType',
+                'SqlType',
+                'SqlSequence')
+            $contractItems = @($report.SelectNodes(
+                "//d:Operation[@Name='Create' or @Name='Alter' or @Name='Refresh' or @Name='TableRebuild']/d:Item",
+                $namespace) | Where-Object { $_.GetAttribute('Type') -in $contractTypes })
+            if ($contractItems.Count -gt 0) {
+                $changes = ($contractItems | Select-Object -First 12 | ForEach-Object {
+                    "$($_.ParentNode.GetAttribute('Name')) $($_.GetAttribute('Type')) $($_.GetAttribute('Value'))"
+                }) -join '; '
+                throw "La API no puede desplegarse sin el componente database: el esquema destino no satisface el contrato del release. Cambios pendientes: $changes"
+            }
+            Write-Information 'El esquema destino ya satisface el contrato del release; no se publicaron cambios de base de datos.' -InformationAction Continue
+            return
+        }
         $destructiveItems = @($report.SelectNodes(
             "//d:Operation[@Name='Drop']/d:Item[@Type='SqlTable' or @Type='SqlColumn']",
             $namespace))
@@ -706,6 +734,9 @@ if ($selectedComponents -contains 'database') {
     Publish-Database
     & (Join-Path $PSScriptRoot 'Sync-AuralySqlFirewall.ps1') -Environment $Environment
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo habilitar el acceso administrado del runtime a Azure SQL.' }
+}
+elseif ($selectedComponents -contains 'api') {
+    Publish-Database -ValidateOnly
 }
 if ($selectedComponents -contains 'function') {
     Assert-OfflineLeaseSigningConfiguration

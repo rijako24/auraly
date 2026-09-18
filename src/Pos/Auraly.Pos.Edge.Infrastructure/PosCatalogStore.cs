@@ -152,6 +152,19 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         var status = await StatusAsync(connection, transaction, cancellationToken);
         if (status.Status != "Bootstrapping")
             throw new InvalidOperationException("There is no bootstrap ready to promote.");
+        if (status.ProcessedProducts != status.TotalProducts)
+        {
+            await ExecuteAsync(connection, transaction, """
+                UPDATE PosCatalogState
+                SET Status='Invalid',SessionId=NULL,NextPageCursor=NULL,UpdatedAt=@Now
+                WHERE StateId=1;
+                """,
+                [P("@Now", Clock.GetUtcNow().ToString("O"))],
+                cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            throw new InvalidDataException(
+                $"The local catalog contains {status.ProcessedProducts} of {status.TotalProducts} required products. A new bootstrap is required.");
+        }
 
         await ExecuteAsync(connection, transaction, """
             DELETE FROM PosCatalogBarcodes;
@@ -594,7 +607,10 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         command.Transaction = (SqliteTransaction)transaction;
         command.CommandText = """
             SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor,UpdatedAt,
-                   TotalProducts,TotalProducts
+                   TotalProducts,
+                   CASE WHEN Status='Bootstrapping'
+                        THEN (SELECT COUNT(*) FROM PosCatalogStagingProducts)
+                        ELSE TotalProducts END
             FROM PosCatalogState WHERE StateId=1;
             """;
         await using var reader = await command.ExecuteReaderAsync(ct);

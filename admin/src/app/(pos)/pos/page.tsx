@@ -95,6 +95,7 @@ import {
   canIssuePosDocument,
   dianQuotaExhaustedMessage,
   fiscalConfigurationRequiredMessage,
+  posDocumentReadinessError,
 } from "@/services/pos/pos-fiscal-guard";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
@@ -722,11 +723,15 @@ export default function PosPage() {
                 fiscalWarnings: health.fiscalWarnings ?? [],
                 dianQuotaAvailable: health.dianQuotaAvailable ?? null,
               });
-              if (health.dianQuotaAvailable === false && documentTypeRef.current === "SalesInvoice")
-                setError(dianQuotaExhaustedMessage);
+              const readinessError = posDocumentReadinessError(
+                documentTypeRef.current,
+                health.fiscalReady,
+                health.dianQuotaAvailable !== false,
+              );
+              if (readinessError) setError(readinessError);
             }
 
-            if (shouldUseEnrolledPosRuntime(health, workspaceChangeRequested)) {
+            if (shouldUseEnrolledPosRuntime(health)) {
               if (active) {
                 initialEdgeHealth.current = { client: edgeClient, health };
                 setEdgeLoginState(
@@ -845,8 +850,12 @@ export default function PosPage() {
         fiscalWarnings: health.fiscalWarnings ?? [],
         dianQuotaAvailable: health.dianQuotaAvailable ?? null,
       });
-      if (health.dianQuotaAvailable === false && documentType === "SalesInvoice")
-        setError(dianQuotaExhaustedMessage);
+      const readinessError = posDocumentReadinessError(
+        documentType,
+        health.fiscalReady,
+        health.dianQuotaAvailable !== false,
+      );
+      if (readinessError) setError(readinessError);
     };
 
     const connect = async () => {

@@ -149,6 +149,8 @@
     "src/lib/pricing-publication-draft.test.ts",
     "src/lib/goods-receipt-calculator.ts",
     "src/lib/goods-receipt-calculator.test.ts",
+    "src/lib/goods-receipt-confirmation.ts",
+    "src/lib/goods-receipt-confirmation.test.ts",
     "src/lib/formatted-decimal-input.ts",
     "src/lib/formatted-decimal-input.test.ts",
     "src/lib/default-start-route.ts",

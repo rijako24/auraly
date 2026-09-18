@@ -53,7 +53,7 @@ La línea base DEV registrada es `0.1.0-rc7`, generada y desplegada por el pipel
 Los despliegues ordinarios ya no se ejecutan desde el equipo del operador. Se usa el workflow manual `.github/workflows/deploy-auraly-release.yml`:
 
 1. En GitHub Actions, abrir **Deploy Auraly release** y seleccionar **Run workflow**.
-2. Para DEV, indicar una versión nueva, `ref=main` y el alcance auditado en `components`. Los valores permitidos son `database`, `function`, `api`, `admin` y `pos-installer`, separados por coma. El pipeline ejecuta todas las pruebas y crea una sola vez el release completo, pero despliega únicamente los componentes declarados.
+2. Para DEV, indicar una versión nueva, `ref=main` y el alcance auditado en `components`. Los valores permitidos son `database`, `function`, `api`, `admin` y `pos-installer`, separados por coma. El pipeline ejecuta todas las pruebas y crea una sola vez el release completo, pero despliega únicamente los componentes declarados. Un despliegue de API sin `database` no modifica el esquema: antes de publicar compara el DACPAC del release con la base destino y se bloquea si falta una tabla, columna, procedimiento, vista, función, tipo o secuencia requerida por ese release.
 3. El alcance queda guardado en `manifest.json` antes de archivar y etiquetar el release. Para PROD se elige la misma versión validada en DEV: el pipeline descarga los mismos bytes y reutiliza obligatoriamente ese alcance; no recompila, amplía ni reemplaza componentes ajenos al cambio.
 4. Revisar el resumen final y los health checks. Un job fallido no se corrige con comandos aislados: se reejecuta el job idempotente después de corregir la causa.
 

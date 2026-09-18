@@ -298,7 +298,15 @@ public sealed class ReleasePackagingTests
         Assert.Contains("deploymentComponents", scopeResolver, StringComparison.Ordinal);
         Assert.Contains("Los componentes solicitados no coinciden", scopeResolver,
             StringComparison.Ordinal);
+        Assert.Contains("$selected -contains 'database' -or $selected -contains 'api'", scopeResolver,
+            StringComparison.Ordinal);
         Assert.Contains("if ($selectedComponents -contains 'database')", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("elseif ($selectedComponents -contains 'api')", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("Publish-Database -ValidateOnly", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("el esquema destino no satisface el contrato", deployment,
             StringComparison.Ordinal);
         Assert.Contains("if ($selectedComponents -contains 'function')", deployment,
             StringComparison.Ordinal);

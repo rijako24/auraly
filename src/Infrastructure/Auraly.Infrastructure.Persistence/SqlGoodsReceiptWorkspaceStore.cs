@@ -657,7 +657,15 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@DraftId", draftId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.Add("@RowVersion", SqlDbType.Timestamp).Value = ParseToken(concurrencyToken);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        if (await command.ExecuteNonQueryAsync(cancellationToken) == 1) return;
+
+        await using var exists = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.GoodsReceiptDrafts
+            WHERE GoodsReceiptDraftId=@DraftId AND BusinessId=@BusinessId;
+            """, connection);
+        exists.Parameters.AddWithValue("@DraftId", draftId);
+        exists.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        if (Convert.ToInt32(await exists.ExecuteScalarAsync(cancellationToken)) != 0)
             throw new PurchasingConflictException("The draft no longer exists or changed in another session.");
     }
 
