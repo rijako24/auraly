@@ -119,7 +119,7 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
   const reversibleCardMethods = new Set(sale.payments
     .filter(payment => ["DebitCard","CreditCard"].includes(payment.methodCode) && payment.availableAmount > 0)
     .map(payment => payment.methodCode));
-  const reasons = runtime ? bootstrap.data?.reasons : reasonsQuery.data;
+  const configuredReasons = runtime ? bootstrap.data?.reasons : reasonsQuery.data;
   const configuredResolutionMethods = runtime ? bootstrap.data?.resolutionMethods : resolutionMethods.data;
   const configuredScopes = runtime ? bootstrap.data?.scopes : returnScopes.data;
   const configuredSettlement = runtime ? bootstrap.data?.settlementConfiguration : settlementConfiguration.data;
@@ -194,7 +194,7 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
         originalDocumentId: sale.documentId, returnedAt: new Date().toISOString(),
         returnScopeCode,
         economicResolution, refundMethodCode: economicResolution === "Refund" ? resolutionMethod as SalesReturnRefundMethod : null,
-        reasonDescription: reasons?.find(reason => reason.code === reasonCode)?.name ?? reasonCode,
+        reasonDescription: configuredReasons?.find(reason => reason.code === reasonCode)?.name ?? reasonCode,
         reasonCode, notes: notes.trim() || null,
         workSessionId, originalPaymentNumber: cardRefund ? Number(originalPaymentNumber) : null,
         bankAccountId: transferRefund && accountingEnabled ? selectedBankAccountId : null,
@@ -216,7 +216,7 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
       </DialogHeader>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
         <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
-          <Field label="Motivo"><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue placeholder="Selecciona un motivo" /></SelectTrigger><SelectContent>{(reasons??[]).map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="Motivo"><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue placeholder="Selecciona un motivo" /></SelectTrigger><SelectContent>{(configuredReasons??[]).map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
           <Field label="Cómo devolver el valor"><Select value={resolutionMethod} onValueChange={changeResolutionMethod}><SelectTrigger><SelectValue placeholder={resolutionMethodsLoading ? "Cargando opciones…" : "Selecciona"} /></SelectTrigger><SelectContent>{availableMethods.map(method => <SelectItem key={method.id} value={method.code} disabled={method.code === "CustomerCredit" && sale.receivableOutstanding <= 0}>{method.label}{method.code === "CustomerCredit" && sale.receivableOutstanding <= 0 ? " · sin saldo" : ""}</SelectItem>)}</SelectContent></Select>{resolutionMethod === "CustomerCredit" && <p className="text-xs text-muted-foreground">Máximo disponible para abonar: {formatCurrency(sale.receivableOutstanding)}. Si la devolución es mayor, registra operaciones separadas.</p>}</Field>
           {cardRefund && <Field label="Pago de tarjeta por reversar"><Select value={originalPaymentNumber} onValueChange={setOriginalPaymentNumber}><SelectTrigger><SelectValue placeholder="Selecciona la transacción original" /></SelectTrigger><SelectContent>{cardPayments.map(payment => <SelectItem key={payment.paymentNumber} value={String(payment.paymentNumber)}>{payment.cardFranchiseCode ?? payment.methodCode} · {payment.approvalNumber ?? `pago ${payment.paymentNumber}`} · disponible {formatCurrency(payment.availableAmount)}</SelectItem>)}</SelectContent></Select></Field>}
           {transferRefund && <Field label="Transferencia"><Button type="button" variant="outline" className="w-full justify-start" onClick={() => setTransferDialogOpen(true)}><Landmark className="mr-2 h-4 w-4"/>{settlementReference ? `${accountingEnabled ? `${bankAccounts.find(account => account.bankAccountId === (bankAccountId || principalBankAccountId))?.displayName ?? "Cuenta"} · ` : ""}${settlementReference}` : "Registrar cuenta y soporte"}</Button></Field>}
