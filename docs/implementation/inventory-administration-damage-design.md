@@ -38,6 +38,7 @@ Esta rebanada extiende el modelo canónico existente; no crea un segundo inventa
 - `GET /api/commerce/v1/inventory/physical-counts/{countId}`
 - `POST /api/commerce/v1/inventory/physical-counts/{countId}/drafts`
 - `PUT /api/commerce/v1/inventory/physical-counts/{countId}/drafts/{draftId}`
+- `POST /api/commerce/v1/inventory/physical-counts/{countId}/drafts/{draftId}/discard`
 - `POST /api/commerce/v1/inventory/physical-counts/{countId}/reconciliations`
 - `GET /api/commerce/v1/inventory/physical-counts/{countId}/reconciliation`
 - `POST /api/commerce/v1/inventory/physical-counts/{countId}/reconciliations/{reconciliationId}/drafts`
@@ -77,7 +78,9 @@ Los permisos se separan por responsabilidad: `inventory.physical-counts.manage` 
 El proyecto SQL provisiona las series operativas CTI, AJI, TRB, CNV y AVE para negocios que aún no poseen una serie activa. No son prefijos DIAN. Los permisos se asignan al rol Administrator mediante el postdeployment.
 ## Cierre de la captura operativa
 
-La acción `Inventario > Nueva operación` es el punto de entrada para crear inventarios físicos, ajustes, salidas de traslado, conversiones y averías. La confirmación de entrada se abre desde el traslado pendiente en el historial, porque continúa un documento existente en vez de crear otro. No replica reglas de negocio: ambos momentos del traslado consumen sus casos de uso canónicos y todos los documentos confirmados entran al mismo motor ordenado mediante su señal RabbitMQ. Al confirmar una salida, el formulario espera que termine su autoguardado pendiente y luego elimina el borrador local, de modo que una escritura tardía no pueda restaurar el traslado ya enviado. En todos los formularios, la acción primaria de confirmar o aplicar se ubica al extremo derecho del pie de acciones.
+La acción `Inventario > Nueva operación` es el punto de entrada para crear inventarios físicos, ajustes, salidas de traslado, conversiones y averías. La confirmación de entrada se abre desde el traslado pendiente en el historial, porque continúa un documento existente en vez de crear otro. No replica reglas de negocio: ambos momentos del traslado consumen sus casos de uso canónicos y todos los documentos confirmados entran al mismo motor ordenado mediante su señal RabbitMQ. Confirmar persiste encabezado, detalle, payload y trabajo durable en una transacción corta; no escribe `InventoryBalances` ni `InventoryMovements`, que siguen siendo propiedad exclusiva del motor. El presupuesto de aceptación HTTP es inferior a un segundo.
+
+El borrador local conserva tanto el `DocumentId` como `OccurredAt`, por lo que un reintento después de perder la respuesta envía exactamente el mismo payload. Después de la aceptación, el formulario espera que termine su autoguardado pendiente y que la transacción de IndexedDB confirme antes de cerrar; una escritura tardía no puede restaurar el documento ya enviado. Descartar espera la misma confirmación local. En conteos, el descarte confirma primero la transición versionada del borrador servidor y luego elimina la recuperación local. En todos los formularios, la acción primaria de confirmar o aplicar se ubica al extremo derecho del pie de acciones.
 
 Reglas de teclado comunes a sus grillas:
 

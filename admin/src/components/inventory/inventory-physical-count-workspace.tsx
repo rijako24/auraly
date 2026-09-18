@@ -56,6 +56,7 @@ import {
   inventoryDraftKey,
   loadInventoryOperationDraft,
   removeInventoryOperationDraft,
+  removeInventoryOperationDraftForDocument,
   saveInventoryOperationDraft,
 } from "@/lib/operation-draft-store";
 
@@ -645,6 +646,7 @@ export function PhysicalCountDraftEditForm({
   const draft = value?.count.drafts.find(item => item.draftId === value.draftId);
   const [lines, setLines] = useState<CountCaptureLine[]>([]);
   const [draftDialogOpen, setDraftDialogOpen] = useState(false);
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
   const [name, setName] = useState("");
   const [captureStage, setCaptureStage] = useState<CountCaptureStage>("Count");
   const countRefs = useRef(new Map<string, HTMLInputElement>());
@@ -731,6 +733,25 @@ export function PhysicalCountDraftEditForm({
     },
     onError: (error: Error) => toast.error(error.message || "No fue posible aplicar el conteo."),
   });
+  const discard = useMutation({
+    mutationFn: async () => {
+      await inventoryApi.discardPhysicalCountDraft(
+        value!.count.inventoryPhysicalCountId,
+        draft!.draftId,
+        { businessId, version: draft!.version },
+      );
+      await removeInventoryOperationDraftForDocument(
+        inventoryDraftKey(businessId, "count"),
+        value!.count.inventoryPhysicalCountId,
+      );
+    },
+    onSuccess: () => {
+      toast.success("Borrador de conteo descartado.");
+      setDiscardDialogOpen(false);
+      onCompleted("drafts");
+    },
+    onError: (error: Error) => toast.error(error.message || "No fue posible descartar el borrador."),
+  });
 
   if (!value || !draft) return null;
   return <div className="space-y-5">
@@ -751,12 +772,28 @@ export function PhysicalCountDraftEditForm({
     <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
       <p className="text-sm text-muted-foreground">{lines.length} {lines.length === 1 ? "producto" : "productos"} cargados del borrador</p>
       <div className="flex flex-wrap gap-2">
-        {canCapture && <Button variant="outline" disabled={save.isPending || apply.isPending} onClick={() => setDraftDialogOpen(true)}><Save className="mr-2 h-4 w-4" />Guardar borrador</Button>}
-        {captureStage === "Count" && <Button variant="outline" disabled={!countsComplete || save.isPending || apply.isPending} onClick={() => { setCaptureStage("Recount"); window.requestAnimationFrame(() => window.requestAnimationFrame(() => { const input = recountRefs.current.get(lines.find(line => !validNumber(line.recount))?.productId ?? lines[0]?.productId); input?.focus(); input?.select(); })); }}><RefreshCw className="mr-2 h-4 w-4" />Recontar</Button>}
-        {canApply && <Button disabled={!applyValid || save.isPending || apply.isPending} onClick={() => apply.mutate()}>{apply.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}Aplicar inventario</Button>}
+        {canCapture && <Button variant="destructive" disabled={save.isPending || apply.isPending || discard.isPending} onClick={() => setDiscardDialogOpen(true)}><Trash2 className="mr-2 h-4 w-4" />Descartar borrador</Button>}
+        {canCapture && <Button variant="outline" disabled={save.isPending || apply.isPending || discard.isPending} onClick={() => setDraftDialogOpen(true)}><Save className="mr-2 h-4 w-4" />Guardar borrador</Button>}
+        {captureStage === "Count" && <Button variant="outline" disabled={!countsComplete || save.isPending || apply.isPending || discard.isPending} onClick={() => { setCaptureStage("Recount"); window.requestAnimationFrame(() => window.requestAnimationFrame(() => { const input = recountRefs.current.get(lines.find(line => !validNumber(line.recount))?.productId ?? lines[0]?.productId); input?.focus(); input?.select(); })); }}><RefreshCw className="mr-2 h-4 w-4" />Recontar</Button>}
+        {canApply && <Button disabled={!applyValid || save.isPending || apply.isPending || discard.isPending} onClick={() => apply.mutate()}>{apply.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}Aplicar inventario</Button>}
       </div>
     </div>
     <SaveDraftNameDialog open={draftDialogOpen} name={name} pending={save.isPending} onNameChange={setName} onClose={() => setDraftDialogOpen(false)} onSave={() => save.mutate()} />
+    <Dialog open={discardDialogOpen} onOpenChange={(open) => { if (!discard.isPending) setDiscardDialogOpen(open); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Descartar borrador de conteo</DialogTitle>
+          <DialogDescription>Se eliminará este borrador de la lista activa y también cualquier recuperación local de conteo guardada en este dispositivo.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" disabled={discard.isPending} onClick={() => setDiscardDialogOpen(false)}>Cancelar</Button>
+          <Button variant="destructive" disabled={discard.isPending} onClick={() => discard.mutate()}>
+            {discard.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Descartar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>;
 }
 

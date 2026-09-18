@@ -356,6 +356,7 @@ public sealed record SaveInventoryPhysicalCountDraftRequest(
     Guid BusinessId, long Version, string Name,
     IReadOnlyCollection<InventoryPhysicalCountDraftLineInput> Lines, bool ReadyForReconciliation,
     string CaptureStage = "Count");
+public sealed record DiscardInventoryPhysicalCountDraftRequest(Guid BusinessId, long Version);
 public sealed record PrepareInventoryReconciliationDraft(Guid DraftId, long Version);
 public sealed record PrepareInventoryReconciliationRequest(
     Guid BusinessId, IReadOnlyCollection<PrepareInventoryReconciliationDraft> Drafts);

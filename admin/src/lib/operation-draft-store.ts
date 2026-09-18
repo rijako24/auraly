@@ -26,6 +26,7 @@ export type DurableInventoryOperationDraft = {
   businessId: string;
   kind: "count" | "adjustment" | "transfer" | "conversion" | "damage";
   documentId: string;
+  occurredAt?: string;
   warehouseId: string;
   destinationId: string;
   reason: string;
@@ -52,6 +53,12 @@ type DurableInventoryOperationSelection = {
   updatedAt: string;
 };
 
+export function inventoryOperationOccurredAt(
+  draft: Pick<DurableInventoryOperationDraft, "occurredAt" | "updatedAt">,
+) {
+  return draft.occurredAt ?? draft.updatedAt;
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE, VERSION);
@@ -72,9 +79,14 @@ async function transaction<T>(
   const database = await openDatabase();
   try {
     return await new Promise<T>((resolve, reject) => {
-      const request = action(database.transaction(STORE, mode).objectStore(STORE));
-      request.onsuccess = () => resolve(request.result);
+      const indexedDbTransaction = database.transaction(STORE, mode);
+      const request = action(indexedDbTransaction.objectStore(STORE));
+      let result: T;
+      request.onsuccess = () => { result = request.result; };
       request.onerror = () => reject(request.error);
+      indexedDbTransaction.oncomplete = () => resolve(result);
+      indexedDbTransaction.onerror = () => reject(indexedDbTransaction.error);
+      indexedDbTransaction.onabort = () => reject(indexedDbTransaction.error);
     });
   } finally {
     database.close();
@@ -95,6 +107,15 @@ export async function saveInventoryOperationDraft(
 
 export async function removeInventoryOperationDraft(key: string) {
   await transaction("readwrite", (store) => store.delete(key));
+}
+
+export async function removeInventoryOperationDraftForDocument(
+  key: string,
+  documentId: string,
+) {
+  const draft = await loadInventoryOperationDraft(key);
+  if (!draft || draft.documentId === documentId)
+    await removeInventoryOperationDraft(key);
 }
 
 export async function loadActiveInventoryOperationKind(businessId: string) {

@@ -10,6 +10,7 @@ public interface IInventoryPhysicalCountStore
     Task<InventoryPhysicalCountDetail?> GetAsync(InventoryUserIdentity user, Guid countId, CancellationToken token);
     Task<InventoryPhysicalCountDetail> CreateDraftAsync(InventoryUserIdentity user, Guid countId, CreateInventoryPhysicalCountDraftRequest request, CancellationToken token);
     Task<InventoryPhysicalCountDetail> SaveDraftAsync(InventoryUserIdentity user, Guid countId, Guid draftId, SaveInventoryPhysicalCountDraftRequest request, CancellationToken token);
+    Task DiscardDraftAsync(InventoryUserIdentity user, Guid countId, Guid draftId, DiscardInventoryPhysicalCountDraftRequest request, CancellationToken token);
     Task<InventoryReconciliationDetail> PrepareReconciliationAsync(InventoryUserIdentity user, Guid countId, PrepareInventoryReconciliationRequest request, CancellationToken token);
     Task<InventoryReconciliationDetail?> GetReconciliationAsync(InventoryUserIdentity user, Guid countId, CancellationToken token);
     Task<InventoryPhysicalCountDetail> SaveReconciliationDraftAsync(InventoryUserIdentity user, Guid countId, Guid reconciliationId, SaveInventoryReconciliationDraftRequest request, CancellationToken token);
@@ -111,6 +112,16 @@ public sealed class InventoryPhysicalCountService(
             Name = NormalizeRequired(request.Name, 120, "Draft name"),
             Lines = request.Lines.Select(line => line with { PendingReason = Normalize(line.PendingReason, 250) }).ToArray()
         }, token);
+    }
+
+    public Task DiscardDraftAsync(InventoryUserIdentity user, Guid countId, Guid draftId, DiscardInventoryPhysicalCountDraftRequest request, CancellationToken token = default)
+    {
+        Require(user, request.BusinessId, InventoryPermissionCodes.CapturePhysicalCounts);
+        ValidateId(countId, "Physical count");
+        ValidateId(draftId, "Draft");
+        if (request.Version < 1)
+            throw new InventoryValidationException("A valid draft version is required.");
+        return store.DiscardDraftAsync(user, countId, draftId, request, token);
     }
 
     public Task<InventoryReconciliationDetail> PrepareReconciliationAsync(InventoryUserIdentity user, Guid countId, PrepareInventoryReconciliationRequest request, CancellationToken token = default)

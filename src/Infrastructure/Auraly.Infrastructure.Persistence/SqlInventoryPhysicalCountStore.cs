@@ -334,6 +334,87 @@ public sealed class SqlInventoryPhysicalCountStore(
         catch(SqlException exception){await RollbackIfActiveAsync(transaction);throw Translate(exception);}catch{await RollbackIfActiveAsync(transaction);throw;}
     }
 
+    public async Task DiscardDraftAsync(InventoryUserIdentity user, Guid countId, Guid draftId, DiscardInventoryPhysicalCountDraftRequest request, CancellationToken token)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, token);
+        try
+        {
+            const string sql = """
+                IF NOT EXISTS(
+                  SELECT 1
+                  FROM dbo.InventoryPhysicalCounts countHeader WITH(UPDLOCK,HOLDLOCK)
+                  INNER JOIN dbo.Businesses business ON business.BusinessId=countHeader.BusinessId
+                  WHERE countHeader.InventoryPhysicalCountId=@CountId
+                    AND countHeader.BusinessId=@BusinessId
+                    AND business.TenantId=@TenantId)
+                  THROW 51201,'The physical count does not belong to this business.',1;
+
+                IF NOT EXISTS(
+                  SELECT 1 FROM dbo.InventoryPhysicalCountLists WITH(UPDLOCK,HOLDLOCK)
+                  WHERE InventoryPhysicalCountListId=@DraftId AND InventoryPhysicalCountId=@CountId)
+                  RETURN;
+
+                IF EXISTS(
+                  SELECT 1 FROM dbo.InventoryPhysicalCountLists
+                  WHERE InventoryPhysicalCountListId=@DraftId AND Status=N'Discarded')
+                  RETURN;
+
+                IF NOT EXISTS(
+                  SELECT 1 FROM dbo.InventoryPhysicalCounts
+                  WHERE InventoryPhysicalCountId=@CountId AND Status IN (N'Open',N'Reconciling'))
+                  THROW 51202,'Only an active physical count draft can be discarded.',1;
+
+                IF NOT EXISTS(
+                  SELECT 1 FROM dbo.InventoryPhysicalCountLists
+                  WHERE InventoryPhysicalCountListId=@DraftId AND AssignedUserId=@UserId)
+                  THROW 51201,'Only the owner can discard this draft.',1;
+
+                IF NOT EXISTS(
+                  SELECT 1 FROM dbo.InventoryPhysicalCountLists
+                  WHERE InventoryPhysicalCountListId=@DraftId AND Version=@Version)
+                  THROW 51202,'The draft changed. Reload it before discarding.',1;
+
+                IF EXISTS(
+                  SELECT 1
+                  FROM dbo.InventoryPhysicalCountReconciliationDrafts selected
+                  INNER JOIN dbo.InventoryPhysicalCountReconciliations reconciliation
+                    ON reconciliation.InventoryPhysicalCountReconciliationId=selected.InventoryPhysicalCountReconciliationId
+                  WHERE selected.InventoryPhysicalCountListId=@DraftId AND reconciliation.Status=N'Active')
+                  THROW 51202,'This draft belongs to an active reconciliation and cannot be discarded.',1;
+
+                UPDATE dbo.InventoryPhysicalCountLists
+                SET Status=N'Discarded',Version=Version+1,UpdatedAt=@Now
+                WHERE InventoryPhysicalCountListId=@DraftId;
+
+                IF NOT EXISTS(
+                  SELECT 1 FROM dbo.InventoryPhysicalCountLists
+                  WHERE InventoryPhysicalCountId=@CountId AND Status<>N'Discarded')
+                BEGIN
+                  UPDATE dbo.InventoryPhysicalCounts
+                  SET Status=N'Cancelled',ClosedAt=COALESCE(ClosedAt,@Now)
+                  WHERE InventoryPhysicalCountId=@CountId AND Status IN (N'Open',N'Reconciling');
+                END
+                """;
+            await ExecuteAsync(connection, transaction, sql, token,
+                P("@CountId", countId), P("@DraftId", draftId), P("@BusinessId", request.BusinessId),
+                P("@TenantId", user.TenantId), P("@UserId", user.UserId), P("@Version", request.Version),
+                P("@Now", timeProvider.GetUtcNow()));
+            await transaction.CommitAsync(token);
+        }
+        catch (SqlException exception)
+        {
+            await RollbackIfActiveAsync(transaction);
+            throw Translate(exception);
+        }
+        catch
+        {
+            await RollbackIfActiveAsync(transaction);
+            throw;
+        }
+    }
+
     public async Task<InventoryReconciliationDetail> PrepareReconciliationAsync(InventoryUserIdentity user, Guid countId, PrepareInventoryReconciliationRequest request, CancellationToken token)
     {
         await using var connection=connections.Create();await connection.OpenAsync(token);await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);

@@ -165,7 +165,16 @@ ordenado después de procesar todas las aplicaciones requeridas.
 
 `InProgress -> Ready`
 
-`Discarded` se reserva para anulación administrativa.
+`Discarded` representa un borrador descartado por su propietario. El descarte
+es una transición transaccional, versionada e idempotente: no mueve inventario,
+no elimina el histórico físico y lo retira inmediatamente de las consultas
+activas. Si era el último borrador activo, la sesión pasa a `Cancelled`.
+
+La interfaz elimina además la recuperación local de IndexedDB únicamente
+después de que el servidor acepte el descarte. Repetir la acción sobre un
+borrador ya descartado termina correctamente, lo que permite completar la
+limpieza local después de una interrupción sin crear una segunda ruta de
+persistencia.
 
 ### Conciliación
 

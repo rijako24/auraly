@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
@@ -257,6 +258,121 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                 true, "Count"));
         Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
         await ClosePhysicalCountForTestAsync(countId);
+    }
+
+    [Fact]
+    public async Task Inventory_confirmations_accept_within_one_second_without_moving_inventory_inline()
+    {
+        var source = Guid.NewGuid();
+        var output = Guid.NewGuid();
+        var third = Guid.NewGuid();
+        var destination = Guid.NewGuid();
+        await SeedAsync(source, output, third, destination);
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Count,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.DispatchTransfer,
+            InventoryPermissionCodes.Damage,
+            InventoryPermissionCodes.Convert);
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null, [new(1, source, 20m, 5m)]));
+
+        var initialBalance = await BalanceAsync(fixture.WarehouseId, source);
+        var adjustmentId = Guid.NewGuid();
+        var transferId = Guid.NewGuid();
+        var damageId = Guid.NewGuid();
+        var conversionId = Guid.NewGuid();
+        var countId = Guid.NewGuid();
+        var occurredAt = DateTimeOffset.UtcNow;
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            await SendWithinBudgetAsync(client, "/api/commerce/v1/inventory-adjustments/confirm",
+                new ConfirmInventoryAdjustmentRequest(adjustmentId, fixture.BusinessId, fixture.WarehouseId,
+                    occurredAt, "FOUND_SURPLUS", null, null, [new(1, source, 1m, 5m)]),
+                $"budget-adjustment-{adjustmentId:N}");
+            await SendWithinBudgetAsync(client, "/api/commerce/v1/warehouse-transfers/dispatch",
+                new DispatchWarehouseTransferRequest(transferId, fixture.BusinessId, fixture.WarehouseId,
+                    destination, occurredAt, "WAREHOUSE_TRANSFER", null, [new(1, source, 1m)]),
+                $"budget-transfer-{transferId:N}");
+            await SendWithinBudgetAsync(client, "/api/commerce/v1/inventory-damages/confirm",
+                new ConfirmInventoryDamageRequest(damageId, fixture.BusinessId, fixture.WarehouseId,
+                    occurredAt, "DAMAGE", null, null, [new(1, source, 1m)]),
+                $"budget-damage-{damageId:N}");
+            await SendWithinBudgetAsync(client, "/api/commerce/v1/product-conversions/confirm",
+                new ConfirmProductConversionRequest(conversionId, fixture.BusinessId, fixture.WarehouseId,
+                    occurredAt, "SPLIT", "PRESENTATION_CHANGE", null, null,
+                    [new(1, "INPUT", source, 1m, null), new(2, "OUTPUT", output, 1m, null)]),
+                $"budget-conversion-{conversionId:N}");
+            await SendWithinBudgetAsync(client, "/api/commerce/v1/stock-counts/apply",
+                new ApplyStockCountRequest(countId, fixture.BusinessId, fixture.WarehouseId,
+                    occurredAt, "PHYSICAL_COUNT", null, [new(source, 20m, 19m)]),
+                $"budget-count-{countId:N}");
+
+            Assert.Equal(initialBalance, await BalanceAsync(fixture.WarehouseId, source));
+            foreach (var documentId in new[] { adjustmentId, transferId, damageId, conversionId, countId })
+            {
+                Assert.Equal(0, await CountAsync("InventoryMovements", documentId));
+                Assert.Equal("Pending", await JobStatusAsync(documentId));
+            }
+        }
+        finally
+        {
+            var signals = fixture.DrainDocumentSignals();
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in signals)
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
+    }
+
+    [Fact]
+    public async Task Physical_count_draft_discard_is_atomic_versioned_and_idempotent()
+    {
+        var product = Guid.NewGuid();
+        await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.ManagePhysicalCounts,
+            InventoryPermissionCodes.CapturePhysicalCounts);
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null, [new(1, product, 1m, 1m)]));
+        var countId = Guid.NewGuid();
+        InventoryPhysicalCountDraft draft;
+        using (var create = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/inventory/physical-counts",
+                   new CreateInventoryPhysicalCountRequest(countId, fixture.BusinessId, fixture.WarehouseId,
+                       "Partial", "PHYSICAL_COUNT", null, "Conteo para descartar", [product])))
+        {
+            Assert.True(create.StatusCode == HttpStatusCode.Created,
+                $"Expected Created but received {create.StatusCode}: {await create.Content.ReadAsStringAsync()}");
+            draft = Assert.Single(Assert.IsType<InventoryPhysicalCountDetail>(
+                await create.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>()).Drafts);
+        }
+
+        using (var stale = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}/discard",
+                   new DiscardInventoryPhysicalCountDraftRequest(fixture.BusinessId, draft.Version + 1)))
+            Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+
+        using (var discard = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}/discard",
+                   new DiscardInventoryPhysicalCountDraftRequest(fixture.BusinessId, draft.Version)))
+            Assert.Equal(HttpStatusCode.NoContent, discard.StatusCode);
+
+        var discarded = Assert.IsType<InventoryPhysicalCountDetail>(
+            await client.GetFromJsonAsync<InventoryPhysicalCountDetail>(
+                $"/api/commerce/v1/inventory/physical-counts/{countId:D}"));
+        Assert.Empty(discarded.Drafts);
+        Assert.Equal("Cancelled", discarded.Status);
+
+        using var replay = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}/discard",
+            new DiscardInventoryPhysicalCountDraftRequest(fixture.BusinessId, draft.Version));
+        Assert.Equal(HttpStatusCode.NoContent, replay.StatusCode);
     }
 
     [Fact]
@@ -974,6 +1090,15 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.True(response.StatusCode == HttpStatusCode.Accepted,
             $"Expected Accepted, received {response.StatusCode}: {responseBody}");
         return await response.Content.ReadFromJsonAsync<InventoryOperationAcceptance>() ?? throw new InvalidOperationException("Acceptance missing.");
+    }
+    private static async Task<InventoryOperationAcceptance> SendWithinBudgetAsync<T>(HttpClient client, string url, T request, string key)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var acceptance = await SendAsync(client, url, request, key);
+        stopwatch.Stop();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"{url} took {stopwatch.Elapsed.TotalMilliseconds:N0} ms; budget is below 1,000 ms.");
+        return acceptance;
     }
     private static HttpRequestMessage CreateMessage<T>(string url,T request,string key){var message=new HttpRequestMessage(HttpMethod.Post,url){Content=JsonContent.Create(request)};message.Headers.Add("Idempotency-Key",key);return message;}
     private async Task<(decimal Quantity,decimal Average,decimal Value)> BalanceAsync(Guid warehouse,Guid product)
