@@ -1020,11 +1020,11 @@ export class OnlinePosClient implements PosClient {
   }
 
   async searchIssuedSales(search = "", skip = 0, take = 50) {
-    const page = await request<OnlineIssuedSalePage>(
+    const page = await request<ServerIssuedSalePage>(
       "/api/commerce/v1/pos/drafts/sales/search",
       this.post({ context: this.scope(), search, skip, take }),
     );
-    return mapIssuedSales(page);
+    return mapServerIssuedSalesPage(page);
   }
 
   searchServerIssuedSales(
