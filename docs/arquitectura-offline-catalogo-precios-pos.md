@@ -50,6 +50,12 @@ El navegador conserva:
 
 La PWA no será la fuente durable de productos, ventas ni certificados.
 
+La descarga de la interfaz para uso sin conexión pertenece a la preparación
+explícita del vendedor. La navegación normal del dashboard no vuelve a descargar
+la ruta activa ni sus recursos: hacerlo duplica el viaje que ya resolvió Next.js,
+consume memoria de forma proporcional al peso de cada pantalla y puede expulsar
+la aplicación instalada en dispositivos móviles con presupuesto limitado.
+
 ### 2.2 Auraly POS Edge
 
 Servicio local .NET 8 para Windows:

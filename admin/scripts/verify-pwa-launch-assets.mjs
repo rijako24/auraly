@@ -59,8 +59,15 @@ if (!offlineShell.includes('RUNTIME_CACHE = "auraly-pwa-v14-runtime"'))
   throw new Error("The offline shell writer must use the active service-worker runtime cache.");
 if (!offlineShell.includes("linkedStaticAssets(html)") ||
     !offlineShell.includes("await cache.put(assetRequest, assetResponse)") ||
-    !offlineShell.includes("prepareCurrentAppShell"))
+    !offlineShell.includes("prepareSellerAppShell"))
   throw new Error("Preparing a seller shell must persist the CSS and chunks required to render it.");
+if (offlineShell.includes("prepareCurrentAppShell") ||
+    !offlineShell.includes("ASSET_DOWNLOAD_CONCURRENCY") ||
+    !offlineShell.includes("await cache.match(assetRequest)"))
+  throw new Error("Dashboard navigation must not trigger route pre-caching; explicit seller preparation must deduplicate and bound asset downloads.");
+const pwaProvider = await readFile(path.join(root, "src", "providers", "pwa-provider.tsx"), "utf8");
+if (pwaProvider.includes("prepareCurrentAppShell") || pwaProvider.includes("prepareSellerAppShell"))
+  throw new Error("The global PWA provider must not download an app shell after each navigation.");
 const nextStaticStrategy = worker.match(/if \(url\.pathname\.startsWith\("\/_next\/static\/"\)\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
 if (!nextStaticStrategy.includes("fetch(request).then") ||
     !nextStaticStrategy.includes("caches.match(request)") ||
