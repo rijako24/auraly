@@ -2732,6 +2732,7 @@ export default function PosPage() {
     orderIds: string[],
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
+    printAfterInvoice: boolean,
     idempotencyKey: string,
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
@@ -2745,7 +2746,7 @@ export default function PosPage() {
         transfer?.reference,
         transfer?.bankAccountId,
         transfer?.notes,
-        true,
+        printAfterInvoice,
         idempotencyKey,
         onProgress,
         true,
@@ -3720,7 +3721,6 @@ export default function PosPage() {
               <OrdersWorkspace
                 key={`compact-orders-${ordersRefreshVersion}`}
                 compact
-                invoicePrintMode="always"
                 initialStatus="Available"
                 activeOrderId={draft?.sourceOrderId}
                 loadPage={loadCommerceOrders}
@@ -3728,11 +3728,12 @@ export default function PosPage() {
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={async (orders) =>
                   printOrdersOnline(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode, _printAfterInvoice, idempotencyKey, onProgress) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     paymentMethodCode,
                     documentType,
+                    printAfterInvoice,
                     idempotencyKey,
                     onProgress,
                   )
@@ -3772,7 +3773,6 @@ export default function PosPage() {
           <main className="min-h-0 flex-1 overflow-auto p-5">
             <OrdersWorkspace
               key={`expanded-orders-${ordersRefreshVersion}`}
-              invoicePrintMode="always"
               initialStatus="Available"
               activeOrderId={draft?.sourceOrderId}
               loadPage={loadCommerceOrders}
@@ -3780,11 +3780,12 @@ export default function PosPage() {
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={async (orders) =>
                 printOrdersOnline(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType, paymentMethodCode, _printAfterInvoice, idempotencyKey, onProgress) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
                   documentType,
+                  printAfterInvoice,
                   idempotencyKey,
                   onProgress,
                 )

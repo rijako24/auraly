@@ -331,6 +331,13 @@ public sealed class PosArchitectureTests
             "(pos)",
             "pos",
             "page.tsx"));
+        var ordersWorkspace = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "admin",
+            "src",
+            "components",
+            "orders",
+            "orders-workspace.tsx"));
         var headerStart = page.IndexOf("<header", StringComparison.Ordinal);
         var headerEnd = page.IndexOf("</header>", headerStart, StringComparison.Ordinal);
         var header = page[headerStart..headerEnd];
@@ -343,6 +350,11 @@ public sealed class PosArchitectureTests
         Assert.Contains("sidePanel === \"temporaries\"", page, StringComparison.Ordinal);
         Assert.Contains("setOrdersExpanded(true)", page, StringComparison.Ordinal);
         Assert.Contains("<OrdersWorkspace", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("invoicePrintMode", page, StringComparison.Ordinal);
+        Assert.Contains("printAfterInvoice,", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("invoicePrintMode", ordersWorkspace, StringComparison.Ordinal);
+        Assert.Contains("checked={printAfterInvoice}", ordersWorkspace, StringComparison.Ordinal);
+        Assert.Contains("printAfterInvoice,", ordersWorkspace, StringComparison.Ordinal);
         Assert.Contains("ordersExpanded && client", page, StringComparison.Ordinal);
         Assert.Contains("{ordersCount}", page, StringComparison.Ordinal);
         Assert.Contains("setSelectedCustomer(recoveredCustomer)", page, StringComparison.Ordinal);

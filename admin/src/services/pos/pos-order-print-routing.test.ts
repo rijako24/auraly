@@ -6,7 +6,6 @@ import {
   orderReceiptsFromEmission,
   orderReceiptsForPrinting,
   resolvePosOrderPrintRoute,
-  shouldPrintOrderInvoice,
 } from "./pos-order-print-routing";
 
 test("la aplicación instalada imprime pedidos directamente, esté enrolada o no", () => {
@@ -15,13 +14,6 @@ test("la aplicación instalada imprime pedidos directamente, esté enrolada o no
 
 test("el navegador conserva la vista previa para pedidos", () => {
   assert.equal(resolvePosOrderPrintRoute(null), "browser");
-});
-
-test("punto de venta siempre imprime y pedidos conserva la elección del usuario", () => {
-  assert.equal(shouldPrintOrderInvoice("always", false), true);
-  assert.equal(shouldPrintOrderInvoice("always", true), true);
-  assert.equal(shouldPrintOrderInvoice("optional", false), false);
-  assert.equal(shouldPrintOrderInvoice("optional", true), true);
 });
 
 test("pedidos conserva factura y comprobante de cartera devueltos al emitir", () => {

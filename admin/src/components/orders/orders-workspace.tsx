@@ -55,9 +55,7 @@ import {
 } from "@/services/orders/order-batch-selection";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
 import {
-  type OrderInvoicePrintMode,
   type OrderInvoiceSequenceProgress,
-  shouldPrintOrderInvoice,
 } from "@/services/pos/pos-order-print-routing";
 import { getOrderAvailability } from "./order-availability";
 import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
@@ -114,7 +112,6 @@ type OrdersWorkspaceProps = {
   routeOptions?: Array<{ routeId: string; name: string }>;
   source?: number;
   activeOrderId?: string | null;
-  invoicePrintMode?: OrderInvoicePrintMode;
 };
 
 type InvoiceProgress = {
@@ -153,7 +150,6 @@ export function OrdersWorkspace({
   routeOptions = [],
   source,
   activeOrderId,
-  invoicePrintMode = "optional",
 }: OrdersWorkspaceProps) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CommerceOrderPage | null>(null);
@@ -348,12 +344,11 @@ export function OrdersWorkspace({
       await refresh();
       return;
     }
-    const shouldPrint = shouldPrintOrderInvoice(invoicePrintMode, printAfterInvoice);
     const fingerprint = JSON.stringify({
       orderIds: available.map((order) => order.orderId).sort(),
       documentType,
       paymentMethodCode: requestedPaymentMethodCode,
-      printAfterInvoice: shouldPrint,
+      printAfterInvoice,
     });
     if (invoiceAttemptRef.current?.fingerprint !== fingerprint) {
       invoiceAttemptRef.current = { fingerprint, key: crypto.randomUUID() };
@@ -413,7 +408,7 @@ export function OrdersWorkspace({
         available,
         documentType,
         requestedPaymentMethodCode,
-        shouldPrint,
+        printAfterInvoice,
         idempotencyKey,
         updateProgress,
       );
@@ -722,7 +717,7 @@ export function OrdersWorkspace({
                     <CreditCard className="h-3.5 w-3.5" />Crédito
                   </button>
                 </div>
-                {invoicePrintMode === "optional" && <label className="col-span-2 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 sm:col-span-1">
+                <label className="col-span-2 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 sm:col-span-1">
                   <Checkbox
                     checked={printAfterInvoice}
                     disabled={working}
@@ -732,7 +727,7 @@ export function OrdersWorkspace({
                   />
                   <Printer className="h-3.5 w-3.5 text-teal-700" />
                   Imprimir al facturar
-                </label>}
+                </label>
                 <Button
                   type="button"
                   disabled={!selectedOrders.length || working || selectingAll || !onInvoiceSelected}
