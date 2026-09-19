@@ -37,6 +37,7 @@ public static class FiscalArtifactTypeCodes
     public const string SubmissionZip = "SubmissionZip";
     public const string DianApplicationResponse = "DianApplicationResponse";
     public const string SignedAttachedDocument = "SignedAttachedDocument";
+    public const string GraphicalRepresentationPdf = "GraphicalRepresentationPdf";
     public const string SanitizedSoapRequest = "SanitizedSoapRequest";
     public const string SanitizedSoapResponse = "SanitizedSoapResponse";
 }

@@ -3,14 +3,19 @@ CREATE PROCEDURE dbo.FiscalInvoiceDeliveryArtifactSave
     @MessageId UNIQUEIDENTIFIER,
     @TenantId UNIQUEIDENTIFIER,
     @LeaseId UNIQUEIDENTIFIER,
-    @Content VARBINARY(MAX),
-    @ContentHash BINARY(32),
-    @FileName NVARCHAR(256)
+    @AttachedDocument VARBINARY(MAX),
+    @AttachedDocumentHash BINARY(32),
+    @AttachedDocumentFileName NVARCHAR(256),
+    @GraphicalRepresentation VARBINARY(MAX),
+    @GraphicalRepresentationHash BINARY(32),
+    @GraphicalRepresentationFileName NVARCHAR(256)
 AS
 BEGIN
     SET NOCOUNT ON;
-    IF DATALENGTH(@Content)=0 OR DATALENGTH(@ContentHash)<>32
-      THROW 51290,'The signed AttachedDocument artifact is invalid.',1;
+    IF DATALENGTH(@AttachedDocument)=0 OR DATALENGTH(@AttachedDocumentHash)<>32
+       OR DATALENGTH(@GraphicalRepresentation)=0
+       OR DATALENGTH(@GraphicalRepresentationHash)<>32
+      THROW 51290,'The fiscal delivery artifacts are invalid.',1;
 
     IF NOT EXISTS(
       SELECT 1
@@ -32,14 +37,33 @@ BEGIN
       IF NOT EXISTS(
         SELECT 1 FROM dbo.FiscalArtifacts
         WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedAttachedDocument'
-          AND ArtifactVersion=1 AND ContentHash=@ContentHash)
+          AND ArtifactVersion=1 AND ContentHash=@AttachedDocumentHash)
         THROW 51292,'A different signed AttachedDocument artifact already exists.',1;
     END
     ELSE
       INSERT dbo.FiscalArtifacts
         (FiscalArtifactId,DocumentId,ArtifactType,ArtifactVersion,Content,ContentHash,
          ContentType,FileName,TechnicalAnnexVersion,GeneratorVersion,CreatedAt)
-      VALUES(NEWID(),@DocumentId,N'SignedAttachedDocument',1,@Content,@ContentHash,
-             N'application/xml',@FileName,NULL,N'Auraly.Fiscal.Ubl',SYSDATETIMEOFFSET());
+      VALUES(NEWID(),@DocumentId,N'SignedAttachedDocument',1,@AttachedDocument,@AttachedDocumentHash,
+             N'application/xml',@AttachedDocumentFileName,NULL,N'Auraly.Fiscal.Ubl',SYSDATETIMEOFFSET());
+
+    IF EXISTS(
+      SELECT 1 FROM dbo.FiscalArtifacts WITH(UPDLOCK,HOLDLOCK)
+      WHERE DocumentId=@DocumentId AND ArtifactType=N'GraphicalRepresentationPdf')
+    BEGIN
+      IF NOT EXISTS(
+        SELECT 1 FROM dbo.FiscalArtifacts
+        WHERE DocumentId=@DocumentId AND ArtifactType=N'GraphicalRepresentationPdf'
+          AND ArtifactVersion=1 AND ContentHash=@GraphicalRepresentationHash)
+        THROW 51293,'A different graphical representation artifact already exists.',1;
+    END
+    ELSE
+      INSERT dbo.FiscalArtifacts
+        (FiscalArtifactId,DocumentId,ArtifactType,ArtifactVersion,Content,ContentHash,
+         ContentType,FileName,TechnicalAnnexVersion,GeneratorVersion,CreatedAt)
+      VALUES(NEWID(),@DocumentId,N'GraphicalRepresentationPdf',1,
+             @GraphicalRepresentation,@GraphicalRepresentationHash,
+             N'application/pdf',@GraphicalRepresentationFileName,NULL,
+             N'Auraly.Fiscal.Pdf/v1',SYSDATETIMEOFFSET());
 END;
 GO

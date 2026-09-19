@@ -151,6 +151,7 @@ builder.Services.AddSingleton<DianSupportDocumentUblBuilder>();
 builder.Services.AddSingleton<DianCreditNoteUblBuilder>();
 builder.Services.AddSingleton<DianDebitNoteUblBuilder>();
 builder.Services.AddSingleton<DianAttachedDocumentBuilder>();
+builder.Services.AddSingleton<DianInvoicePdfRenderer>();
 builder.Services.AddSingleton<DianSchemaValidator>();
 builder.Services.AddSingleton<DianPayrollXmlBuilder>();
 builder.Services.AddSingleton<DianPayrollSchemaValidator>();

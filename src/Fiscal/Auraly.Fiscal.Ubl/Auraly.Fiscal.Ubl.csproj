@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
     <Content Include="Schemas\**\*.xsd">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

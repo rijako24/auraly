@@ -129,7 +129,8 @@ internal static class PosPeripheralModule
                     CustomerName: request.CustomerName,
                     BusinessName: request.BusinessName,
                     WarehouseName: request.WarehouseName,
-                    CreditAcknowledgement: request.CreditAcknowledgement);
+                    CreditAcknowledgement: request.CreditAcknowledgement,
+                    InvoicePrintDetails: request.InvoicePrintDetails);
                 if (orderTicketWorkflow)
                     await printer.PrintOrderAsync(receipt, ct);
                 else

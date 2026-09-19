@@ -33,22 +33,31 @@ public sealed class FiscalInvoiceEmailPackageTests
     }
 
     [Fact]
-    public void Zip_contains_only_the_signed_attached_document()
+    public void Zip_contains_the_signed_attached_document_and_pdf_representation()
     {
         var attachedDocument = Encoding.UTF8.GetBytes("<AttachedDocument>signed</AttachedDocument>");
+        var pdf = Encoding.ASCII.GetBytes("%PDF-1.4\nrepresentation");
         var issuedAt = new DateTimeOffset(2026, 9, 12, 9, 15, 0, TimeSpan.FromHours(-5));
 
         var zip = PlatformEmailOutboxHostedService.BuildFiscalContainer(
-            "AttachedDocument-SETP42.xml", attachedDocument, issuedAt);
+            "AttachedDocument-SETP42.xml", attachedDocument,
+            "RepresentacionGrafica-SETP42.pdf", pdf, issuedAt);
 
         using var archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read);
-        var entry = Assert.Single(archive.Entries);
-        Assert.Equal("AttachedDocument-SETP42.xml", entry.FullName);
+        Assert.Equal(2, archive.Entries.Count);
+        var entry = archive.GetEntry("AttachedDocument-SETP42.xml");
+        Assert.NotNull(entry);
         using var content = new MemoryStream();
-        using (var source = entry.Open()) source.CopyTo(content);
+        using (var source = entry!.Open()) source.CopyTo(content);
         Assert.Equal(attachedDocument, content.ToArray());
+        var pdfEntry = archive.GetEntry("RepresentacionGrafica-SETP42.pdf");
+        Assert.NotNull(pdfEntry);
+        using var pdfContent = new MemoryStream();
+        using (var source = pdfEntry!.Open()) source.CopyTo(pdfContent);
+        Assert.Equal(pdf, pdfContent.ToArray());
         Assert.Equal(zip, PlatformEmailOutboxHostedService.BuildFiscalContainer(
-            "AttachedDocument-SETP42.xml", attachedDocument, issuedAt));
+            "AttachedDocument-SETP42.xml", attachedDocument,
+            "RepresentacionGrafica-SETP42.pdf", pdf, issuedAt));
     }
 
     [Fact]

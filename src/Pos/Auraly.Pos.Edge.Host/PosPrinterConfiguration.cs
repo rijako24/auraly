@@ -425,7 +425,7 @@ public sealed class ConfigurableOrderDocumentPrinter(
                     new Auraly.Contracts.Sales.OnlineSalesReceiptLine(
                         line.ProductCode, line.Description, line.Quantity,
                         line.UnitPrice, line.Discount, line.Tax, line.Total,
-                        line.TaxCode, line.TaxRate)).ToArray(),
+                        line.TaxCode, line.TaxRate, line.UnitCode)).ToArray(),
                 receipt.Payments.Select(payment =>
                     new Auraly.Contracts.Sales.OnlineSalesPayment(
                         payment.MethodCode, payment.Amount, payment.Reference,
@@ -440,7 +440,8 @@ public sealed class ConfigurableOrderDocumentPrinter(
                 null,
                 receipt.CustomerName ?? receipt.CustomerIdentification,
                 receipt.CompanyName,
-                receipt.CompanyLogoSource)).ToArray(),
+                receipt.CompanyLogoSource,
+                InvoicePrintDetails: receipt.InvoicePrintDetails)).ToArray(),
             workflowPrinterName,
             outputFormat,
             cancellationToken);
@@ -699,7 +700,7 @@ public sealed class ConfigurablePosReceiptPrinter(
                 receipt.Lines.Select(line => new PosReceiptLine(
                     line.ProductCode, line.Description, line.Quantity,
                     line.UnitPrice, line.Discount, line.Tax, line.Total,
-                    line.TaxCode, line.TaxRate)).ToArray(),
+                    line.TaxCode, line.TaxRate, line.UnitCode)).ToArray(),
                 receipt.Payments.Select(payment => new OfflineSalePayment(
                     payment.MethodCode, payment.Amount, payment.Reference,
                     payment.CardFranchiseCode, payment.ApprovalNumber,
@@ -717,7 +718,8 @@ public sealed class ConfigurablePosReceiptPrinter(
                 CustomerName: receipt.CustomerName,
                 BusinessName: receipt.CreditAcknowledgement?.BusinessName,
                 WarehouseName: receipt.CreditAcknowledgement?.WarehouseName,
-                CreditAcknowledgement: receipt.CreditAcknowledgement);
+                CreditAcknowledgement: receipt.CreditAcknowledgement,
+                InvoicePrintDetails: receipt.InvoicePrintDetails);
 }
 
 public sealed class RenderedWindowsReceiptPrinter(

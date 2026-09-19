@@ -22,6 +22,7 @@ public sealed class PlatformEmailOutboxHostedService(
     SqlServerConnectionFactory connections,
     PlatformEmailOptions options,
     DianAttachedDocumentBuilder attachedDocuments,
+    DianInvoicePdfRenderer invoicePdfs,
     DianSchemaValidator fiscalSchemaValidator,
     IFiscalXmlSigner fiscalXmlSigner,
     TimeProvider timeProvider,
@@ -161,6 +162,7 @@ public sealed class PlatformEmailOutboxHostedService(
         }
         else
         {
+            var deliveryArtifactsChanged = false;
             if (signedAttachedDocument is null)
             {
                 if (invoice.ApplicationResponse is not { Length: > 0 })
@@ -189,15 +191,32 @@ public sealed class PlatformEmailOutboxHostedService(
                 signedAttachedDocument = signed.SignedXml;
                 signedAttachedDocumentFileName =
                     $"AttachedDocument-{SafeFileName(invoice.FiscalNumber)}.xml";
-                await SaveFiscalDeliveryArtifactAsync(
-                    invoice, message, signedAttachedDocument,
-                    Convert.FromHexString(signed.Sha256Hex),
-                    signedAttachedDocumentFileName,
-                    cancellationToken);
+                deliveryArtifactsChanged = true;
             }
+            var pdf = invoice.GraphicalRepresentationPdf;
+            var pdfFileName = invoice.GraphicalRepresentationPdfFileName;
+            if (pdf is null)
+            {
+                pdf = invoicePdfs.Render(invoice.SignedXml);
+                pdfFileName =
+                    $"RepresentacionGrafica-{SafeFileName(invoice.FiscalNumber)}.pdf";
+                deliveryArtifactsChanged = true;
+            }
+            if (deliveryArtifactsChanged)
+                await SaveFiscalDeliveryArtifactsAsync(
+                    invoice, message,
+                    signedAttachedDocument,
+                    System.Security.Cryptography.SHA256.HashData(signedAttachedDocument),
+                    signedAttachedDocumentFileName ?? "AttachedDocument.xml",
+                    pdf,
+                    System.Security.Cryptography.SHA256.HashData(pdf),
+                    pdfFileName ?? "RepresentacionGrafica.pdf",
+                    cancellationToken);
             container = BuildFiscalContainer(
                 signedAttachedDocumentFileName ?? "AttachedDocument.xml",
                 signedAttachedDocument,
+                pdfFileName ?? "RepresentacionGrafica.pdf",
+                pdf,
                 invoice.IssuedAt);
             attachmentFileName = $"FacturaElectronica-{SafeFileName(invoice.FiscalNumber)}.zip";
             subject = BuildFiscalInvoiceSubject(metadata);
@@ -306,17 +325,22 @@ public sealed class PlatformEmailOutboxHostedService(
                 reader.IsDBNull(7) ? null : (byte[])reader[7],
                 reader.IsDBNull(8) ? null : (byte[])reader[8],
                 reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.GetString(10), reader.GetString(11), reader.GetString(12),
-                !reader.IsDBNull(13), reader.IsDBNull(14) ? null : (byte[])reader[14])
+                reader.IsDBNull(10) ? null : (byte[])reader[10],
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.GetString(12), reader.GetString(13), reader.GetString(14),
+                !reader.IsDBNull(15), reader.IsDBNull(16) ? null : (byte[])reader[16])
             : null;
     }
 
-    private async Task SaveFiscalDeliveryArtifactAsync(
+    private async Task SaveFiscalDeliveryArtifactsAsync(
         FiscalInvoiceRecipient invoice,
         ClaimedMessage message,
-        byte[] content,
-        byte[] contentHash,
-        string fileName,
+        byte[] attachedDocument,
+        byte[] attachedDocumentHash,
+        string attachedDocumentFileName,
+        byte[] graphicalRepresentation,
+        byte[] graphicalRepresentationHash,
+        string graphicalRepresentationFileName,
         CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
@@ -329,9 +353,12 @@ public sealed class PlatformEmailOutboxHostedService(
         command.Parameters.AddWithValue("@MessageId", message.MessageId);
         command.Parameters.AddWithValue("@TenantId", message.TenantId);
         command.Parameters.AddWithValue("@LeaseId", message.LeaseId);
-        command.Parameters.AddWithValue("@Content", content);
-        command.Parameters.AddWithValue("@ContentHash", contentHash);
-        command.Parameters.AddWithValue("@FileName", fileName);
+        command.Parameters.AddWithValue("@AttachedDocument", attachedDocument);
+        command.Parameters.AddWithValue("@AttachedDocumentHash", attachedDocumentHash);
+        command.Parameters.AddWithValue("@AttachedDocumentFileName", attachedDocumentFileName);
+        command.Parameters.AddWithValue("@GraphicalRepresentation", graphicalRepresentation);
+        command.Parameters.AddWithValue("@GraphicalRepresentationHash", graphicalRepresentationHash);
+        command.Parameters.AddWithValue("@GraphicalRepresentationFileName", graphicalRepresentationFileName);
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -510,11 +537,21 @@ public sealed class PlatformEmailOutboxHostedService(
     internal static byte[] BuildFiscalContainer(
         string fileName,
         byte[] signedAttachedDocument,
+        string pdfFileName,
+        byte[] graphicalRepresentation,
         DateTimeOffset issuedAt)
     {
+        if (graphicalRepresentation.Length == 0 ||
+            !graphicalRepresentation.AsSpan().StartsWith("%PDF-"u8))
+            throw new ArgumentException(
+                "The graphical representation must be a PDF.",
+                nameof(graphicalRepresentation));
         using var output = new MemoryStream();
         using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
             WriteEntry(archive, SafeFileName(fileName), signedAttachedDocument, issuedAt);
+            WriteEntry(archive, SafeFileName(pdfFileName), graphicalRepresentation, issuedAt);
+        }
         return output.ToArray();
     }
 
@@ -622,7 +659,7 @@ public sealed class PlatformEmailOutboxHostedService(
             <h1 style="margin:0 0 14px;font-size:28px">Tu factura electrónica está lista</h1>
             <p style="font-size:16px;line-height:1.6">Hola, <strong>{{customer}}</strong>. <strong>{{business}}</strong> emitió la factura electrónica de venta que encontrarás adjunta a este correo.</p>
             <table role="presentation" width="100%" style="margin:22px 0;background:#f0fdfa;border:1px solid #99f6e4;border-radius:14px"><tr><td style="padding:17px;line-height:1.8">Documento Auraly: <strong>{{document}}</strong><br>Número DIAN: <strong>{{fiscal}}</strong><br>Fecha: {{invoice.IssuedAt:dd/MM/yyyy HH:mm}}<br>Total: <strong>{{amount}}</strong></td></tr></table>
-            <p style="font-size:14px;line-height:1.6;color:#526170">El archivo ZIP adjunto contiene el AttachedDocument firmado: allí se conservan la factura XML y la respuesta electrónica de validación de la DIAN. Guárdalo como soporte del documento.</p>
+            <p style="font-size:14px;line-height:1.6;color:#526170">El archivo ZIP adjunto contiene el AttachedDocument firmado con la factura XML, la respuesta electrónica de validación de la DIAN y la representación gráfica en PDF. Guárdalo como soporte del documento.</p>
             <p style="font-size:12px;line-height:1.6;color:#64748b">Correo autorrespuesta: {{support}}</p>
             <p style="padding:14px;border-radius:12px;background:#f6f9fa;border:1px solid #dce5e9;font-size:12px;color:#64748b">Este mensaje es informativo. No respondas con claves, contraseñas ni datos de pago.</p>
             </td></tr><tr><td style="padding:20px 32px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px">Soporte: <a href="mailto:{{support}}">{{support}}</a> · Enviado de forma segura por Auraly.</td></tr>
@@ -638,7 +675,7 @@ public sealed class PlatformEmailOutboxHostedService(
         {metadata.SupplierLegalName} emitió la factura electrónica {invoice.FiscalNumber}.
         Documento Auraly: {invoice.DocumentNumber}. Fecha: {invoice.IssuedAt:dd/MM/yyyy HH:mm}.
         Total: {invoice.Amount:C0} COP.
-        El ZIP adjunto contiene el AttachedDocument firmado con la factura XML y la respuesta de validación de la DIAN.
+        El ZIP adjunto contiene el AttachedDocument firmado con la factura XML, la respuesta de validación de la DIAN y la representación gráfica en PDF.
         Correo autorrespuesta: {options.SupportEmail}
         """;
 
@@ -675,6 +712,8 @@ public sealed class PlatformEmailOutboxHostedService(
         byte[]? ApplicationResponse,
         byte[]? SignedAttachedDocument,
         string? SignedAttachedDocumentFileName,
+        byte[]? GraphicalRepresentationPdf,
+        string? GraphicalRepresentationPdfFileName,
         string CertificateProvider,
         string CertificateKeyReference,
         string CertificateThumbprint,

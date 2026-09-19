@@ -9,6 +9,7 @@ BEGIN
            fiscal.FiscalNumber,fiscal.IssuedAt,sale.PayableAmount,
            signedXml.Content,applicationResponse.Content,
            attachedDocument.Content,attachedDocument.FileName,
+           graphicalRepresentation.Content,graphicalRepresentation.FileName,
            issuer.CertificateProvider,issuer.CertificateKeyReference,
            issuer.CertificateThumbprint,issuer.TestSetId,statusResponse.Content
     FROM dbo.FiscalDocuments fiscal
@@ -36,6 +37,12 @@ BEGIN
       WHERE artifact.DocumentId=fiscal.DocumentId
         AND artifact.ArtifactType=N'SignedAttachedDocument'
       ORDER BY artifact.ArtifactVersion DESC) attachedDocument
+    OUTER APPLY(
+      SELECT TOP(1) artifact.Content,artifact.FileName
+      FROM dbo.FiscalArtifacts artifact
+      WHERE artifact.DocumentId=fiscal.DocumentId
+        AND artifact.ArtifactType=N'GraphicalRepresentationPdf'
+      ORDER BY artifact.ArtifactVersion DESC) graphicalRepresentation
     OUTER APPLY(
       SELECT TOP(1) artifact.Content
       FROM dbo.FiscalArtifacts artifact

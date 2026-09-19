@@ -506,6 +506,14 @@
         "resolved": "0.1.8",
         "contentHash": "lrqrQPAwziQV2E5uImAg1i3SpxDn5XdJ8q3sjRBgEdx1quq1ZftnKNyfp3sTY0J7OxpA14ryGBSSUdoGLGCHjw=="
       },
+      "QRCoder": {
+        "type": "Transitive",
+        "resolved": "1.8.0",
+        "contentHash": "RuvX3PEXU6pbY/I5ItAk800jm62r+YnoPLgyS2WTgwxkOnGkOfU9ORiipHUF0LkLyqM8rlroUCA319JjRYfRFQ==",
+        "dependencies": {
+          "System.Drawing.Common": "6.0.0"
+        }
+      },
       "RabbitMQ.Client": {
         "type": "Transitive",
         "resolved": "7.2.1",
@@ -853,7 +861,8 @@
       "auraly.fiscal.ubl": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Fiscal.Core": "[1.0.0, )"
+          "Auraly.Fiscal.Core": "[1.0.0, )",
+          "QRCoder": "[1.8.0, )"
         }
       },
       "auraly.platform.application": {

@@ -17,7 +17,9 @@ public sealed class HalfLetterDocumentRenderer
 
     public string Render(
         IReadOnlyCollection<OnlineSalesReceipt> receipts,
-        string format = HalfLetter)
+        string format = HalfLetter,
+        int? templateVersion = null,
+        bool autoPrint = true)
     {
         ArgumentNullException.ThrowIfNull(receipts);
         if (receipts.Count == 0)
@@ -36,7 +38,7 @@ public sealed class HalfLetterDocumentRenderer
             _ => "letter"
         };
         var pages = string.Join("", receipts.Select(receipt =>
-            RenderPage(receipt, sheetClass, isLetter)));
+            RenderPage(receipt, sheetClass, isLetter, templateVersion)));
 
         return $$"""
             <!doctype html>
@@ -74,6 +76,8 @@ public sealed class HalfLetterDocumentRenderer
                 .meta { display: grid; grid-template-columns: 1.2fr 1fr; gap: .8mm 4mm; margin: 1.5mm 0 1mm; }
                 .pair { display: flex; justify-content: space-between; gap: 2.5mm; }
                 .pair span { color: #475569; }
+                .fiscal-compliance { padding: 1.2mm 0; border-top: .2mm solid #cbd5e1; border-bottom: .2mm solid #cbd5e1; font-size: 6.2pt; line-height: 1.3; }
+                .fiscal-compliance > div + div { margin-top: .45mm; }
                 table { width: 100%; border-collapse: collapse; margin-top: 1mm; }
                 th { padding: 1.1mm; background: #eef8f7; text-align: left; font-size: 7pt; }
                 td { padding: 1mm 1.1mm; border-bottom: .2mm solid #e2e8f0; }
@@ -102,10 +106,13 @@ public sealed class HalfLetterDocumentRenderer
                 .letter .breakdown .pair { font-size: 7.5pt; }
                 .letter .fiscal, .letter .caption, .letter .footer { font-size: 7pt; }
                 .letter .qr { width: 33mm; height: 33mm; }
+                .viewer-actions { position: fixed; z-index: 10; top: 12px; right: 12px; padding: 10px; border-radius: 10px; background: #07111f; }
+                .viewer-actions button { border: 0; border-radius: 7px; padding: 8px 14px; background: #62e6dd; color: #061f22; font-weight: 700; cursor: pointer; }
+                @media print { .viewer-actions { display: none; } }
                 @media screen { body { background: #e2e8f0; } .sheet { margin: 8mm auto; box-shadow: 0 4px 24px #0f172a33; } }
               </style>
             </head>
-            <body>{{pages}}<script>
+            <body>{{(autoPrint ? string.Empty : "<div class=\"viewer-actions\"><button type=\"button\" onclick=\"window.print()\">Imprimir / PDF</button></div>")}}{{pages}}<script>
               for (const documentElement of document.querySelectorAll('.document')) {
                 const content = documentElement.querySelector('.document-content');
                 const available = documentElement.clientHeight;
@@ -115,24 +122,41 @@ public sealed class HalfLetterDocumentRenderer
                   content.style.width = `${100 / scale}%`;
                 }
               }
-              addEventListener('load', () => setTimeout(() => window.print(), 150));
+              {{(autoPrint ? "addEventListener('load', () => setTimeout(() => window.print(), 150));" : string.Empty)}}
             </script></body></html>
             """;
     }
 
-    private static string RenderPage(OnlineSalesReceipt receipt, string sheetClass, bool isLetter)
+    private static string RenderPage(
+        OnlineSalesReceipt receipt,
+        string sheetClass,
+        bool isLetter,
+        int? templateVersion)
     {
-        var copy = RenderCopy(receipt);
+        var copy = RenderCopy(receipt, templateVersion);
         return isLetter
             ? $"<section class=\"sheet {sheetClass}\"><div class=\"copy\">{copy}</div></section>"
             : $"<section class=\"sheet {sheetClass}\"><div class=\"copy\">{copy}</div><div class=\"copy\">{copy}</div></section>";
     }
 
-    private static string RenderCopy(OnlineSalesReceipt receipt)
+    private static string RenderCopy(OnlineSalesReceipt receipt, int? templateVersion)
     {
         var isInvoice = receipt.DocumentType == PosSaleDocumentTypes.Invoice;
         var isOrder = receipt.DocumentType == "Order";
-        var template = PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
+        var template = isInvoice
+            ? templateVersion switch
+            {
+                2 => PosPrintTemplateCatalog.SalesInvoiceV2,
+                3 => PosPrintTemplateCatalog.SalesInvoice,
+                null when receipt.InvoicePrintDetails is null => PosPrintTemplateCatalog.SalesInvoiceV2,
+                null => PosPrintTemplateCatalog.SalesInvoice,
+                _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
+            }
+            : PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
+        var fiscalDetails = isInvoice && template.Version >= 3 &&
+            receipt.InvoicePrintDetails is { } details
+            ? FiscalDetails(details)
+            : string.Empty;
         var documentName = isOrder
             ? "Pedido"
             : isInvoice
@@ -149,8 +173,13 @@ public sealed class HalfLetterDocumentRenderer
         var fiscalNumber = !isInvoice || string.IsNullOrWhiteSpace(receipt.FiscalNumber)
             ? string.Empty
             : $"<div class=\"pair\"><span>Número DIAN</span><strong>{Encode(receipt.FiscalNumber)}</strong></div>";
-        var rows = string.Join("", receipt.Lines.Select(line =>
-            $"<tr><td>{Encode(line.Description)}</td><td class=\"numeric\">{Quantity(line.Quantity)}</td><td class=\"numeric\">{Money(line.UnitPrice)}</td><td class=\"numeric\">{Money(line.Total)}</td></tr>"));
+        var rows = string.Join("", receipt.Lines.Select((line, index) =>
+        {
+            var identity = template.Version >= 3
+                ? $"{index + 1}. {Encode(line.Description)}<br><small>{Encode(line.ProductCode)} · {Encode(line.UnitCode)}</small>"
+                : Encode(line.Description);
+            return $"<tr><td>{identity}</td><td class=\"numeric\">{Quantity(line.Quantity)}</td><td class=\"numeric\">{Money(line.UnitPrice)}</td><td class=\"numeric\">{Money(line.Total)}</td></tr>";
+        }));
         var qr = !isInvoice || string.IsNullOrWhiteSpace(receipt.QrPayload)
             ? string.Empty
             : $"<img class=\"qr\" alt=\"QR DIAN\" src=\"data:image/svg+xml;base64,{QrBase64(receipt.QrPayload)}\">";
@@ -182,7 +211,7 @@ public sealed class HalfLetterDocumentRenderer
             ? string.Empty
             : $"<img class=\"brand-logo\" src=\"{Encode(receipt.CompanyLogoSource)}\" alt=\"Logo de {companyName}\">";
         var issuedAt = receipt.IssuedAt.ToString("d/M/yyyy, h:mm:ss tt", ColombianCulture);
-        var details = isOrder
+        var detailSection = isOrder
             ? $"<section class=\"details\"><div><div class=\"caption\">Detalle del pedido · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div></div></div></section>"
             : $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section><section class=\"breakdown\"><div class=\"breakdown-title\">Medios de pago</div>{payments}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Subtotal</span><strong>{Money(receipt.UntaxedAmount)}</strong></div><div class=\"pair\"><span>Total impuestos</span><strong>{Money(receipt.TaxAmount)}</strong></div><div class=\"pair\"><span>Total bruto</span><strong>{Money(receipt.PayableAmount)}</strong></div>{withholdingTotals}<div class=\"pair total\"><span>Total a pagar</span><strong>{Money(netPayable)}</strong></div>{cashTender}{qr}</div></div></section>";
 
@@ -190,10 +219,25 @@ public sealed class HalfLetterDocumentRenderer
           <article class="document" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
             <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>N.º de ticket</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
             <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{fiscalNumber}}</section>
+            {{fiscalDetails}}
             <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
-            {{details}}
+            {{detailSection}}
             <footer class="footer"><span>{{representationName}}</span><span class="platform">{{issuedBy}} · <strong>www.auralyapp.co</strong><br>Emitido: {{issuedAt}}</span><span class="page-number">Página 1 de 1</span></footer>
           </div></article>
+          """;
+    }
+
+    private static string FiscalDetails(SalesInvoicePrintDetails details)
+    {
+        var paymentForm = details.PaymentFormCode == "2" ? "Crédito" : "Contado";
+        return $$"""
+          <section class="fiscal-compliance">
+            <div><strong>Vendedor:</strong> {{Encode(details.SupplierName)}} · NIT {{Encode(details.SupplierIdentification)}} · Resp. {{Encode(details.SupplierTaxResponsibility)}}</div>
+            <div><strong>Dirección:</strong> {{Encode(details.SupplierAddress)}} · <strong>Dirección cliente:</strong> {{Encode(details.CustomerAddress)}}</div>
+            <div><strong>Resolución DIAN:</strong> {{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}} · Rango {{details.AuthorizationRangeStart}} a {{details.AuthorizationRangeEnd}} · Vigencia {{details.AuthorizationValidFrom:dd/MM/yyyy}} a {{details.AuthorizationValidUntil:dd/MM/yyyy}}</div>
+            <div><strong>Forma / medio de pago:</strong> {{paymentForm}} / {{Encode(PaymentMeansName(details.PaymentMeansCode))}} · Vence {{details.PaymentDueDate:dd/MM/yyyy}}</div>
+            <div><strong>Software:</strong> {{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
+          </section>
           """;
     }
 
@@ -205,6 +249,7 @@ public sealed class HalfLetterDocumentRenderer
     }
 
     private static string Encode(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
+    private static string PaymentMeansName(string code) => code switch { "10" => "Efectivo", "42" => "Transferencia", "48" => "Tarjeta crédito", "49" => "Tarjeta débito", _ => code };
     private static string Money(decimal value) => value.ToString("C0", ColombianCulture);
     private static string Quantity(decimal value) => value.ToString("0.###", ColombianCulture);
     private static string Rate(decimal value) => value.ToString("0.##", ColombianCulture);

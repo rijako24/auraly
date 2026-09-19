@@ -32,7 +32,26 @@ public sealed record OnlineSalesReceiptLine(
     decimal Tax,
     decimal Total,
     string TaxCode = "01",
-    decimal TaxRate = 0);
+    decimal TaxRate = 0,
+    string UnitCode = "EA");
+
+public sealed record SalesInvoicePrintDetails(
+    string SupplierName,
+    string SupplierIdentification,
+    string SupplierTaxResponsibility,
+    string SupplierAddress,
+    string CustomerAddress,
+    string AuthorizationNumber,
+    DateOnly AuthorizationValidFrom,
+    DateOnly AuthorizationValidUntil,
+    string AuthorizationPrefix,
+    long AuthorizationRangeStart,
+    long AuthorizationRangeEnd,
+    string PaymentFormCode,
+    string PaymentMeansCode,
+    DateOnly PaymentDueDate,
+    string SoftwareProviderIdentification,
+    string SoftwareName);
 
 public sealed record CreditSaleAcknowledgement(
     Guid DocumentId,
@@ -77,7 +96,8 @@ public sealed record OnlineSalesReceipt(
     decimal WithholdingTotal = 0m,
     decimal NetPayableAmount = 0m,
     IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null,
-    CreditSaleAcknowledgement? CreditAcknowledgement = null);
+    CreditSaleAcknowledgement? CreditAcknowledgement = null,
+    SalesInvoicePrintDetails? InvoicePrintDetails = null);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

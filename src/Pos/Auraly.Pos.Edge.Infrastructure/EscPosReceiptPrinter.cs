@@ -53,10 +53,25 @@ public sealed class EscPosReceiptRenderer
         Write(stream, AlignLeft);
         WriteBoldLine(stream, Pair("Cliente", receipt.CustomerName ?? receipt.CustomerIdentification, columns));
         WriteBoldLine(stream, Pair("Identificacion", receipt.CustomerIdentification, columns));
+        if (isFiscal && receipt.InvoicePrintDetails is { } details)
+        {
+            WriteWrapped(stream, $"Vendedor: {details.SupplierName}", columns);
+            WriteWrapped(stream, $"NIT: {details.SupplierIdentification} Resp: {details.SupplierTaxResponsibility}", columns);
+            WriteWrapped(stream, $"Direccion: {details.SupplierAddress}", columns);
+            WriteWrapped(stream, $"Direccion cliente: {details.CustomerAddress}", columns);
+            WriteWrapped(stream, $"Resolucion DIAN: {details.AuthorizationNumber}", columns);
+            WriteWrapped(stream, $"Prefijo {details.AuthorizationPrefix} Rango {details.AuthorizationRangeStart} a {details.AuthorizationRangeEnd}", columns);
+            WriteWrapped(stream, $"Vigencia {details.AuthorizationValidFrom:dd/MM/yyyy} a {details.AuthorizationValidUntil:dd/MM/yyyy}", columns);
+            WriteWrapped(stream, $"Pago: {(details.PaymentFormCode == "2" ? "Credito" : "Contado")} / {PaymentMeansName(details.PaymentMeansCode)} Vence {details.PaymentDueDate:dd/MM/yyyy}", columns);
+            WriteWrapped(stream, $"Software: {details.SoftwareName} - Fabricante/proveedor {details.SupplierName} NIT {details.SoftwareProviderIdentification}", columns);
+        }
         WriteLine(stream, new string('-', columns));
+        var lineNumber = 0;
         foreach (var line in receipt.Lines)
         {
-            WriteBoldWrapped(stream, line.Description, columns);
+            lineNumber++;
+            WriteBoldWrapped(stream, $"{lineNumber}. {line.Description}", columns);
+            WriteWrapped(stream, $"{line.ProductCode} / {line.UnitCode}", columns);
             WriteLine(
                 stream,
                 Right(
@@ -193,6 +208,15 @@ public sealed class EscPosReceiptRenderer
         "Voucher" => "Bono / vale",
         "Check" => "Cheque",
         "Withholding" => "Retencion",
+        _ => code
+    };
+
+    private static string PaymentMeansName(string code) => code switch
+    {
+        "10" => "Efectivo",
+        "42" => "Transferencia",
+        "48" => "Tarjeta credito",
+        "49" => "Tarjeta debito",
         _ => code
     };
 

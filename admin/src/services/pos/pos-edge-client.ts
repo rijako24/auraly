@@ -313,6 +313,7 @@ export type PosReceiptLine = {
   total: number;
   taxCode: string;
   taxRate: number;
+  unitCode?: string;
 };
 
 export type PosPrintableReceipt = {
@@ -345,6 +346,24 @@ export type PosPrintableReceipt = {
   }> | null;
   businessName?: string | null;
   warehouseName?: string | null;
+  invoicePrintDetails?: {
+    supplierName: string;
+    supplierIdentification: string;
+    supplierTaxResponsibility: string;
+    supplierAddress: string;
+    customerAddress: string;
+    authorizationNumber: string;
+    authorizationValidFrom: string;
+    authorizationValidUntil: string;
+    authorizationPrefix: string;
+    authorizationRangeStart: number;
+    authorizationRangeEnd: number;
+    paymentFormCode: string;
+    paymentMeansCode: string;
+    paymentDueDate: string;
+    softwareProviderIdentification: string;
+    softwareName: string;
+  } | null;
   creditAcknowledgement?: {
     documentId: string;
     documentNumber: string;

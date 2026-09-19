@@ -102,6 +102,12 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   de regeneración permanece separado en `GeneratedAt` y en la versión del artefacto.
 - Envío: intento y solicitud sanitizada se guardan antes de llamar a DIAN.
 - ZIP: se genera una vez de forma determinística y se reutiliza.
+- Entrega al adquirente: después de `DianAccepted`, el contenedor electrónico
+  incluye el `AttachedDocument` XML firmado y la representación gráfica PDF del
+  mismo `SignedXml`. Ambos artefactos se guardan con SHA-256 y versión inmutable
+  en `FiscalArtifacts`; un reintento de correo los reutiliza y no reconstruye la
+  factura ni hace otra llamada a DIAN. El ZIP sigue limitado a 2 MB. Esta regla
+  implementa el artículo 35 de la Resolución DIAN 000165 de 2023.
 - Resultado: aceptación/rechazo publica un solo evento de outbox.
 - Rechazo DIAN: el reintento autorizado vuelve a `PendingGeneration`, elimina la
   clave de seguimiento terminal anterior y normaliza únicamente la proyección UBL

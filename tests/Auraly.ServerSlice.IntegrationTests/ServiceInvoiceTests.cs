@@ -235,28 +235,37 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
 
         var attachedDocument = Encoding.UTF8.GetBytes("<AttachedDocument>signed</AttachedDocument>");
         var attachedHash = SHA256.HashData(attachedDocument);
+        var graphicalRepresentation = Encoding.ASCII.GetBytes("%PDF-1.4\n%%EOF");
+        var graphicalRepresentationHash = SHA256.HashData(graphicalRepresentation);
         for (var attempt = 0; attempt < 2; attempt++)
         {
             await using var save = new SqlCommand("""
                 EXEC dbo.FiscalInvoiceDeliveryArtifactSave
-                  @DocumentId,@MessageId,@TenantId,@LeaseId,@Content,@ContentHash,@FileName;
+                  @DocumentId,@MessageId,@TenantId,@LeaseId,
+                  @AttachedDocument,@AttachedDocumentHash,@AttachedDocumentFileName,
+                  @GraphicalRepresentation,@GraphicalRepresentationHash,
+                  @GraphicalRepresentationFileName;
                 """, connection);
             save.Parameters.AddWithValue("@DocumentId", first.DocumentId);
             save.Parameters.AddWithValue("@MessageId", deliveryMessageId);
             save.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             save.Parameters.AddWithValue("@LeaseId", deliveryLeaseId);
-            save.Parameters.AddWithValue("@Content", attachedDocument);
-            save.Parameters.AddWithValue("@ContentHash", attachedHash);
-            save.Parameters.AddWithValue("@FileName", "AttachedDocument-test.xml");
+            save.Parameters.AddWithValue("@AttachedDocument", attachedDocument);
+            save.Parameters.AddWithValue("@AttachedDocumentHash", attachedHash);
+            save.Parameters.AddWithValue("@AttachedDocumentFileName", "AttachedDocument-test.xml");
+            save.Parameters.AddWithValue("@GraphicalRepresentation", graphicalRepresentation);
+            save.Parameters.AddWithValue("@GraphicalRepresentationHash", graphicalRepresentationHash);
+            save.Parameters.AddWithValue("@GraphicalRepresentationFileName", "RepresentacionGrafica-test.pdf");
             await save.ExecuteNonQueryAsync();
         }
 
         await using var storedArtifact = new SqlCommand("""
             SELECT COUNT(*) FROM dbo.FiscalArtifacts
-            WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedAttachedDocument';
+            WHERE DocumentId=@DocumentId
+              AND ArtifactType IN(N'SignedAttachedDocument',N'GraphicalRepresentationPdf');
             """, connection);
         storedArtifact.Parameters.AddWithValue("@DocumentId", first.DocumentId);
-        Assert.Equal(1, Convert.ToInt32(await storedArtifact.ExecuteScalarAsync()));
+        Assert.Equal(2, Convert.ToInt32(await storedArtifact.ExecuteScalarAsync()));
     }
 
     [Fact]

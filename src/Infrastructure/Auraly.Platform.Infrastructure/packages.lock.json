@@ -602,6 +602,14 @@
           "System.Diagnostics.DiagnosticSource": "6.0.1"
         }
       },
+      "QRCoder": {
+        "type": "Transitive",
+        "resolved": "1.8.0",
+        "contentHash": "RuvX3PEXU6pbY/I5ItAk800jm62r+YnoPLgyS2WTgwxkOnGkOfU9ORiipHUF0LkLyqM8rlroUCA319JjRYfRFQ==",
+        "dependencies": {
+          "System.Drawing.Common": "6.0.0"
+        }
+      },
       "System.ClientModel": {
         "type": "Transitive",
         "resolved": "1.8.0",
@@ -989,7 +997,8 @@
       "auraly.fiscal.ubl": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Fiscal.Core": "[1.0.0, )"
+          "Auraly.Fiscal.Core": "[1.0.0, )",
+          "QRCoder": "[1.8.0, )"
         }
       },
       "auraly.platform.application": {

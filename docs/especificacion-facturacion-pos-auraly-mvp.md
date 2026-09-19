@@ -552,6 +552,14 @@ carta/media oficio/carta y reimpresión) muestran inmediatamente después del
 total **Efectivo recibido** y **Cambio**. Los documentos históricos que no
 capturaron ese dato no inventan un valor.
 
+La versión 3 de `sales-invoice` es la activa para factura electrónica y conserva
+la versión 2 para rollback. En tirilla, media carta, media oficio y carta muestra
+los datos legales y de resolución, adquirente identificado, detalle de línea,
+forma/medio de pago, impuestos, totales, CUFE, QR y software exigidos para la
+representación gráfica. El visor que compara estas salidas es exclusivamente de
+desarrollo y consume los renderizadores productivos; no hace parte del flujo de
+caja ni presenta una maqueta.
+
 Reglas:
 
 - el cambio se entrega normalmente contra efectivo;

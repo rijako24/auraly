@@ -23,7 +23,8 @@ public sealed record PosReceiptLine(
     decimal Tax,
     decimal Total,
     string TaxCode = "01",
-    decimal TaxRate = 0);
+    decimal TaxRate = 0,
+    string UnitCode = "EA");
 
 public sealed record PosReceipt(
     Guid PrintJobId,
@@ -49,7 +50,8 @@ public sealed record PosReceipt(
     string? CustomerName = null,
     string? BusinessName = null,
     string? WarehouseName = null,
-    CreditSaleAcknowledgement? CreditAcknowledgement = null);
+    CreditSaleAcknowledgement? CreditAcknowledgement = null,
+    SalesInvoicePrintDetails? InvoicePrintDetails = null);
 
 public interface IPosReceiptPrinter
 {
@@ -312,6 +314,9 @@ public sealed class PosSaleCompletionService(
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;
+        var ublLineMetadata = immutable.UblSnapshot?.Lines
+            .ToDictionary(line => line.LineNumber)
+            ?? [];
         var payload = new PosReceipt(
             identity.PrintJobId,
             issued.DocumentId,
@@ -328,7 +333,8 @@ public sealed class PosSaleCompletionService(
                 line.TaxAmount,
                 line.LineTotal,
                 line.TaxCode,
-                line.TaxRate)).ToArray(),
+                line.TaxRate,
+                ublLineMetadata.GetValueOrDefault(line.LineNumber)?.UnitCode ?? "EA")).ToArray(),
             immutable.Payments.Select(payment => new OfflineSalePayment(
                 payment.MethodCode,
                 payment.Amount,
@@ -355,7 +361,8 @@ public sealed class PosSaleCompletionService(
             CustomerName: customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification,
             CreditAcknowledgement: CreditAcknowledgement(
                 immutable,
-                customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification));
+                customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification),
+            InvoicePrintDetails: PrintDetails(immutable.UblSnapshot));
 
         // Issuance owns the sale lifecycle. Printing is a post-effect and must
         // never keep an already issued sale or its next draft in limbo.
@@ -410,7 +417,10 @@ public sealed class PosSaleCompletionService(
                 line.TaxAmount,
                 line.LineTotal,
                 line.TaxCode,
-                line.TaxRate)).ToArray(),
+                line.TaxRate,
+                metadata is not null && metadata.TryGetValue(line.LineNumber, out var unitItem)
+                    ? unitItem.UnitCode
+                    : "EA")).ToArray(),
             immutable.Payments.Select(payment => new OfflineSalePayment(
                 payment.MethodCode,
                 payment.Amount,
@@ -435,7 +445,8 @@ public sealed class PosSaleCompletionService(
             CreditAcknowledgement: CreditAcknowledgement(
                 immutable,
                 immutable.UblSnapshot?.Customer.RegistrationName
-                    ?? immutable.CommercialSnapshot.CustomerIdentification));
+                    ?? immutable.CommercialSnapshot.CustomerIdentification),
+            InvoicePrintDetails: PrintDetails(immutable.UblSnapshot));
 
         await printer.PrintAsync(payload, ct);
         await sales.RecordReprintAsync(
@@ -458,6 +469,27 @@ public sealed class PosSaleCompletionService(
             immutable.Credit.Amount,
             immutable.Credit.RemainingCredit,
             immutable.Credit.SoldByName ?? "Usuario");
+
+    private static SalesInvoicePrintDetails? PrintDetails(
+        PosSaleUblSnapshotContract? snapshot) => snapshot is null
+        ? null
+        : new SalesInvoicePrintDetails(
+            snapshot.Supplier.RegistrationName,
+            snapshot.Supplier.Identification,
+            snapshot.Supplier.TaxResponsibilityCode,
+            snapshot.Supplier.Address.AddressLine,
+            snapshot.Customer.Address.AddressLine,
+            snapshot.Authorization.Number,
+            snapshot.Authorization.ValidFrom,
+            snapshot.Authorization.ValidUntil,
+            snapshot.Authorization.Prefix,
+            snapshot.Authorization.RangeStart,
+            snapshot.Authorization.RangeEnd,
+            snapshot.PaymentFormCode,
+            snapshot.PaymentMeansCode,
+            snapshot.DueDate,
+            snapshot.Supplier.Identification,
+            "Auraly");
 
     public async Task<WithholdingCalculationSnapshot> PreviewSettlementAsync(
         DraftId draftId,

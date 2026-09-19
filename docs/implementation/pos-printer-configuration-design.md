@@ -122,11 +122,32 @@ la factura como un segundo trabajo físico: primero termina y corta la factura y
 después imprime y corta el comprobante. La secuencia aplica a tirilla de 58/80
 mm, media carta, media oficio y carta.
 
-La versión 2 activa de `sales-invoice` y `sales-receipt` conserva el contenido
-de la versión 1 y agrega, cuando el pago en efectivo registró un valor entregado,
+La versión 2 de `sales-invoice` y la versión 2 activa de `sales-receipt` conservan el contenido
+de la versión 1 y agregan, cuando el pago en efectivo registró un valor entregado,
 `Efectivo recibido` y `Cambio` inmediatamente después del total. La versión 1
 permanece disponible e inmutable para reimpresiones históricas y nunca inventa
 un valor recibido a partir del importe aplicado.
+
+La versión 3 activa de `sales-invoice` agrega a tirilla, media carta, media oficio
+y carta la identificación legal del emisor, responsabilidad y dirección, nombre,
+identificación y dirección del adquirente, resolución, prefijo, rango y vigencia,
+forma y medio de pago, vencimiento, fabricante/proveedor del software y código y
+unidad de cada línea. Conserva impuestos, totales, CUFE y QR DIAN. La versión 2
+permanece seleccionable para comparar o hacer rollback sin alterar sus campos.
+
+El visor de reportes es una herramienta de desarrollo, no una pantalla previa a
+la impresión para el cajero o el cliente. Se genera con:
+
+```powershell
+dotnet run --project tools/Auraly.ReportPreview/Auraly.ReportPreview.csproj -- --open
+```
+
+El índice abre las salidas HTML y PDF producidas por los renderizadores reales y
+permite comparar versiones y formatos. Los archivos se escriben bajo
+`artifacts/report-preview`, fuera del control de versiones. La tirilla HTML/CSS
+continúa como representación canónica porque preserva QR, logotipo, anchos físicos
+y composición; ESC/POS de texto se mantiene únicamente como transporte de
+compatibilidad para dispositivos que no puedan imprimir el render.
 
 La definición HTML de cierre vive únicamente en `Auraly.Pos.Printing`.
 Servidor, navegador y POS Edge consumen esa misma plantilla; TypeScript solo

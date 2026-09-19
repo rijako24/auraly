@@ -109,8 +109,8 @@ public static class OnlineSalesReceiptMapper
         var snapshot = request.CommercialSnapshot;
         var customerName = request.UblSnapshot?.Customer.RegistrationName
             ?? "Consumidor final";
-        var productCodes = request.UblSnapshot?.Lines
-            .ToDictionary(line => line.LineNumber, line => line.ProductCode)
+        var ublLines = request.UblSnapshot?.Lines
+            .ToDictionary(line => line.LineNumber)
             ?? [];
         return new OnlineSalesReceipt(
             request.DocumentId,
@@ -120,7 +120,7 @@ public static class OnlineSalesReceiptMapper
             snapshot.IssuedAt,
             snapshot.CustomerIdentification,
             request.Lines.Select(line => new OnlineSalesReceiptLine(
-                productCodes.GetValueOrDefault(line.LineNumber, string.Empty),
+                ublLines.GetValueOrDefault(line.LineNumber)?.ProductCode ?? string.Empty,
                 line.Description,
                 line.Quantity,
                 line.UnitPrice,
@@ -128,7 +128,8 @@ public static class OnlineSalesReceiptMapper
                 line.TaxAmount,
                 line.LineTotal,
                 line.TaxCode,
-                line.TaxRate)).ToArray(),
+                line.TaxRate,
+                ublLines.GetValueOrDefault(line.LineNumber)?.UnitCode ?? "EA")).ToArray(),
             request.Payments.Select(payment => new OnlineSalesPayment(
                     payment.MethodCode,
                     payment.Amount,
@@ -162,6 +163,28 @@ public static class OnlineSalesReceiptMapper
                     snapshot.CustomerIdentification,
                     request.Credit.Amount,
                     request.Credit.RemainingCredit,
-                    request.Credit.SoldByName ?? "Usuario"));
+                    request.Credit.SoldByName ?? "Usuario"),
+            InvoicePrintDetails: PrintDetails(request.UblSnapshot));
     }
+
+    private static SalesInvoicePrintDetails? PrintDetails(
+        PosSaleUblSnapshotContract? snapshot) => snapshot is null
+        ? null
+        : new SalesInvoicePrintDetails(
+            snapshot.Supplier.RegistrationName,
+            snapshot.Supplier.Identification,
+            snapshot.Supplier.TaxResponsibilityCode,
+            snapshot.Supplier.Address.AddressLine,
+            snapshot.Customer.Address.AddressLine,
+            snapshot.Authorization.Number,
+            snapshot.Authorization.ValidFrom,
+            snapshot.Authorization.ValidUntil,
+            snapshot.Authorization.Prefix,
+            snapshot.Authorization.RangeStart,
+            snapshot.Authorization.RangeEnd,
+            snapshot.PaymentFormCode,
+            snapshot.PaymentMeansCode,
+            snapshot.DueDate,
+            snapshot.Supplier.Identification,
+            "Auraly");
 }

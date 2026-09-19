@@ -7,7 +7,8 @@ public readonly record struct PosPrintTemplateVersion(string Code, int Version);
 public static class PosPrintTemplateCatalog
 {
     public static readonly PosPrintTemplateVersion SalesInvoiceV1 = new("sales-invoice", 1);
-    public static readonly PosPrintTemplateVersion SalesInvoice = new("sales-invoice", 2);
+    public static readonly PosPrintTemplateVersion SalesInvoiceV2 = new("sales-invoice", 2);
+    public static readonly PosPrintTemplateVersion SalesInvoice = new("sales-invoice", 3);
     public static readonly PosPrintTemplateVersion SalesReceiptV1 = new("sales-receipt", 1);
     public static readonly PosPrintTemplateVersion SalesReceipt = new("sales-receipt", 2);
     public static readonly PosPrintTemplateVersion Order = new("order", 1);

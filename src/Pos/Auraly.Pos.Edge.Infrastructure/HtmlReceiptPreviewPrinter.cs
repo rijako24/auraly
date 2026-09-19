@@ -59,7 +59,10 @@ public sealed class HtmlReceiptPreviewRenderer
     private static readonly CultureInfo ColombianCulture =
         CultureInfo.GetCultureInfo("es-CO");
 
-    public string Render(PosReceipt receipt)
+    public string Render(
+        PosReceipt receipt,
+        int? templateVersion = null,
+        bool autoPrint = true)
     {
         ArgumentNullException.ThrowIfNull(receipt);
         if (receipt.PaperWidthMillimeters is not (58 or 80))
@@ -69,7 +72,16 @@ public sealed class HtmlReceiptPreviewRenderer
 
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
         var isOrder = receipt.DocumentType == "Order";
-        var template = PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
+        var template = isFiscal
+            ? templateVersion switch
+            {
+                2 => PosPrintTemplateCatalog.SalesInvoiceV2,
+                3 => PosPrintTemplateCatalog.SalesInvoice,
+                null when receipt.InvoicePrintDetails is null => PosPrintTemplateCatalog.SalesInvoiceV2,
+                null => PosPrintTemplateCatalog.SalesInvoice,
+                _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
+            }
+            : PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
         var bodyFontSize = isFiscal ? 12 : 11;
         var issuedBy = isFiscal
             ? "Factura emitida por Auraly"
@@ -92,10 +104,15 @@ public sealed class HtmlReceiptPreviewRenderer
         var fiscalFooter = isFiscal
             ? $"<div class=\"cufe\"><strong>CUFE</strong><br>{Encode(receipt.Cufe!)}</div><div class=\"qr\">{qrSvg}</div>"
             : string.Empty;
+        var fiscalDetails = isFiscal && template.Version >= 3 &&
+            receipt.InvoicePrintDetails is { } details
+            ? FiscalDetails(details)
+            : string.Empty;
 
         var lines = string.Join(
             Environment.NewLine,
-            receipt.Lines.Select(RenderLine));
+            receipt.Lines.Select((line, index) => RenderLine(
+                line, template.Version >= 3 ? index + 1 : null)));
         var payments = string.Join(
             Environment.NewLine,
             receipt.Payments.Select(payment =>
@@ -172,6 +189,8 @@ public sealed class HtmlReceiptPreviewRenderer
                 .pair strong, .amount { white-space: nowrap; font-variant-numeric: tabular-nums; }
                 .discount { color: #9a4b08; font-size: 11px; }
                 .section-title { margin: 7px 0 3px; font-weight: 900; text-transform: uppercase; }
+                .fiscal-compliance { margin: 8px 0; padding: 7px 0; border-top: 1px dashed #789093; border-bottom: 1px dashed #789093; font-size: 9px; overflow-wrap: anywhere; }
+                .fiscal-compliance > div + div { margin-top: 3px; }
                 .tax-table { width: 100%; border-collapse: collapse; margin: 4px 0; }
                 .tax-table th { padding: 3px 0; border-bottom: 1px solid #789093; text-align: right; font-size: 10px; }
                 .tax-table th:first-child, .tax-table td:first-child { text-align: left; }
@@ -219,6 +238,7 @@ public sealed class HtmlReceiptPreviewRenderer
                 <hr class="rule">
                 <div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName ?? receipt.CustomerIdentification)}}</strong></div>
                 <div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>
+                {{fiscalDetails}}
                 <hr class="rule">
                 {{lines}}
                 <hr class="rule">
@@ -227,22 +247,29 @@ public sealed class HtmlReceiptPreviewRenderer
                 <footer class="platform-footer">{{issuedBy}}<br><strong>www.auralyapp.co</strong></footer>
               </main>
               <script>
-                window.addEventListener("load", () => window.setTimeout(() => window.print(), 250));
+                {{(autoPrint ? "window.addEventListener(\"load\", () => window.setTimeout(() => window.print(), 250));" : string.Empty)}}
               </script>
             </body>
             </html>
             """;
     }
 
-    private static string RenderLine(PosReceiptLine line)
+    private static string RenderLine(PosReceiptLine line, int? lineNumber)
     {
         var product = Encode(line.Description);
+        var identity = lineNumber.HasValue
+            ? $"{lineNumber}. "
+            : string.Empty;
+        var item = lineNumber.HasValue
+            ? $"<div class=\"muted\">{Encode(line.ProductCode)} · {Encode(line.UnitCode)}</div>"
+            : string.Empty;
         var discount = line.Discount > 0
             ? $"<div class=\"pair discount\"><span>Descuento</span><strong>-{Money(line.Discount)}</strong></div>"
             : string.Empty;
         return $$"""
             <section class="line">
-              <div class="product">{{product}}</div>
+              <div class="product">{{identity}}{{product}}</div>
+              {{item}}
               <div class="pair muted">
                 <span>{{Quantity(line.Quantity)}} × {{Money(line.UnitPrice)}}</span>
                 <strong>{{Money(line.Total)}}</strong>
@@ -265,6 +292,23 @@ public sealed class HtmlReceiptPreviewRenderer
               Pair("Cambio", Money(Math.Max(0, tendered - cash.Amount)));
     }
 
+    private static string FiscalDetails(SalesInvoicePrintDetails details)
+    {
+        var paymentForm = details.PaymentFormCode == "2" ? "Crédito" : "Contado";
+        return $$"""
+          <section class="fiscal-compliance">
+            <div><strong>Vendedor:</strong> {{Encode(details.SupplierName)}} · NIT {{Encode(details.SupplierIdentification)}}</div>
+            <div>Resp. fiscal: {{Encode(details.SupplierTaxResponsibility)}} · {{Encode(details.SupplierAddress)}}</div>
+            <div><strong>Dirección cliente:</strong> {{Encode(details.CustomerAddress)}}</div>
+            <div><strong>Resolución DIAN:</strong> {{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}}</div>
+            <div>Rango {{details.AuthorizationRangeStart}} a {{details.AuthorizationRangeEnd}}</div>
+            <div>Vigencia {{details.AuthorizationValidFrom:dd/MM/yyyy}} a {{details.AuthorizationValidUntil:dd/MM/yyyy}}</div>
+            <div><strong>Pago:</strong> {{paymentForm}} / {{Encode(PaymentMeansName(details.PaymentMeansCode))}} · Vence {{details.PaymentDueDate:dd/MM/yyyy}}</div>
+            <div><strong>Software:</strong> {{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
+          </section>
+          """;
+    }
+
     private static string Scope(string? businessName)
     {
         return string.IsNullOrWhiteSpace(businessName) ? string.Empty : $"Sede: {businessName}";
@@ -280,6 +324,15 @@ public sealed class HtmlReceiptPreviewRenderer
         "Voucher" => "Bono / vale",
         "Check" => "Cheque",
         "Withholding" => "Retención",
+        _ => code
+    };
+
+    private static string PaymentMeansName(string code) => code switch
+    {
+        "10" => "Efectivo",
+        "42" => "Transferencia",
+        "48" => "Tarjeta crédito",
+        "49" => "Tarjeta débito",
         _ => code
     };
 

@@ -1325,7 +1325,8 @@
       "auraly.fiscal.ubl": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Fiscal.Core": "[1.0.0, )"
+          "Auraly.Fiscal.Core": "[1.0.0, )",
+          "QRCoder": "[1.8.0, )"
         }
       },
       "auraly.infrastructure.dispatching": {

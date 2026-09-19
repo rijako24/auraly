@@ -543,6 +543,74 @@ public sealed class EscPosReceiptRendererTests
         Assert.DoesNotContain("Subtotal", value);
     }
 
+    [Theory]
+    [InlineData("Receipt")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal)]
+    [InlineData(HalfLetterDocumentRenderer.Letter)]
+    public void Invoice_v3_contains_the_required_DIAN_graphical_representation_data(
+        string format)
+    {
+        var details = new SalesInvoicePrintDetails(
+            "Comercializadora Uno SAS", "900123456", "R-99-PN",
+            "Calle 10 # 20-30", "Carrera 4 # 5-06", "18760000001",
+            new DateOnly(2026, 1, 1), new DateOnly(2027, 12, 31),
+            "FE", 1, 10000, "1", "10", new DateOnly(2026, 9, 18),
+            "900123456", "Auraly");
+        string value;
+        if (format == "Receipt")
+        {
+            value = new HtmlReceiptPreviewRenderer().Render(
+                Receipt() with
+                {
+                    CustomerName = "Cliente prueba",
+                    InvoicePrintDetails = details
+                });
+        }
+        else
+        {
+            value = new HalfLetterDocumentRenderer().Render(
+                [OnlineReceipt() with { InvoicePrintDetails = details }], format);
+        }
+
+        Assert.Contains("data-auraly-report-version=\"3\"", value);
+        Assert.Contains("Comercializadora Uno SAS", value);
+        Assert.Contains("900123456", value);
+        Assert.Contains("Cliente prueba", value);
+        Assert.Contains("222222222", value);
+        Assert.Contains("Resolución DIAN", value);
+        Assert.Contains("18760000001", value);
+        Assert.Contains("Rango 1 a 10000", value);
+        Assert.Contains("Vigencia", value);
+        Assert.Contains("Contado", value);
+        Assert.Contains("Efectivo", value);
+        Assert.Contains("Software", value);
+        Assert.Contains("Auraly", value);
+        Assert.Contains("P-001", value);
+        Assert.Contains("EA", value);
+        Assert.Contains("CUFE", value);
+    }
+
+    [Fact]
+    public void Invoice_template_can_be_rendered_with_the_previous_version_for_rollback()
+    {
+        var details = new SalesInvoicePrintDetails(
+            "Comercializadora Uno SAS", "900123456", "R-99-PN",
+            "Calle 10 # 20-30", "Carrera 4 # 5-06", "18760000001",
+            new DateOnly(2026, 1, 1), new DateOnly(2027, 12, 31),
+            "FE", 1, 10000, "1", "10", new DateOnly(2026, 9, 18),
+            "900123456", "Auraly");
+        var receipt = Receipt() with { InvoicePrintDetails = details };
+
+        var previous = new HtmlReceiptPreviewRenderer().Render(receipt, templateVersion: 2);
+        var current = new HtmlReceiptPreviewRenderer().Render(receipt, templateVersion: 3);
+
+        Assert.Contains("data-auraly-report-version=\"2\"", previous);
+        Assert.DoesNotContain("Resolución DIAN", previous);
+        Assert.Contains("data-auraly-report-version=\"3\"", current);
+        Assert.Contains("Resolución DIAN", current);
+    }
+
     private static OnlineSalesReceipt OnlineReceipt() =>
         new(
             Guid.NewGuid(),
