@@ -25,4 +25,18 @@ public sealed class PosSaleFiscalMappingsTests
     {
         Assert.Null(PosSaleFiscalMappings.DianIdentificationTypeCode("UNKNOWN"));
     }
+
+    [Fact]
+    public void Derives_the_DIAN_NIT_check_digit_instead_of_trusting_master_data()
+    {
+        Assert.Equal("1", PosSaleFiscalMappings.DianCheckDigit(
+            "31", "900172649", "0"));
+    }
+
+    [Fact]
+    public void Rejects_a_malformed_DIAN_NIT_before_generating_UBL()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            PosSaleFiscalMappings.DianCheckDigit("31", "900-172-649", null));
+    }
 }

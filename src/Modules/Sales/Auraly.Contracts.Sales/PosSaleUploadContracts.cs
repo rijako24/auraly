@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Auraly.BuildingBlocks.Domain.Identity;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.Commerce.Taxation.Contracts;
 
@@ -208,6 +209,21 @@ public static class PosSaleFiscalMappings
             "PPT" or "48" => "48",
             _ => null
         };
+
+    public static string DianCheckDigit(
+        string dianIdentificationTypeCode,
+        string identification,
+        string? storedCheckDigit)
+    {
+        if (!string.Equals(dianIdentificationTypeCode, "31", StringComparison.Ordinal))
+            return string.IsNullOrWhiteSpace(storedCheckDigit) ? "0" : storedCheckDigit.Trim();
+        if (!ColombianNit.TryCalculateVerificationDigit(
+                identification?.Trim(), out var verificationDigit))
+            throw new ArgumentException(
+                "A DIAN NIT must contain between 3 and 15 digits.",
+                nameof(identification));
+        return verificationDigit.ToString();
+    }
 
     public static string? PaymentMeansCode(string methodCode) => methodCode switch
     {

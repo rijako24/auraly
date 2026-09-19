@@ -691,11 +691,18 @@ public sealed class FiscalGenerationWorker(
         issuer.TaxSchemeId, issuer.TaxSchemeName, Address(issuer.Address), null, null);
 
 
-    private static DianParty Party(PosSaleUblPartyContract value) => new(
-        value.Identification, value.CheckDigit, DianIdentificationTypeCode(value.IdentificationTypeCode),
-        value.OrganizationTypeCode, value.RegistrationName, value.TradeName,
-        value.TaxResponsibilityCode, value.TaxSchemeId, value.TaxSchemeName,
-        Address(value.Address), value.Email, value.Telephone);
+    private static DianParty Party(PosSaleUblPartyContract value)
+    {
+        var identificationType = DianIdentificationTypeCode(value.IdentificationTypeCode);
+        return new DianParty(
+            value.Identification,
+            PosSaleFiscalMappings.DianCheckDigit(
+                identificationType, value.Identification, value.CheckDigit),
+            identificationType,
+            value.OrganizationTypeCode, value.RegistrationName, value.TradeName,
+            value.TaxResponsibilityCode, value.TaxSchemeId, value.TaxSchemeName,
+            Address(value.Address), value.Email, value.Telephone);
+    }
 
     private static DianParty SupportSeller(PurchaseSupportFiscalSnapshot snapshot)
     {

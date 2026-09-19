@@ -27,7 +27,10 @@ internal static class SqlSaleUblPartyReader
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT p.PartyType,p.Identification,p.VerificationDigit,
+            SELECT p.PartyType,
+                   CASE WHEN p.IdentificationTypeCode IN(N'NIT',N'31')
+                        THEN p.NormalizedIdentification ELSE p.Identification END,
+                   p.VerificationDigit,
                    p.IdentificationTypeCode,
                    COALESCE(p.LegalName,p.DisplayName,
                      NULLIF(LTRIM(RTRIM(CONCAT(p.FirstName,N' ',p.LastName))),N'')),
@@ -67,9 +70,14 @@ internal static class SqlSaleUblPartyReader
             PosSaleFiscalMappings.DianIdentificationTypeCode(sourceIdentificationType)
             ?? throw new InvalidOperationException(
                 $"El tipo de identificación '{sourceIdentificationType}' no tiene equivalencia DIAN.");
+        var identification = reader.GetString(1);
+        var checkDigit = PosSaleFiscalMappings.DianCheckDigit(
+            dianIdentificationType,
+            identification,
+            reader.IsDBNull(2) ? null : reader.GetString(2));
         return new PosSaleUblPartyContract(
-            reader.GetString(1),
-            reader.IsDBNull(2) ? "0" : reader.GetString(2),
+            identification,
+            checkDigit,
             dianIdentificationType,
             reader.GetString(0) == "Organization" ? "1" : "2",
             reader.IsDBNull(4) ? "Consumidor final" : reader.GetString(4),

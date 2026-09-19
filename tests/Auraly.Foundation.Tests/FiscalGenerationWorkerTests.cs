@@ -82,6 +82,43 @@ public sealed class FiscalGenerationWorkerTests
         Assert.NotEqual(artifacts.GeneratedAt, artifacts.SignedAt);
     }
 
+    [Fact]
+    public async Task Invoice_generation_derives_a_customer_NIT_check_digit()
+    {
+        var work = CreateWork();
+        var customer = work.Sale!.UblSnapshot!.Customer with
+        {
+            Identification = "900172649",
+            CheckDigit = "0",
+            IdentificationTypeCode = "NIT",
+            OrganizationTypeCode = "1",
+            RegistrationName = "CLIENTE NIT",
+            TradeName = "CLIENTE NIT",
+            TaxSchemeId = "01",
+            TaxSchemeName = "IVA"
+        };
+        work = work with
+        {
+            Sale = work.Sale with
+            {
+                CommercialSnapshot = work.Sale.CommercialSnapshot with
+                    { CustomerIdentification = customer.Identification },
+                FiscalSnapshot = work.Sale.FiscalSnapshot! with
+                    { CustomerIdentification = customer.Identification },
+                UblSnapshot = work.Sale.UblSnapshot with { Customer = customer }
+            }
+        };
+        var store = new TestStore(work);
+
+        Assert.True(await CreateWorker(store).ProcessAsync(
+            work.BusinessId, work.DocumentId, "worker-a"));
+
+        var xml = Encoding.UTF8.GetString(
+            Assert.IsType<FiscalGeneratedArtifacts>(store.Completed).UnsignedXml);
+        Assert.Contains("schemeID=\"1\"", xml, StringComparison.Ordinal);
+        Assert.Equal(FiscalDocumentStatusCodes.PendingSubmission, store.FinalStatus);
+    }
+
     private static FiscalGenerationWorker CreateWorker(TestStore store) => new(
         store, new TestPinProvider(), new DianInvoiceUblBuilder(),
         new DianSupportDocumentUblBuilder(), new DianCreditNoteUblBuilder(),

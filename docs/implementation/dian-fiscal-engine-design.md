@@ -42,6 +42,12 @@ existe fuera de la transacción del servidor y se conserva para recuperación ex
 
 La prueba SQL modifica nombres maestros después de recibir la venta y demuestra que el UBL conserva los datos históricos. Si falta un dato obligatorio, el proceso pasa a `MissingMandatoryFiscalData`; el servidor no inventa ni corrige silenciosamente la factura emitida.
 
+La proyección DIAN del adquirente normaliza `NIT` al identificador compacto del
+maestro y deriva su dígito de verificación con `ColombianNit`; no confía en un DV
+manual posiblemente desactualizado. La generación vuelve a aplicar la misma regla
+sobre el snapshot para proteger reintentos y documentos históricos, sin cambiar la
+identificación, los importes, el CUFE ni la numeración.
+
 La antigua responsabilidad de `SalidaDeMercanciaFolio` no se migra. No hace falta una tabla paralela de folio: `SalesDocuments` conserva los datos comerciales de la factura; `FiscalDocuments` es la raíz común para factura y nota crédito; `FiscalSnapshots` y `SalesReturnFiscalSnapshots` conservan los snapshots exactos; `FiscalDocumentProcesses` conserva la evolución fiscal; `FiscalArtifacts` conserva XML, ZIP y respuestas.
 
 Las devoluciones procesadas generan una nota crédito que referencia el número y CUFE originales. Su CUDE se calcula durante la generación fiscal, se persiste una sola vez y se usa sin renumerar en todos los reintentos. Facturas y notas crédito comparten workers, leases, artefactos, intentos y estados, pero conservan snapshots tipados distintos.
