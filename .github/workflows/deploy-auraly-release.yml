@@ -56,27 +56,27 @@ jobs:
     steps:
       - name: Checkout source for DEV
         if: inputs.environment == 'dev'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
 
       - name: Checkout release tag for PROD
         if: inputs.environment == 'prod'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: auraly-v${{ inputs.version }}
           fetch-depth: 0
 
       - name: Setup .NET
         if: inputs.environment == 'dev'
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
 
       - name: Setup Node
         if: inputs.environment == 'dev'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20.19.0
           cache: npm
@@ -138,7 +138,7 @@ jobs:
           -SkipAdmin
 
       - name: Login to Azure release archive with OIDC
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -225,7 +225,7 @@ jobs:
           "needs_sqlpackage=$($scope.NeedsSqlPackage.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Upload release between jobs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: auraly-release-${{ inputs.version }}
           path: artifacts/releases/${{ inputs.version }}
@@ -239,16 +239,16 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.release.outputs.commit }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: ${{ needs.release.outputs.artifact_name }}
           path: artifacts/releases/${{ inputs.version }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         if: needs.release.outputs.needs_sqlpackage == 'true'
         with:
           dotnet-version: 8.0.x
@@ -261,7 +261,7 @@ jobs:
           "SQLPACKAGE_PATH=$HOME/.dotnet/tools/sqlpackage" >> $env:GITHUB_ENV
 
       - name: Login to Azure with OIDC
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -293,17 +293,17 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.release.outputs.commit }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: ${{ needs.release.outputs.artifact_name }}
           path: artifacts/releases/${{ inputs.version }}
 
       - name: Login to Azure with OIDC
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -328,7 +328,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.release.outputs.commit }}
 

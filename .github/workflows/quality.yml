@@ -11,8 +11,8 @@ jobs:
     env:
       AURALY_TEST_SQLSERVER: '(localdb)\MSSQLLocalDB'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
       - name: Install SQLPackage 170 for integration tests
@@ -32,8 +32,8 @@ jobs:
       run:
         working-directory: admin
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20.19.0
           cache: npm
