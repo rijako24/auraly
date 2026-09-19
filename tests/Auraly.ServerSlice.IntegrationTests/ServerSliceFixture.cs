@@ -72,6 +72,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public static readonly byte[] FiscalSecretProtectionKey =
         SHA256.HashData(Encoding.UTF8.GetBytes("Auraly.ServerSlice fiscal secret protection key"));
 
+    public static string UniqueNit(Guid seed) =>
+        (100_000_000UL + BitConverter.ToUInt64(seed.ToByteArray()) % 900_000_000UL)
+        .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
     private WebApplicationFactory<Program>? _factory;
     private string? _databaseName;
     private readonly object _authenticationSessionLock = new();

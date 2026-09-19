@@ -927,7 +927,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             new("@TenantId", fixture.TenantId),
             new("@BusinessId", fixture.BusinessId),
             new("@UserId", userId),
-            new("@Identification", customerId.ToString("N")),
+            new("@Identification", ServerSliceFixture.UniqueNit(customerId)),
             new("@Name", name),
             new("@RequiresElectronicInvoice", requiresElectronicInvoice));
         return (customerId, partySiteId);

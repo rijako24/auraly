@@ -410,7 +410,7 @@ public sealed class OrderRecoveryTests(
             """,
             new("@UserId", userId), new("@TenantId", fixture.TenantId),
             new("@Username", $"review-{userId:N}"), new("@CustomerPartyId", customerPartyId),
-            new("@CustomerIdentification", customerId.ToString("N")),
+            new("@CustomerIdentification", ServerSliceFixture.UniqueNit(customerId)),
             new("@SellerPartyId", sellerPartyId), new("@CustomerId", customerId),
             new("@SellerId", sellerId), new("@SellerCode", $"RV-{sellerId:N}"[..20]),
             new("@BusinessId", fixture.BusinessId), new("@WarehouseId", fixture.WarehouseId),

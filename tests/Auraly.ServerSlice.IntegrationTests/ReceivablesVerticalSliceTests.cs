@@ -676,7 +676,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 new("@TenantId", fixture.TenantId),
                 new("@BusinessId", fixture.BusinessId),
                 new("@UserId", userId),
-                new("@Identification", customerId.ToString("N")),
+                new("@Identification", ServerSliceFixture.UniqueNit(customerId)),
                 new("@Username", $"receivables-{userId:N}"),
                 new("@Email", $"receivables-{userId:N}@test.local"));
 
