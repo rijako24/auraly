@@ -31,7 +31,7 @@ public sealed class PosCashMovementTicketPrinter(
             string.IsNullOrWhiteSpace(ticket.ResponsibleName))
             throw new ArgumentException("El movimiento para imprimir no es válido.");
 
-        var settings = configuration.Load();
+        var settings = configuration.LoadForPosPrinting();
         var printerName = settings.PosPrinterName;
         if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
             string.IsNullOrWhiteSpace(printerName))

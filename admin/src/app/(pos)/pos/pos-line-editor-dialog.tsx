@@ -57,7 +57,13 @@ export function PosLineEditorDialog({
   const modal = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    focusEditorControl(discountInputs.current[0]);
+    const firstEditableDiscount = discountInputs.current.find(
+      (input) => input !== null && !input.disabled,
+    );
+    const firstEditableControl = modal.current?.querySelector<HTMLInputElement>(
+      "input[data-editor-row]:not(:disabled)",
+    );
+    focusEditorControl(firstEditableDiscount ?? firstEditableControl);
   }, []);
 
   usePosModalBehavior({

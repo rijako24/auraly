@@ -78,6 +78,7 @@ import {
 } from "./pos-order-print-routing";
 import { toPrintableOrder } from "./pos-order-print-document";
 import { resolvePosReceiptPrintRoute } from "./pos-receipt-print-routing";
+import { resolveSalePrintEffect } from "./pos-print-routing";
 import {
   posWorkspaceOptionsCacheKey,
   posWorkspaceStorageKey,
@@ -984,16 +985,20 @@ export class OnlinePosClient implements PosClient {
         mutation,
       );
       const nextDraft = this.mapDraft(result.nextDraft);
-      const printCompletion = new Promise<void>((resolve, reject) => {
-        window.setTimeout(() => {
-          void this.printDirect(
-            [result.receipt],
-            !result.isDuplicate,
-            "pos",
-            browserPreview,
-          ).then(resolve, reject);
-        }, 0);
-      });
+      const printEffect = resolveSalePrintEffect(result.isDuplicate);
+      if (!printEffect.dispatchCopy) closePrintPreview(browserPreview);
+      const printCompletion = printEffect.dispatchCopy
+        ? new Promise<void>((resolve, reject) => {
+            window.setTimeout(() => {
+              void this.printDirect(
+                [result.receipt],
+                printEffect.openCashDrawer,
+                "pos",
+                browserPreview,
+              ).then(resolve, reject);
+            }, 0);
+          })
+        : undefined;
       return {
         issuedSale: {
           documentId: { value: result.receipt.documentId },
@@ -1009,8 +1014,8 @@ export class OnlinePosClient implements PosClient {
         nextDocumentNumber: null,
         nextFiscalNumber: null,
         receipt: result.receipt,
-        printPreviewOpened: printRoute === "browser",
-        printedDirectly: printRoute === "installed-app",
+        printPreviewOpened: printEffect.dispatchCopy && printRoute === "browser",
+        printedDirectly: printEffect.dispatchCopy && printRoute === "installed-app",
         printCompletion,
       } satisfies PosCompleteSaleResult;
     } catch (error) {

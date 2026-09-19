@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.IO.Ports;
 using System.Text.Json;
+using System.ComponentModel;
 using Auraly.Contracts.Sales;
 using Auraly.Pos.Edge.Infrastructure;
 using Auraly.Pos.Printing;
@@ -148,12 +149,17 @@ public sealed record PosScaleConfiguration(
 public sealed record PosPrinterConfigurationView(
     PosPrinterConfiguration Configuration,
     IReadOnlyList<string> InstalledPrinters,
-    IReadOnlyList<string> SerialPorts);
+    IReadOnlyList<string> SerialPorts,
+    bool PrintingReady,
+    IReadOnlyList<string> ValidationErrors,
+    IReadOnlyList<string> PeripheralWarnings);
 
 public sealed class PosPrinterConfigurationStore(
     string settingsPath,
     string receiptOutputDirectory,
-    PosPrinterConfiguration? enrollmentDefault = null)
+    PosPrinterConfiguration? enrollmentDefault = null,
+    Func<IReadOnlyList<string>>? installedPrinterProvider = null,
+    Func<IReadOnlyList<string>>? serialPortProvider = null)
 {
     private readonly object gate = new();
     private readonly PosPrinterConfiguration initial =
@@ -184,10 +190,80 @@ public sealed class PosPrinterConfigurationStore(
                         LegacyPrinterFor(stored, stored.OrderOutputFormat)
                 };
             }
-            catch (JsonException)
+            catch (JsonException exception)
             {
-                return initial;
+                throw new InvalidDataException(
+                    "La configuración local de impresoras está dañada. Restaura el archivo printer-settings.json y vuelve a abrir Periféricos.",
+                    exception);
             }
+        }
+    }
+
+    public PosPrinterConfigurationView GetView()
+    {
+        var configuration = Load();
+        var installedPrinters = InstalledPrinters();
+        IReadOnlyList<string> serialPorts;
+        IReadOnlyList<string> warnings;
+        try
+        {
+            serialPorts = SerialPorts();
+            warnings = [];
+        }
+        catch (InvalidOperationException exception)
+        {
+            serialPorts = [];
+            warnings = [exception.Message];
+        }
+        return View(configuration, installedPrinters, serialPorts, warnings);
+    }
+
+    public PosPrinterConfigurationView SaveView(PosPrinterConfiguration requested)
+    {
+        var installedPrinters = InstalledPrinters();
+        var normalized = requested with
+        {
+            PosPrinterName = RequireInstalledPrinter(
+                requested.PosPrinterName, installedPrinters, "facturas"),
+            OrderPrinterName = RequireInstalledPrinter(
+                requested.OrderPrinterName, installedPrinters, "pedidos")
+        };
+        return View(Save(normalized), installedPrinters, [], []);
+    }
+
+    public PosPrinterConfiguration LoadForPosPrinting()
+    {
+        var configuration = Load();
+        if (installedPrinterProvider is null) return configuration;
+        try
+        {
+            return configuration with
+            {
+                PosPrinterName = RequireInstalledPrinter(
+                    configuration.PosPrinterName, InstalledPrinters(), "facturas")
+            };
+        }
+        catch (ArgumentException exception)
+        {
+            throw new InvalidOperationException(exception.Message, exception);
+        }
+    }
+
+    public PosPrinterConfiguration LoadForOrderPrinting()
+    {
+        var configuration = Load();
+        if (installedPrinterProvider is null) return configuration;
+        try
+        {
+            return configuration with
+            {
+                OrderPrinterName = RequireInstalledPrinter(
+                    configuration.OrderPrinterName, InstalledPrinters(), "pedidos")
+            };
+        }
+        catch (ArgumentException exception)
+        {
+            throw new InvalidOperationException(exception.Message, exception);
         }
     }
 
@@ -246,11 +322,92 @@ public sealed class PosPrinterConfigurationStore(
         return value;
     }
 
-    public IReadOnlyList<string> InstalledPrinters() =>
-        WindowsPrinterDiscovery.GetInstalledPrinters();
+    public IReadOnlyList<string> InstalledPrinters()
+    {
+        try
+        {
+            return (installedPrinterProvider ??
+                WindowsPrinterDiscovery.GetInstalledPrinters)();
+        }
+        catch (Win32Exception exception)
+        {
+            throw new InvalidOperationException(
+                "Windows no permitió consultar las impresoras instaladas.", exception);
+        }
+    }
 
-    public IReadOnlyList<string> SerialPorts() =>
-        SerialPort.GetPortNames().Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    public IReadOnlyList<string> SerialPorts()
+    {
+        try
+        {
+            return (serialPortProvider?.Invoke() ?? SerialPort.GetPortNames())
+                .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+        catch (Win32Exception exception)
+        {
+            throw new InvalidOperationException(
+                "Windows no permitió consultar los puertos de la balanza.", exception);
+        }
+    }
+
+    private PosPrinterConfigurationView View(
+        PosPrinterConfiguration configuration,
+        IReadOnlyList<string> installedPrinters,
+        IReadOnlyList<string> serialPorts,
+        IReadOnlyList<string> warnings)
+    {
+        var errors = PrinterValidationErrors(configuration, installedPrinters);
+        return new PosPrinterConfigurationView(
+            configuration,
+            installedPrinters,
+            serialPorts,
+            errors.Count == 0,
+            errors,
+            warnings);
+    }
+
+    private static IReadOnlyList<string> PrinterValidationErrors(
+        PosPrinterConfiguration configuration,
+        IReadOnlyList<string> installedPrinters)
+    {
+        var errors = new List<string>();
+        ValidateSelectedPrinter(
+            configuration.PosPrinterName, installedPrinters, "facturas", errors);
+        ValidateSelectedPrinter(
+            configuration.OrderPrinterName, installedPrinters, "pedidos", errors);
+        return errors;
+    }
+
+    private static string RequireInstalledPrinter(
+        string? requested,
+        IReadOnlyList<string> installedPrinters,
+        string workflow)
+    {
+        var selected = Clean(requested)
+            ?? throw new ArgumentException($"Configura la impresora de {workflow}.");
+        var installed = installedPrinters.FirstOrDefault(candidate =>
+            string.Equals(candidate, selected, StringComparison.OrdinalIgnoreCase));
+        if (installed is null)
+            throw new ArgumentException(
+                $"La impresora de {workflow} '{selected}' no está instalada en este equipo.");
+        return installed;
+    }
+
+    private static void ValidateSelectedPrinter(
+        string? selected,
+        IReadOnlyList<string> installedPrinters,
+        string workflow,
+        ICollection<string> errors)
+    {
+        try
+        {
+            RequireInstalledPrinter(selected, installedPrinters, workflow);
+        }
+        catch (ArgumentException exception)
+        {
+            errors.Add(exception.Message);
+        }
+    }
 
     private static PosScaleConfiguration? ValidateScale(PosScaleConfiguration? scale)
     {
@@ -461,7 +618,15 @@ public sealed class ConfigurablePosReceiptPrinter(
         PosReceipt receipt,
         CancellationToken cancellationToken = default)
     {
-        var configuration = settings.Load();
+        var configuration = settings.LoadForPosPrinting();
+        await PrintAsync(receipt, configuration, cancellationToken);
+    }
+
+    private async Task PrintAsync(
+        PosReceipt receipt,
+        PosPrinterConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
         receipt = PrepareReceipt(receipt);
         if (configuration.PosOutputFormat != PrintTemplateFormats.Receipt)
             await orderDocumentPrinter.PrintAsync(
@@ -470,7 +635,12 @@ public sealed class ConfigurablePosReceiptPrinter(
                 configuration.PosOutputFormat,
                 cancellationToken);
         else
-            await PrintReceiptAsync(receipt, cancellationToken);
+            await PrintReceiptAsync(
+                receipt,
+                configuration,
+                configuration.PosPrinterName,
+                configuration.ReceiptPaperWidthMillimeters,
+                cancellationToken);
 
         if (receipt.CreditAcknowledgement is not null)
             await PrintCreditAcknowledgementAsync(
@@ -479,18 +649,25 @@ public sealed class ConfigurablePosReceiptPrinter(
 
     public Task PrintReceiptAsync(
         PosReceipt receipt,
-        CancellationToken cancellationToken = default) =>
-        PrintReceiptAsync(receipt, settings.Load().PosPrinterName,
-            settings.Load().ReceiptPaperWidthMillimeters, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var configuration = settings.LoadForPosPrinting();
+        return PrintReceiptAsync(
+            receipt,
+            configuration,
+            configuration.PosPrinterName,
+            configuration.ReceiptPaperWidthMillimeters,
+            cancellationToken);
+    }
 
     private Task PrintReceiptAsync(
         PosReceipt receipt,
+        PosPrinterConfiguration configuration,
         string? workflowPrinterName,
         int paperWidthMillimeters,
         CancellationToken cancellationToken)
     {
         receipt = PrepareReceipt(receipt);
-        var configuration = settings.Load();
         var printerName = workflowPrinterName ?? configuration.PrinterFor(
             receipt.DocumentType, PrintTemplateFormats.Receipt);
         if (configuration.ReceiptMode == PosPrinterModes.WindowsRaw)
@@ -535,17 +712,18 @@ public sealed class ConfigurablePosReceiptPrinter(
         CancellationToken cancellationToken = default)
     {
         if (receipts.Count == 0) return;
+        var configuration = settings.LoadForPosPrinting();
         if (receipts.Any(receipt => receipt.CreditAcknowledgement is not null))
         {
             // Each credit sale intentionally produces two physical jobs so the
             // invoice cuts before its independently signed acknowledgement.
             foreach (var receipt in receipts)
                 await PrintAsync(
-                    ToPosReceipt(receipt, settings.Load().ReceiptPaperWidthMillimeters),
+                    ToPosReceipt(receipt, configuration.ReceiptPaperWidthMillimeters),
+                    configuration,
                     cancellationToken);
             return;
         }
-        var configuration = settings.Load();
         if (configuration.PosOutputFormat != PrintTemplateFormats.Receipt)
         {
             await orderDocumentPrinter.PrintAsync(
@@ -558,6 +736,7 @@ public sealed class ConfigurablePosReceiptPrinter(
         foreach (var receipt in receipts)
             await PrintReceiptAsync(
                 ToPosReceipt(receipt, configuration.ReceiptPaperWidthMillimeters),
+                configuration,
                 configuration.PosPrinterName,
                 configuration.ReceiptPaperWidthMillimeters,
                 cancellationToken);
@@ -573,7 +752,7 @@ public sealed class ConfigurablePosReceiptPrinter(
         CancellationToken cancellationToken = default)
     {
         if (receipts.Count == 0) return;
-        var configuration = settings.Load();
+        var configuration = settings.LoadForOrderPrinting();
         var prepared = receipts.Select(PrepareReceipt).ToArray();
         if (configuration.OrderOutputFormat != PrintTemplateFormats.Receipt)
         {
@@ -587,6 +766,7 @@ public sealed class ConfigurablePosReceiptPrinter(
         foreach (var receipt in prepared)
             await PrintReceiptAsync(
                 receipt,
+                configuration,
                 configuration.OrderPrinterName,
                 configuration.OrderReceiptPaperWidthMillimeters,
                 cancellationToken);
@@ -742,6 +922,7 @@ public sealed class RenderedWindowsReceiptPrinter(
 
 internal static class WindowsPrinterDiscovery
 {
+    private const int ErrorInsufficientBuffer = 122;
     private const uint PrinterEnumLocal = 2;
     private const uint PrinterEnumConnections = 4;
 
@@ -749,14 +930,25 @@ internal static class WindowsPrinterDiscovery
     {
         if (!OperatingSystem.IsWindows()) return [];
         var flags = PrinterEnumLocal | PrinterEnumConnections;
-        EnumPrinters(flags, null, 4, IntPtr.Zero, 0, out var required, out _);
-        if (required == 0) return [];
+        var firstSucceeded = EnumPrinters(
+            flags, null, 4, IntPtr.Zero, 0, out var required, out _);
+        var firstError = Marshal.GetLastWin32Error();
+        if (!firstSucceeded && firstError != ErrorInsufficientBuffer)
+            throw new Win32Exception(firstError,
+                "Windows no pudo consultar las impresoras instaladas.");
+        if (required == 0)
+        {
+            if (firstSucceeded) return [];
+            throw new Win32Exception(firstError,
+                "Windows no pudo consultar las impresoras instaladas.");
+        }
         var buffer = Marshal.AllocHGlobal((int)required);
         try
         {
             if (!EnumPrinters(
                     flags, null, 4, buffer, required, out _, out var returned))
-                return [];
+                throw new Win32Exception(Marshal.GetLastWin32Error(),
+                    "Windows no pudo consultar las impresoras instaladas.");
             var size = Marshal.SizeOf<PrinterInfo4>();
             var names = new List<string>((int)returned);
             for (var index = 0; index < returned; index++)

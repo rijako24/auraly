@@ -125,13 +125,13 @@ public sealed class PosCashDrawer(
 
     public void Open()
     {
-        var settings = configuration.Load();
+        var settings = configuration.LoadForPosPrinting();
         if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
-            string.IsNullOrWhiteSpace(settings.ReceiptPrinterName))
+            string.IsNullOrWhiteSpace(settings.PosPrinterName))
             throw new InvalidOperationException(
                 "Configura la impresora de tirilla conectada al cajón.");
         rawPrintJob.Print(
-            settings.ReceiptPrinterName,
+            settings.PosPrinterName,
             "Auraly-Abrir-Cajon",
             Pulse);
     }
@@ -220,7 +220,7 @@ public sealed class PosWorkSessionClosurePrinter(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var settings = configuration.Load();
+        var settings = configuration.LoadForPosPrinting();
         var printerName = settings.PosPrinterName;
         if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
             string.IsNullOrWhiteSpace(printerName))

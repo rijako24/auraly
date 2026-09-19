@@ -709,6 +709,134 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
+    public void Corrupted_printer_settings_fail_visibly_instead_of_using_defaults()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-printer-corrupt-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "settings.json");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(path, "{not-json");
+            var store = new PosPrinterConfigurationStore(
+                path, Path.Combine(directory, "receipts"));
+
+            var exception = Assert.Throws<InvalidDataException>(() => store.Load());
+
+            Assert.Contains("está dañada", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Authoritative_printer_view_rejects_missing_printers_and_enumerates_once()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-printer-readiness-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var enumerations = 0;
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"),
+                installedPrinterProvider: () =>
+                {
+                    enumerations++;
+                    return ["Factura instalada", "Pedidos instalada"];
+                });
+            var requested = PosPrinterConfiguration.Default with
+            {
+                PosPrinterName = "Impresora desaparecida",
+                OrderPrinterName = "Pedidos instalada"
+            };
+
+            var exception = Assert.Throws<ArgumentException>(() =>
+                store.SaveView(requested));
+
+            Assert.Contains("no está instalada", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(1, enumerations);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Saved_printer_configuration_is_ready_after_restart_and_preserves_system_identity()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-printer-restart-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "settings.json");
+        Func<IReadOnlyList<string>> printers = () =>
+            ["Factura instalada", "Pedidos instalada"];
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                path, Path.Combine(directory, "receipts"),
+                installedPrinterProvider: printers);
+            var saved = store.SaveView(PosPrinterConfiguration.Default with
+            {
+                PosPrinterName = "factura instalada",
+                OrderPrinterName = "pedidos instalada"
+            });
+            var restarted = new PosPrinterConfigurationStore(
+                path, Path.Combine(directory, "receipts"),
+                installedPrinterProvider: printers).GetView();
+
+            Assert.True(saved.PrintingReady);
+            Assert.True(restarted.PrintingReady);
+            Assert.Empty(restarted.ValidationErrors);
+            Assert.Equal("Factura instalada", restarted.Configuration.PosPrinterName);
+            Assert.Equal("Pedidos instalada", restarted.Configuration.OrderPrinterName);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Optional_scale_port_failure_does_not_block_valid_printer_configuration()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-printer-discovery-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "settings.json");
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                path,
+                Path.Combine(directory, "receipts"),
+                installedPrinterProvider: () => ["Factura", "Pedidos"],
+                serialPortProvider: () => throw new System.ComponentModel.Win32Exception());
+
+            var saved = store.SaveView(PosPrinterConfiguration.Default with
+            {
+                PosPrinterName = "Factura",
+                OrderPrinterName = "Pedidos"
+            });
+            var view = store.GetView();
+
+            Assert.True(saved.PrintingReady);
+            Assert.True(view.PrintingReady);
+            Assert.Contains(view.PeripheralWarnings, warning =>
+                warning.Contains("puertos", StringComparison.Ordinal));
+            Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Legacy_printer_settings_are_upgraded_to_workflow_printers_when_loaded()
     {
         var directory = Path.Combine(

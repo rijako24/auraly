@@ -200,12 +200,30 @@ comparar ambos transportes y los cuatro formatos antes de publicar.
 - cierre con detalle conciliado y totalizado de entradas y salidas de efectivo;
 - pruebas del contenido y escritura atómica.
 
-## Siguiente incremento de configuración
+## Configuración local implementada
 
-La pantalla de configuración deberá consumir un caso de uso real de POS Edge
-para descubrir impresoras y guardar los perfiles locales. Incluirá impresión
-de prueba y validará capacidades antes de activar corte o cajón. No se agrega
-ahora una pantalla desconectada ni una lista de impresoras simulada.
+La pantalla `Periféricos` consume el caso de uso de POS Edge para descubrir las
+impresoras reales de Windows y guardar los perfiles locales. El archivo
+`printer-settings.json` es la fuente autoritativa de la estación; no se replica
+en `SettingsJson`, en el enrolamiento ni en el servidor. POS Edge valida al
+guardar y antes de cada trabajo que el identificador seleccionado todavía
+exista en el catálogo de Windows. Una impresora eliminada o renombrada deja la
+impresión directa en estado no preparado y produce un error observable; no se
+sustituye por la predeterminada ni por datos inventados.
+
+La balanza es opcional. Un error de permisos al enumerar puertos COM se devuelve
+como `peripheralWarnings` y no invalida impresoras correctas ni impide guardar
+su configuración. Los errores de descubrimiento de impresoras se exponen al
+consultar o guardar la configuración y al solicitar un trabajo de impresión.
+
+La impresión no forma parte del estado global `Ready`: una caja puede terminar
+su preparación, iniciar sesión y vender sin tener una impresora configurada.
+`/edge/v1/configuration/printers` conserva `printingReady` y los errores de
+validación como estado propio del periférico. Si se solicita imprimir sin una
+configuración válida, el trabajo se rechaza de forma observable y no se elige
+una impresora predeterminada ni se repite el efecto. Una falla física posterior
+nunca puede deshacer una venta ya emitida. La prueba física de impresión y la
+validación de capacidades de corte o cajón continúan como incremento separado.
 
 Sin Auraly POS, la estación web usa el diálogo de impresión del navegador. Con
 Auraly POS instalado, POS Edge puede imprimir directamente con `WindowsRaw` y
@@ -224,4 +242,11 @@ canónicos por flujo al leer la configuración. La interfaz completa ambos flujo
 con la única impresora instalada cuando Windows reporta exactamente una. El
 archivo vuelve a escribirse únicamente al guardar explícitamente; no existe una
 segunda fuente de configuración ni una migración remota por tenant.
+
+La emisión es idempotente respecto de la venta y de todos sus efectos. Un
+reintento de una venta ya emitida devuelve el mismo snapshot y no repite
+numeración, inventario, pago, impresión ni apertura de cajón. Una falla posterior
+de impresión se recupera únicamente mediante la reimpresión explícita desde el
+snapshot. Web y aplicación instalada comparten esta regla; únicamente cambia el
+adaptador final (`BrowserPreview` o POS Edge/Windows).
 

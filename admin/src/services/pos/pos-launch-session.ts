@@ -47,12 +47,13 @@ export function enrolledWorkspaceOption(
   };
 }
 
-export function usesEnrolledPosRuntime(health: PosLaunchHealth) {
-  return health.status !== "EnrollmentRequired";
-}
-
-export function shouldUseEnrolledPosRuntime(health: PosLaunchHealth) {
-  return usesEnrolledPosRuntime(health);
+export function resolvePosExecutionMode(
+  hasInstalledApp: boolean,
+  health: PosLaunchHealth | null,
+): "online" | "edge" | null {
+  if (!hasInstalledApp) return "online";
+  if (!health) return null;
+  return health.status === "EnrollmentRequired" ? "online" : "edge";
 }
 
 export function workspaceActivationMode(

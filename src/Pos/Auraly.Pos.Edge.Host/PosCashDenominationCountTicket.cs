@@ -29,7 +29,7 @@ public sealed class PosCashDenominationCountTicketPrinter(
         CancellationToken cancellationToken)
     {
         Validate(ticket);
-        var settings = configuration.Load();
+        var settings = configuration.LoadForPosPrinting();
         var printerName = settings.PosPrinterName;
         if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
             string.IsNullOrWhiteSpace(printerName))

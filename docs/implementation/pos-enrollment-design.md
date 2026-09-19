@@ -124,8 +124,21 @@ La experiencia visual es la misma:
 `serverConnected` significa que Auraly Server aceptó la identidad vigente del
 dispositivo. Una respuesta `401` prueba que el transporte existe, pero deja el
 estado desconectado porque ninguna capacidad remota autenticada está disponible.
+Cada transición de esta señal se publica inmediatamente por el SSE local de
+estado; las respuestas siguientes no vuelven a emitirla mientras el valor no
+cambie. Así la preparación deja de mostrar “Verificando conexión” desde la
+primera respuesta autenticada, sin polling ni una consulta adicional.
 El canal push mantiene su indicador independiente; ninguno de los dos condiciona
 el login local ni la lectura de la proyección SQLite.
+
+La pantalla de preparación usa un marco de altura estable. Su barra comienza en
+0 %, reserva los hitos de identidad y validación final, y avanza entre ellos con
+el porcentaje durable de productos realmente aplicado por `PosCatalogStore`;
+no estima avance por tiempo ni crea un proceso de seguimiento paralelo. Después
+del catálogo ejecuta la validación final y publica `Ready` y 100 %. La impresora
+es una configuración local opcional: no condiciona la preparación, el login ni
+la venta; sólo se valida cuando se consulta o guarda el periférico o cuando se
+solicita imprimir.
 
 Los modales personalizados del POS comparten una pila de foco: el control
 inicial gana el foco al abrir, `Escape` cierra solo la ventana superior y el
@@ -143,9 +156,9 @@ Al arrancar, Edge ejecuta una puesta al día en segundo plano sobre el cursor
 durable. Si una conexión transitoria falla, conserva el cursor y ejecuta la
 política acotada de tres reintentos; un fallo permanente o el agotamiento de esa
 política espera intervención manual. Después de completar la puesta al día deja
-de consultar el catálogo. El disparo push para cambios ocurridos durante una
-sesión abierta sigue pendiente de conectar al transporte real; no se simula
-mediante polling continuo.
+de consultar el catálogo. Azure Web PubSub entrega las invalidaciones durante
+una sesión abierta y una reconexión dispara una única puesta al día para cubrir
+eventos perdidos; no se simula mediante polling continuo.
 
 ## Límites que siguen pendientes
 
@@ -153,9 +166,9 @@ Esta rebanada no declara terminado:
 
 - menú general offline;
 - revocación y reasignación administrativa explícita de un Edge;
-- selección administrativa de impresora y balanza desde `Periféricos`, con o
-  sin enrolamiento;
 - instalador Windows y validación del reinicio automático como servicio.
 
-La impresora queda con el proveedor de vista previa y tirilla de 80 mm ya
-existente hasta que se implemente su maestro.
+La selección local de impresora y balanza desde `Periféricos` está disponible
+con o sin enrolamiento. Es configuración de la estación instalada; en un equipo
+enrolado, la validez de los destinos de facturas y pedidos forma parte de
+`Ready`. La balanza sigue siendo una capacidad opcional.

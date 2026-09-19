@@ -4,9 +4,8 @@ import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import {
   enrolledWorkspaceOption,
   installedPosLaunchDestination,
+  resolvePosExecutionMode,
   shouldAutoActivateRememberedWorkspace,
-  shouldUseEnrolledPosRuntime,
-  usesEnrolledPosRuntime,
   workspaceActivationMode,
 } from "./pos-launch-session";
 import { isCurrentEdgeUserSession } from "./pos-edge-session";
@@ -89,24 +88,29 @@ test("an unenrolled installation resumes its remembered online workspace", () =>
   assert.equal(shouldAutoActivateRememberedWorkspace("business-a:warehouse-a"), true);
 });
 
-test("enrollment is the single owner of installed runtime selection", () => {
-  assert.equal(
-    usesEnrolledPosRuntime({ status: "LoginRequired", identityReady: true }),
-    true,
-  );
-  assert.equal(
-    usesEnrolledPosRuntime({ status: "Ready", identityReady: true }),
-    true,
-  );
-  assert.equal(
-    usesEnrolledPosRuntime({ status: "EnrollmentRequired", identityReady: false }),
-    false,
-  );
+test("one resolver selects web for browser or unenrolled installations", () => {
+  assert.equal(resolvePosExecutionMode(false, null), "online");
+  assert.equal(resolvePosExecutionMode(true, {
+    status: "EnrollmentRequired",
+    identityReady: false,
+  }), "online");
 });
 
-test("an enrolled computer always keeps the enrolled runtime", () => {
-  const enrolled = { status: "Ready", identityReady: true };
-  assert.equal(shouldUseEnrolledPosRuntime(enrolled), true);
+test("the same resolver selects SQLite for every enrolled preparation state", () => {
+  for (const status of [
+    "IdentitySynchronizing",
+    "Synchronizing",
+    "LoginRequired",
+    "Ready",
+  ])
+    assert.equal(resolvePosExecutionMode(
+      true,
+      { status, identityReady: status === "Ready" },
+    ), "edge");
+});
+
+test("an unavailable installed service does not guess a data owner", () => {
+  assert.equal(resolvePosExecutionMode(true, null), null);
 });
 
 test("online invoices report an exhausted DIAN quota without a technical error", () => {

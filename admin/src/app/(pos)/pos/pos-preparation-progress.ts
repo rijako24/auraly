@@ -39,21 +39,25 @@ export function posPreparationView(
       detail: "Estamos leyendo el checkpoint local para continuar justo donde quedó.",
       currentResource: "Estado del equipo",
       resourceProgress: null,
-      overallProgress: null,
+      overallProgress: 0,
       processedLabel: null,
       connectionLabel: "Conectando…",
       resumeLabel: "Buscando un punto de reanudación seguro",
     };
   }
 
+  const catalogProgress = Math.min(100, Math.max(0, health.catalogProgressPercent ?? 0));
   const completed = Math.max(0, health.preparationCompletedSteps ?? 0);
   const totalSteps = Math.max(0, health.preparationTotalSteps ?? 0);
-  const currentStepProgress = health.preparationStage === "Catalog"
-    ? Math.min(100, Math.max(0, health.catalogProgressPercent ?? 0)) / 100
-    : 0;
-  const overallProgress = totalSteps > 0
-    ? Math.min(100, Math.floor((completed + currentStepProgress) * 100 / totalSteps))
-    : null;
+  const overallProgress = health.preparationStage === "Identity"
+    ? 0
+    : health.preparationStage === "CatalogStarting"
+      ? 10
+      : health.preparationStage === "Catalog"
+        ? 10 + Math.floor(catalogProgress * 0.85)
+        : health.preparationStage === "Finalizing"
+          ? totalSteps > 0 && completed >= totalSteps ? 100 : 95
+          : 0;
   const activeStages = (health.synchronizationStages ?? []).join(", ");
 
   if (health.automaticRetryScheduled) {

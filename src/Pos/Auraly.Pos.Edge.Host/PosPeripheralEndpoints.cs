@@ -32,7 +32,8 @@ internal static class PosPeripheralModule
             Path.Combine(dataDirectory, "printer-settings.json"),
             configuration["PosEdge:ReceiptOutputDirectory"]
                 ?? Path.Combine(dataDirectory, "receipts"),
-            enrollmentPrinterDefault));
+            enrollmentPrinterDefault,
+            WindowsPrinterDiscovery.GetInstalledPrinters));
         services.AddSingleton<ConfigurableOrderDocumentPrinter>();
         services.AddSingleton<ConfigurablePosReceiptPrinter>();
         services.AddSingleton<IPosReceiptPrinter>(sp =>
@@ -52,8 +53,30 @@ internal static class PosPeripheralModule
     {
         edge.MapGet("/configuration/printers", (
             PosPrinterConfigurationStore printers) =>
-            Results.Ok(new PosPrinterConfigurationView(
-                printers.Load(), printers.InstalledPrinters(), printers.SerialPorts())));
+        {
+            try
+            {
+                return Results.Ok(printers.GetView());
+            }
+            catch (InvalidDataException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (IOException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
 
         edge.MapPut("/configuration/printers", (
             PosPrinterConfiguration request,
@@ -61,8 +84,8 @@ internal static class PosPeripheralModule
         {
             try
             {
-                return Results.Ok(new PosPrinterConfigurationView(
-                    printers.Save(request), printers.InstalledPrinters(), printers.SerialPorts()));
+                var view = printers.SaveView(request);
+                return Results.Ok(view);
             }
             catch (ArgumentException exception)
             {
@@ -72,13 +95,24 @@ internal static class PosPeripheralModule
                         [nameof(PosPrinterConfiguration)] = [exception.Message]
                     });
             }
+            catch (InvalidOperationException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (IOException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
         });
 
         edge.MapPost("/print/receipt", async (
             DirectPrintReceiptRequest request,
             string? workflow,
             ConfigurablePosReceiptPrinter printer,
-            PosPrinterConfigurationStore configuration,
             CancellationToken ct) =>
         {
             var orderTicketWorkflow = workflow == "order-tickets";
@@ -95,17 +129,6 @@ internal static class PosPeripheralModule
                 {
                     [nameof(workflow)] = ["El flujo de impresión no es válido."]
                 });
-            var settings = configuration.Load();
-            var workflowPrinterName = orderTicketWorkflow
-                ? settings.OrderPrinterName
-                : settings.PosPrinterName;
-            if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
-                string.IsNullOrWhiteSpace(workflowPrinterName))
-                return Results.Problem(
-                    orderTicketWorkflow
-                        ? "Configura la impresora de pedidos."
-                        : "Configura la impresora de facturas.",
-                    statusCode: StatusCodes.Status409Conflict);
             try
             {
                 var receipt = new PosReceipt(
@@ -122,7 +145,7 @@ internal static class PosPeripheralModule
                     request.PayableAmount,
                     request.Cufe,
                     request.QrPayload,
-                    settings.ReceiptPaperWidthMillimeters,
+                    80,
                     request.DocumentType,
                     request.CompanyName,
                     request.CompanyLogoSource,

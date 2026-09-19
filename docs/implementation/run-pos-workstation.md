@@ -65,7 +65,7 @@ launcher de escritorio— sin construir WiX en cada cambio:
 ```powershell
 .\scripts\Build-AuralyPosInstaller.ps1 `
   -ApiUrl https://api-auraly-dev-w5usmo6w.azurewebsites.net `
-  -Version 0.0.0-local `
+  -Version 0.0.0-alpha1 `
   -PayloadOnly
 ```
 

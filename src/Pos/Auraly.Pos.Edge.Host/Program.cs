@@ -187,7 +187,8 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton(sp => new HttpClient(
             new PosServerConnectionHandler(
                 new HttpClientHandler(),
-                sp.GetRequiredService<PosServerConnectionState>()))
+                sp.GetRequiredService<PosServerConnectionState>(),
+                sp.GetRequiredService<PosUiStateSignal>()))
         {
             BaseAddress = new Uri(serverUrl)
         });

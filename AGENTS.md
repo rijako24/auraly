@@ -29,6 +29,7 @@ Antes de crear una clase, servicio, flujo, handler, endpoint, tabla, configuraci
 - Tratar rendimiento como atributo obligatorio desde el diseño: definir el camino critico, volumen esperado, numero de viajes de red/consultas y presupuesto de latencia o throughput antes de implementar. No se acepta N+1, trabajo por render, polling descontrolado ni procesamiento proporcional a datos ajenos a la operacion.
 - Prohibir lecturas de base de datos, llamadas HTTP, lecturas de secretos u operaciones de blob por elemento. Las lecturas deben resolverse por conjunto, lote o pagina y su cantidad de viajes debe permanecer acotada al crecer el volumen. Un comando por elemento solo se admite cuando cada elemento es una transaccion independiente, el lote tiene limite explicito y se reutiliza el motor canonico; nunca habilita N+1 de lectura. Si una cardinalidad de uno es una invariante, debe estar respaldada por esquema/contrato y validarse explicitamente en el codigo.
 - Evitar resincronizaciones, invalidaciones y refetches redundantes. Un comando debe devolver o permitir reutilizar el estado autoritativo producido; solo se admite una nueva lectura cuando exista una razon de consistencia documentada, con alcance acotado y prueba que verifique el numero de viajes.
+- Ejecutar solamente lo pedido y los pasos indispensables para completarlo. No inferir, diseñar ni agregar procesos, flujos de recuperacion, abstracciones, estados, efectos o mejoras no solicitados. Si para continuar hace falta una decision fuera del alcance explicito, se informa y se solicita esa decision antes de implementarla. Un reintento idempotente de un comando ya terminado se limita a devolver su resultado autoritativo y no repite efectos.
 - En frontend, cada recurso visible tiene un solo propietario de carga y refresco. Componentes duplicados, contadores auxiliares y vistas ocultas no pueden consultar por separado el mismo recurso. Una mutacion reutiliza su respuesta autoritativa y actualiza ese propietario; no remonta componentes ni dispara un segundo GET para reconstruir lo que el comando ya devolvio.
 - El estado operativo autoritativo se actualiza por evento push o por una accion explicita del usuario. Se prohibe introducir polling periodico de red. La unica excepcion es el heartbeat propietario de un lease activo: se agenda despues de completar el intento anterior, corre solo mientras el lease existe, usa un intervalo inferior a su expiracion y se detiene ante fallo o liberacion. Toda reconexion de WebSocket/SSE usa la politica compartida de backoff, evita intentos simultaneos, tiene un maximo finito de intentos fallidos y se reactiva solamente por una señal explicita como visibilidad, conectividad o accion del usuario.
 - Cada indicador de progreso representa una sola etapa y se cierra al terminar esa etapa. No se mantiene un mensaje como `Actualizando precios` mientras se ejecutan guardado, inventario, impresion o sincronizacion; las etapas posteriores deben declararse por separado y medirse de extremo a extremo.
@@ -65,6 +66,17 @@ Un cambio de implementacion no esta terminado hasta que:
 ## Auditoria posterior obligatoria
 
 Despues de cada implementacion y antes de entregarla, el agente debe auditar el diff completo contra este archivo, `docs/estandares-de-ingenieria.md`, las invariantes y los documentos propietarios del modulo. Esta revision posterior no se sustituye por haber hecho preflight ni por ejecutar tests.
+
+Esta auditoria es una revision fuerte tipo PR de **todo** cambio realizado, no una
+lectura superficial ni un resumen de lo implementado. Debe volver a cuestionar
+el diseno y revisar archivo por archivo en busca de malas practicas, riesgos,
+codigo repetido, reglas duplicadas, propietarios alternos y rutas diferentes
+para el mismo proceso. Tambien debe comprobar que no se agregaron procesos,
+estados, reintentos, recuperaciones, abstracciones o efectos que el usuario no
+pidio. Un hallazgo se corrige y se vuelven a ejecutar los checks afectados; si
+no puede corregirse sin una decision fuera del alcance, se entrega como bloqueo
+con evidencia concreta. Ningun cambio se considera terminado solamente porque
+compile o porque sus pruebas pasen.
 
 La auditoria debe comprobar y dejar en la entrega evidencia explicita de que:
 

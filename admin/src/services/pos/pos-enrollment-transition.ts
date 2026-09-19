@@ -7,7 +7,8 @@ export function shouldCompletePosEnrollment(
 }
 
 export function isPosPreparationPending(edgeStatus: string): boolean {
-  return edgeStatus === "IdentitySynchronizing" || edgeStatus === "Synchronizing";
+  return edgeStatus === "IdentitySynchronizing" ||
+    edgeStatus === "Synchronizing";
 }
 
 type PosEnrollmentTransitionClient<THealth, TSession> = {

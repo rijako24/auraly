@@ -1,7 +1,9 @@
-export type PosReceiptPrintRoute = "installed-app" | "browser";
+import { resolvePosPrintRoute, type PosPrintRoute } from "./pos-print-routing";
+
+export type PosReceiptPrintRoute = PosPrintRoute;
 
 export function resolvePosReceiptPrintRoute(
   edgeSessionToken: string | null,
 ): PosReceiptPrintRoute {
-  return edgeSessionToken ? "installed-app" : "browser";
+  return resolvePosPrintRoute(edgeSessionToken);
 }

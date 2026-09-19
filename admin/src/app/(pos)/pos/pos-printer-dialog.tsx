@@ -31,6 +31,8 @@ export function PosPrinterDialog({
   const [value, setValue] = useState<PosPrinterConfiguration | null>(null);
   const [printers, setPrinters] = useState<string[]>([]);
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [peripheralWarnings, setPeripheralWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -47,6 +49,9 @@ export function PosPrinterDialog({
           configuration: loadBrowserPrinterConfiguration(),
           installedPrinters: [] as string[],
           serialPorts: [] as string[],
+          printingReady: true,
+          validationErrors: [] as string[],
+          peripheralWarnings: [] as string[],
         });
     operation
       .then((view) => {
@@ -59,6 +64,8 @@ export function PosPrinterDialog({
           : view.configuration);
         setPrinters(view.installedPrinters);
         setSerialPorts(view.serialPorts ?? []);
+        setValidationErrors(view.validationErrors ?? []);
+        setPeripheralWarnings(view.peripheralWarnings ?? []);
       })
       .catch((caught) => {
         if (active)
@@ -94,6 +101,8 @@ export function PosPrinterDialog({
         setValue(view.configuration);
         setPrinters(view.installedPrinters);
         setSerialPorts(view.serialPorts ?? []);
+        setValidationErrors(view.validationErrors ?? []);
+        setPeripheralWarnings(view.peripheralWarnings ?? []);
       } else {
         setValue(saveBrowserPrinterConfiguration(value));
       }
@@ -144,6 +153,19 @@ export function PosPrinterDialog({
                 <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
                   Windows no reporto impresoras instaladas. Instala el controlador y vuelve a abrir esta configuracion.
                 </p>
+              )}
+              {client&&validationErrors.length>0 && (
+                <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+                  <p className="font-semibold">La impresión directa no está preparada.</p>
+                  <ul className="mt-1 list-disc pl-5">
+                    {validationErrors.map(issue=><li key={issue}>{issue}</li>)}
+                  </ul>
+                </div>
+              )}
+              {client&&peripheralWarnings.length>0 && (
+                <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+                  {peripheralWarnings.map(issue=><p key={issue}>{issue}</p>)}
+                </div>
               )}
               {!client && <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <h3 className="font-semibold text-slate-950">Impresión directa</h3>

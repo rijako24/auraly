@@ -14,6 +14,24 @@ forma en que se abrió el equipo:
 - Al enrolar se habilitan además SQLite, catálogo local, login offline,
   numeración, outbox y sincronización.
 
+`resolvePosExecutionMode` es el único resolvedor del propietario de datos del
+POS: sin aplicación instalada o con `EnrollmentRequired` selecciona
+`OnlinePosClient` y el servidor web; para cualquier estado enrolado selecciona
+`PosEdgeClient` y SQLite. Si el servicio instalado no responde, el propietario
+queda indeterminado mientras reinicia; no se adivina ni se cambia de
+persistencia. La conectividad no cambia ese propietario. La aplicación instalada
+sólo permite que el modo online use adaptadores locales de periféricos; no crea
+un segundo motor de venta.
+
+Los pedidos son una excepción deliberada al propietario de datos de la venta:
+su único propietario es la API web de Pedidos y SQL Server, incluso cuando la
+caja está enrolada. POS Edge no expone endpoints ni persistencia paralela de
+pedidos; sólo recibe, como adaptador local de periféricos, el documento ya
+resuelto por la API para imprimirlo. Por ello crear, recuperar, editar, guardar
+o facturar un pedido requiere conexión. Al volver a una venta local se restaura
+el mismo `PosEdgeClient`; no se migra el pedido a SQLite ni se cambia el
+propietario de la venta iniciada localmente.
+
 No se pregunta al cajero el modo en cada inicio y no se cambia de persistencia a
 mitad de una factura. La ausencia de Internet no se confunde con la ausencia de
 POS Edge.

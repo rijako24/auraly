@@ -89,6 +89,7 @@ describe("isPosPreparationPending", () => {
   it("keeps only actual preparation states in the progress experience", () => {
     assert.equal(isPosPreparationPending("IdentitySynchronizing"), true);
     assert.equal(isPosPreparationPending("Synchronizing"), true);
+    assert.equal(isPosPreparationPending("PrinterConfigurationRequired"), false);
     assert.equal(isPosPreparationPending("Ready"), false);
     assert.equal(isPosPreparationPending("LoginRequired"), false);
   });

@@ -26,6 +26,7 @@ import {
   posStateStreamReconnectDelay,
 } from "./pos-state-invalidation";
 import { readPosEdgeProblem } from "./pos-printer-configuration";
+import { resolveSalePrintEffect } from "./pos-print-routing";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -843,6 +844,9 @@ export type PosPrinterConfigurationView = {
   configuration: PosPrinterConfiguration;
   installedPrinters: string[];
   serialPorts: string[];
+  printingReady?: boolean;
+  validationErrors?: string[];
+  peripheralWarnings?: string[];
 };
 
 const BROWSER_PRINTER_CONFIGURATION_KEY = "auraly.printing.configuration.v1";
@@ -1396,7 +1400,8 @@ export class PosEdgeClient implements PosClient {
       customerName: result.receipt.customerName || result.receipt.customerIdentification,
       fiscalStatus: result.receipt.fiscalStatus || "LocallyIssuedPendingSync",
     };
-    const printCompletion = result.printedDirectly
+    const printEffect = resolveSalePrintEffect(result.issuedSale.wasAlreadyIssued);
+    const printCompletion = result.printedDirectly || !printEffect.dispatchCopy
       ? undefined
       : new Promise<void>((resolve, reject) => {
           window.setTimeout(() => {

@@ -285,6 +285,21 @@ public sealed class PosIdentitySynchronizationJourneyTests
                 new PosLocalLoginRequest("cashier-updated", password));
             Assert.Equal("Cajera sincronizada", reconnectedLogin.DisplayName);
             Assert.Contains(CommercePermissionCodes.SalesChangePrice, reconnectedLogin.Permissions);
+
+            // A desktop restart creates a new store over the same durable SQLite
+            // database and key directory. Login must keep using the synchronized
+            // local projection while Auraly Server is unavailable.
+            var restartedIdentities = new PosLocalIdentityStore(
+                $"Data Source={databasePath}", keyDirectory,
+                new Uuid7AuralyIdGenerator(clock), clock);
+            await restartedIdentities.InitializeAsync();
+            var restartedLogin = await restartedIdentities.LoginAsync(
+                new PosLocalLoginRequest("cashier-updated", password));
+            Assert.Equal("Cajera sincronizada", restartedLogin.DisplayName);
+            Assert.Contains(
+                CommercePermissionCodes.SalesChangePrice,
+                restartedLogin.Permissions);
+            Assert.Equal(2, handler.RequestCount);
             Assert.Contains(events.Read(), item =>
                 item.Category == "Usuario" &&
                 item.Title.Contains("Cajera sincronizada", StringComparison.Ordinal));

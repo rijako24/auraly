@@ -26,7 +26,7 @@ import {
   readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
 import {
-  usesEnrolledPosRuntime,
+  resolvePosExecutionMode,
 } from "@/services/pos/pos-launch-session";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
 import { defaultStartRoute } from "@/lib/default-start-route";
@@ -76,7 +76,7 @@ function LoginForm() {
       if (edgeToken) {
         const client = new PosEdgeClient(edgeToken, readEdgeUserSession());
         const health = await client.health().catch(() => null);
-        if (active && health && usesEnrolledPosRuntime(health)) {
+        if (active && health && resolvePosExecutionMode(true, health) === "edge") {
           installedEdgeClient = client;
           setEdgeClient(client);
           setPreparedBusinessName(health.businessName);

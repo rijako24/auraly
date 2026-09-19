@@ -1,5 +1,6 @@
 using System.Net;
 using Auraly.Pos.Edge.Host;
+using Auraly.Pos.Edge.Infrastructure;
 using Xunit;
 
 namespace Auraly.Pos.Edge.Host.Tests;
@@ -47,6 +48,21 @@ public sealed class PosServerConnectionTests
         Assert.False(state.IsConnected);
     }
 
+    [Fact]
+    public async Task Connection_change_is_published_immediately_to_the_local_ui()
+    {
+        var state = new PosServerConnectionState();
+        var progress = new RecordingProgressSink();
+        using var client = new HttpClient(new PosServerConnectionHandler(
+            new ResponseHandler(HttpStatusCode.OK), state, progress));
+
+        using var first = await client.GetAsync("https://server.test/catalog/page-1");
+        using var second = await client.GetAsync("https://server.test/catalog/page-2");
+
+        Assert.True(state.IsConnected);
+        Assert.Equal(1, progress.PublishCount);
+    }
+
     private sealed class ResponseHandler(HttpStatusCode statusCode) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
@@ -61,5 +77,12 @@ public sealed class PosServerConnectionTests
             HttpRequestMessage request,
             CancellationToken cancellationToken) =>
             throw new HttpRequestException("Server unavailable");
+    }
+
+    private sealed class RecordingProgressSink : IPosSynchronizationProgressSink
+    {
+        public int PublishCount { get; private set; }
+
+        public void Publish() => PublishCount++;
     }
 }

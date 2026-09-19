@@ -1,6 +1,7 @@
 namespace Auraly.Pos.Edge.Host;
 
 using System.Net;
+using Auraly.Pos.Edge.Infrastructure;
 
 public sealed class PosServerConnectionState
 {
@@ -8,9 +9,9 @@ public sealed class PosServerConnectionState
 
     public bool IsConnected => Volatile.Read(ref _connected) == 1;
 
-    public void MarkConnected() => Interlocked.Exchange(ref _connected, 1);
+    public bool MarkConnected() => Interlocked.Exchange(ref _connected, 1) == 0;
 
-    public void MarkDisconnected() => Interlocked.Exchange(ref _connected, 0);
+    public bool MarkDisconnected() => Interlocked.Exchange(ref _connected, 0) == 1;
 }
 
 public sealed class PosPushConnectionState
@@ -26,7 +27,8 @@ public sealed class PosPushConnectionState
 
 public sealed class PosServerConnectionHandler(
     HttpMessageHandler innerHandler,
-    PosServerConnectionState state) : DelegatingHandler(innerHandler)
+    PosServerConnectionState state,
+    IPosSynchronizationProgressSink? progress = null) : DelegatingHandler(innerHandler)
 {
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
@@ -35,16 +37,16 @@ public sealed class PosServerConnectionHandler(
         try
         {
             var response = await base.SendAsync(request, cancellationToken);
-            if (response.StatusCode == HttpStatusCode.Unauthorized)
-                state.MarkDisconnected();
-            else
-                state.MarkConnected();
+            var changed = response.StatusCode == HttpStatusCode.Unauthorized
+                ? state.MarkDisconnected()
+                : state.MarkConnected();
+            if (changed) progress?.Publish();
             return response;
         }
         catch (Exception exception)
             when (exception is HttpRequestException or TaskCanceledException)
         {
-            state.MarkDisconnected();
+            if (state.MarkDisconnected()) progress?.Publish();
             throw;
         }
     }

@@ -62,7 +62,11 @@ No se afirma todavía:
 - login offline multiusuario;
 - reasignación administrativa de dispositivos;
 - prueba real del instalador/servicio Windows;
-- selección física de impresora o balanza durante enrolamiento.
+- prueba física de impresión y balanza como paso automático del enrolamiento.
+
+La selección de impresora y balanza ya se realiza localmente desde
+`Periféricos`, antes o después del enrolamiento. No se incorpora al paquete de
+enrolamiento ni crea una segunda configuración remota.
 
 Estos puntos pertenecen a las rebanadas siguientes y no se representan mediante
 mocks ni componentes vacíos.

@@ -45,7 +45,7 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
     priceSource: "Public",
     discount: 0,
     documentUnitCost: index === 1 ? 6_000.123456 : 6_000,
-    allowsDocumentCostOverride: index !== 1,
+    allowsDocumentCostOverride: index === 0,
     allowsFractionalSale: false,
     net: 10_000,
     tax: 1_900,
@@ -69,7 +69,7 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
     payableAmount: 83_300,
   };
   let appliedLines: {
-    lines: Array<{ lineId: string; description: string; unitPrice: number; discount: number; documentUnitCost: number }>;
+    lines: Array<{ lineId: string; description: string; publicUnitPrice: number; discount: number; documentUnitCost: number }>;
     expectedVersion: number;
   } | null = null;
 
@@ -108,7 +108,7 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
           return {
             ...line,
             description: update.description,
-            unitPrice: update.unitPrice,
+            publicUnitPrice: update.publicUnitPrice,
             discount: update.discount,
             documentUnitCost: update.documentUnitCost,
           };
@@ -130,7 +130,7 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   const discounts = editor.locator('input[data-editor-column="3"]');
   await expect(editor).toBeVisible();
   await expect(discounts).toHaveCount(lines.length);
-  await expect(discounts.first()).toBeFocused();
+  await expect(discounts.nth(1)).toBeFocused();
   await expect(editor.locator('input[data-editor-row="0"][data-editor-column="1"]')).toBeEnabled();
   await expect(editor.locator('input[data-editor-row="0"][data-editor-column="2"]')).toBeEnabled();
   await expect(editor.locator('input[data-editor-row="1"][data-editor-column="1"]')).toBeDisabled();
@@ -140,31 +140,25 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   await expect(editor.getByText("Precio original con IVA: 11.900").first()).toBeVisible();
 
   await page.keyboard.press("ArrowRight");
-  await expect(editor.locator('input[data-editor-row="0"][data-editor-column="4"]')).toBeFocused();
+  await expect(editor.locator('input[data-editor-row="1"][data-editor-column="4"]')).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  const firstPrice = editor.locator('input[data-editor-row="0"][data-editor-column="5"]');
-  await expect(firstPrice).toBeFocused();
+  const secondPrice = editor.locator('input[data-editor-row="1"][data-editor-column="5"]');
+  await expect(secondPrice).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  await expect(firstPrice).toBeFocused();
+  await expect(secondPrice).toBeFocused();
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("ArrowLeft");
-  await expect(discounts.first()).toBeFocused();
+  await expect(discounts.nth(1)).toBeFocused();
   await page.keyboard.press("ArrowLeft");
-  await expect(editor.locator('input[data-editor-row="0"][data-editor-column="2"]')).toBeFocused();
+  const secondDescription = editor.locator('input[data-editor-row="1"][data-editor-column="0"]');
+  await expect(secondDescription).toBeFocused();
   await page.keyboard.press("ArrowLeft");
-  await expect(editor.locator('input[data-editor-row="0"][data-editor-column="1"]')).toBeFocused();
-  await page.keyboard.press("ArrowLeft");
-  const firstDescription = editor.locator('input[data-editor-row="0"][data-editor-column="0"]');
-  await expect(firstDescription).toBeFocused();
-  await page.keyboard.press("ArrowLeft");
-  await expect(firstDescription).toBeFocused();
+  await expect(secondDescription).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("ArrowRight");
-  await expect(discounts.first()).toBeFocused();
+  await expect(discounts.nth(1)).toBeFocused();
 
   const initialScrollTop = await scrollRegion.evaluate(element => element.scrollTop);
-  for (let index = 1; index < lines.length; index += 1) {
+  for (let index = 2; index < lines.length; index += 1) {
     await page.keyboard.press("ArrowDown");
     await expect(discounts.nth(index)).toBeFocused();
   }
@@ -177,10 +171,10 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
 
   const firstCost = editor.locator('input[data-editor-row="0"][data-editor-column="1"]');
   const firstMargin = editor.locator('input[data-editor-row="0"][data-editor-column="2"]');
+  const firstDescription = editor.locator('input[data-editor-row="0"][data-editor-column="0"]');
   await firstDescription.fill("Producto puntual editado");
   await firstCost.fill("5000");
   await expect(firstMargin).toHaveValue("40");
-  const secondPrice = editor.locator('input[data-editor-row="1"][data-editor-column="5"]');
   const secondMargin = editor.locator('input[data-editor-row="1"][data-editor-column="2"]');
   await secondPrice.fill("9000");
   await expect(secondMargin).toHaveValue("20,67");
@@ -191,8 +185,8 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
   expect(appliedLines!.expectedVersion).toBe(1);
   expect(appliedLines!.lines[0].description).toBe("Producto puntual editado");
   expect(appliedLines!.lines[0].documentUnitCost).toBe(5_000);
-  expect(appliedLines!.lines[0].unitPrice).toBe(10_000);
-  expect(appliedLines!.lines[0].discount).toBe(1_983.33);
+  expect(appliedLines!.lines[0].publicUnitPrice).toBeCloseTo(9_916.666667, 6);
+  expect(appliedLines!.lines[0].discount).toBe(0);
   expect(appliedLines!.lines[1].documentUnitCost).toBe(6_000.123456);
   expect(appliedLines!.lines[1].discount).toBe(2_900);
   await expect(page.getByText("Producto puntual editado")).toBeVisible();

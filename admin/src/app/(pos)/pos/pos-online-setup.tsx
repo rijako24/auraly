@@ -160,7 +160,7 @@ function PreparationPanel({ value }: { value: PosSetupPreparation }) {
   const visibleProgress = view.overallProgress;
   const currentResource = value.message ?? view.currentResource;
 
-  return <div aria-live="polite" className="relative flex min-h-[31rem] flex-col justify-center">
+  return <div aria-live="polite" className="relative flex h-[31rem] flex-col justify-center">
     <div className={`rounded-[1.75rem] border p-5 md:p-6 ${failed ? "border-red-300/25 bg-red-400/[.07]" : "border-teal-200/15 bg-[#092126]"}`}>
       <div className="flex items-start gap-4">
         <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl border ${failed ? "border-red-300/30 bg-red-300/10 text-red-200" : "border-teal-200/25 bg-teal-300/10 text-teal-200"}`}>

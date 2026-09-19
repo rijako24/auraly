@@ -143,7 +143,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import {
   enrolledWorkspaceOption,
   shouldAutoActivateRememberedWorkspace,
-  shouldUseEnrolledPosRuntime,
+  resolvePosExecutionMode,
   workspaceActivationMode,
 } from "@/services/pos/pos-launch-session";
 import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
@@ -731,7 +731,7 @@ export default function PosPage() {
               if (readinessError) setError(readinessError);
             }
 
-            if (shouldUseEnrolledPosRuntime(health)) {
+            if (resolvePosExecutionMode(true, health) === "edge") {
               if (active) {
                 initialEdgeHealth.current = { client: edgeClient, health };
                 setEdgeLoginState(
@@ -2396,7 +2396,8 @@ export default function PosPage() {
         checkout.credit,
         authorization ?? undefined,
       );
-      if (client.mode === "edge" && (result.printedDirectly || result.printCompletion))
+      if (client.mode === "edge" && (result.printedDirectly || result.printCompletion ||
+          result.issuedSale.wasAlreadyIssued))
         closePrintPreview(localPrintPreview);
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
@@ -2424,6 +2425,7 @@ export default function PosPage() {
           } else if (
             client.mode === "edge" &&
             result.printedDirectly === false &&
+            !result.issuedSale.wasAlreadyIssued &&
             result.receipt
           ) {
             await renderReceiptsReceipt(
@@ -2438,6 +2440,11 @@ export default function PosPage() {
               },
             );
           }
+          if (result.printCompletion) {
+            setMessage(
+              `${result.issuedSale.documentNumber} emitida e impresa. Nueva venta lista.`,
+            );
+          }
         } catch (printFailure) {
           closePrintPreview(localPrintPreview);
           const detail = printFailure instanceof Error
@@ -2448,9 +2455,13 @@ export default function PosPage() {
       };
       window.setTimeout(() => void printAfterCompletedSale(), 0);
 
-      const issuedLabel = result.printedDirectly
-        ? "emitida e impresa directamente"
-        : "emitida; impresión enviada";
+      const issuedLabel = result.issuedSale.wasAlreadyIssued
+        ? "ya estaba emitida; no se repitieron efectos"
+        : result.printCompletion
+          ? "emitida; impresión en curso"
+          : result.printedDirectly
+            ? "emitida e impresa directamente"
+            : "emitida; impresión enviada";
       setMessage(
         settlement.change > 0
           ? `${result.issuedSale.documentNumber} ${issuedLabel}. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`

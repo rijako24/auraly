@@ -1326,6 +1326,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             Assert.True(health.GetProperty("initialEnrollmentSessionAvailable").GetBoolean());
             Assert.Equal(2, health.GetProperty("preparationCompletedSteps").GetInt32());
             Assert.Equal(3, health.GetProperty("preparationTotalSteps").GetInt32());
+            Assert.False(health.TryGetProperty("printingReady", out _));
+            Assert.False(health.TryGetProperty("printerValidationErrors", out _));
         }
         finally
         {
