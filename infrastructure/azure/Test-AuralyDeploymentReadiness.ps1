@@ -284,7 +284,7 @@ function Test-RemoteEnvironment {
                 -Uri "https://$($staticAdmin.Properties.defaultHostname)/api/auth/login" `
                 -Method Post `
                 -ContentType 'application/json' `
-                -Body '{"username":"auraly-connectivity-probe","password":"invalid-probe"}' `
+                -Body '{"username":"auraly-connectivity-probe","tenantKey":"auraly-connectivity-probe","password":"invalid-probe"}' `
                 -UseBasicParsing `
                 -TimeoutSec 30
             $loginProbeStatus = [int]$loginProbe.StatusCode
