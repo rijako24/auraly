@@ -10,6 +10,7 @@ import {
   type PosPrintTemplateFormat,
   type PosPrinterConfiguration,
 } from "@/services/pos/pos-edge-client";
+import { completeInstalledPrinterConfiguration } from "@/services/pos/pos-printer-configuration";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -50,7 +51,12 @@ export function PosPrinterDialog({
     operation
       .then((view) => {
         if (!active) return;
-        setValue(view.configuration);
+        setValue(client
+          ? completeInstalledPrinterConfiguration(
+              view.configuration,
+              view.installedPrinters,
+            )
+          : view.configuration);
         setPrinters(view.installedPrinters);
         setSerialPorts(view.serialPorts ?? []);
       })
@@ -82,7 +88,9 @@ export function PosPrinterDialog({
     setFeedback(null);
     try {
       if (client) {
-        const view = await client.savePrinterConfiguration(value);
+        const view = await client.savePrinterConfiguration(
+          completeInstalledPrinterConfiguration(value, printers),
+        );
         setValue(view.configuration);
         setPrinters(view.installedPrinters);
         setSerialPorts(view.serialPorts ?? []);

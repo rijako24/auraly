@@ -171,10 +171,17 @@ public sealed class PosPrinterConfigurationStore(
                 var stored = JsonSerializer.Deserialize<PosPrinterConfiguration>(
                                  File.ReadAllText(settingsPath))
                              ?? PosPrinterConfiguration.Default;
-                return stored with
+                stored = stored with
                 {
                     ReceiptMode = PosPrinterModes.WindowsRaw,
                     OrderMode = OrderPrinterModes.WindowsPrint
+                };
+                return stored with
+                {
+                    PosPrinterName = Clean(stored.PosPrinterName) ??
+                        LegacyPrinterFor(stored, stored.PosOutputFormat),
+                    OrderPrinterName = Clean(stored.OrderPrinterName) ??
+                        LegacyPrinterFor(stored, stored.OrderOutputFormat)
                 };
             }
             catch (JsonException)
@@ -266,6 +273,15 @@ public sealed class PosPrinterConfigurationStore(
 
     private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? LegacyPrinterFor(
+        PosPrinterConfiguration configuration,
+        string format) =>
+        Clean(configuration.TemplateRoutes?.FirstOrDefault(route =>
+            route.Format == format)?.PrinterName) ??
+        (format == PrintTemplateFormats.Receipt
+            ? Clean(configuration.ReceiptPrinterName)
+            : Clean(configuration.LetterPrinterName));
 
     private static bool IsWorkflowFormat(string? value) =>
         value is PrintTemplateFormats.Receipt or

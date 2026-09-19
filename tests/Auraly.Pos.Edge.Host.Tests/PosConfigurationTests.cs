@@ -709,6 +709,41 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
+    public void Legacy_printer_settings_are_upgraded_to_workflow_printers_when_loaded()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-printer-legacy-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "settings.json");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(path, """
+                {
+                  "ReceiptMode":"WindowsRaw",
+                  "ReceiptPrinterName":"Tirilla anterior",
+                  "ReceiptPaperWidthMillimeters":80,
+                  "LetterPrinterName":"Documentos anteriores",
+                  "OrderMode":"WindowsPrint",
+                  "PosOutputFormat":"Receipt",
+                  "OrderOutputFormat":"HalfLetter",
+                  "TemplateRoutes":null
+                }
+                """);
+
+            var loaded = new PosPrinterConfigurationStore(
+                path, Path.Combine(directory, "receipts")).Load();
+
+            Assert.Equal("Tirilla anterior", loaded.PosPrinterName);
+            Assert.Equal("Documentos anteriores", loaded.OrderPrinterName);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Order_printer_renders_every_document_in_a_batch_larger_than_the_visible_page()
     {
         var directory = Path.Combine(

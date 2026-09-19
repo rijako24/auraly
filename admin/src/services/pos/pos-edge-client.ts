@@ -25,6 +25,7 @@ import {
   isChangedPosStateEvent,
   posStateStreamReconnectDelay,
 } from "./pos-state-invalidation";
+import { readPosEdgeProblem } from "./pos-printer-configuration";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -1557,17 +1558,9 @@ export class PosEdgeClient implements PosClient {
     });
     if (!response.ok) {
       const raw = await response.text();
-      let detail = raw || response.statusText;
-      try {
-        const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
-        detail = problem.detail || problem.title || detail;
-        announceEdgeLoginReplacement(response.status, problem.code || problem.title, requestSessionToken);
-        throw new PosEdgeError(detail, response.status, problem.code || problem.title);
-      } catch (parsed) {
-        if (parsed instanceof PosEdgeError) throw parsed;
-        // The local host may intentionally return plain text for simple failures.
-      }
-      throw new PosEdgeError(detail, response.status);
+      const problem = readPosEdgeProblem(raw, response.statusText);
+      announceEdgeLoginReplacement(response.status, problem.code, requestSessionToken);
+      throw new PosEdgeError(problem.detail, response.status, problem.code);
     }
     return (await response.json()) as T;
   }
@@ -1599,16 +1592,9 @@ export class PosEdgeClient implements PosClient {
     if (response.ok || acceptedStatuses.includes(response.status))
       return (await response.json()) as T;
     const raw = await response.text();
-    let detail = raw || response.statusText;
-    try {
-      const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
-      detail = problem.detail || problem.title || detail;
-      announceEdgeLoginReplacement(response.status, problem.code || problem.title, requestSessionToken);
-      throw new PosEdgeError(detail, response.status, problem.code || problem.title);
-    } catch (parsed) {
-      if (parsed instanceof PosEdgeError) throw parsed;
-    }
-    throw new PosEdgeError(detail, response.status);
+    const problem = readPosEdgeProblem(raw, response.statusText);
+    announceEdgeLoginReplacement(response.status, problem.code, requestSessionToken);
+    throw new PosEdgeError(problem.detail, response.status, problem.code);
   }
 
   private async requestVoid(path: string, init: RequestInit = {}): Promise<void> {
@@ -1627,15 +1613,9 @@ export class PosEdgeClient implements PosClient {
     });
     if (!response.ok) {
       const raw = await response.text();
-      let detail = raw || response.statusText;
-      try {
-        const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
-        detail = problem.detail || problem.title || detail;
-        announceEdgeLoginReplacement(response.status, problem.code || problem.title, requestSessionToken);
-      } catch {
-        // The local host may intentionally return plain text for simple failures.
-      }
-      throw new PosEdgeError(detail, response.status);
+      const problem = readPosEdgeProblem(raw, response.statusText);
+      announceEdgeLoginReplacement(response.status, problem.code, requestSessionToken);
+      throw new PosEdgeError(problem.detail, response.status, problem.code);
     }
   }
 }

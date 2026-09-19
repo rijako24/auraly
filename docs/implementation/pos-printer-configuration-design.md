@@ -197,3 +197,10 @@ el archivo local: `orderOutputFormat`, `orderPrinterName` y
 `orderReceiptPaperWidthMillimeters`. No se aceptan alias plurales ni rutas de
 compatibilidad; guardar y volver a abrir consume exactamente esos mismos campos.
 
+Al actualizar una instalación que todavía conserva los campos locales anteriores
+de tirilla y documentos, POS Edge los proyecta una sola vez sobre los nombres
+canónicos por flujo al leer la configuración. La interfaz completa ambos flujos
+con la única impresora instalada cuando Windows reporta exactamente una. El
+archivo vuelve a escribirse únicamente al guardar explícitamente; no existe una
+segunda fuente de configuración ni una migración remota por tenant.
+
