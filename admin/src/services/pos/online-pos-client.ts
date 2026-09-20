@@ -1,3 +1,4 @@
+import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
 import {
   invoiceCommerceOrders,
   loadCommerceOrder,
@@ -172,6 +173,7 @@ type OnlineDraft = {
   version: number;
   updatedAt: string;
   lines: OnlineDraftLine[];
+  charges?: AppliedInvoiceCharge[];
   untaxedAmount: number;
   taxAmount: number;
   payableAmount: number;
@@ -864,6 +866,22 @@ export class OnlinePosClient implements PosClient {
     } satisfies PosCustomerSelection;
   }
 
+  invoiceCharges(page = 1) {
+    return request<InvoiceChargePage>(`/api/commerce/v1/pos/invoice-charges?page=${page}`);
+  }
+
+  async saveCharge(draftId: string, input: AddInvoiceCharge) {
+    return this.mapDraft(await request<OnlineDraft>(
+      `/api/commerce/v1/pos/drafts/${draftId}/charges/${input.appliedChargeId}`,
+      this.mutation({ ...input, expectedVersion: this.version(draftId) }, "PUT")));
+  }
+
+  async removeCharge(draftId: string, appliedChargeId: string) {
+    return this.mapDraft(await request<OnlineDraft>(
+      `/api/commerce/v1/pos/drafts/${draftId}/charges/${appliedChargeId}/remove`,
+      this.mutation({ expectedVersion: this.version(draftId) }, "POST")));
+  }
+
   async removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization) {
     return this.mapDraft(
       await request<OnlineDraft>(
@@ -1404,12 +1422,29 @@ export class OnlinePosClient implements PosClient {
   }
 
   async printOrders(orderIds: string[]): Promise<{ printedCount: number }> {
-    const documents = await loadCommerceOrderPrintBatch(orderIds);
-    const receipts = documents.map((order) => toPrintableOrder(order, this.context));
     const preview = this.edgeSessionToken ? null : openHalfLetterPrintPreview();
     try {
-      await this.printDirect(receipts, false, "order-tickets", preview);
-      return { printedCount: receipts.length };
+      if (this.edgeSessionToken) {
+        const documents = await loadCommerceOrderPrintBatch(orderIds);
+        const receipts = documents.map((order) => toPrintableOrder(order, this.context));
+        await this.printDirect(receipts, false, "order-tickets");
+        return { printedCount: receipts.length };
+      }
+      const configuration = loadBrowserPrinterConfiguration();
+      const branding = await tenantsApi.getBranding();
+      const rendered = await request<{ html: string; printedCount: number }>(
+        "/api/commerce/v1/orders/print-batch/render",
+        this.post({
+          orderIds,
+          format: configuration.orderOutputFormat ?? "HalfLetter",
+          paperWidthMillimeters: configuration.orderReceiptPaperWidthMillimeters ?? 80,
+          companyName: branding.displayName ?? branding.legalName,
+          companyLogoSource: branding.logoUrl,
+          businessName: this.context.businessName,
+        }),
+      );
+      renderServerPrintDocument(preview, rendered.html);
+      return { printedCount: rendered.printedCount };
     } catch (error) {
       closePrintPreview(preview);
       throw error;
@@ -1476,6 +1511,7 @@ export class OnlinePosClient implements PosClient {
       reference: draft.reference,
       observation: draft.observation,
       lines: draft.lines.map(mapLine),
+      charges: draft.charges ?? [],
       untaxedAmount: draft.untaxedAmount,
       taxAmount: draft.taxAmount,
       payableAmount: draft.payableAmount,
@@ -1657,9 +1693,7 @@ export async function renderReceiptsReceipt(
     const qr = receipt.documentType === "SalesInvoice"
       ? `<img class="qr" src="${window.location.origin}/api/commerce/v1/pos/drafts/sales/${receipt.documentId}/qr?businessId=${context.businessId}&warehouseId=${context.warehouseId}&workSessionId=${context.workSessionId}" alt="QR DIAN">` : "";
     const ticketHeader = `${presentation.isInvoice ? "" : `<h2>${presentation.title}</h2>`}<div class="ticket-number">N.º de ticket: <b>${escapeHtml(presentation.displayNumber)}</b></div>`;
-    const summary = presentation.isOrder
-      ? `<section class="totals"><div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div></section>`
-      : `<section class="totals"><h3>Impuestos por tarifa</h3><table class="tax-table"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>${taxes}</tbody></table><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div>${cashTender}<h3 class="payment-title">Medios de pago</h3>${payments}</section>`;
+    const summary = `<section class="totals"><h3>Impuestos por tarifa</h3><table class="tax-table"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>${taxes}</tbody></table><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div>${cashTender}<h3 class="payment-title">Medios de pago</h3>${payments}</section>`;
     return `<article data-auraly-report="${presentation.templateCode}" data-auraly-report-version="${presentation.templateVersion}"><header>${brand}${ticketHeader}<div>${presentation.issuedAt}</div>${location ? `<p class="scope">${escapeHtml(location)}</p>` : ""}</header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div></section>${invoiceComplianceMarkup(receipt)}${lines}${summary}${presentation.isInvoice && receipt.cufe ? `<p class="cufe"><b>CUFE</b><br>${escapeHtml(receipt.cufe)}</p>` : ""}${qr}<footer>${presentation.issuedBy}<br><b>www.auralyapp.co</b></footer></article>`;
   }).join("");
   preview.document.open();
@@ -1736,9 +1770,7 @@ export async function renderReceiptsHalfLetter(
       : "";
     const netPayable = presentation.netPayable;
     const issuedAt = presentation.issuedAt;
-    const bottom = presentation.isOrder
-      ? `<section class="bottom"><div><small>Detalle del pedido · copia cliente / control</small></div><div class="totals"><div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div></div></section>`
-      : `<section class="bottom"><div>${cufe}<section class="breakdowns"><div class="breakdown"><b>Impuestos por tarifa</b>${taxes}</div><div class="breakdown"><b>Medios de pago</b>${payments}</div></section><small>Representación gráfica · copia cliente / control</small></div><div class="totals"><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div><div><span>Total bruto</span><b>${currency.format(receipt.payableAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total a pagar</span><b>${currency.format(netPayable)}</b></div>${cashTender}${qr}</div></section>`;
+    const bottom = `<section class="bottom"><div>${cufe}<section class="breakdowns"><div class="breakdown"><b>Impuestos por tarifa</b>${taxes}</div><div class="breakdown"><b>Medios de pago</b>${payments}</div></section><small>Representación gráfica · copia cliente / control</small></div><div class="totals"><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div><div><span>Total bruto</span><b>${currency.format(receipt.payableAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total a pagar</span><b>${currency.format(netPayable)}</b></div>${cashTender}${qr}</div></section>`;
     const copy = `<article class="document" data-auraly-report="${presentation.templateCode}" data-auraly-report-version="${presentation.templateVersion}"><div class="document-content"><header><div>${brand}<h2>${presentation.title}</h2></div><div class="right"><span>N.º de ticket</span><br><b>${escapeHtml(receipt.documentNumber)}</b><br>${issuedAt}</div></header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>${fiscal}</section>${invoiceComplianceMarkup(receipt)}<table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Total</th></tr></thead><tbody>${rows}</tbody></table>${bottom}<footer><span>${presentation.representationName}</span><span class="platform">${presentation.issuedBy} · <b>www.auralyapp.co</b><br>Emitido: ${issuedAt}</span><span class="page">Página 1 de 1</span></footer></div></article>`;
     const sheetClass = format === "Letter"
       ? "letter"
@@ -1836,17 +1868,15 @@ function paymentMethodName(code: string) {
 /** One sales-document definition; receipt and sheet sizes only arrange it. */
 function salesPrintPresentation(receipt: PosPrintableReceipt) {
   const isInvoice = receipt.documentType === "SalesInvoice";
-  const isOrder = receipt.documentType === "Order";
+  if (receipt.documentType === "Order")
+    throw new Error("Los pedidos se imprimen con la plantilla compartida del servidor.");
   return {
     isInvoice,
-    isOrder,
-    title: isOrder ? "Pedido" : isInvoice ? "Factura electrónica de venta" : "Comprobante de venta",
+    title: isInvoice ? "Factura electrónica de venta" : "Comprobante de venta",
     displayNumber: isInvoice && receipt.fiscalNumber
       ? receipt.fiscalNumber
       : receipt.documentNumber,
-    representationName: isOrder
-      ? "Pedido"
-      : isInvoice
+    representationName: isInvoice
       ? "Representación gráfica de factura electrónica"
       : "Representación gráfica del comprobante de venta",
     issuedBy: isInvoice ? "Factura emitida por Auraly" : "Comprobante emitido por Auraly",
@@ -1854,7 +1884,7 @@ function salesPrintPresentation(receipt: PosPrintableReceipt) {
     netPayable: receipt.withholdingTotal > 0
       ? receipt.netPayableAmount
       : receipt.payableAmount,
-    templateCode: isOrder ? "order" : isInvoice ? "sales-invoice" : "sales-receipt",
-    templateVersion: isOrder ? 1 : isInvoice && receipt.invoicePrintDetails ? 3 : 2,
+    templateCode: isInvoice ? "sales-invoice" : "sales-receipt",
+    templateVersion: isInvoice && receipt.invoicePrintDetails ? 3 : 2,
   };
 }

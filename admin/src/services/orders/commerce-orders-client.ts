@@ -86,6 +86,8 @@ export type CommerceOrderPrintDocument = {
   createdAt: string;
   customerName: string | null;
   customerIdentification: string | null;
+  customerPhone: string | null;
+  deliveryAddress: string | null;
   currency: string;
   total: number;
   lines: CommerceOrderPrintLine[];

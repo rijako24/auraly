@@ -41,9 +41,12 @@ public sealed record ImmutableFiscalSnapshot(
     string QrPayload,
     decimal PayableRoundingAmount = 0m);
 
+public sealed record SalesInvoiceCharge(Guid AppliedChargeId, decimal UntaxedAmount, decimal TaxAmount);
+
 public sealed class SalesInvoice
 {
     private readonly List<SalesInvoiceLine> _lines = [];
+    private readonly List<SalesInvoiceCharge> _charges = [];
 
     public SalesInvoice(
         DocumentId id,
@@ -75,8 +78,9 @@ public sealed class SalesInvoice
     public IReadOnlyCollection<SalesInvoiceLine> Lines => _lines;
     public AuralyDocumentNumberAssignment? DocumentNumber { get; private set; }
     public ImmutableFiscalSnapshot? FiscalSnapshot { get; private set; }
-    public decimal UntaxedAmount => _lines.Sum(line => line.Subtotal);
-    public decimal TaxAmount => _lines.Sum(line => line.Tax);
+    public IReadOnlyCollection<SalesInvoiceCharge> Charges => _charges;
+    public decimal UntaxedAmount => _lines.Sum(line => line.Subtotal) + _charges.Sum(charge => charge.UntaxedAmount);
+    public decimal TaxAmount => _lines.Sum(line => line.Tax) + _charges.Sum(charge => charge.TaxAmount);
     public decimal PayableAmount => UntaxedAmount + TaxAmount;
 
     public void AddLine(SalesInvoiceLine line)
@@ -93,6 +97,18 @@ public sealed class SalesInvoice
             line.LineTotal != line.UntaxedAmount + line.Tax)
             throw new ArgumentException("Line totals must be closed monetary amounts.", nameof(line));
         _lines.Add(line);
+    }
+
+    public void AddCharge(SalesInvoiceCharge charge)
+    {
+        EnsureDraft();
+        if (charge.AppliedChargeId == Guid.Empty || _charges.Any(value => value.AppliedChargeId == charge.AppliedChargeId))
+            throw new ArgumentException("A charge requires a unique identity.", nameof(charge));
+        if (charge.UntaxedAmount < 0 || charge.TaxAmount < 0 ||
+            charge.UntaxedAmount != MonetaryRounding.RoundLineAmount(charge.UntaxedAmount) ||
+            charge.TaxAmount != MonetaryRounding.RoundLineAmount(charge.TaxAmount))
+            throw new ArgumentException("Charge amounts must be closed monetary amounts.", nameof(charge));
+        _charges.Add(charge);
     }
 
     public void ConfirmOffline(

@@ -808,6 +808,15 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
           Description TEXT NULL,
           SortOrder INTEGER NOT NULL,
           PRIMARY KEY(CatalogCode,OptionId));
+        CREATE TABLE IF NOT EXISTS PosInvoiceCharges(
+          ChargeId TEXT PRIMARY KEY,BusinessId TEXT NOT NULL,Version INTEGER NOT NULL,
+          Code TEXT NOT NULL,Name TEXT NOT NULL,SortOrder INTEGER NOT NULL,
+          Payload TEXT NOT NULL,Cursor INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS IX_PosInvoiceCharges_Business_Order ON PosInvoiceCharges(BusinessId,SortOrder,Code);
+        CREATE TABLE IF NOT EXISTS PosInvoiceChargeStaging(
+          ChargeId TEXT PRIMARY KEY,BusinessId TEXT NOT NULL,Version INTEGER NOT NULL,
+          Code TEXT NOT NULL,Name TEXT NOT NULL,SortOrder INTEGER NOT NULL,
+          Payload TEXT NOT NULL,Cursor INTEGER NOT NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS UX_PosReferenceOptions_Code
           ON PosReferenceOptions(CatalogCode,Code);
         CREATE TABLE IF NOT EXISTS PosBankAccounts(

@@ -118,6 +118,10 @@ public sealed record OrderDetail(
 
 public sealed record OrderPrintBatchRequest(IReadOnlyCollection<Guid> OrderIds);
 
+public sealed record OrderPrintRenderRequest(IReadOnlyCollection<Guid> OrderIds,
+    string Format, int PaperWidthMillimeters = 80, string? CompanyName = null,
+    string? CompanyLogoSource = null, string? BusinessName = null);
+
 public sealed record OrderPrintLine(
     string? ProductCode,
     string ProductName,
@@ -135,7 +139,9 @@ public sealed record OrderPrintDocument(
     string? CustomerIdentification,
     string Currency,
     decimal Total,
-    IReadOnlyList<OrderPrintLine> Lines);
+    IReadOnlyList<OrderPrintLine> Lines,
+    string? CustomerPhone = null,
+    string? DeliveryAddress = null);
 
 public sealed record ClaimOrderRequest(
     Guid WorkSessionId,

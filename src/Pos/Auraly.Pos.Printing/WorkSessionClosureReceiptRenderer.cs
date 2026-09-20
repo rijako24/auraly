@@ -18,7 +18,7 @@ public static class WorkSessionClosureReceiptRenderer
         {
             1 => RenderV1(value, companyName, companyLogoSource, paperWidthMillimeters),
             2 => RenderV2(value, companyName, companyLogoSource, paperWidthMillimeters),
-            3 => RenderV3(value, companyName, companyLogoSource, paperWidthMillimeters),
+            3 or 4 => RenderMovementClosure(value, companyName, companyLogoSource, paperWidthMillimeters),
             _ => throw new InvalidOperationException(
                 $"La versión {value.ReceiptTemplateVersion} de la tirilla de cierre no está disponible.")
         };
@@ -63,7 +63,8 @@ public static class WorkSessionClosureReceiptRenderer
         WorkSessionClosureView value,
         string? companyName,
         string? companyLogoSource,
-        int paperWidthMillimeters)
+        int paperWidthMillimeters,
+        int version = 2)
     {
         var creditSales = value.CreditSales ?? [];
         var creditDetailTotal = creditSales.Sum(item => item.Amount);
@@ -78,15 +79,17 @@ public static class WorkSessionClosureReceiptRenderer
             .Select(payment =>
             {
                 var cashDetails = IsCash(payment.PaymentMethodCode)
-                    ? $"<div class=\"payment-details\"><span>Entradas <strong>{Money(Math.Max(0, payment.OtherAmount))}</strong></span><span>Salidas <strong>{Money(Math.Abs(Math.Min(0, payment.OtherAmount)))}</strong></span></div>"
+                    ? $"<div class=\"payment-details\"><span>Entradas <strong>{Money(version >= 4 ? payment.CashEntryAmount : Math.Max(0, payment.OtherAmount))}</strong></span><span>Salidas <strong>{Money(version >= 4 ? payment.CashExitAmount : Math.Abs(Math.Min(0, payment.OtherAmount)))}</strong></span></div>"
                     : string.Empty;
                 var reconciliation = payment.CountedAmount is not { } counted
                     ? string.Empty
                     : $"<div class=\"payment-details\"><span>{(IsCash(payment.PaymentMethodCode) ? "Efectivo esperado" : "Esperado")} <strong>{Money(payment.NetAmount)}</strong></span><span>{(IsCash(payment.PaymentMethodCode) ? "Efectivo contado" : "Contado")} <strong>{Money(counted)}</strong></span></div>{DifferenceBox(payment.Difference ?? counted - payment.NetAmount)}";
-                return $"<section class=\"payment\" data-payment-method=\"{Encode(payment.PaymentMethodCode)}\"><h3>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</h3><div class=\"payment-details\"><span>Ventas <strong>{Money(payment.SalesAmount)}</strong></span><span>Devoluciones <strong>{Money(payment.RefundAmount)}</strong></span></div>{cashDetails}{reconciliation}</section>";
+                return $"<section class=\"payment\" data-payment-method=\"{Encode(payment.PaymentMethodCode)}\"><h3>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</h3><div class=\"payment-details\"><span>Ventas <strong>{Money(payment.SalesAmount)}</strong></span><span>Devoluciones <strong>{Money(payment.RefundAmount)}</strong></span></div>{cashDetails}{(version >= 4 ? ChargePaymentRows(value.InvoiceCharges ?? [], payment.PaymentMethodCode) : string.Empty)}{reconciliation}</section>";
             }));
-        var creditRows = string.Join(string.Empty, creditSales.Select(credit =>
-            $"<tr><td><strong>{Encode(credit.CustomerName)}</strong><small>{Encode(credit.DocumentNumber)}</small></td><td>{Money(credit.Amount)}</td></tr>"));
+        var creditRows = string.Join(string.Empty, creditSales.Select(credit => version >= 4
+            ? $"<tr><td>{Encode(credit.CustomerName)}</td><td>{Encode(credit.DocumentNumber)}</td><td>{Money(credit.Amount)}</td></tr>"
+            : $"<tr><td><strong>{Encode(credit.CustomerName)}</strong><small>{Encode(credit.DocumentNumber)}</small></td><td>{Money(credit.Amount)}</td></tr>"));
+        var creditColumnSpan = version >= 4 ? " colspan=\"2\"" : string.Empty;
         var logo = Logo(companyLogoSource, companyName ?? value.BusinessName);
         var body = $$"""
 <header>{{logo}}<h1>{{Encode(companyName ?? value.BusinessName)}}</h1><h2>Arqueo de caja · Cierre confirmado</h2><p class="scope">Sede: {{Encode(Location(value))}}</p>
@@ -94,14 +97,16 @@ public static class WorkSessionClosureReceiptRenderer
 </header>
 <h2 class="section-title">Actividad del turno</h2><table class="rows"><tbody><tr class="count-row"><td>Número de ventas</td><td>{{value.SalesCount}}</td></tr><tr class="count-row"><td>Ventas a cartera</td><td>{{value.CreditSalesCount}}</td></tr><tr class="count-row"><td>Devoluciones</td><td>{{value.ReturnCount}}</td></tr></tbody></table>
 <h2 class="section-title">Totales del turno</h2><table class="rows"><tbody><tr><td>Ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Valor a cartera</td><td>{{Money(value.CreditSalesAmount)}}</td></tr><tr><td>Entradas de caja</td><td>{{Money(CashEntries(value))}}</td></tr><tr><td>Salidas de caja</td><td>{{Money(CashExits(value))}}</td></tr></tbody></table>
-<h2 class="section-title">Ventas a cartera</h2><table class="rows credit-sales"><tbody>{{(creditRows.Length > 0 ? creditRows : "<tr><td>Sin ventas a cartera</td><td>$ 0</td></tr>")}}</tbody><tfoot><tr><th>Total cartera</th><th>{{Money(value.CreditSalesAmount)}}</th></tr></tfoot></table>
+<h2 class="section-title">Ventas a cartera</h2><table class="rows credit-sales"><tbody>{{(creditRows.Length > 0 ? creditRows : $"<tr><td{creditColumnSpan}>Sin ventas a cartera</td><td>$ 0</td></tr>")}}</tbody><tfoot><tr><th{{creditColumnSpan}}>Total cartera</th><th>{{Money(value.CreditSalesAmount)}}</th></tr></tfoot></table>
+{{(version >= 4 ? ChargePaymentRows(value.InvoiceCharges ?? [], "Credit") : string.Empty)}}
 <h2 class="section-title">Detalle por medio de pago</h2>{{payments}}
+{{(version >= 4 ? ChargeSection(value.InvoiceCharges ?? []) : string.Empty)}}
 {{Note(value.Note)}}
 """;
         return DocumentV2(body, paperWidthMillimeters);
     }
 
-    private static string RenderV3(
+    private static string RenderMovementClosure(
         WorkSessionClosureView value,
         string? companyName,
         string? companyLogoSource,
@@ -115,34 +120,62 @@ public static class WorkSessionClosureReceiptRenderer
             .Where(item => item.Direction == CashMovementDirections.Out)
             .ToArray();
 
+        var version = value.ReceiptTemplateVersion;
         var sections = CashMovementSection("Entradas de dinero", entries,
-                           entries.Sum(item => item.Amount))
+                           entries.Sum(item => item.Amount), version)
                        + CashMovementSection("Salidas de dinero", exits,
-                           exits.Sum(item => item.Amount));
-        return RenderV2(value, companyName, companyLogoSource, paperWidthMillimeters)
+                           exits.Sum(item => item.Amount), version);
+        var compactStyles = version >= 4
+            ? ".invoice-charges small{display:block;color:#555;font-size:9px}.invoice-charges td:last-child{white-space:nowrap}.cash-movement small{white-space:pre-line;overflow-wrap:anywhere}.cash-movement td:last-child{white-space:nowrap;vertical-align:top}.credit-sales td:first-child,.credit-sales th:first-child{width:auto}.credit-sales td{vertical-align:top;overflow-wrap:anywhere}.credit-sales td:nth-child(2){white-space:nowrap;padding-left:4px;padding-right:4px}.credit-sales td:last-child{white-space:nowrap}"
+            : string.Empty;
+        return RenderV2(value, companyName, companyLogoSource, paperWidthMillimeters, version)
             .Replace(
                 "<h2 class=\"section-title\">Detalle por medio de pago</h2>",
                 sections + "<h2 class=\"section-title\">Detalle por medio de pago</h2>",
                 StringComparison.Ordinal)
             .Replace(
                 "</style>",
-                ".cash-movement td:first-child{width:72%}.cash-movement small{display:block;color:#555;font-size:9px}.cash-empty{color:#666}</style>",
+                ".cash-movement td:first-child{width:72%}.cash-movement small{display:block;color:#555;font-size:9px}.cash-empty{color:#666}" + compactStyles + "</style>",
                 StringComparison.Ordinal)
             .Replace(
                 $"data-auraly-report-version=\"{PosPrintTemplateCatalog.WorkSessionClosureV2.Version}\"",
-                $"data-auraly-report-version=\"{PosPrintTemplateCatalog.WorkSessionClosure.Version}\"",
+                $"data-auraly-report-version=\"{version}\"",
                 StringComparison.Ordinal);
+    }
+
+    private static string ChargePaymentRows(IReadOnlyList<WorkSessionInvoiceCharge> charges, string method)
+    {
+        var rows = charges.SelectMany(charge => charge.Payments
+            .Where(payment => payment.PaymentMethodCode.Equals(method, StringComparison.OrdinalIgnoreCase))
+            .Select(payment => $"<tr><td>{Encode(charge.Name)}<small>{Encode(charge.DocumentNumber)} · {Encode(charge.SupplierName)}</small></td><td>{Money(payment.Amount)}</td></tr>"));
+        var html = string.Join(string.Empty, rows);
+        return html.Length == 0 ? string.Empty : $"<table class=\"rows invoice-charges\"><tbody>{html}</tbody></table>";
+    }
+
+    private static string ChargeSection(IReadOnlyList<WorkSessionInvoiceCharge> charges)
+    {
+        var rows = string.Join(string.Empty, charges.Select(charge =>
+            $"<tr><td>{Encode(charge.Name)}<small>{Encode(charge.DocumentNumber)} · {Encode(charge.SupplierName)} · {(charge.InvoicedAmount > 0 ? "En factura" : "Gasto")}</small></td><td>{Money(charge.Amount)}</td></tr>"));
+        if (charges.Count == 0) rows = "<tr><td>Sin cargos</td><td>$ 0</td></tr>";
+        return $"<h2 class=\"section-title\">Cargos de facturación</h2><table class=\"rows invoice-charges\"><tbody>{rows}</tbody><tfoot><tr><th>Incluido en facturas</th><th>{Money(charges.Sum(charge => charge.InvoicedAmount))}</th></tr><tr><th>Registrado como gasto</th><th>{Money(charges.Sum(charge => charge.ExpenseAmount))}</th></tr></tfoot></table>";
     }
 
     private static string CashMovementSection(
         string title,
         IReadOnlyList<WorkSessionCashMovementDetail> details,
-        decimal total)
+        decimal total,
+        int version)
     {
         var rows = details.Count == 0
             ? "<tr class=\"cash-empty\"><td>Sin movimientos</td><td>$ 0</td></tr>"
             : string.Join(string.Empty, details.Select(detail =>
             {
+                if (version >= 4)
+                {
+                    var observation = string.IsNullOrWhiteSpace(detail.Notes)
+                        ? string.Empty : $"<small>{Encode(detail.Notes)}</small>";
+                    return $"<tr class=\"cash-movement\"><td><strong>{Encode(detail.ReasonName)}</strong>{observation}</td><td>{Money(detail.Amount)}</td></tr>";
+                }
                 var reference = string.IsNullOrWhiteSpace(detail.Reference)
                     ? string.Empty
                     : $" · {Encode(detail.Reference)}";

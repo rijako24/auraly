@@ -108,6 +108,7 @@ public static class OnlineSalesReceiptMapper
         ArgumentNullException.ThrowIfNull(request);
         var snapshot = request.CommercialSnapshot;
         var customerName = request.UblSnapshot?.Customer.RegistrationName
+            ?? snapshot.CustomerName
             ?? "Consumidor final";
         var ublLines = request.UblSnapshot?.Lines
             .ToDictionary(line => line.LineNumber)
@@ -120,7 +121,7 @@ public static class OnlineSalesReceiptMapper
             snapshot.IssuedAt,
             snapshot.CustomerIdentification,
             request.Lines.Select(line => new OnlineSalesReceiptLine(
-                ublLines.GetValueOrDefault(line.LineNumber)?.ProductCode ?? string.Empty,
+                ublLines.GetValueOrDefault(line.LineNumber)?.ProductCode ?? line.ProductCodeSnapshot,
                 line.Description,
                 line.Quantity,
                 line.UnitPrice,
@@ -129,7 +130,11 @@ public static class OnlineSalesReceiptMapper
                 line.LineTotal,
                 line.TaxCode,
                 line.TaxRate,
-                ublLines.GetValueOrDefault(line.LineNumber)?.UnitCode ?? "EA")).ToArray(),
+                ublLines.GetValueOrDefault(line.LineNumber)?.UnitCode ?? "EA"))
+                .Concat((request.Charges ?? []).Where(charge => charge.InvoicedAmount > 0)
+                    .Select(charge => new OnlineSalesReceiptLine(charge.Code, charge.Name, 1,
+                        charge.InvoicedUntaxedAmount, 0, charge.InvoicedTaxAmount, charge.InvoicedAmount,
+                        charge.TaxCode, charge.TaxRate))).ToArray(),
             request.Payments.Select(payment => new OnlineSalesPayment(
                     payment.MethodCode,
                     payment.Amount,

@@ -1,3 +1,4 @@
+import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
 import type { TenantBranding } from "@/services/api/tenants";
 import type { InventoryReasonItem } from "@/services/api/inventory";
 import type { ReferenceOption } from "@/services/api/reference-options";
@@ -201,6 +202,7 @@ export type PosDraft = {
   reference: string | null;
   observation: string | null;
   lines: PosDraftLine[];
+  charges?: AppliedInvoiceCharge[];
   untaxedAmount: number;
   taxAmount: number;
   payableAmount: number;
@@ -325,6 +327,8 @@ export type PosPrintableReceipt = {
   issuedAt: string;
   customerIdentification: string;
   customerName: string;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
   lines: PosReceiptLine[];
   payments: PosPaymentInput[];
   untaxedAmount: number;
@@ -522,6 +526,13 @@ export type PosSynchronizationEvent = {
   newPrice: number | null;
 };
 
+export type WorkSessionInvoiceCharge = {
+  documentId: string; documentNumber: string; appliedChargeId: string; chargeId: string;
+  code: string; name: string; supplierName: string; amount: number; invoicedAmount: number;
+  expenseAmount: number; withholdingAmount: number;
+  payments: Array<{ paymentNumber: number; paymentMethodCode: string; amount: number }>;
+};
+
 export type PosWorkSessionClosure = {
   workSessionClosureId: string;
   workSessionId: string;
@@ -549,6 +560,7 @@ export type PosWorkSessionClosure = {
   note: string | null;
   paymentTotals: PosWorkSessionPaymentTotal[];
   receiptTemplateVersion?: number;
+  invoiceCharges?: WorkSessionInvoiceCharge[] | null;
   cashMovements?: Array<{
     documentId: string;
     direction: "In" | "Out";
@@ -672,6 +684,9 @@ export interface PosClient {
   createCustomer(input: PosCreateCustomerInput): Promise<PosCustomer>;
   createApproval(input: PosApprovalCreateInput): Promise<PosApprovalSummary>;
   approval(approvalRequestId: string): Promise<PosApprovalSummary>;
+  invoiceCharges(page?: number): Promise<InvoiceChargePage>;
+  saveCharge(draftId: string, input: AddInvoiceCharge): Promise<PosDraft>;
+  removeCharge(draftId: string, appliedChargeId: string): Promise<PosDraft>;
   activeDraft(): Promise<PosDraft>;
   nextNumbers(documentType?: PosSaleDocumentType): Promise<PosNextNumbers | null>;
   capture(value: string, customerId: string | null, quantity?: number): Promise<PosCaptureResult>;
@@ -1325,6 +1340,20 @@ export class PosEdgeClient implements PosClient {
         body: JSON.stringify({ customerId, partySiteId }),
       },
     );
+  }
+
+  invoiceCharges(page = 1) {
+    return this.request<InvoiceChargePage>(`/edge/v1/invoice-charges?page=${page}`);
+  }
+
+  saveCharge(draftId: string, input: AddInvoiceCharge) {
+    return this.request<PosDraft>(`/edge/v1/drafts/${draftId}/charges/${input.appliedChargeId}`, {
+      method: "PUT", body: JSON.stringify({ ...input, expectedVersion: 0 }),
+    });
+  }
+
+  removeCharge(draftId: string, appliedChargeId: string) {
+    return this.request<PosDraft>(`/edge/v1/drafts/${draftId}/charges/${appliedChargeId}`, { method: "DELETE" });
   }
 
   removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization) {

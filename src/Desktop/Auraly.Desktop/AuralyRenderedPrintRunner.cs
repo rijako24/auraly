@@ -1,3 +1,4 @@
+using Auraly.Pos.Printing;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;

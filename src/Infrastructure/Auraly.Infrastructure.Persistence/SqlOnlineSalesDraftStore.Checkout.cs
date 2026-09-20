@@ -213,13 +213,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             documentConsecutive,
             configuration.Padding);
         var fiscalNumber = $"{configuration.FiscalPrefix}{fiscalConsecutive}";
-        var taxes = draft.Lines
-            .GroupBy(line => line.TaxCode, StringComparer.Ordinal)
-            .Select(group => new PosSaleTaxContract(
-                group.Key,
-                group.Sum(line => line.Tax)))
-            .OrderBy(tax => tax.Code, StringComparer.Ordinal)
-            .ToArray();
+        var taxes = PosSaleTaxSummary.Calculate(draft.Lines.Select(line =>
+            new PosSaleTaxContract(line.TaxCode, line.Tax)), draft.Charges);
         var cufe = CufeCalculator.Calculate(
             new CufeInput(
                 fiscalNumber,
@@ -367,7 +362,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                     creditValidation.AvailableCredit.Value - request.Credit.Amount),
                     user.UserName,
                     state.CustomerPartySiteId),
-            CustomerPartySiteId: state.CustomerPartySiteId);
+            CustomerPartySiteId: state.CustomerPartySiteId,
+            Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null);
 
         DemandValidPreparedFiscalSnapshot(upload, fiscalMaterial);
 

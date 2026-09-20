@@ -104,14 +104,24 @@ sede en el encabezado, separan al responsable como dato propio, usan reglas
 punteadas alrededor del valor y recuperan el espacio amplio de firma. Las
 versiones 1 y 2 permanecen disponibles e inmutables para reproducir los formatos
 publicados originalmente.
-`work-session-closure` tiene una versión 3 activa: conserva Actividad, Totales,
-Ventas a cartera —una fila por cliente y factura con su valor financiado— y
-Detalle por medio de pago, y agrega secciones independientes
-de entradas y salidas de efectivo con cada movimiento, responsable y valor. Los
-subtotales brutos de entradas y salidas del medio `Cash` se derivan del mismo
-lote de movimientos que alimenta esas secciones, por lo que cuadran por
-construcción sin agregar una guarda que pueda impedir el cierre. Las versiones 1 y 2
-permanecen disponibles e inmutables para reimpresiones históricas.
+`work-session-closure` tiene una versión 4 activa: conserva Actividad, Totales,
+Ventas a cartera y Detalle por medio de pago. Cada entrada y salida muestra
+motivo, observación debajo si existe y valor; la persona responsable permanece
+en el encabezado del cierre. Cartera ocupa una fila con nombre, factura y valor.
+Las versiones 1, 2 y 3 permanecen disponibles e inmutables para reimpresiones.
+El detalle de efectivo de la consulta y de la tirilla procede del snapshot del
+cierre. No depende de cambios posteriores del motivo ni de que haya terminado
+la proyección asíncrona del documento. La clave de verificación de los nuevos
+cierres deriva del identificador inmutable del movimiento y no cambia al
+terminar esa proyección. La consulta resuelve el conjunto en el mismo lote SQL.
+
+`order` tiene una versión 2 activa. Muestra dirección de entrega y teléfono del
+snapshot del pedido en tirilla de 58/80 mm, media carta, medio oficio y carta.
+Un dato ausente se presenta como «Sin registrar»; no se consulta la ficha actual
+del cliente para completar una reimpresión. La versión 1 sigue seleccionable.
+Los renderizadores HTML de hoja y tirilla residen en `Auraly.Pos.Printing`;
+Edge adapta el contrato y el navegador solicita `/orders/print-batch/render`.
+El endpoint carga el lote una sola vez y devuelve el HTML compartido.
 
 `credit-sale-acknowledgement` es la plantilla canónica del comprobante de
 cartera que firma el cliente. Se deriva del mismo resultado transaccional de la

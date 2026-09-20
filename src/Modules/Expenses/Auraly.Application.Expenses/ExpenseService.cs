@@ -1,4 +1,4 @@
-using Auraly.Application.DocumentProcessing;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Taxation.Application;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Expenses;
@@ -8,6 +8,9 @@ namespace Auraly.Application.Expenses;
 
 public interface IExpenseStore
 {
+    Task<ExpenseAcceptance?> FindReplayAsync(ExpenseUserIdentity user, string idempotencyKey,
+        ConfirmExpenseRequest request, ExpenseAmounts amounts, CancellationToken ct);
+    Task<ExpenseConceptView?> GetConceptAsync(ExpenseUserIdentity user, Guid conceptId, CancellationToken ct);
     Task<ExpenseWorkspaceOptions> GetOptionsAsync(ExpenseUserIdentity user, CancellationToken ct);
     Task<IReadOnlyList<ExpenseConceptView>> ListConceptsAsync(ExpenseUserIdentity user, bool includeInactive, CancellationToken ct);
     Task<ExpenseConceptView> SaveConceptAsync(ExpenseUserIdentity user, SaveExpenseConceptRequest request, CancellationToken ct);
@@ -18,7 +21,7 @@ public interface IExpenseStore
 }
 
 public sealed class ExpenseService(IExpenseStore store, WithholdingService withholding,
-    IDocumentProcessingSignalPublisher signals)
+    IAccountingProcessingSignalPublisher signals, Auraly.Application.Fiscal.FiscalProcessingCoordinator fiscal)
 {
     public Task<ExpenseWorkspaceOptions> GetOptionsAsync(ExpenseUserIdentity user, CancellationToken ct = default)
     { Demand(user, ExpensePermissionCodes.Read); return store.GetOptionsAsync(user, ct); }
@@ -68,16 +71,24 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
             SupplierDocumentNumber = Text(request.SupplierDocumentNumber, 80, "Número del proveedor"),
             Description = string.IsNullOrWhiteSpace(request.Description) ? "Gasto operativo" : Text(request.Description, 300, "Descripción"), EvidenceUrl = Optional(request.EvidenceUrl, 1000),
             WithholdingJurisdictionCode = Optional(request.WithholdingJurisdictionCode, 16) };
-        var options = await store.GetOptionsAsync(user, ct);
-        var concept = options.Concepts.SingleOrDefault(x => x.ConceptId == request.ConceptId && x.IsActive)
-            ?? throw new ExpenseValidationException("El concepto de gasto no está activo.");
+        var replay = await store.FindReplayAsync(user, idempotencyKey.Trim(), normalized, amounts, ct);
+        if (replay is not null) return replay;
+        var concept = await store.GetConceptAsync(user, request.ConceptId, ct);
+        if (concept is null || !concept.IsActive)
+            throw new ExpenseValidationException("El concepto de gasto no está activo.");
         var calculation = await withholding.CalculateAsync(user.TenantId, user.BusinessId,
             new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
                 WithholdingRecognitionMoments.Accrual, request.SupplierId, concept.WithholdingConceptCode,
                 normalized.WithholdingJurisdictionCode, amounts.TaxExclusiveAmount, amounts.VatAmount, request.IssuedAt), ct);
         var accepted = await store.AcceptAsync(user, idempotencyKey.Trim(), normalized, amounts, calculation, ct);
-        await signals.PublishAsync(new DocumentProcessingSignal(accepted.MovementId, user.BusinessId,
-            accepted.ExpenseId, ExpenseDocumentTypes.Expense), ct);
+        if (!accepted.IdempotentReplay)
+        {
+            await signals.PublishAsync(new AccountingProcessingSignal(
+                accepted.AccountingJobId ?? throw new InvalidOperationException("The expense has no accounting job."),
+                user.BusinessId, accepted.ExpenseId, ExpenseDocumentTypes.Expense), ct);
+            if (accepted.HasFiscalSupport)
+                await fiscal.RequestGenerationAsync(user.BusinessId, accepted.ExpenseId, ct);
+        }
         return accepted;
     }
 

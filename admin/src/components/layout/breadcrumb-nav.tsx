@@ -31,6 +31,7 @@ const pathLabels: Record<string, string> = {
   "sales-debit-notes": "Notas débito de venta",
   "sales-returns": "Devoluciones de venta",
   "service-invoices": "Facturas de servicios",
+  "invoice-charges": "Cargos de facturación",
   tenants: "Empresas",
   businesses: "Sedes",
   users: "Usuarios",

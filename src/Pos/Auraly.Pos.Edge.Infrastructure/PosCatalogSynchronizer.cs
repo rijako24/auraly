@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Sales;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
@@ -232,7 +233,10 @@ public sealed class PosCatalogSynchronizer(
                 events!.ChannelTierReceived(tier, previous, product?.Name);
             }
         }
-        await store.ApplyPricingSnapshotAsync(pricing, cancellationToken);
+        // A failed later download must not acknowledge the configuration cursor.
+        // The final atomic charge promotion commits the cursor only after every
+        // component was received successfully.
+        await store.ApplyPricingSnapshotAsync(pricing with { ConfigurationCursor = null }, cancellationToken);
         progress?.Publish();
         if (pricing.WarehouseAllowsNegativeStock is { } allowsNegativeStock
             && warehousePolicy is not null)
@@ -253,6 +257,22 @@ public sealed class PosCatalogSynchronizer(
             content: null,
             cancellationToken);
         await store.ApplySettlementConfigurationAsync(settlementConfiguration, cancellationToken);
+        progress?.Publish();
+        var configurationCursor = pricing.ConfigurationCursor
+            ?? throw new InvalidDataException("El servidor no entregó el cursor de configuración.");
+        var pageNumber = 1;
+        InvoiceChargePage chargePage;
+        do
+        {
+            chargePage = await SendAsync<InvoiceChargePage>(HttpMethod.Get,
+                $"api/pos/v1/invoice-charges?businessId={scope.BusinessId:D}&page={pageNumber}&throughCursor={configurationCursor}",
+                null, cancellationToken);
+            if (chargePage.Page != pageNumber)
+                throw new InvalidDataException("La página de cargos no corresponde a la solicitada.");
+            await store.StageInvoiceChargePageAsync(scope.BusinessId, configurationCursor, chargePage, cancellationToken);
+            pageNumber++;
+        } while (pageNumber <= chargePage.TotalPages);
+        await store.PromoteInvoiceChargesAsync(scope.BusinessId, configurationCursor, chargePage.TotalCount, cancellationToken);
         progress?.Publish();
     }
 

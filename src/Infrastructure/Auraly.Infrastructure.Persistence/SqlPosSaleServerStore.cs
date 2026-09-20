@@ -372,6 +372,7 @@ public sealed class SqlPosSaleServerStore(
                 return existing;
             }
 
+            await SqlInvoiceChargeStore.ValidateIssuedAsync(connection, transaction, request, cancellationToken);
             await ValidateCustomerSiteAsync(
                 connection, transaction, request, cancellationToken);
             await ValidateCreditAsync(

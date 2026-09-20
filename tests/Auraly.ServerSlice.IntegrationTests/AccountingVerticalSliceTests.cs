@@ -27,7 +27,7 @@ public sealed class AccountingSliceCollection : ICollectionFixture<ServerSliceFi
 
 [Collection(AccountingSliceCollection.Name)]
 [Trait("EngineCertification", "Accounting")]
-public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
+public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
     public async Task Accounting_document_type_catalog_matches_the_processing_policy()
@@ -1388,7 +1388,13 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
                 expenseId));
         await AssertBalancedAsync(expenseId);
-        await AssertFastProcessingAsync(expenseId, "gasto");
+        Assert.Equal(0, await CountAsync("DocumentProcessingJobs", "DocumentId", expenseId));
+        Assert.Equal(1, await CountAsync("AccountingSourceDocuments", "SourceDocumentId", expenseId));
+        Assert.Equal("Processed", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
+        var expenseMilliseconds = await ScalarAsync<long>(
+            "SELECT DATEDIFF_BIG(millisecond,CreatedAt,CompletedAt) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", expenseId);
+        Assert.True(expenseMilliseconds < 2_000, $"Expense financial processing took {expenseMilliseconds} ms.");
         Assert.Equal(119_000m, await ScalarAsync<decimal>(
             "SELECT GrossAmount FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
         Assert.Equal(6_350m, await ScalarAsync<decimal>(

@@ -1,10 +1,9 @@
 using System.Globalization;
 using System.Net;
 using Auraly.Contracts.Sales;
-using Auraly.Pos.Printing;
 using QRCoder;
 
-namespace Auraly.Pos.Edge.Infrastructure;
+namespace Auraly.Pos.Printing;
 
 public sealed class HalfLetterDocumentRenderer
 {
@@ -152,7 +151,9 @@ public sealed class HalfLetterDocumentRenderer
                 null => PosPrintTemplateCatalog.SalesInvoice,
                 _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
             }
-            : PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
+            : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
+        var orderContact = isOrder && template.Version >= 2
+            ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone) : string.Empty;
         var fiscalDetails = isInvoice && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
             ? FiscalDetails(details)
@@ -218,7 +219,7 @@ public sealed class HalfLetterDocumentRenderer
         return $$"""
           <article class="document" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
             <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>N.º de ticket</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
-            <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{fiscalNumber}}</section>
+            <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{fiscalNumber}}{{orderContact}}</section>
             {{fiscalDetails}}
             <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
             {{detailSection}}

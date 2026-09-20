@@ -237,7 +237,8 @@ public sealed class WorkSessionService(
         Guid workSessionId,
         CancellationToken cancellationToken = default)
     {
-        Demand(identity, WorkSessionPermissionCodes.Read);
+        if (!identity.Permissions.Contains(WorkSessionPermissionCodes.ReadCashDifferences))
+            Demand(identity, WorkSessionPermissionCodes.Read);
         if (workSessionId == Guid.Empty)
             throw new WorkSessionValidationException("WorkSessionId is required.");
         return store.GetClosureAsync(identity, workSessionId, cancellationToken);

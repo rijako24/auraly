@@ -8,6 +8,8 @@
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Application\Auraly.BuildingBlocks.Application.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
     <ProjectReference Include="..\Auraly.Contracts.Parties\Auraly.Contracts.Parties.csproj" />
+    <ProjectReference Include="..\..\Expenses\Auraly.Contracts.Expenses\Auraly.Contracts.Expenses.csproj" />
+    <ProjectReference Include="..\..\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
     <ProjectReference Include="..\Auraly.Domain.Parties\Auraly.Domain.Parties.csproj" />
   </ItemGroup>
 </Project>

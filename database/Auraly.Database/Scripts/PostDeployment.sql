@@ -82,6 +82,7 @@ GO
 :r .\Seeds\SeedPurchasingPermissions.sql
 :r .\Seeds\SeedFiscalConfigurationPermissions.sql
 :r .\Seeds\SeedExpensePermissions.sql
+:r .\Seeds\SeedInvoiceChargePermissions.sql
 :r .\Seeds\SeedPayrollCatalogs.sql
 :r .\Seeds\SeedPayrollPermissions.sql
 :r .\Seeds\SeedPayrollReports.sql

@@ -298,7 +298,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Closure_freezes_credit_customers_and_renders_the_same_version_two_receipt()
+    public async Task Closure_freezes_credit_customers_and_renders_the_current_receipt()
     {
         var userId = await CreateUserAsync("work-session-credit-detail");
         using var client = fixture.CreateUserClient(
@@ -332,7 +332,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 new WorkSessionPaymentCount("Card", 0m),
                 new WorkSessionPaymentCount("Transfer", 0m)
             ]));
-        Assert.Equal(3, closure.ReceiptTemplateVersion);
+        Assert.Equal(4, closure.ReceiptTemplateVersion);
         Assert.Equal(closure.CreditSalesAmount, closure.CreditSales!.Sum(item => item.Amount));
 
         var verificationItems = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
@@ -350,7 +350,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var receipt = await receiptResponse.Content
             .ReadFromJsonAsync<WorkSessionClosureReceiptView>();
         Assert.NotNull(receipt);
-        Assert.Contains("data-auraly-report-version=\"3\"", receipt.Html);
+        Assert.Contains("data-auraly-report-version=\"4\"", receipt.Html);
         Assert.Contains("Cliente cartera exacta", receipt.Html);
         Assert.Contains("CVI-CARTERA-1", receipt.Html);
         Assert.Contains("Total cartera", receipt.Html);
@@ -364,7 +364,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             userId,
             WorkSessionPermissionCodes.Read,
             WorkSessionPermissionCodes.Close,
-            WorkSessionPermissionCodes.ManageCash);
+            WorkSessionPermissionCodes.ManageCash,
+            WorkSessionPermissionCodes.ReadCashDifferences);
         var opened = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
 
@@ -387,7 +388,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                     35_000m,
                     DateTimeOffset.UtcNow,
                     "Ingreso pendiente de proyección",
-                    null,
+                    "Observación guardada del movimiento",
                     null))
             };
             movement.Headers.Add("Idempotency-Key", $"cash-{documentId:N}");
@@ -421,6 +422,13 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             Assert.Equal(35_000m, closure.CountedCash);
             Assert.Equal(35_000m,
                 Assert.Single(closure.CashMovements!).Amount);
+            var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+                $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
+            var detail = Assert.Single(items!, item => item.MovementType == "CashIn");
+            Assert.Equal(reason.Name, detail.ReasonName);
+            Assert.Equal("Observación guardada del movimiento", detail.Notes);
+            Assert.Equal($"CashMovement:{documentId:D}", detail.VerificationKey, ignoreCase: true);
+            Assert.Equal(35_000m, detail.Amount);
         }
         finally
         {

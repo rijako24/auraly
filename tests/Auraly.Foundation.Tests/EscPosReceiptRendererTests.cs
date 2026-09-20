@@ -1,3 +1,4 @@
+using Auraly.Pos.Printing;
 using System.Text;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
@@ -471,8 +472,10 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("2.000", html);
     }
 
-    [Fact]
-    public void Order_receipt_has_order_identity_and_omits_fiscal_tax_and_payment_sections()
+    [Theory]
+    [InlineData(58)]
+    [InlineData(80)]
+    public void Order_receipt_has_order_identity_and_omits_fiscal_tax_and_payment_sections(int width)
     {
         var receipt = Receipt() with
         {
@@ -481,7 +484,10 @@ public sealed class EscPosReceiptRendererTests
             FiscalNumber = "FE-NOT-ALLOWED",
             CustomerName = "Cliente pedido",
             BusinessName = "Sede principal",
-            WarehouseName = "Bodega de venta"
+            WarehouseName = "Bodega de venta",
+            PaperWidthMillimeters = width,
+            CustomerPhone = "3001234567",
+            CustomerAddress = "Calle 10 # 20-30 <portería>"
         };
 
         var esc = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(receipt));
@@ -492,6 +498,13 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("data-auraly-report=\"order\"", html);
         Assert.Contains("Cliente pedido", html);
         Assert.Contains("Producto &amp; prueba", html);
+        Assert.Contains("3001234567", esc);
+        Assert.Contains("Calle 10 # 20-30", esc);
+        Assert.Contains("3001234567", html);
+        Assert.Contains("Calle 10 # 20-30 &lt;porter", html);
+        Assert.Contains("data-auraly-report-version=\"2\"", html);
+        var historical = new HtmlReceiptPreviewRenderer().Render(receipt, templateVersion: 1);
+        Assert.DoesNotContain("3001234567", historical);
         AssertMinimalThermalTail(new EscPosReceiptRenderer().Render(receipt));
     }
 
@@ -516,7 +529,9 @@ public sealed class EscPosReceiptRendererTests
             DocumentType = "Order",
             DocumentNumber = "PED-0000042",
             FiscalNumber = "FE-NOT-ALLOWED",
-            CustomerName = "Cliente pedido"
+            CustomerName = "Cliente pedido",
+            CustomerPhone = "3001234567",
+            CustomerAddress = "Calle 10 # 20-30 <portería>"
         };
 
         var html = new HalfLetterDocumentRenderer().Render([receipt], format);
@@ -525,6 +540,10 @@ public sealed class EscPosReceiptRendererTests
         Assert.Equal(copies, html.Split("PED-0000042").Length - 1);
         Assert.Equal(copies, html.Split("data-auraly-report=\"order\"").Length - 1);
         Assert.Equal(copies, html.Split("Cliente pedido").Length - 1);
+        Assert.Equal(copies, html.Split("3001234567").Length - 1);
+        Assert.Equal(copies, html.Split("Calle 10 # 20-30 &lt;porter").Length - 1);
+        var historical = new HalfLetterDocumentRenderer().Render([receipt], format, templateVersion: 1);
+        Assert.DoesNotContain("3001234567", historical);
     }
 
     private static void AssertOrderPresentation(string value)

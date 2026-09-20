@@ -287,7 +287,9 @@ public sealed class PosOfflineWorkSessionClosureService(
             localSales.Sum(value => value.CreditAmount),
             0,
             creditSales,
-            cashMovementDetails);
+            cashMovementDetails,
+            Auraly.Application.Sales.InvoiceChargeClosureProjection.MapPayments(
+                localSales.SelectMany(sale => sale.InvoiceCharges ?? []), ClosureMethod));
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -329,7 +331,7 @@ public sealed class PosOfflineWorkSessionClosureService(
             preview.ReturnCount,
             preview.CreditSales,
             PosPrintTemplateCatalog.WorkSessionClosure.Version,
-            preview.CashMovements);
+            preview.CashMovements, preview.InvoiceCharges);
         var queued = await store.QueueAsync(
             new PosQueuedWorkSessionClosure(
                 input.OperationId,

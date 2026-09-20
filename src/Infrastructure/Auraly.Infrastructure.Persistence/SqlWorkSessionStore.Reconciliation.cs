@@ -357,10 +357,21 @@ public sealed partial class SqlWorkSessionStore
         await using var command = new SqlCommand("""
             WITH ClosureContext AS
             (
-                SELECT session.WorkSessionId,session.UserId,session.OpenedAt,closure.ClosedAt
+                SELECT session.WorkSessionId,session.UserId,session.OpenedAt,closure.ClosedAt,closure.ReceiptSnapshotJson SnapshotJson
                 FROM dbo.WorkSessionClosures closure
                 INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
                 WHERE closure.WorkSessionClosureId=@ClosureId
+            ),
+            ClosureCashMovements AS
+            (
+                SELECT detail.DocumentId,detail.ReasonName,detail.Notes,detail.Direction,detail.DocumentNumber,
+                    detail.Amount,detail.Reference,detail.OccurredAt,
+                    COALESCE(TRY_CONVERT(int,JSON_VALUE(context.SnapshotJson,'$.receiptTemplateVersion')),1) TemplateVersion
+                FROM ClosureContext context CROSS APPLY OPENJSON(context.SnapshotJson,N'$.cashMovements')
+                WITH(DocumentId uniqueidentifier '$.documentId',ReasonName nvarchar(200) '$.reasonName',
+                    Notes nvarchar(500) '$.notes',Direction nvarchar(8) '$.direction',
+                    DocumentNumber nvarchar(100) '$.documentNumber',Amount decimal(19,4) '$.amount',
+                    Reference nvarchar(500) '$.reference',OccurredAt datetimeoffset '$.occurredAt') detail
             ),
             VerificationMovements AS
             (
@@ -405,12 +416,28 @@ public sealed partial class SqlWorkSessionStore
                 INNER JOIN ClosureContext context ON context.WorkSessionId=movement.WorkSessionId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=movement.PaymentMethodCode
                 WHERE movement.MovementType NOT IN(N'SalePayment',N'Refund')
+                  AND (COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode)<>N'Cash' OR
+                    movement.MovementType NOT IN(N'CashIn',N'CashOut',N'PayablePayment',N'ReceivablePayment') OR
+                    COALESCE(TRY_CONVERT(int,JSON_VALUE(context.SnapshotJson,'$.receiptTemplateVersion')),1)<4)
+                UNION ALL
+                SELECT CONCAT(N'CashMovement:',CONVERT(nvarchar(36),detail.DocumentId)),
+                  N'Cash',CASE WHEN detail.Direction=N'In' THEN N'CashIn' ELSE N'CashOut' END,
+                  detail.DocumentId,detail.DocumentNumber,0,
+                  CASE WHEN detail.Direction=N'In' THEN detail.Amount ELSE -detail.Amount END,
+                  detail.Reference,NULL,NULL,detail.OccurredAt,N'CashMovement',CAST(NULL AS nvarchar(300))
+                FROM ClosureCashMovements detail WHERE detail.TemplateVersion>=4
             )
             SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType,movement.SourceId,
               movement.DocumentNumber,movement.SourceNumber,movement.Amount,movement.Reference,
               movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt,
-              movement.SourceDocumentType,movement.CustomerName,decision.Status
+              movement.SourceDocumentType,movement.CustomerName,decision.Status,detail.ReasonName,detail.Notes
             FROM VerificationMovements movement
+            LEFT JOIN dbo.WorkSessionMovements cashMovement ON cashMovement.WorkSessionMovementId=movement.SourceId
+              AND movement.MovementType IN(N'CashIn',N'CashOut')
+            LEFT JOIN ClosureCashMovements detail
+              ON detail.DocumentId=CASE WHEN detail.TemplateVersion>=4 THEN movement.SourceId
+                   ELSE COALESCE(cashMovement.DocumentId,cashMovement.WorkSessionMovementId) END
+                AND movement.MovementType IN(N'CashIn',N'CashOut')
             LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
             OUTER APPLY
@@ -435,7 +462,9 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(8) ? null : reader.GetString(8),
                 reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetDateTimeOffset(10),
                 reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12),
-                reader.IsDBNull(13) ? null : reader.GetString(13)));
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14),
+                reader.IsDBNull(15) ? null : reader.GetString(15)));
         return result;
     }
 

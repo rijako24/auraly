@@ -112,6 +112,7 @@ import { PosInventoryResolutionDialog } from "./pos-inventory-resolution-dialog"
 import { PosQuantityAvailabilityDialog, type PosQuantityShortage } from "./pos-quantity-availability-dialog";
 import { temporaryNameForCustomer } from "./pos-temporary-name";
 import { PosOnlineSetup } from "./pos-online-setup";
+import { PosInvoiceChargeDialog } from "./pos-invoice-charge-dialog";
 import { PosPaymentDialog } from "./pos-payment-dialog";
 import { PosPrinterDialog } from "./pos-printer-dialog";
 import {
@@ -383,6 +384,7 @@ export default function PosPage() {
   const [error, setError] = useState<string | null>(null);
   const [temporaryOpen, setTemporaryOpen] = useState(false);
   const [temporaryName, setTemporaryName] = useState("");
+  const [chargesOpen, setChargesOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [saleSettlement, setSaleSettlement] = useState<import("@/services/pos/pos-edge-client").PosSaleSettlement | null>(null);
   const [saleSettlementError, setSaleSettlementError] = useState(false);
@@ -1244,6 +1246,7 @@ export default function PosPage() {
   }, [busy, client, showError, workstation.workSessionId]);
 
   shortcutAction.current = (event, shortcut) => {
+    if (chargesOpen) return;
     if (
       invoiceSearchOpen ||
       returnsOpen ||
@@ -1264,7 +1267,7 @@ export default function PosPage() {
         !denominationCalculatorOpen &&
         !closurePreview &&
         !confirmation;
-    if (event.ctrlKey || event.altKey || event.shiftKey) return;
+    if (event.ctrlKey || event.altKey || event.metaKey || (event.shiftKey && shortcut !== POS_ACTION_SHORTCUTS.payment)) return;
     if (productSearchOpen && shortcut === POS_ACTION_SHORTCUTS.editLines) {
       setProductAvailabilityRequest((current) => current + 1);
       return;
@@ -1305,7 +1308,8 @@ export default function PosPage() {
         !paymentOpen &&
         !confirmation
       ) {
-        void openPayment();
+        if (event.shiftKey) setChargesOpen(true);
+        else void openPayment();
       } else if (
         shortcut === POS_ACTION_SHORTCUTS.productSearch &&
         !busy &&
@@ -1400,7 +1404,7 @@ export default function PosPage() {
 
   useEffect(() => {
     const handleCashDrawerShortcut = (event: KeyboardEvent) => {
-      if (!isPosCashDrawerShortcut(event) || !canOpenCashDrawer) return;
+      if (chargesOpen || !isPosCashDrawerShortcut(event) || !canOpenCashDrawer) return;
 
       const canOpenCashMovement =
         Boolean(workstation.workSessionId) &&
@@ -1429,6 +1433,7 @@ export default function PosPage() {
   }, [
     busy,
     canOpenCashDrawer,
+    chargesOpen,
     cashMovementDirection,
     closurePreview,
     confirmation,
@@ -1460,7 +1465,7 @@ export default function PosPage() {
 
   useEffect(() => {
     const openDenominationCalculator = (event: KeyboardEvent) => {
-      if (!isPosDenominationCalculatorShortcut(event) || !client) return;
+      if (chargesOpen || !isPosDenominationCalculatorShortcut(event) || !client) return;
       const canOpen =
         !busy &&
         !temporaryOpen &&
@@ -1488,6 +1493,7 @@ export default function PosPage() {
     cashMovementDirection,
     client,
     closureAttempt,
+    chargesOpen,
     closurePreview,
     confirmation,
     customerSearchOpen,
@@ -3540,6 +3546,11 @@ export default function PosPage() {
               Buscar cliente
               <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">{POS_ACTION_SHORTCUTS.customerSearch}</span>
             </button>
+            <button type="button" disabled={!draft?.lines.length || busy} onClick={() => setChargesOpen(true)}
+              className="mb-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 px-3 py-2 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40">
+              Cargos de facturación <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">Shift + F8</span>
+            </button>
+            {(draft?.charges?.length ?? 0) > 0 && <div className="mb-3 space-y-2 rounded-xl bg-white/5 p-3 text-xs">{draft?.charges?.map(charge => <div key={charge.appliedChargeId} className="flex items-start justify-between gap-2"><div><b>{charge.name}</b><p className="text-auraly-secondary">{charge.invoicedAmount > 0 ? "Incluido en factura" : "Gasto"}</p></div><span className="whitespace-nowrap">{money.format(charge.amount)}</span></div>)}</div>}
             <dl className="space-y-2 text-sm">
               <TotalRow label="Subtotal" value={draft?.untaxedAmount ?? 0} />
               <TotalRow label="Total impuestos" value={draft?.taxAmount ?? 0} />
@@ -3926,6 +3937,8 @@ export default function PosPage() {
         />
       )}
 
+      {chargesOpen && draft && client && <PosInvoiceChargeDialog client={client} draft={draft} onUpdated={setDraft}
+        onClose={() => { setChargesOpen(false); focusScanner(); }}/>}
       {paymentOpen && draft && saleSettlement && (
         <PosPaymentDialog
           client={client}

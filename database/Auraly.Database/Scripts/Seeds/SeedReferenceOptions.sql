@@ -13,6 +13,13 @@ DECLARE @Source TABLE
 
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
 VALUES
+('10c00000-0000-0000-0000-000000000001',N'invoice-charge-calculation',N'Manual',N'Valor digitado',N'Capturar el valor en cada factura.',10),
+('10c00000-0000-0000-0000-000000000002',N'invoice-charge-calculation',N'Fixed',N'Valor fijo',NULL,20),
+('10c00000-0000-0000-0000-000000000003',N'invoice-charge-calculation',N'Percentage',N'Porcentaje',N'Porcentaje sobre la base completa de productos.',30),
+('10c00000-0000-0000-0000-000000000004',N'invoice-charge-calculation',N'Ranges',N'Rangos de factura',N'Tarifa fija o porcentual según el total de productos.',40),
+('10c00000-0000-0000-0000-000000000011',N'invoice-charge-inclusion',N'Always',N'Siempre incluir en la factura',NULL,10),
+('10c00000-0000-0000-0000-000000000012',N'invoice-charge-inclusion',N'Never',N'Nunca incluir en la factura: registrar gasto',NULL,20),
+('10c00000-0000-0000-0000-000000000013',N'invoice-charge-inclusion',N'UpToInvoiceAmount',N'Incluir según el importe de la factura',N'Se incluye hasta el importe configurado, inclusive. Por encima se registra como gasto.',30),
 ('10000000-0000-0000-0000-000000000001',N'payment-method',N'Cash',N'Efectivo',NULL,10),
 ('10000000-0000-0000-0000-000000000002',N'payment-method',N'DebitCard',N'Tarjeta débito',NULL,20),
 ('10000000-0000-0000-0000-000000000003',N'payment-method',N'CreditCard',N'Tarjeta crédito',NULL,30),

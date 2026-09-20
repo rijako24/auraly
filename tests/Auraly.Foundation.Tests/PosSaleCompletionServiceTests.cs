@@ -15,6 +15,81 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class PosSaleCompletionServiceTests
 {
+    public static IEnumerable<object[]> InvoiceChargeScenarios()
+    {
+        foreach (var (basis, tariff) in new[] { (79999m, 5000m), (80000m, 5000m), (80000.01m, 5000m), (100000m, 6000m), (400000m, 8000m) })
+        foreach (var mode in new[] { "None", "Delivery", "Agotados" })
+        foreach (var payment in new[] { "Cash", "TransferAndCredit" })
+            yield return [basis, tariff, mode, payment];
+    }
+
+    [Theory, MemberData(nameof(InvoiceChargeScenarios))]
+    public async Task Invoice_charge_is_durable_in_fiscal_totals_outbox_and_reprint(
+        decimal basis, decimal tariff, string mode, string payment)
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            var draft = await fixture.AddLineAsync();
+            draft = await fixture.Drafts.SetQuantityAsync(draft.DraftId, draft.Lines.Single().LineId, basis / 10000m);
+            var customerId = Guid.NewGuid();
+            draft = await fixture.Drafts.AssignPartiesAsync(draft.DraftId, customerId, null, Guid.NewGuid());
+            var expectedCharge = mode == "Delivery" && basis <= 80000 ? tariff : 0;
+            if (mode != "None")
+            {
+                var catalog = new PosCatalogStore(fixture.ConnectionString);
+                await catalog.InitializeAsync();
+                var definition = new InvoiceChargeDefinition(Guid.NewGuid(), fixture.Scope.BusinessId.Value,
+                    1, "DOM", "Domicilio de prueba", true, 0, mode == "Agotados" ? "Manual" : "Ranges",
+                    mode == "Agotados" ? 5000 : null, mode == "Agotados" ? "Never" : "UpToInvoiceAmount",
+                    mode == "Agotados" ? null : 80000, Guid.NewGuid(), "Domicilios", Guid.NewGuid(), "TEST", "Gasto",
+                    null, null, Guid.NewGuid(), "IVA 19", "01", 19,
+                    mode == "Agotados" ? [] : [new(0,100000,"Fixed",5000),new(100000,200000,"Fixed",6000),
+                        new(200000,300000,"Fixed",7000),new(300000,400000,"Fixed",8000),new(400000,null,"Percentage",2)],
+                    [new(Guid.NewGuid(), "Domiciliario de prueba", "TEST", 0, true)], Guid.NewGuid(), "IVA 0", 0);
+                await catalog.StageInvoiceChargePageAsync(fixture.Scope.BusinessId.Value, 1, new([definition],1,100,1,1));
+                await catalog.PromoteInvoiceChargesAsync(fixture.Scope.BusinessId.Value, 1, 1);
+                draft = await fixture.Drafts.SaveChargeAsync(fixture.Scope, draft.DraftId,
+                    new(Guid.NewGuid(), definition.ChargeId, 1, definition.Suppliers.Single().SupplierId,
+                        mode == "Agotados" ? 6500 : null, 0));
+                Assert.Equal(expectedCharge, Assert.Single(draft.Charges!).InvoicedAmount);
+            }
+            var total = basis + expectedCharge;
+            var transfer = decimal.Round(total / 4, 2);
+            var payments = payment == "Cash"
+                ? new[] { new OfflineSalePayment("Cash", total, TenderedAmount: total + 10000) }
+                : [new OfflineSalePayment("Transfer", transfer, "Referencia de prueba")];
+            var credit = payment == "Cash" ? null : new PosSaleCreditTerms(customerId, total - transfer, fixture.IssuedAt.AddDays(15));
+            var result = await fixture.CompleteAsync(draft.DraftId, payments, credit);
+            Assert.Equal(total, result.IssuedSale.Total);
+            Assert.Equal(total, result.Receipt.Lines.Sum(line => line.Total));
+            Assert.Empty(result.NextDraft.Charges!);
+            var pending = Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
+            var snapshot = PosSaleContractSerializer.Deserialize(pending.Payload);
+            Assert.Equal(total, snapshot.CommercialSnapshot.PayableAmount);
+            Assert.Equal(total, snapshot.Payments.Sum(value => value.Amount) + (snapshot.Credit?.Amount ?? 0));
+            Assert.Null(Auraly.Application.Fiscal.FiscalSnapshotValidator.ValidateStructure(snapshot));
+            Assert.Equal(mode == "None" ? 0 : 1, snapshot.Charges?.Count ?? 0);
+            var localClosureSale = Assert.Single(await fixture.Sales.ReadWorkSessionSalesAsync(snapshot.WorkSessionId));
+            Assert.Equal(total, localClosureSale.Total);
+            Assert.Equal(mode == "None" ? 0 : 1, localClosureSale.InvoiceCharges!.Count);
+            Assert.Equal(expectedCharge, localClosureSale.InvoiceCharges.Sum(charge => charge.InvoicedAmount));
+            Assert.Equal(expectedCharge, localClosureSale.InvoiceCharges.SelectMany(charge => charge.Payments).Sum(value => value.Amount));
+            if (mode != "None")
+            {
+                var charge = Assert.Single(snapshot.Charges!);
+                Assert.Equal(mode == "Agotados" ? 6500 : tariff, charge.Amount);
+                Assert.Equal(charge.Amount - expectedCharge, charge.ExpenseAmount);
+            }
+            await new PosSaleCompletionService(fixture.Drafts, fixture.Issuance, fixture.Sales, fixture.Printer)
+                .ReprintAsync(result.IssuedSale.DocumentId, fixture.Scope.UserId, 58);
+            var printed = Assert.Single(fixture.Printer.Receipts);
+            Assert.Equal(total, printed.PayableAmount);
+            Assert.Equal(result.Receipt.Lines, printed.Lines);
+            Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
+            Assert.Equal("FV101", (await fixture.Sales.PreviewNextFiscalNumberAsync(fixture.Scope.DeviceId, fixture.IssuedAt)).FullNumber);
+        });
+    }
+
     [Fact]
     public async Task Successful_completion_clears_sale_before_printing_and_previews_the_next_number()
     {
@@ -244,7 +319,7 @@ public sealed class PosSaleCompletionServiceTests
             PosDraftStore drafts,
             PosDraftIssuanceStore issuance,
             PosEdgeSaleStore sales,
-            RecordingPrinter printer)
+            RecordingPrinter printer, string connectionString)
         {
             Scope = scope;
             Register = register;
@@ -252,10 +327,12 @@ public sealed class PosSaleCompletionServiceTests
             Issuance = issuance;
             Sales = sales;
             Printer = printer;
+            ConnectionString = connectionString;
         }
 
         public DateTimeOffset IssuedAt { get; } =
             new(2026, 7, 28, 14, 30, 0, TimeSpan.FromHours(-5));
+        public string ConnectionString { get; }
         public PosDraftScope Scope { get; }
         public SalesExecutionContext Register { get; }
         public PosDraftStore Drafts { get; }
@@ -311,7 +388,7 @@ public sealed class PosSaleCompletionServiceTests
                 100,
                 200,
                 new DateOnly(2027, 7, 28)));
-            return new Fixture(scope, executionContext, drafts, issuance, sales, new RecordingPrinter());
+            return new Fixture(scope, executionContext, drafts, issuance, sales, new RecordingPrinter(), connectionString);
         }
 
         public Task<PosDraft> AddLineAsync(decimal documentUnitCost = 0m) =>

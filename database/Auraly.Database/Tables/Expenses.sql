@@ -32,7 +32,8 @@ CREATE TABLE [dbo].[Expenses]
     [DocumentPrefix] NVARCHAR(8) NOT NULL,
     [DocumentSeriesCode] NVARCHAR(8) NOT NULL,
     [DocumentConsecutive] BIGINT NOT NULL,
-    [SupplierDocumentNumber] NVARCHAR(80) NOT NULL,
+    [SupplierDocumentNumber] NVARCHAR(80) NULL,
+    [SourceInvoiceId] UNIQUEIDENTIFIER NULL,
     [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
     [DueDate] DATETIMEOFFSET(7) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
@@ -53,7 +54,8 @@ CREATE TABLE [dbo].[Expenses]
     CONSTRAINT [PK_Expenses] PRIMARY KEY ([ExpenseId]),
     CONSTRAINT [UQ_Expenses_Business_Number] UNIQUE ([BusinessId],[DocumentNumber]),
     CONSTRAINT [UQ_Expenses_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
-    CONSTRAINT [UQ_Expenses_Supplier_Document] UNIQUE ([BusinessId],[SupplierId],[SupplierDocumentNumber]),
+    CONSTRAINT [FK_Expenses_SourceInvoice] FOREIGN KEY ([BusinessId],[SourceInvoiceId]) REFERENCES [dbo].[SalesDocuments]([BusinessId],[DocumentId]),
+    CONSTRAINT [CK_Expenses_EvidenceOrigin] CHECK ([SupplierDocumentNumber] IS NOT NULL OR [SourceInvoiceId] IS NOT NULL),
     CONSTRAINT [FK_Expenses_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_Expenses_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers]([SupplierId]),
     CONSTRAINT [FK_Expenses_Concepts] FOREIGN KEY ([BusinessId],[ExpenseConceptId]) REFERENCES [dbo].[ExpenseConcepts]([BusinessId],[ExpenseConceptId]),
@@ -66,4 +68,11 @@ CREATE TABLE [dbo].[Expenses]
 );
 GO
 CREATE INDEX [IX_Expenses_Business_Issued] ON [dbo].[Expenses]([BusinessId],[IssuedAt] DESC);
+GO
+
+CREATE UNIQUE INDEX [UQ_Expenses_Supplier_Document] ON [dbo].[Expenses]([BusinessId],[SupplierId],[SupplierDocumentNumber])
+  WHERE [SupplierDocumentNumber] IS NOT NULL;
+GO
+CREATE INDEX [IX_Expenses_SourceInvoice] ON [dbo].[Expenses]([BusinessId],[SourceInvoiceId])
+  WHERE [SourceInvoiceId] IS NOT NULL;
 GO

@@ -18,6 +18,14 @@ directamente al motor de reporting.
 
 ## Atribución histórica de una venta
 
+El writer canónico proyecta las líneas, los medios de pago y los grupos de
+impuestos de una factura por conjuntos: una escritura SQL por conjunto, sin
+consultas por línea. Los cargos incluidos en factura forman parte del documento,
+los impuestos y los totales por cliente, vendedor y bodega. No se atribuyen a un
+producto, categoría o proveedor de mercancía; su detalle se consulta en Cargos de
+facturación. Los cargos asumidos como gasto no incrementan las ventas. La regla
+de inclusión llega congelada en el documento y reporting no la recalcula.
+
 Al confirmar cada línea de factura, `SalesDocumentLines` fija una vez:
 
 - código y nombre del producto;

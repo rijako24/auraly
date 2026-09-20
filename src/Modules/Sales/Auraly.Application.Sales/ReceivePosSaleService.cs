@@ -304,6 +304,13 @@ public sealed class ReceivePosSaleService(
 
     private static void ValidateSettlement(PosSaleUploadRequest request)
     {
+        try { InvoiceChargeApplication.ValidateSnapshot(request.Lines.Sum(line => line.LineTotal), request.Charges); }
+        catch (InvoiceChargeValidationException error) { throw new PosSaleInvalidException(error.Message); }
+        if (request.Charges is { Count: > 0 } &&
+            (request.CommercialSnapshot.UntaxedAmount != request.Lines.Sum(line => line.UntaxedAmount) + request.Charges.Sum(charge => charge.InvoicedUntaxedAmount) ||
+             request.CommercialSnapshot.TaxAmount != request.Lines.Sum(line => line.TaxAmount) + request.Charges.Sum(charge => charge.InvoicedTaxAmount)))
+            throw new PosSaleInvalidException("Los cargos y productos no coinciden con el total de la venta.");
+
         var paid = request.Payments.Sum(payment => payment.Amount);
         var credit = request.Credit?.Amount ?? 0m;
         var withholding = request.CommercialSnapshot.Withholding;

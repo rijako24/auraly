@@ -74,13 +74,37 @@ test("orders and personal routes are independent navigation capabilities", () =>
   );
 });
 
-test("the own company view is independent from platform tenant administration", () => {
+test("company navigation opens the own profile or platform administration according to permissions", () => {
   assert.deepEqual(
     authorizedNavigationItems(["tenant.profile.read"]).map(({ name, href }) => ({ name, href })),
     [{ name: "Empresa", href: "/dashboard/company" }],
   );
   assert.deepEqual(
     authorizedNavigationItems(["tenants.read"]).map(({ name, href }) => ({ name, href })),
-    [{ name: "Empresas", href: "/dashboard/tenants" }],
+    [{ name: "Empresa", href: "/dashboard/tenants" }],
+  );
+});
+
+test("platform users see one company entry even with own-profile permissions", () => {
+  const permissions = ["tenant.profile.read", "tenant.profile.update", "tenants.read"];
+  const items = authorizedNavigationItems(permissions);
+  assert.deepEqual(
+    items.map(({ name, href }) => ({ name, href })),
+    [{ name: "Empresa", href: "/dashboard/tenants" }],
+  );
+  assert.deepEqual(authorizedNavigationGroups(permissions), [
+    { label: "Administración", items },
+  ]);
+});
+
+test("company navigation disappears without read access and restores the own profile after platform access is removed", () => {
+  assert.deepEqual(authorizedNavigationItems(["tenant.profile.update", "tenants.update"]), []);
+  assert.deepEqual(authorizedNavigationGroups([]), []);
+  const permissions = ["tenant.profile.read", "tenants.read"];
+  assert.equal(authorizedNavigationItems(permissions).length, 1);
+  assert.deepEqual(
+    authorizedNavigationGroups(permissions.filter(permission => permission !== "tenants.read"))
+      .flatMap(group => group.items.map(({ name, href }) => ({ name, href }))),
+    [{ name: "Empresa", href: "/dashboard/company" }],
   );
 });

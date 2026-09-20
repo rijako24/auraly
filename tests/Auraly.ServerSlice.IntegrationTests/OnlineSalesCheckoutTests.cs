@@ -16,7 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
+public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 {
     [Fact]
     public async Task Sales_checkout_rejects_the_retired_habilitation_property()

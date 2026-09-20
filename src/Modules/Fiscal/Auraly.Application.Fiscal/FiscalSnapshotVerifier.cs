@@ -74,10 +74,9 @@ public static class FiscalSnapshotValidator
                 "The fiscal issuer or environment differs from the server configuration.");
         }
 
-        var taxes = request.Lines
-            .GroupBy(line => line.TaxCode, StringComparer.Ordinal)
-            .Select(group => new FiscalTaxAmount(group.Key, group.Sum(line => line.TaxAmount)))
-            .ToArray();
+        var taxes = PosSaleTaxSummary.Calculate(request.Lines.Select(line =>
+                new PosSaleTaxContract(line.TaxCode, line.TaxAmount)), request.Charges)
+            .Select(tax => new FiscalTaxAmount(tax.Code, tax.Amount)).ToArray();
         var calculated = CufeCalculator.Calculate(
             new CufeInput(
                 snapshot.FiscalNumber,
@@ -184,9 +183,9 @@ public static class FiscalSnapshotValidator
             }
         }
 
-        var untaxedTotal = request.Lines.Sum(line => line.UntaxedAmount);
-        var taxTotal = request.Lines.Sum(line => line.TaxAmount);
-        var payableTotal = request.Lines.Sum(line => line.LineTotal);
+        var untaxedTotal = request.Lines.Sum(line => line.UntaxedAmount) + (request.Charges?.Sum(charge => charge.InvoicedUntaxedAmount) ?? 0);
+        var taxTotal = request.Lines.Sum(line => line.TaxAmount) + (request.Charges?.Sum(charge => charge.InvoicedTaxAmount) ?? 0);
+        var payableTotal = untaxedTotal + taxTotal;
         if (snapshot.UntaxedAmount != untaxedTotal ||
             snapshot.TaxAmount != taxTotal ||
             snapshot.PayableAmount != payableTotal + snapshot.PayableRoundingAmount ||
@@ -209,9 +208,9 @@ public static class FiscalSnapshotValidator
             return "Actual payments plus financed balance do not match the net sale settlement.";
         }
 
-        var lineTaxes = request.Lines
-            .GroupBy(line => line.TaxCode, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.Sum(line => line.TaxAmount), StringComparer.Ordinal);
+        var lineTaxes = PosSaleTaxSummary.Calculate(request.Lines.Select(line =>
+                new PosSaleTaxContract(line.TaxCode, line.TaxAmount)), request.Charges)
+            .ToDictionary(tax => tax.Code, tax => tax.Amount, StringComparer.Ordinal);
         var snapshotTaxes = snapshot.Taxes
             .GroupBy(tax => tax.Code, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Sum(tax => tax.Amount), StringComparer.Ordinal);

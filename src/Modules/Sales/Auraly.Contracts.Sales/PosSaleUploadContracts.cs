@@ -33,6 +33,17 @@ public static class SaleSourceModes
 
 public sealed record PosSaleTaxContract(string Code, decimal Amount);
 
+public static class PosSaleTaxSummary
+{
+    public static IReadOnlyList<PosSaleTaxContract> Calculate(IEnumerable<PosSaleTaxContract> productTaxes,
+        IReadOnlyList<AppliedInvoiceCharge>? charges = null) =>
+        productTaxes.Concat((charges ?? []).Where(charge => charge.InvoicedAmount > 0)
+                .Select(charge => new PosSaleTaxContract(charge.TaxCode, charge.InvoicedTaxAmount)))
+            .GroupBy(tax => tax.Code, StringComparer.Ordinal)
+            .Select(group => new PosSaleTaxContract(group.Key, group.Sum(tax => tax.Amount)))
+            .OrderBy(tax => tax.Code, StringComparer.Ordinal).ToArray();
+}
+
 public sealed record PosSaleLineContract(
     int LineNumber,
     Guid ProductId,
@@ -260,7 +271,9 @@ public sealed record PosSaleUploadRequest(
     string SourceMode = SaleSourceModes.PosEdge,
     Guid? SourceOrderId = null,
     PosSaleCreditContract? Credit = null,
-    Guid? CustomerPartySiteId = null);
+    Guid? CustomerPartySiteId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

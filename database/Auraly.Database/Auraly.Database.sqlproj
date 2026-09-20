@@ -267,6 +267,7 @@
     <Build Include="Tables\BankReconciliations.sql" />
     <Build Include="Tables\ComplianceReporting.sql" />
     <Build Include="Tables\Expenses.sql" />
+    <Build Include="Tables\InvoiceCharges.sql" />
     <Build Include="Tables\PosSynchronizationOutboxMessages.sql" />
     <Build Include="Tables\ServerOutboxMessages.sql" />
     <Build Include="Tables\Payroll.sql" />

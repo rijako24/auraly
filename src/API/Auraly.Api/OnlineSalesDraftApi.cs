@@ -16,6 +16,16 @@ public static class OnlineSalesDraftApi
         var group = endpoints.MapGroup("/api/commerce/v1/pos/drafts")
             .RequireAuthorization("pos.user");
 
+        group.MapPut("/{draftId:guid}/charges/{chargeId:guid}", (HttpContext context, Guid draftId,
+            Guid chargeId, InvoiceChargeDraftRequest request, OnlineSalesDraftService service, CancellationToken ct) =>
+            chargeId != request.AppliedChargeId ? Task.FromResult<IResult>(Results.BadRequest()) :
+            Handle(() => service.SaveChargeAsync(context.User.ToOnlineSalesUserIdentity(), draftId, request,
+                context.Request.Headers["Idempotency-Key"].ToString(), ct)));
+        group.MapPost("/{draftId:guid}/charges/{chargeId:guid}/remove", (HttpContext context, Guid draftId,
+            Guid chargeId, RemoveOnlineSalesDraftLineRequest request, OnlineSalesDraftService service, CancellationToken ct) =>
+            Handle(() => service.RemoveChargeAsync(context.User.ToOnlineSalesUserIdentity(), draftId, chargeId,
+                request.ExpectedVersion, context.Request.Headers["Idempotency-Key"].ToString(), ct)));
+
         group.MapPost("/active", async (
             HttpContext context,
             OpenOnlineSalesDraftRequest request,

@@ -1347,6 +1347,11 @@ public sealed partial class SqlOnlineSalesDraftStore(
              AND inventoryLink.ChildProductId=line.ProductId
              AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
             ORDER BY line.SalesDraftId,line.Position,line.SalesDraftLineId;
+
+            SELECT charge.DraftId,charge.SelectionJson
+            FROM sales.InvoiceChargeDraftSelections charge
+            JOIN OPENJSON(@DraftIdsJson) WITH(DraftId uniqueidentifier '$') input ON input.DraftId=charge.DraftId
+            ORDER BY charge.DraftId,charge.AppliedChargeId;
             """;
         command.Parameters.Add(P("@DraftIdsJson", JsonSerializer.Serialize(draftIds)));
         var headers = new Dictionary<Guid, DraftSnapshotHeader>();
@@ -1389,17 +1394,24 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 reader.GetDecimal(14), reader.GetBoolean(15), reader.GetBoolean(16),
                 net, tax, total, promotionDiscount, publicUnitPrice, total));
         }
+        var selections = headers.Keys.ToDictionary(id => id, _ => new List<InvoiceChargeSelection>());
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            selections[reader.GetGuid(0)].Add(JsonSerializer.Deserialize<InvoiceChargeSelection>(reader.GetString(1))
+                ?? throw new InvalidDataException("El cargo del borrador no contiene un snapshot válido."));
         return headers.ToDictionary(pair => pair.Key, pair =>
         {
             var header = pair.Value;
             var draftLines = lines[pair.Key];
+            var charges = InvoiceChargeApplication.Calculate(draftLines.Sum(line => line.Total), selections[pair.Key]);
             return new OnlineSalesDraft(
                 header.DraftId, header.BusinessId, header.WarehouseId, header.WorkSessionId,
                 header.UserId, header.CustomerId, header.SellerId, header.Status,
                 header.Name, header.Reference, header.Observation, header.Version,
-                header.UpdatedAt, draftLines, draftLines.Sum(line => line.Net),
-                draftLines.Sum(line => line.Tax), draftLines.Sum(line => line.Total),
-                header.SourceOrderId,header.CustomerPartySiteId);
+                header.UpdatedAt, draftLines, draftLines.Sum(line => line.Net) + charges.Sum(x => x.InvoicedUntaxedAmount),
+                draftLines.Sum(line => line.Tax) + charges.Sum(x => x.InvoicedTaxAmount),
+                draftLines.Sum(line => line.Total) + charges.Sum(x => x.InvoicedAmount),
+                header.SourceOrderId,header.CustomerPartySiteId,charges);
         });
     }
 

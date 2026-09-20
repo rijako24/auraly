@@ -28,6 +28,15 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Resolver precio comercial de productos | `CommercePriceResolver` compone los calculadores canónicos de canal y promoción con las líneas del documento ya cargadas | recalcular en SQL, SQLite, pedido, endpoint o UI |
 | Imprimir pedidos | `OrderService` autoriza y solicita el snapshot capturado; `SqlOrderStore` lo carga en lote; `PosPrintTemplateCatalog.Order` y el pipeline de impresión existente lo representan | consultar cada pedido/línea por separado, convertirlo en venta o crear otro renderer/servicio de impresión |
 | Consultar o editar la empresa propia | `tenant.profile.read/update` → `TenantsController` limita el recurso a `User.TenantId` → `TenantService`; el plan se proyecta en solo lectura desde la suscripción canónica | conceder `tenants.*` al administrador cliente, confiar en el `tenantId` del navegador o duplicar el perfil empresarial |
+| Cargos de facturación | catálogo versionado `InvoiceChargeService`/`SqlInvoiceChargeStore` → `InvoiceChargeCalculation` compartido por borrador online y Edge → snapshot de la venta → writer común de Gastos | otro medio de pago, producto ficticio, cálculo en UI o tabla paralela de cargos emitidos |
+| Gasto manual o asociado a una factura | `ExpenseService` o handler de venta → `SqlExpenseStore.PersistAcceptedAsync` → fuentes/trabajos financieros canónicos → `SqlAccountingPostingProcessor` abre CxP y marca el gasto procesado | consumir cursor operativo para gastos nuevos, abrir CxP desde POS o volver a registrar gasto al pagar al proveedor |
+
+La navegación muestra una sola entrada **Empresa**. Con `tenant.profile.read`
+abre el perfil propio; con el permiso de plataforma `tenants.read` abre el listado
+administrativo y sustituye el acceso propio en el menú. Sidebar, menú móvil y
+búsqueda comparten esta regla en `sidebar-nav-config`; no consulta datos ni amplía
+los permisos de servidor. Los contratos de perfil y administración conservan sus
+rutas y autorizaciones independientes.
 
 ## Documento e inventario
 

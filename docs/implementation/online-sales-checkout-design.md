@@ -1,11 +1,144 @@
 # Emisión durable de ventas online
 
-Fecha: 2026-07-30
+## Extensión aprobada: cargos de facturación (online y Edge)
+
+Los cargos accesorios pertenecen al documento de venta, no al catálogo de medios
+de pago. La configuración se administra en **Cargos de facturación**, fuera de
+Configuración general. El cambio no amplía `BillableServices` al POS ni crea
+productos ficticios. Cada cargo conserva su identidad, versión de regla, base,
+importe incluido en factura o registrado como gasto, proveedor y clasificación
+contable al emitir. La empresa se deriva del contexto autenticado activo; no se
+selecciona un cliente ni una empresa en la regla del cargo.
+
+`InvoiceChargeCalculation`, en el dominio de Sales, es la política pura común
+para servidor y Edge. La base es el total de productos después de descuentos e
+impuestos y antes de cargos y retenciones. Las tarifas pueden ser digitadas,
+fijas, porcentuales o por intervalos contiguos `[desde,hasta)`, desde cero y con
+último límite abierto. El porcentaje se aplica a toda la base. Primero se
+resuelve la tarifa y después su inclusión en factura. `InclusionMode` permite
+incluir siempre, nunca (registrar gasto) o incluir según el importe de la
+factura, hasta `InvoiceAmountLimit` inclusive. Esta decisión depende de la base
+de la factura, nunca de la identidad ni atributos del cliente. Para el domicilio
+de Aurali, COP 80.000 todavía incluye el cargo y solo por encima se registra
+como gasto. **Domicilio · Agotados** usa valor digitado (sugerencia editable) y
+nunca se incluye en el total a cobrar, sin umbral. Son definiciones del mismo catálogo.
+Cada versión congela también cuenta, centro, tasas y datos del proveedor; una
+edición de maestros no reescribe versiones anteriores. La recepción consulta en
+un único lote las versiones referenciadas (máximo diez), verifica su sede y
+recalcula el resultado con la política común antes de aceptar importes, cuentas
+y proveedor. Una repetición ya aceptada devuelve su resultado antes de esa lectura.
+Las tarifas y los datos del proveedor son datos del tenant, nunca defaults del
+motor. El usuario autorizó tarifas de prueba editables únicamente para Aurali
+en desarrollo; no son valores predeterminados del sistema.
+
+El importe cobrado al cliente participa en la liquidación normal, incluido
+crédito. Los pagos aplicados, excluido el cambio, distribuyen proporcionalmente
+el cargo; el redondeo acumulado conserva exactamente el total y el orden estable
+de los pagos. La parte a crédito no es recaudo hasta que se cobre. El costo del
+proveedor es una obligación distinta de la deuda del cliente: reutiliza Gastos,
+sus conceptos y el motor financiero-contable canónico. El concepto es dueño de
+la cuenta de gasto y del centro predeterminado. Asumir un costo no crea una
+entrada de efectivo; pagar al proveedor posteriormente sí produce el egreso
+normal, sin registrar nuevamente el gasto.
+
+El writer común `SqlExpenseStore.PersistAcceptedAsync` persiste gastos manuales
+y gastos originados por cargos, retenciones y fuentes financieras en la misma
+transacción de aceptación. Los nuevos gastos entran directamente a
+`AccountingSourceDocuments`/`AccountingPostingJobs`, sin consumir el cursor
+operativo ni crear `DocumentProcessingJobs`. El handler documental de Expense
+permanece exclusivamente para drenar documentos históricos ya aceptados por esa
+ruta; podrá retirarse cuando no existan trabajos históricos pendientes. El motor
+contable es el único dueño de la CxP y de la transición del gasto a `Processed`.
+
+Un cargo usa `AppliedChargeId` como identidad del gasto y `SourceInvoiceId` como
+referencia interna a la venta. Su `SupplierDocumentNumber` es nulo: no se inventa
+una factura del proveedor. Los gastos manuales conservan la exigencia de ese
+número y su unicidad filtrada. El retry compara la solicitud original y no
+vuelve a calcular retenciones ni requiere maestros actualmente activos.
+
+Hasta diez cargos por factura reutilizan operaciones en lote de numeración,
+fuentes contables, retenciones y, cuando la política del proveedor lo exige,
+reserva de cupo y documentos soporte. Las firmas individuales de estos helpers
+conservan su comportamiento y delegan al lote de tamaño uno. Las alertas usan
+los coordinadores fiscal y contable existentes después del commit.
+
+La consulta independiente lee snapshots de ventas de la sede autenticada en
+periodos de hasta 31 días y páginas de hasta 100 filas. Une la obligación real
+para mostrar su saldo; no introduce otra tabla de cargos emitidos. El cierre
+congela su desglose y reutiliza el endpoint de snapshot, incluyendo el permiso
+de supervisión del tenant. Sus filas de cargo son informativas y no alteran
+conteos ni decisiones de conciliación.
+
+El historial tiene dos viajes SQL (scope/zona y reporte). Materializa únicamente
+el periodo de la sede en una tabla temporal de consulta y ordena sus claves antes
+de devolver el JSON de la página. Esto evita repetir la expansión del snapshot y
+la reserva excesiva de memoria por estimaciones fijas de `OPENJSON`. La regresión
+de 30 facturas exige menos de dos segundos para la consulta completa por API.
+
+En POS, **Cargos de facturación** se abre junto al total o con `Shift + F8`;
+`F8` conserva el cobro. El modal consulta únicamente su página visible y las
+mutaciones reemplazan el borrador con la respuesta autoritativa. Un cargo puede
+quitarse o editarse; el proveedor único activo se selecciona automáticamente.
+Los cargos pertenecen a la facturación: guardar un borrador con cargos como
+pedido se rechaza explícitamente para no perderlos. Una venta temporal sí los
+conserva. Quitar el último producto limpia los cargos asociados.
+
+El cierre incorpora **Cargos de facturación** y el desglose dentro del medio de
+pago correspondiente, con factura, cargo, proveedor y cantidad de cargos. Es un
+desglose de pagos existentes: no crea otro movimiento `SalePayment` ni suma dos
+veces la venta. La vista de resultados respeta el conteo ciego. Los cargos
+asumidos por la empresa se identifican sin atribuirles un ingreso de caja.
+
+Edge conserva configuración y proveedor elegible en SQLite y usa su outbox de
+ventas existente. Alta, edición e inactivación generan la invalidación
+`Configuration` por el canal push canónico; bootstrap y reconexión recuperan lo
+pendiente sin polling. Desactivar o reactivar un proveedor elegido por un cargo
+publica también `Configuration` desde el writer de terceros. Las banderas de
+elegibilidad se refrescan; tarifas y clasificación financiera siguen congeladas
+en la versión del cargo hasta su siguiente edición. Una factura emitida conserva su snapshot al sincronizar,
+aunque exista una versión posterior. Reenvíos no repiten cargo, gasto, CxP,
+inventario, pagos ni movimientos de sesión.
+
+Criterios de aceptación: escenarios reales de venta sin cargo, cliente/empresa
+en ambos lados del umbral y exactamente en él, rangos, digitado, efectivo,
+tarjeta, transferencia, pagos mixtos, crédito, posterior recaudo, gasto/CxP y
+pago al proveedor, cierre/reconciliación, aislamiento, concurrencia, reintento,
+desconexión y reconexión. La prueba fiscal debe reconciliar el total y sus
+impuestos, y la reimpresión debe conservar el documento emitido.
+
+Presupuesto: el cálculo es local y lineal en hasta 32 rangos y 11 participaciones
+de pago; no realiza I/O. Las lecturas de configuración y cargos se hacen por
+lote o página, nunca por cargo. La confirmación conserva el umbral local de dos
+segundos del motor documental; el reporte pagina como máximo 100 filas y la
+descarga de configuración se realiza por lotes acotados. Se mide el recorrido
+sin builds ni suites concurrentes antes de publicar.
+
+La confirmación multilínea usa `SqlInventoryLedgerWriter.PostBatchAsync`: carga
+solamente los productos afectados y sus pools de costo, mantiene el orden de
+valoración de las líneas y escribe saldos y kardex en lote dentro de la misma
+transacción documental. El método unitario delega en el mismo writer. La
+contabilidad resuelve categorías/cuentas y escribe líneas de asiento y pagos por
+conjunto; las aplicaciones de cartera y proveedores conservan sus validaciones,
+bloqueos e idempotencia en el processor financiero existente. La representación
+JSON se lee directamente con `OPENJSON ... WITH`, sin multiplicar las
+estimaciones de filas con una expansión anidada por elemento.
+
+Compatibilidad y despliegue: primero se publica el esquema aditivo y los
+lectores del servidor, después admin y el instalador Edge. Los payloads sin
+cargos conservan su serialización anterior. Si hay que detener nuevas
+aplicaciones, se inactivan los cargos mediante su configuración; los documentos
+emitidos y pendientes siguen usando su versión congelada. Después de emitir
+facturas con cargos no se deben reinstalar lectores anteriores que desconocen
+estos totales: la reversión requiere conservar la lectura y sincronización de
+los documentos ya aceptados. No se borran versiones, gastos ni cierres para
+revertir una publicación.
+
+Contexto original: 2026-07-30. Alineado al modelo de sesiones vigente: 2026-09-19.
 
 ## Decisión de contexto
 
-Una venta web siempre pertenece a una caja real. `RegisterId` es obligatorio en
-modo online y determina:
+Una venta web pertenece a la sede activa y al turno del cajero. `BusinessId`,
+`WorkSessionId` y `SoldByUserId` conservan el contexto operativo:
 
 - negocio y sede;
 - bodega;
@@ -15,9 +148,9 @@ modo online y determina:
 - cursores de ambos consecutivos;
 - sesión de caja y responsabilidad por cajero.
 
-El campo que no existe en una venta web es `DeviceId`, porque un navegador no se
-hace pasar por un equipo POS Edge enrolado. El documento conserva
-`SourceMode=Online`, `RegisterId` y `SoldByUserId`.
+`DeviceId` es nulo en una venta web porque el navegador no representa un equipo
+POS Edge enrolado. El documento conserva `SourceMode=Online`, `BusinessId`,
+`WorkSessionId` y `SoldByUserId`. No existe `RegisterId` en el esquema vigente.
 
 ## Flujo transaccional
 
@@ -29,7 +162,7 @@ Dentro de una transacción serializable, el servidor:
 1. bloquea el borrador del usuario;
 2. valida que siga activo y tenga la versión esperada;
 3. valida que los pagos cubran exactamente el total;
-4. resuelve las series operativa y fiscal activas de la caja;
+4. resuelve las series operativa y fiscal del emisor servidor de la sede;
 5. consume atómicamente ambos consecutivos;
 6. congela el snapshot comercial, fiscal y UBL;
 7. calcula CUFE y QR con la clave técnica de la resolución;
@@ -44,7 +177,7 @@ Después, el mismo motor usado por POS Edge:
 - crea líneas y resúmenes agrupados por impuesto y tarifa;
 - registra la salida de inventario;
 - registra pagos;
-- abre o reutiliza la sesión de la caja;
+- valida la sesión abierta del cajero;
 - atribuye la venta al turno del cajero;
 - registra movimientos de caja;
 - publica el evento mediante outbox;
@@ -53,7 +186,7 @@ Después, el mismo motor usado por POS Edge:
 ## Concurrencia e idempotencia
 
 Dos usuarios pueden vender simultáneamente desde computadores diferentes usando
-el mismo `RegisterId`. Los cursores pertenecen a las series de la caja y se
+sesiones propias en la misma sede. Los cursores pertenecen a sus series y se
 bloquean en SQL Server; uno recibe N y el otro N+1.
 
 El payload preparado se conserva antes de invocar el motor. Un reintento exacto:
@@ -64,8 +197,9 @@ El payload preparado se conserva antes de invocar el motor. Un reintento exacto:
 - no duplica líneas, impuestos, inventario, pagos, caja ni outbox.
 
 Reutilizar la misma venta con otra clave o contenido produce conflicto explícito.
-Un medio de pago sin un caso de uso completo —por ejemplo crédito antes de
-conectar cuentas por cobrar— se rechaza antes de reservar numeración.
+El crédito se declara mediante `Credit` y el cliente seleccionado con cupo
+habilitado; no es un registro ficticio en `Payments`. Enviar `Credit` como medio
+de pago se rechaza antes de reservar numeración.
 
 ## Persistencia
 
@@ -73,8 +207,8 @@ conectar cuentas por cobrar— se rechaza antes de reservar numeración.
 - `FiscalSeriesCursors`: siguiente consecutivo fiscal por serie.
 - `OnlineSalesCheckoutReceipts`: payload exacto, hash, clave idempotente,
   siguiente borrador y estado.
-- `SalesDocuments`: `RegisterId` obligatorio, `DeviceId` nulo para online y
-  `SourceMode` explícito.
+- `SalesDocuments`: sede, sesión y cajero responsables; `DeviceId` nulo para
+  online y `SourceMode` explícito.
 
 El proyecto `Auraly.Database.sqlproj` continúa siendo el único dueño del esquema.
 
@@ -92,7 +226,7 @@ retención. El total bruto, las retenciones y el neto por cobrar se presentan en
 la pantalla y en todos los formatos soportados: tirilla, media carta, medio
 oficio y carta.
 
-## Evidencia ejecutada
+## Evidencia histórica del checkout original
 
 - DACPAC: 0 errores y 0 advertencias.
 - Fundación: 109 pruebas correctas.
@@ -102,12 +236,13 @@ oficio y carta.
 - Reintento exacto sin duplicados.
 - Conflicto cuando cambia el contenido.
 - Dos cajeros concurrentes en una caja sin colisión de numeración.
-- Crédito todavía no conectado a cartera rechazado sin consumir consecutivos.
+- Un valor `Credit` incorrectamente enviado como medio de pago se rechaza sin
+  consumir consecutivos. El contrato de financiación usa `Credit` por separado.
 
-## Pendiente inmediato
+## Integración vigente del POS
 
-El servidor ya cubre el cierre durable. La siguiente tarea es conectar
-`OnlinePosClient` a la pantalla POS, recordar la caja seleccionada, imprimir
-desde el recibo confirmado y habilitar búsqueda y reimpresión de documentos del
-servidor. El modo online no debe mostrarse como terminado hasta que ese recorrido
-visual esté conectado y probado.
+`OnlinePosClient` conecta la pantalla POS al checkout, conserva el contexto de
+venta y devuelve recibo y siguiente borrador. La impresión y reimpresión usan
+el recibo confirmado y los renderizadores compartidos de `Auraly.Pos.Printing`.
+El historial consulta los documentos del servidor; no reconstruye la venta
+a partir de precios ni cargos actuales.

@@ -571,34 +571,7 @@ public sealed class ConfigurableOrderDocumentPrinter(
         string outputFormat = PrintTemplateFormats.HalfLetter,
         CancellationToken cancellationToken = default) =>
         PrintAsync(
-            receipts.Select(receipt => new Auraly.Contracts.Sales.OnlineSalesReceipt(
-                receipt.DocumentId.Value,
-                receipt.DocumentType,
-                receipt.DocumentNumber,
-                receipt.FiscalNumber,
-                receipt.IssuedAt,
-                receipt.CustomerIdentification,
-                receipt.Lines.Select(line =>
-                    new Auraly.Contracts.Sales.OnlineSalesReceiptLine(
-                        line.ProductCode, line.Description, line.Quantity,
-                        line.UnitPrice, line.Discount, line.Tax, line.Total,
-                        line.TaxCode, line.TaxRate, line.UnitCode)).ToArray(),
-                receipt.Payments.Select(payment =>
-                    new Auraly.Contracts.Sales.OnlineSalesPayment(
-                        payment.MethodCode, payment.Amount, payment.Reference,
-                        payment.CardFranchiseCode, payment.ApprovalNumber,
-                        payment.BankAccountId, payment.Notes,
-                        payment.TenderedAmount)).ToArray(),
-                receipt.UntaxedAmount,
-                receipt.TaxAmount,
-                receipt.PayableAmount,
-                receipt.Cufe,
-                receipt.QrPayload,
-                null,
-                receipt.CustomerName ?? receipt.CustomerIdentification,
-                receipt.CompanyName,
-                receipt.CompanyLogoSource,
-                InvoicePrintDetails: receipt.InvoicePrintDetails)).ToArray(),
+            receipts.Select(receipt => receipt.ToPrintDocument()).ToArray(),
             workflowPrinterName,
             outputFormat,
             cancellationToken);
@@ -899,7 +872,9 @@ public sealed class ConfigurablePosReceiptPrinter(
                 BusinessName: receipt.CreditAcknowledgement?.BusinessName,
                 WarehouseName: receipt.CreditAcknowledgement?.WarehouseName,
                 CreditAcknowledgement: receipt.CreditAcknowledgement,
-                InvoicePrintDetails: receipt.InvoicePrintDetails);
+                InvoicePrintDetails: receipt.InvoicePrintDetails,
+                CustomerPhone: receipt.CustomerPhone,
+                CustomerAddress: receipt.CustomerAddress);
 }
 
 public sealed class RenderedWindowsReceiptPrinter(

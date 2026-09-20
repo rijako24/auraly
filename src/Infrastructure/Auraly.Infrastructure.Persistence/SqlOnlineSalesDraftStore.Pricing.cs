@@ -101,7 +101,13 @@ public sealed partial class SqlOnlineSalesDraftStore
         CancellationToken ct)
     {
         var lines = await ReadLineProductsAsync(connection, transaction, draftId, ct);
-        if (lines.Count == 0) return;
+        if (lines.Count == 0)
+        {
+            await ExecuteAsync(connection, transaction,
+                "DELETE sales.InvoiceChargeDraftSelections WHERE DraftId=@DraftId;",
+                [P("@DraftId", draftId)], ct);
+            return;
+        }
         var prices = await ResolveProductPricesAsync(
             connection, transaction, state.BusinessId, state.WarehouseId, customerId,
             lines.Select(line => new SalePriceRequest(

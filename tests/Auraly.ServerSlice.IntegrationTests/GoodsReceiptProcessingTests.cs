@@ -656,14 +656,15 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             var issuedAt = new DateTimeOffset(2026, 9, 1, 10, 0, 0,
                 TimeSpan.FromHours(-5));
             var supportExpenseId = Guid.NewGuid();
+            var expenseCommand = new ConfirmExpenseRequest(
+                supportExpenseId, fixture.BusinessId, fixture.SupplierId,
+                conceptId, null, $"PROV-{supportExpenseId:N}", issuedAt,
+                issuedAt.AddDays(30), "COP", "Servicio de proveedor no obligado",
+                100_000m, 19_000m, null, null);
             using (var request = new HttpRequestMessage(HttpMethod.Post,
                        "/api/commerce/v1/expenses/confirm")
                    {
-                       Content = JsonContent.Create(new ConfirmExpenseRequest(
-                           supportExpenseId, fixture.BusinessId, fixture.SupplierId,
-                           conceptId, null, $"PROV-{supportExpenseId:N}", issuedAt,
-                           issuedAt.AddDays(30), "COP", "Servicio de proveedor no obligado",
-                           100_000m, 19_000m, null, null))
+                       Content = JsonContent.Create(expenseCommand)
                    })
             {
                 request.Headers.Add("Idempotency-Key", $"expense-support-{supportExpenseId:N}");
@@ -705,6 +706,18 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(0, await ScalarAsync<int>(
                 "SELECT COUNT(*) FROM dbo.FiscalDocuments WHERE DocumentId=@Id",
                 ordinaryExpenseId));
+            using (var deactivate = await client.PutAsJsonAsync($"/api/commerce/v1/expenses/concepts/{conceptId}",
+                new SaveExpenseConceptRequest(conceptId, fixture.BusinessId, "Concepto retirado",
+                    account.AccountId, center.CostCenterId, null, false))) deactivate.EnsureSuccessStatusCode();
+            using var retry = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/expenses/confirm")
+                { Content = JsonContent.Create(expenseCommand) };
+            retry.Headers.Add("Idempotency-Key", $"expense-support-{supportExpenseId:N}");
+            using var replay = await client.SendAsync(retry);
+            replay.EnsureSuccessStatusCode();
+            Assert.True((await replay.Content.ReadFromJsonAsync<ExpenseAcceptance>())!.IdempotentReplay);
+            Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id", supportExpenseId));
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id", supportExpenseId));
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.FiscalDocuments WHERE DocumentId=@Id", supportExpenseId));
         }
         finally
         {

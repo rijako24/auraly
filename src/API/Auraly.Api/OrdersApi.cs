@@ -2,6 +2,8 @@ using System.Security.Claims;
 using Auraly.Application.Orders;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Orders;
+using Auraly.Contracts.Sales;
+using Auraly.Pos.Printing;
 
 namespace Auraly.Api;
 
@@ -69,6 +71,30 @@ public static class OrdersApi
             CancellationToken ct) =>
             await Handle(() => service.GetPrintBatchAsync(
                 context.User.ToOrderUserActor(), request, ct)));
+
+        group.MapPost("/print-batch/render", async (HttpContext context,
+            OrderPrintRenderRequest request, OrderService service, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                if (request.Format is not ("Receipt" or "HalfLetter" or "HalfLegal" or "Letter") ||
+                    request.PaperWidthMillimeters is not (58 or 80))
+                    throw new OrderValidationException("Selecciona un formato de impresión válido.");
+                var orders = await service.GetPrintBatchAsync(context.User.ToOrderUserActor(),
+                    new(request.OrderIds), ct);
+                var documents = orders.Select(order => new OnlineSalesReceipt(
+                    order.OrderId, "Order", order.OrderNumber, null, order.CreatedAt,
+                    order.CustomerIdentification ?? "", order.Lines.Select(line => new OnlineSalesReceiptLine(
+                        line.ProductCode ?? "", line.ProductName, line.Quantity, line.UnitPrice,
+                        line.DiscountAmount, 0, line.LineTotal)).ToArray(), [], order.Total, 0, order.Total,
+                    null, null, "NotApplicable", order.CustomerName ?? "Cliente", request.CompanyName,
+                    request.CompanyLogoSource, CustomerPhone: order.CustomerPhone,
+                    CustomerAddress: order.DeliveryAddress)).ToArray();
+                var html = request.Format == "Receipt"
+                    ? new SalesReceiptHtmlRenderer().RenderBatch(documents, request.PaperWidthMillimeters,
+                        request.BusinessName, autoPrint: false)
+                    : new HalfLetterDocumentRenderer().Render(documents, request.Format, autoPrint: false);
+                return new { html, printedCount = documents.Length };
+            }));
 
         group.MapPost("/{orderId:guid}/claim", async (
             HttpContext context,

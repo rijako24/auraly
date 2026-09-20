@@ -1,4 +1,6 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Sales;
+using Auraly.Application.Sales;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
 
@@ -6,6 +8,86 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class PosDraftStoreTests
 {
+    [Fact]
+    public async Task Invoice_charge_recalculates_from_invoice_amount_and_survives_restart_pause_and_recovery()
+    {
+        await WithStoreAsync(async (store, path, scope, ids) =>
+        {
+            var catalog = new PosCatalogStore($"Data Source={path};Pooling=False");
+            await catalog.InitializeAsync();
+            var definition = TestCharge(scope.BusinessId.Value);
+            await catalog.StageInvoiceChargePageAsync(scope.BusinessId.Value, 1, new([definition], 1, 100, 1, 1));
+            await catalog.PromoteInvoiceChargesAsync(scope.BusinessId.Value, 1, 1);
+            var draft = await store.AddOrIncrementLineAsync(scope, Line(8));
+            var request = new InvoiceChargeDraftRequest(Guid.NewGuid(), definition.ChargeId, 1,
+                definition.Suppliers.Single().SupplierId, null, 0);
+            var charged = await store.SaveChargeAsync(scope, draft.DraftId, request);
+            Assert.Equal(85000, charged.PayableAmount);
+            Assert.Equal(5000, Assert.Single(charged.Charges!).InvoicedAmount);
+            var repriced = await store.SetQuantityAsync(draft.DraftId, draft.Lines.Single().LineId, 9);
+            Assert.Equal(90000, repriced.PayableAmount);
+            Assert.Equal(5000, Assert.Single(repriced.Charges!).ExpenseAmount);
+            var otherCustomer = await store.AssignPartiesAsync(draft.DraftId, Guid.NewGuid(), null, Guid.NewGuid());
+            Assert.Equal(repriced.Charges, otherCustomer.Charges);
+
+            // Updating the catalog does not rewrite a selection already captured.
+            await catalog.StageInvoiceChargePageAsync(scope.BusinessId.Value, 2,
+                new([definition with { Version = 2, Value = 9000 }], 1, 100, 1, 1));
+            await catalog.PromoteInvoiceChargesAsync(scope.BusinessId.Value, 2, 1);
+            var reopened = Store(path, ids);
+            var persisted = await reopened.GetOrCreateActiveAsync(scope);
+            Assert.Equal(5000, Assert.Single(persisted.Charges!).Amount);
+            await reopened.SaveTemporaryAsync(draft.DraftId, "Con domicilio", null, null);
+            var paused = await reopened.ListTemporariesAsync(scope.BusinessId, new());
+            Assert.Equal(5000, Assert.Single(Assert.Single(paused).Charges!).Amount);
+            var recovered = await reopened.RecoverTemporaryAsync(draft.DraftId, scope);
+            Assert.Equal(persisted.Charges, recovered.Charges);
+            var empty = await reopened.RemoveLineAsync(recovered.DraftId, recovered.Lines.Single().LineId);
+            Assert.Empty(empty.Charges!);
+            Assert.Equal(0, empty.PayableAmount);
+        });
+    }
+
+    [Fact]
+    public async Task Invoice_charge_rejects_other_site_other_session_inactive_catalog_and_stale_version()
+    {
+        await WithStoreAsync(async (store, path, scope, _) =>
+        {
+            var catalog = new PosCatalogStore($"Data Source={path};Pooling=False");
+            await catalog.InitializeAsync();
+            var definition = TestCharge(scope.BusinessId.Value);
+            await catalog.StageInvoiceChargePageAsync(scope.BusinessId.Value, 1, new([definition], 1, 100, 1, 1));
+            await catalog.PromoteInvoiceChargesAsync(scope.BusinessId.Value, 1, 1);
+            var draft = await store.AddOrIncrementLineAsync(scope, Line(1));
+            var request = new InvoiceChargeDraftRequest(Guid.NewGuid(), definition.ChargeId, 1,
+                definition.Suppliers.Single().SupplierId, null, 0);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.SaveChargeAsync(
+                scope with { BusinessId = new(Guid.NewGuid()) }, draft.DraftId, request));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.SaveChargeAsync(
+                scope with { UserId = new(Guid.NewGuid()) }, draft.DraftId, request));
+            await Assert.ThrowsAsync<InvoiceChargeConflictException>(() => store.SaveChargeAsync(
+                scope, draft.DraftId, request with { ChargeVersion = 2 }));
+            await Assert.ThrowsAsync<InvoiceChargeValidationException>(() => store.SaveChargeAsync(
+                scope, draft.DraftId, request with { SupplierId = Guid.NewGuid() }));
+            var saved = await store.SaveChargeAsync(scope, draft.DraftId, request);
+            var repeated = await store.SaveChargeAsync(scope, draft.DraftId, request);
+            Assert.Single(repeated.Charges!);
+            Assert.Equal(saved.PayableAmount, repeated.PayableAmount);
+            await catalog.StageInvoiceChargePageAsync(scope.BusinessId.Value, 2, new([], 1, 100, 0, 0));
+            await catalog.PromoteInvoiceChargesAsync(scope.BusinessId.Value, 2, 0);
+            await Assert.ThrowsAsync<InvoiceChargeValidationException>(() => store.SaveChargeAsync(scope, draft.DraftId, request));
+            var removed = await store.RemoveChargeAsync(scope, draft.DraftId, request.AppliedChargeId);
+            Assert.Empty(removed.Charges!);
+            Assert.Equal(10000, removed.PayableAmount);
+        });
+    }
+
+    private static InvoiceChargeDefinition TestCharge(Guid businessId) => new(
+        Guid.NewGuid(), businessId, 1, "DOM", "Domicilio de prueba", true, 0, "Fixed", 5000,
+        "UpToInvoiceAmount", 80000, Guid.NewGuid(), "Domicilios", Guid.NewGuid(), "TEST", "Gasto",
+        null, null, Guid.NewGuid(), "Impuesto", "01", 0, [],
+        [new(Guid.NewGuid(), "Proveedor de prueba", "TEST", 0, true)], Guid.NewGuid(), "Impuesto", 0);
+
     [Fact]
     public async Task Active_sale_survives_restart_and_identical_scans_create_separate_lines()
     {

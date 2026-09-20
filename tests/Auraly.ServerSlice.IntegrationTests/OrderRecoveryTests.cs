@@ -262,6 +262,9 @@ public sealed class OrderRecoveryTests(
             new("@TaxProfileId", taxProfileId), new("@TaxCode", $"SO-{taxProfileId:N}"[..32]),
             new("@PromotionId", promotionId));
         var partySiteId = await SeedPrimarySiteAsync(partyId, userId);
+        await ExecuteAsync("UPDATE dbo.PartySites SET Phone=N'3001234567' WHERE PartySiteId=@Id;",
+            new SqlParameter("@Id", partySiteId));
+
 
         using var client = fixture.CreateUserClient(
             userId,
@@ -312,6 +315,9 @@ public sealed class OrderRecoveryTests(
         Assert.Equal((111m, "Nombre capturado A", true), persistedLines[firstProductId]);
         Assert.Equal((99m, "Nombre capturado B", false), persistedLines[secondProductId]);
 
+        await ExecuteAsync("UPDATE dbo.PartySites SET Phone=N'3007654321',AddressLine=N'Dirección modificada' WHERE PartySiteId=@Id;",
+            new SqlParameter("@Id", partySiteId));
+
         using var printResponse = await client.PostAsJsonAsync(
             "/api/commerce/v1/orders/print-batch",
             new OrderPrintBatchRequest([orderId, orderId]));
@@ -321,6 +327,21 @@ public sealed class OrderRecoveryTests(
         Assert.Equal(orderId, printable.OrderId);
         Assert.Equal(205m, printable.Total);
         Assert.Equal("Cliente precios pedido", printable.CustomerName);
+        Assert.Equal("3001234567", printable.CustomerPhone);
+        Assert.Contains("Calle de prueba 1", printable.DeliveryAddress);
+        foreach (var format in new[] { "Receipt", "HalfLetter", "HalfLegal", "Letter" })
+        {
+            using var renderedResponse = await client.PostAsJsonAsync(
+                "/api/commerce/v1/orders/print-batch/render", new OrderPrintRenderRequest([orderId], format));
+            renderedResponse.EnsureSuccessStatusCode();
+            var rendered = await renderedResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            var html = rendered.GetProperty("html").GetString()!;
+            Assert.Equal(1, rendered.GetProperty("printedCount").GetInt32());
+            Assert.Contains("3001234567", html);
+            Assert.Contains("Calle de prueba 1", html);
+            Assert.DoesNotContain("3007654321", html);
+        }
+
         Assert.Collection(
             printable.Lines.OrderBy(line => line.UnitPrice),
             line =>

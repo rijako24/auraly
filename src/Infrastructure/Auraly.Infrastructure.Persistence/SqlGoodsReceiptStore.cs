@@ -649,22 +649,38 @@ public sealed class SqlGoodsReceiptStore(
 
     internal static async Task<SupportFiscalAllocation> AllocateSupportFiscalAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid supplierId,
+        DateTimeOffset issuedAt, DateTimeOffset now, CancellationToken cancellationToken) =>
+        (await AllocateSupportFiscalBatchAsync(connection, transaction, businessId, [supplierId],
+            issuedAt, now, cancellationToken))[0];
+
+    internal static async Task<IReadOnlyList<SupportFiscalAllocation>> AllocateSupportFiscalBatchAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId, IReadOnlyList<Guid> supplierIds,
         DateTimeOffset issuedAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        if (supplierIds.Count is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(supplierIds));
         const string sql = """
-            SELECT TOP(1) fs.SeriesId,fs.FiscalAuthorizationId,fs.Prefix,fs.RangeStart,fs.RangeEnd,
+            SELECT requested.[key],fs.SeriesId,fs.FiscalAuthorizationId,fs.Prefix,fs.RangeStart,fs.RangeEnd,
                    a.AuthorizationNumber,a.ValidFrom,a.ValidUntil,a.Environment,a.QrValidationUrl,
                    c.FiscalIssuerConfigurationId,
                    p.PartyType,p.Identification,p.VerificationDigit,p.IdentificationTypeCode,
                    COALESCE(p.LegalName,p.DisplayName),COALESCE(p.DisplayName,p.LegalName),
                    country.Code,country.Name,division.Code,division.Name,city.Code,city.Name,site.AddressLine,
                    email.Value,phone.Value,site.PostalCode
-            FROM dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
+            FROM OPENJSON(@SupplierIds) requested
+            CROSS JOIN (SELECT TOP(1) value.* FROM dbo.FiscalSeries value WITH(UPDLOCK,HOLDLOCK)
+              JOIN dbo.FiscalAuthorizations auth ON auth.FiscalAuthorizationId=value.FiscalAuthorizationId
+              WHERE value.BusinessId=@BusinessId AND value.DocumentType=N'SupportDocument'
+                AND value.EmitterKind=N'Server' AND value.DeviceId IS NULL AND value.IsActive=1
+                AND auth.IsActive=1 AND auth.ValidFrom<=CONVERT(date,@IssuedAt) AND auth.ValidUntil>=CONVERT(date,@IssuedAt)
+                AND EXISTS(SELECT 1 FROM dbo.FiscalIssuerConfigurations issuer WHERE issuer.BusinessId=value.BusinessId
+                  AND issuer.IsActive=1 AND issuer.Environment=auth.Environment
+                  AND issuer.ValidFrom<=@IssuedAt AND (issuer.ValidTo IS NULL OR issuer.ValidTo>@IssuedAt))
+              ORDER BY auth.ValidUntil DESC,value.SeriesId) fs
             JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=fs.FiscalAuthorizationId
             JOIN dbo.FiscalIssuerConfigurations c ON c.BusinessId=fs.BusinessId AND c.IsActive=1
               AND c.Environment=a.Environment
               AND c.ValidFrom<=@IssuedAt AND (c.ValidTo IS NULL OR c.ValidTo>@IssuedAt)
-            JOIN dbo.Suppliers s ON s.SupplierId=@SupplierId AND s.BusinessId=fs.BusinessId AND s.IsActive=1
+            JOIN dbo.Suppliers s ON s.SupplierId=CONVERT(uniqueidentifier,requested.value) AND s.BusinessId=fs.BusinessId AND s.IsActive=1
             JOIN dbo.Parties p ON p.PartyId=s.PartyId AND p.IsActive=1
             OUTER APPLY(SELECT TOP(1) value.* FROM dbo.PartySites value
               WHERE value.PartyId=p.PartyId AND value.IsActive=1
@@ -681,70 +697,77 @@ public sealed class SqlGoodsReceiptStore(
             WHERE fs.BusinessId=@BusinessId AND fs.DocumentType=N'SupportDocument'
               AND fs.EmitterKind=N'Server' AND fs.DeviceId IS NULL AND fs.IsActive=1
               AND a.IsActive=1 AND a.ValidFrom<=CONVERT(date,@IssuedAt) AND a.ValidUntil>=CONVERT(date,@IssuedAt)
-            ORDER BY a.ValidUntil DESC,fs.SeriesId;
+            ORDER BY CONVERT(int,requested.[key]);
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@SupplierId", supplierId);
+        command.Parameters.AddWithValue("@SupplierIds", JsonSerializer.Serialize(supplierIds));
         command.Parameters.AddWithValue("@IssuedAt", issuedAt);
+        var allocations = new List<SupportFiscalAllocation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-            throw new PurchasingValidationException(
-                "No hay numeración DIAN ni configuración fiscal activa para generar el documento soporte.");
-        var seriesId = reader.GetGuid(0);
-        var authorizationId = reader.GetGuid(1);
-        var prefix = reader.GetString(2);
-        var rangeStart = reader.GetInt64(3);
-        var rangeEnd = reader.GetInt64(4);
-        var authorization = new PosSaleUblAuthorizationContract(reader.GetString(5),
-            DateOnly.FromDateTime(reader.GetDateTime(6)), DateOnly.FromDateTime(reader.GetDateTime(7)),
-            prefix, rangeStart, rangeEnd);
-        var environment = reader.GetByte(8);
-        var qrUrl = reader.GetString(9);
-        var issuerId = reader.GetGuid(10);
-        if (reader.IsDBNull(12))
-            throw new PurchasingValidationException("El proveedor necesita identificación para generar el documento soporte.");
-        if (reader.IsDBNull(14) || Enumerable.Range(17, 7).Any(reader.IsDBNull))
-            throw new PurchasingValidationException(
-                "El proveedor necesita tipo de identificación y una sede principal con dirección DIAN completa para generar el documento soporte.");
-        var sellerIdentification = reader.GetString(12);
-        if (!ColombianNit.TryCalculateVerificationDigit(
-                sellerIdentification, out var sellerVerificationDigit))
-            throw new PurchasingValidationException(
-                "El proveedor residente necesita un NIT numérico válido para generar el documento soporte.");
-        if (reader.IsDBNull(26) || reader.GetString(26).Trim() is not { Length: 6 } postalZone ||
-            !postalZone.All(char.IsDigit))
-            throw new PurchasingValidationException(
-                "El proveedor residente necesita un código postal DIAN de seis dígitos para generar el documento soporte.");
-        var seller = new PosSaleUblPartyContract(
-            sellerIdentification, sellerVerificationDigit.ToString(), "31",
-            reader.GetString(11) == "Organization" ? "1" : "2",
-            reader.GetString(15), reader.GetString(16), "R-99-PN", "ZZ", "No aplica",
-            new PosSaleUblAddressContract(
-                reader.GetString(21), reader.GetString(22), reader.GetString(20),
-                reader.GetString(19), reader.GetString(23), reader.GetString(17),
-                reader.GetString(18)),
-            reader.IsDBNull(24) ? null : reader.GetString(24),
-            reader.IsDBNull(25) ? null : reader.GetString(25));
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (Convert.ToInt32(reader.GetString(0)) != allocations.Count)
+                throw new PurchasingValidationException("The complete supplier fiscal batch could not be loaded.");
+            var seriesId = reader.GetGuid(1);
+            var authorizationId = reader.GetGuid(2);
+            var prefix = reader.GetString(3);
+            var rangeStart = reader.GetInt64(4);
+            var rangeEnd = reader.GetInt64(5);
+            var authorization = new PosSaleUblAuthorizationContract(reader.GetString(6),
+                DateOnly.FromDateTime(reader.GetDateTime(7)), DateOnly.FromDateTime(reader.GetDateTime(8)),
+                prefix, rangeStart, rangeEnd);
+            var environment = reader.GetByte(9);
+            var qrUrl = reader.GetString(10);
+            var issuerId = reader.GetGuid(11);
+            if (reader.IsDBNull(13))
+                throw new PurchasingValidationException("El proveedor necesita identificación para generar el documento soporte.");
+            if (reader.IsDBNull(15) || Enumerable.Range(18, 7).Any(reader.IsDBNull))
+                throw new PurchasingValidationException(
+                    "El proveedor necesita tipo de identificación y una sede principal con dirección DIAN completa para generar el documento soporte.");
+            var sellerIdentification = reader.GetString(13);
+            if (!ColombianNit.TryCalculateVerificationDigit(
+                    sellerIdentification, out var sellerVerificationDigit))
+                throw new PurchasingValidationException(
+                    "El proveedor residente necesita un NIT numérico válido para generar el documento soporte.");
+            if (reader.IsDBNull(27) || reader.GetString(27).Trim() is not { Length: 6 } postalZone ||
+                !postalZone.All(char.IsDigit))
+                throw new PurchasingValidationException(
+                    "El proveedor residente necesita un código postal DIAN de seis dígitos para generar el documento soporte.");
+            var seller = new PosSaleUblPartyContract(
+                sellerIdentification, sellerVerificationDigit.ToString(), "31",
+                reader.GetString(12) == "Organization" ? "1" : "2",
+                reader.GetString(16), reader.GetString(17), "R-99-PN", "ZZ", "No aplica",
+                new PosSaleUblAddressContract(
+                    reader.GetString(22), reader.GetString(23), reader.GetString(21),
+                    reader.GetString(20), reader.GetString(24), reader.GetString(18),
+                    reader.GetString(19)),
+                reader.IsDBNull(25) ? null : reader.GetString(25),
+                reader.IsDBNull(26) ? null : reader.GetString(26));
+            allocations.Add(new(seriesId, authorizationId, issuerId, string.Empty,
+                environment, qrUrl, authorization, seller, postalZone));
+        }
         await reader.CloseAsync();
-
-        const string cursorSql = """
-            IF NOT EXISTS(SELECT 1 FROM dbo.FiscalSeriesCursors WITH (UPDLOCK,HOLDLOCK) WHERE SeriesId=@SeriesId)
+        if (allocations.Count != supplierIds.Count || allocations.Select(item => item.SeriesId).Distinct().Count() != 1)
+            throw new PurchasingValidationException("No hay numeración DIAN, proveedor o configuración fiscal activa para generar el documento soporte.");
+        var first = allocations[0];
+        await using var cursor = new SqlCommand("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.FiscalSeriesCursors WITH(UPDLOCK,HOLDLOCK) WHERE SeriesId=@SeriesId)
               INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt) VALUES(@SeriesId,@RangeStart,@Now);
-            DECLARE @Value BIGINT;
-            SELECT @Value=NextConsecutive FROM dbo.FiscalSeriesCursors WITH (UPDLOCK,HOLDLOCK) WHERE SeriesId=@SeriesId;
-            UPDATE dbo.FiscalSeriesCursors SET NextConsecutive=@Value+1,UpdatedAt=@Now WHERE SeriesId=@SeriesId;
+            DECLARE @Value bigint;
+            SELECT @Value=NextConsecutive FROM dbo.FiscalSeriesCursors WITH(UPDLOCK,HOLDLOCK) WHERE SeriesId=@SeriesId;
+            IF @Value>@RangeEnd-@Count+1 THROW 51734,N'La numeración DIAN de documento soporte está agotada.',1;
+            UPDATE dbo.FiscalSeriesCursors SET NextConsecutive=@Value+@Count,UpdatedAt=@Now WHERE SeriesId=@SeriesId;
             SELECT @Value;
-            """;
-        await using var cursor = new SqlCommand(cursorSql, connection, transaction);
-        cursor.Parameters.AddWithValue("@SeriesId", seriesId);
-        cursor.Parameters.AddWithValue("@RangeStart", rangeStart);
+            """, connection, transaction);
+        cursor.Parameters.AddWithValue("@SeriesId", first.SeriesId);
+        cursor.Parameters.AddWithValue("@RangeStart", first.Authorization.RangeStart);
+        cursor.Parameters.AddWithValue("@RangeEnd", first.Authorization.RangeEnd);
+        cursor.Parameters.AddWithValue("@Count", allocations.Count);
         cursor.Parameters.AddWithValue("@Now", now);
         var consecutive = Convert.ToInt64(await cursor.ExecuteScalarAsync(cancellationToken));
-        if (consecutive > rangeEnd)
-            throw new PurchasingValidationException("La numeración DIAN de documento soporte está agotada.");
-        return new(seriesId, authorizationId, issuerId, prefix + consecutive,
-            environment, qrUrl, authorization, seller, postalZone);
+        return allocations.Select((item, index) => item with {
+            FiscalNumber = item.Authorization.Prefix + (consecutive + index) }).ToArray();
     }
 
     private static async Task InsertSupportFiscalAsync(

@@ -7,7 +7,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Auraly.Contracts.Expenses\Auraly.Contracts.Expenses.csproj" />
     <ProjectReference Include="..\Auraly.Domain.Expenses\Auraly.Domain.Expenses.csproj" />
-    <ProjectReference Include="..\..\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\Accounting\Auraly.Commerce.Accounting.Application\Auraly.Commerce.Accounting.Application.csproj" />
     <ProjectReference Include="..\..\Taxation\Auraly.Commerce.Taxation.Application\Auraly.Commerce.Taxation.Application.csproj" />
+    <ProjectReference Include="..\..\Fiscal\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
   </ItemGroup>
 </Project>

@@ -153,7 +153,8 @@ public sealed record OnlineSalesDraft(
     decimal TaxAmount,
     decimal PayableAmount,
     Guid? SourceOrderId = null,
-    Guid? CustomerPartySiteId = null);
+    Guid? CustomerPartySiteId = null,
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
 
 public sealed record OnlineSalesInventoryIssue(
     Guid LineId,

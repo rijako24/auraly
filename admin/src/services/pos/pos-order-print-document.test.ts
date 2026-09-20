@@ -9,6 +9,8 @@ test("an order print document preserves captured prices and has no fiscal or pay
     createdAt: "2026-09-11T15:00:00Z",
     customerName: "Cliente pedido",
     customerIdentification: "900123",
+    customerPhone: "3001234567",
+    deliveryAddress: "Calle 10 # 20-30 · Apartamento 402",
     total: 195,
     lines: [{
       productCode: "P-1",
@@ -23,6 +25,8 @@ test("an order print document preserves captured prices and has no fiscal or pay
   assert.equal(receipt.documentType, "Order");
   assert.equal(receipt.documentNumber, "PED-0042");
   assert.equal(receipt.customerName, "Cliente pedido");
+  assert.equal(receipt.customerPhone, "3001234567");
+  assert.equal(receipt.customerAddress, "Calle 10 # 20-30 · Apartamento 402");
   assert.equal(receipt.lines[0]?.unitPrice, 100);
   assert.equal(receipt.lines[0]?.discount, 5);
   assert.equal(receipt.lines[0]?.total, 195);

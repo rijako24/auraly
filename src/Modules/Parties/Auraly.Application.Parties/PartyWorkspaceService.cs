@@ -1,6 +1,8 @@
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
+using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Sales;
 using Auraly.Domain.Parties;
 
 namespace Auraly.Application.Parties;
@@ -55,7 +57,12 @@ public sealed class PartyWorkspaceService(
     public Task<PartyRoleOptionPage> RoleOptionsAsync(
         PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct)
     {
-        Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
+        // Creating an expense needs the scoped supplier picker, not permission
+        // to browse/edit the full third-party workspace or other roles.
+        if (query.Role?.Trim() != "Supplier" ||
+            (!actor.Permissions.Contains(ExpensePermissionCodes.Create) &&
+             !actor.Permissions.Contains(InvoiceChargePermissions.Configure)))
+            Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
         if (page < 1 || query.PageSize is < 1 or > 100)
             throw new PartyValidationException("Page and PageSize are outside the allowed range.");
         var role = query.Role?.Trim();

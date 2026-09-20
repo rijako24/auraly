@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Application.Fiscal;
+using Auraly.Application.Sales;
+using System.Xml.Linq;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
@@ -117,6 +119,42 @@ public sealed class FiscalGenerationWorkerTests
             Assert.IsType<FiscalGeneratedArtifacts>(store.Completed).UnsignedXml);
         Assert.Contains("schemeID=\"1\"", xml, StringComparison.Ordinal);
         Assert.Equal(FiscalDocumentStatusCodes.PendingSubmission, store.FinalStatus);
+    }
+
+    [Theory]
+    [InlineData("Always", 0, 2, 16900, 1900)]
+    [InlineData("Always", 19, 2, 16900, 2698.32)]
+    [InlineData("Never", 19, 1, 11900, 1900)]
+    public async Task Charge_fiscal_lines_reconcile_taxes_without_inventing_product_lines(
+        string inclusion, decimal taxRate, int lineCount, decimal total, decimal vat)
+    {
+        var work = CreateWork();
+        var sale = work.Sale!;
+        var definition = new InvoiceChargeDefinition(Guid.NewGuid(), work.BusinessId, 1,
+            "DOM", "Domicilio", true, 0, "Fixed", 5000, inclusion, null,
+            Guid.NewGuid(), "Domicilios", Guid.NewGuid(), "TEST", "Gasto", null, null,
+            Guid.NewGuid(), "IVA", "01", taxRate, [], [new(Guid.NewGuid(), "Proveedor", "TEST", 0, true)],
+            Guid.NewGuid(), "IVA", 0);
+        var charge = InvoiceChargeApplication.Calculate(11900,
+            new InvoiceChargeSelection(Guid.NewGuid(), definition, definition.Suppliers[0].SupplierId, null));
+        var commercial = sale.CommercialSnapshot with { UntaxedAmount = total - vat, TaxAmount = vat,
+            PayableAmount = total, Taxes = [new("01", vat)] };
+        work = work with { Sale = sale with { Charges = [charge], CommercialSnapshot = commercial,
+            FiscalSnapshot = sale.FiscalSnapshot! with { UntaxedAmount = total - vat, TaxAmount = vat,
+                PayableAmount = total, Taxes = commercial.Taxes }, Payments = [new(1, "Cash", total, null)] } };
+        var store = new TestStore(work);
+        Assert.True(await CreateWorker(store).ProcessAsync(work.BusinessId, work.DocumentId, "worker-fees"));
+        Assert.True(store.Completed is not null, store.ErrorMessage);
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(store.Completed!.UnsignedXml));
+        XNamespace aggregate = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2";
+        XNamespace basic = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2";
+        var lines = xml.Root!.Elements(aggregate + "InvoiceLine").ToArray();
+        Assert.Equal(lineCount, lines.Length);
+        Assert.Equal(total - vat, lines.Sum(line => (decimal)line.Element(basic + "LineExtensionAmount")!));
+        Assert.Equal(total, (decimal)xml.Root.Element(aggregate + "LegalMonetaryTotal")!.Element(basic + "PayableAmount")!);
+        Assert.Equal(vat, xml.Root.Elements(aggregate + "TaxTotal").Sum(tax => (decimal)tax.Element(basic + "TaxAmount")!));
+        Assert.Single(work.Sale!.Lines);
+        Assert.Equal(inclusion == "Always", lines.Any(line => line.ToString().Contains("Domicilio", StringComparison.Ordinal)));
     }
 
     private static FiscalGenerationWorker CreateWorker(TestStore store) => new(

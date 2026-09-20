@@ -8,6 +8,7 @@ using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Parties;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Application.Sales;
 using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Pos.Edge.Host;
@@ -385,7 +386,7 @@ public static class PosEdgeHostApplication
                 await context.Response.WriteAsJsonAsync(new
                 {
                     code = "IssuedPendingPrint",
-                    detail = "La factura ya fue emitida y estÃ¡ pendiente de imprimir la tirilla. Presiona F1 para reintentar la impresiÃ³n."
+                    detail = "La factura ya fue emitida y está pendiente de imprimir la tirilla. Presiona F1 para reintentar la impresión."
         });
             }
             finally
@@ -810,6 +811,32 @@ public static class PosEdgeHostApplication
             CancellationToken ct) =>
             Results.Ok(await drafts.GetOrCreateActiveAsync(
                 context.ScopeFor(sessions.Required()), ct)));
+        edge.MapGet("/invoice-charges", async (int? page, PosCatalogStore catalog,
+            PosEdgeRuntimeContext context, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+        {
+            if (!sessions.Required().Permissions.Contains(CommercePermissionCodes.SalesCreate)) return Results.Forbid();
+            if (page is < 1 or > 1000000) return Results.BadRequest(new { detail = "Página no válida." });
+            return Results.Ok(await catalog.InvoiceChargesAsync(context.BusinessId.Value, page ?? 1, ct));
+        });
+        edge.MapPut("/drafts/{draftId:guid}/charges/{appliedChargeId:guid}", async (
+            Guid draftId, Guid appliedChargeId, InvoiceChargeDraftRequest request, PosDraftStore drafts,
+            PosEdgeRuntimeContext context, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+        {
+            var session = sessions.Required();
+            if (!session.Permissions.Contains(CommercePermissionCodes.SalesCreate)) return Results.Forbid();
+            if (appliedChargeId != request.AppliedChargeId) return Results.BadRequest();
+            try { return Results.Ok(await drafts.SaveChargeAsync(context.ScopeFor(session), new(draftId), request, ct)); }
+            catch (InvoiceChargeValidationException error) { return Results.BadRequest(new { detail = error.Message }); }
+            catch (InvoiceChargeConflictException error) { return Results.Conflict(new { detail = error.Message }); }
+        });
+        edge.MapDelete("/drafts/{draftId:guid}/charges/{appliedChargeId:guid}", async (
+            Guid draftId, Guid appliedChargeId, PosDraftStore drafts, PosEdgeRuntimeContext context,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+        {
+            var session = sessions.Required();
+            if (!session.Permissions.Contains(CommercePermissionCodes.SalesCreate)) return Results.Forbid();
+            return Results.Ok(await drafts.RemoveChargeAsync(context.ScopeFor(session), new(draftId), appliedChargeId, ct));
+        });
         edge.MapGet("/catalog/products", async (
             string? search,
             int? skip,

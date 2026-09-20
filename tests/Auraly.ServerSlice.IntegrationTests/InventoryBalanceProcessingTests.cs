@@ -71,6 +71,84 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
         }
     }
 
+    [Fact]
+    public async Task Twenty_sale_lines_reuse_one_inventory_batch_and_do_not_multiply_SQL_trips()
+    {
+        using var client = fixture.CreateClient();
+        var warmup = fixture.CreateValidRequest(8894);
+        var single = fixture.CreateValidRequest(8895);
+        var source = fixture.CreateValidRequest(8896);
+        try
+        {
+            await UploadAsync(client, warmup);
+            int singleCommands;
+            using (var counter = new CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog))
+            {
+                await UploadAsync(client, single);
+                singleCommands = counter.Count;
+            }
+            var before = await ReadBalanceQuantityAsync() ?? 0;
+            var original = source.Lines[0];
+            var many = source with { Lines = Enumerable.Range(1, 20).Select(number => original with {
+                LineNumber = number, Quantity = original.Quantity / 20,
+                DiscountAmount = original.DiscountAmount / 20, TaxAmount = original.TaxAmount / 20,
+                UntaxedAmount = original.UntaxedAmount / 20, LineTotal = original.LineTotal / 20 }).ToArray() };
+            int manyCommands;
+            using (var counter = new CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog))
+            {
+                await UploadAsync(client, many);
+                manyCommands = counter.Count;
+            }
+            Assert.True(singleCommands > 0, "SqlClient no publicó evidencia de comandos.");
+            Assert.True(manyCommands <= singleCommands,
+                $"Una línea: {singleCommands} comandos; veinte líneas: {manyCommands} comandos.");
+            var movements = await ReadMovementsAsync(many.DocumentId, many.DocumentId);
+            Assert.Equal(20, movements.Count);
+            Assert.Equal(before, movements[0].QuantityBefore);
+            Assert.Equal(before - original.Quantity, movements[^1].QuantityAfter);
+            Assert.Equal(before - original.Quantity, await ReadBalanceQuantityAsync());
+            await UploadAsync(client, many);
+            Assert.Equal(20, (await ReadMovementsAsync(many.DocumentId, many.DocumentId)).Count);
+        }
+        finally
+        {
+            await RemoveFromPendingFiscalListingAsync(warmup.DocumentId, single.DocumentId);
+            await RemoveFromPendingFiscalListingAsync(source.DocumentId, source.DocumentId);
+        }
+    }
+
+    private sealed class CommandCounter : IObserver<System.Diagnostics.DiagnosticListener>,
+        IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly string database;
+        private readonly System.Collections.Concurrent.ConcurrentBag<IDisposable> subscriptions = [];
+        private readonly IDisposable allListeners;
+        private int count;
+        public int Count => Volatile.Read(ref count);
+        public CommandCounter(string database)
+        {
+            this.database = database;
+            allListeners = System.Diagnostics.DiagnosticListener.AllListeners.Subscribe(this);
+        }
+        public void OnNext(System.Diagnostics.DiagnosticListener listener)
+        {
+            if (listener.Name == "SqlClientDiagnosticListener")
+                subscriptions.Add(listener.Subscribe(this, name => name.EndsWith(".WriteCommandBefore", StringComparison.Ordinal)));
+        }
+        public void OnNext(KeyValuePair<string, object?> value)
+        {
+            if (value.Value?.GetType().GetProperty("Command")?.GetValue(value.Value) is SqlCommand command &&
+                command.Connection?.Database == database) Interlocked.Increment(ref count);
+        }
+        public void OnCompleted() { }
+        public void OnError(Exception error) => throw error;
+        public void Dispose()
+        {
+            allListeners.Dispose();
+            foreach (var subscription in subscriptions) subscription.Dispose();
+        }
+    }
+
     private async Task SetManageStockAsync(bool value)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);

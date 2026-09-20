@@ -73,7 +73,8 @@ public sealed record PosEdgeIssueCommand(
     WithholdingCalculationSnapshot? Withholding = null,
     PosSaleCreditContract? Credit = null,
     string? CustomerName = null,
-    Guid? CustomerPartySiteId = null);
+    Guid? CustomerPartySiteId = null,
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -143,7 +144,8 @@ public sealed record PosLocalWorkSessionSale(
     IReadOnlyList<PosSalePaymentContract> Payments,
     decimal CreditAmount,
     string CustomerName,
-    string DocumentNumber);
+    string DocumentNumber,
+    IReadOnlyList<Auraly.Contracts.WorkSessions.WorkSessionInvoiceCharge>? InvoiceCharges = null);
 
 public sealed record PosSaleOutboxStatus(
     int PendingCount,
@@ -560,7 +562,7 @@ public sealed class PosEdgeSaleStore
                 technicalKey,
                 environment,
                 qrValidationUrl,
-                command.Lines));
+                command.Lines, command.Charges));
             invoice = confirmed.Invoice;
             snapshot = invoice.FiscalSnapshot
                 ?? throw new InvalidOperationException("The sale was not fiscally frozen.");
@@ -571,7 +573,7 @@ public sealed class PosEdgeSaleStore
         else
         {
             invoice = _confirmationService.Prepare(new PrepareOfflineSaleCommand(
-                command.UserId, command.DocumentId, command.Context, command.Lines));
+                command.UserId, command.DocumentId, command.Context, command.Lines, command.Charges));
             outboxMessageId = Guid.NewGuid();
             outboxType = "sales.receipt.confirmed";
         }
@@ -668,7 +670,8 @@ public sealed class PosEdgeSaleStore
                 value.CommercialSnapshot.CustomerName
                     ?? value.UblSnapshot?.Customer.RegistrationName
                     ?? value.CommercialSnapshot.CustomerIdentification,
-                value.DocumentNumber.FullNumber))
+                value.DocumentNumber.FullNumber,
+                Auraly.Application.Sales.InvoiceChargeClosureProjection.FromSale(value)))
             .ToArray();
     }
 
@@ -1083,13 +1086,8 @@ public sealed class PosEdgeSaleStore
                 (payment.MethodCode != "Transfer" && (payment.BankAccountId is not null || payment.Notes is not null))))
             throw new InvalidOperationException("Transfer payments require valid evidence and settlement configuration.");
 
-        var taxes = lines
-            .GroupBy(line => line.TaxCode, StringComparer.Ordinal)
-            .Select(group => new PosSaleTaxContract(
-                group.Key,
-                group.Sum(line => line.TaxAmount)))
-            .OrderBy(tax => tax.Code, StringComparer.Ordinal)
-            .ToArray();
+        var taxes = PosSaleTaxSummary.Calculate(lines.Select(line =>
+            new PosSaleTaxContract(line.TaxCode, line.TaxAmount)), command.Charges);
         return new PosSaleUploadRequest(
             command.Context.TenantId.Value,
             command.Context.BusinessId.Value,
@@ -1143,7 +1141,8 @@ public sealed class PosEdgeSaleStore
             command.CustomerId,
             SourceOrderId: command.SourceOrderId,
             Credit: command.Credit,
-            CustomerPartySiteId: command.CustomerPartySiteId);
+            CustomerPartySiteId: command.CustomerPartySiteId,
+            Charges: command.Charges is { Count: > 0 } ? command.Charges : null);
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>

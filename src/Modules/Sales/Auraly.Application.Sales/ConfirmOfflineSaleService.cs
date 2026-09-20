@@ -31,7 +31,8 @@ public sealed record PrepareOfflineSaleCommand(
     UserId UserId,
     DocumentId DocumentId,
     SalesExecutionContext Context,
-    IReadOnlyCollection<OfflineSaleLine> Lines);
+    IReadOnlyCollection<OfflineSaleLine> Lines,
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
 
 public sealed record ConfirmOfflineSaleCommand(
     UserId UserId,
@@ -45,7 +46,8 @@ public sealed record ConfirmOfflineSaleCommand(
     FiscalTechnicalKey TechnicalKey,
     FiscalEnvironment Environment,
     string QrValidationUrl,
-    IReadOnlyCollection<OfflineSaleLine> Lines);
+    IReadOnlyCollection<OfflineSaleLine> Lines,
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
 
 public sealed record ConfirmedOfflineSale(
     SalesInvoice Invoice,
@@ -58,11 +60,11 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
     {
         ArgumentNullException.ThrowIfNull(command);
         var invoice = Prepare(new PrepareOfflineSaleCommand(
-            command.UserId, command.DocumentId, command.Context, command.Lines));
+            command.UserId, command.DocumentId, command.Context, command.Lines, command.Charges));
 
-        var taxes = command.Lines
-            .GroupBy(line => line.Product.TaxCode, StringComparer.Ordinal)
-            .Select(group => new FiscalTaxAmount(group.Key, group.Sum(line => line.TaxAmount)))
+        var taxes = PosSaleTaxSummary.Calculate(command.Lines.Select(line =>
+                new PosSaleTaxContract(line.Product.TaxCode, line.TaxAmount)), command.Charges)
+            .Select(tax => new FiscalTaxAmount(tax.Code, tax.Amount))
             .ToArray();
         var cufe = CufeCalculator.Calculate(
             new CufeInput(
@@ -124,6 +126,7 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
 
         if (command.Lines.Count == 0)
             throw new InvalidOperationException("An offline sale requires at least one line.");
+        InvoiceChargeApplication.ValidateSnapshot(command.Lines.Sum(line => line.LineTotal), command.Charges);
 
         if (command.Lines.Any(line => line.Discount > 0))
         {
@@ -163,6 +166,9 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
                 line.LineTotal));
         }
 
+        foreach (var charge in command.Charges ?? [])
+            invoice.AddCharge(new SalesInvoiceCharge(charge.AppliedChargeId,
+                charge.InvoicedUntaxedAmount, charge.InvoicedTaxAmount));
         return invoice;
     }
 }

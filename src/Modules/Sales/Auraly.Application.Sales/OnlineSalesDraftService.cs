@@ -12,6 +12,10 @@ public sealed record OnlineSalesUserIdentity(
 
 public interface IOnlineSalesDraftStore
 {
+    Task<OnlineSalesDraft> SaveChargeAsync(OnlineSalesUserIdentity user, Guid draftId,
+        InvoiceChargeDraftRequest request, string idempotencyKey, CancellationToken ct);
+    Task<OnlineSalesDraft> RemoveChargeAsync(OnlineSalesUserIdentity user, Guid draftId,
+        Guid appliedChargeId, long expectedVersion, string idempotencyKey, CancellationToken ct);
     Task<OnlineSalesDraft> GetOrCreateActiveAsync(
         OnlineSalesUserIdentity user,
         OnlineSalesDraftContext context,
@@ -374,6 +378,26 @@ public sealed class OnlineSalesDraftService(
         return await drafts.ResetAsync(
             user, draftId, request.ExpectedVersion, cancelSourceOrder: true,
             idempotencyKey, cancellationToken);
+    }
+
+    public Task<OnlineSalesDraft> SaveChargeAsync(OnlineSalesUserIdentity user, Guid draftId,
+        InvoiceChargeDraftRequest request, string idempotencyKey, CancellationToken ct = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (request.AppliedChargeId == Guid.Empty || request.ChargeId == Guid.Empty ||
+            request.SupplierId == Guid.Empty || request.ChargeVersion < 1)
+            throw new OnlineSalesDraftValidationException("Selecciona un cargo y su proveedor.");
+        return drafts.SaveChargeAsync(user, draftId, request, idempotencyKey, ct);
+    }
+
+    public Task<OnlineSalesDraft> RemoveChargeAsync(OnlineSalesUserIdentity user, Guid draftId,
+        Guid appliedChargeId, long expectedVersion, string idempotencyKey, CancellationToken ct = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, expectedVersion, idempotencyKey);
+        if (appliedChargeId == Guid.Empty) throw new OnlineSalesDraftValidationException("El cargo es obligatorio.");
+        return drafts.RemoveChargeAsync(user, draftId, appliedChargeId, expectedVersion, idempotencyKey, ct);
     }
 
     public async Task<OnlineSalesDraft> DiscardUnpricedGenericLineAsync(

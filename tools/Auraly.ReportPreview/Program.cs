@@ -1,8 +1,10 @@
+using Auraly.Pos.Printing;
 using System.Diagnostics;
 using System.Net;
 using System.Text;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
 using Auraly.Fiscal.Ubl;
 using Auraly.Pos.Edge.Infrastructure;
 
@@ -47,6 +49,49 @@ foreach (var version in new[] { 2, 3 })
         sheetRenderer.Render([online], format, version, autoPrint: false),
         Encoding.UTF8);
     pages.Add((fileName, $"{label} · v{version}"));
+}
+
+var order = online with
+{
+    DocumentType = "Order", DocumentNumber = "PED-0000042", FiscalNumber = null,
+    Lines = [new("CAFE-01", "Café molido premium", 2m, 11900m, 0m, 0m, 23800m)],
+    UntaxedAmount = 23800m, TaxAmount = 0m,
+    CustomerPhone = "300 123 4567",
+    CustomerAddress = "Calle 10 # 20-30, edificio Los Almendros, apartamento 402.\nEntregar en portería, entrada por la carrera 5.",
+    Payments = [], Cufe = null, QrPayload = null, InvoicePrintDetails = null
+};
+foreach (var width in new[] { 58, 80 })
+{
+    var file = $"pedido-{width}mm.html";
+    await File.WriteAllTextAsync(Path.Combine(output, file),
+        new SalesReceiptHtmlRenderer().Render(order, width, autoPrint: false), Encoding.UTF8);
+    pages.Add((file, $"Pedido · {width} mm"));
+    var now = new DateTimeOffset(2026, 9, 19, 18, 0, 0, TimeSpan.FromHours(-5));
+    var closure = new WorkSessionClosureView(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+        "Sede principal", null, null, Guid.NewGuid(), "María González", null, now.AddHours(-8), now,
+        85000m, 0m, 3000m, 88000m, 88000m, 88000m, 0m, "Cierre de prueba",
+        [new WorkSessionPaymentTotal("Cash", 85000m, 0m, 3000m, 88000m, 88000m, 0m, true, 5000m, 2000m)],
+        3, 1, 25000m, 0, [new WorkSessionCreditSale("Cliente con nombre extenso", "FV-1234", 25000m)], 4,
+        [new WorkSessionCashMovementDetail(Guid.NewGuid(), "In", "ING-1", "Base adicional", 5000m,
+             now.AddHours(-2), "María", Notes: "Cambio para el turno.\nBilletes de baja denominación."),
+         new WorkSessionCashMovementDetail(Guid.NewGuid(), "Out", "EGR-1", "Compra de suministros", 2000m,
+             now.AddHours(-1), "María", Notes: "Papel para la impresora de caja y elementos de oficina.")],
+        InvoiceCharges: [
+            new(Guid.NewGuid(), "FV-1233", Guid.NewGuid(), Guid.NewGuid(), "DOM", "Domicilio",
+                "Domiciliario de prueba", 5000m, 5000m, 0m, 0m, [new(1, "Cash", 5000m)]),
+            new(Guid.NewGuid(), "FV-1234", Guid.NewGuid(), Guid.NewGuid(), "AGOT", "Agotados",
+                "Domiciliario de prueba", 6500m, 0m, 6500m, 0m, [])]);
+    file = $"cierre-{width}mm-v4.html";
+    await File.WriteAllTextAsync(Path.Combine(output, file),
+        WorkSessionClosureReceiptRenderer.RenderHtml(closure, paperWidthMillimeters: width), Encoding.UTF8);
+    pages.Add((file, $"Cierre v4 · {width} mm"));
+}
+foreach (var (format, slug, label) in formats)
+{
+    var file = $"pedido-{slug}.html";
+    await File.WriteAllTextAsync(Path.Combine(output, file),
+        sheetRenderer.Render([order], format, autoPrint: false), Encoding.UTF8);
+    pages.Add((file, $"Pedido · {label}"));
 }
 
 const string pdfName = "representacion-grafica-fiscal-v1.pdf";

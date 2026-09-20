@@ -40,14 +40,14 @@ public sealed record ConfirmExpenseRequest(Guid ExpenseId, Guid BusinessId, Guid
 public sealed record ExpenseDocumentPayload(Guid TenantId, Guid BusinessId, Guid ExpenseId, Guid SupplierId,
     Guid ConceptId, Guid ExpenseAccountId, Guid? CostCenterId, Guid ConfirmedByUserId, string DocumentNumber,
     Guid DocumentSeriesId, string DocumentPrefix, string DocumentSeriesCode, long DocumentConsecutive,
-    string SupplierDocumentNumber, DateTimeOffset IssuedAt, DateTimeOffset DueDate, string CurrencyCode,
+    string? SupplierDocumentNumber, DateTimeOffset IssuedAt, DateTimeOffset DueDate, string CurrencyCode,
     string Description, decimal TaxExclusiveAmount, decimal VatAmount, decimal GrossAmount,
-    string? EvidenceUrl, WithholdingCalculationSnapshot Withholding);
+    string? EvidenceUrl, WithholdingCalculationSnapshot Withholding, Guid? SourceInvoiceId = null);
 
 public sealed record ExpenseAcceptance(Guid ExpenseId, Guid MovementId, string DocumentNumber,
-    string Status, long ProcessingSequence, bool IdempotentReplay);
+    string Status, long ProcessingSequence, bool IdempotentReplay, Guid? AccountingJobId = null, bool HasFiscalSupport = false);
 
-public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, string SupplierDocumentNumber,
+public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, string? SupplierDocumentNumber,
     Guid SupplierId, string SupplierName, Guid ConceptId, string ConceptName, DateTimeOffset IssuedAt,
     DateTimeOffset DueDate, decimal GrossAmount, decimal WithholdingAmount, decimal NetPayable,
     string CurrencyCode, string Status, string? EvidenceUrl);

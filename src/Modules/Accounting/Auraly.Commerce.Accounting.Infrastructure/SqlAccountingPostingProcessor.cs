@@ -651,12 +651,6 @@ public sealed partial class SqlAccountingPostingProcessor(
                 paymentSources.Add((reader.GetString(0),
                     reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.GetDecimal(2)));
         }
-        var payments = new List<(string Category, decimal Amount)>();
-        foreach (var payment in paymentSources)
-            payments.Add((payment.MethodCode == "Transfer" && payment.BankAccountId is { } bankId
-                ? BankAccountCategory(bankId)
-                : await ResolveSourceCategoryAsync(connection, transaction,
-                    "PosPaymentMethod", payment.MethodCode, cancellationToken), payment.Amount));
         var withholdingSources = new List<(string Kind, decimal Amount)>();
         await using (var command = new SqlCommand("""
             SELECT Kind,SUM(Amount) FROM dbo.DocumentWithholdingLines
@@ -670,9 +664,30 @@ public sealed partial class SqlAccountingPostingProcessor(
             while (await reader.ReadAsync(cancellationToken))
                 withholdingSources.Add((reader.GetString(0), reader.GetDecimal(1)));
         }
+        var sourceKeys = paymentSources.Select(payment => new { SourceType = "PosPaymentMethod", SourceCode = payment.MethodCode })
+            .Concat(withholdingSources.Select(item => new { SourceType = "SaleWithholdingKind", SourceCode = item.Kind })).Distinct().ToArray();
+        var categories = new Dictionary<(string Type, string Code), string>();
+        await using (var mapping = new SqlCommand("""
+            SELECT m.SourceType,m.SourceCode,m.Category FROM dbo.AccountingConfigurationProfiles p
+            JOIN dbo.AccountingSourceCategoryMappings m ON m.ProfileCode=p.ProfileCode
+            JOIN OPENJSON(@Keys) WITH(SourceType nvarchar(64),SourceCode nvarchar(64)) requested
+              ON requested.SourceType=m.SourceType AND requested.SourceCode=m.SourceCode
+            WHERE p.IsDefault=1 AND p.IsActive=1;
+            """, connection, transaction))
+        {
+            mapping.Parameters.AddWithValue("@Keys", JsonSerializer.Serialize(sourceKeys));
+            await using var reader = await mapping.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) categories.Add((reader.GetString(0), reader.GetString(1)), reader.GetString(2));
+        }
+        string Category(string type, string code) => categories.TryGetValue((type, code), out var value) ? value
+            : throw new InvalidOperationException($"Source '{type}:{code}' has no accounting category mapping.");
+        var payments = new List<(string Category, decimal Amount)>();
+        foreach (var payment in paymentSources)
+            payments.Add((payment.MethodCode == "Transfer" && payment.BankAccountId is { } bankId
+                ? BankAccountCategory(bankId)
+                : Category("PosPaymentMethod", payment.MethodCode), payment.Amount));
         foreach (var withholding in withholdingSources)
-            payments.Add((await ResolveSourceCategoryAsync(connection, transaction,
-                "SaleWithholdingKind", withholding.Kind, cancellationToken), withholding.Amount));
+            payments.Add((Category("SaleWithholdingKind", withholding.Kind), withholding.Amount));
         var paid = payments.Sum(payment => payment.Amount);
         if (paid > total) throw new InvalidOperationException("Payments exceed the immutable invoice total.");
         if (paid < total) payments.Add((AccountingCategories.AccountsReceivable, total - paid));
@@ -888,41 +903,34 @@ public sealed partial class SqlAccountingPostingProcessor(
             SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
             decimal grossTotal, CancellationToken cancellationToken)
     {
-        decimal? netAmount;
-        await using (var command = new SqlCommand("""
+        await using var command = new SqlCommand("""
             SELECT NetAmount FROM dbo.DocumentWithholdingSnapshots
-            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType
-              AND BusinessId=@BusinessId;
-            """, connection, transaction))
-        {
-            command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
-            command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
-            command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
-            var value = await command.ExecuteScalarAsync(cancellationToken);
-            netAmount = value is null or DBNull ? null : Convert.ToDecimal(value);
-        }
-        if (netAmount is null)
+            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType AND BusinessId=@BusinessId;
+            SELECT w.Kind,SUM(w.Amount),m.Category
+            FROM dbo.DocumentWithholdingLines w
+            LEFT JOIN (dbo.AccountingSourceCategoryMappings m
+              INNER JOIN dbo.AccountingConfigurationProfiles p ON p.ProfileCode=m.ProfileCode
+                AND p.IsDefault=1 AND p.IsActive=1)
+              ON m.SourceType=N'PurchaseWithholdingKind' AND m.SourceCode=w.Kind
+            WHERE w.DocumentId=@DocumentId AND w.DocumentType=@DocumentType
+            GROUP BY w.Kind,m.Category ORDER BY w.Kind;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
             return [(AccountingCategories.AccountsPayable, grossTotal)];
-
+        var netAmount = reader.GetDecimal(0);
         var settlements = new List<(string Category, decimal Amount)>();
-        var withholdingSources = new List<(string Kind, decimal Amount)>();
-        if (netAmount.Value > 0)
-            settlements.Add((AccountingCategories.AccountsPayable, netAmount.Value));
-        await using (var command = new SqlCommand("""
-            SELECT Kind,SUM(Amount) FROM dbo.DocumentWithholdingLines
-            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType
-            GROUP BY Kind ORDER BY Kind;
-            """, connection, transaction))
+        if (netAmount > 0) settlements.Add((AccountingCategories.AccountsPayable, netAmount));
+        await reader.NextResultAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
-            command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
-            command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-                withholdingSources.Add((reader.GetString(0), reader.GetDecimal(1)));
+            if (reader.IsDBNull(2)) throw new InvalidOperationException(
+                $"Source 'PurchaseWithholdingKind:{reader.GetString(0)}' has no accounting category mapping.");
+            settlements.Add((reader.GetString(2), reader.GetDecimal(1)));
         }
-        foreach (var withholding in withholdingSources)
-            settlements.Add((await ResolveSourceCategoryAsync(connection, transaction,
-                "PurchaseWithholdingKind", withholding.Kind, cancellationToken), withholding.Amount));
         if (decimal.Round(settlements.Sum(item => item.Amount), 4) != decimal.Round(grossTotal, 4))
             throw new InvalidOperationException("The payable and withholding settlements do not reconcile.");
         return settlements;
@@ -932,31 +940,22 @@ public sealed partial class SqlAccountingPostingProcessor(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
         CancellationToken cancellationToken)
     {
+        var expense = Auraly.Contracts.Expenses.ExpenseContractSerializer.Deserialize(source.PayloadJson);
+        if (expense.ExpenseId != source.DocumentId || expense.BusinessId != source.BusinessId)
+            throw new InvalidOperationException("The expense snapshot does not match its accounting source.");
         await using var command = new SqlCommand("""
-            SELECT e.DocumentNumber,e.TaxExclusiveAmount,e.VatAmount,e.GrossAmount,
-                   e.ExpenseAccountId,s.PartyId
-            FROM
-            (
-              SELECT x.DocumentNumber,x.TaxExclusiveAmount,x.VatAmount,x.GrossAmount,
-                     c.ExpenseAccountId,x.SupplierId,x.BusinessId,x.ExpenseId
-              FROM dbo.Expenses x
-              JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=x.ExpenseConceptId
-            ) e
-            JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId
-            WHERE e.ExpenseId=@DocumentId AND e.BusinessId=@BusinessId;
+            SELECT PartyId FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId;
             """, connection, transaction);
-        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@SupplierId", expense.SupplierId);
         command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-            throw new InvalidOperationException("The expense was not found for accounting.");
-        var number=reader.GetString(0);var untaxed=reader.GetDecimal(1);var vat=reader.GetDecimal(2);
-        var total=reader.GetDecimal(3);var accountId=reader.GetGuid(4);
-        Guid? party=reader.IsDBNull(5)?null:reader.GetGuid(5);
-        await reader.DisposeAsync();
-        var settlements=await LoadPurchaseWithholdingSettlementsAsync(connection,transaction,source,total,cancellationToken);
-        return FinancialFactsResult.Ready(FinancialFacts.Expense(number,party,untaxed,vat,total,
-            settlements,accountId));
+        var partyValue = await command.ExecuteScalarAsync(cancellationToken);
+        if (partyValue is null) throw new InvalidOperationException("The expense supplier was not found for accounting.");
+        Guid? party = partyValue is DBNull ? null : (Guid)partyValue;
+        var settlements = await LoadPurchaseWithholdingSettlementsAsync(connection, transaction,
+            source, expense.GrossAmount, cancellationToken);
+        return FinancialFactsResult.Ready(FinancialFacts.Expense(expense.DocumentNumber, party,
+            expense.TaxExclusiveAmount, expense.VatAmount, expense.GrossAmount,
+            settlements, expense.ExpenseAccountId));
     }
 
     private static async Task<FinancialFactsResult> LoadPurchaseReturnFactsAsync(
@@ -1218,44 +1217,36 @@ public sealed partial class SqlAccountingPostingProcessor(
     {
         var result = new Dictionary<string, Guid>(StringComparer.Ordinal);
         var occurredOn = DateOnly.FromDateTime(source.OccurredAt.Date).ToDateTime(TimeOnly.MinValue);
-        foreach (var category in categories)
-        {
-            if (TryParseBankAccountCategory(category, out var bankAccountId))
-            {
-                await using var bank = new SqlCommand("""
-                    SELECT b.AccountingAccountId
-                    FROM accounting.BankAccounts b
-                    INNER JOIN dbo.AccountingAccounts a
-                      ON a.AccountId=b.AccountingAccountId AND a.TenantId=b.TenantId
-                    WHERE b.BankAccountId=@BankAccountId AND b.TenantId=@TenantId
-                      AND b.IsActive=1 AND a.IsActive=1 AND a.AllowsPosting=1;
-                    """, connection, transaction);
-                bank.Parameters.AddWithValue("@BankAccountId", bankAccountId);
-                bank.Parameters.AddWithValue("@TenantId", source.TenantId);
-                var bankValue = await bank.ExecuteScalarAsync(cancellationToken);
-                if (bankValue is Guid bankPostingAccountId)
-                    result[category] = bankPostingAccountId;
-                continue;
-            }
-            await using var command = new SqlCommand("""
-                SELECT TOP(1) m.AccountId
-                FROM dbo.AccountingAccountMappings m
-                INNER JOIN dbo.AccountingAccounts a ON a.AccountId=m.AccountId
-                WHERE m.TenantId=@TenantId AND m.Category=@Category
-                  AND (m.BusinessId=@BusinessId OR m.BusinessId IS NULL)
-                  AND m.EffectiveFrom<=@OccurredOn
-                  AND (m.EffectiveTo IS NULL OR m.EffectiveTo>=@OccurredOn)
-                  AND a.IsActive=1 AND a.AllowsPosting=1
-                ORDER BY CASE WHEN m.BusinessId=@BusinessId THEN 0 ELSE 1 END,
-                         m.EffectiveFrom DESC;
-                """, connection, transaction);
-            command.Parameters.AddWithValue("@TenantId", source.TenantId);
-            command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
-            command.Parameters.AddWithValue("@Category", category);
-            command.Parameters.AddWithValue("@OccurredOn", occurredOn);
-            var value = await command.ExecuteScalarAsync(cancellationToken);
-            if (value is Guid id) result[category] = id;
-        }
+        if (categories.Count == 0) return result;
+        await using var command = new SqlCommand("""
+            SELECT input.Category,CASE WHEN input.BankAccountId IS NOT NULL
+              THEN bank.AccountingAccountId ELSE mapping.AccountId END
+            FROM OPENJSON(@Categories) WITH(Category nvarchar(128),BankAccountId uniqueidentifier) input
+            OUTER APPLY (
+              SELECT b.AccountingAccountId FROM accounting.BankAccounts b
+              JOIN dbo.AccountingAccounts a ON a.AccountId=b.AccountingAccountId AND a.TenantId=b.TenantId
+              WHERE b.BankAccountId=input.BankAccountId AND b.TenantId=@TenantId
+                AND b.IsActive=1 AND a.IsActive=1 AND a.AllowsPosting=1
+            ) bank
+            OUTER APPLY (
+              SELECT TOP(1) m.AccountId FROM dbo.AccountingAccountMappings m
+              JOIN dbo.AccountingAccounts a ON a.AccountId=m.AccountId AND a.TenantId=m.TenantId
+              WHERE input.BankAccountId IS NULL AND m.TenantId=@TenantId AND m.Category=input.Category
+                AND (m.BusinessId=@BusinessId OR m.BusinessId IS NULL)
+                AND m.EffectiveFrom<=@OccurredOn AND (m.EffectiveTo IS NULL OR m.EffectiveTo>=@OccurredOn)
+                AND a.IsActive=1 AND a.AllowsPosting=1
+              ORDER BY CASE WHEN m.BusinessId=@BusinessId THEN 0 ELSE 1 END,m.EffectiveFrom DESC
+            ) mapping;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", source.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        command.Parameters.AddWithValue("@OccurredOn", occurredOn);
+        command.Parameters.Add("@Categories", SqlDbType.NVarChar, -1).Value = System.Text.Json.JsonSerializer.Serialize(
+            categories.Select(category => new { Category = category,
+                BankAccountId = TryParseBankAccountCategory(category, out var id) ? (Guid?)id : null }));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            if (!reader.IsDBNull(1)) result.Add(reader.GetString(0), reader.GetGuid(1));
         return result;
     }
 
@@ -1292,27 +1283,28 @@ public sealed partial class SqlAccountingPostingProcessor(
             command.Parameters.AddWithValue("@Description", description); AddMoney(command, "@Total", debit);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        for (var index = 0; index < lines.Count; index++)
+        await using (var command = new SqlCommand("""
+            INSERT dbo.AccountingEntryLines
+            (EntryId,LineNumber,AccountId,PartyId,PartyIdentificationSnapshot,
+             PartyNameSnapshot,CostCenterId,CostCenterCodeSnapshot,
+             CostCenterNameSnapshot,Description,Debit,Credit)
+            SELECT @EntryId,line.LineNumber,line.AccountId,line.PartyId,
+                   party.Identification,party.DisplayName,line.CostCenterId,
+                   center.Code,center.Name,line.Description,line.Debit,line.Credit
+            FROM OPENJSON(@Lines) WITH(LineNumber int,
+              AccountId uniqueidentifier,PartyId uniqueidentifier,CostCenterId uniqueidentifier,
+              Description nvarchar(max),Debit decimal(19,4),Credit decimal(19,4)) line
+            LEFT JOIN dbo.Parties party ON party.PartyId=line.PartyId AND party.TenantId=@TenantId
+            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=line.CostCenterId;
+            """, connection, transaction))
         {
-            var line = lines[index];
-            await using var command = new SqlCommand("""
-                INSERT dbo.AccountingEntryLines
-                (EntryId,LineNumber,AccountId,PartyId,PartyIdentificationSnapshot,
-                 PartyNameSnapshot,CostCenterId,CostCenterCodeSnapshot,
-                 CostCenterNameSnapshot,Description,Debit,Credit)
-                SELECT @EntryId,@LineNumber,@AccountId,@PartyId,
-                       party.Identification,party.DisplayName,@CostCenterId,
-                       center.Code,center.Name,@Description,@Debit,@Credit
-                FROM (VALUES(1)) seed(Value)
-                LEFT JOIN dbo.Parties party ON party.PartyId=@PartyId
-                LEFT JOIN dbo.AccountingCostCenters center
-                  ON center.CostCenterId=@CostCenterId;
-                """, connection, transaction);
-            command.Parameters.AddWithValue("@EntryId", entryId); command.Parameters.AddWithValue("@LineNumber", index + 1);
-            command.Parameters.AddWithValue("@AccountId", line.AccountId); command.Parameters.AddWithValue("@PartyId", (object?)line.PartyId ?? DBNull.Value);
-            command.Parameters.AddWithValue("@CostCenterId", (object?)line.CostCenterId ?? DBNull.Value); command.Parameters.AddWithValue("@Description", line.Description);
-            AddMoney(command, "@Debit", line.Debit); AddMoney(command, "@Credit", line.Credit);
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            command.Parameters.AddWithValue("@EntryId", entryId);
+            command.Parameters.AddWithValue("@TenantId", source.TenantId);
+            command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = System.Text.Json.JsonSerializer.Serialize(
+                lines.Select((line, index) => new { LineNumber = index + 1, line.AccountId, line.PartyId,
+                    line.CostCenterId, line.Description, line.Debit, line.Credit }));
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != lines.Count)
+                throw new DBConcurrencyException("The complete journal entry was not persisted.");
         }
         await using var complete = new SqlCommand("""
             UPDATE dbo.AccountingPostingJobs SET Status=N'Posted',AttemptCount=AttemptCount+1,

@@ -524,7 +524,8 @@ public sealed class SqlOrderStore(
 
             SELECT selected.Sequence,o.OrderId,o.BusinessId,
                    COALESCE(NULLIF(o.ExternalDocumentNumber,N''),CONCAT(N'PED-',LEFT(CONVERT(nvarchar(36),o.OrderId),8))),
-                   o.CreatedAt,o.CustomerNameSnapshot,o.CustomerDocumentSnapshot,o.Currency,o.Total
+                   o.CreatedAt,o.CustomerNameSnapshot,o.CustomerDocumentSnapshot,o.Currency,o.Total,
+                   o.CustomerPhoneSnapshot,o.DeliveryAddressSnapshot
             FROM @Selected selected
             INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
             INNER JOIN dbo.Businesses business
@@ -570,7 +571,9 @@ public sealed class SqlOrderStore(
                 NullableString(reader, 6),
                 reader.GetString(7),
                 reader.GetDecimal(8),
-                []));
+                [],
+                NullableString(reader, 9),
+                NullableString(reader, 10)));
         }
 
         await reader.NextResultAsync(cancellationToken);
@@ -597,7 +600,9 @@ public sealed class SqlOrderStore(
                 header.CustomerIdentification,
                 header.Currency,
                 header.Total,
-                header.Lines))
+                header.Lines,
+                header.CustomerPhone,
+                header.DeliveryAddress))
             .ToArray();
     }
 
@@ -986,7 +991,9 @@ public sealed class SqlOrderStore(
         string? CustomerIdentification,
         string Currency,
         decimal Total,
-        List<OrderPrintLine> Lines);
+        List<OrderPrintLine> Lines,
+        string? CustomerPhone,
+        string? DeliveryAddress);
 
     private static async Task<int> ExecuteAsync(
         SqlConnection connection,

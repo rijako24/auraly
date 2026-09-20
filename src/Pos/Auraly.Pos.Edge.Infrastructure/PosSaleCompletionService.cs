@@ -51,7 +51,9 @@ public sealed record PosReceipt(
     string? BusinessName = null,
     string? WarehouseName = null,
     CreditSaleAcknowledgement? CreditAcknowledgement = null,
-    SalesInvoicePrintDetails? InvoicePrintDetails = null);
+    SalesInvoicePrintDetails? InvoicePrintDetails = null,
+    string? CustomerPhone = null,
+    string? CustomerAddress = null);
 
 public interface IPosReceiptPrinter
 {
@@ -310,59 +312,12 @@ public sealed class PosSaleCompletionService(
                     command.SoldByName,
                     draft.CustomerPartySiteId),
                 customer?.Name,
-                draft.CustomerPartySiteId),
+                draft.CustomerPartySiteId, draft.Charges),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;
-        var ublLineMetadata = immutable.UblSnapshot?.Lines
-            .ToDictionary(line => line.LineNumber)
-            ?? [];
-        var payload = new PosReceipt(
-            identity.PrintJobId,
-            issued.DocumentId,
-            issued.DocumentNumber,
-            issued.FiscalNumber,
-            immutable.CommercialSnapshot.IssuedAt,
-            immutable.CommercialSnapshot.CustomerIdentification,
-            immutable.Lines.Select(line => new PosReceiptLine(
-                draft.Lines.First(source => source.ProductId.Value == line.ProductId).ProductCode,
-                line.Description,
-                line.Quantity,
-                line.UnitPrice,
-                line.DiscountAmount,
-                line.TaxAmount,
-                line.LineTotal,
-                line.TaxCode,
-                line.TaxRate,
-                ublLineMetadata.GetValueOrDefault(line.LineNumber)?.UnitCode ?? "EA")).ToArray(),
-            immutable.Payments.Select(payment => new OfflineSalePayment(
-                payment.MethodCode,
-                payment.Amount,
-                payment.Reference,
-                payment.CardFranchiseCode,
-                payment.ApprovalNumber,
-                payment.BankAccountId,
-                payment.Notes,
-                payment.TenderedAmount))
-                .Concat(immutable.Credit is null
-                    ? []
-                    : [new OfflineSalePayment("Credit", immutable.Credit.Amount)])
-                .ToArray(),
-            immutable.CommercialSnapshot.UntaxedAmount,
-            immutable.CommercialSnapshot.TaxAmount,
-            immutable.CommercialSnapshot.PayableAmount,
-            issued.Cufe,
-            issued.QrPayload,
-            command.PaperWidthMillimeters,
-            immutable.CommercialSnapshot.DocumentType,
-            WithholdingTotal: immutable.CommercialSnapshot.Withholding?.WithholdingTotal ?? 0m,
-            NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
-            Withholdings: immutable.CommercialSnapshot.Withholding?.Lines,
-            CustomerName: customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification,
-            CreditAcknowledgement: CreditAcknowledgement(
-                immutable,
-                customer?.Name ?? immutable.CommercialSnapshot.CustomerIdentification),
-            InvoicePrintDetails: PrintDetails(immutable.UblSnapshot));
+        var payload = OnlineSalesReceiptMapper.From(immutable, null)
+            .ToPosReceipt(identity.PrintJobId, command.PaperWidthMillimeters);
 
         // Issuance owns the sale lifecycle. Printing is a post-effect and must
         // never keep an already issued sale or its next draft in limbo.
@@ -398,55 +353,8 @@ public sealed class PosSaleCompletionService(
                 nameof(paperWidthMillimeters), "Receipt width must be 58 or 80 mm.");
         var immutable = await sales.GetIssuedUploadAsync(documentId, ct)
             ?? throw new KeyNotFoundException("The issued sale does not exist locally.");
-        var metadata = immutable.UblSnapshot?.Lines.ToDictionary(line => line.LineNumber);
-        var payload = new PosReceipt(
-            Guid.NewGuid(),
-            documentId,
-            immutable.DocumentNumber.FullNumber,
-            immutable.FiscalSnapshot?.FiscalNumber,
-            immutable.CommercialSnapshot.IssuedAt,
-            immutable.CommercialSnapshot.CustomerIdentification,
-            immutable.Lines.Select(line => new PosReceiptLine(
-                metadata is not null && metadata.TryGetValue(line.LineNumber, out var item)
-                    ? item.ProductCode
-                    : string.Empty,
-                line.Description,
-                line.Quantity,
-                line.UnitPrice,
-                line.DiscountAmount,
-                line.TaxAmount,
-                line.LineTotal,
-                line.TaxCode,
-                line.TaxRate,
-                metadata is not null && metadata.TryGetValue(line.LineNumber, out var unitItem)
-                    ? unitItem.UnitCode
-                    : "EA")).ToArray(),
-            immutable.Payments.Select(payment => new OfflineSalePayment(
-                payment.MethodCode,
-                payment.Amount,
-                payment.Reference,
-                payment.CardFranchiseCode,
-                payment.ApprovalNumber,
-                payment.BankAccountId,
-                payment.Notes,
-                payment.TenderedAmount)).ToArray(),
-            immutable.CommercialSnapshot.UntaxedAmount,
-            immutable.CommercialSnapshot.TaxAmount,
-            immutable.CommercialSnapshot.PayableAmount,
-            immutable.FiscalSnapshot?.Cufe,
-            immutable.FiscalSnapshot?.QrPayload,
-            paperWidthMillimeters,
-            immutable.CommercialSnapshot.DocumentType,
-            WithholdingTotal: immutable.CommercialSnapshot.Withholding?.WithholdingTotal ?? 0m,
-            NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
-            Withholdings: immutable.CommercialSnapshot.Withholding?.Lines,
-            CustomerName: immutable.UblSnapshot?.Customer.RegistrationName
-                ?? immutable.CommercialSnapshot.CustomerIdentification,
-            CreditAcknowledgement: CreditAcknowledgement(
-                immutable,
-                immutable.UblSnapshot?.Customer.RegistrationName
-                    ?? immutable.CommercialSnapshot.CustomerIdentification),
-            InvoicePrintDetails: PrintDetails(immutable.UblSnapshot));
+        var payload = OnlineSalesReceiptMapper.From(immutable, null)
+            .ToPosReceipt(Guid.NewGuid(), paperWidthMillimeters);
 
         await printer.PrintAsync(payload, ct);
         await sales.RecordReprintAsync(
@@ -455,41 +363,6 @@ public sealed class PosSaleCompletionService(
             timeProvider?.GetUtcNow() ?? DateTimeOffset.UtcNow,
             ct);
     }
-
-    private static CreditSaleAcknowledgement? CreditAcknowledgement(
-        PosSaleUploadRequest immutable,
-        string customerName) => immutable.Credit is null
-        ? null
-        : new CreditSaleAcknowledgement(
-            immutable.DocumentId,
-            immutable.DocumentNumber.FullNumber,
-            immutable.CommercialSnapshot.IssuedAt,
-            customerName,
-            immutable.CommercialSnapshot.CustomerIdentification,
-            immutable.Credit.Amount,
-            immutable.Credit.RemainingCredit,
-            immutable.Credit.SoldByName ?? "Usuario");
-
-    private static SalesInvoicePrintDetails? PrintDetails(
-        PosSaleUblSnapshotContract? snapshot) => snapshot is null
-        ? null
-        : new SalesInvoicePrintDetails(
-            snapshot.Supplier.RegistrationName,
-            snapshot.Supplier.Identification,
-            snapshot.Supplier.TaxResponsibilityCode,
-            snapshot.Supplier.Address.AddressLine,
-            snapshot.Customer.Address.AddressLine,
-            snapshot.Authorization.Number,
-            snapshot.Authorization.ValidFrom,
-            snapshot.Authorization.ValidUntil,
-            snapshot.Authorization.Prefix,
-            snapshot.Authorization.RangeStart,
-            snapshot.Authorization.RangeEnd,
-            snapshot.PaymentFormCode,
-            snapshot.PaymentMeansCode,
-            snapshot.DueDate,
-            snapshot.Supplier.Identification,
-            "Auraly");
 
     public async Task<WithholdingCalculationSnapshot> PreviewSettlementAsync(
         DraftId draftId,

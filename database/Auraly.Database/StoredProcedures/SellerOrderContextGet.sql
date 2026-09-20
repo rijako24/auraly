@@ -7,7 +7,8 @@ CREATE PROCEDURE [dbo].[SellerOrderContextGet]
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)),p.Identification,email.Value,phone.Value,
+    SELECT COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)),p.Identification,email.Value,
+           COALESCE(NULLIF(LTRIM(RTRIM(site.Phone)),N''),phone.Value),
            COALESCE(site.AddressLine,N''),orders.WarehouseId,site.PartySiteId,
            CAST(COALESCE(sourceWarehouse.AllowNegativeStockSales,0) AS BIT)
     FROM dbo.Customers customer INNER JOIN dbo.Parties p ON p.PartyId=customer.PartyId

@@ -28,6 +28,10 @@ public sealed class SqlDocumentProcessingCompletionObserver(
                 await fiscal.RequestGenerationAsync(
                     signal.BusinessId, signal.DocumentId, cancellationToken);
 
+            if (signal.EconomicEffectsEnabled && Auraly.Contracts.Sales.PosSaleDocumentTypes.IsSupported(signal.DocumentType))
+                foreach (var expenseId in await LoadChargeSupportDocumentsAsync(signal, cancellationToken))
+                    await fiscal.RequestGenerationAsync(signal.BusinessId, expenseId, cancellationToken);
+
             if (signal.EconomicEffectsEnabled &&
                 AccountingProcessingPolicy.Supports(signal.DocumentType))
                 await accounting.RequestPostingAsync(
@@ -47,6 +51,26 @@ public sealed class SqlDocumentProcessingCompletionObserver(
             await RecordFailureAsync(signal, exception, CancellationToken.None);
             throw;
         }
+    }
+
+    private async Task<IReadOnlyList<Guid>> LoadChargeSupportDocumentsAsync(
+        DocumentProcessingSignal signal, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT TOP(11) e.ExpenseId FROM dbo.Expenses e
+            JOIN dbo.FiscalDocumentProcesses p ON p.DocumentId=e.ExpenseId AND p.BusinessId=e.BusinessId
+            WHERE e.BusinessId=@BusinessId AND e.SourceInvoiceId=@DocumentId AND p.Status=N'PendingGeneration'
+            ORDER BY e.ExpenseId;
+            """, connection);
+        AddScope(command, signal);
+        var result = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) result.Add(reader.GetGuid(0));
+        if (result.Count > InvoiceChargeApplication.MaximumChargesPerInvoice)
+            throw new InvalidOperationException("The invoice has more fiscal charge documents than allowed.");
+        return result;
     }
 
     private async Task CompleteOperationalOutboxAsync(

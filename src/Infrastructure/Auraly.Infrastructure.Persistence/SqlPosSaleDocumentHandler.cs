@@ -15,17 +15,20 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
     private readonly IAuralyIdGenerator _idGenerator;
     private readonly SqlInventoryLedgerWriter _inventoryWriter;
     private readonly TimeProvider _timeProvider;
+    private readonly Auraly.Commerce.Taxation.Application.WithholdingService _taxation;
 
     public SqlPosSaleDocumentHandler(
         SqlDocumentProcessingSessionAccessor sessions,
         IAuralyIdGenerator idGenerator,
         SqlInventoryLedgerWriter inventoryWriter,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        Auraly.Commerce.Taxation.Application.WithholdingService taxation)
     {
         _sessions = sessions;
         _idGenerator = idGenerator;
         _inventoryWriter = inventoryWriter;
         _timeProvider = timeProvider;
+        _taxation = taxation;
     }
 
     public string DocumentType => PosSaleDocumentTypes.Invoice;
@@ -54,24 +57,20 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await ValidateWorkSessionAsync(session, request, cancellationToken);
         var inventoryWarehouseId = await ResolveInventoryWarehouseAsync(
             session, request, cancellationToken);
-        foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
-        {
-            if (!line.IsGenericProductSnapshot)
-            {
-                await InsertInventoryMovementAsync(
-                    session, request, inventoryWarehouseId, line, cancellationToken);
-            }
-        }
+        await _inventoryWriter.PostBatchAsync(session, request.Lines.OrderBy(line => line.LineNumber)
+            .Where(line => !line.IsGenericProductSnapshot).Select(line => new InventoryLedgerPosting(
+                request.BusinessId, inventoryWarehouseId, line.ProductId, request.DocumentId,
+                request.CommercialSnapshot.DocumentType, line.LineNumber, "Sale", -line.Quantity, null,
+                InventoryValuationMode.AverageCost, request.CommercialSnapshot.IssuedAt)).ToArray(), cancellationToken);
         await InsertLinesAsync(session, request, cancellationToken);
 
+        await SqlExpenseStore.AcceptInvoiceChargesAsync(session.Connection, session.Transaction,
+            request, _taxation, _idGenerator, _timeProvider.GetUtcNow(), cancellationToken);
         await LinkSourceOrderAsync(session, request, cancellationToken);
 
         await PersistWithholdingSnapshotAsync(session, request, cancellationToken);
 
-        foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
-        {
-            await InsertPaymentAsync(session, request, payment, cancellationToken);
-        }
+        await InsertPaymentsAsync(session, request, cancellationToken);
 
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, request.CommercialSnapshot.IssuedAt,
@@ -116,30 +115,24 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        foreach (var item in withholding.Lines.Select((line, index) => (line, index)))
+        if (withholding.Lines.Count > 0)
         {
             await using var command = new SqlCommand("""
                 INSERT dbo.DocumentWithholdingLines
                   (DocumentId,DocumentType,LineNumber,RuleId,RuleVersion,RuleCode,Name,
                    Kind,BaseKind,TaxableBase,Rate,Amount,JurisdictionCode)
-                VALUES
-                  (@DocumentId,@DocumentType,@LineNumber,@RuleId,@RuleVersion,@RuleCode,@Name,
-                   @Kind,@BaseKind,@TaxableBase,@Rate,@Amount,@JurisdictionCode);
+                SELECT @DocumentId,@DocumentType,CONVERT(int,j.[key])+1,line.RuleId,line.RuleVersion,line.RuleCode,line.Name,
+                   line.Kind,line.BaseKind,line.TaxableBase,line.Rate,line.Amount,line.JurisdictionCode
+                FROM OPENJSON(@Lines) j CROSS APPLY OPENJSON(j.value) WITH(
+                  RuleId uniqueidentifier,RuleVersion int,RuleCode nvarchar(64),Name nvarchar(200),
+                  Kind nvarchar(32),BaseKind nvarchar(32),TaxableBase decimal(19,4),Rate decimal(9,6),
+                  Amount decimal(19,4),JurisdictionCode nvarchar(16)) line;
                 """, session.Connection, session.Transaction);
             command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
             command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
-            command.Parameters.AddWithValue("@LineNumber", item.index + 1);
-            command.Parameters.AddWithValue("@RuleId", item.line.RuleId);
-            command.Parameters.AddWithValue("@RuleVersion", item.line.RuleVersion);
-            command.Parameters.AddWithValue("@RuleCode", item.line.RuleCode);
-            command.Parameters.AddWithValue("@Name", item.line.Name);
-            command.Parameters.AddWithValue("@Kind", item.line.Kind);
-            command.Parameters.AddWithValue("@BaseKind", item.line.BaseKind);
-            AddDecimal(command, "@TaxableBase", item.line.TaxableBase, 19, 4);
-            AddDecimal(command, "@Rate", item.line.Rate, 9, 6);
-            AddDecimal(command, "@Amount", item.line.Amount, 19, 4);
-            command.Parameters.AddWithValue("@JurisdictionCode", (object?)item.line.JurisdictionCode ?? DBNull.Value);
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(withholding.Lines);
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != withholding.Lines.Count)
+                throw new DBConcurrencyException("The complete sale withholding snapshot was not persisted.");
         }
     }
 
@@ -198,30 +191,6 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         if (await command.ExecuteNonQueryAsync(cancellationToken) != request.Lines.Count)
             throw new InvalidOperationException(
                 "The immutable attribution for every sale line could not be captured.");
-    }
-
-    private async Task InsertInventoryMovementAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        PosSaleUploadRequest request,
-        Guid inventoryWarehouseId,
-        PosSaleLineContract line,
-        CancellationToken cancellationToken)
-    {
-        await _inventoryWriter.PostAsync(
-            session,
-            new InventoryLedgerPosting(
-                request.BusinessId,
-                inventoryWarehouseId,
-                line.ProductId,
-                request.DocumentId,
-                request.CommercialSnapshot.DocumentType,
-                line.LineNumber,
-                "Sale",
-                -line.Quantity,
-                null,
-                InventoryValuationMode.AverageCost,
-                request.CommercialSnapshot.IssuedAt),
-            cancellationToken);
     }
 
     private static async Task<Guid> ResolveInventoryWarehouseAsync(
@@ -297,12 +266,12 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task InsertPaymentAsync(
+    private static async Task InsertPaymentsAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
-        PosSalePaymentContract payment,
         CancellationToken cancellationToken)
     {
+        if (request.Payments.Count == 0) return;
         const string sql = """
             DECLARE @AccountingEnabled bit=CASE WHEN EXISTS(
               SELECT 1 FROM dbo.AccountingTenantSettings settings
@@ -314,36 +283,30 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 Reference, Notes, CardFranchiseCode, ApprovalNumber, BankAccountId, RegisteredAt
             )
             SELECT
-                @DocumentId, @PaymentNumber, @MethodCode, @Amount, @TenderedAmount,
-                @Reference, @Notes, @CardFranchiseCode, @ApprovalNumber, @BankAccountId, @RegisteredAt
-            WHERE @MethodCode<>N'Transfer' OR
-              (@AccountingEnabled=0 AND @BankAccountId IS NULL) OR
+                @DocumentId, input.PaymentNumber, input.MethodCode, input.Amount, input.TenderedAmount,
+                input.Reference, input.Notes, input.CardFranchiseCode, input.ApprovalNumber, input.BankAccountId, @RegisteredAt
+            FROM OPENJSON(@Payments) WITH(
+              PaymentNumber int,MethodCode nvarchar(32),Amount decimal(19,4),TenderedAmount decimal(19,4),
+              Reference nvarchar(160),Notes nvarchar(500),CardFranchiseCode nvarchar(64),
+              ApprovalNumber nvarchar(100),BankAccountId uniqueidentifier) input
+            WHERE input.MethodCode<>N'Transfer' OR
+              (@AccountingEnabled=0 AND input.BankAccountId IS NULL) OR
               (@AccountingEnabled=1 AND EXISTS(
                   SELECT 1 FROM accounting.BankAccounts bank
                   INNER JOIN dbo.Businesses business ON business.TenantId=bank.TenantId
                   INNER JOIN dbo.AccountingAccounts account
                     ON account.AccountId=bank.AccountingAccountId AND account.TenantId=bank.TenantId
-                  WHERE bank.BankAccountId=@BankAccountId
+                  WHERE bank.BankAccountId=input.BankAccountId
                     AND business.BusinessId=@BusinessId AND bank.IsActive=1
                     AND account.IsActive=1 AND account.AllowsPosting=1));
-            IF @@ROWCOUNT<>1
+            IF @@ROWCOUNT<>@PaymentCount
                 THROW 51000,N'The transfer bank account is not active for the sale tenant.',1;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@PaymentNumber", payment.PaymentNumber);
-        command.Parameters.AddWithValue("@MethodCode", payment.MethodCode);
-        AddDecimal(command, "@Amount", payment.Amount, 19, 4);
-        var tenderedAmount = command.Parameters.Add("@TenderedAmount", SqlDbType.Decimal);
-        tenderedAmount.Precision = 19;
-        tenderedAmount.Scale = 4;
-        tenderedAmount.Value = (object?)payment.TenderedAmount ?? DBNull.Value;
-        command.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
-        command.Parameters.AddWithValue("@Notes", (object?)payment.Notes ?? DBNull.Value);
-        command.Parameters.AddWithValue("@CardFranchiseCode", (object?)payment.CardFranchiseCode ?? DBNull.Value);
-        command.Parameters.AddWithValue("@ApprovalNumber", (object?)payment.ApprovalNumber ?? DBNull.Value);
-        command.Parameters.AddWithValue("@BankAccountId", (object?)payment.BankAccountId ?? DBNull.Value);
+        command.Parameters.Add("@Payments", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(request.Payments);
+        command.Parameters.AddWithValue("@PaymentCount", request.Payments.Count);
         command.Parameters.AddWithValue("@RegisteredAt", request.CommercialSnapshot.IssuedAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

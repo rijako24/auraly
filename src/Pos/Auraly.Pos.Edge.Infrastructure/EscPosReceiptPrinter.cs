@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using Auraly.Contracts.Sales;
+using Auraly.Pos.Printing;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
@@ -53,6 +54,11 @@ public sealed class EscPosReceiptRenderer
         Write(stream, AlignLeft);
         WriteBoldLine(stream, Pair("Cliente", receipt.CustomerName ?? receipt.CustomerIdentification, columns));
         WriteBoldLine(stream, Pair("Identificacion", receipt.CustomerIdentification, columns));
+        if (isOrder)
+        {
+            WriteWrapped(stream, $"Direccion: {OrderContactPresentation.Value(receipt.CustomerAddress)}", columns);
+            WriteWrapped(stream, $"Telefono: {OrderContactPresentation.Value(receipt.CustomerPhone)}", columns);
+        }
         if (isFiscal && receipt.InvoicePrintDetails is { } details)
         {
             WriteWrapped(stream, $"Vendedor: {details.SupplierName}", columns);

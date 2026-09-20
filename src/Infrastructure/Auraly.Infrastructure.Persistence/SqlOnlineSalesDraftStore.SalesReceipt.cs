@@ -127,10 +127,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             payment.BankAccountId,
             string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
             payment.TenderedAmount)).ToArray();
-        var taxes = lines.GroupBy(line => line.TaxCode, StringComparer.Ordinal)
-            .Select(group => new PosSaleTaxContract(
-                group.Key, group.Sum(line => line.TaxAmount)))
-            .OrderBy(tax => tax.Code, StringComparer.Ordinal).ToArray();
+        var taxes = PosSaleTaxSummary.Calculate(draft.Lines.Select(line =>
+            new PosSaleTaxContract(line.TaxCode, line.Tax)), draft.Charges);
         var upload = new PosSaleUploadRequest(
             user.TenantId, state.BusinessId, state.WarehouseId, Guid.Empty,
             state.WorkSessionId, user.UserId, ids.NewId(),
@@ -158,7 +156,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                             creditValidation.AvailableCredit.Value - request.Credit.Amount),
                     user.UserName,
                     state.CustomerPartySiteId),
-            CustomerPartySiteId: state.CustomerPartySiteId);
+            CustomerPartySiteId: state.CustomerPartySiteId,
+            Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null);
 
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """

@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Purchasing;
@@ -291,27 +292,29 @@ public sealed partial class SqlAccountingPostingProcessor
                 throw new DBConcurrencyException("The receivable was not opened atomically.");
         }
 
-        foreach (var payment in sale.Payments.OrderBy(x => x.PaymentNumber))
+        if (sale.Payments.Count > 0)
         {
             await using var movement = new SqlCommand("""
                 INSERT dbo.WorkSessionMovements
                   (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,
                    BusinessDate,MovementType,PaymentMethodCode,Amount,Reference,SourceKey,
                    OccurredAt,RecordedByUserId)
-                VALUES(@Id,@SessionId,@DocumentId,@Number,@Date,N'SalePayment',@Method,
-                   @Amount,@Reference,@SourceKey,@OccurredAt,@UserId);
+                SELECT p.Id,@SessionId,@DocumentId,p.PaymentNumber,@Date,N'SalePayment',p.MethodCode,
+                  p.Amount,p.Reference,p.SourceKey,@OccurredAt,@UserId
+                FROM OPENJSON(@Payments) WITH(Id uniqueidentifier,PaymentNumber int,
+                  MethodCode nvarchar(32),Amount decimal(19,4),Reference nvarchar(max),SourceKey nvarchar(160)) p;
+                IF @@ROWCOUNT<>@Count THROW 51607,'The sale payments were not recorded atomically.',1;
                 """, connection, transaction);
-            movement.Parameters.AddWithValue("@Id", ids.NewId());
             movement.Parameters.AddWithValue("@SessionId", canonicalWorkSessionId);
             movement.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
-            movement.Parameters.AddWithValue("@Number", payment.PaymentNumber);
             movement.Parameters.AddWithValue("@Date", sale.CommercialSnapshot.IssuedAt.Date);
-            movement.Parameters.AddWithValue("@Method", payment.MethodCode);
-            AddMoney(movement, "@Amount", payment.Amount);
-            movement.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
-            movement.Parameters.AddWithValue("@SourceKey", $"sale:{sale.DocumentId:D}:{payment.PaymentNumber}");
             movement.Parameters.AddWithValue("@OccurredAt", sale.CommercialSnapshot.IssuedAt);
             movement.Parameters.AddWithValue("@UserId", sale.SoldByUserId);
+            movement.Parameters.AddWithValue("@Count", sale.Payments.Count);
+            movement.Parameters.Add("@Payments", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(
+                sale.Payments.Select(payment => new { Id = ids.NewId(), payment.PaymentNumber,
+                    payment.MethodCode, payment.Amount, payment.Reference,
+                    SourceKey = $"sale:{sale.DocumentId:D}:{payment.PaymentNumber}" }));
             await movement.ExecuteNonQueryAsync(token);
         }
     }
@@ -470,14 +473,23 @@ public sealed partial class SqlAccountingPostingProcessor
             : Task.CompletedTask;
     }
 
-    private Task ApplyExpenseFinancialEffectsAsync(
+    private async Task ApplyExpenseFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
-        ExpenseDocumentPayload value, CancellationToken token) =>
-        value.Withholding.NetAmount > 0
-            ? OpenPayableAsync(connection, transaction, value.BusinessId, value.SupplierId,
+        ExpenseDocumentPayload value, CancellationToken token)
+    {
+        if (value.Withholding.NetAmount > 0)
+            await OpenPayableAsync(connection, transaction, value.BusinessId, value.SupplierId,
                 value.ExpenseId, "Expense", value.DocumentNumber, value.CurrencyCode,
-                value.Withholding.NetAmount, value.DueDate, value.IssuedAt, token)
-            : Task.CompletedTask;
+                value.Withholding.NetAmount, value.DueDate, value.IssuedAt, token);
+        await using var command = new SqlCommand("""
+            UPDATE dbo.Expenses SET Status=N'Processed',ProcessedAt=@Now
+            WHERE ExpenseId=@Id AND BusinessId=@BusinessId AND Status=N'Accepted';
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@Id", value.ExpenseId);
+        command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+        await command.ExecuteNonQueryAsync(token);
+    }
 
     private async Task OpenPayableAsync(
         SqlConnection connection, SqlTransaction transaction,
@@ -599,52 +611,47 @@ public sealed partial class SqlAccountingPostingProcessor
         SqlConnection connection, SqlTransaction transaction,
         SupplierPaymentDocumentPayload payment, CancellationToken token)
     {
-        foreach (var allocation in payment.Allocations.OrderBy(x => x.LineNumber))
+        await using (var apply = new SqlCommand("""
+            DECLARE @Allocations TABLE(LineNumber int UNIQUE,PayableId uniqueidentifier PRIMARY KEY,
+              Amount decimal(19,4),TransactionId uniqueidentifier);
+            INSERT @Allocations SELECT LineNumber,PayableId,Amount,TransactionId FROM OPENJSON(@AllocationsJson)
+              WITH(LineNumber int,PayableId uniqueidentifier,Amount decimal(19,4),TransactionId uniqueidentifier);
+            DECLARE @Ready TABLE(LineNumber int,PayableId uniqueidentifier PRIMARY KEY,
+              Amount decimal(19,4),BalanceAfter decimal(19,4),TransactionId uniqueidentifier);
+            INSERT @Ready SELECT input.LineNumber,input.PayableId,input.Amount,
+              balance.OutstandingAmount-input.Amount,input.TransactionId
+            FROM @Allocations input JOIN dbo.Payables balance WITH(UPDLOCK,HOLDLOCK)
+              ON balance.PayableId=input.PayableId AND balance.BusinessId=@BusinessId
+              AND balance.SupplierId=@SupplierId AND balance.CurrencyCode=@Currency
+              AND balance.Status IN(N'Open',N'PartiallyPaid') AND balance.OutstandingAmount>=input.Amount
+            JOIN dbo.SupplierPaymentApplications application WITH(UPDLOCK,HOLDLOCK)
+              ON application.PayableId=input.PayableId AND application.PaymentId=@PaymentId
+              AND application.LineNumber=input.LineNumber AND application.Amount=input.Amount AND application.AppliedAt IS NULL;
+            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment allocations are no longer valid.',1;
+            UPDATE balance SET OutstandingAmount=ready.BalanceAfter,
+              Status=CASE WHEN ready.BalanceAfter=0 THEN N'Paid' ELSE N'PartiallyPaid' END
+            FROM dbo.Payables balance JOIN @Ready ready ON ready.PayableId=balance.PayableId;
+            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment balances were not updated atomically.',1;
+            UPDATE application SET AppliedAt=@Now FROM dbo.SupplierPaymentApplications application
+              JOIN @Ready ready ON ready.LineNumber=application.LineNumber AND ready.PayableId=application.PayableId
+              WHERE application.PaymentId=@PaymentId AND application.AppliedAt IS NULL;
+            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment applications were not updated atomically.',1;
+            INSERT dbo.PayableTransactions(PayableTransactionId,PayableId,TransactionType,Amount,
+              SourceDocumentId,OccurredAt,CreatedAt)
+            SELECT TransactionId,PayableId,N'Payment',Amount,@PaymentId,@At,@Now FROM @Ready;
+            """, connection, transaction))
         {
-            decimal balance;
-            await using (var read = new SqlCommand("""
-                SELECT p.OutstandingAmount FROM dbo.Payables p WITH(UPDLOCK,HOLDLOCK)
-                INNER JOIN dbo.SupplierPaymentApplications a WITH(UPDLOCK,HOLDLOCK)
-                  ON a.PayableId=p.PayableId AND a.PaymentId=@PaymentId
-                 AND a.LineNumber=@Line AND a.Amount=@Amount AND a.AppliedAt IS NULL
-                WHERE p.PayableId=@PayableId AND p.BusinessId=@BusinessId
-                  AND p.SupplierId=@SupplierId AND p.CurrencyCode=@Currency
-                  AND p.Status IN(N'Open',N'PartiallyPaid');
-                """, connection, transaction))
-            {
-                read.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
-                read.Parameters.AddWithValue("@Line", allocation.LineNumber);
-                AddMoney(read, "@Amount", allocation.Amount);
-                read.Parameters.AddWithValue("@PayableId", allocation.PayableId);
-                read.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
-                read.Parameters.AddWithValue("@SupplierId", payment.SupplierId);
-                read.Parameters.AddWithValue("@Currency", payment.CurrencyCode);
-                var result = await read.ExecuteScalarAsync(token);
-                if (result is null || allocation.Amount > (balance = Convert.ToDecimal(result)))
-                    throw new InvalidOperationException("The supplier payment allocation is no longer valid.");
-            }
-            var now = timeProvider.GetUtcNow();
-            await using var apply = new SqlCommand("""
-                UPDATE dbo.Payables SET OutstandingAmount=@After,
-                  Status=CASE WHEN @After=0 THEN N'Paid' ELSE N'PartiallyPaid' END
-                WHERE PayableId=@PayableId;
-                UPDATE dbo.SupplierPaymentApplications SET AppliedAt=@Now
-                WHERE PaymentId=@PaymentId AND LineNumber=@Line AND AppliedAt IS NULL;
-                INSERT dbo.PayableTransactions
-                  (PayableTransactionId,PayableId,TransactionType,Amount,
-                   SourceDocumentId,OccurredAt,CreatedAt)
-                VALUES(@TransactionId,@PayableId,N'Payment',@Amount,@PaymentId,@At,@Now);
-                """, connection, transaction);
-            AddMoney(apply, "@After", balance - allocation.Amount);
-            apply.Parameters.AddWithValue("@PayableId", allocation.PayableId);
             apply.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
-            apply.Parameters.AddWithValue("@Line", allocation.LineNumber);
-            apply.Parameters.AddWithValue("@Now", now);
-            apply.Parameters.AddWithValue("@TransactionId", ids.NewId());
-            AddMoney(apply, "@Amount", allocation.Amount);
+            apply.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
+            apply.Parameters.AddWithValue("@SupplierId", payment.SupplierId);
+            apply.Parameters.AddWithValue("@Currency", payment.CurrencyCode);
+            apply.Parameters.AddWithValue("@AllocationCount", payment.Allocations.Count);
             apply.Parameters.AddWithValue("@At", payment.PaidAt);
-            if (await apply.ExecuteNonQueryAsync(token) != 3)
-                throw new DBConcurrencyException("The supplier payment was not applied atomically.");
+            apply.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            apply.Parameters.Add("@AllocationsJson", SqlDbType.NVarChar, -1).Value = System.Text.Json.JsonSerializer.Serialize(
+                payment.Allocations.Select(allocation => new { allocation.LineNumber,allocation.PayableId,allocation.Amount,
+                    TransactionId = ids.NewId() }));
+            await apply.ExecuteNonQueryAsync(token);
         }
         await CompleteSupplierPaymentAsync(connection, transaction, payment, token);
     }
@@ -676,52 +683,47 @@ public sealed partial class SqlAccountingPostingProcessor
         SqlConnection connection, SqlTransaction transaction,
         CustomerPaymentDocumentPayload payment, CancellationToken token)
     {
-        foreach (var allocation in payment.Allocations.OrderBy(x => x.LineNumber))
+        await using (var apply = new SqlCommand("""
+            DECLARE @Allocations TABLE(LineNumber int UNIQUE,ReceivableId uniqueidentifier PRIMARY KEY,
+              Amount decimal(19,4),TransactionId uniqueidentifier);
+            INSERT @Allocations SELECT LineNumber,ReceivableId,Amount,TransactionId FROM OPENJSON(@AllocationsJson)
+              WITH(LineNumber int,ReceivableId uniqueidentifier,Amount decimal(19,4),TransactionId uniqueidentifier);
+            DECLARE @Ready TABLE(LineNumber int,ReceivableId uniqueidentifier PRIMARY KEY,
+              Amount decimal(19,4),BalanceAfter decimal(19,4),TransactionId uniqueidentifier);
+            INSERT @Ready SELECT input.LineNumber,input.ReceivableId,input.Amount,
+              balance.OutstandingAmount-input.Amount,input.TransactionId
+            FROM @Allocations input JOIN dbo.Receivables balance WITH(UPDLOCK,HOLDLOCK)
+              ON balance.ReceivableId=input.ReceivableId AND balance.BusinessId=@BusinessId
+              AND balance.CustomerId=@CustomerId AND balance.CurrencyCode=@Currency
+              AND balance.Status IN(N'Open',N'PartiallyPaid') AND balance.OutstandingAmount>=input.Amount
+            JOIN dbo.CustomerPaymentApplications application WITH(UPDLOCK,HOLDLOCK)
+              ON application.ReceivableId=input.ReceivableId AND application.PaymentId=@PaymentId
+              AND application.LineNumber=input.LineNumber AND application.Amount=input.Amount AND application.AppliedAt IS NULL;
+            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment allocations are no longer valid.',1;
+            UPDATE balance SET OutstandingAmount=ready.BalanceAfter,
+              Status=CASE WHEN ready.BalanceAfter=0 THEN N'Paid' ELSE N'PartiallyPaid' END
+            FROM dbo.Receivables balance JOIN @Ready ready ON ready.ReceivableId=balance.ReceivableId;
+            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment balances were not updated atomically.',1;
+            UPDATE application SET AppliedAt=@Now FROM dbo.CustomerPaymentApplications application
+              JOIN @Ready ready ON ready.LineNumber=application.LineNumber AND ready.ReceivableId=application.ReceivableId
+              WHERE application.PaymentId=@PaymentId AND application.AppliedAt IS NULL;
+            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment applications were not updated atomically.',1;
+            INSERT dbo.ReceivableTransactions(ReceivableTransactionId,ReceivableId,TransactionType,Amount,
+              SourceDocumentId,OccurredAt,CreatedAt)
+            SELECT TransactionId,ReceivableId,N'Payment',Amount,@PaymentId,@At,@Now FROM @Ready;
+            """, connection, transaction))
         {
-            decimal balance;
-            await using (var read = new SqlCommand("""
-                SELECT r.OutstandingAmount FROM dbo.Receivables r WITH(UPDLOCK,HOLDLOCK)
-                INNER JOIN dbo.CustomerPaymentApplications a WITH(UPDLOCK,HOLDLOCK)
-                  ON a.ReceivableId=r.ReceivableId AND a.PaymentId=@PaymentId
-                 AND a.LineNumber=@Line AND a.Amount=@Amount AND a.AppliedAt IS NULL
-                WHERE r.ReceivableId=@ReceivableId AND r.BusinessId=@BusinessId
-                  AND r.CustomerId=@CustomerId AND r.CurrencyCode=@Currency
-                  AND r.Status IN(N'Open',N'PartiallyPaid');
-                """, connection, transaction))
-            {
-                read.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
-                read.Parameters.AddWithValue("@Line", allocation.LineNumber);
-                AddMoney(read, "@Amount", allocation.Amount);
-                read.Parameters.AddWithValue("@ReceivableId", allocation.ReceivableId);
-                read.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
-                read.Parameters.AddWithValue("@CustomerId", payment.CustomerId);
-                read.Parameters.AddWithValue("@Currency", payment.CurrencyCode);
-                var result = await read.ExecuteScalarAsync(token);
-                if (result is null || allocation.Amount > (balance = Convert.ToDecimal(result)))
-                    throw new InvalidOperationException("The customer payment allocation is no longer valid.");
-            }
-            var now = timeProvider.GetUtcNow();
-            await using var apply = new SqlCommand("""
-                UPDATE dbo.Receivables SET OutstandingAmount=@After,
-                  Status=CASE WHEN @After=0 THEN N'Paid' ELSE N'PartiallyPaid' END
-                WHERE ReceivableId=@ReceivableId;
-                UPDATE dbo.CustomerPaymentApplications SET AppliedAt=@Now
-                WHERE PaymentId=@PaymentId AND LineNumber=@Line AND AppliedAt IS NULL;
-                INSERT dbo.ReceivableTransactions
-                  (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
-                   SourceDocumentId,OccurredAt,CreatedAt)
-                VALUES(@TransactionId,@ReceivableId,N'Payment',@Amount,@PaymentId,@At,@Now);
-                """, connection, transaction);
-            AddMoney(apply, "@After", balance - allocation.Amount);
-            apply.Parameters.AddWithValue("@ReceivableId", allocation.ReceivableId);
             apply.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
-            apply.Parameters.AddWithValue("@Line", allocation.LineNumber);
-            apply.Parameters.AddWithValue("@Now", now);
-            apply.Parameters.AddWithValue("@TransactionId", ids.NewId());
-            AddMoney(apply, "@Amount", allocation.Amount);
+            apply.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
+            apply.Parameters.AddWithValue("@CustomerId", payment.CustomerId);
+            apply.Parameters.AddWithValue("@Currency", payment.CurrencyCode);
+            apply.Parameters.AddWithValue("@AllocationCount", payment.Allocations.Count);
             apply.Parameters.AddWithValue("@At", payment.PaidAt);
-            if (await apply.ExecuteNonQueryAsync(token) != 3)
-                throw new DBConcurrencyException("The customer payment was not applied atomically.");
+            apply.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            apply.Parameters.Add("@AllocationsJson", SqlDbType.NVarChar, -1).Value = System.Text.Json.JsonSerializer.Serialize(
+                payment.Allocations.Select(allocation => new { allocation.LineNumber,allocation.ReceivableId,allocation.Amount,
+                    TransactionId = ids.NewId() }));
+            await apply.ExecuteNonQueryAsync(token);
         }
         var completedAt = timeProvider.GetUtcNow();
         await using var complete = new SqlCommand("""

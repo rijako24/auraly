@@ -97,7 +97,9 @@ public sealed record OnlineSalesReceipt(
     decimal NetPayableAmount = 0m,
     IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null,
     CreditSaleAcknowledgement? CreditAcknowledgement = null,
-    SalesInvoicePrintDetails? InvoicePrintDetails = null);
+    SalesInvoicePrintDetails? InvoicePrintDetails = null,
+    string? CustomerPhone = null,
+    string? CustomerAddress = null);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

@@ -52,7 +52,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
             await ExecuteAsync(
                 connection,
                 transaction,
-                "DELETE dbo.SalesDraftLines WHERE SalesDraftId=@DraftId;",
+                "DELETE sales.InvoiceChargeDraftSelections WHERE DraftId=@DraftId; DELETE dbo.SalesDraftLines WHERE SalesDraftId=@DraftId;",
                 [P("@DraftId", draftId)],
                 cancellationToken);
 

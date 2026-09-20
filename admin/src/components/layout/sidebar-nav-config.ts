@@ -42,6 +42,8 @@ export interface NavItem {
   icon: LucideIcon;
   /** Permission required to show this item. If missing, item is always shown for authenticated users. */
   permission?: string;
+  /** A broader authorized view replaces this entry when this permission is granted. */
+  hiddenByPermission?: string;
 }
 
 export interface NavSeparator {
@@ -61,6 +63,7 @@ export const navigation: NavEntry[] = [
   { type: "separator", label: "Comercial" },
   { name: "Punto de venta", href: "/pos", icon: ReceiptText, permission: "sales.create" },
   { name: "Pedidos", href: "/dashboard/orders", icon: ShoppingCart, permission: "orders.read" },
+  { name: "Cargos de facturación", href: "/dashboard/invoice-charges", icon: ReceiptText, permission: "invoice-charges.read" },
   { name: "Mis rutas", href: "/dashboard/my-routes", icon: Route, permission: "routes.read" },
   { name: "Servicios y facturación", href: "/dashboard/service-invoices", icon: FileText, permission: "service-invoices.read" },
   { name: "Rutas comerciales", href: "/dashboard/routes", icon: Route, permission: "routes.read-all" },
@@ -106,8 +109,8 @@ export const navigation: NavEntry[] = [
   { name: "Gastos", href: "/dashboard/expenses", icon: ReceiptText, permission: "expenses.read" },
   { name: "Nómina", href: "/dashboard/payroll", icon: Users, permission: "payroll.read" },
   { type: "separator", label: "Administración" },
-  { name: "Empresa", href: "/dashboard/company", icon: Building2, permission: "tenant.profile.read" },
-  { name: "Empresas", href: "/dashboard/tenants", icon: Building2, permission: "tenants.read" },
+  { name: "Empresa", href: "/dashboard/company", icon: Building2, permission: "tenant.profile.read", hiddenByPermission: "tenants.read" },
+  { name: "Empresa", href: "/dashboard/tenants", icon: Building2, permission: "tenants.read" },
   { name: "Sedes", href: "/dashboard/businesses", icon: Store, permission: "businesses.read" },
   { name: "Roles", href: "/dashboard/roles", icon: Shield, permission: "roles.read" },
   { name: "Auditoría", href: "/dashboard/audit-logs", icon: FileSearch, permission: "audit_logs.read" },
@@ -120,7 +123,12 @@ export const navigation: NavEntry[] = [
 export function authorizedNavigationItems(permissions: readonly string[]): NavItem[] {
   const granted = new Set(permissions);
   return navigation.filter((entry): entry is NavItem =>
-    "href" in entry && (!entry.permission || granted.has(entry.permission)));
+    "href" in entry && isNavigationItemVisible(entry, granted));
+}
+
+function isNavigationItemVisible(item: NavItem, granted: ReadonlySet<string>): boolean {
+  return (!item.permission || granted.has(item.permission))
+    && (!item.hiddenByPermission || !granted.has(item.hiddenByPermission));
 }
 
 export function authorizedNavigationGroups(permissions: readonly string[]): NavGroup[] {
@@ -135,7 +143,7 @@ export function authorizedNavigationGroups(permissions: readonly string[]): NavG
       continue;
     }
 
-    if (entry.permission && !granted.has(entry.permission)) continue;
+    if (!isNavigationItemVisible(entry, granted)) continue;
     if (!currentGroup) {
       currentGroup = { label: "Principal", items: [] };
       groups.push(currentGroup);

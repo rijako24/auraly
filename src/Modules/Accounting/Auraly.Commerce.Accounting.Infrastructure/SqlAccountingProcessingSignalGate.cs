@@ -24,6 +24,13 @@ public sealed class SqlAccountingProcessingSignalGate(
                 (job.SourceDocumentId=@DocumentId AND job.SourceDocumentType=@DocumentType)
                 OR
                 (
+                  @DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+                  AND job.SourceDocumentType=N'Expense'
+                  AND EXISTS(SELECT 1 FROM dbo.Expenses e WHERE e.BusinessId=@BusinessId
+                    AND e.SourceInvoiceId=@DocumentId AND e.ExpenseId=job.SourceDocumentId)
+                )
+                OR
+                (
                   @DocumentType=N'GoodsReceipt'
                   AND job.SourceDocumentType=N'GoodsReceiptCostDocument'
                   AND EXISTS

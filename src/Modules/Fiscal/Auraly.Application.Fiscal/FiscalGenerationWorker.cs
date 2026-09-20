@@ -198,7 +198,12 @@ public sealed class FiscalGenerationWorker(
                 line.Description, item.UnitCode, line.Quantity, line.UnitPrice, line.DiscountAmount,
                 line.UntaxedAmount, [new DianTax(line.TaxCode, item.TaxName,
                     line.UntaxedAmount, line.TaxAmount, item.TaxPercent)]);
-        }).ToArray();
+        }).Concat((sale.Charges ?? []).Where(charge => charge.InvoicedAmount > 0)
+            .Select((charge, index) => new DianInvoiceLine(sale.Lines.Count + index + 1,
+                charge.Code, "999", charge.Name, "EA", 1, charge.InvoicedUntaxedAmount, 0,
+                charge.InvoicedUntaxedAmount, [new DianTax(charge.TaxCode,
+                    PosSaleFiscalMappings.TaxName(charge.TaxCode), charge.InvoicedUntaxedAmount,
+                    charge.InvoicedTaxAmount, charge.TaxRate)]))).ToArray();
         var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
         var frozenTaxes = sale.FiscalSnapshot.Taxes
             .GroupBy(tax => tax.Code, StringComparer.Ordinal)

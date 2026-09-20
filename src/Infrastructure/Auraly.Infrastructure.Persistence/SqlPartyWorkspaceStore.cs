@@ -382,7 +382,7 @@ public sealed partial class SqlPartyWorkspaceStore(
             await update.ExecuteNonQueryAsync(ct);
             await ReplacePrimaryContactAsync(connection,transaction,partyId,"Email",request.Email,now,ct);
             await ReplacePrimaryContactAsync(connection,transaction,partyId,"Phone",request.Phone,now,ct);
-            await EnqueueCustomerChangeAsync(connection,transaction,actor.BusinessId,partyId,now,ct);
+            await EnqueuePosPartyChangeAsync(connection,transaction,actor.BusinessId,partyId,now,ct);
             await transaction.CommitAsync(ct);
             return await RequiredItemAsync(actor,partyId,ct);
         }
@@ -436,7 +436,7 @@ public sealed partial class SqlPartyWorkspaceStore(
             command.Parameters.AddRange([P("@PartyId",partyId),P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),
                 P("@Active",request.IsActive),P("@ActorId",actor.ActorId),P("@Now",now),P("@RowVersion",rowVersion)]);
             await command.ExecuteNonQueryAsync(ct);
-            await EnqueueCustomerChangeAsync(connection,transaction,actor.BusinessId,partyId,now,ct);
+            await EnqueuePosPartyChangeAsync(connection,transaction,actor.BusinessId,partyId,now,ct);
             await transaction.CommitAsync(ct);
             return await RequiredItemAsync(actor,partyId,ct);
         }
@@ -583,7 +583,7 @@ public sealed partial class SqlPartyWorkspaceStore(
     private static async Task<Guid?> FindSupplierIdAsync(SqlConnection c,SqlTransaction t,Guid party,Guid business,CancellationToken ct)
     { await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="SELECT SupplierId FROM dbo.Suppliers WITH(UPDLOCK,HOLDLOCK) WHERE PartyId=@Party AND BusinessId=@Business";x.Parameters.AddRange([P("@Party",party),P("@Business",business)]);return await x.ExecuteScalarAsync(ct) as Guid?; }
 
-    private async Task EnqueueCustomerChangeAsync(
+    private async Task EnqueuePosPartyChangeAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId,
         Guid partyId, DateTimeOffset now, CancellationToken ct)
     {
@@ -600,6 +600,20 @@ public sealed partial class SqlPartyWorkspaceStore(
               SELECT @NotificationId,@BusinessId,N'Customers',@Cursor,@Now,
                      N'Customer',CustomerId,N'Upsert'
               FROM dbo.Customers WHERE BusinessId=@BusinessId AND PartyId=@PartyId;
+            END
+            IF EXISTS(SELECT 1 FROM dbo.Suppliers supplier
+              JOIN sales.InvoiceChargeSuppliers selected ON selected.SupplierId=supplier.SupplierId
+              JOIN sales.InvoiceChargeDefinitions definition ON definition.ChargeId=selected.ChargeId
+                AND definition.CurrentVersion=selected.Version AND definition.BusinessId=@BusinessId
+              WHERE supplier.BusinessId=@BusinessId AND supplier.PartyId=@PartyId)
+            BEGIN
+              DECLARE @ConfigurationCursor bigint;
+              SELECT @ConfigurationCursor=ISNULL(MAX(AvailableThroughCursor),0)+1
+              FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=@BusinessId AND Stream=N'Configuration';
+              INSERT dbo.PosSynchronizationOutboxMessages
+                (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+              VALUES(NEWID(),@BusinessId,N'Configuration',@ConfigurationCursor,@Now);
             END
             """,[P("@NotificationId",ids.NewId()),P("@BusinessId",businessId),P("@PartyId",partyId),P("@Now",now)],ct);
     }

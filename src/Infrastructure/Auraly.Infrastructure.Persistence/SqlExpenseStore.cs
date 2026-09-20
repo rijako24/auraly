@@ -1,6 +1,4 @@
 using System.Data;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Auraly.Application.Expenses;
 using Auraly.BuildingBlocks.Domain.Identifiers;
@@ -14,7 +12,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAuralyIdGenerator ids,
+public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connections, IAuralyIdGenerator ids,
     TimeProvider timeProvider) : IExpenseStore
 {
     public async Task<ExpenseWorkspaceOptions> GetOptionsAsync(ExpenseUserIdentity user, CancellationToken ct)
@@ -95,7 +93,8 @@ public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAur
         catch (SqlException error) when (error.Number is >= 51600 and <= 51602) { await tx.RollbackAsync(CancellationToken.None); throw new ExpenseValidationException(error.Message); }
         catch (SqlException error) when (error.Number is 2601 or 2627) { await tx.RollbackAsync(CancellationToken.None); throw new ExpenseConflictException("Ya existe un concepto con ese código."); }
         catch { await tx.RollbackAsync(CancellationToken.None); throw; }
-        return (await ListConceptsAsync(user, true, ct)).Single(x => x.ConceptId == request.ConceptId);
+        return await GetConceptAsync(user, request.ConceptId, ct)
+            ?? throw new DBConcurrencyException("The saved expense concept was not found.");
     }
 
     public async Task<ExpensePage> ListAsync(ExpenseUserIdentity user, int page, int pageSize, string? search, Guid? conceptId,
@@ -119,30 +118,23 @@ public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAur
         await using var reader = await command.ExecuteReaderAsync(ct); await reader.ReadAsync(ct);
         var count = reader.GetInt32(0); var gross = reader.GetDecimal(1); var held = reader.GetDecimal(2); var net = reader.GetDecimal(3);
         await reader.NextResultAsync(ct); var items = new List<ExpenseListItem>();
-        while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14)));
+        while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14)));
         return new(items, page, pageSize, count, gross, held, net);
     }
 
     public async Task<ExpenseAcceptance> AcceptAsync(ExpenseUserIdentity user, string idempotencyKey, ConfirmExpenseRequest request,
         ExpenseAmounts amounts, WithholdingCalculationSnapshot withholding, CancellationToken ct)
     {
-        var requestHash = SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { request, amounts, withholding })));
+        var requestHash = HashRequest(request);
         await using var connection = connections.Create(); await connection.OpenAsync(ct);
         await using var tx = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
-            await using (var replay = new SqlCommand("""
-                SELECT e.ExpenseId,e.DocumentNumber,e.Status,e.RequestHash,j.ProcessingSequence,j.JobId
-                FROM dbo.Expenses e WITH(UPDLOCK,HOLDLOCK) JOIN dbo.DocumentProcessingJobs j ON j.DocumentId=e.ExpenseId AND j.DocumentType=N'Expense'
-                WHERE e.BusinessId=@BusinessId AND (e.ExpenseId=@Id OR e.IdempotencyKey=@Key);
-                """, connection, tx))
+            var replay = await FindReplayAsync(connection, tx, user, idempotencyKey, request, amounts, ct);
+            if (replay is not null)
             {
-                replay.Parameters.AddWithValue("@BusinessId", user.BusinessId); replay.Parameters.AddWithValue("@Id", request.ExpenseId); replay.Parameters.AddWithValue("@Key", idempotencyKey);
-                await using var reader = await replay.ExecuteReaderAsync(ct); if (await reader.ReadAsync(ct))
-                {
-                    if (!reader.GetFieldValue<byte[]>(3).AsSpan().SequenceEqual(requestHash)) throw new ExpenseConflictException("La clave de idempotencia se reutilizó con otros datos.");
-                    var value = new ExpenseAcceptance(reader.GetGuid(0), reader.GetGuid(5), reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true); await reader.DisposeAsync(); await tx.CommitAsync(ct); return value;
-                }
+                await tx.CommitAsync(ct);
+                return replay;
             }
             Guid accountId; Guid? defaultCenter; string? purchaseEvidencePolicy;
             await using (var validate = new SqlCommand("""
@@ -178,22 +170,13 @@ public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAur
                 }
             }
             var number = await SqlOperationalDocumentAllocator.AllocateNumberAsync(connection, tx, user.BusinessId, ExpenseDocumentTypes.Expense, now, ct);
-            var sequence = await SqlOperationalDocumentAllocator.AllocateSequenceAsync(connection, tx, user.BusinessId, now, ct); var movementId = ids.NewId(); var center = request.CostCenterId ?? defaultCenter;
+            var accountingJobId = ids.NewId(); var center = request.CostCenterId ?? defaultCenter;
             var payload = new ExpenseDocumentPayload(user.TenantId, user.BusinessId, request.ExpenseId, request.SupplierId, request.ConceptId, accountId, center, user.UserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, request.SupplierDocumentNumber, request.IssuedAt, request.DueDate, request.CurrencyCode, request.Description, amounts.TaxExclusiveAmount, amounts.VatAmount, amounts.GrossAmount, request.EvidenceUrl, withholding);
-            var json = ExpenseContractSerializer.Serialize(payload); var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
-            await using var insert = new SqlCommand("""
-                INSERT dbo.Expenses(ExpenseId,BusinessId,SupplierId,ExpenseConceptId,CostCenterId,DocumentSeriesId,DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,SupplierDocumentNumber,IssuedAt,DueDate,CurrencyCode,Description,TaxExclusiveAmount,VatAmount,GrossAmount,WithholdingAmount,NetPayable,EvidenceUrl,Status,ConfirmedByUserId,IdempotencyKey,RequestHash,AcceptedAt)
-                VALUES(@Id,@BusinessId,@SupplierId,@ConceptId,@CenterId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,@SupplierNumber,@IssuedAt,@DueDate,@Currency,@Description,@Net,@Vat,@Gross,@Held,@Payable,@Evidence,N'Accepted',@UserId,@Key,@RequestHash,@Now);
-                INSERT dbo.DocumentProcessingJobs(JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
-                VALUES(@JobId,@BusinessId,@Sequence,@Id,N'Expense',N'Pending',@Now,@Now);
-                INSERT dbo.DocumentProcessingPayloads(DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
-                VALUES(@Id,N'Expense',@BusinessId,1,@Payload,@PayloadHash,@Now);
-                """, connection, tx);
-            insert.Parameters.AddWithValue("@Id", request.ExpenseId); insert.Parameters.AddWithValue("@BusinessId", user.BusinessId); insert.Parameters.AddWithValue("@SupplierId", request.SupplierId); insert.Parameters.AddWithValue("@ConceptId", request.ConceptId); insert.Parameters.AddWithValue("@CenterId", (object?)center ?? DBNull.Value); insert.Parameters.AddWithValue("@SeriesId", number.SeriesId); insert.Parameters.AddWithValue("@Number", number.FullNumber); insert.Parameters.AddWithValue("@Prefix", number.Prefix); insert.Parameters.AddWithValue("@SeriesCode", number.SeriesCode); insert.Parameters.AddWithValue("@Consecutive", number.Consecutive); insert.Parameters.AddWithValue("@SupplierNumber", request.SupplierDocumentNumber); insert.Parameters.AddWithValue("@IssuedAt", request.IssuedAt); insert.Parameters.AddWithValue("@DueDate", request.DueDate); insert.Parameters.AddWithValue("@Currency", request.CurrencyCode); insert.Parameters.AddWithValue("@Description", request.Description); Money(insert, "@Net", amounts.TaxExclusiveAmount); Money(insert, "@Vat", amounts.VatAmount); Money(insert, "@Gross", amounts.GrossAmount); Money(insert, "@Held", withholding.WithholdingTotal); Money(insert, "@Payable", withholding.NetAmount); insert.Parameters.AddWithValue("@Evidence", (object?)request.EvidenceUrl ?? DBNull.Value); insert.Parameters.AddWithValue("@UserId", user.UserId); insert.Parameters.AddWithValue("@Key", idempotencyKey); insert.Parameters.Add("@RequestHash", SqlDbType.Binary, 32).Value = requestHash; insert.Parameters.AddWithValue("@Now", now); insert.Parameters.AddWithValue("@JobId", movementId); insert.Parameters.AddWithValue("@Sequence", sequence); insert.Parameters.AddWithValue("@Payload", json); insert.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = payloadHash;
-            await insert.ExecuteNonQueryAsync(ct);
+            await PersistAcceptedAsync(connection, tx,
+                [new(payload, idempotencyKey, requestHash, accountingJobId)], now, ct);
             if (support is not null)
                 await InsertSupportFiscalAsync(connection, tx, payload, support, now, ct);
-            await tx.CommitAsync(ct); return new(request.ExpenseId, movementId, number.FullNumber, "Accepted", sequence, false);
+            await tx.CommitAsync(ct); return new(request.ExpenseId, Guid.Empty, number.FullNumber, "Accepted", 0, false, accountingJobId, support is not null);
         }
         catch (ExpenseConflictException) { await tx.RollbackAsync(CancellationToken.None); throw; }
         catch (SqlException error) when (error.Number is 2601 or 2627) { await tx.RollbackAsync(CancellationToken.None); throw new ExpenseConflictException("El número de factura del proveedor ya fue registrado."); }
@@ -202,38 +185,51 @@ public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAur
 
     private static ExpenseConceptView ReadConcept(SqlDataReader r) => new(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.GetGuid(4), r.GetString(5), r.GetString(6), r.IsDBNull(7) ? null : r.GetGuid(7), r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9), r.GetBoolean(10));
 
-    private static async Task InsertSupportFiscalAsync(SqlConnection connection, SqlTransaction tx,
+    private static Task InsertSupportFiscalAsync(SqlConnection connection, SqlTransaction tx,
         ExpenseDocumentPayload expense, SqlGoodsReceiptStore.SupportFiscalAllocation support,
+        DateTimeOffset now, CancellationToken ct) =>
+        InsertSupportFiscalBatchAsync(connection, tx, [(expense, support)], now, ct);
+
+    private static async Task InsertSupportFiscalBatchAsync(SqlConnection connection, SqlTransaction tx,
+        IReadOnlyList<(ExpenseDocumentPayload Expense, SqlGoodsReceiptStore.SupportFiscalAllocation Support)> documents,
         DateTimeOffset now, CancellationToken ct)
     {
-        var snapshot = new PurchaseSupportFiscalSnapshot(null,
-            support.IssuerConfigurationId, support.FiscalNumber, support.Environment,
-            support.QrValidationUrl, support.Seller, support.Authorization,
-            [new PurchaseSupportLineMetadata(1, $"GASTO-{expense.ConceptId:N}", "999", "EA", "IVA", "01")],
-            Expense: expense, SellerPostalZone: support.SellerPostalZone);
+        if (documents.Count is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(documents));
+        var rows = documents.Select(item => {
+            var expense = item.Expense; var support = item.Support;
+            var snapshot = new PurchaseSupportFiscalSnapshot(null,
+                support.IssuerConfigurationId, support.FiscalNumber, support.Environment,
+                support.QrValidationUrl, support.Seller, support.Authorization,
+                [new PurchaseSupportLineMetadata(1, $"GASTO-{expense.ConceptId:N}", "999", "EA", "IVA", "01")],
+                Expense: expense, SellerPostalZone: support.SellerPostalZone);
+            return new { DocumentId = expense.ExpenseId, expense.BusinessId, expense.DocumentNumber,
+                expense.IssuedAt, support.FiscalNumber, support.IssuerConfigurationId, support.Environment,
+                SnapshotJson = PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot) };
+        }).ToArray();
         await using var command = new SqlCommand("""
+            SET NOCOUNT ON;
+            DECLARE @Documents TABLE(DocumentId uniqueidentifier PRIMARY KEY,BusinessId uniqueidentifier,
+              DocumentNumber nvarchar(64),IssuedAt datetimeoffset,FiscalNumber nvarchar(64),
+              IssuerId uniqueidentifier,Environment tinyint,SnapshotJson nvarchar(max));
+            INSERT @Documents SELECT DocumentId,BusinessId,DocumentNumber,IssuedAt,FiscalNumber,
+              IssuerConfigurationId,Environment,SnapshotJson FROM OPENJSON(@DocumentsJson) WITH(
+              DocumentId uniqueidentifier,BusinessId uniqueidentifier,DocumentNumber nvarchar(64),
+              IssuedAt datetimeoffset,FiscalNumber nvarchar(64),IssuerConfigurationId uniqueidentifier,
+              Environment tinyint,SnapshotJson nvarchar(max));
             INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
               AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
-            VALUES(@DocumentId,@BusinessId,N'Expense',N'SupportDocument',@AuralyNumber,@FiscalNumber,
-              N'CUDS',NULL,@IssuedAt,@Status,@Now,@Now);
+            SELECT DocumentId,BusinessId,N'Expense',N'SupportDocument',DocumentNumber,FiscalNumber,
+              N'CUDS',NULL,IssuedAt,@Status,@Now,@Now FROM @Documents;
             INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
-            VALUES(@DocumentId,@SnapshotJson,@Environment,@Now);
+            SELECT DocumentId,SnapshotJson,Environment,@Now FROM @Documents;
             INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
               AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
-            VALUES(@DocumentId,@BusinessId,@IssuerId,@Status,0,@Now,@Now,@Now);
+            SELECT DocumentId,BusinessId,IssuerId,@Status,0,@Now,@Now,@Now FROM @Documents;
             """, connection, tx);
-        command.Parameters.AddWithValue("@DocumentId", expense.ExpenseId);
-        command.Parameters.AddWithValue("@BusinessId", expense.BusinessId);
-        command.Parameters.AddWithValue("@AuralyNumber", expense.DocumentNumber);
-        command.Parameters.AddWithValue("@FiscalNumber", support.FiscalNumber);
-        command.Parameters.AddWithValue("@IssuedAt", expense.IssuedAt);
+        command.Parameters.Add("@DocumentsJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(rows);
         command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
         command.Parameters.AddWithValue("@Now", now);
-        command.Parameters.AddWithValue("@SnapshotJson", PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
-        command.Parameters.AddWithValue("@Environment", support.Environment);
-        command.Parameters.AddWithValue("@IssuerId", support.IssuerConfigurationId);
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    private static void Money(SqlCommand c, string name, decimal value) { var p = c.Parameters.Add(name, SqlDbType.Decimal); p.Precision = 19; p.Scale = 4; p.Value = value; }
 }

@@ -102,6 +102,12 @@ public sealed record WorkSessionCashMovementDetail(
     string? Reference = null,
     string? Notes = null);
 
+public sealed record WorkSessionInvoiceChargePayment(int PaymentNumber, string PaymentMethodCode, decimal Amount);
+
+public sealed record WorkSessionInvoiceCharge(Guid DocumentId, string DocumentNumber, Guid AppliedChargeId,
+    Guid ChargeId, string Code, string Name, string SupplierName, decimal Amount, decimal InvoicedAmount,
+    decimal ExpenseAmount, decimal WithholdingAmount, IReadOnlyList<WorkSessionInvoiceChargePayment> Payments);
+
 public sealed record WorkSessionClosureView(
     Guid WorkSessionClosureId,
     Guid WorkSessionId,
@@ -129,7 +135,8 @@ public sealed record WorkSessionClosureView(
     long ReturnCount = 0,
     IReadOnlyList<WorkSessionCreditSale>? CreditSales = null,
     int ReceiptTemplateVersion = 1,
-    IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null);
+    IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null,
+    IReadOnlyList<WorkSessionInvoiceCharge>? InvoiceCharges = null);
 
 public sealed record WorkSessionClosureReceiptRequest(
     string? CompanyName = null,
@@ -159,7 +166,8 @@ public sealed record WorkSessionClosurePreviewView(
     decimal CreditSalesAmount = 0,
     long ReturnCount = 0,
     IReadOnlyList<WorkSessionCreditSale>? CreditSales = null,
-    IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null);
+    IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null,
+    IReadOnlyList<WorkSessionInvoiceCharge>? InvoiceCharges = null);
 
 public sealed record WorkSessionCashDifferencePayload(
     Guid WorkSessionClosureId,
@@ -251,7 +259,9 @@ public sealed record WorkSessionPaymentVerificationItem(
     DateTimeOffset OccurredAt,
     string SourceDocumentType,
     string? CustomerName,
-    string? Status);
+    string? Status,
+    string? ReasonName = null,
+    string? Notes = null);
 
 public sealed record WorkSessionPaymentVerificationDecision(
     string VerificationKey,

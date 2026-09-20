@@ -25,6 +25,8 @@ export interface WorkSessionCashDifference {
 }
 
 export const workSessionDifferencesApi = {
+  closureSnapshot: (workSessionId: string) => apiClient.get<PosWorkSessionClosure>(
+    `/commerce/v1/work-sessions/${encodeURIComponent(workSessionId)}/closure`, undefined, { cache: "no-store" }),
   current: () =>
     apiClient.get<ActiveWorkSession | undefined>(
       "/commerce/v1/work-sessions/current",
@@ -88,7 +90,7 @@ export interface ActiveWorkSession {
 }
 
 export interface ClosurePaymentTotal { paymentMethodCode:string; salesAmount:number; refundAmount:number; otherAmount:number; netAmount:number; countedAmount:number|null; difference:number|null; requiresCount:boolean }
-export interface ClosurePaymentVerification { verificationKey:string; paymentMethodCode:string; movementType:"Sale"|"Refund"|"CashIn"|"CashOut"|"SalePayment"|"CreditSale"; sourceDocumentType:"SalesInvoice"|"SalesReceipt"|"ServiceInvoice"|"SalesReturn"|"CashMovement"; sourceId:string; documentNumber:string; sourceNumber:number; amount:number; reference:string|null; cardFranchiseCode:string|null; approvalNumber:string|null; occurredAt:string; customerName:string|null; status:"Verified"|"Missing"|null }
+export interface ClosurePaymentVerification { verificationKey:string; paymentMethodCode:string; movementType:"Sale"|"Refund"|"CashIn"|"CashOut"|"SalePayment"|"CreditSale"; sourceDocumentType:"SalesInvoice"|"SalesReceipt"|"ServiceInvoice"|"SalesReturn"|"CashMovement"; sourceId:string; documentNumber:string; sourceNumber:number; amount:number; reference:string|null; cardFranchiseCode:string|null; approvalNumber:string|null; occurredAt:string; customerName:string|null; reasonName?:string|null; notes?:string|null; status:"Verified"|"Missing"|null }
 export interface WorkSessionClosure { workSessionClosureId:string; workSessionId:string; businessId:string; businessName:string; warehouseId:string|null; warehouseName:string|null; userId:string; userName:string; openedAt:string; closedAt:string; salesCount:number; creditSalesCount:number; returnCount:number; totalSales:number; totalRefunds:number; netAmount:number; reconciliationStatus:"Pending"|"Partial"|"Reconciled"|"ReconciledWithDifferences"; accountingStatus:string; paymentTotals:ClosurePaymentTotal[] }
 export interface WorkSessionClosurePage { items:WorkSessionClosure[]; page:number; pageSize:number; totalItems:number }
 export interface ReconcileClosureRequest { lines:Array<{paymentMethodCode:string;verifiedAmount:number;isConfirmed:boolean;reasonCode:string|null}>; reclassifications:Array<{fromPaymentMethodCode:string;toPaymentMethodCode:string;amount:number}>; note:string|null; paymentVerifications:Array<{verificationKey:string;status:"Verified"|"Missing"}> }

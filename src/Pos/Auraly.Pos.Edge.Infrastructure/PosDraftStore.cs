@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Domain.Money;
+using Auraly.Contracts.Sales;
 using Microsoft.Data.Sqlite;
 
 namespace Auraly.Pos.Edge.Infrastructure;
@@ -91,10 +92,11 @@ public sealed record PosDraft(
     DateTimeOffset UpdatedAt,
     IReadOnlyList<PosDraftLine> Lines,
     Guid? SourceOrderId = null,
-    Guid? CustomerPartySiteId = null)
+    Guid? CustomerPartySiteId = null,
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null)
 {
-    public decimal UntaxedAmount => Lines.Sum(line => line.Net);
-    public decimal TaxAmount => Lines.Sum(line => line.Tax);
+    public decimal UntaxedAmount => Lines.Sum(line => line.Net) + (Charges?.Sum(charge => charge.InvoicedUntaxedAmount) ?? 0);
+    public decimal TaxAmount => Lines.Sum(line => line.Tax) + (Charges?.Sum(charge => charge.InvoicedTaxAmount) ?? 0);
     public decimal PayableAmount => UntaxedAmount + TaxAmount;
 }
 
@@ -122,7 +124,7 @@ public sealed record PosDraftLineDocumentUpdate(
     decimal Discount,
     decimal DocumentUnitCost = 0);
 
-public sealed class PosDraftStore
+public sealed partial class PosDraftStore
 {
     private readonly string _connectionString;
     private readonly IAuralyIdGenerator _idGenerator;
@@ -467,6 +469,7 @@ public sealed class PosDraftStore
         var now = Now();
         await ExecuteAsync(connection, transaction, """
             DELETE FROM PosDraftLines WHERE DraftId=@DraftId;
+            DELETE FROM PosDraftCharges WHERE DraftId=@DraftId;
             UPDATE PosDrafts
             SET Status='Deleted',UpdatedAt=@Now
             WHERE DraftId=@DraftId AND Status='Active' AND IssuedAt IS NULL;
@@ -653,10 +656,7 @@ public sealed class PosDraftStore
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             while (await reader.ReadAsync(cancellationToken))
                 ids.Add(new DraftId(Guid.Parse(reader.GetString(0))));
-        var values = new List<PosDraft>(ids.Count);
-        foreach (var id in ids)
-            values.Add(await GetRequiredAsync(id, cancellationToken));
-        return values;
+        return (await ReadStoredDraftsAsync(connection, null, ids, cancellationToken)).Select(x => x.Draft).ToArray();
     }
 
     public async Task<bool> HasTemporariesAsync(
@@ -699,6 +699,7 @@ public sealed class PosDraftStore
         var now = Now();
         await ExecuteAsync(connection, transaction, """
             DELETE FROM PosDraftLines WHERE DraftId=@DraftId;
+            DELETE FROM PosDraftCharges WHERE DraftId=@DraftId;
             UPDATE PosDrafts
             SET Status='Deleted',UpdatedAt=@Now
             WHERE DraftId=@DraftId AND Status='Temporary' AND IssuedAt IS NULL;
@@ -763,15 +764,26 @@ public sealed class PosDraftStore
                 ],
                 cancellationToken);
 
-        foreach (var line in sourceLines)
-            await InsertLineAsync(
-                connection,
-                transaction,
-                targetId,
-                _idGenerator.NewId(),
-                ToInput(line),
-                line.Position,
-                cancellationToken);
+        // Copy the complete temporary sale in a bounded batch. Charge selections
+        // keep the tariff version captured before the pause.
+        await ExecuteAsync(connection, transaction, """
+            INSERT INTO PosDraftLines(
+              LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,Quantity,
+              BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,PriceChannelId,Discount,Note,
+              AllowsFractionalSale,DocumentUnitCost,AllowsDocumentCostOverride,Position,
+              IsPriceOverridden,PromotionDiscount,PublicLineTotal)
+            SELECT json_extract(input.value,'$.NewLineId'),@TargetId,line.ProductId,line.ProductCode,
+              line.Description,line.UnitCode,line.TaxCode,line.TaxRate,line.Quantity,line.BaseUnitPrice,
+              line.UnitPrice,line.CurrencyCode,line.PriceSource,line.PriceChannelId,line.Discount,line.Note,
+              line.AllowsFractionalSale,line.DocumentUnitCost,line.AllowsDocumentCostOverride,line.Position,
+              line.IsPriceOverridden,line.PromotionDiscount,line.PublicLineTotal
+            FROM PosDraftLines line JOIN json_each(@LinesJson) input
+              ON line.LineId=json_extract(input.value,'$.LineId') WHERE line.DraftId=@SourceId;
+            INSERT INTO PosDraftCharges(DraftId,AppliedChargeId,ChargeId,SelectionJson)
+            SELECT @TargetId,AppliedChargeId,ChargeId,SelectionJson FROM PosDraftCharges WHERE DraftId=@SourceId;
+            """, [P("@TargetId", targetId.Value), P("@SourceId", temporaryId.Value),
+                P("@LinesJson", JsonSerializer.Serialize(sourceLines.Select(line =>
+                    new { line.LineId, NewLineId = _idGenerator.NewId() })))], cancellationToken);
 
         var now = Now();
         await ExecuteAsync(connection, transaction, """
@@ -795,10 +807,10 @@ public sealed class PosDraftStore
         CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
-        var header = await ReadHeaderAsync(connection, null, draftId, cancellationToken);
-        if (header is null) return null;
-        var lines = await ReadLinesAsync(connection, null, draftId, cancellationToken);
-        return header with { Lines = lines };
+        await using var transaction = connection.BeginTransaction();
+        var result = (await ReadStoredDraftsAsync(connection, transaction, [draftId], cancellationToken)).SingleOrDefault()?.Draft;
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     private async Task<PosDraft> GetRequiredAsync(DraftId draftId, CancellationToken ct) =>
@@ -874,6 +886,10 @@ public sealed class PosDraftStore
         parameters.AddRange(values);
         var affected = await ExecuteAsync(connection, transaction, sql, [.. parameters], ct);
         if (affected == 0) throw new KeyNotFoundException("The draft line does not exist.");
+        await ExecuteAsync(connection, transaction, """
+            DELETE FROM PosDraftCharges WHERE DraftId=@DraftId
+              AND NOT EXISTS(SELECT 1 FROM PosDraftLines WHERE DraftId=@DraftId);
+            """, [P("@DraftId", draftId.Value)], ct);
         await TouchAsync(connection, transaction, draftId, ct);
         await transaction.CommitAsync(ct);
     }
@@ -1086,7 +1102,11 @@ public sealed class PosDraftStore
         command.Parameters.Add(P("@DraftId", draftId.Value));
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
-        return new PosDraft(
+        return ReadHeader(draftId, reader);
+    }
+
+    private static PosDraft ReadHeader(DraftId draftId, SqliteDataReader reader) =>
+        new PosDraft(
             draftId,
             new PosDraftScope(
                 new BusinessId(Guid.Parse(reader.GetString(0))),
@@ -1105,7 +1125,6 @@ public sealed class PosDraftStore
             [],
             NullableGuid(reader, 13),
             NullableGuid(reader, 14));
-    }
 
     private static async Task<IReadOnlyList<PosDraftLine>> ReadLinesAsync(
         SqliteConnection connection,
@@ -1127,7 +1146,12 @@ public sealed class PosDraftStore
         var lines = new List<PosDraftLine>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
-            lines.Add(new PosDraftLine(
+            lines.Add(ReadLine(reader));
+        return lines;
+    }
+
+    private static PosDraftLine ReadLine(SqliteDataReader reader) =>
+        new PosDraftLine(
                 Guid.Parse(reader.GetString(0)),
                 new ProductId(Guid.Parse(reader.GetString(1))),
                 reader.GetString(2),
@@ -1149,11 +1173,9 @@ public sealed class PosDraftStore
                 reader.GetInt32(18),
                 reader.GetInt64(19) == 1,
                 Decimal(reader, 20),
-                Decimal(reader, 21)));
-        return lines;
-    }
+                Decimal(reader, 21));
 
-    private static async Task TouchAsync(
+    private async Task TouchAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         DraftId draftId,
@@ -1162,7 +1184,7 @@ public sealed class PosDraftStore
             connection,
             transaction,
             "UPDATE PosDrafts SET UpdatedAt=@Now WHERE DraftId=@DraftId;",
-            [P("@Now", DateTimeOffset.UtcNow), P("@DraftId", draftId.Value)],
+            [P("@Now", Now()), P("@DraftId", draftId.Value)],
             ct);
 
     private static async Task<int> ExecuteAsync(
@@ -1303,6 +1325,14 @@ public sealed class PosDraftStore
           FOREIGN KEY(DraftId) REFERENCES PosDrafts(DraftId) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS IX_PosDraftLines_Draft
           ON PosDraftLines(DraftId,Position);
+        CREATE TABLE IF NOT EXISTS PosDraftCharges(
+          DraftId TEXT NOT NULL,
+          AppliedChargeId TEXT NOT NULL,
+          ChargeId TEXT NOT NULL,
+          SelectionJson TEXT NOT NULL CHECK(json_valid(SelectionJson)),
+          PRIMARY KEY(DraftId,AppliedChargeId),
+          UNIQUE(DraftId,ChargeId),
+          FOREIGN KEY(DraftId) REFERENCES PosDrafts(DraftId) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS PosDraftAudit(
           AuditId TEXT PRIMARY KEY,
           DraftId TEXT NOT NULL,

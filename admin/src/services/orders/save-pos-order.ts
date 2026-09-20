@@ -13,6 +13,8 @@ export async function savePosDraftAsOrder(
   draft: PosDraft,
   idempotencyKey: string,
 ): Promise<SellerOrderResult> {
+  if (draft.charges?.length)
+    throw new Error("Los cargos se guardan al facturar. Quita los cargos antes de guardar el pedido para evitar perderlos.");
   if (!draft.customerId)
     throw new Error("Selecciona un cliente antes de guardar el pedido.");
   if (!draft.customerPartySiteId)

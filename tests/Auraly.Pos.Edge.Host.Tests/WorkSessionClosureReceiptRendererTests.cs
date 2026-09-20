@@ -7,6 +7,52 @@ namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class WorkSessionClosureReceiptRendererTests
 {
+    [Theory]
+    [InlineData(58)]
+    [InlineData(80)]
+    public void Version_four_prints_reason_notes_amount_and_compact_credit_without_document_metadata(int width)
+    {
+        var closure = Closure(4);
+        closure = closure with
+        {
+            CashMovements = closure.CashMovements!.Select(item => item with
+            {
+                Notes = item.Direction == "In" ? "Anticipo <urgente>\nSegunda línea" : null
+            }).ToArray()
+        };
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(closure, paperWidthMillimeters: width);
+        Assert.Contains("data-auraly-report-version=\"4\"", html);
+        var entries = Section(html, "Entradas de dinero", "Salidas de dinero");
+        Assert.Contains("Ingreso adicional", entries);
+        Assert.Contains("Anticipo &lt;urgente&gt;\nSegunda l&#237;nea", entries);
+        Assert.DoesNotContain("MOV-ENTRADA", entries);
+        Assert.DoesNotContain("REF-1", entries);
+        Assert.DoesNotContain("Cajero", entries);
+        Assert.Contains("$ 7", entries);
+        var exits = Section(html, "Salidas de dinero", "Detalle por medio de pago");
+        Assert.Contains("Compra menor", exits);
+        Assert.Contains("$ 2", exits);
+        Assert.DoesNotContain("MOV-SALIDA", exits);
+        Assert.DoesNotContain("<small>", exits);
+        var credit = Section(html, "Ventas a cartera</h2>", "Entradas de dinero");
+        Assert.Contains("<td>Cliente Uno</td><td>FV-10</td><td>$ 25</td>", credit);
+        Assert.DoesNotContain("<small>", credit);
+    }
+
+    [Theory]
+    [InlineData(58)]
+    [InlineData(80)]
+    public void Version_four_lists_financed_charge_in_credit_without_adding_it_to_cash(int width)
+    {
+        var closure = Closure(4) with { InvoiceCharges = [new(Guid.NewGuid(), "FV-10", Guid.NewGuid(),
+            Guid.NewGuid(), "DOMICILIO", "Domicilio financiado", "Proveedor", 5m, 5m, 0m, 0m,
+            [new(0, "Credit", 5m)])] };
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(closure, paperWidthMillimeters: width);
+        Assert.Contains("Domicilio financiado", Section(html, "Ventas a cartera</h2>", "Entradas de dinero"));
+        Assert.DoesNotContain("Domicilio financiado", Section(html, "data-payment-method=\"Cash\"", "</section>"));
+        Assert.Contains("Domicilio financiado", Section(html, "Cargos de facturaci", "Observación:"));
+    }
+
     [Fact]
     public void Version_two_uses_the_requested_sections_order_and_one_reconciliation_box_per_counted_method()
     {

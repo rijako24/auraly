@@ -676,6 +676,11 @@ public sealed class PosConfigurationTests
             var workSessionId = Guid.NewGuid();
             var userId = Guid.NewGuid();
             var now = DateTimeOffset.UtcNow;
+            var charges = new[] {
+                new WorkSessionInvoiceCharge(Guid.NewGuid(), "FV-DOM", Guid.NewGuid(), Guid.NewGuid(),
+                    "DOM", "Domicilio", "Proveedor", 5m, 5m, 0m, 0m, [new(1, "Cash", 5m)]),
+                new WorkSessionInvoiceCharge(Guid.NewGuid(), "FV-AGOT", Guid.NewGuid(), Guid.NewGuid(),
+                    "AGOT", "Agotados", "Proveedor", 7m, 0m, 7m, 0m, []) };
             PosQueuedWorkSessionClosure queued(Guid operationId, decimal counted) => new(
                 operationId,
                 new WorkSessionClosureView(
@@ -683,7 +688,8 @@ public sealed class PosConfigurationTests
                     Guid.NewGuid(), "Bodega", userId, "Cajero", Guid.NewGuid(),
                     now.AddHours(-8), now, 10m, 0, 0, 10m, 10m, counted,
                     counted - 10m, null,
-                    [new WorkSessionPaymentTotal("Cash", 10m, 0, 0, 10m, counted, counted - 10m)]),
+                    [new WorkSessionPaymentTotal("Cash", 10m, 0, 0, 10m, counted, counted - 10m)],
+                    InvoiceCharges: charges),
                 new DeviceCloseWorkSessionRequest(
                     userId, workSessionId, counted, null, userId,
                     [new WorkSessionPaymentCount("Cash", counted)]));
@@ -695,6 +701,19 @@ public sealed class PosConfigurationTests
             Assert.Equal(firstOperation, first.WorkSessionClosureId);
             Assert.Equal(firstOperation, recovered.WorkSessionClosureId);
             Assert.Equal(10m, recovered.CountedCash);
+            Assert.Equal(2, recovered.InvoiceCharges!.Count);
+            Assert.Equal(5m, recovered.InvoiceCharges.Sum(charge => charge.InvoicedAmount));
+            Assert.Equal(7m, recovered.InvoiceCharges.Sum(charge => charge.ExpenseAmount));
+            // Restarting the store reads the same frozen amounts from the unified outbox.
+            var restarted = new PosOfflineWorkSessionClosureStore(connectionString, TimeProvider.System);
+            var claimed = (await restarted.ClaimAsync())!.Value;
+            Assert.Equal(firstOperation, claimed.OperationId);
+            Assert.Equal(10m, claimed.Value.Request.CountedCash);
+            Assert.Equal(2, claimed.Value.Closure.InvoiceCharges!.Count);
+            Assert.Equal(5m, claimed.Value.Closure.InvoiceCharges.SelectMany(charge => charge.Payments).Sum(payment => payment.Amount));
+            await restarted.MarkUploadedAsync(firstOperation);
+            Assert.Null(await restarted.ClaimAsync());
+            Assert.Equal(0, (await restarted.ReadStatusAsync()).PendingCount);
             await using var database = new SqliteConnection(connectionString);
             await database.OpenAsync();
             await using var count = database.CreateCommand();

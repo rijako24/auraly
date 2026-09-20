@@ -330,7 +330,7 @@ public sealed partial class SqlWorkSessionStore(
                 metrics.ReturnCount,
                 metrics.CreditSales,
                 request.ReceiptTemplateVersion,
-                metrics.CashMovements);
+                metrics.CashMovements, metrics.InvoiceCharges);
             var snapshot = JsonSerializer.Serialize(closure, Json);
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot));
 
@@ -443,7 +443,7 @@ public sealed partial class SqlWorkSessionStore(
             metrics.CreditSalesAmount,
             metrics.ReturnCount,
             metrics.CreditSales,
-            metrics.CashMovements);
+            metrics.CashMovements, metrics.InvoiceCharges);
     }
 
     public async Task<bool> HasPausedSalesAsync(
@@ -494,7 +494,8 @@ public sealed partial class SqlWorkSessionStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         var result = await ReadClosureAsync(
-            connection, null, identity, workSessionId, cancellationToken);
+            connection, null, identity, workSessionId, cancellationToken,
+            allowTenantRead: identity.Permissions.Contains(WorkSessionPermissionCodes.ReadCashDifferences));
         return result?.Closure;
     }
 
@@ -837,25 +838,32 @@ public sealed partial class SqlWorkSessionStore(
 
                 UNION ALL
 
-                SELECT movement.WorkSessionMovementId,
-                       CASE WHEN movement.MovementType=N'CashIn' THEN N'In' ELSE N'Out' END,
-                       movement.SourceKey,
-                       CASE WHEN movement.MovementType=N'CashIn'
-                            THEN N'Entrada de dinero' ELSE N'Salida de dinero' END,
+                SELECT COALESCE(supplierPayment.PaymentId,customerPayment.PaymentId,movement.WorkSessionMovementId),
+                       CASE WHEN movement.Amount>0 THEN N'In' ELSE N'Out' END,
+                       COALESCE(supplierPayment.DocumentNumber,customerPayment.DocumentNumber,movement.SourceKey),
+                       COALESCE(documentType.Label,CASE WHEN movement.MovementType=N'CashIn'
+                            THEN N'Entrada de dinero' ELSE N'Salida de dinero' END),
                        ABS(movement.Amount),movement.OccurredAt,
                        LTRIM(RTRIM(CONCAT(users.FirstName,N' ',users.LastName))),
-                       movement.Reference,NULL
+                       movement.Reference,COALESCE(supplierPayment.Notes,customerPayment.Notes)
                 FROM dbo.WorkSessionMovements movement
                 INNER JOIN dbo.WorkSessions session
                   ON session.WorkSessionId=movement.WorkSessionId
                 INNER JOIN dbo.AppUsers users
                   ON users.UserId=movement.RecordedByUserId
                  AND users.TenantId=session.TenantId
+                LEFT JOIN dbo.SupplierPayments supplierPayment ON supplierPayment.PaymentId=movement.DocumentId
+                  AND movement.MovementType=N'PayablePayment' AND supplierPayment.BusinessId=session.BusinessId
+                LEFT JOIN dbo.CustomerPayments customerPayment ON customerPayment.PaymentId=
+                    COALESCE(movement.DocumentId,TRY_CONVERT(uniqueidentifier,RIGHT(movement.SourceKey,36)))
+                  AND movement.MovementType=N'ReceivablePayment' AND customerPayment.BusinessId=session.BusinessId
+                LEFT JOIN reference.Options documentType ON documentType.CatalogCode=N'accounting-document-type'
+                  AND documentType.Code=movement.MovementType
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=movement.PaymentMethodCode
                 WHERE movement.WorkSessionId=@WorkSessionId
                   AND session.TenantId=@TenantId AND session.UserId=@UserId
-                  AND movement.MovementType IN(N'CashIn',N'CashOut')
+                  AND movement.MovementType IN(N'CashIn',N'CashOut',N'PayablePayment',N'ReceivablePayment')
                   AND COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode)=N'Cash'
                   AND NOT EXISTS
                   (
@@ -865,6 +873,13 @@ public sealed partial class SqlWorkSessionStore(
                   )
             ) detail
             ORDER BY detail.OccurredAt,detail.DocumentId;
+            SELECT payload.PayloadJson FROM dbo.SalesDocuments d
+            JOIN dbo.DocumentProcessingPayloads payload ON payload.DocumentId=d.DocumentId AND payload.DocumentType=d.DocumentType
+            JOIN dbo.WorkSessions session ON session.WorkSessionId=d.WorkSessionId AND session.BusinessId=d.BusinessId
+            WHERE session.WorkSessionId=@WorkSessionId AND session.TenantId=@TenantId AND session.UserId=@UserId
+              AND JSON_QUERY(payload.PayloadJson,'$.charges') IS NOT NULL
+            ORDER BY d.IssuedAt,d.DocumentId;
+            SELECT PaymentMethodCode,ClosureMethodCode FROM worksessions.CashClosurePaymentMethodMappings;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         command.Parameters.AddWithValue("@TenantId", identity.TenantId);
@@ -873,7 +888,7 @@ public sealed partial class SqlWorkSessionStore(
         await reader.ReadAsync(cancellationToken);
         var metrics = new SalesMetrics(
             reader.GetInt64(0), reader.GetInt32(1), reader.GetDecimal(2),
-            reader.GetInt64(3), [], []);
+            reader.GetInt64(3), [], [], []);
         await reader.NextResultAsync(cancellationToken);
         var creditSales = new List<WorkSessionCreditSale>();
         while (await reader.ReadAsync(cancellationToken))
@@ -888,10 +903,20 @@ public sealed partial class SqlWorkSessionStore(
                 reader.GetDateTimeOffset(5), reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8)));
+        await reader.NextResultAsync(cancellationToken);
+        var invoiceCharges = new List<WorkSessionInvoiceCharge>();
+        while (await reader.ReadAsync(cancellationToken))
+            invoiceCharges.AddRange(Auraly.Application.Sales.InvoiceChargeClosureProjection.FromSale(
+                Auraly.Contracts.Sales.PosSaleContractSerializer.Deserialize(reader.GetString(0))));
+        await reader.NextResultAsync(cancellationToken);
+        var closureMethods = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (await reader.ReadAsync(cancellationToken)) closureMethods.Add(reader.GetString(0), reader.GetString(1));
         return metrics with
         {
             CreditSales = creditSales,
-            CashMovements = cashMovements
+            CashMovements = cashMovements,
+            InvoiceCharges = Auraly.Application.Sales.InvoiceChargeClosureProjection.MapPayments(invoiceCharges,
+                method => closureMethods.GetValueOrDefault(method, method))
         };
     }
 
@@ -1167,7 +1192,8 @@ public sealed partial class SqlWorkSessionStore(
     private sealed record SalesMetrics(
         long SalesCount, int CreditSalesCount, decimal CreditSalesAmount, long ReturnCount,
         IReadOnlyList<WorkSessionCreditSale> CreditSales,
-        IReadOnlyList<WorkSessionCashMovementDetail> CashMovements);
+        IReadOnlyList<WorkSessionCashMovementDetail> CashMovements,
+        IReadOnlyList<WorkSessionInvoiceCharge> InvoiceCharges);
 
     private static IReadOnlyList<WorkSessionPaymentTotal> ApplyCashMovementDetailTotals(
         IReadOnlyList<WorkSessionPaymentTotal> totals,
@@ -1196,17 +1222,18 @@ public sealed partial class SqlWorkSessionStore(
         SqlTransaction? transaction,
         WorkSessionIdentity identity,
         Guid workSessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool allowTenantRead = false)
     {
         await using var command = new SqlCommand("""
             SELECT c.IdempotencyKey,c.ReceiptSnapshotJson,c.ReceiptHash
             FROM dbo.WorkSessionClosures c
             INNER JOIN dbo.WorkSessions s ON s.WorkSessionId=c.WorkSessionId
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
-            WHERE c.WorkSessionId=@WorkSessionId AND s.UserId=@UserId
+            WHERE c.WorkSessionId=@WorkSessionId AND (@AllowTenantRead=1 OR s.UserId=@UserId)
               AND b.TenantId=@TenantId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        command.Parameters.AddWithValue("@AllowTenantRead", allowTenantRead);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
         command.Parameters.AddWithValue("@TenantId", identity.TenantId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

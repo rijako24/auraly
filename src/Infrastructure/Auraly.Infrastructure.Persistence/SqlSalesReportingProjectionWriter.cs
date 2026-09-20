@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Returns;
@@ -12,7 +13,7 @@ public sealed record SalesReportingSqlSession(
     SqlTransaction Transaction);
 
 /// <summary>
-/// Maintains the sales read model as an intrinsic effect of the canonical sale transaction.
+/// Maintains the sales read model within the canonical reporting transaction.
 /// The writer is deliberately idempotent at source-document level and never reads this model
 /// to make operational, inventory, fiscal or accounting decisions.
 /// </summary>
@@ -30,25 +31,19 @@ public sealed class SqlSalesReportingProjectionWriter(
         var localDate = await ResolveLocalDateAsync(
             session, value.BusinessId, value.CommercialSnapshot.IssuedAt, cancellationToken);
         var now = timeProvider.GetUtcNow();
-        var recognizedCost = 0m;
         var seller = await ResolveSellerAttributionAsync(session, value, cancellationToken);
-
-        foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
-        {
-            var lineCost = decimal.Round(
-                line.Quantity * line.DocumentUnitCost, 4, MidpointRounding.AwayFromZero);
-            recognizedCost += lineCost;
-            await InsertSaleLineFactAsync(
-                session, value, line, seller.SellerId, lineCost, localDate.Date, now,
-                cancellationToken);
-        }
+        var recognizedCost = await InsertSaleLineFactsAsync(
+            session, value, seller.SellerId, localDate.Date, now, cancellationToken);
 
         await InsertSaleDocumentAsync(
             session, value, seller, localDate, recognizedCost, now, cancellationToken);
         await InsertSalePaymentFactsAsync(session, value, localDate.Date, now, cancellationToken);
         await InsertSaleTaxFactsAsync(session, value, localDate.Date, now, cancellationToken);
         await ApplyDimensionDeltasAsync(session, value.BusinessId, value.DocumentId,
-            value.CommercialSnapshot.DocumentType, 1, now, cancellationToken);
+            value.CommercialSnapshot.DocumentType, 1, now, cancellationToken,
+            chargeUntaxed: value.Charges?.Sum(charge => charge.InvoicedUntaxedAmount) ?? 0,
+            chargeTax: value.Charges?.Sum(charge => charge.InvoicedTaxAmount) ?? 0,
+            chargeTotal: value.Charges?.Sum(charge => charge.InvoicedAmount) ?? 0);
 
         var discount = value.Lines.Sum(line => line.DiscountAmount);
         var gross = value.CommercialSnapshot.UntaxedAmount + discount;
@@ -411,12 +406,10 @@ public sealed class SqlSalesReportingProjectionWriter(
             throw new InvalidOperationException("The sale reporting document could not be projected.");
     }
 
-    private async Task InsertSaleLineFactAsync(
+    private async Task<decimal> InsertSaleLineFactsAsync(
         SalesReportingSqlSession session,
         PosSaleUploadRequest value,
-        PosSaleLineContract line,
         Guid? sellerId,
-        decimal cost,
         DateOnly localDate,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -430,8 +423,8 @@ public sealed class SqlSalesReportingProjectionWriter(
               CategoryId,CategoryName,SupplierId,SupplierName,Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,
               TotalAmount,RecognizedCostAmount,ProjectionVersion,ProjectedAt
             )
-            SELECT @FactId,@TenantId,@BusinessId,@DocumentId,@DocumentType,@LineNumber,
-                   @DocumentId,@LineNumber,N'Sale',@OccurredAt,@LocalDate,@WarehouseId,
+            SELECT batch.FactId,@TenantId,@BusinessId,@DocumentId,@DocumentType,batch.LineNumber,
+                   @DocumentId,batch.LineNumber,N'Sale',@OccurredAt,@LocalDate,@WarehouseId,
                    @WorkSessionId,@SellerId,@CustomerId,@PartySiteId,p.ProductId,
                    CASE WHEN sourceLine.AttributionSnapshotVersion>0
                         THEN COALESCE(sourceLine.ProductCodeSnapshot,N'')
@@ -447,37 +440,37 @@ public sealed class SqlSalesReportingProjectionWriter(
                         THEN sourceLine.SupplierIdSnapshot ELSE supplier.SupplierId END,
                    CASE WHEN sourceLine.AttributionSnapshotVersion>0
                         THEN sourceLine.SupplierNameSnapshot ELSE supplier.Name END,
-                   @Quantity,@Gross,@Discount,@Untaxed,@Tax,
-                   @Total,@Cost,@Version,@ProjectedAt
-            FROM dbo.SalesDocumentLines sourceLine
+                   batch.Quantity,batch.Gross,batch.Discount,batch.Untaxed,batch.Tax,
+                   batch.Total,batch.Cost,@Version,@ProjectedAt
+            FROM OPENJSON(@Lines) WITH
+              (FactId uniqueidentifier,LineNumber int,ProductId uniqueidentifier,
+               Quantity decimal(19,6),Gross decimal(19,4),Discount decimal(19,4),
+               Untaxed decimal(19,4),Tax decimal(19,4),Total decimal(19,4),Cost decimal(19,4)) batch
+            INNER JOIN dbo.SalesDocumentLines sourceLine
+              ON sourceLine.DocumentId=@DocumentId AND sourceLine.LineNumber=batch.LineNumber
+              AND sourceLine.ProductId=batch.ProductId
             INNER JOIN dbo.Products p ON p.ProductId=sourceLine.ProductId
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
               INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=@BusinessId
               WHERE sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId AND sp.IsActive=1 AND s.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId) supplier
-            WHERE sourceLine.DocumentId=@DocumentId AND sourceLine.LineNumber=@LineNumber
-              AND p.ProductId=@ProductId
-              AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
+            WHERE p.TenantId=@TenantId;
             """;
+        var lines = value.Lines.Select(line => new
+        {
+            FactId = ids.NewId(), line.LineNumber, line.ProductId, line.Quantity,
+            Gross = line.UntaxedAmount + line.DiscountAmount, Discount = line.DiscountAmount,
+            Untaxed = line.UntaxedAmount, Tax = line.TaxAmount, Total = line.LineTotal,
+            Cost = decimal.Round(line.Quantity * line.DocumentUnitCost, 4, MidpointRounding.AwayFromZero)
+        }).ToArray();
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@FactId", ids.NewId());
-        AddSaleFactParameters(command, value, line, sellerId, localDate, now);
-        AddDecimal(command, "@Cost", cost, 19, 4);
+        command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(lines);
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new InvalidOperationException($"Sale line {line.LineNumber} could not be projected.");
-    }
-
-    private static void AddSaleFactParameters(
-        SqlCommand command, PosSaleUploadRequest value, PosSaleLineContract line,
-        Guid? sellerId, DateOnly localDate, DateTimeOffset now)
-    {
         command.Parameters.AddWithValue("@TenantId", value.TenantId);
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
         command.Parameters.AddWithValue("@DocumentId", value.DocumentId);
         command.Parameters.AddWithValue("@DocumentType", value.CommercialSnapshot.DocumentType);
-        command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         command.Parameters.AddWithValue("@OccurredAt", value.CommercialSnapshot.IssuedAt);
         command.Parameters.AddWithValue("@LocalDate", localDate.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@WarehouseId", value.WarehouseId);
@@ -485,15 +478,10 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@SellerId", (object?)sellerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@CustomerId", (object?)value.CustomerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PartySiteId", (object?)value.CustomerPartySiteId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        command.Parameters.AddWithValue("@ProductName", line.Description);
-        AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
-        AddDecimal(command, "@Gross", line.UntaxedAmount + line.DiscountAmount, 19, 4);
-        AddDecimal(command, "@Discount", line.DiscountAmount, 19, 4);
-        AddDecimal(command, "@Untaxed", line.UntaxedAmount, 19, 4);
-        AddDecimal(command, "@Tax", line.TaxAmount, 19, 4);
-        AddDecimal(command, "@Total", line.LineTotal, 19, 4);
         command.Parameters.AddWithValue("@ProjectedAt", now);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != lines.Length)
+            throw new InvalidOperationException("The sale lines could not be projected completely.");
+        return lines.Sum(line => line.Cost);
     }
 
     private static async Task InsertSalePaymentFactsAsync(
@@ -507,19 +495,30 @@ public sealed class SqlSalesReportingProjectionWriter(
             INSERT reporting.SalesReportPaymentFacts
               (SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
                BusinessLocalDate,MovementType,MethodCode,Amount,Reference,WorkSessionId,ProjectedAt)
-            VALUES(@DocumentId,@DocumentType,@Number,@TenantId,@BusinessId,@LocalDate,
-                   @MovementType,@Method,@Amount,@Reference,@WorkSessionId,@ProjectedAt);
+            SELECT @DocumentId,@DocumentType,p.PaymentNumber,@TenantId,@BusinessId,@LocalDate,
+                   p.MovementType,p.MethodCode,p.Amount,p.Reference,@WorkSessionId,@ProjectedAt
+            FROM OPENJSON(@Payments) WITH
+              (PaymentNumber int,MovementType nvarchar(24),MethodCode nvarchar(32),
+               Amount decimal(19,4),Reference nvarchar(max)) p;
             """;
-        foreach (var payment in value.Payments.OrderBy(x => x.PaymentNumber))
-            await InsertPaymentFactAsync(session, sql, value.DocumentId,
-                value.CommercialSnapshot.DocumentType, payment.PaymentNumber, value.TenantId,
-                value.BusinessId, localDate, "Payment", payment.MethodCode, payment.Amount,
-                payment.Reference, value.WorkSessionId, now, cancellationToken);
+        var payments = value.Payments.Select(payment => new
+        {
+            payment.PaymentNumber, MovementType = "Payment", payment.MethodCode, payment.Amount, payment.Reference
+        }).ToList();
         if (value.Credit is not null)
-            await InsertPaymentFactAsync(session, sql, value.DocumentId,
-                value.CommercialSnapshot.DocumentType, 0, value.TenantId, value.BusinessId,
-                localDate, "Credit", "Credit", value.Credit.Amount, null,
-                value.WorkSessionId, now, cancellationToken);
+            payments.Add(new { PaymentNumber = 0, MovementType = "Credit", MethodCode = "Credit",
+                value.Credit.Amount, Reference = (string?)null });
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@DocumentId", value.DocumentId);
+        command.Parameters.AddWithValue("@DocumentType", value.CommercialSnapshot.DocumentType);
+        command.Parameters.AddWithValue("@TenantId", value.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        command.Parameters.AddWithValue("@LocalDate", localDate.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@WorkSessionId", value.WorkSessionId);
+        command.Parameters.AddWithValue("@ProjectedAt", now);
+        command.Parameters.Add("@Payments", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(payments);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != payments.Count)
+            throw new InvalidOperationException("The sale payments could not be projected completely.");
     }
 
     private static async Task InsertPaymentFactAsync(
@@ -551,7 +550,10 @@ public sealed class SqlSalesReportingProjectionWriter(
         await InsertTaxFactsAsync(session, value.DocumentId, value.CommercialSnapshot.DocumentType,
             value.TenantId, value.BusinessId, localDate, value.Lines.Select(line =>
                 new TaxFact(line.TaxCode, line.TaxRate, line.UntaxedAmount,
-                    line.TaxAmount, line.LineTotal)), 1m, now, cancellationToken);
+                    line.TaxAmount, line.LineTotal)).Concat((value.Charges ?? [])
+                .Where(charge => charge.InvoicedAmount > 0).Select(charge =>
+                    new TaxFact(charge.TaxCode, charge.TaxRate, charge.InvoicedUntaxedAmount,
+                        charge.InvoicedTaxAmount, charge.InvoicedAmount))), 1m, now, cancellationToken);
 
     private static async Task InsertReturnTaxFactsAsync(
         SalesReportingSqlSession session, SalesReturnDocumentPayload value,
@@ -571,25 +573,27 @@ public sealed class SqlSalesReportingProjectionWriter(
             INSERT reporting.SalesReportTaxFacts
               (SourceDocumentId,SourceDocumentType,TaxCode,TaxRate,TenantId,BusinessId,
                BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt)
-            VALUES(@DocumentId,@DocumentType,@Code,@Rate,@TenantId,@BusinessId,@LocalDate,
-                   @Taxable,@Tax,@Total,@ProjectedAt);
+            SELECT @DocumentId,@DocumentType,t.Code,t.Rate,@TenantId,@BusinessId,@LocalDate,
+                   t.Taxable,t.Tax,t.Total,@ProjectedAt
+            FROM OPENJSON(@Taxes) WITH
+              (Code nvarchar(16),Rate decimal(9,6),Taxable decimal(19,4),
+               Tax decimal(19,4),Total decimal(19,4)) t;
             """;
-        foreach (var group in lines.GroupBy(x => new { x.Code, x.Rate }))
+        var taxes = lines.GroupBy(x => new { x.Code, x.Rate }).Select(group => new
         {
-            await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-            command.Parameters.AddWithValue("@DocumentId", documentId);
-            command.Parameters.AddWithValue("@DocumentType", documentType);
-            command.Parameters.AddWithValue("@Code", group.Key.Code);
-            AddDecimal(command, "@Rate", group.Key.Rate, 9, 6);
-            command.Parameters.AddWithValue("@TenantId", tenantId);
-            command.Parameters.AddWithValue("@BusinessId", businessId);
-            command.Parameters.AddWithValue("@LocalDate", localDate.ToDateTime(TimeOnly.MinValue));
-            AddDecimal(command, "@Taxable", sign * group.Sum(x => x.Taxable), 19, 4);
-            AddDecimal(command, "@Tax", sign * group.Sum(x => x.Tax), 19, 4);
-            AddDecimal(command, "@Total", sign * group.Sum(x => x.Total), 19, 4);
-            command.Parameters.AddWithValue("@ProjectedAt", now);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
+            group.Key.Code, group.Key.Rate, Taxable = sign * group.Sum(x => x.Taxable),
+            Tax = sign * group.Sum(x => x.Tax), Total = sign * group.Sum(x => x.Total)
+        }).ToArray();
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@DocumentType", documentType);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@LocalDate", localDate.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.Add("@Taxes", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(taxes);
+        command.Parameters.AddWithValue("@ProjectedAt", now);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != taxes.Length)
+            throw new InvalidOperationException("The document taxes could not be projected completely.");
     }
 
     private static async Task<OriginalSaleDimensions> ReadOriginalSaleDimensionsAsync(
@@ -723,10 +727,11 @@ public sealed class SqlSalesReportingProjectionWriter(
     private static async Task ApplyDimensionDeltasAsync(
         SalesReportingSqlSession session, Guid businessId, Guid sourceDocumentId,
         string sourceDocumentType, long documentCount, DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        decimal chargeUntaxed = 0, decimal chargeTax = 0, decimal chargeTotal = 0)
     {
         const string sql = """
-            WITH dimensions AS
+            WITH lineDimensions AS
             (
               SELECT f.BusinessLocalDate,v.DimensionType,v.DimensionKey,MAX(v.DimensionLabel) DimensionLabel,
                      @DocumentCount DocumentCount,SUM(f.Quantity) Quantity,
@@ -749,6 +754,18 @@ public sealed class SqlSalesReportingProjectionWriter(
               WHERE f.BusinessId=@BusinessId AND f.SourceDocumentId=@SourceDocumentId
                 AND f.SourceDocumentType=@SourceDocumentType
               GROUP BY f.BusinessLocalDate,v.DimensionType,v.DimensionKey
+            )
+            ,dimensions AS
+            (
+              SELECT BusinessLocalDate,DimensionType,DimensionKey,DimensionLabel,DocumentCount,Quantity,
+                GrossSales+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeUntaxed ELSE 0 END GrossSales,
+                Discounts,Returns,
+                NetUntaxed+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeUntaxed ELSE 0 END NetUntaxed,
+                NetTax+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeTax ELSE 0 END NetTax,
+                NetTotal+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeTotal ELSE 0 END NetTotal,
+                NetCost,
+                GrossProfit+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeTotal ELSE 0 END GrossProfit
+              FROM lineDimensions
             )
             MERGE reporting.SalesReportDailyDimensionTotals WITH(HOLDLOCK) AS target
             USING dimensions source
@@ -777,6 +794,9 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@SourceDocumentId", sourceDocumentId);
         command.Parameters.AddWithValue("@SourceDocumentType", sourceDocumentType);
         command.Parameters.AddWithValue("@DocumentCount", documentCount);
+        AddDecimal(command, "@ChargeUntaxed", chargeUntaxed, 19, 4);
+        AddDecimal(command, "@ChargeTax", chargeTax, 19, 4);
+        AddDecimal(command, "@ChargeTotal", chargeTotal, 19, 4);
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);

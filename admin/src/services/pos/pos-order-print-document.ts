@@ -6,6 +6,8 @@ export type PrintableOrderDocument = {
   createdAt: string;
   customerName?: string | null;
   customerIdentification?: string | null;
+  customerPhone?: string | null;
+  deliveryAddress?: string | null;
   total: number;
   lines: Array<{
     productCode?: string | null;
@@ -29,6 +31,8 @@ export function toPrintableOrder(
     issuedAt: order.createdAt,
     customerIdentification: order.customerIdentification ?? "",
     customerName: order.customerName ?? "Cliente",
+    customerPhone: order.customerPhone ?? null,
+    customerAddress: order.deliveryAddress ?? null,
     lines: order.lines.map((line) => ({
       productCode: line.productCode ?? "",
       description: line.productName,
