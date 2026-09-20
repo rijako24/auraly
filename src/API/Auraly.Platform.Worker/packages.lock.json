@@ -1304,7 +1304,8 @@
       "auraly.application.expenses": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Application.Fiscal": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Domain.Expenses": "[1.0.0, )"
@@ -1365,7 +1366,9 @@
         "dependencies": {
           "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Parties": "[1.0.0, )",
+          "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Domain.Parties": "[1.0.0, )"
         }
       },
@@ -1407,7 +1410,9 @@
       "auraly.application.sales": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.Catalog": "[1.0.0, )",
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Application.Expenses": "[1.0.0, )",
           "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
@@ -1416,6 +1421,7 @@
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Auraly.Contracts.Organization": "[1.0.0, )",
           "Auraly.Contracts.Sales": "[1.0.0, )",
+          "Auraly.Contracts.WorkSessions": "[1.0.0, )",
           "Auraly.Domain.Sales": "[1.0.0, )",
           "Auraly.Fiscal.Core": "[1.0.0, )"
         }
@@ -1573,7 +1579,9 @@
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
-          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Catalog": "[1.0.0, )",
+          "Auraly.Contracts.Expenses": "[1.0.0, )"
         }
       },
       "auraly.contracts.worksessions": {
@@ -1771,7 +1779,8 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Contracts.Sales": "[1.0.0, )",
-          "Auraly.Contracts.WorkSessions": "[1.0.0, )"
+          "Auraly.Contracts.WorkSessions": "[1.0.0, )",
+          "QRCoder": "[1.8.0, )"
         }
       }
     }
