@@ -1,6 +1,6 @@
 # Diseño del motor fiscal DIAN
 
-Fecha de actualización: 2026-09-07.
+Fecha de actualización: 2026-09-20.
 
 ## Flujo vertical conectado
 
@@ -108,6 +108,23 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   en `FiscalArtifacts`; un reintento de correo los reutiliza y no reconstruye la
   factura ni hace otra llamada a DIAN. El ZIP sigue limitado a 2 MB. Esta regla
   implementa el artículo 35 de la Resolución DIAN 000165 de 2023.
+- La representación de entrega pertenece a `DianInvoicePdfRenderer`, cuyo
+  catálogo de versiones es `dian-invoice-letter` (v1 histórica, v2 activa).
+  No depende del formato ni del perfil de impresora POS. La v2 es carta vertical
+  de 612 × 792 puntos, con emisor/adquirente, contactos del XML, autorización,
+  generación, pago/plazo, detalle, descuentos, tributos, totales y software.
+  Cantidades e importes se presentan desde el XML firmado, sin consultar maestros
+  ni recalcular la factura. Cada página repite CUFE, QR y número de factura;
+  las tablas repiten su encabezado al continuar. El PDF incluye código/versión
+  en sus metadatos. La v1 no cambia y un artefacto ya persistido se reutiliza
+  byte por byte en reenvíos, aunque haya una nueva versión de plantilla.
+  El camino trabaja en memoria, con cero consultas/HTTP, un solo QR vectorial
+  compartido por todas las páginas y complejidad proporcional al XML. Presupuesto
+  de aceptación local: renderizar 1.000 líneas en menos de 2 segundos, medido
+  sin builds o suites concurrentes; se verifica además el límite del ZIP existente.
+  Referencias: requisitos gráficos y entrega de la
+  [Resolución 227 de 2025, artículos 1.5.1.2.2.1 y 1.5.1.5.5.1](https://normograma.dian.gov.co/dian/compilacion/docs/resolucion_dian_0227_2025.htm)
+  y [Concepto DIAN 4232 de 2024, QR en todas las páginas](https://normograma.dian.gov.co/dian/compilacion/docs/oficio_dian_4232_2024.htm).
 - Resultado: aceptación/rechazo publica un solo evento de outbox.
 - Rechazo DIAN: el reintento autorizado vuelve a `PendingGeneration`, elimina la
   clave de seguimiento terminal anterior y normaliza únicamente la proyección UBL

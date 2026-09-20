@@ -6,18 +6,26 @@ using QRCoder;
 
 namespace Auraly.Fiscal.Ubl;
 
-public sealed class DianInvoicePdfRenderer
+public sealed partial class DianInvoicePdfRenderer
 {
+    // Fiscal delivery templates are independent of POS paper/printer profiles.
+    // Persisted FiscalArtifacts remain the authority for historical deliveries.
+    public const string TemplateCode = "dian-invoice-letter";
+    public const int CurrentTemplateVersion = 2;
     private const int LinesPerPage = 43;
     private static readonly XNamespace Cac = DianUblNamespaces.Cac;
     private static readonly XNamespace Cbc = DianUblNamespaces.Cbc;
     private static readonly XNamespace Sts = DianUblNamespaces.Sts;
 
-    public byte[] Render(ReadOnlyMemory<byte> signedInvoice)
+    public byte[] Render(ReadOnlyMemory<byte> signedInvoice, int templateVersion = CurrentTemplateVersion)
     {
         var invoice = Load(signedInvoice);
         if (invoice.Root?.Name != DianUblNamespaces.Invoice + "Invoice")
             throw new InvalidOperationException("The PDF source is not a UBL Invoice document.");
+
+        if (templateVersion == 2) return RenderLetterV2(invoice);
+        if (templateVersion != 1)
+            throw new ArgumentOutOfRangeException(nameof(templateVersion), "The fiscal PDF template version is not available.");
 
         var lines = BuildLines(invoice);
         var qrPayload = Required(invoice.Descendants(Sts + "QRCode").SingleOrDefault(),
