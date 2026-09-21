@@ -127,7 +127,9 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   1.000 líneas, sin builds concurrentes. El ZIP mantiene su límite de 2 MB.
 - El despliegue API incluye el driver Playwright Linux y `start-api.sh`; el arranque
   instala la revisión fijada de Chromium y sus bibliotecas del sistema, con caché
-  de navegador bajo `/home`. No se descargan binarios durante el envío de facturas.
+  de navegador bajo `/home`. Antes de iniciar la API verifica una conversión PDF real
+  sin datos comerciales; si el runtime falla, el despliegue falla visiblemente.
+  No se descargan binarios durante el envío de facturas.
   CI prueba el PDF en Windows y Linux. Se despliega primero el procedimiento de
   consulta y después la API; sus columnas agregadas son compatibles con la API
   anterior. Rollback a un paquete anterior sin script conserva el arranque dotnet.
