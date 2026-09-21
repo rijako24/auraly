@@ -756,11 +756,11 @@ public sealed class OrderBatchInvoiceTests(
             verify.Parameters.AddWithValue("@DocumentId", result.DocumentId.Value);
             await using var reader = await verify.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
-            Assert.Equal(5908.90m, reader.GetDecimal(0));
-            Assert.Equal(5908.90m, reader.GetDecimal(1));
+            Assert.Equal(5900m, reader.GetDecimal(0));
+            Assert.Equal(5900m, reader.GetDecimal(1));
             Assert.Equal(partySiteId, reader.GetGuid(2));
             Assert.Equal(partySiteId, reader.GetGuid(3));
-            Assert.Equal(5908.90m, reader.GetDecimal(4));
+            Assert.Equal(5900m, reader.GetDecimal(4));
         }
         finally
         {

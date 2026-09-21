@@ -847,7 +847,12 @@ public sealed class OrderRecoveryTests(
         {
             Content = JsonContent.Create(new CompleteOnlineSalesDraftRequest(
                 recoveredForInvoice.Version,
-                [new OnlineSalesPayment("Cash", recoveredForInvoice.PayableAmount, null)])),
+                [new OnlineSalesPayment(
+                    "Cash",
+                    recoveredForInvoice.PayableAmount,
+                    null,
+                    RoundingAdjustment: PosPaymentRoundingPolicy.Adjustment(
+                        recoveredForInvoice.PayableAmount))])),
         })
         {
             invoiceRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));

@@ -378,7 +378,7 @@ public sealed partial class SqlWorkSessionStore
                 SELECT CONCAT(N'Sale:',CONVERT(nvarchar(36),payment.DocumentId),N':',payment.PaymentNumber) VerificationKey,
                   COALESCE(mapping.ClosureMethodCode,payment.MethodCode) PaymentMethodCode,N'Sale' MovementType,
                   payment.DocumentId SourceId,document.DocumentNumber,payment.PaymentNumber SourceNumber,
-                  payment.Amount+payment.RoundingAdjustment,payment.Reference,payment.CardFranchiseCode,payment.ApprovalNumber,payment.RegisteredAt OccurredAt,
+                  payment.Amount+payment.RoundingAdjustment Amount,payment.Reference,payment.CardFranchiseCode,payment.ApprovalNumber,payment.RegisteredAt OccurredAt,
                   document.DocumentType SourceDocumentType,CAST(NULL AS nvarchar(300)) CustomerName
                 FROM dbo.SalesPayments payment
                 INNER JOIN dbo.SalesDocuments document ON document.DocumentId=payment.DocumentId

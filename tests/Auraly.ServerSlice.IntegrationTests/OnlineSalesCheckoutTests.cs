@@ -421,16 +421,19 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 
         var captured = await CaptureAsync(client, await OpenAsync(client));
         var bankAccountId = await EnsureTransferBankAccountAsync();
-        var cashAmount = decimal.Round(captured.PayableAmount / 3m, 2);
-        var transferAmount = captured.PayableAmount - cashAmount;
+        var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(captured.PayableAmount);
+        var roundedTotal = captured.PayableAmount + roundingAdjustment;
+        var cashAmount = decimal.Round(roundedTotal / 3m, 2);
+        var transferAmount = roundedTotal - cashAmount;
         var completed = await CompleteAsync(
             client,
             captured.DraftId,
             new CompleteOnlineSalesDraftRequest(captured.Version,
             [
                 new OnlineSalesPayment("Cash", cashAmount, null),
-                new OnlineSalesPayment("Transfer", transferAmount, "TRANSFER-SPLIT",
-                    BankAccountId: bankAccountId)
+                new OnlineSalesPayment("Transfer", transferAmount - roundingAdjustment,
+                    "TRANSFER-SPLIT", BankAccountId: bankAccountId,
+                    RoundingAdjustment: roundingAdjustment)
             ]),
             $"split-cash-trace-{Guid.NewGuid():N}");
 
@@ -732,12 +735,19 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             client, captured.DraftId,
             new CompleteOnlineSalesDraftRequest(
                 captured.Version,
-                [new OnlineSalesPayment("Cash", settlement.NetAmount, null)]),
+                [new OnlineSalesPayment(
+                    "Cash",
+                    settlement.NetAmount,
+                    null,
+                    RoundingAdjustment:
+                        PosPaymentRoundingPolicy.Adjustment(settlement.NetAmount))]),
             $"sale-withholding-{Guid.NewGuid():N}");
 
         Assert.Equal(PosSaleRemoteStatuses.FiscalVerified, completed.Receipt.FiscalStatus);
         Assert.Equal(settlement.WithholdingTotal, completed.Receipt.WithholdingTotal);
-        Assert.Equal(settlement.NetAmount, completed.Receipt.NetPayableAmount);
+        Assert.Equal(
+            settlement.NetAmount + PosPaymentRoundingPolicy.Adjustment(settlement.NetAmount),
+            completed.Receipt.NetPayableAmount);
         Assert.Single(completed.Receipt.Withholdings!);
         var persisted = await WaitForWithholdingSnapshotAsync(completed.Receipt.DocumentId);
         Assert.Equal(settlement.GrossAmount, persisted.Gross);
