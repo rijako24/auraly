@@ -808,6 +808,26 @@ public sealed class DatabaseUpgradeMigrationTests
             "La limpieza de fuentes de reporte debe ejecutarse después de crear los snapshots comerciales.");
     }
 
+    [Fact]
+    public void Order_item_quantity_precision_is_migrated_before_the_dacpac()
+    {
+        var root = FindRepositoryRoot();
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260921_PreserveOrderItemQuantityPrecision.sql"));
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+
+        Assert.Contains("precision <> 19 OR scale <> 6", migration,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ALTER TABLE dbo.OrderItems ALTER COLUMN Quantity decimal(19, 6) NOT NULL",
+            migration,
+            StringComparison.Ordinal);
+        Assert.Contains("20260921_PreserveOrderItemQuantityPrecision.sql", pipeline,
+            StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
