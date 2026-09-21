@@ -39,7 +39,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Enrolled_device_return_bootstrap_requires_its_exact_work_session_and_device()
+    public async Task Enrolled_device_return_bootstrap_uses_business_scope_without_session_or_device_affinity()
     {
         using (var client = fixture.CreateClient())
         using (var message = DeviceRequest("/api/pos/v1/sales-returns/bootstrap",
@@ -53,7 +53,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
                    new { fixture.BusinessId, fixture.WorkSessionId }, fixture.DeniedDeviceId,
                    ServerSliceFixture.DeniedDeviceSecret))
         using (var response = await client.SendAsync(message))
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
     [Fact]
     public async Task Enrolled_device_history_uses_business_scope_without_cashier_session_affinity()

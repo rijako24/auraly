@@ -282,7 +282,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Return_requires_backend_permissions_and_authenticated_business()
     {
-        using var denied = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create);
+        using var denied = fixture.CreateAdminClient(SalesReturnPermissionCodes.Confirm);
         var request = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, Guid.NewGuid(),
             DateTimeOffset.UtcNow, ReturnEconomicResolutions.Refund, "Cash", "Prueba",
@@ -295,8 +295,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
                    "/api/commerce/v1/sales-returns?page=1&pageSize=20"))
             Assert.Equal(HttpStatusCode.Forbidden, deniedRead.StatusCode);
 
-        using var allowed = fixture.CreateAdminClient(
-            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using var allowed = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create);
         using var wrongScope = Message(
             request with { BusinessId = Guid.NewGuid() }, $"scope-{Guid.NewGuid():N}");
         using var wrongScopeResponse = await allowed.SendAsync(wrongScope);
