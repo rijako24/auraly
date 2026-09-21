@@ -94,11 +94,12 @@ foreach (var (format, slug, label) in formats)
     pages.Add((file, $"Pedido · {label}"));
 }
 
-const string pdfName = "representacion-grafica-fiscal-v1.pdf";
-await File.WriteAllBytesAsync(
-    Path.Combine(output, pdfName),
-    new DianInvoicePdfRenderer().Render(BuildUblInvoice()));
-pages.Add((pdfName, "PDF del correo · v1"));
+const string pdfName = "factura-correo-carta-v3.pdf";
+var invoicePdfRenderer = new DianInvoicePdfRenderer();
+var emailReceipt = invoicePdfRenderer.ReadReceipt(BuildUblInvoice()) with { Payments = online.Payments };
+await File.WriteAllBytesAsync(Path.Combine(output, pdfName),
+    await invoicePdfRenderer.RenderAsync(emailReceipt));
+pages.Add((pdfName, "PDF del correo · Carta v3"));
 
 var buttons = string.Join(Environment.NewLine, pages.Select((page, index) =>
     $"<button{(index == 0 ? " class=\"active\"" : "")} data-file=\"{WebUtility.HtmlEncode(page.FileName)}\">{WebUtility.HtmlEncode(page.Label)}</button>"));

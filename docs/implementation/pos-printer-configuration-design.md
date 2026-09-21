@@ -260,3 +260,25 @@ de impresión se recupera únicamente mediante la reimpresión explícita desde 
 snapshot. Web y aplicación instalada comparten esta regla; únicamente cambia el
 adaptador final (`BrowserPreview` o POS Edge/Windows).
 
+
+## Unificación de factura Carta v3 y correo
+
+Por solicitud expresa, el correo usa la misma Carta v3 del POS; se retira el diseño
+independiente de correo. La corrección del título fiscal y la forma/plazo de pago
+se aplica a v3, conservando los medios de pago y la disponibilidad de v2.
+La representación monetaria conserva los centavos cuando existen y la fecha usa
+el reloj fiscal colombiano canónico, independientemente de la zona horaria del
+servidor o de Windows. Son correcciones de datos presentados, sin recalcular la venta.
+`InvoicePaymentPresentation` posee esa presentación; web, hojas y ESC/POS la
+reutilizan. El transporte Windows no reemplaza el título emitido por la plantilla.
+
+El POS web envía la respuesta de venta que ya posee a
+`/pos/drafts/sales/receipts/render` (permiso `pos.user`, máximo 500 documentos,
+10.000 líneas y cuerpo de 10 MiB). Es renderizado puro, sin lecturas ni escrituras
+comerciales, sin descargas separadas del QR y sin otra composición HTML en TS.
+El adaptador instalado conserva la generación local de los mismos renderizadores.
+
+Carta v3 distribuye filas completas entre páginas con CUFE/QR por página. Windows
+imprime estas hojas mediante WebView2 nativo, con texto vectorial y saltos de página,
+en lugar de comprimir toda la factura en una sola imagen. Tirillas conservan el
+transporte raster ESC/POS. Los archivos PDF históricos del correo no se regeneran.

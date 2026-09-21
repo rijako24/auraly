@@ -1043,6 +1043,16 @@
         "resolved": "1.6.14",
         "contentHash": "tTaBT8qjk3xINfESyOPE2rIellPvB7qpVqiWiyA/lACVvz+xOGiXhFUfohcx82NLbi5avzLW0lx+s6oAqQijfw=="
       },
+      "Microsoft.Playwright": {
+        "type": "Transitive",
+        "resolved": "1.62.0",
+        "contentHash": "cos6dmHPcMpS6bXw2WEgoXb8KXwMhs3c5L0P/cUf2rdUpjVA3g3u+KiSpVp2VCzsXymRpy2tFHqm+Wnz7s5VhQ==",
+        "dependencies": {
+          "Microsoft.Bcl.AsyncInterfaces": "6.0.0",
+          "System.ComponentModel.Annotations": "5.0.0",
+          "System.Text.Json": "6.0.10"
+        }
+      },
       "Microsoft.SqlServer.Server": {
         "type": "Transitive",
         "resolved": "1.0.0",
@@ -1386,6 +1396,11 @@
         "type": "Transitive",
         "resolved": "5.0.0",
         "contentHash": "FXkLXiK0sVVewcso0imKQoOxjoPAj42R8HtjjbSjVPAzwDfzoyoznWxgA3c38LDbN9SJux1xXoXYAhz98j7r2g=="
+      },
+      "System.ComponentModel.Annotations": {
+        "type": "Transitive",
+        "resolved": "5.0.0",
+        "contentHash": "dMkqfy2el8A8/I76n2Hi1oBFEbG1SfxD2l5nhwXV3XjlnOmwxJlQbYpJH4W51odnU9sARCSAgv7S3CyAFMkpYg=="
       },
       "System.Configuration.ConfigurationManager": {
         "type": "Transitive",
@@ -2797,7 +2812,8 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Fiscal.Core": "[1.0.0, )",
-          "QRCoder": "[1.8.0, )"
+          "Auraly.Pos.Printing": "[1.0.0, )",
+          "Microsoft.Playwright": "[1.62.0, )"
         }
       },
       "auraly.infrastructure.dispatching": {
@@ -2990,6 +3006,7 @@
         "dependencies": {
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
+          "Auraly.Fiscal.Core": "[1.0.0, )",
           "QRCoder": "[1.8.0, )"
         }
       }

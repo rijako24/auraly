@@ -5,6 +5,8 @@ using System.Text.Json;
 using Azure;
 using Azure.Communication.Email;
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Sales;
+using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
@@ -197,7 +199,10 @@ public sealed class PlatformEmailOutboxHostedService(
             var pdfFileName = invoice.GraphicalRepresentationPdfFileName;
             if (pdf is null)
             {
-                pdf = invoicePdfs.Render(invoice.SignedXml);
+                var fiscalReceipt = invoicePdfs.ReadReceipt(invoice.SignedXml);
+                var receipt = ApplyInvoiceSettlement(fiscalReceipt with { DocumentId = invoice.DocumentId },
+                    invoice.DocumentNumber, invoice.PaymentsJson, invoice.CreditAmount, invoice.WithholdingJson);
+                pdf = await invoicePdfs.RenderAsync(receipt, cancellationToken);
                 pdfFileName =
                     $"RepresentacionGrafica-{SafeFileName(invoice.FiscalNumber)}.pdf";
                 deliveryArtifactsChanged = true;
@@ -229,6 +234,30 @@ public sealed class PlatformEmailOutboxHostedService(
         await SendAsync(client, invoice.Email, subject, html, plain, cancellationToken,
             [new(attachmentFileName,
                 "application/zip", new BinaryData(container))]);
+    }
+
+    internal static OnlineSalesReceipt ApplyInvoiceSettlement(OnlineSalesReceipt fiscalReceipt,
+        string documentNumber, string paymentsJson, decimal creditAmount, string? withholdingJson)
+    {
+        var payments = JsonSerializer.Deserialize<OnlineSalesPayment[]>(paymentsJson)
+            ?? throw new InvalidOperationException("The invoice has no payment presentation data.");
+        var withholding = withholdingJson is null ? null :
+            JsonSerializer.Deserialize<WithholdingCalculationSnapshot>(withholdingJson,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var netAmount = withholding?.NetAmount ?? fiscalReceipt.PayableAmount;
+        if (payments.Any(payment => payment.Amount <= 0) || creditAmount < 0 ||
+            payments.Sum(payment => payment.Amount) + creditAmount != netAmount)
+            throw new InvalidOperationException("The invoice payment detail does not match its payable amount.");
+        return fiscalReceipt with
+        {
+            DocumentNumber = documentNumber,
+            Payments = creditAmount > 0
+                ? payments.Append(new OnlineSalesPayment("Credit", creditAmount, null)).ToArray()
+                : payments,
+            WithholdingTotal = withholding?.WithholdingTotal ?? 0m,
+            NetPayableAmount = netAmount,
+            Withholdings = withholding?.Lines
+        };
     }
 
     private async Task SendAsync(EmailClient client, string recipient, string subject,
@@ -328,7 +357,8 @@ public sealed class PlatformEmailOutboxHostedService(
                 reader.IsDBNull(10) ? null : (byte[])reader[10],
                 reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.GetString(12), reader.GetString(13), reader.GetString(14),
-                !reader.IsDBNull(15), reader.IsDBNull(16) ? null : (byte[])reader[16])
+                !reader.IsDBNull(15), reader.IsDBNull(16) ? null : (byte[])reader[16],
+                reader.GetString(17), reader.GetDecimal(18), reader.IsDBNull(19) ? null : reader.GetString(19))
             : null;
     }
 
@@ -718,6 +748,9 @@ public sealed class PlatformEmailOutboxHostedService(
         string CertificateKeyReference,
         string CertificateThumbprint,
         bool IsHabilitation,
-        byte[]? DianStatusResponse);
+        byte[]? DianStatusResponse,
+        string PaymentsJson,
+        decimal CreditAmount,
+        string? WithholdingJson);
     private sealed record RecipientContext(string TenantName, string Name);
 }

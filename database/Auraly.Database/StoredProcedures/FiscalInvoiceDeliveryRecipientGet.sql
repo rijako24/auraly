@@ -11,12 +11,22 @@ BEGIN
            attachedDocument.Content,attachedDocument.FileName,
            graphicalRepresentation.Content,graphicalRepresentation.FileName,
            issuer.CertificateProvider,issuer.CertificateKeyReference,
-           issuer.CertificateThumbprint,issuer.TestSetId,statusResponse.Content
+           issuer.CertificateThumbprint,issuer.TestSetId,statusResponse.Content,
+           (SELECT payment.MethodCode,payment.Amount,payment.Reference,
+                   payment.CardFranchiseCode,payment.ApprovalNumber,payment.BankAccountId,
+                   payment.Notes,payment.TenderedAmount
+            FROM dbo.SalesPayments payment WHERE payment.DocumentId=sale.DocumentId
+            ORDER BY payment.PaymentNumber FOR JSON PATH) AS PaymentsJson,
+           sale.CreditAmount,
+           JSON_QUERY(payload.PayloadJson,'$.commercialSnapshot.withholding') AS WithholdingJson
     FROM dbo.FiscalDocuments fiscal
     JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
      AND business.TenantId=@TenantId
     JOIN dbo.SalesDocuments sale ON sale.DocumentId=fiscal.DocumentId
      AND sale.BusinessId=fiscal.BusinessId
+    LEFT JOIN dbo.DocumentProcessingPayloads payload
+      ON payload.DocumentId=sale.DocumentId AND payload.DocumentType=sale.DocumentType
+     AND payload.BusinessId=sale.BusinessId
     JOIN dbo.FiscalDocumentProcesses process ON process.DocumentId=fiscal.DocumentId
      AND process.BusinessId=fiscal.BusinessId
     JOIN dbo.FiscalIssuerConfigurations issuer

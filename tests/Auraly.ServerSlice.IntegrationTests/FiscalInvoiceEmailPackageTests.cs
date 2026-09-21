@@ -3,11 +3,38 @@ using System.Text;
 using Azure.Communication.Email;
 using Auraly.Api;
 using Auraly.Fiscal.Ubl;
+using Auraly.Contracts.Sales;
+using System.Text.Json;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed class FiscalInvoiceEmailPackageTests
 {
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(3000, 0)]
+    [InlineData(3000, 100)]
+    public void Email_preserves_real_payment_allocations_credit_and_withholding(decimal credit, decimal retained)
+    {
+        var receipt = new OnlineSalesReceipt(Guid.NewGuid(), "SalesInvoice", "FE1", "FE1",
+            DateTimeOffset.UtcNow, "123", [], [], 10000, 1900, 11900, "cufe", "qr", null, "Cliente");
+        var payments = new OnlineSalesPayment[] {
+            new("Cash", 1000, null, TenderedAmount: 2000), new("Transfer", 10900 - credit - retained, "ABC") };
+        var withholding = retained == 0 ? null : JsonSerializer.Serialize(new {
+            grossAmount = 11900m, withholdingTotal = retained, netAmount = 11900m - retained,
+            lines = Array.Empty<object>() });
+        var projected = PlatformEmailOutboxHostedService.ApplyInvoiceSettlement(receipt, "FV-123",
+            JsonSerializer.Serialize(payments), credit, withholding);
+        Assert.Equal("FV-123", projected.DocumentNumber);
+        Assert.Equal(payments[0], projected.Payments[0]);
+        Assert.Equal(payments[1], projected.Payments[1]);
+        Assert.Equal(credit, projected.Payments.Where(x => x.MethodCode == "Credit").Sum(x => x.Amount));
+        Assert.Equal(11900m - retained, projected.NetPayableAmount);
+        Assert.Equal(retained, projected.WithholdingTotal);
+        Assert.Throws<InvalidOperationException>(() => PlatformEmailOutboxHostedService.ApplyInvoiceSettlement(
+            receipt, "FV-123", JsonSerializer.Serialize(payments), credit + 1, withholding));
+    }
+
     [Fact]
     public void Email_message_only_contains_explicit_attachments()
     {

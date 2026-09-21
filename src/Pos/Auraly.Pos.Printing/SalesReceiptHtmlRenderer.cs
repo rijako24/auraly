@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using Auraly.Contracts.Sales;
+using Auraly.Fiscal.Core;
 using QRCoder;
 
 namespace Auraly.Pos.Printing;
@@ -61,7 +62,7 @@ public sealed class SalesReceiptHtmlRenderer
         var displayNumber = Encode((isFiscal && !string.IsNullOrWhiteSpace(receipt.FiscalNumber) ? receipt.FiscalNumber : receipt.DocumentNumber));
         var ticketNumber = $"<div class=\"ticket-number\">N.º de ticket: <strong>{displayNumber}</strong></div>";
         var documentHeader = isFiscal
-            ? ticketNumber
+            ? (template.Version >= 3 ? "<div class=\"title\">Factura electrónica de venta</div>" : string.Empty) + ticketNumber
             : $"<div class=\"title\">{Encode((isOrder ? "Pedido" : "Comprobante de venta"))}</div>{ticketNumber}";
         var qrSvg = string.Empty;
         if (isFiscal)
@@ -80,7 +81,7 @@ public sealed class SalesReceiptHtmlRenderer
             ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone) : string.Empty;
         var fiscalDetails = isFiscal && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
-            ? FiscalDetails(details)
+            ? FiscalDetails(details, receipt.IssuedAt)
             : string.Empty;
 
         var lines = string.Join(
@@ -208,7 +209,7 @@ public sealed class SalesReceiptHtmlRenderer
                   {{companyLogo}}
                   <div class="brand">{{companyName}}</div>
                   {{documentHeader}}
-                  <div class="muted">{{Encode(receipt.IssuedAt.ToLocalTime().ToString("dd/MM/yyyy, h:mm:ss tt", ColombianCulture))}}</div>
+                  <div class="muted">{{Encode(DianFiscalDateTime.InColombia(receipt.IssuedAt).ToString("dd/MM/yyyy, h:mm:ss tt", ColombianCulture))}}</div>
                   {{(string.IsNullOrWhiteSpace(scope) ? string.Empty : $"<div class=\"scope muted\">{Encode(scope)}</div>")}}
                 </header>
                 <hr class="rule">
@@ -272,9 +273,8 @@ public sealed class SalesReceiptHtmlRenderer
               Pair("Cambio", Money(Math.Max(0, tendered - cash.Amount)));
     }
 
-    private static string FiscalDetails(SalesInvoicePrintDetails details)
+    private static string FiscalDetails(SalesInvoicePrintDetails details, DateTimeOffset issuedAt)
     {
-        var paymentForm = details.PaymentFormCode == "2" ? "Crédito" : "Contado";
         return $$"""
           <section class="fiscal-compliance">
             <div><strong>Vendedor:</strong> {{Encode(details.SupplierName)}} · NIT {{Encode(details.SupplierIdentification)}}</div>
@@ -283,7 +283,7 @@ public sealed class SalesReceiptHtmlRenderer
             <div><strong>Resolución DIAN:</strong> {{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}}</div>
             <div>Rango {{details.AuthorizationRangeStart}} a {{details.AuthorizationRangeEnd}}</div>
             <div>Vigencia {{details.AuthorizationValidFrom:dd/MM/yyyy}} a {{details.AuthorizationValidUntil:dd/MM/yyyy}}</div>
-            <div><strong>Pago:</strong> {{paymentForm}} / {{Encode(PaymentMeansName(details.PaymentMeansCode))}} · Vence {{details.PaymentDueDate:dd/MM/yyyy}}</div>
+            {{InvoicePaymentPresentation.Html(details, issuedAt)}}
             <div><strong>Software:</strong> {{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
           </section>
           """;
@@ -307,17 +307,9 @@ public sealed class SalesReceiptHtmlRenderer
         _ => code
     };
 
-    private static string PaymentMeansName(string code) => code switch
-    {
-        "10" => "Efectivo",
-        "42" => "Transferencia",
-        "48" => "Tarjeta crédito",
-        "49" => "Tarjeta débito",
-        _ => code
-    };
 
     private static string Money(decimal value) =>
-        value.ToString("C0", ColombianCulture);
+        value.ToString(value == decimal.Truncate(value) ? "C0" : "C2", ColombianCulture);
 
     private static string Quantity(decimal value) =>
         value.ToString("0.###", ColombianCulture);

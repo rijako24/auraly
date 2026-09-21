@@ -608,6 +608,29 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("P-001", value);
         Assert.Contains("EA", value);
         Assert.Contains("CUFE", value);
+        Assert.Contains("Factura electrónica de venta", value);
+        Assert.Contains("Forma de pago", value);
+        Assert.DoesNotContain("Vencimiento", value);
+        Assert.DoesNotContain("Vence ", value);
+        Assert.DoesNotContain("Medio de pago:", value);
+    }
+
+    [Fact]
+    public void Credit_terms_are_separate_from_the_unchanged_payment_breakdown()
+    {
+        var details = new SalesInvoicePrintDetails("Empresa", "900123456", "R-99-PN", "Dirección", "Cliente",
+            "18760000001", new DateOnly(2026, 1, 1), new DateOnly(2027, 12, 31), "FE", 1, 10000,
+            "2", "ZZZ", new DateOnly(2026, 10, 18), "900123456", "Auraly");
+        var issuedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.FromHours(-5));
+        var fields = InvoicePaymentPresentation.Fields(details, issuedAt);
+        Assert.Equal(new[] { ("Forma de pago", "Crédito"), ("Plazo", "30 días"), ("Vencimiento", "18/10/2026") }, fields);
+        var html = new SalesReceiptHtmlRenderer().Render(OnlineReceipt() with { InvoicePrintDetails = details, IssuedAt = issuedAt });
+        Assert.Contains("Medios de pago", html);
+        Assert.DoesNotContain("ZZZ", html);
+        Assert.Contains("30 d&#237;as", html);
+        var utcNearMidnight = new DateTimeOffset(2026, 9, 19, 1, 0, 0, TimeSpan.Zero);
+        Assert.Equal("30 días", InvoicePaymentPresentation.Fields(details, utcNearMidnight)[1].Value);
+        Assert.Throws<InvalidOperationException>(() => InvoicePaymentPresentation.Fields(details with { PaymentDueDate = new DateOnly(2026, 9, 17) }, issuedAt));
     }
 
     [Fact]

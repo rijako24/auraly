@@ -108,23 +108,35 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   en `FiscalArtifacts`; un reintento de correo los reutiliza y no reconstruye la
   factura ni hace otra llamada a DIAN. El ZIP sigue limitado a 2 MB. Esta regla
   implementa el artículo 35 de la Resolución DIAN 000165 de 2023.
-- La representación de entrega pertenece a `DianInvoicePdfRenderer`, cuyo
-  catálogo de versiones es `dian-invoice-letter` (v1 histórica, v2 activa).
-  No depende del formato ni del perfil de impresora POS. La v2 es carta vertical
-  de 612 × 792 puntos, con emisor/adquirente, contactos del XML, autorización,
-  generación, pago/plazo, detalle, descuentos, tributos, totales y software.
-  Cantidades e importes se presentan desde el XML firmado, sin consultar maestros
-  ni recalcular la factura. Cada página repite CUFE, QR y número de factura;
-  las tablas repiten su encabezado al continuar. El PDF incluye código/versión
-  en sus metadatos. La v1 no cambia y un artefacto ya persistido se reutiliza
-  byte por byte en reenvíos, aunque haya una nueva versión de plantilla.
-  El camino trabaja en memoria, con cero consultas/HTTP, un solo QR vectorial
-  compartido por todas las páginas y complejidad proporcional al XML. Presupuesto
-  de aceptación local: renderizar 1.000 líneas en menos de 2 segundos, medido
-  sin builds o suites concurrentes; se verifica además el límite del ZIP existente.
-  Referencias: requisitos gráficos y entrega de la
-  [Resolución 227 de 2025, artículos 1.5.1.2.2.1 y 1.5.1.5.5.1](https://normograma.dian.gov.co/dian/compilacion/docs/resolucion_dian_0227_2025.htm)
-  y [Concepto DIAN 4232 de 2024, QR en todas las páginas](https://normograma.dian.gov.co/dian/compilacion/docs/oficio_dian_4232_2024.htm).
+- La representación enviada por correo reutiliza `sales-invoice` Carta v3 de
+  `HalfLetterDocumentRenderer`. `DianInvoicePdfRenderer` solo adapta el XML firmado
+  al contrato de impresión y convierte ese HTML mediante Chromium fijado por
+  Microsoft.Playwright. No existe una segunda plantilla de correo. La sustitución
+  del diseño anterior y la corrección de v3 fueron solicitadas expresamente;
+  los PDF ya persistidos conservan sus bytes y SHA-256, sin regeneración histórica.
+- Forma de pago: contado; para crédito, plazo y vencimiento. Los medios y sus
+  importes se mantienen en el detalle existente. El código fiscal del XML no se
+  convierte en un pago por el total: la consulta de entrega obtiene por conjunto
+  `SalesPayments`, el crédito original de `SalesDocuments` y las retenciones del
+  payload comercial. No consulta maestros ni añade viajes por línea/pago.
+- Carta v3 pagina filas completas y repite identificación, CUFE, QR y encabezado
+  de tabla. El adaptador PDF usa contexto aislado por documento y bloquea peticiones
+  de red; no modifica el XML ni recalcula precios/impuestos. La conversión tiene
+  timeout observable; un fallo conserva el reintento del outbox existente.
+  Presupuesto de aceptación local: hasta 5 s para una factura corta y 20 s para
+  1.000 líneas, sin builds concurrentes. El ZIP mantiene su límite de 2 MB.
+- El despliegue API incluye el driver Playwright Linux y `start-api.sh`; el arranque
+  instala la revisión fijada de Chromium y sus bibliotecas del sistema, con caché
+  de navegador bajo `/home`. No se descargan binarios durante el envío de facturas.
+  CI prueba el PDF en Windows y Linux. Se despliega primero el procedimiento de
+  consulta y después la API; sus columnas agregadas son compatibles con la API
+  anterior. Rollback a un paquete anterior sin script conserva el arranque dotnet.
+- El QR conserva el contenido fiscal del anexo técnico 1.9, sección 11.7, incluido
+  el enlace de consulta cuyo `documentkey` es el CUFE. Decodificar una imagen digital
+  no certifica la lectura del papel ni que la cámara abra directamente texto mixto.
+  Referencias: [Resolución 227 de 2025, art. 1.5.1.2.2.1](https://normograma.dian.gov.co/dian/compilacion/docs/resolucion_dian_0227_2025.htm),
+  [anexo 1.9](https://www.dian.gov.co/impuestos/factura-electronica/Documents/Anexo-Tecnico-Factura-Electronica-de-Venta-vr-1-9.pdf)
+  y [Concepto DIAN 4232 de 2024](https://normograma.dian.gov.co/dian/compilacion/docs/oficio_dian_4232_2024.htm).
 - Resultado: aceptación/rechazo publica un solo evento de outbox.
 - Rechazo DIAN: el reintento autorizado vuelve a `PendingGeneration`, elimina la
   clave de seguimiento terminal anterior y normaliza únicamente la proyección UBL

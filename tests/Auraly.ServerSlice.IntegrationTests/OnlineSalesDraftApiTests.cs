@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
+using Auraly.Application.Sales;
+using Auraly.Pos.Printing;
+using System.Text.Json;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -9,6 +12,32 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData("Receipt", 58)]
+    [InlineData("Receipt", 80)]
+    [InlineData("Letter", 80)]
+    public async Task Browser_print_reuses_exact_shared_template_and_needs_no_sale_reload(string format, int width)
+    {
+        using var client = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        // These IDs were never uploaded: presentation must not issue a history/QR lookup.
+        var receipt = OnlineSalesReceiptMapper.From(fixture.CreateValidRequest(1981), "DianAccepted");
+        var request = new SalesReceiptsRenderRequest([receipt], format, width, "Sede", AutoPrint: false);
+        using var response = await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/receipts/render", request);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var expected = format == "Receipt"
+            ? new SalesReceiptHtmlRenderer().RenderBatch([receipt], width, "Sede", autoPrint: false)
+            : new HalfLetterDocumentRenderer().Render([receipt], format, autoPrint: false);
+        Assert.Equal(expected, body.GetProperty("html").GetString());
+        using var empty = await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/receipts/render", request with { Receipts = [] });
+        Assert.Equal(HttpStatusCode.BadRequest, empty.StatusCode);
+        using var tooMany = await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/receipts/render", request with { Receipts = Enumerable.Repeat(receipt, 501).ToArray() });
+        Assert.Equal(HttpStatusCode.BadRequest, tooMany.StatusCode);
+        using var anonymous = fixture.CreateClient();
+        using var denied = await anonymous.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/receipts/render", request);
+        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+    }
+
     [Fact]
     public async Task Enrolled_device_return_bootstrap_requires_its_exact_work_session_and_device()
     {

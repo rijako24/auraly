@@ -649,6 +649,7 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: 'Disabled'
       http20Enabled: true
       linuxFxVersion: 'DOTNETCORE|8.0'
+      appCommandLine: 'if [ -f /home/site/wwwroot/start-api.sh ]; then exec bash /home/site/wwwroot/start-api.sh; else exec dotnet /home/site/wwwroot/Auraly.Api.dll; fi'
       minTlsVersion: '1.2'
       appSettings: [
         {

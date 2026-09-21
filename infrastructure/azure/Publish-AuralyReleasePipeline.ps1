@@ -666,6 +666,9 @@ function Publish-Api {
         }
         Write-Warning 'Azure CLI perdio el seguimiento, pero Kudu confirmo Deployment successful.'
     }
+    & az webapp config set --resource-group $configuration.ResourceGroup `
+        --name $configuration.Api --startup-file 'if [ -f /home/site/wwwroot/start-api.sh ]; then exec bash /home/site/wwwroot/start-api.sh; else exec dotnet /home/site/wwwroot/Auraly.Api.dll; fi' --output none
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo configurar el runtime PDF de la API.' }
     & az webapp config appsettings set `
         --resource-group $configuration.ResourceGroup `
         --name $configuration.Api `

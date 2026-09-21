@@ -68,7 +68,8 @@ public sealed class EscPosReceiptRenderer
             WriteWrapped(stream, $"Resolucion DIAN: {details.AuthorizationNumber}", columns);
             WriteWrapped(stream, $"Prefijo {details.AuthorizationPrefix} Rango {details.AuthorizationRangeStart} a {details.AuthorizationRangeEnd}", columns);
             WriteWrapped(stream, $"Vigencia {details.AuthorizationValidFrom:dd/MM/yyyy} a {details.AuthorizationValidUntil:dd/MM/yyyy}", columns);
-            WriteWrapped(stream, $"Pago: {(details.PaymentFormCode == "2" ? "Credito" : "Contado")} / {PaymentMeansName(details.PaymentMeansCode)} Vence {details.PaymentDueDate:dd/MM/yyyy}", columns);
+            foreach (var field in InvoicePaymentPresentation.Fields(details, receipt.IssuedAt))
+                WriteWrapped(stream, $"{field.Label}: {field.Value}", columns);
             WriteWrapped(stream, $"Software: {details.SoftwareName} - Fabricante/proveedor {details.SupplierName} NIT {details.SoftwareProviderIdentification}", columns);
         }
         WriteLine(stream, new string('-', columns));
@@ -217,14 +218,6 @@ public sealed class EscPosReceiptRenderer
         _ => code
     };
 
-    private static string PaymentMeansName(string code) => code switch
-    {
-        "10" => "Efectivo",
-        "42" => "Transferencia",
-        "48" => "Tarjeta credito",
-        "49" => "Tarjeta debito",
-        _ => code
-    };
 
     private static string Scope(string? businessName, string? warehouseName)
     {

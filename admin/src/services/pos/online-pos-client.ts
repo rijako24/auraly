@@ -93,9 +93,6 @@ import {
 } from "@/lib/realtime-reconnect-policy";
 import { cashDenominationCountHtml, printCashDenominationCount, printWorkSessionClosure, workSessionCloseRequest, workSessionClosurePreviewRequest, workSessionClosureReceiptRequest } from "./pos-work-session-close";
 import { cashMovementTicketHtml, printCashMovementTicket } from "./pos-cash-movement-print";
-import { receiptBrandMarkup } from "./pos-receipt-brand";
-import { receiptLineMarkup } from "./pos-receipt-line-markup";
-import { posReceiptTypographyCss } from "./pos-receipt-style";
 import {
   isWorkspacePolicySynchronizationMessage,
   shouldReconnectWorkspacePolicy,
@@ -1639,23 +1636,6 @@ function renderServerPrintDocument(preview: Window | null, html: string): void {
   preview.document.close();
 }
 
-export async function renderInvoiceOrdersReceipt(
-  preview: Window | null,
-  response: InvoiceOrdersResponse,
-  context: ReceiptRenderContext,
-) {
-  const documentIds = response.results.flatMap((result) =>
-    result.documentId && !result.error ? [result.documentId] : []);
-  if (!documentIds.length) { closePrintPreview(preview); return; }
-  if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
-  const receipts = await Promise.all(documentIds.map((documentId) =>
-    request<PosPrintableReceipt>(
-      `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
-      { method: "POST", body: JSON.stringify(context) },
-    )));
-  await renderReceiptsReceipt(preview, receipts, context);
-}
-
 export async function renderReceiptsReceipt(
   preview: Window | null,
   receipts: PosPrintableReceipt[],
@@ -1663,66 +1643,7 @@ export async function renderReceiptsReceipt(
   paperWidthMillimeters = 80,
   autoPrint = true,
 ) {
-  if (!receipts.length) { closePrintPreview(preview); return; }
-  if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
-  const paperWidth = paperWidthMillimeters === 58 ? 58 : 80;
-  const bodyWidth = paperWidth - 8;
-  const currency = new Intl.NumberFormat("es-CO", {
-    style: "currency", currency: "COP", maximumFractionDigits: 0,
-  });
-  const branding = await tenantsApi.getBranding().catch(() => null);
-  const location = context.businessName ? `Sede: ${context.businessName}` : "";
-  const documents = receipts.map((receipt) => {
-    const presentation = salesPrintPresentation(receipt);
-    const brand = receiptBrandMarkup(branding ?? {
-      displayName: receipt.companyName ?? "Empresa",
-      legalName: null,
-      logoUrl: receipt.companyLogoSource ?? null,
-    });
-    const lines = receipt.lines.map((line, index) =>
-      receiptLineMarkup(line, currency,
-        presentation.isInvoice && presentation.templateVersion >= 3 ? index + 1 : undefined)).join("");
-    const taxes = receiptTaxTableRows(receipt, currency);
-    const payments = receiptPaymentRows(receipt, currency, "div");
-    const cashTender = receiptCashTenderRows(receipt, currency, "div");
-    const withholdings = receiptWithholdingRows(receipt, currency, "div");
-    const withholdingTotals = receipt.withholdingTotal > 0
-      ? `<div><span>Total bruto</span><b>${currency.format(receipt.payableAmount)}</b></div><h3>Retenciones</h3>${withholdings}<div><span>Total retenciones</span><b>-${currency.format(receipt.withholdingTotal)}</b></div>`
-      : "";
-    const netPayable = presentation.netPayable;
-    const qr = receipt.documentType === "SalesInvoice"
-      ? `<img class="qr" src="${window.location.origin}/api/commerce/v1/pos/drafts/sales/${receipt.documentId}/qr?businessId=${context.businessId}&warehouseId=${context.warehouseId}&workSessionId=${context.workSessionId}" alt="QR DIAN">` : "";
-    const ticketHeader = `${presentation.isInvoice ? "" : `<h2>${presentation.title}</h2>`}<div class="ticket-number">N.º de ticket: <b>${escapeHtml(presentation.displayNumber)}</b></div>`;
-    const summary = `<section class="totals"><h3>Impuestos por tarifa</h3><table class="tax-table"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>${taxes}</tbody></table><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total</span><b>${currency.format(netPayable)}</b></div>${cashTender}<h3 class="payment-title">Medios de pago</h3>${payments}</section>`;
-    return `<article data-auraly-report="${presentation.templateCode}" data-auraly-report-version="${presentation.templateVersion}"><header>${brand}${ticketHeader}<div>${presentation.issuedAt}</div>${location ? `<p class="scope">${escapeHtml(location)}</p>` : ""}</header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div></section>${invoiceComplianceMarkup(receipt)}${lines}${summary}${presentation.isInvoice && receipt.cufe ? `<p class="cufe"><b>CUFE</b><br>${escapeHtml(receipt.cufe)}</p>` : ""}${qr}<footer>${presentation.issuedBy}<br><b>www.auralyapp.co</b></footer></article>`;
-  }).join("");
-  preview.document.open();
-  preview.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Comprobantes de venta</title><style>@page{size:${paperWidth}mm auto;margin:4mm}*{box-sizing:border-box}${posReceiptTypographyCss}body{width:${bodyWidth}mm;margin:0 auto;color:#111;font:12px/1.35 ui-monospace,Consolas,monospace}article{page-break-after:always}article:last-child{page-break-after:auto}header{border-bottom:1px dashed #555;padding-bottom:8px}header>*+*{margin-top:4px}.brand-logo{display:block;max-width:48mm;max-height:18mm;margin:0 auto 3mm;object-fit:contain}.brand-name{margin:0;font:800 20px/1.2 Arial,sans-serif;text-transform:uppercase}h2{margin:4px 0 0;font-size:13px;text-transform:uppercase}.ticket-number{font-size:12px}.scope{margin:3px 0 0;color:#444}.meta{padding:8px 0;border-bottom:1px dashed #555}.fiscal-compliance{padding:8px 0;border-bottom:1px dashed #555;font-size:9px;overflow-wrap:anywhere}.fiscal-compliance div+div{margin-top:3px}.totals{padding:8px 0}.meta div,.totals div,.line div{display:flex;justify-content:space-between;gap:10px}.meta b,.totals b,.line b{font-variant-numeric:tabular-nums;text-align:right}.line{padding:8px 0;border-bottom:1px dashed #aaa}.line>b{display:block;text-align:left}.line small{display:block;color:#475569}.discount{color:#7c2d12;font-size:11px}.tax-table{width:100%;border-collapse:collapse;margin:4px 0}.tax-table th{padding:3px 0;border-bottom:1px solid #777;text-align:right;font-size:10px}.tax-table th:first-child,.tax-table td:first-child{text-align:left}.tax-table td{padding:3px 0;text-align:right;font-variant-numeric:tabular-nums}.total{margin-top:7px;padding:6px 0;border-top:2px dashed #111;border-bottom:2px dashed #111;font-size:18px;font-weight:900}.payment-title{margin-top:8px}.cufe{padding-top:8px;border-top:1px dashed #555;overflow-wrap:anywhere;font-size:9px}.qr{display:block;width:42mm;height:42mm;margin:9px auto 4px}footer{padding-top:7px;text-align:center}h3{margin:5px 0 4px;font-size:11px;text-transform:uppercase}.viewer-actions{position:fixed;right:12px;top:12px;z-index:10}.viewer-actions button{border:0;border-radius:8px;background:#0f766e;color:white;padding:10px 14px;font-weight:700}@media print{.viewer-actions{display:none}}</style></head><body>${autoPrint ? "" : '<div class="viewer-actions"><button type="button" onclick="window.print()">Imprimir / PDF</button></div>'}${documents}<script>${autoPrint ? "addEventListener('load',()=>setTimeout(()=>window.print(),150));" : ""}</script></body></html>`);
-  preview.document.close();
-}
-
-export async function renderInvoiceOrdersHalfLetter(
-  preview: Window | null,
-  response: InvoiceOrdersResponse,
-  context: ReceiptRenderContext,
-) {
-  const documentIds = response.results.flatMap((result) =>
-    result.documentId && !result.error ? [result.documentId] : []);
-  if (!documentIds.length) {
-    closePrintPreview(preview);
-    return;
-  }
-  if (!preview)
-    throw new Error("El navegador bloqueó la vista previa de impresión.");
-  const receipts = await Promise.all(documentIds.map((documentId) =>
-    request<PosPrintableReceipt>(
-      `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
-      {
-        method: "POST",
-        body: JSON.stringify(context),
-      },
-    )));
-  await renderReceiptsHalfLetter(preview, receipts, context);
+  await renderSharedSalesDocument(preview, receipts, context, "Receipt", paperWidthMillimeters, autoPrint);
 }
 
 export async function renderReceiptsHalfLetter(
@@ -1732,77 +1653,34 @@ export async function renderReceiptsHalfLetter(
   format: Exclude<PosPrintTemplateFormat, "Receipt"> = "HalfLetter",
   autoPrint = true,
 ) {
+  await renderSharedSalesDocument(preview, receipts, context, format, 80, autoPrint);
+}
+
+async function renderSharedSalesDocument(
+  preview: Window | null,
+  receipts: PosPrintableReceipt[],
+  context: ReceiptRenderContext,
+  format: PosPrintTemplateFormat,
+  paperWidthMillimeters: number,
+  autoPrint: boolean,
+) {
   if (!receipts.length) { closePrintPreview(preview); return; }
   if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
-  const currency = new Intl.NumberFormat("es-CO", {
-    style: "currency", currency: "COP", maximumFractionDigits: 0,
-  });
-  const branding = await tenantsApi.getBranding().catch(() => null);
-  const pages = receipts.map((receipt) => {
-    const presentation = salesPrintPresentation(receipt);
-    const brand = receiptBrandMarkup(branding ?? {
-      displayName: receipt.companyName ?? "Empresa",
-      legalName: null,
-      logoUrl: receipt.companyLogoSource ?? null,
-    });
-    const isInvoice = presentation.isInvoice;
-    const rows = receipt.lines.map((line, index) => {
-      const identity = presentation.templateVersion >= 3
-        ? `${index + 1}. ${escapeHtml(line.description)}<br><small>${escapeHtml(line.productCode)} · ${escapeHtml(line.unitCode ?? "EA")}</small>`
-        : escapeHtml(line.description);
-      return `<tr><td>${identity}</td><td class="n">${line.quantity}</td><td class="n">${currency.format(line.unitPrice)}</td><td class="n">${currency.format(line.total)}</td></tr>`;
-    }).join("");
-    const qr = receipt.documentType === "SalesInvoice"
-      ? `<img class="qr" src="${window.location.origin}/api/commerce/v1/pos/drafts/sales/${receipt.documentId}/qr?businessId=${context.businessId}&warehouseId=${context.warehouseId}&workSessionId=${context.workSessionId}" alt="QR DIAN">`
-      : "";
-    const fiscal = isInvoice && receipt.fiscalNumber
-      ? `<div><span>Número DIAN</span><b>${escapeHtml(receipt.fiscalNumber)}</b></div>`
-      : "";
-    const cufe = isInvoice && receipt.cufe
-      ? `<p class="cufe"><b>CUFE</b><br>${escapeHtml(receipt.cufe)}</p>`
-      : "";
-    const taxes = receiptTaxRows(receipt, currency, "div");
-    const payments = receiptPaymentRows(receipt, currency, "div");
-    const cashTender = receiptCashTenderRows(receipt, currency, "div");
-    const withholdings = receiptWithholdingRows(receipt, currency, "div");
-    const withholdingTotals = receipt.withholdingTotal > 0
-      ? `${withholdings}<div><span>Total retenciones</span><b>-${currency.format(receipt.withholdingTotal)}</b></div>`
-      : "";
-    const netPayable = presentation.netPayable;
-    const issuedAt = presentation.issuedAt;
-    const bottom = `<section class="bottom"><div>${cufe}<section class="breakdowns"><div class="breakdown"><b>Impuestos por tarifa</b>${taxes}</div><div class="breakdown"><b>Medios de pago</b>${payments}</div></section><small>Representación gráfica · copia cliente / control</small></div><div class="totals"><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Total impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div><div><span>Total bruto</span><b>${currency.format(receipt.payableAmount)}</b></div>${withholdingTotals}<div class="total"><span>Total a pagar</span><b>${currency.format(netPayable)}</b></div>${cashTender}${qr}</div></section>`;
-    const copy = `<article class="document" data-auraly-report="${presentation.templateCode}" data-auraly-report-version="${presentation.templateVersion}"><div class="document-content"><header><div>${brand}<h2>${presentation.title}</h2></div><div class="right"><span>N.º de ticket</span><br><b>${escapeHtml(receipt.documentNumber)}</b><br>${issuedAt}</div></header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>${fiscal}</section>${invoiceComplianceMarkup(receipt)}<table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Total</th></tr></thead><tbody>${rows}</tbody></table>${bottom}<footer><span>${presentation.representationName}</span><span class="platform">${presentation.issuedBy} · <b>www.auralyapp.co</b><br>Emitido: ${issuedAt}</span><span class="page">Página 1 de 1</span></footer></div></article>`;
-    const sheetClass = format === "Letter"
-      ? "letter"
-      : format === "HalfLegal" ? "half half-oficio" : "half half-letter";
-    const copies = format === "Letter"
-      ? `<div class="copy">${copy}</div>`
-      : `<div class="copy">${copy}</div><div class="copy">${copy}</div>`;
-    return `<section class="sheet ${sheetClass}">${copies}</section>`;
-  }).join("");
-  const pageSize = format === "HalfLegal" ? "215.9mm 330.2mm" : "Letter portrait";
+  const branding = await tenantsApi.getBranding();
+  // Reuse the authoritative checkout/history response; rendering never reloads a sale or QR.
+  const rendered = await request<{ html: string }>(
+    "/api/commerce/v1/pos/drafts/sales/receipts/render",
+    { method: "POST", body: JSON.stringify({
+      receipts: receipts.map(receipt => ({ ...receipt,
+        companyName: branding.displayName ?? receipt.companyName,
+        companyLogoSource: branding.logoUrl ?? receipt.companyLogoSource,
+      })),
+      format, paperWidthMillimeters, businessName: context.businessName, autoPrint,
+    }) },
+  );
   preview.document.open();
-  preview.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Comprobantes de venta</title><style>
-    @page{size:${pageSize};margin:0}*{box-sizing:border-box}html,body{margin:0;color:#07111f;font-family:Arial,sans-serif}.sheet{width:215.9mm;page-break-after:always;position:relative;overflow:hidden;background:#fff}.sheet:last-child{page-break-after:auto}.half-letter{height:279.4mm;--copy-height:139.7mm;--document-width:129.7mm}.half-oficio{height:330.2mm;--copy-height:165.1mm;--document-width:155.1mm}.letter{height:279.4mm}.copy{position:relative;overflow:hidden}.half .copy{width:215.9mm;height:var(--copy-height)}.half .document{position:absolute;left:50%;top:50%;width:var(--document-width);height:203.9mm;transform:translate(-50%,-50%) rotate(90deg);transform-origin:center;padding:5mm 6mm 4mm}.letter .copy{width:100%;height:100%;padding:12mm 13mm 10mm}.letter .document{width:100%;height:100%}.document{font-size:8pt;line-height:1.22}.document-content{min-height:100%;display:flex;flex-direction:column;transform-origin:top left}header{display:grid;grid-template-columns:1fr auto;gap:5mm;border-bottom:.25mm solid #0f766e;padding-bottom:1.7mm}.brand-logo{display:block;max-width:28mm;max-height:13mm;object-fit:contain}.brand-name{margin:0;font-size:13pt;font-weight:500;color:#065f5b}h2{margin:.8mm 0 0;font-size:8.5pt}.right{text-align:right;white-space:nowrap}.meta{display:grid;grid-template-columns:1.2fr 1fr;gap:.8mm 4mm;margin:1.5mm 0 1mm}.fiscal-compliance{padding:1.2mm 0;border-top:.2mm solid #cbd5e1;border-bottom:.2mm solid #cbd5e1;font-size:6.2pt}.fiscal-compliance div+div{margin-top:.45mm}.meta div,.totals div,.breakdown div{display:flex;justify-content:space-between;gap:2.5mm}.meta span,.totals span,.breakdown span{color:#475569}table{width:100%;border-collapse:collapse;margin-top:1mm}th{padding:1.1mm;background:#eef8f7;text-align:left;font-size:7pt}td{padding:1mm 1.1mm;border-bottom:.2mm solid #e2e8f0}.n{text-align:right;white-space:nowrap}.bottom{display:grid;grid-template-columns:minmax(0,1fr) 41mm;gap:4mm;margin-top:2mm}.breakdowns{display:grid;grid-template-columns:1fr 1fr;gap:3mm;margin-top:1.5mm}.breakdown{min-width:0}.breakdown>b{display:block;margin-bottom:.7mm;color:#065f5b}.breakdown div{padding:.25mm 0;font-size:6.7pt}.totals{border:.2mm solid #cbd5e1;border-radius:2mm;padding:2mm}.total{font-size:10pt;color:#065f5b}.cufe{overflow-wrap:anywhere;font-size:6.2pt}.qr{display:block;width:25mm;height:25mm;margin:1mm auto 0}small{color:#64748b;font-size:6.2pt}footer{display:grid;grid-template-columns:1fr auto auto;align-items:end;gap:3mm;margin-top:auto;padding-top:1.5mm;border-top:.2mm solid #94a3b8;color:#64748b;font-size:6.2pt}.platform{text-align:center;color:#334155}.platform b{color:#065f5b}.page{white-space:nowrap;text-align:right}.letter .document{font-size:9pt}.letter .brand-name{font-size:16pt}.letter h2{font-size:10pt}.letter .meta{margin-top:2.5mm}.letter th{font-size:8pt}.letter td{padding-top:1.6mm;padding-bottom:1.6mm}.letter .bottom{margin-top:4mm;grid-template-columns:minmax(0,1fr) 49mm}.letter .breakdown div{font-size:7.5pt}.letter .cufe,.letter small,.letter footer{font-size:7pt}.letter .qr{width:33mm;height:33mm}@media screen{body{background:#e2e8f0}.sheet{margin:8mm auto;box-shadow:0 4px 24px #0f172a33}}
-  </style></head><body>${autoPrint ? "" : '<div style="position:fixed;right:12px;top:12px;z-index:10"><button type="button" onclick="window.print()">Imprimir / PDF</button></div>'}${pages}<script>addEventListener('load',()=>{for(const documentElement of document.querySelectorAll('.document')){const content=documentElement.querySelector('.document-content');const available=documentElement.clientHeight;if(content.scrollHeight>available){const scale=Math.max(.58,available/content.scrollHeight);content.style.transform='scale('+scale+')';content.style.width=(100/scale)+'%'}}${autoPrint ? "setTimeout(()=>window.print(),150)" : ""}});</script></body></html>`);
+  preview.document.write(rendered.html);
   preview.document.close();
-}
-
-function escapeHtml(value: string | null) {
-  return (value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function invoiceComplianceMarkup(receipt: PosPrintableReceipt) {
-  if (receipt.documentType !== "SalesInvoice" || !receipt.invoicePrintDetails) return "";
-  const value = receipt.invoicePrintDetails;
-  const paymentForm = value.paymentFormCode === "2" ? "Crédito" : "Contado";
-  const paymentMeans = ({ "10": "Efectivo", "42": "Transferencia", "48": "Tarjeta crédito", "49": "Tarjeta débito" } as Record<string, string>)[value.paymentMeansCode] ?? value.paymentMeansCode;
-  return `<section class="fiscal-compliance"><div><b>Vendedor:</b> ${escapeHtml(value.supplierName)} · NIT ${escapeHtml(value.supplierIdentification)} · Resp. ${escapeHtml(value.supplierTaxResponsibility)}</div><div><b>Dirección:</b> ${escapeHtml(value.supplierAddress)} · <b>Dirección cliente:</b> ${escapeHtml(value.customerAddress)}</div><div><b>Resolución DIAN:</b> ${escapeHtml(value.authorizationNumber)} · Prefijo ${escapeHtml(value.authorizationPrefix)} · Rango ${value.authorizationRangeStart} a ${value.authorizationRangeEnd} · Vigencia ${value.authorizationValidFrom} a ${value.authorizationValidUntil}</div><div><b>Forma / medio de pago:</b> ${paymentForm} / ${escapeHtml(paymentMeans)} · Vence ${escapeHtml(value.paymentDueDate)}</div><div><b>Software:</b> ${escapeHtml(value.softwareName)} · Fabricante/proveedor ${escapeHtml(value.supplierName)} · NIT ${escapeHtml(value.softwareProviderIdentification)}</div></section>`;
 }
 
 function inventoryAvailableFromProblem(message: string) {
@@ -1811,80 +1689,4 @@ function inventoryAvailableFromProblem(message: string) {
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isFinite(value) ? value : null;
-}
-
-function receiptTaxRows(receipt: PosPrintableReceipt, currency: Intl.NumberFormat, element: "div") {
-  return receiptTaxGroups(receipt)
-    .map(item => `<${element}><span>${escapeHtml(taxName(item.code))} ${item.rate.toLocaleString("es-CO", { maximumFractionDigits: 2 })}% · base ${currency.format(item.base)}</span><b>${currency.format(item.tax)}</b></${element}>`)
-    .join("");
-}
-
-function receiptTaxTableRows(receipt: PosPrintableReceipt, currency: Intl.NumberFormat) {
-  return receiptTaxGroups(receipt)
-    .map(item => `<tr><td>${escapeHtml(taxName(item.code))} ${item.rate.toLocaleString("es-CO", { maximumFractionDigits: 2 })}%</td><td>${currency.format(item.base)}</td><td>${currency.format(item.tax)}</td></tr>`)
-    .join("");
-}
-
-function receiptTaxGroups(receipt: PosPrintableReceipt) {
-  const groups = new Map<string, { code: string; rate: number; base: number; tax: number }>();
-  for (const line of receipt.lines) {
-    const key = `${line.taxCode}:${line.taxRate}`;
-    const current = groups.get(key) ?? { code: line.taxCode, rate: line.taxRate, base: 0, tax: 0 };
-    current.base += line.total - line.tax;
-    current.tax += line.tax;
-    groups.set(key, current);
-  }
-
-  return [...groups.values()]
-    .sort((left, right) => left.code.localeCompare(right.code) || left.rate - right.rate);
-}
-
-function receiptPaymentRows(receipt: PosPrintableReceipt, currency: Intl.NumberFormat, element: "div") {
-  return receipt.payments.map(payment => `<${element}><span>${escapeHtml(paymentMethodName(payment.methodCode))}</span><b>${currency.format(payment.amount)}</b></${element}>`).join("");
-}
-
-function receiptCashTenderRows(receipt: PosPrintableReceipt, currency: Intl.NumberFormat, element: "div") {
-  const cash = receipt.payments.find(payment =>
-    payment.methodCode === "Cash" && payment.tenderedAmount != null);
-  if (!cash || cash.tenderedAmount == null) return "";
-  const change = Math.max(0, cash.tenderedAmount - cash.amount);
-  return `<${element}><span>Efectivo recibido</span><b>${currency.format(cash.tenderedAmount)}</b></${element}><${element}><span>Cambio</span><b>${currency.format(change)}</b></${element}>`;
-}
-
-function receiptWithholdingRows(receipt: PosPrintableReceipt, currency: Intl.NumberFormat, element: "div") {
-  return (receipt.withholdings ?? []).map(withholding =>
-    `<${element}><span>Ret. ${escapeHtml(withholding.name)} (${withholding.rate.toLocaleString("es-CO", { maximumFractionDigits: 4 })}%)</span><b>-${currency.format(withholding.amount)}</b></${element}>`,
-  ).join("");
-}
-
-function taxName(code: string) {
-  return ({ "01": "IVA", "02": "IC", "03": "ICA", "04": "INC" } as Record<string, string>)[code] ?? code;
-}
-
-function paymentMethodName(code: string) {
-  return ({ Cash: "Efectivo", Card: "Tarjeta", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia", Credit: "Crédito / cartera", Voucher: "Bono / vale", Check: "Cheque", Withholding: "Retención" } as Record<string, string>)[code] ?? code;
-}
-
-/** One sales-document definition; receipt and sheet sizes only arrange it. */
-function salesPrintPresentation(receipt: PosPrintableReceipt) {
-  const isInvoice = receipt.documentType === "SalesInvoice";
-  if (receipt.documentType === "Order")
-    throw new Error("Los pedidos se imprimen con la plantilla compartida del servidor.");
-  return {
-    isInvoice,
-    title: isInvoice ? "Factura electrónica de venta" : "Comprobante de venta",
-    displayNumber: isInvoice && receipt.fiscalNumber
-      ? receipt.fiscalNumber
-      : receipt.documentNumber,
-    representationName: isInvoice
-      ? "Representación gráfica de factura electrónica"
-      : "Representación gráfica del comprobante de venta",
-    issuedBy: isInvoice ? "Factura emitida por Auraly" : "Comprobante emitido por Auraly",
-    issuedAt: new Date(receipt.issuedAt).toLocaleString("es-CO"),
-    netPayable: receipt.withholdingTotal > 0
-      ? receipt.netPayableAmount
-      : receipt.payableAmount,
-    templateCode: isInvoice ? "sales-invoice" : "sales-receipt",
-    templateVersion: isInvoice && receipt.invoicePrintDetails ? 3 : 2,
-  };
 }

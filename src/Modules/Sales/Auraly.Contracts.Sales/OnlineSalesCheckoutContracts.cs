@@ -75,6 +75,8 @@ public sealed record CreditSaleAcknowledgementRenderRequest(
 public sealed record CreditSaleAcknowledgementRenderResponse(
     IReadOnlyList<string> HtmlDocuments);
 
+public sealed record SalesReceiptTaxTotal(string Name, decimal Rate, decimal TaxableAmount, decimal Amount);
+
 public sealed record OnlineSalesReceipt(
     Guid DocumentId,
     string DocumentType,
@@ -99,9 +101,18 @@ public sealed record OnlineSalesReceipt(
     CreditSaleAcknowledgement? CreditAcknowledgement = null,
     SalesInvoicePrintDetails? InvoicePrintDetails = null,
     string? CustomerPhone = null,
-    string? CustomerAddress = null);
+    string? CustomerAddress = null,
+    IReadOnlyList<SalesReceiptTaxTotal>? TaxTotals = null);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,
     OnlineSalesDraft NextDraft,
     bool IsDuplicate);
+
+// A presentation-only request: it reads and writes no business data.
+public sealed record SalesReceiptsRenderRequest(
+    IReadOnlyList<OnlineSalesReceipt> Receipts,
+    string Format,
+    int PaperWidthMillimeters = 80,
+    string? BusinessName = null,
+    bool AutoPrint = true);

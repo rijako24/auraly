@@ -395,6 +395,36 @@ group.MapPost("/{draftId:guid}/items", async (
                 context.User.ToOnlineSalesUserIdentity(),
                 draftId, lineId, request, IdempotencyKey(context), ct)));
 
+        // Render the response already held by the caller; no database or per-document QR request.
+        group.MapPost("/sales/receipts/render", (SalesReceiptsRenderRequest request) =>
+        {
+            if (request.Receipts is null || request.Receipts.Count is < 1 or > 500 ||
+                request.Receipts.Any(receipt => receipt is null ||
+                    !PosSaleDocumentTypes.IsSupported(receipt.DocumentType) ||
+                    receipt.Lines is null || receipt.Lines.Count == 0 || receipt.Lines.Any(line => line is null) ||
+                    receipt.Payments is null || receipt.Payments.Any(payment => payment is null) ||
+                    (PosSaleDocumentTypes.IsFiscal(receipt.DocumentType) &&
+                        (string.IsNullOrWhiteSpace(receipt.Cufe) || string.IsNullOrWhiteSpace(receipt.QrPayload)))) ||
+                request.Receipts.Sum(receipt => (long)receipt.Lines.Count) > 10_000 ||
+                request.Format is not ("Receipt" or "HalfLetter" or "HalfLegal" or "Letter") ||
+                request.PaperWidthMillimeters is not (58 or 80))
+                return Results.BadRequest(new { message = "Selecciona hasta 500 documentos y un formato de impresión válido." });
+            try
+            {
+                var html = request.Format == "Receipt"
+                    ? new SalesReceiptHtmlRenderer().RenderBatch(request.Receipts,
+                        request.PaperWidthMillimeters, request.BusinessName, autoPrint: request.AutoPrint)
+                    : new HalfLetterDocumentRenderer().Render(request.Receipts, request.Format,
+                        autoPrint: request.AutoPrint);
+                return Results.Ok(new { html });
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                    { [nameof(request.Receipts)] = [exception.Message] });
+            }
+        }).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(10 * 1024 * 1024));
+
         group.MapPost("/sales/credit-acknowledgement/render", (
             CreditSaleAcknowledgementRenderRequest request) =>
         {

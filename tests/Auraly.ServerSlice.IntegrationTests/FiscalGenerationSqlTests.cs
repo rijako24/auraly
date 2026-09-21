@@ -52,13 +52,13 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.Contains("CLIENTE HISTORICO", xml, StringComparison.Ordinal);
         Assert.DoesNotContain("MAESTRO CAMBIADO", xml, StringComparison.Ordinal);
         var signedXml = await ArtifactAsync(request.DocumentId, FiscalArtifactTypeCodes.SignedXml);
-        var graphical = Encoding.ASCII.GetString(new DianInvoicePdfRenderer().Render(signedXml));
-        Assert.Contains("/MediaBox [0 0 612 792]", graphical);
-        Assert.Contains("/Subject (dian-invoice-letter/2)", graphical);
+        var graphical = new DianInvoicePdfRenderer().RenderHtml(signedXml);
+        Assert.Contains("Letter portrait", graphical);
+        Assert.Contains("data-auraly-report-version=\"3\"", graphical);
         Assert.Contains("EMISOR HISTORICO", graphical);
         Assert.Contains("CLIENTE HISTORICO", graphical);
         Assert.DoesNotContain("MAESTRO CAMBIADO", graphical);
-        Assert.Contains("/QR Do", graphical);
+        Assert.Contains("alt=\"QR DIAN\"", graphical);
     }
 
     [Fact]

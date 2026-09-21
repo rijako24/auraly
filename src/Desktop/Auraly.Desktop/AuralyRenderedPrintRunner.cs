@@ -81,13 +81,16 @@ internal sealed class AuralyRenderedPrintForm : Form
             if (!installedPrinter.IsValid)
                 throw new InvalidOperationException(
                     $"La impresora configurada '{command.PrinterName}' ya no está disponible.");
-            var output = SelectVirtualPrinterOutput(command.PrinterName);
+            var isThermal = command.PaperWidthMillimeters is not null;
+            // The native XPS driver owns its output-file dialog for paged documents.
+            var output = !isThermal && command.PrinterName.Contains("XPS", StringComparison.OrdinalIgnoreCase)
+                ? new VirtualPrinterOutput(null, false)
+                : SelectVirtualPrinterOutput(command.PrinterName);
             if (output.Cancelled)
             {
                 Handled = true;
                 return;
             }
-            var isThermal = command.PaperWidthMillimeters is not null;
             ClientSize = new Size(
                 ViewportWidth(command.PaperWidthMillimeters),
                 1200);
@@ -101,6 +104,9 @@ internal sealed class AuralyRenderedPrintForm : Form
                 userDataFolder: profile);
             await browser.EnsureCoreWebView2Async(environment);
             browser.ZoomFactor = 1;
+            if (!isThermal)
+                await browser.CoreWebView2.CallDevToolsProtocolMethodAsync(
+                    "Emulation.setEmulatedMedia", "{\"media\":\"print\"}");
             await browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
                 "window.print = () => undefined;");
             var navigated = new TaskCompletionSource<bool>(
@@ -111,6 +117,41 @@ internal sealed class AuralyRenderedPrintForm : Form
             if (!await navigated.Task)
                 throw new InvalidOperationException(
                     "No fue posible preparar el documento para impresión.");
+            if (!isThermal && await browser.CoreWebView2.ExecuteScriptAsync(
+                "document.querySelector('.sheet') !== null") == "true")
+            {
+                // Preserve vector text and the shared template's page boundaries.
+                // Readiness checks are local WebView state, bounded to 30 seconds.
+                var deadline = DateTime.UtcNow.AddSeconds(30);
+                while (await browser.CoreWebView2.ExecuteScriptAsync(
+                    "document.documentElement.dataset.auralyReportReady === 'true'") != "true")
+                {
+                    if (DateTime.UtcNow >= deadline)
+                        throw new InvalidOperationException("No fue posible paginar el documento para impresión.");
+                    await Task.Delay(50);
+                }
+                var dimensions = JsonSerializer.Deserialize<double[]>(
+                    await browser.CoreWebView2.ExecuteScriptAsync(
+                        "(() => { const r=document.querySelector('.sheet')?.getBoundingClientRect(); return r ? [r.width/96,r.height/96] : null; })()"))
+                    ?? throw new InvalidOperationException("El documento no define el tamaño de sus páginas.");
+                var settings = environment.CreatePrintSettings();
+                settings.PrinterName = command.PrinterName;
+                settings.MediaSize = CoreWebView2PrintMediaSize.Custom;
+                settings.PageWidth = dimensions[0];
+                settings.PageHeight = dimensions[1];
+                settings.MarginTop = settings.MarginBottom = settings.MarginLeft = settings.MarginRight = 0;
+                settings.ShouldPrintBackgrounds = true;
+                settings.ShouldPrintHeaderAndFooter = false;
+                if (output.Path is not null)
+                {
+                    if (!await browser.CoreWebView2.PrintToPdfAsync(output.Path, settings))
+                        throw new InvalidOperationException("No fue posible guardar el PDF de la factura.");
+                }
+                else if (await browser.CoreWebView2.PrintAsync(settings) != CoreWebView2PrintStatus.Succeeded)
+                    throw new InvalidOperationException("La impresora no completó el documento.");
+                Handled = true;
+                return;
+            }
             await Task.Delay(250);
             await browser.CoreWebView2.ExecuteScriptAsync(
                 $$"""
@@ -157,26 +198,6 @@ internal sealed class AuralyRenderedPrintForm : Form
                     element.style.marginTop = '8px';
                     element.style.marginBottom = '8px';
                   });
-                  const firstTitle = document.querySelector('.receipt header .title');
-                  const titleElements = [...document.querySelectorAll('.receipt header .title')];
-                  if (firstTitle && ['factura electronica de venta', 'factura electrónica de venta', 'número de ticket'].includes(firstTitle.textContent?.trim().toLowerCase())) {
-                    const number = titleElements[1]?.textContent?.trim() || firstTitle.textContent?.replace(/^n(?:ú|u)mero de ticket:?\s*/i, '').trim();
-                    if (number) {
-                      firstTitle.textContent = 'N.º de ticket: ';
-                      const strong = document.createElement('strong');
-                      strong.textContent = number.replace(/^N\.º\s*/i, '');
-                      firstTitle.append(strong);
-                      firstTitle.classList.add('ticket-number');
-                      if (titleElements[1]) titleElements[1].remove();
-                    }
-                  } else if (firstTitle?.textContent?.trim().toLowerCase() === 'comprobante de venta' && titleElements[1]) {
-                    const number = titleElements[1].textContent?.trim().replace(/^N\.º\s*/i, '');
-                    titleElements[1].textContent = 'N.º de ticket: ';
-                    const strong = document.createElement('strong');
-                    strong.textContent = number;
-                    titleElements[1].append(strong);
-                    titleElements[1].classList.add('ticket-number');
-                  }
                   const scope = document.querySelector('.receipt header .scope');
                   if (scope) scope.textContent = scope.textContent?.split(/\s+(?:-|·)\s+/)[0] ?? '';
                   document.querySelectorAll('.receipt header > * + *')
@@ -265,19 +286,16 @@ internal sealed class AuralyRenderedPrintForm : Form
                 var heightJson = await browser.CoreWebView2.ExecuteScriptAsync(
                     "Math.min(16000, Math.max(1, document.documentElement.scrollHeight, document.body.scrollHeight))");
                 var height = JsonSerializer.Deserialize<int>(heightJson);
-                ClientSize = new Size(800, CssPixelsToDevicePixels(height));
+                ClientSize = new Size(800, (int)Math.Ceiling(height * DeviceDpi / 96d));
                 await Task.Delay(100);
                 await browser.CoreWebView2.CapturePreviewAsync(
                     CoreWebView2CapturePreviewImageFormat.Png, png);
             }
             png.Position = 0;
             using var captured = new Bitmap(png);
-            using var image = command.PaperWidthMillimeters is null
-                ? new Bitmap(captured)
-                : ToThermalMonochrome(
-                    captured,
-                    thermalRasterWidth,
-                    qrGeometry);
+            using var image = isThermal
+                ? ToThermalMonochrome(captured, thermalRasterWidth, qrGeometry)
+                : new Bitmap(captured);
             var diagnosticPreview = Environment.GetEnvironmentVariable(
                 "AURALY_PRINT_DIAGNOSTIC_PNG");
             if (!string.IsNullOrWhiteSpace(diagnosticPreview))
@@ -560,9 +578,6 @@ internal sealed class AuralyRenderedPrintForm : Form
         paperWidthMillimeters is int width
             ? Math.Max(220, (int)Math.Ceiling(width * DeviceDpi / 25.4d))
             : 800;
-
-    private int CssPixelsToDevicePixels(int cssPixels) =>
-        (int)Math.Ceiling(cssPixels * DeviceDpi / 96d);
 
     private static int ToHundredthsOfInch(int millimeters) =>
         (int)Math.Round(millimeters * 100d / 25.4d);

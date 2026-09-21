@@ -148,6 +148,9 @@ try {
         -c Release --no-build --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'La regresion legacy fallo.' }
 
+    & (Join-Path $repoRoot 'tests\Auraly.Foundation.Tests\bin\Release\net8.0\playwright.ps1') install --only-shell chromium
+    if ($LASTEXITCODE) { throw 'No se pudo instalar el navegador PDF fijado por el release.' }
+
     & dotnet test (Join-Path $repoRoot 'tests\Auraly.Foundation.Tests\Auraly.Foundation.Tests.csproj') `
         -c Release --no-build --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'Las pruebas de Auraly Foundation fallaron.' }
@@ -171,10 +174,14 @@ try {
     $apiPublish = Join-Path $publishPath 'api'
     & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Api\Auraly.Api.csproj') `
         -c Release --no-restore -o $apiPublish `
+        -p:PlaywrightPlatform=linux-x64 `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
     if ($LASTEXITCODE) { throw 'La publicacion de Auraly API fallo.' }
+    if (-not (Test-Path (Join-Path $apiPublish '.playwright/node/linux-x64/node'))) {
+        throw 'El paquete API no contiene el driver PDF para Linux.'
+    }
 
     & dotnet build (Join-Path $repoRoot 'database\Auraly.Database\Auraly.Database.sqlproj') `
         -c Release --no-restore

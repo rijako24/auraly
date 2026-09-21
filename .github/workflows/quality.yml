@@ -22,9 +22,25 @@ jobs:
           "SQLPACKAGE_PATH=$HOME/.dotnet/tools/sqlpackage.exe" >> $env:GITHUB_ENV
       - run: dotnet restore Auraly.Commerce.sln --locked-mode
       - run: dotnet build Auraly.Commerce.sln --no-restore --configuration Release
+      - name: Install pinned PDF browser
+        shell: pwsh
+        run: ./tests/Auraly.Foundation.Tests/bin/Release/net8.0/playwright.ps1 install --only-shell chromium
       - run: dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj --no-build --configuration Release
       - run: dotnet test tests/Auraly.Pos.Edge.Host.Tests/Auraly.Pos.Edge.Host.Tests.csproj --no-build --configuration Release
       - run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release
+
+  invoice-pdf-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet build tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj -c Release
+      - name: Install pinned PDF browser and OS libraries
+        shell: pwsh
+        run: ./tests/Auraly.Foundation.Tests/bin/Release/net8.0/playwright.ps1 install --with-deps --only-shell chromium
+      - run: dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj -c Release --no-build --filter FullyQualifiedName~DianInvoicePdfRendererTests
 
   admin:
     runs-on: ubuntu-latest
