@@ -653,6 +653,10 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       appSettings: [
         {
+          name: 'WEBSITES_CONTAINER_START_TIME_LIMIT'
+          value: '900'
+        }
+        {
           name: 'ASPNETCORE_ENVIRONMENT'
           value: environment == 'prod' ? 'Production' : 'Development'
         }

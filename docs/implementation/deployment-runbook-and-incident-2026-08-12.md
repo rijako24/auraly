@@ -64,6 +64,15 @@ El preflight exige, sin imprimir valores:
 Los secretos no se pasan por `appsettings.json`, el repositorio, el manifiesto,
 la salida de CI ni la documentación.
 
+La API que genera Carta v3 con Chromium usa `start-api.sh` y
+`WEBSITES_CONTAINER_START_TIME_LIMIT=900`, declarados en Bicep y aplicados por
+`Publish-AuralyReleasePipeline.ps1` antes de cargar el ZIP. La primera instalación
+del navegador y sus bibliotecas en DEV excedió el límite predeterminado de 230 s;
+el presupuesto de 900 s cubre ese arranque frío y mantiene un fallo acotado.
+El script debe registrar `Auraly PDF runtime ready` y la API responder `/health`.
+Los paquetes anteriores sin ese script conservan el arranque dotnet para rollback.
+No se regeneran binarios para corregir únicamente estos ajustes de infraestructura.
+
 Web PubSub se declara en el mismo resource group de cada ambiente. DEV usa
 `Free_F1`; producción usa `Standard_S1` únicamente cuando se aprueba y aplica la
 promoción productiva. La API publica con la identidad administrada de Auraly y
