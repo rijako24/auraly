@@ -10,7 +10,7 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PosSalesReturnServerClientTests
 {
     [Fact]
-    public async Task Return_query_is_forwarded_with_device_and_local_session_scope()
+    public async Task Return_query_is_forwarded_without_requiring_a_work_session_header()
     {
         var deviceId = Guid.NewGuid();
         var userId = Guid.NewGuid();
@@ -20,7 +20,7 @@ public sealed class PosSalesReturnServerClientTests
         var client = new PosSalesReturnServerClient(http,
             new PosDeviceCredentials(deviceId, "device-secret"));
         var session = new PosLocalUserSession(Guid.NewGuid(), workSessionId, userId,
-            "cashier", "Cashier", ["sales.returns.read"],
+            "cashier", "Cashier", ["sales.returns.create"],
             DateTimeOffset.UtcNow.AddHours(1), "session-token");
         var body = JsonSerializer.SerializeToElement(new
         {
@@ -34,7 +34,7 @@ public sealed class PosSalesReturnServerClientTests
         Assert.Equal("/api/pos/v1/sales-returns/search", handler.Path);
         Assert.Equal(deviceId.ToString("D"), handler.DeviceId);
         Assert.Equal(userId.ToString("D"), handler.UserId);
-        Assert.Equal(workSessionId.ToString("D"), handler.WorkSessionId);
+        Assert.Null(handler.WorkSessionId);
     }
 
     private sealed class ReturnHandler : HttpMessageHandler

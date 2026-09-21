@@ -66,6 +66,7 @@ public sealed class DianInvoicePdfRenderer
             throw new InvalidOperationException("The PDF source is not a UBL Invoice document.");
         var supplier = Party(root, "AccountingSupplierParty");
         var customer = Party(root, "AccountingCustomerParty");
+        var customerPhone = ContactTelephone(root, "AccountingCustomerParty");
         var number = Required(root.Element(Cbc + "ID"), "Invoice/ID");
         var currency = Required(root.Element(Cbc + "DocumentCurrencyCode"), "DocumentCurrencyCode");
         if (currency != "COP") throw new InvalidOperationException("The shared invoice template requires COP.");
@@ -121,11 +122,20 @@ public sealed class DianInvoicePdfRenderer
             Required(root.Element(Cbc + "UUID"), "UUID"),
             Required(document.Descendants(Sts + "QRCode").SingleOrDefault(), "QRCode"), null,
             Required(customer.Element(Cbc + "RegistrationName"), "CustomerName"), details.SupplierName,
-            InvoicePrintDetails: details, TaxTotals: taxSummary);
+            InvoicePrintDetails: details,
+            CustomerPhone: customerPhone,
+            CustomerAddress: details.CustomerAddress,
+            TaxTotals: taxSummary);
     }
 
     private static XElement Party(XElement root, string name) => root.Element(Cac + name)?.Element(Cac + "Party")?.Element(Cac + "PartyTaxScheme")
         ?? throw new InvalidOperationException($"Missing {name}/PartyTaxScheme.");
+    private static string? ContactTelephone(XElement root, string name)
+    {
+        var value = root.Element(Cac + name)?.Element(Cac + "Party")?
+            .Element(Cac + "Contact")?.Element(Cbc + "Telephone")?.Value.Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
     private static string Identification(XElement party)
     {
         var id = party.Element(Cbc + "CompanyID");

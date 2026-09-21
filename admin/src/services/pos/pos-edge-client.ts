@@ -242,8 +242,6 @@ export type PosIssuedSaleFilters = {
 
 export type PosServerHistoryScope = {
   businessId: string;
-  warehouseId: string;
-  workSessionId: string;
 };
 
 export type PosFiscalNumberPreview = {
@@ -744,6 +742,10 @@ export interface PosClient {
     context: PosServerHistoryScope,
     documentId: string,
   ): Promise<PosPrintableReceipt>;
+  recordServerIssuedSaleReprint(
+    context: PosServerHistoryScope,
+    documentId: string,
+  ): Promise<void>;
   searchServerReturnableSales(
     context: PosSalesReturnContext,
     query: PosSalesReturnQuery,
@@ -755,9 +757,6 @@ export interface PosClient {
   loadServerSalesReturnBootstrap(
     context: PosSalesReturnContext,
   ): Promise<PosSalesReturnBootstrap>;
-  resolveSalesReturnWorkSession(
-    context: PosSalesReturnContext,
-  ): Promise<string>;
   confirmServerSalesReturn(
     request: ConfirmSalesReturnRequest,
   ): Promise<SalesReturnAcceptance>;
@@ -1462,7 +1461,7 @@ export class PosEdgeClient implements PosClient {
   }
 
   searchServerIssuedSales(
-    context: { businessId: string; warehouseId: string; workSessionId: string },
+    context: PosServerHistoryScope,
     filters: PosIssuedSaleFilters,
     skip = 0,
     take = 20,
@@ -1482,7 +1481,7 @@ export class PosEdgeClient implements PosClient {
   }
 
   searchServerHistoryCustomers(
-    context: { businessId: string; warehouseId: string; workSessionId: string },
+    context: PosServerHistoryScope,
     search: string,
     skip = 0,
     take = 10,
@@ -1494,24 +1493,34 @@ export class PosEdgeClient implements PosClient {
   }
 
   searchServerHistoryProducts(
-    context: { businessId: string; warehouseId: string; workSessionId: string },
+    context: PosServerHistoryScope,
     search: string,
     skip = 0,
     take = 10,
   ) {
     return this.request<PosCatalogSearchPage>(
       "/edge/v1/server-history/products/search",
-      { method: "POST", body: JSON.stringify({ context, search, skip, take, customerId: null, publicPriceOnly: false }) },
+      { method: "POST", body: JSON.stringify({ context, search, skip, take }) },
     );
   }
 
   loadServerIssuedSaleReceipt(
-    context: { businessId: string; warehouseId: string; workSessionId: string },
+    context: PosServerHistoryScope,
     documentId: string,
   ) {
     return this.request<PosPrintableReceipt>(
       `/edge/v1/server-history/sales/${documentId}/receipt`,
       { method: "POST", body: JSON.stringify(context) },
+    );
+  }
+
+  recordServerIssuedSaleReprint(
+    context: PosServerHistoryScope,
+    documentId: string,
+  ) {
+    return this.requestVoid(
+      `/edge/v1/server-history/sales/${documentId}/reprint-audit`,
+      { method: "POST", body: JSON.stringify({ businessId: context.businessId }) },
     );
   }
 
@@ -1537,16 +1546,6 @@ export class PosEdgeClient implements PosClient {
       "/edge/v1/server-returns/bootstrap",
       { method: "POST", body: JSON.stringify(context) },
     );
-  }
-
-  resolveSalesReturnWorkSession(context: PosSalesReturnContext) {
-    if (!context.workSessionId)
-      return Promise.reject(new PosEdgeError(
-        "La caja enrolada no tiene una sesión de trabajo activa.",
-        409,
-        "WorkSessionRequired",
-      ));
-    return Promise.resolve(context.workSessionId);
   }
 
   confirmServerSalesReturn(request: ConfirmSalesReturnRequest) {

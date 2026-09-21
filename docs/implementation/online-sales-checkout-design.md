@@ -56,7 +56,7 @@ una factura del proveedor. Los gastos manuales conservan la exigencia de ese
 número y su unicidad filtrada. El retry compara la solicitud original y no
 vuelve a calcular retenciones ni requiere maestros actualmente activos.
 
-Hasta diez cargos por factura reutilizan operaciones en lote de numeración,
+Hasta diez aplicaciones de cargo por factura reutilizan operaciones en lote de numeración,
 fuentes contables, retenciones y, cuando la política del proveedor lo exige,
 reserva de cupo y documentos soporte. Las firmas individuales de estos helpers
 conservan su comportamiento y delegan al lote de tamaño uno. Las alertas usan
@@ -77,11 +77,21 @@ de 30 facturas exige menos de dos segundos para la consulta completa por API.
 
 En POS, **Cargos de facturación** se abre junto al total o con `Shift + F8`;
 `F8` conserva el cobro. El modal consulta únicamente su página visible y las
-mutaciones reemplazan el borrador con la respuesta autoritativa. Un cargo puede
-quitarse o editarse; el proveedor único activo se selecciona automáticamente.
+mutaciones reemplazan el borrador con la respuesta autoritativa. El botón
+**Agregar cargo** crea una aplicación independiente, por lo que una misma
+definición puede agregarse varias veces con distinto valor o proveedor. Un cargo
+puede quitarse o editarse; el proveedor único activo se selecciona automáticamente.
 Los cargos pertenecen a la facturación: guardar un borrador con cargos como
 pedido se rechaza explícitamente para no perderlos. Una venta temporal sí los
 conserva. Quitar el último producto limpia los cargos asociados.
+
+Cada aplicación se guarda por `AppliedChargeId` en
+`sales.InvoiceChargeDraftSelections`. Al emitir, el POS calcula una sola vez y
+sube el snapshot final dentro de `PosSaleUploadRequest.Charges`; recepción valida
+integridad, tenant y referencias versionadas, pero no vuelve a ejecutar la fórmula.
+El flujo canónico de gastos acepta las aplicaciones asumidas por la empresa y el
+motor contable crea el asiento y la cuenta por pagar al proveedor de forma
+idempotente.
 
 El cierre incorpora **Cargos de facturación** y el desglose dentro del medio de
 pago correspondiente, con factura, cargo, proveedor y cantidad de cargos. Es un
@@ -244,5 +254,7 @@ oficio y carta.
 `OnlinePosClient` conecta la pantalla POS al checkout, conserva el contexto de
 venta y devuelve recibo y siguiente borrador. La impresión y reimpresión usan
 el recibo confirmado y los renderizadores compartidos de `Auraly.Pos.Printing`.
-El historial consulta los documentos del servidor; no reconstruye la venta
-a partir de precios ni cargos actuales.
+El historial requiere `sales.reprint`, consulta el snapshot por tenant y negocio
+sin depender del cajero, sesión o bodega que originaron la venta, y audita la
+reimpresión después de imprimir. No reconstruye la venta a partir de precios ni
+cargos actuales.

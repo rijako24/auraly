@@ -27,7 +27,6 @@ public sealed class SalesReturnService(
         if (request.BusinessId != user.BusinessId)
             throw new SalesReturnForbiddenException("The return belongs to another business.");
         Require(user, SalesReturnPermissionCodes.Create);
-        Require(user, SalesReturnPermissionCodes.Confirm);
         if (request.ReturnId == Guid.Empty || request.OriginalDocumentId == Guid.Empty ||
             request.WarehouseId == Guid.Empty)
             throw new SalesReturnValidationException("ReturnId, OriginalDocumentId and WarehouseId are required.");
@@ -48,10 +47,8 @@ public sealed class SalesReturnService(
         if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             !SalesReturnRefundMethods.All.Contains(request.RefundMethodCode!))
             throw new SalesReturnValidationException("The refund method is invalid.");
-        if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
-            (request.WorkSessionId is null || request.WorkSessionId == Guid.Empty))
-            throw new SalesReturnValidationException(
-                "A refund requires the operational work session of the user.");
+        if (request.WorkSessionId == Guid.Empty)
+            throw new SalesReturnValidationException("WorkSessionId must be null or a valid identifier.");
         var cardRefund = request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             request.RefundMethodCode is SalesReturnRefundMethods.DebitCard or SalesReturnRefundMethods.CreditCard;
         var transferRefund = request.EconomicResolution == ReturnEconomicResolutions.Refund &&

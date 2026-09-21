@@ -61,22 +61,27 @@ public sealed class EscPosReceiptRenderer
         }
         if (isFiscal && receipt.InvoicePrintDetails is { } details)
         {
-            WriteWrapped(stream, $"Vendedor: {details.SupplierName}", columns);
-            WriteWrapped(stream, $"NIT: {details.SupplierIdentification} Resp: {details.SupplierTaxResponsibility}", columns);
-            WriteWrapped(stream, $"Direccion: {details.SupplierAddress}", columns);
-            WriteWrapped(stream, $"Direccion cliente: {details.CustomerAddress}", columns);
-            WriteWrapped(stream, $"Resolucion DIAN: {details.AuthorizationNumber}", columns);
+            var customerAddress = string.IsNullOrWhiteSpace(receipt.CustomerAddress)
+                ? details.CustomerAddress
+                : receipt.CustomerAddress;
+            if (!string.IsNullOrWhiteSpace(customerAddress))
+                WriteWrapped(stream, $"Direccion: {customerAddress}", columns);
+            if (!string.IsNullOrWhiteSpace(receipt.CustomerPhone))
+                WriteWrapped(stream, $"Telefono: {receipt.CustomerPhone}", columns);
+            WriteWrapped(stream, $"{details.SupplierName} - NIT {details.SupplierIdentification} - Resp. {details.SupplierTaxResponsibility} - {details.SupplierAddress}", columns);
+            WriteWrapped(stream, details.AuthorizationNumber, columns);
             WriteWrapped(stream, $"Prefijo {details.AuthorizationPrefix} Rango {details.AuthorizationRangeStart} a {details.AuthorizationRangeEnd}", columns);
             WriteWrapped(stream, $"Vigencia {details.AuthorizationValidFrom:dd/MM/yyyy} a {details.AuthorizationValidUntil:dd/MM/yyyy}", columns);
-            WriteWrapped(stream, $"Software: {details.SoftwareName} - Fabricante/proveedor {details.SupplierName} NIT {details.SoftwareProviderIdentification}", columns);
+            WriteWrapped(stream, $"{details.SoftwareName} - Fabricante/proveedor {details.SupplierName} NIT {details.SoftwareProviderIdentification}", columns);
         }
         WriteLine(stream, new string('-', columns));
         var lineNumber = 0;
         foreach (var line in receipt.Lines)
         {
             lineNumber++;
-            WriteBoldWrapped(stream, $"{lineNumber}. {line.Description}", columns);
-            WriteWrapped(stream, $"{line.ProductCode} / {line.UnitCode}", columns);
+            WriteBoldWrapped(stream, isFiscal ? line.Description : $"{lineNumber}. {line.Description}", columns);
+            if (!isFiscal)
+                WriteWrapped(stream, $"{line.ProductCode} / {line.UnitCode}", columns);
             WriteLine(
                 stream,
                 Right(

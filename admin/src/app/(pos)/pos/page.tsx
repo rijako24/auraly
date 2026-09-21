@@ -1226,6 +1226,8 @@ export default function PosPage() {
   }, [draft, saveOrder]);
 
   const activePosPermissions = client?.mode === "edge" ? edgePermissions : permissions;
+  const canReprintSales = activePosPermissions.includes("sales.reprint");
+  const canCreateSalesReturns = activePosPermissions.includes("sales.returns.create");
   const canOpenCashDrawer = activePosPermissions
     .includes("work-sessions.cash.drawer.open");
   const canReadProductAvailability = (client?.mode === "edge" ? edgePermissions : permissions)
@@ -1276,6 +1278,7 @@ export default function PosPage() {
         !event.ctrlKey &&
         shortcut === POS_ACTION_SHORTCUTS.returns &&
         serverConnected &&
+        canCreateSalesReturns &&
         !busy &&
         !temporaryOpen &&
         !productSearchOpen &&
@@ -1288,6 +1291,8 @@ export default function PosPage() {
       } else
       if (
         shortcut === POS_ACTION_SHORTCUTS.invoices &&
+        serverConnected &&
+        canReprintSales &&
         !busy &&
         !temporaryOpen &&
         !productSearchOpen &&
@@ -2183,6 +2188,10 @@ export default function PosPage() {
         sale.documentId.value,
       );
       await client.printHistoricalReceipt(receipt);
+      await client.recordServerIssuedSaleReprint(
+        salesHistoryScope,
+        sale.documentId.value,
+      );
       setMessage(`${sale.documentNumber} reimpresa desde su snapshot original`);
     } catch (caught) {
       showError(caught);
@@ -2547,10 +2556,8 @@ export default function PosPage() {
   const salesHistoryScope = useMemo(
     () => ({
       businessId: workstation.businessId,
-      warehouseId: workstation.warehouseId,
-      workSessionId: workstation.workSessionId ?? "",
     }),
-    [workstation.businessId, workstation.warehouseId, workstation.workSessionId],
+    [workstation.businessId],
   );
   const searchIssuedSales = useCallback(
     (filters: import("@/services/pos/pos-edge-client").PosIssuedSaleFilters, skip: number) => {
@@ -3299,7 +3306,7 @@ export default function PosPage() {
                 Reiniciar
                 <span className="rounded bg-white px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.restartSale}</span>
               </button>
-              <button type="button" disabled={!salesReady || busy}
+              <button type="button" disabled={!serverConnected || !canReprintSales || busy}
                 onClick={() => setInvoiceSearchOpen(true)}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <Printer className="h-4 w-4" />
@@ -3307,7 +3314,7 @@ export default function PosPage() {
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.invoices}</span>
               </button>
               <button type="button"
-                disabled={!serverConnected || busy}
+                disabled={!serverConnected || !canCreateSalesReturns || busy}
                 onClick={() => setReturnsOpen(true)}
                 title={serverConnected ? "Abrir devoluciones" : "Requiere conexión con Auraly Server"}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">

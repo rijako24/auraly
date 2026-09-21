@@ -29,9 +29,9 @@ public sealed partial class SqlOnlineSalesDraftStore
         var selection = new InvoiceChargeSelection(request.AppliedChargeId, definition, request.SupplierId, request.ManualAmount);
         if (draft.Lines.Count == 0) throw new OnlineSalesDraftValidationException("Agrega productos antes de agregar un cargo.");
         var previousCharges = draft.Charges ?? [];
-        if (previousCharges.Any(x => x.ChargeId == request.ChargeId && x.AppliedChargeId != request.AppliedChargeId) ||
-            (previousCharges.Count >= InvoiceChargeApplication.MaximumChargesPerInvoice && previousCharges.All(x => x.AppliedChargeId != request.AppliedChargeId)))
-            throw new OnlineSalesDraftValidationException("Se admiten hasta diez cargos distintos por factura.");
+        if (previousCharges.Count >= InvoiceChargeApplication.MaximumChargesPerInvoice &&
+            previousCharges.All(x => x.AppliedChargeId != request.AppliedChargeId))
+            throw new OnlineSalesDraftValidationException("Se admiten hasta diez cargos por factura.");
         try { _ = InvoiceChargeApplication.Calculate(draft.Lines.Sum(x => x.Total), selection); }
         catch (InvoiceChargeValidationException error) { throw new OnlineSalesDraftValidationException(error.Message); }
         await ExecuteAsync(connection, tx, """

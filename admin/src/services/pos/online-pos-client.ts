@@ -233,7 +233,7 @@ export async function searchServerHistoryCustomers(
   take = 10,
 ) {
   const page = await request<OnlineCustomerPage>(
-    "/api/commerce/v1/pos/drafts/customers/search",
+    "/api/commerce/v1/pos/drafts/history/customers/search",
     { method: "POST", body: JSON.stringify({ context, search, skip, take }) },
   );
   return { ...page, items: page.items.map(mapCustomer) } satisfies PosCustomerSearchPage;
@@ -246,8 +246,8 @@ export async function searchServerHistoryProducts(
   take = 10,
 ) {
   return request<OnlineProductPage>(
-    "/api/commerce/v1/pos/drafts/products/search",
-    { method: "POST", body: JSON.stringify({ context, search, skip, take, customerId: null, publicPriceOnly: false }) },
+    "/api/commerce/v1/pos/drafts/history/products/search",
+    { method: "POST", body: JSON.stringify({ context, search, skip, take }) },
   );
 }
 
@@ -258,6 +258,16 @@ export async function loadServerIssuedSaleReceipt(
   return request<PosPrintableReceipt>(
     `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
     { method: "POST", body: JSON.stringify(context) },
+  );
+}
+
+export async function recordServerIssuedSaleReprint(
+  context: PosServerHistoryScope,
+  documentId: string,
+) {
+  await request<void>(
+    `/api/commerce/v1/pos/drafts/sales/${documentId}/reprint-audit`,
+    { method: "POST", body: JSON.stringify({ businessId: context.businessId }) },
   );
 }
 
@@ -1081,6 +1091,13 @@ export class OnlinePosClient implements PosClient {
     return loadServerIssuedSaleReceipt(context, documentId);
   }
 
+  recordServerIssuedSaleReprint(
+    context: PosServerHistoryScope,
+    documentId: string,
+  ) {
+    return recordServerIssuedSaleReprint(context, documentId);
+  }
+
   searchServerReturnableSales(
     context: PosSalesReturnContext,
     query: PosSalesReturnQuery,
@@ -1101,10 +1118,6 @@ export class OnlinePosClient implements PosClient {
         salesReturnsApi.settlementConfiguration(),
       ]);
     return { reasons, resolutionMethods, scopes, settlementConfiguration };
-  }
-
-  async resolveSalesReturnWorkSession(context: PosSalesReturnContext) {
-    return (await salesReturnsApi.openWorkSession(context.businessId)).workSessionId;
   }
 
   confirmServerSalesReturn(request: ConfirmSalesReturnRequest) {

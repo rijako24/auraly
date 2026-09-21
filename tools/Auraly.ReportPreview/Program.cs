@@ -174,7 +174,8 @@ static PosReceipt BuildThermalReceipt(int width, SalesInvoicePrintDetails detail
         "https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=" + new string('a', 96),
         width, PosSaleDocumentTypes.Invoice,
         CompanyName: "Comercializadora Uno SAS", CustomerName: "Cliente de prueba SAS",
-        InvoicePrintDetails: details);
+        InvoicePrintDetails: details, CustomerPhone: "300 123 4567",
+        CustomerAddress: "Carrera 4 # 5-06, Valledupar");
 
 static OnlineSalesReceipt BuildOnlineReceipt(SalesInvoicePrintDetails details) =>
     new(
@@ -187,7 +188,8 @@ static OnlineSalesReceipt BuildOnlineReceipt(SalesInvoicePrintDetails details) =
         20_000m, 3_800m, 23_800m, new string('a', 96),
         "https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=" + new string('a', 96),
         "Accepted", "Cliente de prueba SAS", "Comercializadora Uno SAS",
-        InvoicePrintDetails: details);
+        InvoicePrintDetails: details, CustomerPhone: "300 123 4567",
+        CustomerAddress: "Carrera 4 # 5-06, Valledupar");
 
 static byte[] BuildUblInvoice()
 {
@@ -199,7 +201,7 @@ static byte[] BuildUblInvoice()
         new DianAuthorization("18760000001", new DateOnly(2026, 1, 1), new DateOnly(2027, 12, 31), "FE", 1, 10000),
         new DianSoftware("900123456", "8", "11111111-1111-1111-1111-111111111111", "12345"),
         new DianParty("900123456", "8", "31", "1", "Comercializadora Uno SAS", "Comercializadora Uno", "R-99-PN", "01", "IVA", address),
-        new DianParty("222222222222", "0", "13", "2", "Cliente de prueba SAS", "Cliente de prueba", "R-99-PN", "ZZ", "No aplica", address),
+        new DianParty("222222222222", "0", "13", "2", "Cliente de prueba SAS", "Cliente de prueba", "R-99-PN", "ZZ", "No aplica", address, Telephone: "300 123 4567"),
         [new DianInvoiceLine(1, "P-001", "999", "Café molido premium", "EA", 2m, 10_000m, 0m, 20_000m, [new DianTax("01", "IVA", 20_000m, 3_800m, 19m)])],
         [new DianTax("01", "IVA", 20_000m, 3_800m, 19m)],
         new DianPayment("1", "10", new DateOnly(2026, 9, 18), null),

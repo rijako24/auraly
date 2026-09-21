@@ -567,7 +567,7 @@ public sealed class EscPosReceiptRendererTests
     [InlineData(HalfLetterDocumentRenderer.HalfLetter)]
     [InlineData(HalfLetterDocumentRenderer.HalfLegal)]
     [InlineData(HalfLetterDocumentRenderer.Letter)]
-    public void Invoice_v3_preserves_fiscal_identity_without_payment_metadata_in_header(
+    public void Invoice_v3_places_customer_contact_in_header_and_keeps_product_rows_minimal(
         string format)
     {
         var details = new SalesInvoicePrintDetails(
@@ -583,13 +583,20 @@ public sealed class EscPosReceiptRendererTests
                 Receipt() with
                 {
                     CustomerName = "Cliente prueba",
+                    CustomerAddress = "Avenida cliente 12",
+                    CustomerPhone = "3001234567",
                     InvoicePrintDetails = details
                 });
         }
         else
         {
             value = new HalfLetterDocumentRenderer().Render(
-                [OnlineReceipt() with { InvoicePrintDetails = details }], format);
+                [OnlineReceipt() with
+                {
+                    CustomerAddress = "Avenida cliente 12",
+                    CustomerPhone = "3001234567",
+                    InvoicePrintDetails = details
+                }], format);
         }
 
         Assert.Contains("data-auraly-report-version=\"3\"", value);
@@ -597,16 +604,19 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("900123456", value);
         Assert.Contains("Cliente prueba", value);
         Assert.Contains("222222222", value);
-        Assert.Contains("Resolución DIAN", value);
         Assert.Contains("18760000001", value);
         Assert.Contains("Rango 1 a 10000", value);
         Assert.Contains("Vigencia", value);
+        Assert.Contains("Avenida cliente 12", value);
+        Assert.Contains("3001234567", value);
         Assert.DoesNotContain("Contado", value);
         Assert.Contains("Efectivo", value);
-        Assert.Contains("Software", value);
         Assert.Contains("Auraly", value);
-        Assert.Contains("P-001", value);
-        Assert.Contains("EA", value);
+        Assert.DoesNotContain("Vendedor:", value);
+        Assert.DoesNotContain("Resolución DIAN:", value);
+        Assert.DoesNotContain("Software:", value);
+        Assert.DoesNotContain("P-001", value);
+        Assert.DoesNotContain("1. Producto", value);
         Assert.Contains("CUFE", value);
         Assert.Contains("Factura electrónica de venta", value);
         Assert.DoesNotContain("Forma de pago", value);
@@ -614,6 +624,36 @@ public sealed class EscPosReceiptRendererTests
         Assert.DoesNotContain("Vencimiento", value);
         Assert.DoesNotContain("Vence ", value);
         Assert.DoesNotContain("Medio de pago:", value);
+    }
+
+    [Theory]
+    [InlineData(58)]
+    [InlineData(80)]
+    public void Raw_invoice_uses_the_same_minimal_customer_and_product_layout(int width)
+    {
+        var details = new SalesInvoicePrintDetails(
+            "Comercializadora Uno SAS", "900123456", "R-99-PN",
+            "Calle 10 # 20-30", "Carrera 4 # 5-06", "18760000001",
+            new DateOnly(2026, 1, 1), new DateOnly(2027, 12, 31),
+            "FE", 1, 10000, "1", "10", new DateOnly(2026, 9, 18),
+            "900123456", "Auraly");
+        var value = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(
+            Receipt() with
+            {
+                PaperWidthMillimeters = width,
+                CustomerAddress = "Avenida cliente 12",
+                CustomerPhone = "3001234567",
+                InvoicePrintDetails = details
+            }));
+
+        Assert.Contains("Avenida cliente 12", value);
+        Assert.Contains("3001234567", value);
+        Assert.Contains("Comercializadora Uno SAS", value);
+        Assert.DoesNotContain("Vendedor:", value);
+        Assert.DoesNotContain("Resolucion DIAN:", value);
+        Assert.DoesNotContain("Software:", value);
+        Assert.DoesNotContain("P-001", value);
+        Assert.DoesNotContain("1. Producto", value);
     }
 
     [Theory]
@@ -666,9 +706,9 @@ public sealed class EscPosReceiptRendererTests
         var current = new HtmlReceiptPreviewRenderer().Render(receipt, templateVersion: 3);
 
         Assert.Contains("data-auraly-report-version=\"2\"", previous);
-        Assert.DoesNotContain("Resolución DIAN", previous);
+        Assert.DoesNotContain("18760000001", previous);
         Assert.Contains("data-auraly-report-version=\"3\"", current);
-        Assert.Contains("Resolución DIAN", current);
+        Assert.Contains("18760000001", current);
     }
 
     private static OnlineSalesReceipt OnlineReceipt() =>

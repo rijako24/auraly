@@ -143,12 +143,6 @@ export const salesReturnsApi = {
   ),
   getSale: (documentId: string, businessId: string) =>
     apiClient.get<ReturnableSale>(`/commerce/v1/sales-returns/sales/${documentId}`, { businessId }),
-  openWorkSession: (businessId: string, warehouseId?: string) =>
-    apiClient.post<WorkSessionView>("/commerce/v1/work-sessions/current", {
-      businessId,
-      warehouseId: warehouseId ?? null,
-      deviceId: null,
-    }),
   confirm: (request: ConfirmSalesReturnRequest) =>
     apiClient.postIdempotent<SalesReturnAcceptance>(
       "/commerce/v1/sales-returns/confirm",

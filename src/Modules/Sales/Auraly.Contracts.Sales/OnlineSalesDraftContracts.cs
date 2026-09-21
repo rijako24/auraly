@@ -174,8 +174,16 @@ public sealed record GetOnlineSalesCustomerRequest(
     Guid CustomerId,
     Guid? PartySiteId = null);
 
+public sealed record OnlineSalesHistoryContext(Guid BusinessId);
+
+public sealed record SearchOnlineSalesHistoryOptionsRequest(
+    OnlineSalesHistoryContext Context,
+    string? Search = null,
+    int Skip = 0,
+    int Take = 50);
+
 public sealed record SearchOnlineSalesIssuedSalesRequest(
-    OnlineSalesDraftContext Context,
+    OnlineSalesHistoryContext Context,
     string? Search = null,
     int Skip = 0,
     int Take = 50,

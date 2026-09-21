@@ -109,7 +109,6 @@ CREATE TABLE [sales].[InvoiceChargeDraftSelections]
     [Version] BIGINT NOT NULL,
     [SelectionJson] NVARCHAR(MAX) NOT NULL,
     CONSTRAINT [PK_InvoiceChargeDraftSelections] PRIMARY KEY ([DraftId],[AppliedChargeId]),
-    CONSTRAINT [UQ_InvoiceChargeDraftSelections_Charge] UNIQUE ([DraftId],[ChargeId]),
     CONSTRAINT [FK_InvoiceChargeDraftSelections_Draft] FOREIGN KEY ([DraftId]) REFERENCES [dbo].[SalesDrafts]([SalesDraftId]),
     CONSTRAINT [FK_InvoiceChargeDraftSelections_Version] FOREIGN KEY ([ChargeId],[Version]) REFERENCES [sales].[InvoiceChargeVersions]([ChargeId],[Version]),
     CONSTRAINT [CK_InvoiceChargeDraftSelections_Json] CHECK (ISJSON([SelectionJson])=1)

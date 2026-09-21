@@ -34,7 +34,7 @@ export function SalesReturnWorkspace({ embedded = false, businessId, workSession
   const storedPermissions = useAuthStore((state) => state.user?.permissions ?? []);
   const permissions = new Set(permissionOverride ?? storedPermissions);
   const canCreate = permissions.has("sales.returns.create");
-  const canConfirm = permissions.has("sales.returns.confirm");
+  const canConfirm = canCreate;
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
@@ -176,18 +176,12 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
     if (chosen.length === 0) { toast.error("Indica al menos una cantidad por devolver."); return; }
     if (!selection.isValid) { toast.error("Una cantidad supera el saldo disponible."); return; }
     if (economicResolution === "CustomerCredit" && (!sale.customerId || sale.receivableOutstanding <= 0 || estimated > sale.receivableOutstanding)) { toast.error("El abono no puede superar el saldo pendiente de la cuenta por cobrar."); return; }
-    let workSessionId: string | null = runtime?.context.workSessionId ?? null;
+    const workSessionId: string | null = runtime?.context.workSessionId ?? null;
     if (cardRefund && !originalPaymentNumber) { toast.error("Selecciona la transacción de tarjeta que se va a reversar."); return; }
     if (cardRefund && estimated > (cardPayments.find(payment => payment.paymentNumber === Number(originalPaymentNumber))?.availableAmount ?? 0)) { toast.error("El valor supera el saldo de la transacción seleccionada."); return; }
     const selectedBankAccountId = bankAccountId || principalBankAccountId;
     if (transferRefund && !settlementReference.trim()) { toast.error("Registra la referencia de la transferencia."); setTransferDialogOpen(true); return; }
     if (transferRefund && accountingEnabled && !selectedBankAccountId) { toast.error("Configura o selecciona la cuenta bancaria de salida."); return; }
-    if (economicResolution === "Refund") {
-      try { workSessionId = runtime
-        ? await runtime.client.resolveSalesReturnWorkSession(runtime.context)
-        : (await salesReturnsApi.openWorkSession(businessId)).workSessionId; }
-      catch { toast.error("No fue posible abrir la sesión operativa del usuario para registrar la devolución."); return; }
-    }
     try {
       const result = await confirm.mutateAsync({
         returnId: crypto.randomUUID(), businessId, warehouseId: sale.warehouseId,

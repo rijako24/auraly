@@ -140,9 +140,10 @@ un valor recibido a partir del importe aplicado.
 
 La versión 3 activa de `sales-invoice` agrega a tirilla, media carta, media oficio
 y carta la identificación legal del emisor, responsabilidad y dirección, nombre,
-identificación y dirección del adquirente, resolución, prefijo, rango y vigencia,
-forma y medio de pago, vencimiento, fabricante/proveedor del software y código y
-unidad de cada línea. Conserva impuestos, totales, CUFE y QR DIAN. La versión 2
+identificación, dirección y teléfono disponible del adquirente, resolución,
+prefijo, rango y vigencia, y fabricante/proveedor del software. Cada línea muestra
+solo nombre del producto, cantidad, precio unitario y total. Conserva impuestos,
+totales, CUFE y QR DIAN. La versión 2
 permanece seleccionable para comparar o hacer rollback sin alterar sus campos.
 
 El visor de reportes es una herramienta de desarrollo, no una pantalla previa a

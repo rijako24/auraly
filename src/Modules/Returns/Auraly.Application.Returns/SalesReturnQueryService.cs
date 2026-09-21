@@ -20,7 +20,7 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
         SalesReturnUserIdentity user, ReturnableSalesQuery query,
         CancellationToken cancellationToken = default)
     {
-        RequireRead(user);
+        RequireReturnAccess(user);
         ValidatePage(query.Page, query.PageSize);
         ValidateDates(query.From, query.To);
         return store.ListReturnableSalesAsync(
@@ -31,7 +31,7 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
         SalesReturnUserIdentity user, Guid documentId,
         CancellationToken cancellationToken = default)
     {
-        RequireRead(user);
+        RequireReturnAccess(user);
         if (documentId == Guid.Empty)
             throw new SalesReturnValidationException("DocumentId is required.");
         return store.GetReturnableSaleAsync(user, documentId, cancellationToken);
@@ -65,6 +65,14 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
         if (!user.Permissions.Contains(SalesReturnPermissionCodes.Read))
             throw new SalesReturnForbiddenException(
                 $"Permission '{SalesReturnPermissionCodes.Read}' is required.");
+    }
+
+    private static void RequireReturnAccess(SalesReturnUserIdentity user)
+    {
+        if (!user.Permissions.Contains(SalesReturnPermissionCodes.Read) &&
+            !user.Permissions.Contains(SalesReturnPermissionCodes.Create))
+            throw new SalesReturnForbiddenException(
+                $"Permission '{SalesReturnPermissionCodes.Create}' is required.");
     }
 
     private static void ValidatePage(int page, int pageSize)

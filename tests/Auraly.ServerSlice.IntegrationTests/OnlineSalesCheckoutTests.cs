@@ -52,7 +52,8 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var (customerId, partySiteId) = await CreateNaturalPersonCustomerAsync(userId);
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesReprint);
 
         var draft = await OpenAsync(client);
         using (var select = new HttpRequestMessage(
@@ -81,6 +82,18 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
                 captured.Version,
                 [new OnlineSalesPayment("Cash", captured.PayableAmount, null)]),
             $"natural-person-dian-{Guid.NewGuid():N}");
+        Assert.Equal("Dirección principal", completed.Receipt.CustomerAddress);
+        Assert.Equal("3001234567", completed.Receipt.CustomerPhone);
+        using (var historyResponse = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/receipt",
+                   new OnlineSalesHistoryContext(fixture.BusinessId)))
+        {
+            historyResponse.EnsureSuccessStatusCode();
+            var historical = await historyResponse.Content.ReadFromJsonAsync<OnlineSalesReceipt>();
+            Assert.NotNull(historical);
+            Assert.Equal("Dirección principal", historical.CustomerAddress);
+            Assert.Equal("3001234567", historical.CustomerPhone);
+        }
 
         using (var scope = fixture.CreateScope())
         {
@@ -114,7 +127,8 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("checkout");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesReprint);
         client.Timeout = TimeSpan.FromSeconds(60);
 
         var draft = await OpenAsync(client);
@@ -172,10 +186,28 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             Assert.Equal(tenderedAmount, (decimal)(await paymentCommand.ExecuteScalarAsync())!);
         }
 
-        var context = new OnlineSalesDraftContext(
-            fixture.BusinessId,
-            fixture.WarehouseId,
-            captured.WorkSessionId);
+        var context = new OnlineSalesHistoryContext(fixture.BusinessId);
+        using (var reprintOnly = fixture.CreateUserClient(
+                   userId,
+                   CommercePermissionCodes.SalesReprint))
+        {
+            using var customerOptions = await reprintOnly.PostAsJsonAsync(
+                "/api/commerce/v1/pos/drafts/history/customers/search",
+                new SearchOnlineSalesHistoryOptionsRequest(context, Take: 10));
+            customerOptions.EnsureSuccessStatusCode();
+            Assert.NotNull(await customerOptions.Content
+                .ReadFromJsonAsync<OnlineSalesCustomerPage>());
+            using var productOptions = await reprintOnly.PostAsJsonAsync(
+                "/api/commerce/v1/pos/drafts/history/products/search",
+                new SearchOnlineSalesHistoryOptionsRequest(context, Take: 10));
+            productOptions.EnsureSuccessStatusCode();
+            Assert.NotNull(await productOptions.Content
+                .ReadFromJsonAsync<OnlineSalesProductPage>());
+            using var reprintOnlyReceipt = await reprintOnly.PostAsJsonAsync(
+                $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/receipt",
+                context);
+            reprintOnlyReceipt.EnsureSuccessStatusCode();
+        }
         using (var searchResponse = await client.PostAsJsonAsync(
                    "/api/commerce/v1/pos/drafts/sales/search",
                    new SearchOnlineSalesIssuedSalesRequest(
@@ -222,6 +254,11 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             Assert.Equal(captured.PayableAmount, printablePayment.Amount);
             Assert.Equal(tenderedAmount, printablePayment.TenderedAmount);
         }
+        using (var auditResponse = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/reprint-audit",
+                   context))
+            Assert.Equal(HttpStatusCode.NoContent, auditResponse.StatusCode);
+        Assert.Equal(1, await CountReprintsAsync(completed.Receipt.DocumentId));
         var qrUrl =
             $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/qr" +
             $"?businessId={fixture.BusinessId:D}" +
@@ -241,7 +278,7 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
                    $"&warehouseId={fixture.WarehouseId:D}" +
                    $"&workSessionId={Guid.NewGuid():D}"))
         {
-            Assert.Equal(HttpStatusCode.Forbidden, wrongRegisterResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, wrongRegisterResponse.StatusCode);
         }
 
         var replay = await CompleteAsync(
@@ -288,7 +325,8 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("historical-issued-sale");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesReprint);
 
         var captured = await CaptureAsync(client, await OpenAsync(client));
         var completed = await CompleteAsync(
@@ -433,7 +471,8 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("receipt");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesReprint);
         client.Timeout = TimeSpan.FromSeconds(60);
 
         var captured = await CaptureAsync(client, await OpenAsync(client));
@@ -464,10 +503,7 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Null(issuedReceipt.FiscalNumber);
         Assert.Null(issuedReceipt.FiscalStatus);
 
-        var context = new OnlineSalesDraftContext(
-            fixture.BusinessId,
-            fixture.WarehouseId,
-            captured.WorkSessionId);
+        var context = new OnlineSalesHistoryContext(fixture.BusinessId);
         using (var receiptResponse = await client.PostAsJsonAsync(
                    $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/receipt",
                    context))
@@ -872,6 +908,9 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
               AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
             VALUES(@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
               @DivisionId,@CityId,N'Dirección principal',1,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.PartyContacts(
+              PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
+            VALUES(NEWID(),@PartyId,N'Phone',N'3001234567',N'3001234567',1,1,SYSDATETIMEOFFSET());
             """,
             new("@PartyId", partyId),
             new("@CustomerId", customerId),
@@ -941,6 +980,17 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE CustomerId=@CustomerId;",
             connection);
         command.Parameters.AddWithValue("@CustomerId", customerId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountReprintsAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT COUNT(*) FROM dbo.AuditLogs WHERE Action=N'Sales.Reprinted' AND EntityId=CONVERT(nvarchar(100),@DocumentId);",
+            connection);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
@@ -1101,10 +1151,7 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/drafts/sales/search",
             new SearchOnlineSalesIssuedSalesRequest(
-                new OnlineSalesDraftContext(
-                    fixture.BusinessId,
-                    fixture.WarehouseId,
-                    workSessionId),
+                new OnlineSalesHistoryContext(fixture.BusinessId),
                 search,
                 0,
                 50));

@@ -9,6 +9,16 @@ public sealed record StoredOnlineSalesReceipt(
 
 public interface IOnlineSalesHistoryStore
 {
+    Task<OnlineSalesCustomerPage> SearchCustomersAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesHistoryOptionsRequest request,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesProductPage> SearchProductsAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesHistoryOptionsRequest request,
+        CancellationToken cancellationToken);
+
     Task<OnlineSalesCustomer?> GetCustomerAsync(
         OnlineSalesUserIdentity user,
         GetOnlineSalesCustomerRequest request,
@@ -21,19 +31,43 @@ public interface IOnlineSalesHistoryStore
 
     Task<StoredOnlineSalesReceipt?> GetReceiptAsync(
         OnlineSalesUserIdentity user,
-        OnlineSalesDraftContext context,
+        OnlineSalesHistoryContext context,
+        Guid documentId,
+        CancellationToken cancellationToken);
+
+    Task<bool> RecordReprintAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesHistoryContext context,
         Guid documentId,
         CancellationToken cancellationToken);
 }
 
 public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
 {
+    public Task<OnlineSalesCustomerPage> SearchCustomersAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesHistoryOptionsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateHistoryOptions(user, request);
+        return history.SearchCustomersAsync(user, request, cancellationToken);
+    }
+
+    public Task<OnlineSalesProductPage> SearchProductsAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesHistoryOptionsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateHistoryOptions(user, request);
+        return history.SearchProductsAsync(user, request, cancellationToken);
+    }
+
     public Task<OnlineSalesCustomer?> GetCustomerAsync(
         OnlineSalesUserIdentity user,
         GetOnlineSalesCustomerRequest request,
         CancellationToken cancellationToken = default)
     {
-        DemandPermission(user);
+        DemandCreatePermission(user);
         ValidateContext(request.Context);
         if (request.CustomerId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
@@ -46,8 +80,8 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
         SearchOnlineSalesIssuedSalesRequest request,
         CancellationToken cancellationToken = default)
     {
-        DemandPermission(user);
-        ValidateContext(request.Context);
+        DemandReprintPermission(user);
+        ValidateHistoryContext(request.Context);
         if (request.Skip < 0 || request.Take is < 1 or > 100)
             throw new OnlineSalesDraftValidationException(
                 "La paginación solicitada no es válida.");
@@ -66,12 +100,12 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
 
     public async Task<OnlineSalesReceipt?> GetReceiptAsync(
         OnlineSalesUserIdentity user,
-        OnlineSalesDraftContext context,
+        OnlineSalesHistoryContext context,
         Guid documentId,
         CancellationToken cancellationToken = default)
     {
-        DemandPermission(user);
-        ValidateContext(context);
+        DemandReprintPermission(user);
+        ValidateHistoryContext(context);
         if (documentId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
                 "El documento es obligatorio.");
@@ -82,12 +116,47 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
             : OnlineSalesReceiptMapper.From(stored.Request, stored.FiscalStatus);
     }
 
-    private static void DemandPermission(OnlineSalesUserIdentity user)
+    public async Task<bool> RecordReprintAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesHistoryContext context,
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        DemandReprintPermission(user);
+        ValidateHistoryContext(context);
+        if (documentId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "El documento es obligatorio.");
+        return await history.RecordReprintAsync(
+            user, context, documentId, cancellationToken);
+    }
+
+    private static void DemandCreatePermission(OnlineSalesUserIdentity user)
     {
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OnlineSalesDraftForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
+    }
+
+    private static void DemandReprintPermission(OnlineSalesUserIdentity user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesReprint))
+            throw new OnlineSalesDraftForbiddenException(
+                $"Permission '{CommercePermissionCodes.SalesReprint}' is required.");
+    }
+
+    private static void ValidateHistoryOptions(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesHistoryOptionsRequest request)
+    {
+        DemandReprintPermission(user);
+        ValidateHistoryContext(request.Context);
+        if (request.Skip < 0 || request.Take is < 1 or > 100 ||
+            request.Search?.Length > 120)
+            throw new OnlineSalesDraftValidationException(
+                "La búsqueda y paginación solicitadas no son válidas.");
     }
 
     private static void ValidateContext(OnlineSalesDraftContext context)
@@ -96,6 +165,13 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
             context.WorkSessionId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
                 "La sede y la sesión de trabajo son obligatorias.");
+    }
+
+    private static void ValidateHistoryContext(OnlineSalesHistoryContext context)
+    {
+        if (context.BusinessId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "La sede es obligatoria.");
     }
 }
 
@@ -169,7 +245,9 @@ public static class OnlineSalesReceiptMapper
                     request.Credit.Amount,
                     request.Credit.RemainingCredit,
                     request.Credit.SoldByName ?? "Usuario"),
-            InvoicePrintDetails: PrintDetails(request.UblSnapshot));
+            InvoicePrintDetails: PrintDetails(request.UblSnapshot),
+            CustomerPhone: request.UblSnapshot?.Customer.Telephone,
+            CustomerAddress: request.UblSnapshot?.Customer.Address.AddressLine);
     }
 
     private static SalesInvoicePrintDetails? PrintDetails(

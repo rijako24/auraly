@@ -50,6 +50,22 @@ public static class OnlineSalesDraftApi
             await Handle(() => service.SearchCustomersAsync(
                 context.User.ToOnlineSalesUserIdentity(), request, ct)));
 
+        group.MapPost("/history/customers/search", async (
+            HttpContext context,
+            SearchOnlineSalesHistoryOptionsRequest request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SearchCustomersAsync(
+                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+
+        group.MapPost("/history/products/search", async (
+            HttpContext context,
+            SearchOnlineSalesHistoryOptionsRequest request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SearchProductsAsync(
+                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+
         group.MapPost("/customers/get", async (
             HttpContext context,
             GetOnlineSalesCustomerRequest request,
@@ -69,7 +85,7 @@ public static class OnlineSalesDraftApi
         group.MapPost("/sales/{documentId:guid}/receipt", async (
             HttpContext context,
             Guid documentId,
-            OnlineSalesDraftContext request,
+            OnlineSalesHistoryContext request,
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await HandleNullable(() => service.GetReceiptAsync(
@@ -78,26 +94,35 @@ public static class OnlineSalesDraftApi
                 documentId,
                 ct)));
 
+        group.MapPost("/sales/{documentId:guid}/reprint-audit", async (
+            HttpContext context,
+            Guid documentId,
+            OnlineSalesHistoryContext request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await HandleFound(() => service.RecordReprintAsync(
+                context.User.ToOnlineSalesUserIdentity(), request, documentId, ct)));
+
         var deviceHistory = endpoints.MapGroup("/api/pos/v1/history")
             .RequireAuthorization("pos.enrolled");
 
         deviceHistory.MapPost("/customers/search", async (
             HttpContext context,
-            SearchOnlineSalesRequest request,
-            OnlineSalesDraftService service,
+            SearchOnlineSalesHistoryOptionsRequest request,
+            OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await Handle(() => service.SearchCustomersAsync(
-                context.User.ToDeviceOnlineSalesUserIdentity(context, request.Context),
+                context.User.ToDeviceOnlineSalesHistoryIdentity(context),
                 request,
                 ct)));
 
         deviceHistory.MapPost("/products/search", async (
             HttpContext context,
-            SearchOnlineSalesRequest request,
-            OnlineSalesDraftService service,
+            SearchOnlineSalesHistoryOptionsRequest request,
+            OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await Handle(() => service.SearchProductsAsync(
-                context.User.ToDeviceOnlineSalesUserIdentity(context, request.Context),
+                context.User.ToDeviceOnlineSalesHistoryIdentity(context),
                 request,
                 ct)));
 
@@ -107,18 +132,30 @@ public static class OnlineSalesDraftApi
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await Handle(() => service.SearchAsync(
-                context.User.ToDeviceOnlineSalesUserIdentity(context, request.Context),
+                context.User.ToDeviceOnlineSalesHistoryIdentity(context),
                 request,
                 ct)));
 
         deviceHistory.MapPost("/sales/{documentId:guid}/receipt", async (
             HttpContext context,
             Guid documentId,
-            OnlineSalesDraftContext request,
+            OnlineSalesHistoryContext request,
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await HandleNullable(() => service.GetReceiptAsync(
-                context.User.ToDeviceOnlineSalesUserIdentity(context, request),
+                context.User.ToDeviceOnlineSalesHistoryIdentity(context),
+                request,
+                documentId,
+                ct)));
+
+        deviceHistory.MapPost("/sales/{documentId:guid}/reprint-audit", async (
+            HttpContext context,
+            Guid documentId,
+            OnlineSalesHistoryContext request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await HandleFound(() => service.RecordReprintAsync(
+                context.User.ToDeviceOnlineSalesHistoryIdentity(context),
                 request,
                 documentId,
                 ct)));
@@ -136,10 +173,7 @@ public static class OnlineSalesDraftApi
             {
                 var receipt = await service.GetReceiptAsync(
                     context.User.ToOnlineSalesUserIdentity(),
-                    new OnlineSalesDraftContext(
-                        businessId,
-                        warehouseId,
-                        workSessionId),
+                    new OnlineSalesHistoryContext(businessId),
                     documentId,
                     ct);
                 if (receipt is null || string.IsNullOrWhiteSpace(receipt.QrPayload))
@@ -487,6 +521,28 @@ group.MapPost("/{draftId:guid}/items", async (
             DeviceId: deviceId);
     }
 
+    private static OnlineSalesUserIdentity ToDeviceOnlineSalesHistoryIdentity(
+        this ClaimsPrincipal principal,
+        HttpContext context)
+    {
+        if (!Guid.TryParse(context.Request.Headers["X-Auraly-User-Id"], out var userId))
+            throw new OnlineSalesDraftForbiddenException(
+                "El dispositivo no identificó el usuario local.");
+        if (!Guid.TryParse(
+                principal.FindFirstValue(PosAuthenticationDefaults.TenantIdClaim),
+                out var tenantId) ||
+            !Guid.TryParse(
+                principal.FindFirstValue(PosAuthenticationDefaults.DeviceIdClaim),
+                out var deviceId))
+            throw new OnlineSalesDraftForbiddenException(
+                "El dispositivo enrolado no tiene un contexto válido.");
+        return new OnlineSalesUserIdentity(
+            userId,
+            tenantId,
+            new HashSet<string>([CommercePermissionCodes.SalesReprint], StringComparer.Ordinal),
+            DeviceId: deviceId);
+    }
+
     private static string IdempotencyKey(HttpContext context) =>
         context.Request.Headers["Idempotency-Key"].ToString();
 
@@ -636,6 +692,24 @@ group.MapPost("/{draftId:guid}/items", async (
                 exception.Message, statusCode: StatusCodes.Status403Forbidden);
         }
         catch (PosSaleInvalidException exception)
+        {
+            return Results.Problem(
+                exception.Message, statusCode: StatusCodes.Status400BadRequest);
+        }
+    }
+
+    private static async Task<IResult> HandleFound(Func<Task<bool>> action)
+    {
+        try
+        {
+            return await action() ? Results.NoContent() : Results.NotFound();
+        }
+        catch (OnlineSalesDraftForbiddenException exception)
+        {
+            return Results.Problem(
+                exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (OnlineSalesDraftValidationException exception)
         {
             return Results.Problem(
                 exception.Message, statusCode: StatusCodes.Status400BadRequest);

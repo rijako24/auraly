@@ -8,7 +8,7 @@ namespace Auraly.Foundation.Tests;
 public sealed class InvoiceChargeCalculationTests
 {
     [Fact]
-    public void Issued_snapshot_is_checked_against_its_exact_version_including_supplier_policy()
+    public void Issued_snapshot_keeps_calculated_amounts_and_validates_static_references_only()
     {
         var definition = new InvoiceChargeDefinition(Guid.NewGuid(), Guid.NewGuid(), 1,
             "DOM", "Domicilio", true, 0, "Fixed", 5000, "UpToInvoiceAmount", 80000,
@@ -20,14 +20,12 @@ public sealed class InvoiceChargeCalculationTests
             new InvoiceChargeSelection(Guid.NewGuid(), definition, definition.Suppliers[0].SupplierId, null));
         var transmitted = System.Text.Json.JsonSerializer.Deserialize<AppliedInvoiceCharge>(
             System.Text.Json.JsonSerializer.Serialize(original))!;
-        InvoiceChargeApplication.ValidateAgainstDefinitions(80000, [transmitted], [definition]);
+        InvoiceChargeApplication.ValidateSnapshotReferences(80000, [transmitted], [definition]);
         Assert.Throws<InvoiceChargeValidationException>(() => InvoiceChargeApplication.ValidateSnapshot(80000, [null!]));
         var altered = new[] {
             original with { Supplier = null! },
             original with { ExpenseAccountId = Guid.NewGuid() },
             original with { CostCenterId = Guid.NewGuid() },
-            original with { Amount = 6000, InvoicedAmount = 6000, InvoicedUntaxedAmount = 6000, SupplierUntaxedAmount = 6000 },
-            original with { InvoicedAmount = 0, InvoicedUntaxedAmount = 0, ExpenseAmount = 5000 },
             original with { Supplier = original.Supplier with { AppliesWithholding = false } },
             original with { Supplier = original.Supplier with { TaxResponsibilities = [] } },
             original with { Supplier = original.Supplier with { DefaultPaymentDueDays = 99 } },
@@ -37,11 +35,28 @@ public sealed class InvoiceChargeCalculationTests
         };
         foreach (var value in altered)
             Assert.Throws<InvoiceChargeValidationException>(() =>
-                InvoiceChargeApplication.ValidateAgainstDefinitions(80000, [value], [definition]));
+                InvoiceChargeApplication.ValidateSnapshotReferences(80000, [value], [definition]));
+        var recalculatedAmountMustNotBeRequired = original with
+        {
+            Amount = 6000,
+            InvoicedAmount = 6000,
+            InvoicedUntaxedAmount = 6000,
+            SupplierUntaxedAmount = 6000
+        };
+        InvoiceChargeApplication.ValidateSnapshotReferences(
+            80000, [recalculatedAmountMustNotBeRequired], [definition]);
+        var frozenCompanyExpense = original with
+        {
+            InvoicedAmount = 0,
+            InvoicedUntaxedAmount = 0,
+            ExpenseAmount = original.Amount
+        };
+        InvoiceChargeApplication.ValidateSnapshotReferences(
+            80000, [frozenCompanyExpense], [definition]);
         Assert.Throws<InvoiceChargeValidationException>(() =>
-            InvoiceChargeApplication.ValidateAgainstDefinitions(80000, [original], []));
+            InvoiceChargeApplication.ValidateSnapshotReferences(80000, [original], []));
         // Deactivating a later version does not invalidate the original offline document.
-        InvoiceChargeApplication.ValidateAgainstDefinitions(80000, [original],
+        InvoiceChargeApplication.ValidateSnapshotReferences(80000, [original],
             [definition, definition with { Version = 2, IsActive = false, Value = 7000 }]);
     }
 

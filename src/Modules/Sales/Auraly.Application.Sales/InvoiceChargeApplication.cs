@@ -13,8 +13,7 @@ public static class InvoiceChargeApplication
         if (charges is null) return;
         if (charges.Any(charge => charge is null || charge.Supplier is null) ||
             charges.Count > MaximumChargesPerInvoice ||
-            charges.Select(charge => charge.AppliedChargeId).Distinct().Count() != charges.Count ||
-            charges.Select(charge => charge.ChargeId).Distinct().Count() != charges.Count)
+            charges.Select(charge => charge.AppliedChargeId).Distinct().Count() != charges.Count)
             throw new InvoiceChargeValidationException("El documento contiene cargos repetidos o excede el límite.");
         foreach (var charge in charges)
         {
@@ -31,7 +30,7 @@ public static class InvoiceChargeApplication
         }
     }
 
-    public static void ValidateAgainstDefinitions(decimal productTotal,
+    public static void ValidateSnapshotReferences(decimal productTotal,
         IReadOnlyList<AppliedInvoiceCharge> charges, IReadOnlyList<InvoiceChargeDefinition> definitions)
     {
         ValidateSnapshot(productTotal, charges);
@@ -40,12 +39,19 @@ public static class InvoiceChargeApplication
         {
             if (!byVersion.TryGetValue((charge.ChargeId, charge.Version), out var definition))
                 throw new InvoiceChargeValidationException("La versión del cargo no pertenece a esta sede.");
-            var expected = Calculate(productTotal, new InvoiceChargeSelection(charge.AppliedChargeId, definition,
-                charge.Supplier.SupplierId, charge.ManualAmount));
-            // Display and tax-policy data are part of the immutable supplier snapshot too.
-            var supplierMatches = charge.Supplier with { TaxResponsibilities = expected.Supplier.TaxResponsibilities } == expected.Supplier &&
-                (charge.Supplier.TaxResponsibilities ?? []).SequenceEqual(expected.Supplier.TaxResponsibilities ?? []);
-            if (!supplierMatches || charge with { Supplier = expected.Supplier } != expected)
+            var supplier = definition.Suppliers.SingleOrDefault(value =>
+                value.SupplierId == charge.Supplier.SupplierId);
+            var supplierMatches = supplier is not null &&
+                charge.Supplier with { TaxResponsibilities = supplier.TaxResponsibilities } == supplier &&
+                (charge.Supplier.TaxResponsibilities ?? []).SequenceEqual(
+                    supplier.TaxResponsibilities ?? []);
+            if (!supplierMatches ||
+                charge.Code != definition.Code || charge.Name != definition.Name ||
+                charge.ExpenseConceptId != definition.ExpenseConceptId ||
+                charge.ExpenseAccountId != definition.ExpenseAccountId ||
+                charge.CostCenterId != definition.CostCenterId ||
+                charge.WithholdingConceptCode != definition.WithholdingConceptCode ||
+                charge.TaxCode != definition.TaxCode || charge.TaxRate != definition.TaxRate)
                 throw new InvoiceChargeValidationException("El cargo emitido difiere de su configuración versionada.");
         }
     }
@@ -54,9 +60,8 @@ public static class InvoiceChargeApplication
         IReadOnlyList<InvoiceChargeSelection> selections)
     {
         if (selections.Count > MaximumChargesPerInvoice ||
-            selections.Select(x => x.AppliedChargeId).Distinct().Count() != selections.Count ||
-            selections.Select(x => x.Definition.ChargeId).Distinct().Count() != selections.Count)
-            throw new InvoiceChargeValidationException("Se admiten hasta diez cargos distintos por factura.");
+            selections.Select(x => x.AppliedChargeId).Distinct().Count() != selections.Count)
+            throw new InvoiceChargeValidationException("Se admiten hasta diez cargos por factura.");
         return selections.Select(selection => Calculate(productTotal, selection)).ToArray();
     }
 

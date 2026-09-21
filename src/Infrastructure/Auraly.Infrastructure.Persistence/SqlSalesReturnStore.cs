@@ -305,22 +305,20 @@ public sealed class SqlSalesReturnStore(
         ConfirmSalesReturnRequest request, decimal requestedAmount,
         CancellationToken cancellationToken)
     {
-        if (request.WorkSessionId is null)
-            throw new SalesReturnValidationException(
-                "La devolución de dinero requiere la sesión operativa abierta del usuario.");
-        await using (var session = new SqlCommand("""
-            SELECT COUNT_BIG(*) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
-            WHERE WorkSessionId=@Id AND BusinessId=@BusinessId
-              AND TenantId=@TenantId AND UserId=@UserId AND Status=N'Open';
-            """, connection, transaction))
+        if (request.WorkSessionId is not null)
         {
+            await using var session = new SqlCommand("""
+                SELECT COUNT_BIG(*) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
+                WHERE WorkSessionId=@Id AND BusinessId=@BusinessId
+                  AND TenantId=@TenantId AND UserId=@UserId AND Status=N'Open';
+                """, connection, transaction);
             session.Parameters.AddWithValue("@Id", request.WorkSessionId.Value);
             session.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             session.Parameters.AddWithValue("@UserId", user.UserId);
             session.Parameters.AddWithValue("@TenantId", user.TenantId);
             if (Convert.ToInt64(await session.ExecuteScalarAsync(cancellationToken)) != 1)
                 throw new SalesReturnValidationException(
-                    "La devolución requiere la sesión operativa abierta del usuario.");
+                    "La sesión operativa indicada no está abierta para el usuario actual.");
         }
         if (request.RefundMethodCode == SalesReturnRefundMethods.Cash)
         {

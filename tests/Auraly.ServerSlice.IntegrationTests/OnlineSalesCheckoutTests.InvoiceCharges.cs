@@ -59,6 +59,15 @@ public sealed partial class OnlineSalesCheckoutTests
         var replay = await Mutate(HttpMethod.Put, $"charges/{appliedId}", add, key);
         Assert.Equal(draft.Version, replay.Version);
         Assert.Single(replay.Charges!);
+        var repeatedAppliedId = Guid.NewGuid();
+        draft = await Mutate(HttpMethod.Put, $"charges/{repeatedAppliedId}",
+            add with { AppliedChargeId = repeatedAppliedId, ExpectedVersion = draft.Version },
+            Guid.NewGuid().ToString("N"));
+        Assert.Equal(2, draft.Charges!.Count);
+        Assert.All(draft.Charges, charge => Assert.Equal(id, charge.ChargeId));
+        Assert.Equal(products + (included * 2), draft.PayableAmount);
+        draft = await Mutate(HttpMethod.Post, $"charges/{repeatedAppliedId}/remove",
+            new RemoveOnlineSalesDraftLineRequest(draft.Version), Guid.NewGuid().ToString("N"));
         draft = await Mutate(HttpMethod.Post, $"charges/{appliedId}/remove",
             new RemoveOnlineSalesDraftLineRequest(draft.Version), Guid.NewGuid().ToString("N"));
         Assert.Empty(draft.Charges!); Assert.Equal(products, draft.PayableAmount);

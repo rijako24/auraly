@@ -52,7 +52,7 @@ CREATE TABLE [dbo].[SalesReturns]
     CONSTRAINT [UQ_SalesReturns_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [UQ_SalesReturns_Number] UNIQUE ([BusinessId],[DocumentPrefix],[DocumentSeriesCode],[DocumentConsecutive]),
     CONSTRAINT [CK_SalesReturns_Resolution] CHECK
-      (([EconomicResolution]=N'Refund' AND [WorkSessionId] IS NOT NULL
+      (([EconomicResolution]=N'Refund'
           AND [RefundMethodCode] IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard')
           AND (([RefundMethodCode]=N'Cash' AND [BankAccountId] IS NULL)
                OR ([RefundMethodCode]=N'Transfer'

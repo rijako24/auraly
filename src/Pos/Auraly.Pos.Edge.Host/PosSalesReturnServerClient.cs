@@ -29,7 +29,6 @@ public sealed class PosSalesReturnServerClient(HttpClient http, PosDeviceCredent
         request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
         request.Headers.Add("X-Auraly-User-Id", user.UserId.ToString("D"));
-        request.Headers.Add("X-Auraly-Work-Session-Id", user.WorkSessionId.ToString("D"));
         if (idempotencyKey is not null) request.Headers.Add("Idempotency-Key", idempotencyKey);
         using var response = await http.SendAsync(request, token);
         if (!response.IsSuccessStatusCode)

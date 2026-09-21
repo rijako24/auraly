@@ -160,8 +160,15 @@ public sealed class HalfLetterDocumentRenderer
                 _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
             }
             : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
-        var orderContact = isOrder && template.Version >= 2
-            ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone) : string.Empty;
+        var customerContact = isOrder && template.Version >= 2
+            ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone)
+            : isInvoice && template.Version >= 3 && receipt.InvoicePrintDetails is { } invoiceDetails
+                ? OrderContactPresentation.OptionalHtml(
+                    string.IsNullOrWhiteSpace(receipt.CustomerAddress)
+                        ? invoiceDetails.CustomerAddress
+                        : receipt.CustomerAddress,
+                    receipt.CustomerPhone)
+                : string.Empty;
         var fiscalDetails = isInvoice && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
             ? FiscalDetails(details)
@@ -182,11 +189,9 @@ public sealed class HalfLetterDocumentRenderer
         var fiscalNumber = !isInvoice || string.IsNullOrWhiteSpace(receipt.FiscalNumber)
             ? string.Empty
             : $"<div class=\"pair\"><span>Número DIAN</span><strong>{Encode(receipt.FiscalNumber)}</strong></div>";
-        var rows = string.Join("", receipt.Lines.Select((line, index) =>
+        var rows = string.Join("", receipt.Lines.Select(line =>
         {
-            var identity = template.Version >= 3
-                ? $"{index + 1}. {Encode(line.Description)}<br><small>{Encode(line.ProductCode)} · {Encode(line.UnitCode)}</small>"
-                : Encode(line.Description);
+            var identity = Encode(line.Description);
             if (template.Version >= 3 && line.Discount > 0)
                 identity += $"<br><small>Descuento: {Money(line.Discount)}</small>";
             return $"<tr><td>{identity}</td><td class=\"numeric\">{Quantity(line.Quantity)}</td><td class=\"numeric\">{Money(line.UnitPrice)}</td><td class=\"numeric\">{Money(line.Total)}</td></tr>";
@@ -231,7 +236,7 @@ public sealed class HalfLetterDocumentRenderer
         return $$"""
           <article class="document" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
             <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>N.º de ticket</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
-            <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{fiscalNumber}}{{orderContact}}</section>
+            <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{customerContact}}{{fiscalNumber}}</section>
             {{fiscalDetails}}
             <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
             {{detailSection}}
@@ -279,10 +284,9 @@ public sealed class HalfLetterDocumentRenderer
     {
         return $$"""
           <section class="fiscal-compliance">
-            <div><strong>Vendedor:</strong> {{Encode(details.SupplierName)}} · NIT {{Encode(details.SupplierIdentification)}} · Resp. {{Encode(details.SupplierTaxResponsibility)}}</div>
-            <div><strong>Dirección:</strong> {{Encode(details.SupplierAddress)}} · <strong>Dirección cliente:</strong> {{Encode(details.CustomerAddress)}}</div>
-            <div><strong>Resolución DIAN:</strong> {{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}} · Rango {{details.AuthorizationRangeStart}} a {{details.AuthorizationRangeEnd}} · Vigencia {{details.AuthorizationValidFrom:dd/MM/yyyy}} a {{details.AuthorizationValidUntil:dd/MM/yyyy}}</div>
-            <div><strong>Software:</strong> {{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
+            <div>{{Encode(details.SupplierName)}} · NIT {{Encode(details.SupplierIdentification)}} · Resp. {{Encode(details.SupplierTaxResponsibility)}} · {{Encode(details.SupplierAddress)}}</div>
+            <div>{{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}} · Rango {{details.AuthorizationRangeStart}} a {{details.AuthorizationRangeEnd}} · Vigencia {{details.AuthorizationValidFrom:dd/MM/yyyy}} a {{details.AuthorizationValidUntil:dd/MM/yyyy}}</div>
+            <div>{{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
           </section>
           """;
     }

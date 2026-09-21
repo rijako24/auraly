@@ -9,8 +9,6 @@ test("server history sends absent date filters as null for browser and enrolled 
   const request = buildServerIssuedSalesSearchRequest(
     {
       businessId: "10000000-0000-0000-0000-000000000001",
-      warehouseId: "10000000-0000-0000-0000-000000000002",
-      workSessionId: "10000000-0000-0000-0000-000000000003",
     },
     {
       search: "",

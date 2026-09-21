@@ -150,6 +150,33 @@ public sealed partial class PosDraftStore
         await using var command = connection.CreateCommand();
         command.CommandText = Schema;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type='table' AND name='PosDraftCharges'
+              AND replace(sql,' ','') LIKE '%UNIQUE(DraftId,ChargeId)%';
+            """;
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) > 0)
+        {
+            command.CommandText = """
+                PRAGMA foreign_keys=OFF;
+                BEGIN IMMEDIATE;
+                CREATE TABLE PosDraftCharges_Multiple(
+                  DraftId TEXT NOT NULL,
+                  AppliedChargeId TEXT NOT NULL,
+                  ChargeId TEXT NOT NULL,
+                  SelectionJson TEXT NOT NULL CHECK(json_valid(SelectionJson)),
+                  PRIMARY KEY(DraftId,AppliedChargeId),
+                  FOREIGN KEY(DraftId) REFERENCES PosDrafts(DraftId) ON DELETE CASCADE);
+                INSERT INTO PosDraftCharges_Multiple(DraftId,AppliedChargeId,ChargeId,SelectionJson)
+                SELECT DraftId,AppliedChargeId,ChargeId,SelectionJson FROM PosDraftCharges;
+                DROP TABLE PosDraftCharges;
+                ALTER TABLE PosDraftCharges_Multiple RENAME TO PosDraftCharges;
+                COMMIT;
+                PRAGMA foreign_keys=ON;
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
         var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         command.CommandText = "PRAGMA table_info('PosDrafts');";
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -1331,7 +1358,6 @@ public sealed partial class PosDraftStore
           ChargeId TEXT NOT NULL,
           SelectionJson TEXT NOT NULL CHECK(json_valid(SelectionJson)),
           PRIMARY KEY(DraftId,AppliedChargeId),
-          UNIQUE(DraftId,ChargeId),
           FOREIGN KEY(DraftId) REFERENCES PosDrafts(DraftId) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS PosDraftAudit(
           AuditId TEXT PRIMARY KEY,

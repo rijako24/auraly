@@ -1023,7 +1023,7 @@ public static class PosEdgeHostApplication
         });
 
         edge.MapPost("/server-history/customers/search", async (
-            SearchOnlineSalesRequest request,
+            SearchOnlineSalesHistoryOptionsRequest request,
             PosSalesHistoryServerClient server,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
@@ -1032,7 +1032,7 @@ public static class PosEdgeHostApplication
                 RequiredSalesHistoryUser(sessions),
                 ct)));
         edge.MapPost("/server-history/products/search", async (
-            SearchOnlineSalesRequest request,
+            SearchOnlineSalesHistoryOptionsRequest request,
             PosSalesHistoryServerClient server,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
@@ -1051,7 +1051,7 @@ public static class PosEdgeHostApplication
                 ct)));
         edge.MapPost("/server-history/sales/{documentId:guid}/receipt", async (
             Guid documentId,
-            OnlineSalesDraftContext request,
+            OnlineSalesHistoryContext request,
             PosSalesHistoryServerClient server,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
@@ -1060,24 +1060,36 @@ public static class PosEdgeHostApplication
                 request,
                 RequiredSalesHistoryUser(sessions),
                 ct)));
+        edge.MapPost("/server-history/sales/{documentId:guid}/reprint-audit", async (
+            Guid documentId,
+            OnlineSalesHistoryContext request,
+            PosSalesHistoryServerClient server,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+            await ServerHistoryResult(async () =>
+            {
+                await server.RecordReprintAsync(
+                    documentId, request, RequiredSalesHistoryUser(sessions), ct);
+                return Results.NoContent();
+            }));
 
         edge.MapPost("/server-returns/search", async (JsonElement request,
             PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerReturnResult(() => server.SearchAsync(request,
-                RequiredSalesReturnUser(sessions, false), ct)));
+                RequiredSalesReturnUser(sessions), ct)));
         edge.MapPost("/server-returns/sales/{documentId:guid}", async (Guid documentId,
             JsonElement request, PosSalesReturnServerClient server,
             PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerReturnResult(() => server.GetAsync(documentId, request,
-                RequiredSalesReturnUser(sessions, false), ct)));
+                RequiredSalesReturnUser(sessions), ct)));
         edge.MapPost("/server-returns/bootstrap", async (JsonElement request,
             PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerReturnResult(() => server.BootstrapAsync(request,
-                RequiredSalesReturnUser(sessions, false), ct)));
+                RequiredSalesReturnUser(sessions), ct)));
         edge.MapPost("/server-returns/confirm", async (JsonElement request,
             PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerReturnResult(() => server.ConfirmAsync(request,
-                RequiredSalesReturnUser(sessions, true), ct)));
+                RequiredSalesReturnUser(sessions), ct)));
 
         edge.MapPost("/capture", async (
             CaptureRequest request,
@@ -1379,7 +1391,7 @@ public static class PosEdgeHostApplication
     {
         var user = sessions.Required();
         if (!user.Permissions.Contains(
-                CommercePermissionCodes.SalesCreate,
+                CommercePermissionCodes.SalesReprint,
                 StringComparer.Ordinal))
             throw new PosSalesHistoryServerException(
                 StatusCodes.Status403Forbidden,
@@ -1399,13 +1411,10 @@ public static class PosEdgeHostApplication
     }
 
     private static PosLocalUserSession RequiredSalesReturnUser(
-        PosLocalSessionAccessor sessions, bool confirm)
+        PosLocalSessionAccessor sessions)
     {
         var user = sessions.Required();
-        var required = confirm
-            ? new[] { "sales.returns.create", "sales.returns.confirm" }
-            : new[] { "sales.returns.read" };
-        if (required.Any(permission => !user.Permissions.Contains(permission, StringComparer.Ordinal)))
+        if (!user.Permissions.Contains("sales.returns.create", StringComparer.Ordinal))
             throw new PosSalesReturnServerException(403, "Forbidden",
                 "El usuario local no tiene permiso para procesar devoluciones.");
         return user;

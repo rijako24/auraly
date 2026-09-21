@@ -12,23 +12,32 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
     // One round trip returns a scoped page and all its child rows. The same
     // projection follows the save batch, so callers reuse the authoritative result.
     private const string ReadSql = """
-        DECLARE @PageIds TABLE(ChargeId uniqueidentifier PRIMARY KEY,Version bigint);
+        DECLARE @PageIds TABLE(ChargeId uniqueidentifier,Version bigint,
+          PRIMARY KEY(ChargeId,Version));
         SELECT COUNT(*) FROM sales.InvoiceChargeDefinitions d
-        JOIN sales.InvoiceChargeVersions v ON v.ChargeId=d.ChargeId AND v.Version=
-          CASE WHEN @RequestedVersions IS NOT NULL THEN
-            (SELECT r.Version FROM OPENJSON(@RequestedVersions) WITH(ChargeId uniqueidentifier,Version bigint) r WHERE r.ChargeId=d.ChargeId)
-          WHEN @ThroughCursor IS NULL THEN d.CurrentVersion ELSE
-            (SELECT MAX(s.Version) FROM sales.InvoiceChargeVersions s WHERE s.ChargeId=d.ChargeId AND s.SynchronizationCursor<=@ThroughCursor) END
+        JOIN sales.InvoiceChargeVersions v ON v.ChargeId=d.ChargeId AND (
+          (@RequestedVersions IS NOT NULL AND EXISTS(
+            SELECT 1 FROM OPENJSON(@RequestedVersions)
+              WITH(ChargeId uniqueidentifier,Version bigint) r
+            WHERE r.ChargeId=v.ChargeId AND r.Version=v.Version)) OR
+          (@RequestedVersions IS NULL AND v.Version=
+            CASE WHEN @ThroughCursor IS NULL THEN d.CurrentVersion ELSE
+              (SELECT MAX(s.Version) FROM sales.InvoiceChargeVersions s
+               WHERE s.ChargeId=d.ChargeId AND s.SynchronizationCursor<=@ThroughCursor) END))
         JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
         WHERE d.BusinessId=@BusinessId AND b.TenantId=@TenantId
           AND (@OnlyId IS NULL OR d.ChargeId=@OnlyId) AND (@IncludeInactive=1 OR v.IsActive=1)
           AND (@Search IS NULL OR d.Code LIKE N'%'+@Search+N'%' OR v.Name LIKE N'%'+@Search+N'%');
         INSERT @PageIds SELECT d.ChargeId,v.Version FROM sales.InvoiceChargeDefinitions d
-        JOIN sales.InvoiceChargeVersions v ON v.ChargeId=d.ChargeId AND v.Version=
-          CASE WHEN @RequestedVersions IS NOT NULL THEN
-            (SELECT r.Version FROM OPENJSON(@RequestedVersions) WITH(ChargeId uniqueidentifier,Version bigint) r WHERE r.ChargeId=d.ChargeId)
-          WHEN @ThroughCursor IS NULL THEN d.CurrentVersion ELSE
-            (SELECT MAX(s.Version) FROM sales.InvoiceChargeVersions s WHERE s.ChargeId=d.ChargeId AND s.SynchronizationCursor<=@ThroughCursor) END
+        JOIN sales.InvoiceChargeVersions v ON v.ChargeId=d.ChargeId AND (
+          (@RequestedVersions IS NOT NULL AND EXISTS(
+            SELECT 1 FROM OPENJSON(@RequestedVersions)
+              WITH(ChargeId uniqueidentifier,Version bigint) r
+            WHERE r.ChargeId=v.ChargeId AND r.Version=v.Version)) OR
+          (@RequestedVersions IS NULL AND v.Version=
+            CASE WHEN @ThroughCursor IS NULL THEN d.CurrentVersion ELSE
+              (SELECT MAX(s.Version) FROM sales.InvoiceChargeVersions s
+               WHERE s.ChargeId=d.ChargeId AND s.SynchronizationCursor<=@ThroughCursor) END))
         JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
         WHERE d.BusinessId=@BusinessId AND b.TenantId=@TenantId
           AND (@OnlyId IS NULL OR d.ChargeId=@OnlyId) AND (@IncludeInactive=1 OR v.IsActive=1)
@@ -88,9 +97,11 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
         await using var command = new SqlCommand(ReadSql, connection, transaction);
         AddScope(command, new(sale.TenantId, sale.BusinessId, Guid.Empty, new HashSet<string>()));
         AddPage(command, 1, InvoiceChargeApplication.MaximumChargesPerInvoice, null, true, null,
-            requestedVersions: JsonSerializer.Serialize(charges.Select(charge => new { charge.ChargeId, charge.Version })));
+            requestedVersions: JsonSerializer.Serialize(charges
+                .Select(charge => new { charge.ChargeId, charge.Version })
+                .Distinct()));
         var definitions = (await ReadAsync(command, 1, InvoiceChargeApplication.MaximumChargesPerInvoice, ct)).Items;
-        try { InvoiceChargeApplication.ValidateAgainstDefinitions(productTotal, charges, definitions); }
+        try { InvoiceChargeApplication.ValidateSnapshotReferences(productTotal, charges, definitions); }
         catch (InvoiceChargeValidationException error) { throw new PosSaleInvalidException(error.Message); }
     }
 

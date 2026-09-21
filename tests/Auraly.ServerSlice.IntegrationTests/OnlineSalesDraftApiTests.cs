@@ -56,13 +56,10 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
     [Fact]
-    public async Task Enrolled_device_history_uses_the_local_cashier_session_and_rejects_another_device()
+    public async Task Enrolled_device_history_uses_business_scope_without_cashier_session_affinity()
     {
         var request = new SearchOnlineSalesIssuedSalesRequest(
-            new OnlineSalesDraftContext(
-                fixture.BusinessId,
-                fixture.WarehouseId,
-                fixture.WorkSessionId),
+            new OnlineSalesHistoryContext(fixture.BusinessId),
             Take: 20);
 
         using (var client = fixture.CreateClient())
@@ -82,7 +79,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
                    fixture.DeniedDeviceId,
                    ServerSliceFixture.DeniedDeviceSecret))
         using (var response = await client.SendAsync(message))
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]

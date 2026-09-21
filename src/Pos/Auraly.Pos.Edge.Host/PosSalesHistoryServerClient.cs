@@ -10,7 +10,7 @@ public sealed class PosSalesHistoryServerClient(
     PosDeviceCredentials credentials)
 {
     public Task<OnlineSalesCustomerPage> SearchCustomersAsync(
-        SearchOnlineSalesRequest request,
+        SearchOnlineSalesHistoryOptionsRequest request,
         PosLocalUserSession user,
         CancellationToken cancellationToken) =>
         SendAsync<OnlineSalesCustomerPage>(
@@ -21,7 +21,7 @@ public sealed class PosSalesHistoryServerClient(
             cancellationToken);
 
     public Task<OnlineSalesProductPage> SearchProductsAsync(
-        SearchOnlineSalesRequest request,
+        SearchOnlineSalesHistoryOptionsRequest request,
         PosLocalUserSession user,
         CancellationToken cancellationToken) =>
         SendAsync<OnlineSalesProductPage>(
@@ -44,7 +44,7 @@ public sealed class PosSalesHistoryServerClient(
 
     public Task<OnlineSalesReceipt> GetReceiptAsync(
         Guid documentId,
-        OnlineSalesDraftContext request,
+        OnlineSalesHistoryContext request,
         PosLocalUserSession user,
         CancellationToken cancellationToken) =>
         SendAsync<OnlineSalesReceipt>(
@@ -54,12 +54,28 @@ public sealed class PosSalesHistoryServerClient(
             user,
             cancellationToken);
 
+    public async Task RecordReprintAsync(
+        Guid documentId,
+        OnlineSalesHistoryContext requestBody,
+        PosLocalUserSession user,
+        CancellationToken cancellationToken)
+    {
+        _ = await SendAsync<object>(
+            HttpMethod.Post,
+            $"api/pos/v1/history/sales/{documentId:D}/reprint-audit",
+            requestBody,
+            user,
+            cancellationToken,
+            allowEmptyResponse: true);
+    }
+
     private async Task<T> SendAsync<T>(
         HttpMethod method,
         string path,
         object body,
         PosLocalUserSession user,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowEmptyResponse = false)
     {
         using var request = new HttpRequestMessage(method, path)
         {
@@ -68,7 +84,6 @@ public sealed class PosSalesHistoryServerClient(
         request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
         request.Headers.Add("X-Auraly-User-Id", user.UserId.ToString("D"));
-        request.Headers.Add("X-Auraly-Work-Session-Id", user.WorkSessionId.ToString("D"));
         using var response = await http.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -78,6 +93,8 @@ public sealed class PosSalesHistoryServerClient(
                 problem?.Title ?? "SalesHistoryUnavailable",
                 problem?.Detail ?? "No fue posible consultar el historial de ventas.");
         }
+        if (allowEmptyResponse)
+            return default!;
         return await response.Content.ReadFromJsonAsync<T>(cancellationToken)
             ?? throw new PosSalesHistoryServerException(
                 502,

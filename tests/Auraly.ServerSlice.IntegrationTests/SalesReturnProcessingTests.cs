@@ -52,7 +52,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Refund_without_an_operational_work_session_is_rejected()
+    public async Task User_with_create_permission_can_refund_without_an_operational_work_session()
     {
         var original = WithUblSnapshot(fixture.CreateValidRequest(9_504));
         using (var pos = fixture.CreateClient())
@@ -70,15 +70,15 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             [new ConfirmSalesReturnLineRequest(
                 1, .25m, ReturnInventoryDispositions.Sellable)],
             null, null, "Other");
-        using var user = fixture.CreateAdminClient(
-            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using var user = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create);
+        using (var saleResponse = await user.GetAsync(
+                   $"/api/commerce/v1/sales-returns/sales/{original.DocumentId:D}?businessId={fixture.BusinessId:D}"))
+            Assert.Equal(HttpStatusCode.OK, saleResponse.StatusCode);
         using var message = Message(
             request, $"sales-return-admin-cash-{request.ReturnId:N}");
         using var response = await user.SendAsync(message);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("operational work session", await response.Content.ReadAsStringAsync(),
-            StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(0, await ScalarAsync<int>(
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id",
             request.ReturnId));
         Assert.Equal(0, await ScalarAsync<int>(

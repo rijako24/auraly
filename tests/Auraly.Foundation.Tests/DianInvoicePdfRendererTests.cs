@@ -23,6 +23,8 @@ public sealed class DianInvoicePdfRendererTests
         Assert.Equal(invoice.PayableAmount, receipt.PayableAmount);
         Assert.Equal(invoice.Lines[0].UntaxedAmount + invoice.Lines[0].Taxes.Sum(x => x.Amount), receipt.Lines[0].Total);
         Assert.Equal("900123456-8", receipt.InvoicePrintDetails!.SupplierIdentification);
+        Assert.Equal("Calle 10 # 20-30", receipt.CustomerAddress);
+        Assert.Equal("3001234567", receipt.CustomerPhone);
         Assert.Contains("data-auraly-report-version=\"3\"", renderer.RenderHtml(xml));
         Assert.DoesNotContain("Forma de pago", renderer.RenderHtml(xml));
         Assert.DoesNotContain("Plazo", renderer.RenderHtml(xml));
@@ -121,7 +123,7 @@ public sealed class DianInvoicePdfRendererTests
                 "01", "IVA", address),
             new DianParty("222222222222", "0", "13", "2",
                 "Consumidor final", "Consumidor final", "R-99-PN",
-                "ZZ", "No aplica", address),
+                "ZZ", "No aplica", address, Telephone: "3001234567"),
             [new DianInvoiceLine(1, "P-001", "999", "Producto prueba", "EA",
                 1m, 10_000m, 0m, 10_000m,
                 [new DianTax("01", "IVA", 10_000m, 1_900m, 19m)])],

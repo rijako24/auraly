@@ -77,8 +77,15 @@ public sealed class SalesReceiptHtmlRenderer
         var fiscalFooter = isFiscal
             ? $"<div class=\"cufe\"><strong>CUFE</strong><br>{Encode(receipt.Cufe!)}</div><div class=\"qr\">{qrSvg}</div>"
             : string.Empty;
-        var orderContact = isOrder && template.Version >= 2
-            ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone) : string.Empty;
+        var customerContact = isOrder && template.Version >= 2
+            ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone)
+            : isFiscal && template.Version >= 3 && receipt.InvoicePrintDetails is { } invoiceDetails
+                ? OrderContactPresentation.OptionalHtml(
+                    string.IsNullOrWhiteSpace(receipt.CustomerAddress)
+                        ? invoiceDetails.CustomerAddress
+                        : receipt.CustomerAddress,
+                    receipt.CustomerPhone)
+                : string.Empty;
         var fiscalDetails = isFiscal && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
             ? FiscalDetails(details)
@@ -86,8 +93,7 @@ public sealed class SalesReceiptHtmlRenderer
 
         var lines = string.Join(
             Environment.NewLine,
-            receipt.Lines.Select((line, index) => RenderLine(
-                line, template.Version >= 3 ? index + 1 : null)));
+            receipt.Lines.Select(line => RenderLine(line)));
         var payments = string.Join(
             Environment.NewLine,
             receipt.Payments.Select(payment =>
@@ -215,7 +221,7 @@ public sealed class SalesReceiptHtmlRenderer
                 <hr class="rule">
                 <div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName ?? receipt.CustomerIdentification)}}</strong></div>
                 <div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>
-                {{orderContact}}
+                {{customerContact}}
                 {{fiscalDetails}}
                 <hr class="rule">
                 {{lines}}
@@ -235,22 +241,15 @@ public sealed class SalesReceiptHtmlRenderer
         return (start, ticket, end);
     }
 
-    private static string RenderLine(OnlineSalesReceiptLine line, int? lineNumber)
+    private static string RenderLine(OnlineSalesReceiptLine line)
     {
         var product = Encode(line.Description);
-        var identity = lineNumber.HasValue
-            ? $"{lineNumber}. "
-            : string.Empty;
-        var item = lineNumber.HasValue
-            ? $"<div class=\"muted\">{Encode(line.ProductCode)} · {Encode(line.UnitCode)}</div>"
-            : string.Empty;
         var discount = line.Discount > 0
             ? $"<div class=\"pair discount\"><span>Descuento</span><strong>-{Money(line.Discount)}</strong></div>"
             : string.Empty;
         return $$"""
             <section class="line">
-              <div class="product">{{identity}}{{product}}</div>
-              {{item}}
+              <div class="product">{{product}}</div>
               <div class="pair muted">
                 <span>{{Quantity(line.Quantity)}} × {{Money(line.UnitPrice)}}</span>
                 <strong>{{Money(line.Total)}}</strong>
@@ -277,13 +276,11 @@ public sealed class SalesReceiptHtmlRenderer
     {
         return $$"""
           <section class="fiscal-compliance">
-            <div><strong>Vendedor:</strong> {{Encode(details.SupplierName)}} · NIT {{Encode(details.SupplierIdentification)}}</div>
-            <div>Resp. fiscal: {{Encode(details.SupplierTaxResponsibility)}} · {{Encode(details.SupplierAddress)}}</div>
-            <div><strong>Dirección cliente:</strong> {{Encode(details.CustomerAddress)}}</div>
-            <div><strong>Resolución DIAN:</strong> {{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}}</div>
+            <div>{{Encode(details.SupplierName)}} · NIT {{Encode(details.SupplierIdentification)}} · Resp. {{Encode(details.SupplierTaxResponsibility)}} · {{Encode(details.SupplierAddress)}}</div>
+            <div>{{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}}</div>
             <div>Rango {{details.AuthorizationRangeStart}} a {{details.AuthorizationRangeEnd}}</div>
             <div>Vigencia {{details.AuthorizationValidFrom:dd/MM/yyyy}} a {{details.AuthorizationValidUntil:dd/MM/yyyy}}</div>
-            <div><strong>Software:</strong> {{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
+            <div>{{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
           </section>
           """;
     }

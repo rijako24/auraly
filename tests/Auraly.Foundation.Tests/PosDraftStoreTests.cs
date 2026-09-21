@@ -9,6 +9,36 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosDraftStoreTests
 {
     [Fact]
+    public async Task Invoice_can_add_the_same_charge_definition_more_than_once()
+    {
+        await WithStoreAsync(async (store, path, scope, _) =>
+        {
+            var catalog = new PosCatalogStore($"Data Source={path};Pooling=False");
+            await catalog.InitializeAsync();
+            var definition = TestCharge(scope.BusinessId.Value) with
+            {
+                InclusionMode = "Always",
+                InvoiceAmountLimit = null
+            };
+            await catalog.StageInvoiceChargePageAsync(
+                scope.BusinessId.Value, 1, new([definition], 1, 100, 1, 1));
+            await catalog.PromoteInvoiceChargesAsync(scope.BusinessId.Value, 1, 1);
+            var draft = await store.AddOrIncrementLineAsync(scope, Line(1));
+            var first = new InvoiceChargeDraftRequest(
+                Guid.NewGuid(), definition.ChargeId, definition.Version,
+                definition.Suppliers.Single().SupplierId, null, 0);
+            var second = first with { AppliedChargeId = Guid.NewGuid() };
+
+            await store.SaveChargeAsync(scope, draft.DraftId, first);
+            var charged = await store.SaveChargeAsync(scope, draft.DraftId, second);
+
+            Assert.Equal(2, charged.Charges!.Count);
+            Assert.All(charged.Charges, charge => Assert.Equal(definition.ChargeId, charge.ChargeId));
+            Assert.Equal(20_000m, charged.PayableAmount);
+        });
+    }
+
+    [Fact]
     public async Task Invoice_charge_recalculates_from_invoice_amount_and_survives_restart_pause_and_recovery()
     {
         await WithStoreAsync(async (store, path, scope, ids) =>
