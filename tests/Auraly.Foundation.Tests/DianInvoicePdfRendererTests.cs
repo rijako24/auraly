@@ -24,6 +24,9 @@ public sealed class DianInvoicePdfRendererTests
         Assert.Equal(invoice.Lines[0].UntaxedAmount + invoice.Lines[0].Taxes.Sum(x => x.Amount), receipt.Lines[0].Total);
         Assert.Equal("900123456-8", receipt.InvoicePrintDetails!.SupplierIdentification);
         Assert.Contains("data-auraly-report-version=\"3\"", renderer.RenderHtml(xml));
+        Assert.DoesNotContain("Forma de pago", renderer.RenderHtml(xml));
+        Assert.DoesNotContain("Plazo", renderer.RenderHtml(xml));
+        Assert.DoesNotContain("Vencimiento", renderer.RenderHtml(xml));
     }
 
     [Theory]

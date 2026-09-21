@@ -114,8 +114,10 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   Microsoft.Playwright. No existe una segunda plantilla de correo. La sustitución
   del diseño anterior y la corrección de v3 fueron solicitadas expresamente;
   los PDF ya persistidos conservan sus bytes y SHA-256, sin regeneración histórica.
-- Forma de pago: contado; para crédito, plazo y vencimiento. Los medios y sus
-  importes se mantienen en el detalle existente. El código fiscal del XML no se
+- Por solicitud expresa, las representaciones impresas y el PDF omiten el bloque
+  de forma de pago, plazo y vencimiento del encabezado. Los datos fiscales de pago
+  se conservan en el XML; los medios y sus importes se mantienen en el detalle
+  inferior existente. El código fiscal del XML no se
   convierte en un pago por el total: la consulta de entrega obtiene por conjunto
   `SalesPayments`, el crédito original de `SalesDocuments` y las retenciones del
   payload comercial. No consulta maestros ni añade viajes por línea/pago.

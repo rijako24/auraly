@@ -164,7 +164,7 @@ public sealed class HalfLetterDocumentRenderer
             ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone) : string.Empty;
         var fiscalDetails = isInvoice && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
-            ? FiscalDetails(details, receipt.IssuedAt)
+            ? FiscalDetails(details)
             : string.Empty;
         var documentName = isOrder
             ? "Pedido"
@@ -275,14 +275,13 @@ public sealed class HalfLetterDocumentRenderer
         }
         """;
 
-    private static string FiscalDetails(SalesInvoicePrintDetails details, DateTimeOffset issuedAt)
+    private static string FiscalDetails(SalesInvoicePrintDetails details)
     {
         return $$"""
           <section class="fiscal-compliance">
             <div><strong>Vendedor:</strong> {{Encode(details.SupplierName)}} · NIT {{Encode(details.SupplierIdentification)}} · Resp. {{Encode(details.SupplierTaxResponsibility)}}</div>
             <div><strong>Dirección:</strong> {{Encode(details.SupplierAddress)}} · <strong>Dirección cliente:</strong> {{Encode(details.CustomerAddress)}}</div>
             <div><strong>Resolución DIAN:</strong> {{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}} · Rango {{details.AuthorizationRangeStart}} a {{details.AuthorizationRangeEnd}} · Vigencia {{details.AuthorizationValidFrom:dd/MM/yyyy}} a {{details.AuthorizationValidUntil:dd/MM/yyyy}}</div>
-            {{InvoicePaymentPresentation.Html(details, issuedAt)}}
             <div><strong>Software:</strong> {{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
           </section>
           """;

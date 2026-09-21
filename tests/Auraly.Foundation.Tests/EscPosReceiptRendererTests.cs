@@ -567,7 +567,7 @@ public sealed class EscPosReceiptRendererTests
     [InlineData(HalfLetterDocumentRenderer.HalfLetter)]
     [InlineData(HalfLetterDocumentRenderer.HalfLegal)]
     [InlineData(HalfLetterDocumentRenderer.Letter)]
-    public void Invoice_v3_contains_the_required_DIAN_graphical_representation_data(
+    public void Invoice_v3_preserves_fiscal_identity_without_payment_metadata_in_header(
         string format)
     {
         var details = new SalesInvoicePrintDetails(
@@ -601,7 +601,7 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("18760000001", value);
         Assert.Contains("Rango 1 a 10000", value);
         Assert.Contains("Vigencia", value);
-        Assert.Contains("Contado", value);
+        Assert.DoesNotContain("Contado", value);
         Assert.Contains("Efectivo", value);
         Assert.Contains("Software", value);
         Assert.Contains("Auraly", value);
@@ -609,28 +609,46 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("EA", value);
         Assert.Contains("CUFE", value);
         Assert.Contains("Factura electrónica de venta", value);
-        Assert.Contains("Forma de pago", value);
+        Assert.DoesNotContain("Forma de pago", value);
+        Assert.DoesNotContain("Plazo", value);
         Assert.DoesNotContain("Vencimiento", value);
         Assert.DoesNotContain("Vence ", value);
         Assert.DoesNotContain("Medio de pago:", value);
     }
 
-    [Fact]
-    public void Credit_terms_are_separate_from_the_unchanged_payment_breakdown()
+    [Theory]
+    [InlineData("Receipt", 58)]
+    [InlineData("Receipt", 80)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter, 80)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal, 80)]
+    [InlineData(HalfLetterDocumentRenderer.Letter, 80)]
+    [InlineData("Raw", 58)]
+    [InlineData("Raw", 80)]
+    public void Credit_invoice_keeps_payment_breakdown_without_header_payment_block(string format, int width)
     {
         var details = new SalesInvoicePrintDetails("Empresa", "900123456", "R-99-PN", "Dirección", "Cliente",
             "18760000001", new DateOnly(2026, 1, 1), new DateOnly(2027, 12, 31), "FE", 1, 10000,
             "2", "ZZZ", new DateOnly(2026, 10, 18), "900123456", "Auraly");
-        var issuedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.FromHours(-5));
-        var fields = InvoicePaymentPresentation.Fields(details, issuedAt);
-        Assert.Equal(new[] { ("Forma de pago", "Crédito"), ("Plazo", "30 días"), ("Vencimiento", "18/10/2026") }, fields);
-        var html = new SalesReceiptHtmlRenderer().Render(OnlineReceipt() with { InvoicePrintDetails = details, IssuedAt = issuedAt });
-        Assert.Contains("Medios de pago", html);
-        Assert.DoesNotContain("ZZZ", html);
-        Assert.Contains("30 d&#237;as", html);
-        var utcNearMidnight = new DateTimeOffset(2026, 9, 19, 1, 0, 0, TimeSpan.Zero);
-        Assert.Equal("30 días", InvoicePaymentPresentation.Fields(details, utcNearMidnight)[1].Value);
-        Assert.Throws<InvalidOperationException>(() => InvoicePaymentPresentation.Fields(details with { PaymentDueDate = new DateOnly(2026, 9, 17) }, issuedAt));
+        var receipt = OnlineReceipt() with { InvoicePrintDetails = details };
+        var value = format switch
+        {
+            "Receipt" => new SalesReceiptHtmlRenderer().Render(receipt, paperWidthMillimeters: width),
+            "Raw" => Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(
+                Receipt() with {
+                    InvoicePrintDetails = details, PaperWidthMillimeters = width,
+                    Payments = [new OfflineSalePayment("Cash", 10_000m), new OfflineSalePayment("Transfer", 4_875m)]
+                })),
+            _ => new HalfLetterDocumentRenderer().Render([receipt], format)
+        };
+        Assert.Contains("Medios de pago", value);
+        Assert.Contains("Efectivo", value);
+        Assert.Contains("Transferencia", value);
+        Assert.Contains("10.000", value);
+        Assert.Contains(format == "Raw" ? "4.875" : "13.800", value);
+        Assert.DoesNotContain("Forma de pago", value);
+        Assert.DoesNotContain("Plazo", value);
+        Assert.DoesNotContain("Vencimiento", value);
+        Assert.DoesNotContain("ZZZ", value);
     }
 
     [Fact]

@@ -81,7 +81,7 @@ public sealed class SalesReceiptHtmlRenderer
             ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone) : string.Empty;
         var fiscalDetails = isFiscal && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
-            ? FiscalDetails(details, receipt.IssuedAt)
+            ? FiscalDetails(details)
             : string.Empty;
 
         var lines = string.Join(
@@ -273,7 +273,7 @@ public sealed class SalesReceiptHtmlRenderer
               Pair("Cambio", Money(Math.Max(0, tendered - cash.Amount)));
     }
 
-    private static string FiscalDetails(SalesInvoicePrintDetails details, DateTimeOffset issuedAt)
+    private static string FiscalDetails(SalesInvoicePrintDetails details)
     {
         return $$"""
           <section class="fiscal-compliance">
@@ -283,7 +283,6 @@ public sealed class SalesReceiptHtmlRenderer
             <div><strong>Resolución DIAN:</strong> {{Encode(details.AuthorizationNumber)}} · Prefijo {{Encode(details.AuthorizationPrefix)}}</div>
             <div>Rango {{details.AuthorizationRangeStart}} a {{details.AuthorizationRangeEnd}}</div>
             <div>Vigencia {{details.AuthorizationValidFrom:dd/MM/yyyy}} a {{details.AuthorizationValidUntil:dd/MM/yyyy}}</div>
-            {{InvoicePaymentPresentation.Html(details, issuedAt)}}
             <div><strong>Software:</strong> {{Encode(details.SoftwareName)}} · Fabricante/proveedor {{Encode(details.SupplierName)}} · NIT {{Encode(details.SoftwareProviderIdentification)}}</div>
           </section>
           """;

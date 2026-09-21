@@ -264,13 +264,15 @@ adaptador final (`BrowserPreview` o POS Edge/Windows).
 ## Unificación de factura Carta v3 y correo
 
 Por solicitud expresa, el correo usa la misma Carta v3 del POS; se retira el diseño
-independiente de correo. La corrección del título fiscal y la forma/plazo de pago
-se aplica a v3, conservando los medios de pago y la disponibilidad de v2.
+independiente de correo. La corrección del título fiscal se aplica a v3,
+conservando los medios de pago y la disponibilidad de v2. Por solicitud expresa,
+ningún formato incluye el bloque de forma de pago, plazo o vencimiento en el
+encabezado: tirilla, media carta, medio oficio, carta y PDF del correo conservan
+el detalle inferior de medios de pago sin duplicarlo arriba. El XML fiscal no cambia.
 La representación monetaria conserva los centavos cuando existen y la fecha usa
 el reloj fiscal colombiano canónico, independientemente de la zona horaria del
 servidor o de Windows. Son correcciones de datos presentados, sin recalcular la venta.
-`InvoicePaymentPresentation` posee esa presentación; web, hojas y ESC/POS la
-reutilizan. El transporte Windows no reemplaza el título emitido por la plantilla.
+El transporte Windows no reemplaza el título emitido por la plantilla.
 
 El POS web envía la respuesta de venta que ya posee a
 `/pos/drafts/sales/receipts/render` (permiso `pos.user`, máximo 500 documentos,
