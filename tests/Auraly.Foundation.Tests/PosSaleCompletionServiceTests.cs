@@ -54,23 +54,28 @@ public sealed class PosSaleCompletionServiceTests
                 Assert.Equal(expectedCharge, Assert.Single(draft.Charges!).InvoicedAmount);
             }
             var total = basis + expectedCharge;
+            var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(total);
+            var roundedTotal = total + roundingAdjustment;
             var transfer = decimal.Round(total / 4, 2);
             var payments = payment == "Cash"
-                ? new[] { new OfflineSalePayment("Cash", total, TenderedAmount: total + 10000) }
-                : [new OfflineSalePayment("Transfer", transfer, "Referencia de prueba")];
+                ? new[] { new OfflineSalePayment("Cash", total, TenderedAmount: roundedTotal + 10000,
+                    RoundingAdjustment: roundingAdjustment) }
+                : [new OfflineSalePayment("Transfer", transfer, "Referencia de prueba",
+                    RoundingAdjustment: roundingAdjustment)];
             var credit = payment == "Cash" ? null : new PosSaleCreditTerms(customerId, total - transfer, fixture.IssuedAt.AddDays(15));
             var result = await fixture.CompleteAsync(draft.DraftId, payments, credit);
-            Assert.Equal(total, result.IssuedSale.Total);
+            Assert.Equal(roundedTotal, result.IssuedSale.Total);
             Assert.Equal(total, result.Receipt.Lines.Sum(line => line.Total));
             Assert.Empty(result.NextDraft.Charges!);
             var pending = Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
             var snapshot = PosSaleContractSerializer.Deserialize(pending.Payload);
-            Assert.Equal(total, snapshot.CommercialSnapshot.PayableAmount);
+            Assert.Equal(roundedTotal, snapshot.CommercialSnapshot.PayableAmount);
+            Assert.Equal(roundingAdjustment, snapshot.CommercialSnapshot.PayableRoundingAmount);
             Assert.Equal(total, snapshot.Payments.Sum(value => value.Amount) + (snapshot.Credit?.Amount ?? 0));
             Assert.Null(Auraly.Application.Fiscal.FiscalSnapshotValidator.ValidateStructure(snapshot));
             Assert.Equal(mode == "None" ? 0 : 1, snapshot.Charges?.Count ?? 0);
             var localClosureSale = Assert.Single(await fixture.Sales.ReadWorkSessionSalesAsync(snapshot.WorkSessionId));
-            Assert.Equal(total, localClosureSale.Total);
+            Assert.Equal(roundedTotal, localClosureSale.Total);
             Assert.Equal(mode == "None" ? 0 : 1, localClosureSale.InvoiceCharges!.Count);
             Assert.Equal(expectedCharge, localClosureSale.InvoiceCharges.Sum(charge => charge.InvoicedAmount));
             Assert.Equal(expectedCharge, localClosureSale.InvoiceCharges.SelectMany(charge => charge.Payments).Sum(value => value.Amount));
@@ -83,7 +88,8 @@ public sealed class PosSaleCompletionServiceTests
             await new PosSaleCompletionService(fixture.Drafts, fixture.Issuance, fixture.Sales, fixture.Printer)
                 .ReprintAsync(result.IssuedSale.DocumentId, fixture.Scope.UserId, 58);
             var printed = Assert.Single(fixture.Printer.Receipts);
-            Assert.Equal(total, printed.PayableAmount);
+            Assert.Equal(roundedTotal, printed.PayableAmount);
+            Assert.Equal(roundingAdjustment, printed.PayableRoundingAmount);
             Assert.Equal(result.Receipt.Lines, printed.Lines);
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
             Assert.Equal("FV101", (await fixture.Sales.PreviewNextFiscalNumberAsync(fixture.Scope.DeviceId, fixture.IssuedAt)).FullNumber);
@@ -119,6 +125,48 @@ public sealed class PosSaleCompletionServiceTests
             Assert.NotNull(result.NextFiscalNumber);
             Assert.Equal("FV101", result.NextFiscalNumber.FullNumber);
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
+        });
+    }
+
+    [Fact]
+    public async Task Completion_and_payment_preserve_the_closed_line_total_without_revalidating_unit_price_times_quantity()
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            var draft = await fixture.Drafts.AddOrIncrementLineAsync(
+                fixture.Scope,
+                new PosDraftLineInput(
+                    new ProductId(Guid.NewGuid()),
+                    "P-FRACCION",
+                    "Producto fraccionario",
+                    "EA",
+                    "01",
+                    0m,
+                    .3m,
+                    15_340.45m,
+                    15_340.45m,
+                    "COP",
+                    "Captured",
+                    AllowsFractionalSale: true,
+                    PublicLineTotal: 4_602.13m));
+
+            var result = await fixture.CompleteAsync(
+                draft.DraftId,
+                [new OfflineSalePayment("Cash", 4_602.13m,
+                    RoundingAdjustment: -2.13m)]);
+
+            Assert.Equal(4_600m, result.IssuedSale.Total);
+            var upload = PosSaleContractSerializer.Deserialize(
+                Assert.Single(await fixture.Sales.GetPendingOutboxAsync()).Payload);
+            var line = Assert.Single(upload.Lines);
+            Assert.Equal(.3m, line.Quantity);
+            Assert.Equal(4_602.13m, line.LineTotal);
+            Assert.NotEqual(
+                decimal.Round(.3m * 15_340.45m, 2, MidpointRounding.AwayFromZero),
+                line.LineTotal);
+            Assert.Equal(4_602.13m, Assert.Single(upload.Payments).Amount);
+            Assert.Equal(-2.13m, Assert.Single(upload.Payments).RoundingAdjustment);
+            Assert.Equal(4_600m, upload.CommercialSnapshot.PayableAmount);
         });
     }
 

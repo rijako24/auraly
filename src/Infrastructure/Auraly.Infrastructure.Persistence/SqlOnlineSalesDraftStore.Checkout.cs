@@ -178,7 +178,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                 "El inventario cambió y uno o más productos ya no tienen existencias suficientes. Ajusta sus cantidades o elimínalos antes de cobrar.");
         ValidateSettlementContext(state, draft, settlement);
         var withholding = settlement.Withholding;
-        if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != withholding.NetAmount)
+        var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(withholding.NetAmount);
+        if (request.Payments.Sum(payment => payment.CollectedAmount) +
+                (request.Credit?.Amount ?? 0m) != withholding.NetAmount + roundingAdjustment)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
 
@@ -220,7 +222,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 fiscalNumber,
                 now,
                 draft.UntaxedAmount,
-                draft.PayableAmount,
+                draft.PayableAmount + roundingAdjustment,
                 configuration.SupplierTaxId,
                 await ResolveCustomerIdentificationAsync(
                     connection,
@@ -272,7 +274,11 @@ public sealed partial class SqlOnlineSalesDraftStore
                 string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim(),
                 payment.BankAccountId,
                 string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
-                payment.TenderedAmount)).ToArray();
+                payment.TenderedAmount,
+                payment.RoundingAdjustment)).ToArray();
+        if (!PosPaymentRoundingPolicy.IsValid(withholding.NetAmount, payments))
+            throw new OnlineSalesDraftValidationException(
+                "El ajuste al peso no corresponde al total original de la venta.");
         var upload = new PosSaleUploadRequest(
             user.TenantId,
             state.BusinessId,
@@ -296,8 +302,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                 taxes,
                 draft.UntaxedAmount,
                 draft.TaxAmount,
-                draft.PayableAmount,
-                withholding),
+                draft.PayableAmount + roundingAdjustment,
+                withholding,
+                roundingAdjustment),
             new PosSaleFiscalSnapshotContract(
                 configuration.FiscalSeriesId,
                 configuration.FiscalAuthorizationId,
@@ -314,9 +321,10 @@ public sealed partial class SqlOnlineSalesDraftStore
                 taxes,
                 draft.UntaxedAmount,
                 draft.TaxAmount,
-                draft.PayableAmount,
+                draft.PayableAmount + roundingAdjustment,
                 cufe.Cufe,
-                cufe.QrPayload),
+                cufe.QrPayload,
+                roundingAdjustment),
             lines,
             payments,
             new PosSaleUblSnapshotContract(
@@ -832,6 +840,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 .Append(payment.MethodCode)
                 .Append(':')
                 .Append(payment.Amount.ToString(CultureInfo.InvariantCulture))
+                .Append(':')
+                .Append(payment.RoundingAdjustment.ToString(CultureInfo.InvariantCulture))
                 .Append(':')
                 .Append(payment.Reference?.Trim())
                 .Append(':')

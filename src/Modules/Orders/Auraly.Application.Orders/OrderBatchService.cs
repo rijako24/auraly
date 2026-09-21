@@ -33,7 +33,8 @@ public interface IOrderBatchStore
 public sealed class OrderBatchService(
     IOrderBatchStore batches,
     OrderService orders,
-    OnlineSalesCheckoutService checkout)
+    OnlineSalesCheckoutService checkout,
+    InvoiceChargeService invoiceCharges)
 {
     private static readonly HashSet<string> PaymentMethods =
     [
@@ -55,10 +56,13 @@ public sealed class OrderBatchService(
             actor.UserId,
             actor.TenantId,
             actor.Permissions);
+        var normalizedOrders = request.OrderIds.Distinct().ToArray();
+        var batchOrders = await orders.GetBatchAsync(actor, normalizedOrders, cancellationToken);
+        var chargeDefinition = await ResolveChargeDefinitionAsync(actor, request, cancellationToken);
         var issues = await checkout.ValidateOrderCreditBatchAsync(
             identity,
             actor.BusinessId,
-            request.OrderIds.Distinct().ToArray(),
+            CreditAmounts(normalizedOrders, batchOrders, request.Charge, chargeDefinition),
             cancellationToken);
         return issues.Select(MapCreditIssue).ToArray();
     }
@@ -85,12 +89,17 @@ public sealed class OrderBatchService(
         if (lease.Replay is not null)
             return lease.Replay with { IsReplay = true };
 
+        var batchOrders = await orders.GetBatchAsync(
+            actor, normalizedOrders, cancellationToken);
+        var chargeDefinition = await ResolveChargeDefinitionAsync(
+            actor, request, cancellationToken);
+
         if (request.PaymentMethodCode == "Credit")
         {
             var creditIssues = await checkout.ValidateOrderCreditBatchAsync(
                 identity,
                 actor.BusinessId,
-                normalizedOrders,
+                CreditAmounts(normalizedOrders, batchOrders, request.Charge, chargeDefinition),
                 cancellationToken);
             if (creditIssues.Count > 0)
             {
@@ -114,8 +123,6 @@ public sealed class OrderBatchService(
             }
         }
 
-        var batchOrders = await orders.GetBatchAsync(
-            actor, normalizedOrders, cancellationToken);
         var settlementWarmup = checkout.WarmSettlementBatchAsync(
             identity,
             actor.BusinessId,
@@ -224,7 +231,14 @@ public sealed class OrderBatchService(
                         order.Currency,
                         line.PriceSource,
                         line.IsGenericProductSnapshot)).ToArray());
-                var payableAmount = source.Lines.Sum(line => line.PublicLineTotal);
+                var productTotal = source.Lines.Sum(line => line.PublicLineTotal);
+                var charge = request.Charge is null || chargeDefinition is null
+                    ? null
+                    : InvoiceChargeApplication.Calculate(productTotal, new InvoiceChargeSelection(
+                        DeterministicGuid($"order-charge:{lease.OperationId:N}:{orderId:N}:{request.Charge.ChargeId:N}"),
+                        chargeDefinition, request.Charge.SupplierId, request.Charge.ManualAmount));
+                source = source with { Charges = charge is null ? null : [charge] };
+                var payableAmount = productTotal + (charge?.InvoicedAmount ?? 0m);
                 var issued = await checkout.CompleteOrderAsync(
                     identity,
                     source,
@@ -238,10 +252,12 @@ public sealed class OrderBatchService(
                                     payableAmount,
                                     paymentReference,
                                     BankAccountId: request.BankAccountId,
-                                    Notes: request.PaymentNotes)
+                                    Notes: request.PaymentNotes,
+                                    RoundingAdjustment: PosPaymentRoundingPolicy.Adjustment(payableAmount))
                             ],
                         Credit: creditSale
-                            ? new OnlineSalesCreditTerms(payableAmount)
+                            ? new OnlineSalesCreditTerms(
+                                PosPaymentRoundingPolicy.RoundedTotal(payableAmount))
                             : null,
                         DocumentType: documentType),
                     OperationKey(lease.OperationId, orderId, "invoice"),
@@ -326,6 +342,35 @@ public sealed class OrderBatchService(
             issue.AvailableCredit,
             issue.Reason);
 
+    private async Task<InvoiceChargeDefinition?> ResolveChargeDefinitionAsync(
+        OrderActor actor,
+        InvoiceOrdersRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Charge is null) return null;
+        var resolved = await invoiceCharges.ResolveForSaleAsync(
+            new(actor.TenantId, actor.BusinessId, actor.UserId, actor.Permissions),
+            DeterministicGuid($"resolve-charge:{request.Charge.ChargeId:N}:{request.Charge.ChargeVersion}"),
+            request.Charge.ChargeId, request.Charge.ChargeVersion,
+            request.Charge.SupplierId, request.Charge.ManualAmount, cancellationToken);
+        return resolved.Definition;
+    }
+
+    private static IReadOnlyDictionary<Guid, decimal> CreditAmounts(
+        IReadOnlyCollection<Guid> orderIds,
+        IReadOnlyDictionary<Guid, OrderDetail> ordersById,
+        OrderInvoiceChargeSelection? selection,
+        InvoiceChargeDefinition? definition) =>
+        orderIds.ToDictionary(orderId => orderId, orderId =>
+        {
+            if (selection is null || definition is null ||
+                !ordersById.TryGetValue(orderId, out var order)) return 0m;
+            var productTotal = order.Lines.Sum(line => line.LineTotal);
+            return InvoiceChargeApplication.Calculate(productTotal, new InvoiceChargeSelection(
+                DeterministicGuid($"credit-charge:{orderId:N}:{selection.ChargeId:N}"),
+                definition, selection.SupplierId, selection.ManualAmount)).InvoicedAmount;
+        });
+
     private static void Validate(
         OrderActor actor,
         InvoiceOrdersRequest request,
@@ -386,6 +431,10 @@ public sealed class OrderBatchService(
             request.BankAccountId?.ToString("D") ?? string.Empty,
             request.PaymentNotes ?? string.Empty,
             request.DocumentType,
+            request.Charge?.ChargeId.ToString("D") ?? string.Empty,
+            request.Charge?.ChargeVersion.ToString() ?? string.Empty,
+            request.Charge?.SupplierId.ToString("D") ?? string.Empty,
+            request.Charge?.ManualAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
             string.Join(",", orderIds.Select(id => id.ToString("D"))));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
@@ -395,6 +444,9 @@ public sealed class OrderBatchService(
         Guid orderId,
         string suffix) =>
         $"ord:{operationId:N}:{orderId:N}:{suffix}";
+
+    private static Guid DeterministicGuid(string value) =>
+        new(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 16));
 
     private static bool IsRecoverableOrderFailure(Exception exception) =>
         exception is OrderConflictException or

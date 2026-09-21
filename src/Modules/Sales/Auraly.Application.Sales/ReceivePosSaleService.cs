@@ -311,7 +311,7 @@ public sealed class ReceivePosSaleService(
              request.CommercialSnapshot.TaxAmount != request.Lines.Sum(line => line.TaxAmount) + request.Charges.Sum(charge => charge.InvoicedTaxAmount)))
             throw new PosSaleInvalidException("Los cargos y productos no coinciden con el total de la venta.");
 
-        var paid = request.Payments.Sum(payment => payment.Amount);
+        var paid = request.Payments.Sum(payment => payment.CollectedAmount);
         var credit = request.Credit?.Amount ?? 0m;
         var withholding = request.CommercialSnapshot.Withholding;
         var rounding = request.CommercialSnapshot.PayableRoundingAmount;
@@ -327,7 +327,8 @@ public sealed class ReceivePosSaleService(
             throw new PosSaleInvalidException(
                 "The promotion discount snapshot must be a non-negative part of the line discount.");
         if (withholding is not null &&
-            (withholding.GrossAmount != request.CommercialSnapshot.PayableAmount ||
+            (withholding.GrossAmount != request.CommercialSnapshot.PayableAmount -
+                 request.CommercialSnapshot.PayableRoundingAmount ||
              withholding.WithholdingTotal != withholding.Lines.Sum(line => line.Amount) ||
              withholding.NetAmount + withholding.WithholdingTotal != withholding.GrossAmount))
             throw new PosSaleInvalidException(
@@ -335,8 +336,10 @@ public sealed class ReceivePosSaleService(
         if (request.Payments.Any(payment => payment.Amount <= 0) ||
             request.Payments.Select(payment => payment.PaymentNumber).Distinct().Count() != request.Payments.Count ||
             request.Payments.Count(payment => payment.MethodCode == "Cash") > 1 ||
-            request.Payments.Any(payment => payment.TenderedAmount is { } tendered &&
-                (payment.MethodCode != "Cash" || tendered < payment.Amount)) ||
+            !PosPaymentRoundingPolicy.IsValid(
+                request.CommercialSnapshot.NetPayableAmount -
+                    request.CommercialSnapshot.PayableRoundingAmount,
+                request.Payments) ||
             request.Payments.Any(payment =>
                 payment.Reference?.Length > 160 || payment.Notes?.Length > 500 ||
                 payment.CardFranchiseCode?.Length > 64 || payment.ApprovalNumber?.Length > 100 ||

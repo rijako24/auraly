@@ -151,7 +151,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user
-            ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress) => {
+            ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charge) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
@@ -170,6 +170,8 @@ export default function OrdersPage() {
                   printAfterInvoice,
                   idempotencyKey,
                   onProgress,
+                  false,
+                  charge,
                 );
                 return {
                   completedCount: response.completedCount,
@@ -178,6 +180,19 @@ export default function OrdersPage() {
                   creditValidationIssues: response.creditValidationIssues,
                   results: response.results,
                 };
+              }
+            : undefined
+        }
+        onLoadInvoiceCharges={
+          workspace && user
+            ? async (page) => {
+                const context = await selectSalesWorkspace(workspace);
+                return new OnlinePosClient(
+                  context,
+                  user.userId,
+                  `${user.firstName} ${user.lastName}`.trim() || user.username,
+                  readEdgeTokenFromLaunch(),
+                ).invoiceCharges(page);
               }
             : undefined
         }

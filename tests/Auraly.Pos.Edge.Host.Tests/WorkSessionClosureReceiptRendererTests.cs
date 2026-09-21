@@ -8,6 +8,99 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class WorkSessionClosureReceiptRendererTests
 {
     [Theory]
+    [InlineData(58, 4)]
+    [InlineData(80, 4)]
+    [InlineData(58, 5)]
+    [InlineData(80, 5)]
+    public void Version_five_summarizes_charges_outside_payment_methods_and_preserves_collections(int width, int version)
+    {
+        var deliveryId = Guid.NewGuid();
+        var closure = Closure(version) with
+        {
+            InvoiceCharges = [
+                new(Guid.NewGuid(), "FV-11", Guid.NewGuid(), deliveryId, "DOM", "Domicilio", "Proveedor",
+                    12m, 12m, 0m, 0m, [new(1, "Cash", 2m), new(2, "Card", 3m), new(3, "Card", 2m), new(4, "Transfer", 5m)]),
+                new(Guid.NewGuid(), "FV-12", Guid.NewGuid(), deliveryId, "DOM", "Domicilio", "Proveedor",
+                    13m, 13m, 0m, 0m, [new(1, "Cash", 4m), new(2, "Card", 1m), new(3, "Transfer", 5m), new(0, "Credit", 3m)]),
+                new(Guid.NewGuid(), "FV-13", Guid.NewGuid(), Guid.NewGuid(), "AGOT", "Agotados", "Proveedor",
+                    7m, 0m, 7m, 0m, [])]
+        };
+
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(closure, paperWidthMillimeters: width);
+        var cash = Section(html, "data-payment-method=\"Cash\"", "</section>");
+        var card = Section(html, "data-payment-method=\"Card\"", "</section>");
+        var transfer = Section(html, "data-payment-method=\"Transfer\"", "</section>");
+        foreach (var section in new[] { cash, card, transfer })
+        {
+            if (version == 4) Assert.Contains("Domicilio", section);
+            else Assert.DoesNotContain("Domicilio", section);
+            Assert.DoesNotContain("Agotados", section);
+        }
+        Assert.Contains("Efectivo esperado <strong>$ 95</strong>", cash);
+        Assert.Contains("Esperado <strong>$ 25</strong>", card);
+        Assert.Contains("Esperado <strong>$ 40</strong>", transfer);
+        var charges = Section(html, "Cargos de facturaci", version == 5 ? "Detalle por medio de pago" : "Observación:");
+        Assert.Contains("Agotados", charges);
+        Assert.Contains("Domicilio", charges);
+        Assert.Contains("FV-11", charges);
+        Assert.Contains("FV-12", charges);
+        Assert.Contains("<th>$ 25</th>", charges);
+        Assert.Contains("<th>$ 7</th>", charges);
+        if (version == 5)
+        {
+            Assert.True(Index(html, "Salidas de dinero") < Index(html, "Cargos de facturaci"));
+            Assert.True(Index(html, "Cargos de facturaci") < Index(html, "Detalle por medio de pago"));
+            Assert.Equal(1, Count(html, "Cargos de facturaci"));
+            Assert.DoesNotContain("Domicilio", Section(html, "Ventas a cartera</h2>", "Entradas de dinero"));
+            var activity = Section(html, "Actividad del turno", "Totales del turno");
+            Assert.Contains("<td>Domicilio</td><td>2</td>", activity);
+            Assert.Contains("<td>Agotados</td><td>1</td>", activity);
+            var totals = Section(html, "Totales del turno", "Ventas a cartera</h2>");
+            Assert.Contains("<td>Domicilio</td><td>$ 25</td>", totals);
+            Assert.Contains("<td>Agotados</td><td>$ 7</td>", totals);
+            Assert.Contains("<td>Ventas</td><td>$ 165</td>", totals);
+            Assert.Equal(4, Count(html, "Domicilio"));
+            Assert.Contains("data-auraly-report-version=\"5\"", html);
+        }
+        else
+        {
+            Assert.Equal(3, Count(card, "Domicilio"));
+            Assert.Contains("FV-11", card);
+            Assert.Contains("FV-12", card);
+            Assert.DoesNotContain("Domicilio", Section(html, "Actividad del turno", "Ventas a cartera</h2>"));
+        }
+    }
+
+    [Fact]
+    public void Version_five_groups_by_charge_id_instead_of_name_and_encodes_labels()
+    {
+        var closure = Closure(5) with { InvoiceCharges = [
+            new(Guid.NewGuid(), "FV-11", Guid.NewGuid(), Guid.NewGuid(), "A", "Cargo <especial>", "Proveedor",
+                2m, 2m, 0m, 0m, [new(1, "Cash", 2m)]),
+            new(Guid.NewGuid(), "FV-12", Guid.NewGuid(), Guid.NewGuid(), "B", "Cargo <especial>", "Proveedor",
+                3m, 0m, 3m, 0m, [])] };
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(closure);
+        var activity = Section(html, "Actividad del turno", "Totales del turno");
+        Assert.Equal(2, Count(activity, "<td>Cargo &lt;especial&gt;</td><td>1</td>"));
+        var totals = Section(html, "Totales del turno", "Ventas a cartera</h2>");
+        Assert.Contains("<td>Cargo &lt;especial&gt;</td><td>$ 2</td>", totals);
+        Assert.Contains("<td>Cargo &lt;especial&gt;</td><td>$ 3</td>", totals);
+    }
+
+    [Theory]
+    [InlineData(58)]
+    [InlineData(80)]
+    public void Version_five_without_charges_keeps_activity_totals_and_payment_methods(int width)
+    {
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(Closure(5), paperWidthMillimeters: width);
+        Assert.Equal(3, Count(Section(html, "Actividad del turno", "Totales del turno"), "count-row"));
+        Assert.Contains("data-payment-method=\"Cash\"", html);
+        Assert.Contains("data-payment-method=\"Card\"", html);
+        Assert.Contains("data-payment-method=\"Transfer\"", html);
+        Assert.Contains("Sin cargos", html);
+    }
+
+    [Theory]
     [InlineData(58)]
     [InlineData(80)]
     public void Version_four_prints_reason_notes_amount_and_compact_credit_without_document_metadata(int width)

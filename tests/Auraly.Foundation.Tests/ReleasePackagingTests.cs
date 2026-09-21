@@ -104,6 +104,25 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Pos_installer_replaces_legacy_binaries_and_rejects_mixed_payload_versions()
+    {
+        var installer = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "scripts", "Build-AuralyPosInstaller.ps1"));
+
+        // A newer MSI alone does not replace the old 1.0.0.0 executables.
+        Assert.Contains("$binaryFileVersion = \"1.$msiProductVersion\"", installer,
+            StringComparison.Ordinal);
+        Assert.Equal(2, installer.Split("\"-p:FileVersion=$binaryFileVersion\"").Length - 1);
+        Assert.Contains("[Diagnostics.FileVersionInfo]::GetVersionInfo($binaryPath).FileVersion",
+            installer, StringComparison.Ordinal);
+        Assert.Contains("if ($actualVersion -ne $binaryFileVersion)", installer,
+            StringComparison.Ordinal);
+        Assert.True(installer.IndexOf("if ($actualVersion -ne $binaryFileVersion)",
+            StringComparison.Ordinal) < installer.IndexOf("Invoke-AuralySigning $auralyBinaries",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Immutable_release_contains_environment_specific_signed_pos_installers()
     {
         var repositoryRoot = FindRepositoryRoot();

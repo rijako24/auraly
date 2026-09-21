@@ -2,6 +2,7 @@ import type { PosCreditTerms, PosCustomer, PosPaymentInput } from "@/services/po
 
 export type PosPaymentSettlement = {
   isValid: boolean;
+  paymentTotal: number;
   received: number;
   missing: number;
   change: number;
@@ -38,6 +39,17 @@ export function chooseAdditionalPaymentMethod(
 const precision = 100;
 const tolerance = 0.005;
 
+export function paymentTotalForCollection(
+  documentTotal: number,
+  _payments: readonly Pick<PosPaymentInput, "methodCode">[] = [],
+) {
+  return roundToNearestHundred(documentTotal);
+}
+
+export function roundToNearestHundred(value: number) {
+  return Math.round(round(value) / 100) * 100;
+}
+
 export function splitCreditCheckout(
   payments: PosPaymentInput[],
   customer: PosCustomer | null,
@@ -66,6 +78,7 @@ export function calculatePaymentSettlement(
   total: number,
   payments: PosPaymentInput[],
 ): PosPaymentSettlement {
+  const paymentTotal = paymentTotalForCollection(total, payments);
   const validAmounts =
     payments.length > 0 &&
     payments.every(
@@ -80,10 +93,10 @@ export function calculatePaymentSettlement(
     nonCashPayments.reduce((sum, payment) => sum + payment.amount, 0),
   );
   const received = round(cashTendered + nonCashTotal);
-  const missing = round(Math.max(0, total - received));
-  const cashApplied = round(Math.min(cashTendered, Math.max(0, total - nonCashTotal)));
+  const missing = round(Math.max(0, paymentTotal - received));
+  const cashApplied = round(Math.min(cashTendered, Math.max(0, paymentTotal - nonCashTotal)));
   const change = round(Math.max(0, cashTendered - cashApplied));
-  const hasNonCashExcess = nonCashTotal - total > tolerance;
+  const hasNonCashExcess = nonCashTotal - paymentTotal > tolerance;
   const hasDuplicateCash = cashPayments.length > 1;
   const isValid =
     validAmounts &&
@@ -92,7 +105,7 @@ export function calculatePaymentSettlement(
     !hasDuplicateCash;
 
   let remainingCash = cashApplied;
-  const appliedPayments = payments
+  const collectedPayments = payments
     .map((payment) => {
       if (payment.methodCode !== "Cash") return payment;
       const amount = round(Math.min(payment.amount, remainingCash));
@@ -100,9 +113,17 @@ export function calculatePaymentSettlement(
       return { ...payment, amount, tenderedAmount: payment.amount };
     })
     .filter((payment) => payment.amount > tolerance);
+  const adjustment = round(paymentTotal - total);
+  const adjustmentIndex = adjustment === 0
+    ? -1
+    : collectedPayments.findLastIndex((payment) => payment.methodCode !== "Credit");
+  const appliedPayments = collectedPayments.map((payment, index) => index === adjustmentIndex
+    ? { ...payment, amount: round(payment.amount - adjustment), roundingAdjustment: adjustment }
+    : payment);
 
   return {
     isValid,
+    paymentTotal,
     received,
     missing,
     change,

@@ -219,7 +219,8 @@ public static class OnlineSalesReceiptMapper
                     payment.ApprovalNumber,
                     payment.BankAccountId,
                     payment.Notes,
-                    payment.TenderedAmount))
+                    payment.TenderedAmount,
+                    payment.RoundingAdjustment))
                 .Concat(request.Credit is null
                     ? []
                     : [new OnlineSalesPayment("Credit", request.Credit.Amount, request.Credit.DueDate.ToString("O"))])
@@ -232,7 +233,7 @@ public static class OnlineSalesReceiptMapper
             fiscalStatus,
             customerName,
             WithholdingTotal: snapshot.Withholding?.WithholdingTotal ?? 0m,
-            NetPayableAmount: snapshot.Withholding?.NetAmount ?? snapshot.PayableAmount,
+            NetPayableAmount: snapshot.NetPayableAmount,
             Withholdings: snapshot.Withholding?.Lines,
             CreditAcknowledgement: request.Credit is null
                 ? null
@@ -247,7 +248,8 @@ public static class OnlineSalesReceiptMapper
                     request.Credit.SoldByName ?? "Usuario"),
             InvoicePrintDetails: PrintDetails(request.UblSnapshot),
             CustomerPhone: request.UblSnapshot?.Customer.Telephone,
-            CustomerAddress: request.UblSnapshot?.Customer.Address.AddressLine);
+            CustomerAddress: request.UblSnapshot?.Customer.Address.AddressLine,
+            PayableRoundingAmount: snapshot.PayableRoundingAmount);
     }
 
     private static SalesInvoicePrintDetails? PrintDetails(

@@ -140,9 +140,10 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         }
         var payments = await LoadPaymentsAsync(connection, documentId, cancellationToken);
         var lines = await LoadLinesAsync(connection, documentId, cancellationToken);
+        var charges = await LoadChargesAsync(connection, documentId, cancellationToken);
         return new ReturnableSale(documentId, number, fiscal, cufe, issued, customerId,
             customerName, identification, warehouseId, warehouseName, total, returned,
-            receivable, fiscalStatus, payments, lines);
+            receivable, fiscalStatus, payments, lines, charges);
     }
 
     public async Task<SalesReturnPage> ListReturnsAsync(
@@ -289,6 +290,33 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken))
         {var sold=reader.GetDecimal(5);var returned=reader.GetDecimal(6);values.Add(new(reader.GetInt32(0),reader.GetGuid(1),reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),sold,returned,decimal.Max(0,sold-returned),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetString(9),reader.GetDecimal(10),reader.GetDecimal(11),reader.GetDecimal(12),reader.GetDecimal(13),reader.GetString(14)));}
+        return values;
+    }
+
+    private static async Task<IReadOnlyList<ReturnableSaleCharge>> LoadChargesAsync(
+        SqlConnection connection, Guid documentId, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT charge.AppliedChargeId,charge.Code,charge.Name,charge.Amount,
+                   charge.InvoicedAmount,charge.ExpenseAmount,
+                   CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit)
+            FROM dbo.DocumentProcessingPayloads payload
+            CROSS APPLY OPENJSON(payload.PayloadJson,N'$.charges') WITH(
+              AppliedChargeId uniqueidentifier N'$.appliedChargeId',
+              Code nvarchar(32) N'$.code',Name nvarchar(120) N'$.name',
+              Amount decimal(19,4) N'$.amount',InvoicedAmount decimal(19,4) N'$.invoicedAmount',
+              ExpenseAmount decimal(19,4) N'$.expenseAmount') charge
+            LEFT JOIN dbo.SalesReturnCharges returned
+              ON returned.AppliedChargeId=charge.AppliedChargeId
+            WHERE payload.DocumentId=@Id AND payload.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+            ORDER BY charge.Name,charge.AppliedChargeId;
+            """, connection);
+        command.Parameters.AddWithValue("@Id", documentId);
+        var values = new List<ReturnableSaleCharge>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            values.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                reader.GetDecimal(3), reader.GetDecimal(4), reader.GetDecimal(5), reader.GetBoolean(6)));
         return values;
     }
 

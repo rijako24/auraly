@@ -350,38 +350,25 @@ public sealed partial class SqlOnlineSalesDraftStore(
         {
             var current = activeByLine[line.LineId];
             var currentDraftLine = currentDraftLines[line.LineId];
-            if (line.DocumentUnitCost != current.DocumentUnitCost &&
-                !currentDraftLine.AllowsDocumentCostOverride)
-                throw new OnlineSalesDraftValidationException(
-                    "El costo de inventario de la línea queda congelado cuando se agrega el producto.");
-            if (!currentDraftLine.AllowsDocumentCostOverride &&
-                line.PublicUnitPrice != currentDraftLine.PublicUnitPrice)
-                throw new OnlineSalesDraftValidationException(
-                    "El precio público base solo se puede reemplazar en un producto genérico.");
-            if (currentDraftLine.AllowsDocumentCostOverride && line.Discount != 0)
-                throw new OnlineSalesDraftValidationException(
-                    "Un producto genérico siempre tiene descuento cero.");
-            var publicUnitPrice = MonetaryRounding.RoundLineAmount(line.PublicUnitPrice);
-            var manualDiscount = MonetaryRounding.RoundLineAmount(line.Discount);
-            if (manualDiscount > current.Quantity * publicUnitPrice -
-                currentDraftLine.PromotionDiscount)
-                throw new OnlineSalesDraftValidationException(
-                    "El descuento no puede superar el valor de la línea.");
-            var discountChanged = manualDiscount != currentDraftLine.Discount;
+            var evaluation = SaleLineMonetaryPolicy.EvaluateDocumentUpdate(
+                new(current.Quantity, currentDraftLine.PublicUnitPrice,
+                    currentDraftLine.PromotionDiscount, current.DocumentUnitCost,
+                    currentDraftLine.TaxRate, currentDraftLine.AllowsDocumentCostOverride),
+                new(line.Description, line.PublicUnitPrice, line.Discount,
+                    line.DocumentUnitCost));
+            if (!evaluation.IsValid)
+                throw new OnlineSalesDraftValidationException(evaluation.Failure!.Message);
+            var value = evaluation.Update!;
             return new
             {
                 line.LineId,
-                Description = line.Description.Trim(),
-                PublicUnitPrice = publicUnitPrice,
-                UnitPrice = MonetaryRounding.RoundLineAmount(
-                    TaxExclusive(publicUnitPrice, currentDraftLine.TaxRate)),
-                PublicLineTotal = MonetaryRounding.RoundLineAmount(
-                    publicUnitPrice * current.Quantity -
-                    manualDiscount - currentDraftLine.PromotionDiscount),
-                line.DocumentUnitCost,
-                Discount = manualDiscount,
-                CommercialChanged = discountChanged ||
-                    publicUnitPrice != currentDraftLine.PublicUnitPrice
+                value.Description,
+                value.PublicUnitPrice,
+                UnitPrice = value.UntaxedUnitPrice,
+                value.PublicLineTotal,
+                value.DocumentUnitCost,
+                value.Discount,
+                value.PriceChanged
             };
         }).ToArray();
         var affected = await ExecuteAsync(connection, transaction, """
@@ -389,8 +376,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             SET Description=input.Description,BaseUnitPrice=input.UnitPrice,UnitPrice=input.UnitPrice,
                 PublicUnitPrice=input.PublicUnitPrice,PublicLineTotal=input.PublicLineTotal,
                 DocumentUnitCost=input.DocumentUnitCost,DiscountAmount=input.Discount,
-                PriceSource=CASE WHEN input.CommercialChanged=1 THEN N'Manual' ELSE target.PriceSource END,
-                PriceChannelId=CASE WHEN input.CommercialChanged=1 THEN NULL ELSE target.PriceChannelId END
+                PriceSource=CASE WHEN input.PriceChanged=1 THEN N'Manual' ELSE target.PriceSource END,
+                PriceChannelId=CASE WHEN input.PriceChanged=1 THEN NULL ELSE target.PriceChannelId END
             FROM dbo.SalesDraftLines target
             JOIN OPENJSON(@UpdatesJson) WITH(
               LineId uniqueidentifier '$.LineId',Description nvarchar(500) '$.Description',
@@ -398,7 +385,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
               DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',
               PublicLineTotal decimal(18,2) '$.PublicLineTotal',
               Discount decimal(19,4) '$.Discount',
-              CommercialChanged bit '$.CommercialChanged') input
+              PriceChanged bit '$.PriceChanged') input
               ON input.LineId=target.SalesDraftLineId
             WHERE target.SalesDraftId=@DraftId;
             """,

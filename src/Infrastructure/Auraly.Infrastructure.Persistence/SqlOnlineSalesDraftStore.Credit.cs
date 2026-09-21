@@ -11,7 +11,7 @@ public sealed partial class SqlOnlineSalesDraftStore
     public async Task<IReadOnlyList<OnlineOrderCreditValidationIssue>> ValidateOrderCreditBatchAsync(
         OnlineSalesUserIdentity user,
         Guid businessId,
-        IReadOnlyCollection<Guid> orderIds,
+        IReadOnlyDictionary<Guid, decimal> orderAmounts,
         CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
@@ -19,11 +19,10 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             WITH Requested AS (
-              SELECT DISTINCT TRY_CONVERT(uniqueidentifier,[value]) OrderId
-              FROM OPENJSON(@OrderIds)
-              WHERE TRY_CONVERT(uniqueidentifier,[value]) IS NOT NULL
+              SELECT OrderId,AdditionalAmount
+              FROM OPENJSON(@Orders) WITH(OrderId uniqueidentifier,AdditionalAmount decimal(19,4))
             ), OrderTotals AS (
-              SELECT item.OrderId,item.BusinessId,SUM(item.LineTotal) RequestedAmount
+              SELECT item.OrderId,item.BusinessId,SUM(item.LineTotal)+MAX(requested.AdditionalAmount) RequestedAmount
               FROM dbo.OrderItems item
               JOIN Requested requested ON requested.OrderId=item.OrderId
               GROUP BY item.OrderId,item.BusinessId
@@ -93,7 +92,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             ORDER BY eligible.CustomerName;
             """;
         command.Parameters.AddRange([
-            P("@OrderIds", JsonSerializer.Serialize(orderIds)),
+            P("@Orders", JsonSerializer.Serialize(orderAmounts.Select(item => new
+                { OrderId = item.Key, AdditionalAmount = item.Value }))),
             P("@BusinessId", businessId),
             P("@TenantId", user.TenantId)
         ]);

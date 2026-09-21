@@ -650,7 +650,8 @@ public sealed partial class SqlWorkSessionStore(
             PaymentMovements AS
             (
                 SELECT COALESCE(mapping.ClosureMethodCode,payment.MethodCode) AS PaymentMethodCode,
-                       N'SalePayment' AS MovementType,payment.Amount
+                       N'SalePayment' AS MovementType,
+                       payment.Amount+COALESCE(payment.RoundingAdjustment,0) AS Amount
                 FROM dbo.SalesDocuments d
                 INNER JOIN SessionScope session
                   ON session.WorkSessionId=d.WorkSessionId
@@ -661,14 +662,15 @@ public sealed partial class SqlWorkSessionStore(
                   WITH
                   (
                     MethodCode NVARCHAR(32) N'$.methodCode',
-                    Amount DECIMAL(19,4) N'$.amount'
+                    Amount DECIMAL(19,4) N'$.amount',
+                    RoundingAdjustment DECIMAL(19,4) N'$.roundingAdjustment'
                   ) payment
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=payment.MethodCode
                 WHERE d.WorkSessionId=@WorkSessionId
                 UNION ALL
                 SELECT COALESCE(mapping.ClosureMethodCode,p.MethodCode),
-                       N'SalePayment',p.Amount
+                       N'SalePayment',p.Amount+p.RoundingAdjustment
                 FROM dbo.SalesPayments p
                 INNER JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
                 INNER JOIN SessionScope session

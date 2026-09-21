@@ -67,24 +67,35 @@ foreach (var width in new[] { 58, 80 })
         new SalesReceiptHtmlRenderer().Render(order, width, autoPrint: false), Encoding.UTF8);
     pages.Add((file, $"Pedido · {width} mm"));
     var now = new DateTimeOffset(2026, 9, 19, 18, 0, 0, TimeSpan.FromHours(-5));
+    var deliveryChargeId = Guid.NewGuid();
     var closure = new WorkSessionClosureView(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
         "Sede principal", null, null, Guid.NewGuid(), "María González", null, now.AddHours(-8), now,
-        85000m, 0m, 3000m, 88000m, 88000m, 88000m, 0m, "Cierre de prueba",
-        [new WorkSessionPaymentTotal("Cash", 85000m, 0m, 3000m, 88000m, 88000m, 0m, true, 5000m, 2000m)],
-        3, 1, 25000m, 0, [new WorkSessionCreditSale("Cliente con nombre extenso", "FV-1234", 25000m)], 4,
+        185000m, 0m, 3000m, 188000m, 88000m, 88000m, 0m, "Cierre de prueba",
+        [new WorkSessionPaymentTotal("Cash", 85000m, 0m, 3000m, 88000m, 88000m, 0m, true, 5000m, 2000m),
+         new WorkSessionPaymentTotal("Card", 60000m, 0m, 0m, 60000m, 60000m, 0m, true),
+         new WorkSessionPaymentTotal("Transfer", 40000m, 0m, 0m, 40000m, 40000m, 0m, true)],
+        5, 1, 25000m, 0, [new WorkSessionCreditSale("Cliente con nombre extenso", "FV-1234", 25000m)],
+        PosPrintTemplateCatalog.WorkSessionClosure.Version,
         [new WorkSessionCashMovementDetail(Guid.NewGuid(), "In", "ING-1", "Base adicional", 5000m,
              now.AddHours(-2), "María", Notes: "Cambio para el turno.\nBilletes de baja denominación."),
          new WorkSessionCashMovementDetail(Guid.NewGuid(), "Out", "EGR-1", "Compra de suministros", 2000m,
              now.AddHours(-1), "María", Notes: "Papel para la impresora de caja y elementos de oficina.")],
         InvoiceCharges: [
-            new(Guid.NewGuid(), "FV-1233", Guid.NewGuid(), Guid.NewGuid(), "DOM", "Domicilio",
+            new(Guid.NewGuid(), "FV-1233", Guid.NewGuid(), deliveryChargeId, "DOM", "Domicilio",
                 "Domiciliario de prueba", 5000m, 5000m, 0m, 0m, [new(1, "Cash", 5000m)]),
+            new(Guid.NewGuid(), "FV-1235", Guid.NewGuid(), deliveryChargeId, "DOM", "Domicilio",
+                "Domiciliario de prueba", 3000m, 3000m, 0m, 0m, [new(1, "Cash", 3000m)]),
+            new(Guid.NewGuid(), "FV-1236", Guid.NewGuid(), deliveryChargeId, "DOM", "Domicilio",
+                "Domiciliario de prueba", 6000m, 6000m, 0m, 0m, [new(1, "Card", 2500m), new(2, "Card", 3500m)]),
+            new(Guid.NewGuid(), "FV-1237", Guid.NewGuid(), deliveryChargeId, "DOM", "Domicilio",
+                "Domiciliario de prueba", 4000m, 4000m, 0m, 0m, [new(1, "Transfer", 4000m)]),
             new(Guid.NewGuid(), "FV-1234", Guid.NewGuid(), Guid.NewGuid(), "AGOT", "Agotados",
                 "Domiciliario de prueba", 6500m, 0m, 6500m, 0m, [])]);
-    file = $"cierre-{width}mm-v4.html";
+    file = $"cierre-{width}mm-v{PosPrintTemplateCatalog.WorkSessionClosure.Version}.html";
     await File.WriteAllTextAsync(Path.Combine(output, file),
         WorkSessionClosureReceiptRenderer.RenderHtml(closure, paperWidthMillimeters: width), Encoding.UTF8);
-    pages.Add((file, $"Cierre v4 · {width} mm"));
+    // Keep both closures above the fold, with the usual 80 mm receipt selected.
+    pages.Insert(0, (file, $"Cierre de sesión · {width} mm"));
 }
 foreach (var (format, slug, label) in formats)
 {

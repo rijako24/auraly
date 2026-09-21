@@ -71,7 +71,8 @@ public sealed record SalesReportDocumentRow(
     Guid DocumentId, string DocumentType, string DocumentNumber, string? FiscalNumber,
     DateTimeOffset IssuedAt, string CustomerName, string SellerName, string WarehouseName,
     decimal GrossAmount, decimal DiscountAmount, decimal UntaxedAmount, decimal TaxAmount,
-    decimal TotalAmount, decimal ReturnedTotalAmount, decimal NetTotalAmount,
+    decimal TotalAmount, decimal RoundingAdjustmentAmount,
+    decimal ReturnedTotalAmount, decimal NetTotalAmount,
     decimal GrossProfit, string? FiscalStatus);
 
 public sealed record SalesReportDocumentPage(

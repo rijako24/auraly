@@ -79,6 +79,9 @@ public sealed class DianInvoicePdfRenderer
             throw new InvalidOperationException("The software provider is not identified by the signed invoice.");
         var totals = root.Element(Cac + "LegalMonetaryTotal") ?? throw new InvalidOperationException("Missing LegalMonetaryTotal.");
         var payable = Amount(totals.Element(Cbc + "PayableAmount"));
+        var payableRounding = totals.Element(Cbc + "PayableRoundingAmount") is { } rounding
+            ? Amount(rounding)
+            : 0m;
         var lines = root.Elements(Cac + "InvoiceLine").Select(line =>
         {
             var quantity = line.Element(Cbc + "InvoicedQuantity");
@@ -125,7 +128,8 @@ public sealed class DianInvoicePdfRenderer
             InvoicePrintDetails: details,
             CustomerPhone: customerPhone,
             CustomerAddress: details.CustomerAddress,
-            TaxTotals: taxSummary);
+            TaxTotals: taxSummary,
+            PayableRoundingAmount: payableRounding);
     }
 
     private static XElement Party(XElement root, string name) => root.Element(Cac + name)?.Element(Cac + "Party")?.Element(Cac + "PartyTaxScheme")

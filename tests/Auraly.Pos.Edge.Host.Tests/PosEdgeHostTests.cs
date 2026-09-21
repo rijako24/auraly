@@ -691,23 +691,29 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             settlement.WithholdingTotal);
         Assert.Equal(settlement.GrossAmount - settlement.WithholdingTotal, settlement.NetAmount);
         Assert.Single(settlement.Lines);
+        var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(settlement.NetAmount);
 
         var completedResponse = await Client.PostAsJsonAsync(
             $"/edge/v1/drafts/{draft.DraftId.Value:D}/complete",
             new CompleteDraftRequest(
                 null,
-                [new CompletePaymentRequest("Cash", settlement.NetAmount, null)]));
+                [new CompletePaymentRequest(
+                    "Cash", settlement.NetAmount, null,
+                    RoundingAdjustment: roundingAdjustment)]));
         completedResponse.EnsureSuccessStatusCode();
         var completed = await completedResponse.Content.ReadFromJsonAsync<CompletePosSaleResult>();
         Assert.NotNull(completed);
         Assert.Equal(settlement.WithholdingTotal, completed!.Receipt.WithholdingTotal);
-        Assert.Equal(settlement.NetAmount, completed.Receipt.NetPayableAmount);
+        Assert.Equal(PosPaymentRoundingPolicy.RoundedTotal(settlement.NetAmount),
+            completed.Receipt.NetPayableAmount);
+        Assert.Equal(roundingAdjustment, completed.Receipt.PayableRoundingAmount);
         Assert.Single(completed.Receipt.Withholdings!);
         Assert.Equal(settlement.NetAmount, Assert.Single(completed.Receipt.Payments).Amount);
 
         Assert.Empty(_printer.Receipts);
         Assert.Equal(settlement.WithholdingTotal, completed.Receipt.WithholdingTotal);
-        Assert.Equal(settlement.NetAmount, completed.Receipt.NetPayableAmount);
+        Assert.Equal(PosPaymentRoundingPolicy.RoundedTotal(settlement.NetAmount),
+            completed.Receipt.NetPayableAmount);
         var rendered = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(completed.Receipt));
         Assert.Contains("Total retenciones", rendered);
         Assert.Contains("Total", rendered);
@@ -718,8 +724,10 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var upload = PosSaleContractSerializer.Deserialize(pending.Payload);
         Assert.Equal(settlement.WithholdingTotal,
             upload.CommercialSnapshot.Withholding!.WithholdingTotal);
-        Assert.Equal(settlement.NetAmount, upload.CommercialSnapshot.NetPayableAmount);
+        Assert.Equal(PosPaymentRoundingPolicy.RoundedTotal(settlement.NetAmount),
+            upload.CommercialSnapshot.NetPayableAmount);
         Assert.Equal(settlement.NetAmount, Assert.Single(upload.Payments).Amount);
+        Assert.Equal(roundingAdjustment, Assert.Single(upload.Payments).RoundingAdjustment);
     }
 
     [Fact]
@@ -836,8 +844,16 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Equal("PriceChannel", line.PriceSource);
 
         var discountResponse = await Client.PutAsJsonAsync(
-            $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/lines/{line.LineId:D}/discount",
-            new DiscountRequest(5m));
+            $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/lines",
+            new UpdateDraftLinesRequest(
+            [
+                new UpdateSalesDraftLineRequest(
+                    line.LineId,
+                    line.Description,
+                    line.PublicUnitPrice,
+                    5m,
+                    line.DocumentUnitCost)
+            ]));
         discountResponse.EnsureSuccessStatusCode();
         var discounted = await discountResponse.Content.ReadFromJsonAsync<PosDraft>();
         Assert.Equal(5m, Assert.Single(discounted!.Lines).Discount);

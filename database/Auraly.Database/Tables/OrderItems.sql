@@ -10,7 +10,7 @@ CREATE TABLE [dbo].[OrderItems] (
     [ProductNameSnapshot] NVARCHAR(250) NOT NULL,
     [DescriptionSnapshot] NVARCHAR(MAX) NULL,
     [UnitCodeSnapshot] NVARCHAR(24) NULL,
-    [Quantity] DECIMAL(18, 2) NOT NULL,
+    [Quantity] DECIMAL(19, 6) NOT NULL,
     [UnitPrice] DECIMAL(18, 2) NOT NULL,
     [DocumentUnitCost] DECIMAL(19, 6) NOT NULL,
     [IsGenericProductSnapshot] BIT NOT NULL CONSTRAINT [DF_OrderItems_IsGenericProductSnapshot] DEFAULT 0,

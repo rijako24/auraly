@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Domain.Money;
+using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.Sqlite;
 
@@ -401,34 +402,33 @@ public sealed partial class PosDraftStore
             throw new InvalidOperationException("Every active line must receive exactly one update.");
 
         var currentByLine = current.ToDictionary(line => line.LineId);
-        foreach (var update in updates)
+        var normalized = updates.Select(update =>
         {
             var line = currentByLine[update.LineId];
-            if (update.DocumentUnitCost != line.DocumentUnitCost &&
-                !line.AllowsDocumentCostOverride)
-                throw new InvalidOperationException("El costo de inventario de la línea queda congelado cuando se agrega el producto.");
-            if (!line.AllowsDocumentCostOverride && update.PublicUnitPrice != line.PublicUnitPrice)
-                throw new InvalidOperationException("El precio público base solo se puede reemplazar en un producto genérico.");
-            if (line.AllowsDocumentCostOverride && update.Discount != 0)
-                throw new InvalidOperationException("Un producto genérico siempre tiene descuento cero.");
-            if (update.Discount > line.Quantity * update.PublicUnitPrice - line.PromotionDiscount)
-                throw new ArgumentOutOfRangeException(nameof(updates), "Discount cannot exceed line value.");
-        }
-
-        var normalized = updates.Select(update => new
-        {
-            update.LineId,
-            Description = update.Description.Trim(),
-            update.PublicUnitPrice,
-            update.DocumentUnitCost,
-            update.Discount,
-            PublicLineTotal = CloseLineTotal(
-                currentByLine[update.LineId].Quantity,
-                update.PublicUnitPrice,
-                update.Discount,
-                currentByLine[update.LineId].PromotionDiscount),
-            CommercialChanged = update.PublicUnitPrice != currentByLine[update.LineId].PublicUnitPrice ||
-                update.Discount != currentByLine[update.LineId].Discount
+            var evaluation = SaleLineMonetaryPolicy.EvaluateDocumentUpdate(
+                new(line.Quantity, line.PublicUnitPrice, line.PromotionDiscount,
+                    line.DocumentUnitCost, line.TaxRate, line.AllowsDocumentCostOverride),
+                new(update.Description, update.PublicUnitPrice, update.Discount,
+                    update.DocumentUnitCost));
+            if (!evaluation.IsValid)
+            {
+                if (evaluation.Failure!.Code ==
+                    SaleLineDocumentUpdateError.DiscountExceedsLineValue)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(updates), evaluation.Failure.Message);
+                throw new InvalidOperationException(evaluation.Failure.Message);
+            }
+            var value = evaluation.Update!;
+            return new
+            {
+                update.LineId,
+                value.Description,
+                value.PublicUnitPrice,
+                value.DocumentUnitCost,
+                value.Discount,
+                value.PublicLineTotal,
+                value.PriceChanged
+            };
         }).ToArray();
         var affected = await ExecuteAsync(connection, transaction, """
             UPDATE PosDraftLines AS target
@@ -437,9 +437,9 @@ public sealed partial class PosDraftStore
                 DocumentUnitCost=json_extract(input.value,'$.DocumentUnitCost'),
                 Discount=json_extract(input.value,'$.Discount'),
                 PublicLineTotal=json_extract(input.value,'$.PublicLineTotal'),
-                IsPriceOverridden=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN 1 ELSE IsPriceOverridden END,
-                PriceSource=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN 'Manual' ELSE PriceSource END,
-                PriceChannelId=CASE WHEN json_extract(input.value,'$.CommercialChanged')=1 THEN NULL ELSE PriceChannelId END
+                IsPriceOverridden=CASE WHEN json_extract(input.value,'$.PriceChanged')=1 THEN 1 ELSE IsPriceOverridden END,
+                PriceSource=CASE WHEN json_extract(input.value,'$.PriceChanged')=1 THEN 'Manual' ELSE PriceSource END,
+                PriceChannelId=CASE WHEN json_extract(input.value,'$.PriceChanged')=1 THEN NULL ELSE PriceChannelId END
             FROM json_each(@UpdatesJson) input
             WHERE target.DraftId=@DraftId
               AND target.LineId=json_extract(input.value,'$.LineId');

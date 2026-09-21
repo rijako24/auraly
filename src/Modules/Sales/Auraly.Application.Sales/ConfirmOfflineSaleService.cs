@@ -47,7 +47,8 @@ public sealed record ConfirmOfflineSaleCommand(
     FiscalEnvironment Environment,
     string QrValidationUrl,
     IReadOnlyCollection<OfflineSaleLine> Lines,
-    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
+    decimal PayableRoundingAmount = 0m);
 
 public sealed record ConfirmedOfflineSale(
     SalesInvoice Invoice,
@@ -71,7 +72,7 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
                 command.FiscalNumber.FullNumber,
                 command.IssuedAt,
                 invoice.UntaxedAmount,
-                invoice.PayableAmount,
+                invoice.PayableAmount + command.PayableRoundingAmount,
                 command.SupplierTaxId,
                 command.CustomerIdentification,
                 command.TechnicalKey,
@@ -87,9 +88,10 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
             command.CustomerIdentification,
             invoice.UntaxedAmount,
             invoice.TaxAmount,
-            invoice.PayableAmount,
+            invoice.PayableAmount + command.PayableRoundingAmount,
             cufe.Cufe,
-            cufe.QrPayload);
+            cufe.QrPayload,
+            command.PayableRoundingAmount);
 
         invoice.ConfirmOffline(command.DocumentNumber, snapshot);
 

@@ -217,12 +217,17 @@ public sealed class HalfLetterDocumentRenderer
             .ThenBy(value => value.TaxRate)
             .Select(tax => $"<div class=\"pair\"><span>{Encode(TaxName(tax.TaxCode))} {Rate(tax.TaxRate)}% · base {Money(tax.Base)}</span><strong>{Money(tax.Amount)}</strong></div>"));
         var payments = string.Join("", receipt.Payments.Select(payment =>
-            $"<div class=\"pair\"><span>{Encode(PaymentName(payment.MethodCode))}</span><strong>{Money(payment.Amount)}</strong></div>"));
+            $"<div class=\"pair\"><span>{Encode(PaymentName(payment.MethodCode))}</span><strong>{Money(payment.CollectedAmount)}</strong></div>"));
         var cashTender = CashTender(receipt.Payments);
         var withholdings = string.Join("", (receipt.Withholdings ?? []).Select(withholding =>
             $"<div class=\"pair\"><span>Ret. {Encode(withholding.Name)} ({Rate(withholding.Rate)}%)</span><strong>-{Money(withholding.Amount)}</strong></div>"));
         var withholdingTotals = receipt.WithholdingTotal <= 0 ? string.Empty :
             $"{withholdings}<div class=\"pair\"><span>Total retenciones</span><strong>-{Money(receipt.WithholdingTotal)}</strong></div>";
+        var invoiceSubtotal = receipt.PayableAmount - receipt.PayableRoundingAmount;
+        var rounding = receipt.PayableRoundingAmount == 0 ? string.Empty :
+            $"<div class=\"pair\"><span>Ajuste al peso</span><strong>{SignedMoney(receipt.PayableRoundingAmount)}</strong></div>";
+        var grossTotal = receipt.WithholdingTotal <= 0 ? string.Empty :
+            $"<div class=\"pair\"><span>Total bruto</span><strong>{Money(receipt.PayableAmount)}</strong></div>";
         var netPayable = receipt.WithholdingTotal > 0 ? receipt.NetPayableAmount : receipt.PayableAmount;
         var companyName = Encode(receipt.CompanyName);
         var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
@@ -231,7 +236,7 @@ public sealed class HalfLetterDocumentRenderer
         var issuedAt = DianFiscalDateTime.InColombia(receipt.IssuedAt).ToString("d/M/yyyy, h:mm:ss tt", ColombianCulture);
         var detailSection = isOrder
             ? $"<section class=\"details\"><div><div class=\"caption\">Detalle del pedido · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div></div></div></section>"
-            : $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section><section class=\"breakdown\"><div class=\"breakdown-title\">Medios de pago</div>{payments}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Subtotal</span><strong>{Money(receipt.UntaxedAmount)}</strong></div><div class=\"pair\"><span>Total impuestos</span><strong>{Money(receipt.TaxAmount)}</strong></div><div class=\"pair\"><span>Total bruto</span><strong>{Money(receipt.PayableAmount)}</strong></div>{withholdingTotals}<div class=\"pair total\"><span>Total a pagar</span><strong>{Money(netPayable)}</strong></div>{cashTender}{qr}</div></div></section>";
+            : $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section><section class=\"breakdown\"><div class=\"breakdown-title\">Medios de pago</div>{payments}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Subtotal factura</span><strong>{Money(invoiceSubtotal)}</strong></div>{rounding}{grossTotal}{withholdingTotals}<div class=\"pair total\"><span>Total a pagar</span><strong>{Money(netPayable)}</strong></div>{cashTender}{qr}</div></div></section>";
 
         return $$"""
           <article class="document" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
@@ -300,6 +305,7 @@ public sealed class HalfLetterDocumentRenderer
 
     private static string Encode(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
     private static string Money(decimal value) => value.ToString(value == decimal.Truncate(value) ? "C0" : "C2", ColombianCulture);
+    private static string SignedMoney(decimal value) => $"{(value > 0 ? "+" : "-")}{Money(decimal.Abs(value))}";
     private static string Quantity(decimal value) => value.ToString("0.###", ColombianCulture);
     private static string Rate(decimal value) => value.ToString("0.##", ColombianCulture);
     private static string TaxName(string code) => code switch { "01" => "IVA", "02" => "IC", "03" => "ICA", "04" => "INC", _ => code };

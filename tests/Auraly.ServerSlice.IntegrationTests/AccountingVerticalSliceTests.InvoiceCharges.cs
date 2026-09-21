@@ -6,6 +6,7 @@ using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Receivables;
+using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Application.WorkSessions;
@@ -53,6 +54,7 @@ public sealed partial class AccountingVerticalSliceTests
             ExpensePermissionCodes.Read, ExpensePermissionCodes.Configure, ExpensePermissionCodes.Create,
             CatalogPermissionCodes.Update, PayablesPermissionCodes.Read, PayablesPermissionCodes.RegisterPayment,
             ReceivablesPermissionCodes.Read, ReceivablesPermissionCodes.RegisterPayment,
+            SalesReturnPermissionCodes.Read, SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close, WorkSessionPermissionCodes.ReadCashDifferences);
         using (var defaults = await admin.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
         using (var activate = await admin.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
@@ -116,7 +118,8 @@ public sealed partial class AccountingVerticalSliceTests
             }
             await AssertBalancedAsync(sale.DocumentId);
             Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", sale.DocumentId));
-            Assert.Equal(sale.CommercialSnapshot.PayableAmount, await ScalarAsync<decimal>(
+            Assert.Equal(sale.CommercialSnapshot.PayableAmount -
+                sale.CommercialSnapshot.PayableRoundingAmount, await ScalarAsync<decimal>(
                 "SELECT SUM(TotalAmount) FROM reporting.SalesReportTaxFacts WHERE SourceDocumentId=@Id", sale.DocumentId));
             Assert.Equal(sale.CommercialSnapshot.PayableAmount, await ScalarAsync<decimal>(
                 "SELECT TotalAmount FROM reporting.SalesReportDocuments WHERE DocumentId=@Id", sale.DocumentId));
@@ -153,13 +156,16 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.Equal(20, expectedCharges.Length);
         var matrixCharges = (preview.InvoiceCharges ?? []).Where(charge => expectedCharges.Any(expected => expected.AppliedChargeId == charge.AppliedChargeId)).ToArray();
         Assert.Equal(20, matrixCharges.Length);
-        Assert.Equal(baseline.ExpectedCash + issued.SelectMany(sale => sale.Payments).Where(payment => payment.MethodCode == "Cash").Sum(payment => payment.Amount), preview.ExpectedCash);
+        Assert.Equal(baseline.ExpectedCash + issued.SelectMany(sale => sale.Payments)
+            .Where(payment => payment.MethodCode == "Cash").Sum(payment => payment.CollectedAmount), preview.ExpectedCash);
         Assert.Equal(expectedCharges.Sum(charge => charge.InvoicedAmount), matrixCharges.Sum(charge => charge.InvoicedAmount));
         Assert.Equal(expectedCharges.Sum(charge => charge.ExpenseAmount), matrixCharges.Sum(charge => charge.ExpenseAmount));
         Assert.Equal(matrixCharges.Sum(charge => charge.InvoicedAmount), matrixCharges.SelectMany(charge => charge.Payments).Sum(payment => payment.Amount));
 
         // Paying the carrier settles the existing obligation; it does not expense the charge again.
-        var firstCharge = expectedCharges.First();
+        var firstCharge = expectedCharges.First(charge => issued.Any(sale =>
+            sale.Credit is not null && sale.Charges?.Any(candidate =>
+                candidate.AppliedChargeId == charge.AppliedChargeId) == true));
         var payableId = await ScalarAsync<Guid>("SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", firstCharge.AppliedChargeId);
         var payment = new ConfirmSupplierPaymentRequest(Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId,
             issued[0].CommercialSnapshot.IssuedAt.AddHours(1), "COP", SupplierPaymentMethods.Cash, null,
@@ -181,8 +187,82 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.Equal("Pago a proveedor", supplierExit.ReasonName);
         Assert.Equal(payment.Notes, supplierExit.Notes);
         Assert.Equal(firstCharge.Amount, supplierExit.Amount);
+
+        // Returning a paid charge reverses its expense and creates a supplier credit.
+        var chargedSale = issued.Single(sale =>
+            sale.Charges?.Any(charge => charge.AppliedChargeId == firstCharge.AppliedChargeId) == true);
+        var returnId = Guid.NewGuid();
+        var chargeReturn = new ConfirmSalesReturnRequest(
+            returnId, fixture.BusinessId, fixture.WarehouseId, chargedSale.DocumentId,
+            chargedSale.CommercialSnapshot.IssuedAt.AddHours(2),
+            ReturnEconomicResolutions.CustomerCredit, null, "Devolución con cargo de facturación",
+            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
+            ReasonCode: "Other", ReturnedChargeIds: [firstCharge.AppliedChargeId]);
+        using (var message = new HttpRequestMessage(
+                   HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+               { Content = JsonContent.Create(chargeReturn) })
+        {
+            message.Headers.Add("Idempotency-Key", returnId.ToString("N"));
+            using var response = await admin.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        await AssertBalancedAsync(returnId);
+        Assert.Equal(firstCharge.Amount, await AccountAmountAsync(
+            returnId, "519595", debit: false));
+        Assert.Equal(firstCharge.Amount, await ScalarAsync<decimal>("""
+            SELECT SupplierCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
+            WHERE ReturnId=@Id;
+            """, returnId));
+        Assert.Equal(firstCharge.Amount, await ScalarAsync<decimal>("""
+            SELECT OriginalAmount FROM dbo.SupplierCredits
+            WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesReturnCharge';
+            """, firstCharge.AppliedChargeId));
+        Assert.Equal(0, await ScalarAsync<decimal>("""
+            SELECT PayableCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
+            WHERE ReturnId=@Id;
+            """, returnId));
+
+        // A company-paid charge with an open payable is cancelled instead of creating credit.
+        var companyCharge = expectedCharges.First(charge => charge.ExpenseAmount > 0 &&
+            charge.AppliedChargeId != firstCharge.AppliedChargeId && issued.Any(sale =>
+                sale.Credit is not null && sale.Charges?.Any(candidate =>
+                    candidate.AppliedChargeId == charge.AppliedChargeId) == true));
+        var companySale = issued.Single(sale =>
+            sale.Charges?.Any(charge => charge.AppliedChargeId == companyCharge.AppliedChargeId) == true);
+        var companyReturnId = Guid.NewGuid();
+        var companyReturn = new ConfirmSalesReturnRequest(
+            companyReturnId, fixture.BusinessId, fixture.WarehouseId, companySale.DocumentId,
+            companySale.CommercialSnapshot.IssuedAt.AddHours(3),
+            ReturnEconomicResolutions.CustomerCredit, null, "Devolución de domicilio asumido",
+            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
+            ReasonCode: "Other", ReturnedChargeIds: [companyCharge.AppliedChargeId]);
+        using (var message = new HttpRequestMessage(
+                   HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+               { Content = JsonContent.Create(companyReturn) })
+        {
+            message.Headers.Add("Idempotency-Key", companyReturnId.ToString("N"));
+            using var response = await admin.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        await AssertBalancedAsync(companyReturnId);
+        Assert.Equal(companyCharge.Amount, await AccountAmountAsync(
+            companyReturnId, "519595", debit: false));
+        Assert.Equal(companyCharge.Amount, await ScalarAsync<decimal>("""
+            SELECT PayableCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
+            WHERE ReturnId=@Id;
+            """, companyReturnId));
+        Assert.Equal(0, await ScalarAsync<decimal>("""
+            SELECT SupplierCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
+            WHERE ReturnId=@Id;
+            """, companyReturnId));
+        Assert.Equal("Cancelled", await ScalarAsync<string>("""
+            SELECT Status FROM dbo.Payables WHERE SourceDocumentId=@Id;
+            """, companyCharge.AppliedChargeId));
+
         // Collecting a credit invoice is a new cash entry, never a second supplier expense.
-        var creditSale = issued.First(sale => sale.Credit is not null && sale.Charges?.Any(charge => charge.InvoicedAmount > 0) == true);
+        var creditSale = issued.First(sale => sale.Credit is not null &&
+            sale.DocumentId != chargedSale.DocumentId && sale.DocumentId != companySale.DocumentId &&
+            sale.Charges?.Any(charge => charge.InvoicedAmount > 0) == true);
         var receivableId = await ScalarAsync<Guid>("SELECT ReceivableId FROM dbo.Receivables WHERE SourceDocumentId=@Id", creditSale.DocumentId);
         var collection = new ConfirmCustomerPaymentRequest(Guid.NewGuid(), fixture.BusinessId, creditSale.CustomerId!.Value,
             sessionId, DateTimeOffset.UtcNow, "COP", CustomerPaymentMethods.Cash, null, "Recaudo factura con domicilio",
@@ -258,21 +338,31 @@ public sealed partial class AccountingVerticalSliceTests
         var line = source.Lines[0] with { Quantity = 1, UnitPrice = productNet, UntaxedAmount = productNet,
             TaxAmount = productTax, LineTotal = productTotal, DiscountAmount = 0 };
         var gross = productTotal + (charge?.InvoicedAmount ?? 0);
+        var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(gross);
+        var roundedGross = gross + roundingAdjustment;
         var net = productNet + (charge?.InvoicedUntaxedAmount ?? 0);
         var taxes = PosSaleTaxSummary.Calculate([new("01", productTax)], charge is null ? [] : [charge]);
         var vat = taxes.Sum(tax => tax.Amount);
         var paid = mixed ? decimal.Round(gross / 4, 2, MidpointRounding.AwayFromZero) : gross;
         var fiscal = source.FiscalSnapshot!;
-        var cufe = CufeCalculator.Calculate(new CufeInput(fiscal.FiscalNumber, fiscal.IssuedAt, net, gross,
+        var cufe = CufeCalculator.Calculate(new CufeInput(fiscal.FiscalNumber, fiscal.IssuedAt, net, roundedGross,
             fiscal.SupplierTaxId, fiscal.CustomerIdentification,
             new FiscalTechnicalKey(ServerSliceFixture.TechnicalKeyValue, ServerSliceFixture.TechnicalKeyVersion),
             FiscalEnvironment.Test, taxes.Select(tax => new FiscalTaxAmount(tax.Code, tax.Amount)).ToArray()), ServerSliceFixture.QrValidationUrl);
         var sale = WithUblSnapshot(source with { Lines = [line], Charges = charge is null ? null : [charge],
             CustomerId = customerId, CustomerPartySiteId = siteId,
             Credit = mixed ? new(customerId, gross - paid, fiscal.IssuedAt.AddDays(30), PartySiteId: siteId) : null,
-            Payments = [new(1, mixed ? "Transfer" : "Cash", paid, mixed ? $"MATRIX-{consecutive}" : null, BankAccountId: mixed ? bankAccountId : null)],
-            CommercialSnapshot = source.CommercialSnapshot with { UntaxedAmount = net, TaxAmount = vat, PayableAmount = gross, Taxes = taxes },
-            FiscalSnapshot = fiscal with { UntaxedAmount = net, TaxAmount = vat, PayableAmount = gross, Taxes = taxes, Cufe = cufe.Cufe, QrPayload = cufe.QrPayload }
+            Payments = [new(1, mixed ? "Transfer" : "Cash", paid,
+                mixed ? $"MATRIX-{consecutive}" : null,
+                BankAccountId: mixed ? bankAccountId : null,
+                RoundingAdjustment: roundingAdjustment)],
+            CommercialSnapshot = source.CommercialSnapshot with {
+                UntaxedAmount = net, TaxAmount = vat, PayableAmount = roundedGross,
+                PayableRoundingAmount = roundingAdjustment, Taxes = taxes },
+            FiscalSnapshot = fiscal with {
+                UntaxedAmount = net, TaxAmount = vat, PayableAmount = roundedGross,
+                PayableRoundingAmount = roundingAdjustment, Taxes = taxes,
+                Cufe = cufe.Cufe, QrPayload = cufe.QrPayload }
         });
         return sale with { UblSnapshot = sale.UblSnapshot! with {
             PaymentFormCode = mixed ? "2" : "1",

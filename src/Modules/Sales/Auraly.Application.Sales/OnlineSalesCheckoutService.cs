@@ -42,7 +42,8 @@ public sealed record OnlineSalesOrderCheckoutSource(
     Guid? CustomerId,
     Guid? CustomerPartySiteId,
     byte[] SnapshotVersion,
-    IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines);
+    IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines,
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
 
 public static class OnlineSalesOrderCheckoutLineMapper
 {
@@ -118,7 +119,7 @@ public interface IOnlineSalesCheckoutStore
     Task<IReadOnlyList<OnlineOrderCreditValidationIssue>> ValidateOrderCreditBatchAsync(
         OnlineSalesUserIdentity user,
         Guid businessId,
-        IReadOnlyCollection<Guid> orderIds,
+        IReadOnlyDictionary<Guid, decimal> orderAmounts,
         CancellationToken cancellationToken);
 
     Task<OnlineSalesFiscalKeyContext> ResolveFiscalKeyContextAsync(
@@ -201,17 +202,17 @@ public sealed class OnlineSalesCheckoutService(
     public Task<IReadOnlyList<OnlineOrderCreditValidationIssue>> ValidateOrderCreditBatchAsync(
         OnlineSalesUserIdentity user,
         Guid businessId,
-        IReadOnlyCollection<Guid> orderIds,
+        IReadOnlyDictionary<Guid, decimal> orderAmounts,
         CancellationToken cancellationToken = default)
     {
         DemandPermission(user);
-        ArgumentNullException.ThrowIfNull(orderIds);
-        if (businessId == Guid.Empty || orderIds.Count is < 1 or > 50 ||
-            orderIds.Any(orderId => orderId == Guid.Empty))
+        ArgumentNullException.ThrowIfNull(orderAmounts);
+        if (businessId == Guid.Empty || orderAmounts.Count is < 1 or > 50 ||
+            orderAmounts.Any(item => item.Key == Guid.Empty || item.Value < 0m))
             throw new OnlineSalesDraftValidationException(
                 "Selecciona entre 1 y 50 pedidos válidos para validar el crédito.");
         return checkouts.ValidateOrderCreditBatchAsync(
-            user, businessId, orderIds, cancellationToken);
+            user, businessId, orderAmounts, cancellationToken);
     }
 
     public async Task<CompleteOnlineSalesDraftResponse> CompleteAsync(
@@ -277,8 +278,8 @@ public sealed class OnlineSalesCheckoutService(
         var context = new OnlineSaleSettlementContext(
             source.BusinessId,
             source.CustomerId,
-            lines.Sum(line => line.Net),
-            lines.Sum(line => line.Tax),
+            lines.Sum(line => line.Net) + (source.Charges?.Sum(charge => charge.InvoicedUntaxedAmount) ?? 0m),
+            lines.Sum(line => line.Tax) + (source.Charges?.Sum(charge => charge.InvoicedTaxAmount) ?? 0m),
             time.GetUtcNow(),
             lines.Any(line => SaleBelowCostPolicy.IsBelowCost(
                 line.Quantity, line.Net, line.DocumentUnitCost)));
@@ -448,6 +449,8 @@ public sealed class OnlineSalesCheckoutService(
         if (request.Payments.Any(payment =>
                 !PaymentMethods.Contains(payment.MethodCode) ||
                 payment.Amount <= 0 ||
+                payment.RoundingAdjustment is <= -50m or > 50m ||
+                payment.Amount + payment.RoundingAdjustment <= 0m ||
                 payment.Reference?.Length > 160 ||
                 payment.Notes?.Length > 500 ||
                 payment.CardFranchiseCode?.Length > 64 ||
@@ -459,7 +462,7 @@ public sealed class OnlineSalesCheckoutService(
             throw new OnlineSalesDraftValidationException(
                 "Uno de los medios de pago no es válido.");
         if (request.Payments.Any(payment => payment.TenderedAmount is { } tendered &&
-                (payment.MethodCode != "Cash" || tendered < payment.Amount)))
+                (payment.MethodCode != "Cash" || tendered < payment.Amount + payment.RoundingAdjustment)))
             throw new OnlineSalesDraftValidationException(
                 "El efectivo recibido debe corresponder al pago en efectivo y no puede ser menor al valor aplicado.");
         if (request.Payments.Count(payment => payment.MethodCode == "Cash") > 1)

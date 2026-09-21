@@ -272,7 +272,7 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
-    public async Task Adding_same_product_creates_normal_price_line_without_changing_edited_lines()
+    public async Task Line_discount_keeps_automatic_price_source_when_more_products_are_added()
     {
         await WithServiceAsync(async (service, drafts, scope, productId, customerId, availability) =>
         {
@@ -297,7 +297,8 @@ public sealed class PosCaptureServiceTests
             var automatic = addedAgain.Draft.Lines.Single(line => line.LineId != original.LineId);
             Assert.Equal(original.UnitPrice, editedLine.UnitPrice);
             Assert.Equal(5m, editedLine.Discount);
-            Assert.Equal("Manual", editedLine.PriceSource);
+            Assert.Equal("PriceChannel", editedLine.PriceSource);
+            Assert.False(editedLine.IsPriceOverridden);
             Assert.Equal(80m, automatic.UnitPrice);
 
             availability.Response = new(
@@ -310,7 +311,8 @@ public sealed class PosCaptureServiceTests
             var recovered = await drafts.GetOrCreateActiveAsync(scope);
             Assert.Equal(original.UnitPrice, recovered.Lines.Single(line => line.LineId == original.LineId).UnitPrice);
             Assert.Equal(5m, recovered.Lines.Single(line => line.LineId == original.LineId).Discount);
-            Assert.Equal("Manual", recovered.Lines.Single(line => line.LineId == original.LineId).PriceSource);
+            Assert.Equal("PriceChannel", recovered.Lines.Single(line => line.LineId == original.LineId).PriceSource);
+            Assert.False(recovered.Lines.Single(line => line.LineId == original.LineId).IsPriceOverridden);
         });
     }
 

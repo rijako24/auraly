@@ -120,6 +120,51 @@ CREATE INDEX [IX_SalesReturnLines_Original]
   INCLUDE ([Quantity],[DiscountAmount],[UntaxedAmount],[TaxAmount],[LineTotal]);
 GO
 
+CREATE TABLE [dbo].[SalesReturnCharges]
+(
+    [ReturnId] UNIQUEIDENTIFIER NOT NULL,
+    [OriginalDocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [AppliedChargeId] UNIQUEIDENTIFIER NOT NULL,
+    [ChargeId] UNIQUEIDENTIFIER NOT NULL,
+    [Code] NVARCHAR(32) NOT NULL,
+    [Name] NVARCHAR(120) NOT NULL,
+    [Amount] DECIMAL(19,4) NOT NULL,
+    [InvoicedAmount] DECIMAL(19,4) NOT NULL,
+    [ExpenseAmount] DECIMAL(19,4) NOT NULL,
+    [InvoicedUntaxedAmount] DECIMAL(19,4) NOT NULL,
+    [InvoicedTaxAmount] DECIMAL(19,4) NOT NULL,
+    [TaxCode] NVARCHAR(16) NOT NULL,
+    [TaxRate] DECIMAL(9,6) NOT NULL,
+    [SupplierUntaxedAmount] DECIMAL(19,4) NOT NULL,
+    [SupplierVatAmount] DECIMAL(19,4) NOT NULL,
+    [SupplierId] UNIQUEIDENTIFIER NOT NULL,
+    [ExpenseAccountId] UNIQUEIDENTIFIER NOT NULL,
+    [CostCenterId] UNIQUEIDENTIFIER NULL,
+    CONSTRAINT [PK_SalesReturnCharges] PRIMARY KEY ([ReturnId],[AppliedChargeId]),
+    CONSTRAINT [UQ_SalesReturnCharges_Applied] UNIQUE ([AppliedChargeId]),
+    CONSTRAINT [FK_SalesReturnCharges_Return] FOREIGN KEY ([ReturnId],[OriginalDocumentId]) REFERENCES [dbo].[SalesReturns] ([ReturnId],[OriginalDocumentId]),
+    CONSTRAINT [FK_SalesReturnCharges_Supplier] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
+    CONSTRAINT [FK_SalesReturnCharges_ExpenseAccount] FOREIGN KEY ([ExpenseAccountId]) REFERENCES [dbo].[AccountingAccounts] ([AccountId]),
+    CONSTRAINT [FK_SalesReturnCharges_CostCenter] FOREIGN KEY ([CostCenterId]) REFERENCES [dbo].[AccountingCostCenters] ([CostCenterId]),
+    CONSTRAINT [CK_SalesReturnCharges_Amounts] CHECK ([Amount]>0 AND [InvoicedAmount]>=0 AND [ExpenseAmount]>=0 AND [Amount]=[InvoicedAmount]+[ExpenseAmount] AND [InvoicedAmount]=[InvoicedUntaxedAmount]+[InvoicedTaxAmount] AND [Amount]=[SupplierUntaxedAmount]+[SupplierVatAmount] AND [TaxRate] BETWEEN 0 AND 100)
+);
+GO
+
+CREATE TABLE [dbo].[SalesReturnChargeFinancialEffects]
+(
+    [ReturnId] UNIQUEIDENTIFIER NOT NULL,
+    [AppliedChargeId] UNIQUEIDENTIFIER NOT NULL,
+    [PayableId] UNIQUEIDENTIFIER NOT NULL,
+    [PayableCreditAmount] DECIMAL(19,4) NOT NULL,
+    [SupplierCreditAmount] DECIMAL(19,4) NOT NULL,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [PK_SalesReturnChargeFinancialEffects] PRIMARY KEY ([ReturnId],[AppliedChargeId]),
+    CONSTRAINT [FK_SalesReturnChargeFinancialEffects_Charge] FOREIGN KEY ([ReturnId],[AppliedChargeId]) REFERENCES [dbo].[SalesReturnCharges] ([ReturnId],[AppliedChargeId]),
+    CONSTRAINT [FK_SalesReturnChargeFinancialEffects_Payable] FOREIGN KEY ([PayableId]) REFERENCES [dbo].[Payables] ([PayableId]),
+    CONSTRAINT [CK_SalesReturnChargeFinancialEffects_Amounts] CHECK ([PayableCreditAmount]>=0 AND [SupplierCreditAmount]>=0 AND [PayableCreditAmount]+[SupplierCreditAmount]>0)
+);
+GO
+
 CREATE TABLE dbo.SalesServiceReturnLines
 (
     ReturnId UNIQUEIDENTIFIER NOT NULL,

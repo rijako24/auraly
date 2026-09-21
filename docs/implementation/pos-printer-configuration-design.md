@@ -104,11 +104,23 @@ sede en el encabezado, separan al responsable como dato propio, usan reglas
 punteadas alrededor del valor y recuperan el espacio amplio de firma. Las
 versiones 1 y 2 permanecen disponibles e inmutables para reproducir los formatos
 publicados originalmente.
-`work-session-closure` tiene una versión 4 activa: conserva Actividad, Totales,
+`work-session-closure` tiene una versión 5 activa: conserva Actividad, Totales,
 Ventas a cartera y Detalle por medio de pago. Cada entrada y salida muestra
 motivo, observación debajo si existe y valor; la persona responsable permanece
 en el encabezado del cierre. Cartera ocupa una fila con nombre, factura y valor.
-Las versiones 1, 2 y 3 permanecen disponibles e inmutables para reimpresiones.
+Los cargos se agrupan por su identificador: «Actividad del turno» muestra la
+cantidad de aplicaciones y «Totales del turno» el importe acumulado de cada cargo,
+tanto cobrado como asumido como gasto. Un cargo con pagos repartidos se cuenta
+una sola vez. «Cargos de facturación» conserva el detalle por factura y los totales
+incluidos en facturas y registrados como gasto. No se repiten dentro de efectivo,
+tarjeta, transferencia ni cartera. Son resúmenes informativos: no se vuelven a
+sumar al recaudo. Los medios conservan ventas, devoluciones, movimientos aplicables
+y conciliación sin recalcularlos. Los nombres se toman del snapshot del cargo;
+un cierre sin cargos no agrega filas a Actividad ni Totales.
+La sección «Cargos de facturación» se ubica después de «Salidas de dinero» y antes
+de «Detalle por medio de pago».
+Las versiones 1, 2, 3 y 4 permanecen disponibles e inmutables para reimpresiones;
+la versión 4 conserva los cargos individuales dentro de cada medio.
 El detalle de efectivo de la consulta y de la tirilla procede del snapshot del
 cierre. No depende de cambios posteriores del motivo ni de que haya terminado
 la proyección asíncrona del documento. La clave de verificación de los nuevos
@@ -154,7 +166,11 @@ dotnet run --project tools/Auraly.ReportPreview/Auraly.ReportPreview.csproj -- -
 ```
 
 El índice abre las salidas HTML y PDF producidas por los renderizadores reales y
-permite comparar versiones y formatos. Los archivos se escriben bajo
+permite comparar versiones y formatos. Los cierres de sesión de 80 y 58 mm
+aparecen primero, con el de 80 mm seleccionado inicialmente; incluyen movimientos,
+cartera, pagos en efectivo, tarjeta y transferencia, cargos repetidos y gastos
+de ejemplo, usando `WorkSessionClosureReceiptRenderer`.
+Los archivos se escriben bajo
 `artifacts/report-preview`, fuera del control de versiones. La tirilla HTML/CSS
 continúa como representación canónica porque preserva QR, logotipo, anchos físicos
 y composición; ESC/POS de texto se mantiene únicamente como transporte de

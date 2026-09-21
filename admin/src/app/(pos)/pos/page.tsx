@@ -39,6 +39,7 @@ import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date
 import {
   loadCommerceOrder,
   loadCommerceOrders,
+  type OrderInvoiceChargeSelection,
 } from "@/services/orders/commerce-orders-client";
 import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
 import {
@@ -116,6 +117,7 @@ import { PosInvoiceChargeDialog } from "./pos-invoice-charge-dialog";
 import { PosPaymentDialog } from "./pos-payment-dialog";
 import { PosPrinterDialog } from "./pos-printer-dialog";
 import {
+  roundToNearestHundred,
   shouldShowCashChange,
   splitCreditCheckout,
   type PosPaymentSettlement,
@@ -163,7 +165,7 @@ const effectiveUnitMoney = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
   minimumFractionDigits: 0,
-  maximumFractionDigits: 6,
+  maximumFractionDigits: 0,
 });
 
 let rejectedScanAudioContext: AudioContext | null = null;
@@ -2760,6 +2762,7 @@ export default function PosPage() {
     idempotencyKey: string,
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
+    charge?: OrderInvoiceChargeSelection | null,
   ) {
     const result = await runOnlineOrderRequest(async () => {
       const orderClient = await getWebOrderClient();
@@ -2774,6 +2777,7 @@ export default function PosPage() {
         idempotencyKey,
         onProgress,
         true,
+        charge,
       );
     });
     setMessage(
@@ -3568,7 +3572,7 @@ export default function PosPage() {
               <div className="border-t border-white/15 pt-3">
                 <dt className="text-sm text-auraly-secondary">Neto por cobrar</dt>
                 <dd className="text-right text-3xl font-bold tracking-tight text-auraly-light">
-                  {money.format(saleSettlement?.netAmount ?? draft?.payableAmount ?? 0)}
+                  {money.format(roundToNearestHundred(saleSettlement?.netAmount ?? draft?.payableAmount ?? 0))}
                 </dd>
               </div>
             </dl>
@@ -3757,7 +3761,7 @@ export default function PosPage() {
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={async (orders) =>
                   printOrdersOnline(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charge) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     paymentMethodCode,
@@ -3765,8 +3769,11 @@ export default function PosPage() {
                     printAfterInvoice,
                     idempotencyKey,
                     onProgress,
+                    undefined,
+                    charge,
                   )
                 }
+                onLoadInvoiceCharges={(page) => client.invoiceCharges(page)}
                 onConfigurePrinting={() => setPrinterOpen(true)}
                 onCountChange={setOrdersCount}
                 onExpand={openOrders}
@@ -3809,7 +3816,7 @@ export default function PosPage() {
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={async (orders) =>
                 printOrdersOnline(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charge) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
@@ -3817,8 +3824,11 @@ export default function PosPage() {
                   printAfterInvoice,
                   idempotencyKey,
                   onProgress,
+                  undefined,
+                  charge,
                 )
               }
+              onLoadInvoiceCharges={(page) => client.invoiceCharges(page)}
               onConfigurePrinting={() => setPrinterOpen(true)}
               onCountChange={setOrdersCount}
             />

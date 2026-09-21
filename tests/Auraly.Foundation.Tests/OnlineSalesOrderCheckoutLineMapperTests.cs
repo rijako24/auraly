@@ -90,6 +90,56 @@ public sealed class OnlineSalesOrderCheckoutLineMapperTests
         Assert.Equal(500m, fiscal.PromotionDiscountAmount);
     }
 
+    [Fact]
+    public void DocumentUpdate_KeepsAutomaticPriceOwnershipWhenOnlyTheDiscountChanges()
+    {
+        var evaluation = SaleLineMonetaryPolicy.EvaluateDocumentUpdate(
+            new(
+                Quantity: 2m,
+                PublicUnitPrice: 10_000m,
+                PromotionDiscount: 500m,
+                DocumentUnitCost: 7_000m,
+                TaxRate: 19m,
+                AllowsDocumentCostOverride: false),
+            new(
+                Description: " Producto ",
+                PublicUnitPrice: 10_000m,
+                Discount: 1_000m,
+                DocumentUnitCost: 7_000m));
+
+        Assert.True(evaluation.IsValid);
+        Assert.False(evaluation.Update!.PriceChanged);
+        Assert.Equal("Producto", evaluation.Update.Description);
+        Assert.Equal(18_500m, evaluation.Update.PublicLineTotal);
+        Assert.Equal(8_403.36m, evaluation.Update.UntaxedUnitPrice);
+    }
+
+    [Fact]
+    public void DocumentUpdate_UsesTheSameDiscountLimitForEveryPersistenceEngine()
+    {
+        var evaluation = SaleLineMonetaryPolicy.EvaluateDocumentUpdate(
+            new(
+                Quantity: 1m,
+                PublicUnitPrice: 10_000m,
+                PromotionDiscount: 1_000m,
+                DocumentUnitCost: 7_000m,
+                TaxRate: 0m,
+                AllowsDocumentCostOverride: false),
+            new(
+                Description: "Producto",
+                PublicUnitPrice: 10_000m,
+                Discount: 9_001m,
+                DocumentUnitCost: 7_000m));
+
+        Assert.False(evaluation.IsValid);
+        Assert.Equal(
+            SaleLineDocumentUpdateError.DiscountExceedsLineValue,
+            evaluation.Failure!.Code);
+        Assert.Equal(
+            "El descuento no puede superar el valor de la línea.",
+            evaluation.Failure.Message);
+    }
+
     private static OnlineSalesOrderCheckoutLine CreateLine(
         decimal quantity,
         decimal publicUnitPrice,

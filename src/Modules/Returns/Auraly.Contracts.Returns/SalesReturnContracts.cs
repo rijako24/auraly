@@ -63,7 +63,26 @@ public sealed record ConfirmSalesReturnRequest(
     string ReturnScopeCode = SalesReturnScopes.Partial,
     Guid? BankAccountId = null,
     string? SettlementReference = null,
-    string? SettlementNotes = null);
+    string? SettlementNotes = null,
+    IReadOnlyCollection<Guid>? ReturnedChargeIds = null);
+
+public sealed record SalesReturnChargeSnapshot(
+    Guid AppliedChargeId,
+    Guid ChargeId,
+    string Code,
+    string Name,
+    decimal Amount,
+    decimal InvoicedAmount,
+    decimal ExpenseAmount,
+    decimal InvoicedUntaxedAmount,
+    decimal InvoicedTaxAmount,
+    string TaxCode,
+    decimal TaxRate,
+    decimal SupplierUntaxedAmount,
+    decimal SupplierVatAmount,
+    Guid SupplierId,
+    Guid ExpenseAccountId,
+    Guid? CostCenterId);
 
 public sealed record SalesReturnLineSnapshot(
     int LineNumber,
@@ -113,7 +132,8 @@ public sealed record SalesReturnDocumentPayload(
     string? ApprovalNumber = null,
     Guid? BankAccountId = null,
     string? SettlementReference = null,
-    string? SettlementNotes = null);
+    string? SettlementNotes = null,
+    IReadOnlyList<SalesReturnChargeSnapshot>? Charges = null);
 
 public sealed record SalesReturnAcceptance(
     Guid ReturnId,

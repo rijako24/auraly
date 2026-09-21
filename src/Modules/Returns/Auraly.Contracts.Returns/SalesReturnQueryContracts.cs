@@ -71,6 +71,15 @@ public sealed record ReturnableSaleLine(
     decimal LineTotal,
     string Barcodes);
 
+public sealed record ReturnableSaleCharge(
+    Guid AppliedChargeId,
+    string Code,
+    string Name,
+    decimal Amount,
+    decimal InvoicedAmount,
+    decimal ExpenseAmount,
+    bool IsReturned);
+
 public sealed record ReturnableSale(
     Guid DocumentId,
     string DocumentNumber,
@@ -87,7 +96,8 @@ public sealed record ReturnableSale(
     decimal ReceivableOutstanding,
     string FiscalStatus,
     IReadOnlyList<ReturnableSalePayment> Payments,
-    IReadOnlyList<ReturnableSaleLine> Lines);
+    IReadOnlyList<ReturnableSaleLine> Lines,
+    IReadOnlyList<ReturnableSaleCharge> Charges);
 
 public sealed record SalesReturnQuery(
     int Page,

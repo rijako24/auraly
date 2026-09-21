@@ -93,7 +93,6 @@ public sealed class EscPosReceiptRenderer
         WriteLine(stream, new string('-', columns));
         if (!isOrder)
         {
-            WriteLine(stream, Pair("Subtotal", Money(receipt.UntaxedAmount), columns));
             WriteBoldLine(stream, "Impuestos por tarifa");
             WriteBoldLine(stream, TaxRow("Impuesto", "Base", "Valor", columns));
             foreach (var tax in receipt.Lines
@@ -114,7 +113,11 @@ public sealed class EscPosReceiptRenderer
                     Money(tax.Amount),
                     columns));
             }
-            WriteLine(stream, Pair("Total impuestos", Money(receipt.TaxAmount), columns));
+            WriteLine(stream, Pair("Subtotal factura",
+                Money(receipt.PayableAmount - receipt.PayableRoundingAmount), columns));
+            if (receipt.PayableRoundingAmount != 0)
+                WriteLine(stream, Pair("Ajuste al peso",
+                    SignedMoney(receipt.PayableRoundingAmount), columns));
             if (receipt.WithholdingTotal > 0)
                 WriteLine(stream, Pair("Total bruto", Money(receipt.PayableAmount), columns));
             foreach (var withholding in receipt.Withholdings ?? [])
@@ -133,7 +136,7 @@ public sealed class EscPosReceiptRenderer
             WriteCashTender(stream, receipt.Payments, columns);
             WriteBoldLine(stream, "Medios de pago");
             foreach (var payment in receipt.Payments)
-                WriteBoldLine(stream, Pair(PaymentName(payment.MethodCode), Money(payment.Amount), columns));
+                WriteBoldLine(stream, Pair(PaymentName(payment.MethodCode), Money(payment.CollectedAmount), columns));
         }
         WriteLine(stream, new string('-', columns));
         if (isFiscal)
@@ -191,6 +194,9 @@ public sealed class EscPosReceiptRenderer
 
     private static string Money(decimal value) =>
         "$ " + value.ToString("N0", CultureInfo.GetCultureInfo("es-CO"));
+
+    private static string SignedMoney(decimal value) =>
+        $"{(value > 0 ? "+" : "-")}{Money(decimal.Abs(value))}";
 
     private static string Quantity(decimal value) =>
         value.ToString("0.###", CultureInfo.InvariantCulture);

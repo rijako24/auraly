@@ -53,7 +53,8 @@ public sealed record PosReceipt(
     CreditSaleAcknowledgement? CreditAcknowledgement = null,
     SalesInvoicePrintDetails? InvoicePrintDetails = null,
     string? CustomerPhone = null,
-    string? CustomerAddress = null);
+    string? CustomerAddress = null,
+    decimal PayableRoundingAmount = 0m);
 
 public interface IPosReceiptPrinter
 {
@@ -237,14 +238,21 @@ public sealed class PosSaleCompletionService(
                 $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
         var withholding = await CalculateWithholdingAsync(draft, command.IssuedAt, ct);
         if ((command.Payments.Count == 0 && command.Credit is null) ||
-            command.Payments.Sum(payment => payment.Amount) +
-                (command.Credit?.Amount ?? 0m) != withholding.NetAmount)
+            command.Payments.Sum(payment => payment.CollectedAmount) +
+                (command.Credit?.Amount ?? 0m) !=
+                    PosPaymentRoundingPolicy.RoundedTotal(withholding.NetAmount))
             throw new InvalidOperationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
         if (command.Payments.Any(payment => payment.TenderedAmount is { } tendered &&
-                (payment.MethodCode != "Cash" || tendered < payment.Amount)))
+                (payment.MethodCode != "Cash" || tendered < payment.CollectedAmount)) ||
+            command.Payments.Count(payment => payment.RoundingAdjustment != 0m) > 1 ||
+            command.Payments.Any(payment => payment.RoundingAdjustment is <= -50m or > 50m ||
+                payment.CollectedAmount <= 0m) ||
+            (command.Payments.Sum(payment => payment.RoundingAdjustment) is var adjustment &&
+             command.Payments.Count > 0 &&
+             adjustment != PosPaymentRoundingPolicy.Adjustment(withholding.NetAmount)))
             throw new InvalidOperationException(
-                "El efectivo recibido debe corresponder al pago en efectivo y no puede ser menor al valor aplicado.");
+                "El ajuste de pago o el efectivo recibido no corresponde al total de la venta.");
         var customer = draft.CustomerId is null || catalog is null
             ? null
             : await catalog.GetCustomerAsync(draft.CustomerId.Value, ct);

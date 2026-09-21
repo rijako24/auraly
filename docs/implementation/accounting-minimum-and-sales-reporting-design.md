@@ -114,6 +114,15 @@ cobrado o financiado, por lo que el comprobante permanece balanceado y el mismo
 importe llega al UBL fiscal como `PayableRoundingAmount`. Un documento sin ajuste
 conserva cero y no genera una línea artificial.
 
+La política redondea el total fiscal al múltiplo de COP 100 más cercano y cada
+pago guarda `RoundingAdjustment` separado de `Amount`. Caja, banco y cartera
+reciben `Amount + RoundingAdjustment`; el asiento lleva una diferencia positiva
+a `RoundingGain` y una negativa a `RoundingLoss`, sin modificar ingreso, IVA ni
+bases. CUFE y UBL publican el total oficial y su `PayableRoundingAmount` firmado.
+Reporting conserva ese total en `TotalAmount` y publica
+`RoundingAdjustmentAmount`; el subtotal exacto se reconstruye como `TotalAmount
+- RoundingAdjustmentAmount`.
+
 ## Informes fiscales e información exógena
 
 No se agregó una quinta cola. El motor fiscal durable continúa siendo el único

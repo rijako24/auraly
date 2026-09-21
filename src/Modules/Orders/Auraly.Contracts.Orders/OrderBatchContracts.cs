@@ -11,7 +11,14 @@ public sealed record InvoiceOrdersRequest(
     string? PaymentReference,
     string DocumentType = "SalesInvoice",
     Guid? BankAccountId = null,
-    string? PaymentNotes = null);
+    string? PaymentNotes = null,
+    OrderInvoiceChargeSelection? Charge = null);
+
+public sealed record OrderInvoiceChargeSelection(
+    Guid ChargeId,
+    long ChargeVersion,
+    Guid SupplierId,
+    decimal? ManualAmount = null);
 
 public sealed record InvoiceOrderResult(
     Guid OrderId,

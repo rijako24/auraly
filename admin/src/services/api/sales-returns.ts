@@ -71,6 +71,15 @@ export interface ReturnableSale {
     lineTotal: number;
     barcodes: string;
   }>;
+  charges: Array<{
+    appliedChargeId: string;
+    code: string;
+    name: string;
+    amount: number;
+    invoicedAmount: number;
+    expenseAmount: number;
+    isReturned: boolean;
+  }>;
 }
 
 export interface ConfirmSalesReturnRequest {
@@ -95,6 +104,7 @@ export interface ConfirmSalesReturnRequest {
   settlementNotes: string | null;
   reasonCode: string;
   notes: string | null;
+  returnedChargeIds: string[];
 }
 
 export interface SalesSettlementConfiguration {

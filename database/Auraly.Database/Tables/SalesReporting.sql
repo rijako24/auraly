@@ -26,6 +26,7 @@ CREATE TABLE [reporting].[SalesReportDocuments]
     [UntaxedAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
+    [RoundingAdjustmentAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_SalesReportDocuments_RoundingAdjustment] DEFAULT 0,
     [CreditAmount] DECIMAL(19,4) NOT NULL,
     [CollectedAmount] DECIMAL(19,4) NOT NULL,
     [ReturnedUntaxedAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_SalesReportDocuments_ReturnedUntaxed] DEFAULT 0,
@@ -43,7 +44,8 @@ CREATE TABLE [reporting].[SalesReportDocuments]
     CONSTRAINT [CK_SalesReportDocuments_Type] CHECK ([DocumentType] IN (N'SalesInvoice',N'SalesReceipt')),
     CONSTRAINT [CK_SalesReportDocuments_Amounts] CHECK
       ([GrossAmount]>=0 AND [DiscountAmount]>=0 AND [UntaxedAmount]>=0 AND [TaxAmount]>=0 AND
-       [TotalAmount]>=0 AND [CreditAmount]>=0 AND [CollectedAmount]>=0 AND
+       [TotalAmount]>=0 AND [RoundingAdjustmentAmount]>-50 AND [RoundingAdjustmentAmount]<=50 AND
+       [CreditAmount]>=0 AND [CollectedAmount]>=0 AND
        [ReturnedUntaxedAmount]>=0 AND [ReturnedTaxAmount]>=0 AND [ReturnedTotalAmount]>=0 AND
        [RecognizedCostAmount]>=0 AND [ReturnedCostAmount]>=0),
     CONSTRAINT [CK_SalesReportDocuments_Projection] CHECK ([ProjectionVersion]>0)

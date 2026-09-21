@@ -10,6 +10,7 @@ import {
   validateCommerceOrderCredit,
   type CommerceOrderFilters,
   type InvoiceOrdersResponse,
+  type OrderInvoiceChargeSelection,
 } from "@/services/orders/commerce-orders-client";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
 import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
@@ -1325,6 +1326,7 @@ export class OnlinePosClient implements PosClient {
     idempotencyKey = crypto.randomUUID(),
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
     includeCreditAcknowledgement = false,
+    charge?: OrderInvoiceChargeSelection | null,
   ): Promise<InvoiceOrdersResponse> {
     const printRoute = printAfterInvoice
       ? resolvePosOrderPrintRoute(this.edgeSessionToken)
@@ -1348,6 +1350,7 @@ export class OnlinePosClient implements PosClient {
       bankAccountId: bankAccountId ?? null,
       paymentNotes: paymentNotes ?? null,
       documentType,
+      charge: charge ?? null,
     });
     if (paymentMethodCode === "Credit") {
       const creditValidationIssues = await validateCommerceOrderCredit(invoiceRequest(orderIds));

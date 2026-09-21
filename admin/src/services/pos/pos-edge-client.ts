@@ -28,6 +28,7 @@ import {
 } from "./pos-state-invalidation";
 import { readPosEdgeProblem } from "./pos-printer-configuration";
 import { resolveSalePrintEffect } from "./pos-print-routing";
+import { buildCompatibleEdgeLineUpdates } from "./pos-edge-line-update";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -267,6 +268,7 @@ export type PosNextNumbers = { document: PosDocumentNumberPreview; fiscal: PosFi
 export type PosPaymentInput = {
   methodCode: string;
   amount: number;
+  roundingAdjustment?: number;
   reference: string | null;
   cardFranchiseCode?: string | null;
   approvalNumber?: string | null;
@@ -1578,7 +1580,10 @@ export class PosEdgeClient implements PosClient {
   updateLines(draftId: string, lines: PosDraftLineUpdate[], includesProratedDiscount = false) {
     return this.request<PosDraft>(`/edge/v1/drafts/${draftId}/lines`, {
       method: "PUT",
-      body: JSON.stringify({ lines, includesProratedDiscount }),
+      body: JSON.stringify({
+        lines: buildCompatibleEdgeLineUpdates(lines),
+        includesProratedDiscount,
+      }),
     });
   }
 

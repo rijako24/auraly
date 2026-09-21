@@ -92,7 +92,9 @@ CREATE TABLE [dbo].[SupplierCredits]
     [SupplierCreditId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
-    [SourcePurchaseReturnId] UNIQUEIDENTIFIER NOT NULL,
+    [SourcePurchaseReturnId] UNIQUEIDENTIFIER NULL,
+    [SourceDocumentId] UNIQUEIDENTIFIER NULL,
+    [SourceDocumentType] NVARCHAR(40) NULL,
     [OriginalAmount] DECIMAL(19,4) NOT NULL,
     [AvailableAmount] DECIMAL(19,4) NOT NULL,
     [Status] NVARCHAR(24) NOT NULL,
@@ -102,10 +104,18 @@ CREATE TABLE [dbo].[SupplierCredits]
     CONSTRAINT [FK_SupplierCredits_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SupplierCredits_Supplier] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
     CONSTRAINT [FK_SupplierCredits_Return] FOREIGN KEY ([SourcePurchaseReturnId]) REFERENCES [dbo].[PurchaseReturns] ([PurchaseReturnId]),
-    CONSTRAINT [UQ_SupplierCredits_Return] UNIQUE ([SourcePurchaseReturnId]),
+    CONSTRAINT [CK_SupplierCredits_Source] CHECK (([SourcePurchaseReturnId] IS NOT NULL AND [SourceDocumentId] IS NULL AND [SourceDocumentType] IS NULL) OR ([SourcePurchaseReturnId] IS NULL AND [SourceDocumentId] IS NOT NULL AND NULLIF(LTRIM(RTRIM([SourceDocumentType])),N'') IS NOT NULL)),
     CONSTRAINT [CK_SupplierCredits_Amounts] CHECK ([OriginalAmount] > 0 AND [AvailableAmount] BETWEEN 0 AND [OriginalAmount]),
     CONSTRAINT [CK_SupplierCredits_Status] CHECK ([Status] IN (N'Open',N'PartiallyApplied',N'Applied',N'Cancelled'))
 );
+GO
+CREATE UNIQUE INDEX [UX_SupplierCredits_SourceDocument]
+    ON [dbo].[SupplierCredits] ([SourceDocumentId],[SourceDocumentType])
+    WHERE [SourceDocumentId] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_SupplierCredits_PurchaseReturn]
+    ON [dbo].[SupplierCredits] ([SourcePurchaseReturnId])
+    WHERE [SourcePurchaseReturnId] IS NOT NULL;
 GO
 CREATE INDEX [IX_SupplierCredits_Business_Supplier]
     ON [dbo].[SupplierCredits] ([BusinessId], [SupplierId], [Status]);

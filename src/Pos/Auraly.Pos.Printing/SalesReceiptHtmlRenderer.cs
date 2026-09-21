@@ -97,7 +97,7 @@ public sealed class SalesReceiptHtmlRenderer
         var payments = string.Join(
             Environment.NewLine,
             receipt.Payments.Select(payment =>
-                Pair(PaymentName(payment.MethodCode), Money(payment.Amount))));
+                Pair(PaymentName(payment.MethodCode), Money(payment.CollectedAmount))));
         var taxes = string.Join(
             Environment.NewLine,
             receipt.Lines
@@ -118,16 +118,23 @@ public sealed class SalesReceiptHtmlRenderer
             Environment.NewLine,
             (receipt.Withholdings ?? []).Select(withholding =>
                 Pair($"Ret. {withholding.Name} ({Rate(withholding.Rate)}%)", $"-{Money(withholding.Amount)}")));
+        var invoiceSubtotal = receipt.PayableAmount - receipt.PayableRoundingAmount;
+        var rounding = receipt.PayableRoundingAmount == 0
+            ? string.Empty
+            : Pair("Ajuste al peso", SignedMoney(receipt.PayableRoundingAmount));
+        var grossTotal = receipt.WithholdingTotal <= 0
+            ? string.Empty
+            : Pair("Total bruto", Money(receipt.PayableAmount));
         var withholdings = receipt.WithholdingTotal <= 0
             ? string.Empty
-            : $"{Pair("Total bruto", Money(receipt.PayableAmount))}<div class=\"section-title\">Retenciones</div>{withholdingLines}{Pair("Total retenciones", $"-{Money(receipt.WithholdingTotal)}")}";
+            : $"<div class=\"section-title\">Retenciones</div>{withholdingLines}{Pair("Total retenciones", $"-{Money(receipt.WithholdingTotal)}")}";
         var netPayable = receipt.WithholdingTotal > 0
             ? receipt.NetPayableAmount
             : receipt.PayableAmount;
         var cashTender = CashTender(receipt.Payments);
         var summary = isOrder
             ? $"<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div><hr class=\"rule summary\">"
-            : $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Subtotal", Money(receipt.UntaxedAmount))}{Pair("Total impuestos", Money(receipt.TaxAmount))}{withholdings}<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div>{cashTender}<hr class=\"rule summary\"><div class=\"section-title\">Medios de pago</div>{payments}<hr class=\"rule\">";
+            : $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Subtotal factura", Money(invoiceSubtotal))}{rounding}{grossTotal}{withholdings}<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div>{cashTender}<hr class=\"rule summary\"><div class=\"section-title\">Medios de pago</div>{payments}<hr class=\"rule\">";
 
         var companyName = Encode(receipt.CompanyName ?? string.Empty);
         var scope = Scope(businessName);
@@ -306,6 +313,9 @@ public sealed class SalesReceiptHtmlRenderer
 
     private static string Money(decimal value) =>
         value.ToString(value == decimal.Truncate(value) ? "C0" : "C2", ColombianCulture);
+
+    private static string SignedMoney(decimal value) =>
+        $"{(value > 0 ? "+" : "-")}{Money(decimal.Abs(value))}";
 
     private static string Quantity(decimal value) =>
         value.ToString("0.###", ColombianCulture);

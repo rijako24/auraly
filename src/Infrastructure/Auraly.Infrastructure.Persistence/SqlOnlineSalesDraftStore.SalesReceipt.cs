@@ -87,7 +87,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                 "El inventario cambió y uno o más productos ya no tienen existencias suficientes. Ajusta sus cantidades o elimínalos antes de cobrar.");
         ValidateSettlementContext(state, draft, settlement);
         var withholding = settlement.Withholding;
-        if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != withholding.NetAmount)
+        var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(withholding.NetAmount);
+        if (request.Payments.Sum(payment => payment.CollectedAmount) +
+                (request.Credit?.Amount ?? 0m) != withholding.NetAmount + roundingAdjustment)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
         var now = settlement.Context.OccurredAt;
@@ -126,7 +128,11 @@ public sealed partial class SqlOnlineSalesDraftStore
             string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim(),
             payment.BankAccountId,
             string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
-            payment.TenderedAmount)).ToArray();
+            payment.TenderedAmount,
+            payment.RoundingAdjustment)).ToArray();
+        if (!PosPaymentRoundingPolicy.IsValid(withholding.NetAmount, payments))
+            throw new OnlineSalesDraftValidationException(
+                "El ajuste al peso no corresponde al total original de la venta.");
         var taxes = PosSaleTaxSummary.Calculate(draft.Lines.Select(line =>
             new PosSaleTaxContract(line.TaxCode, line.Tax)), draft.Charges);
         var upload = new PosSaleUploadRequest(
@@ -137,7 +143,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                 number.SeriesCode, number.Consecutive, number.Padding, number.FullNumber),
             new PosSaleCommercialSnapshotContract(
                 PosSaleDocumentTypes.Receipt, now, customerIdentification, taxes,
-                draft.UntaxedAmount, draft.TaxAmount, draft.PayableAmount, withholding),
+                draft.UntaxedAmount, draft.TaxAmount,
+                draft.PayableAmount + roundingAdjustment, withholding,
+                roundingAdjustment),
             null,
             lines,
             payments,

@@ -25,6 +25,11 @@ los impuestos y los totales por cliente, vendedor y bodega. No se atribuyen a un
 producto, categoría o proveedor de mercancía; su detalle se consulta en Cargos de
 facturación. Los cargos asumidos como gasto no incrementan las ventas. La regla
 de inclusión llega congelada en el documento y reporting no la recalcula.
+El total documental proyectado conserva el total oficial, redondeado al múltiplo
+de COP 100 más cercano, y `RoundingAdjustmentAmount` identifica la diferencia
+firmada. El subtotal exacto se reconstruye como `TotalAmount -
+RoundingAdjustmentAmount`; líneas, bases e impuestos permanecen exactos y
+reporting no reparte el ajuste entre productos ni bases tributarias.
 
 Al confirmar cada línea de factura, `SalesDocumentLines` fija una vez:
 

@@ -1477,7 +1477,7 @@ public sealed class OrderRecoveryTests(
             VALUES(
               @OrderId,@BusinessId,0,0,2,@WarehouseId,
               N'Cliente pedido',N'123456789',N'COP',
-              15554,777,14777,1,N'PED-PRUEBA-01',DATEADD(day,-4,SYSUTCDATETIME()));
+              4358.62,0,4358.62,1,N'PED-PRUEBA-01',DATEADD(day,-4,SYSUTCDATETIME()));
 
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
@@ -1485,8 +1485,8 @@ public sealed class OrderRecoveryTests(
               DocumentUnitCost,DiscountAmount,LineTotal,RawPayloadJson,CreatedAt)
             VALUES(
               @ItemId,@OrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-              N'Producto del pedido',N'EA',2,7777,
-              6000,777,14777,N'{"PriceSource":"Promotion","TaxCode":"01","TaxRate":0}',DATEADD(day,-4,SYSUTCDATETIME()));
+              N'Producto del pedido',N'EA',.96,4549.71,
+              3500,0,4358.62,N'{"PriceSource":"Captured","TaxCode":"01","TaxRate":0}',DATEADD(day,-4,SYSUTCDATETIME()));
 
             INSERT dbo.TaxProfiles(
               TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
@@ -1532,15 +1532,19 @@ public sealed class OrderRecoveryTests(
             var recovered = await OpenDraftAsync(client, workSession.WorkSessionId);
             var line = Assert.Single(recovered.Lines);
             Assert.Equal("Producto del pedido", line.Description);
-            Assert.Equal(2m, line.Quantity);
-            Assert.Equal(7_777m, line.UnitPrice);
+            Assert.Equal(.96m, line.Quantity);
+            Assert.Equal(4_549.71m, line.UnitPrice);
             Assert.Equal(0m, line.Discount);
-            Assert.Equal(777m, line.PromotionDiscount);
-            Assert.Equal(777m, line.TotalDiscount);
-            Assert.Equal("Promotion", line.PriceSource);
+            Assert.Equal(0m, line.PromotionDiscount);
+            Assert.Equal(0m, line.TotalDiscount);
+            Assert.Equal("Captured", line.PriceSource);
             Assert.Equal(0m, line.TaxRate);
             Assert.Equal(0m, line.Tax);
-            Assert.Equal(14_777m, recovered.PayableAmount);
+            Assert.Equal(4_358.62m, line.PublicLineTotal);
+            Assert.NotEqual(
+                decimal.Round(line.Quantity * line.UnitPrice, 2, MidpointRounding.AwayFromZero),
+                line.PublicLineTotal);
+            Assert.Equal(4_358.62m, recovered.PayableAmount);
 
             using var quantityRequest = new HttpRequestMessage(
                 HttpMethod.Put,

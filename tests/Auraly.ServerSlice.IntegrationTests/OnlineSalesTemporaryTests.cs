@@ -261,6 +261,15 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
             client,
             $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
             new AddOnlineSalesDraftItemRequest("P-E2E", 1m, draft.Version));
+        var capturedLine = Assert.Single(captured.Lines);
+        await ExecuteAsync(
+            """
+            UPDATE dbo.SalesDraftLines
+            SET PublicUnitPrice=4549.71,PublicLineTotal=4358.62
+            WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
+            """,
+            new("@DraftId", captured.DraftId),
+            new("@LineId", capturedLine.LineId));
         var pauseKey = Guid.NewGuid().ToString("N");
         var next = await MutateAsync<OnlineSalesDraft>(
             client,
@@ -291,7 +300,12 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         var saved = Assert.Single(temporaries);
         Assert.Equal("Cliente regresa", saved.Name);
         Assert.Equal("Mesa 4", saved.Reference);
-        Assert.Single(saved.Lines);
+        var savedLine = Assert.Single(saved.Lines);
+        Assert.Equal(4_549.71m, savedLine.PublicUnitPrice);
+        Assert.Equal(4_358.62m, savedLine.PublicLineTotal);
+        Assert.NotEqual(
+            decimal.Round(savedLine.Quantity * savedLine.PublicUnitPrice, 2, MidpointRounding.AwayFromZero),
+            savedLine.PublicLineTotal);
 
         var occupied = await MutateAsync<OnlineSalesDraft>(
             restarted,
@@ -315,7 +329,9 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
             new RecoverOnlineSalesDraftRequest(saved.Version, clean.Version));
         Assert.Equal(saved.DraftId, recovered.DraftId);
         Assert.Equal("Active", recovered.Status);
-        Assert.Single(recovered.Lines);
+        var recoveredLine = Assert.Single(recovered.Lines);
+        Assert.Equal(4_549.71m, recoveredLine.PublicUnitPrice);
+        Assert.Equal(4_358.62m, recoveredLine.PublicLineTotal);
 
         var balanceExisted = await ScalarAsync<int>(
             "SELECT COUNT(1) FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",

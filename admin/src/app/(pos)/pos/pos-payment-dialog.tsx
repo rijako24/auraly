@@ -15,6 +15,7 @@ import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
   handlePosPaymentAmountEnter,
+  paymentTotalForCollection,
   PosPaymentSettlement,
 } from "./pos-payment-settlement";
 import {
@@ -113,7 +114,8 @@ export function PosPaymentDialog({
   useEffect(() => {
     const defaultMethod = methods.find((method) => method.code === "Cash");
     if (!defaultMethod || payments.length > 0) return;
-    setPayments([{ id: crypto.randomUUID(), methodCode: defaultMethod.code, amount: total, reference: null }]);
+    setPayments([{ id: crypto.randomUUID(), methodCode: defaultMethod.code,
+      amount: paymentTotalForCollection(total), reference: null }]);
   }, [methods, payments.length, total]);
 
   useEffect(() => {
@@ -280,9 +282,10 @@ export function PosPaymentDialog({
           (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) ||
         paymentMethods.isLoading || paymentMethods.isError) return;
     await onConfirm(
-      settlement.appliedPayments.map(({ methodCode, amount, reference, cardFranchiseCode, approvalNumber, bankAccountId, notes, tenderedAmount }) => ({
+      settlement.appliedPayments.map(({ methodCode, amount, roundingAdjustment, reference, cardFranchiseCode, approvalNumber, bankAccountId, notes, tenderedAmount }) => ({
         methodCode,
         amount,
+        roundingAdjustment,
         reference: reference?.trim() || null,
         cardFranchiseCode: cardFranchiseCode?.trim() || null,
         approvalNumber: approvalNumber?.trim() || null,
@@ -354,7 +357,7 @@ export function PosPaymentDialog({
           </div>
           <p className="text-right">
             <span className="block text-xs uppercase tracking-wide text-slate-500">Total a pagar</span>
-            <span className="text-2xl font-bold text-teal-800">{money.format(total)}</span>
+            <span className="text-2xl font-bold text-teal-800">{money.format(settlement.paymentTotal)}</span>
           </p>
         </div>
         </div>
@@ -484,7 +487,7 @@ export function PosPaymentDialog({
         </div>
 
         <div className={`mt-4 grid grid-cols-1 gap-3 ${withholdingTotal > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
-          <PaymentMetric label={withholdingTotal > 0 ? "Total venta" : "Total a pagar"} value={grossTotal} />
+          <PaymentMetric label={withholdingTotal > 0 ? "Total venta" : "Total a pagar"} value={withholdingTotal > 0 ? grossTotal : settlement.paymentTotal} />
           {withholdingTotal > 0 && <PaymentMetric label="Retenciones" value={-withholdingTotal} />}
           <PaymentMetric label="Valor recibido" value={settlement.received} />
           <PaymentMetric

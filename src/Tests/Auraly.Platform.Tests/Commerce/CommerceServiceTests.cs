@@ -304,8 +304,8 @@ public class CommerceServiceTests
             BusinessId = businessId,
             ConversationId = conversationId,
             Currency = "COP",
-            Subtotal = 10000m,
-            Total = 10000m
+            Subtotal = 4602.13m,
+            Total = 4602.13m
         };
         var draftItem = new OrderDraftItem
         {
@@ -315,10 +315,10 @@ public class CommerceServiceTests
             ProductId = productId,
             Sku = "PUBLICADO",
             ProductNameSnapshot = "Producto publicado",
-            Quantity = 1m,
-            UnitPrice = 10000m,
+            Quantity = .3m,
+            UnitPrice = 15340.45m,
             DocumentUnitCost = 7_000m,
-            LineTotal = 10000m
+            LineTotal = 4602.13m
         };
         var persistedItems = new List<OrderItem>();
         Order? persistedOrder = null;
@@ -401,11 +401,15 @@ public class CommerceServiceTests
             context,
             new CreateOrderRequest(true, null, null, null, null, null, null));
 
-        snapshot.Total.Should().Be(10000m);
-        snapshot.Items.Should().ContainSingle().Which.UnitPrice.Should().Be(10000m);
+        snapshot.Total.Should().Be(4602.13m);
+        snapshot.Items.Should().ContainSingle().Which.Quantity.Should().Be(.3m);
+        snapshot.Items.Should().ContainSingle().Which.UnitPrice.Should().Be(15340.45m);
+        snapshot.Items.Should().ContainSingle().Which.LineTotal.Should().Be(4602.13m);
         persistedOrder.Should().NotBeNull();
-        persistedOrder!.Total.Should().Be(10000m);
-        persistedItems.Should().ContainSingle().Which.UnitPrice.Should().Be(10000m);
+        persistedOrder!.Total.Should().Be(4602.13m);
+        persistedItems.Should().ContainSingle().Which.Quantity.Should().Be(.3m);
+        persistedItems.Should().ContainSingle().Which.UnitPrice.Should().Be(15340.45m);
+        persistedItems.Should().ContainSingle().Which.LineTotal.Should().Be(4602.13m);
         persistedItems.Should().ContainSingle().Which.DocumentUnitCost.Should().Be(7_000m);
         adapter.Verify(value => value.GetProductAsync(
             It.IsAny<AddOrderItemRequest>(), It.IsAny<CommerceAdapterContext>(),

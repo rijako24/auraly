@@ -64,6 +64,8 @@
     "src/app/(pos)/pos/pos-preparation-progress.ts",
     "src/app/(pos)/pos/pos-preparation-progress.test.ts",
     "src/services/pos/pos-edge-client.ts",
+    "src/services/pos/pos-edge-line-update.ts",
+    "src/services/pos/pos-edge-line-update.test.ts",
     "src/services/pos/pos-printer-configuration.ts",
     "src/services/pos/pos-printer-configuration.test.ts",
     "src/services/pos/pos-server-history-request.ts",

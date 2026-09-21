@@ -73,13 +73,17 @@ public sealed class SqlSalesReturnStore(
 
             var original = await LoadOriginalAsync(
                 connection, transaction, user, request, cancellationToken);
+            var originalLines = await LoadOriginalLinesAsync(
+                connection, transaction, request.OriginalDocumentId,
+                request.Lines.Select(line => line.OriginalLineNumber).ToArray(), cancellationToken);
             var lines = new List<SalesReturnLineSnapshot>(request.Lines.Count);
             var lineNumber = 0;
             var coversEveryRequestedBalance = true;
             foreach (var requested in request.Lines.OrderBy(line => line.OriginalLineNumber))
             {
-                var source = await LoadOriginalLineAsync(connection, transaction,
-                    request.OriginalDocumentId, requested.OriginalLineNumber, cancellationToken);
+                if (!originalLines.TryGetValue(requested.OriginalLineNumber, out var source))
+                    throw new SalesReturnValidationException(
+                        $"Original sale line {requested.OriginalLineNumber} was not found.");
                 SalesReturnAmounts amounts;
                 try
                 {
@@ -109,9 +113,14 @@ public sealed class SqlSalesReturnStore(
                     throw new SalesReturnConflictException(
                         "La anulación total debe devolver el saldo completo de todas las líneas disponibles.");
             }
-            var untaxed = lines.Sum(line => line.UntaxedAmount);
-            var tax = lines.Sum(line => line.TaxAmount);
+            var charges = await LoadOriginalChargesAsync(connection, transaction,
+                request.OriginalDocumentId, request.ReturnedChargeIds, cancellationToken);
+            var untaxed = lines.Sum(line => line.UntaxedAmount) +
+                charges.Sum(charge => charge.InvoicedUntaxedAmount);
+            var tax = lines.Sum(line => line.TaxAmount) +
+                charges.Sum(charge => charge.InvoicedTaxAmount);
             var total = lines.Sum(line => line.LineTotal);
+            total += charges.Sum(charge => charge.InvoicedAmount);
             if (total <= 0) throw new SalesReturnValidationException(
                 "The return must have a positive economic value.");
             if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
@@ -149,7 +158,7 @@ public sealed class SqlSalesReturnStore(
                 request.OriginalPaymentNumber, request.ReasonCode, request.Notes,
                 request.ReturnScopeCode, settlement.CardFranchiseCode,
                 settlement.ApprovalNumber, request.BankAccountId,
-                request.SettlementReference, request.SettlementNotes);
+                request.SettlementReference, request.SettlementNotes, charges);
             var payloadJson = SalesReturnContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
             var movementId = ids.NewId();
@@ -158,6 +167,8 @@ public sealed class SqlSalesReturnStore(
                 cancellationToken);
             await InsertLinesAsync(connection, transaction, request.ReturnId,
                 request.OriginalDocumentId, lines, cancellationToken);
+            await InsertChargesAsync(connection, transaction, request.ReturnId,
+                request.OriginalDocumentId, charges, cancellationToken);
             await InsertJobAsync(connection, transaction, request.ReturnId,
                 user.BusinessId, movementId, sequence, payloadJson, payloadHash, now,
                 cancellationToken);
@@ -260,44 +271,60 @@ public sealed class SqlSalesReturnStore(
         }
     }
 
-    private static async Task<OriginalLine> LoadOriginalLineAsync(
+    private static async Task<IReadOnlyDictionary<int, OriginalLine>> LoadOriginalLinesAsync(
         SqlConnection connection, SqlTransaction transaction,
-        Guid originalDocumentId, int originalLineNumber,
+        Guid originalDocumentId, IReadOnlyCollection<int> originalLineNumbers,
         CancellationToken cancellationToken)
     {
+        if (originalLineNumbers.Count == 0 ||
+            originalLineNumbers.Distinct().Count() != originalLineNumbers.Count)
+            throw new SalesReturnValidationException("Las líneas seleccionadas no son válidas.");
         const string sql = """
-            SELECT l.ProductId,l.Description,l.Quantity,l.UnitPrice,l.DiscountAmount,
+            WITH Requested AS
+            (
+                SELECT DISTINCT TRY_CONVERT(int,[value]) LineNumber FROM OPENJSON(@LineNumbers)
+            ),
+            Returned AS
+            (
+                SELECT r.OriginalLineNumber,SUM(r.Quantity) Quantity,
+                  SUM(r.DiscountAmount) DiscountAmount,SUM(r.UntaxedAmount) UntaxedAmount,
+                  SUM(r.TaxAmount) TaxAmount,SUM(r.LineTotal) LineTotal
+                FROM dbo.SalesReturnLines r WITH (UPDLOCK,HOLDLOCK)
+                WHERE r.OriginalDocumentId=@DocumentId
+                GROUP BY r.OriginalLineNumber
+            ),
+            Costs AS
+            (
+                SELECT m.LineNumber,MAX(m.RecognizedUnitCost) RecognizedUnitCost
+                FROM dbo.InventoryMovements m
+                WHERE m.DocumentId=@DocumentId
+                  AND m.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+                  AND m.MovementType=N'Sale'
+                GROUP BY m.LineNumber
+            )
+            SELECT l.LineNumber,l.ProductId,l.Description,l.Quantity,l.UnitPrice,l.DiscountAmount,
                    l.TaxCode,l.TaxRate,l.UntaxedAmount,l.TaxAmount,l.LineTotal,
                    COALESCE(returned.Quantity,0),COALESCE(returned.DiscountAmount,0),
                    COALESCE(returned.UntaxedAmount,0),COALESCE(returned.TaxAmount,0),
-                   COALESCE(returned.LineTotal,0),
-                   COALESCE(l.UnitCostSnapshot,(SELECT TOP(1) m.RecognizedUnitCost
-                     FROM dbo.InventoryMovements m
-                     WHERE m.DocumentId=l.DocumentId AND m.LineNumber=l.LineNumber
-                       AND m.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
-                       AND m.MovementType=N'Sale'),0)
+                   COALESCE(returned.LineTotal,0),COALESCE(l.UnitCostSnapshot,cost.RecognizedUnitCost,0)
             FROM dbo.SalesDocumentLines l WITH (UPDLOCK,HOLDLOCK)
-            OUTER APPLY (SELECT SUM(r.Quantity) Quantity,
-              SUM(r.DiscountAmount) DiscountAmount,SUM(r.UntaxedAmount) UntaxedAmount,
-              SUM(r.TaxAmount) TaxAmount,SUM(r.LineTotal) LineTotal
-              FROM dbo.SalesReturnLines r WITH (UPDLOCK,HOLDLOCK)
-              WHERE r.OriginalDocumentId=l.DocumentId
-                AND r.OriginalLineNumber=l.LineNumber) returned
-            WHERE l.DocumentId=@DocumentId AND l.LineNumber=@LineNumber
-            ;
+            JOIN Requested requested ON requested.LineNumber=l.LineNumber
+            LEFT JOIN Returned returned ON returned.OriginalLineNumber=l.LineNumber
+            LEFT JOIN Costs cost ON cost.LineNumber=l.LineNumber
+            WHERE l.DocumentId=@DocumentId;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", originalDocumentId);
-        command.Parameters.AddWithValue("@LineNumber", originalLineNumber);
+        command.Parameters.AddWithValue("@LineNumbers", JsonSerializer.Serialize(originalLineNumbers));
+        var values = new Dictionary<int, OriginalLine>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-            throw new SalesReturnValidationException(
-                $"Original sale line {originalLineNumber} was not found.");
-        return new OriginalLine(reader.GetGuid(0), reader.GetString(1), reader.GetDecimal(2),
-            reader.GetDecimal(3), reader.GetDecimal(4), reader.GetString(5), reader.GetDecimal(6),
-            reader.GetDecimal(7), reader.GetDecimal(8), reader.GetDecimal(9),
-            reader.GetDecimal(10), reader.GetDecimal(11), reader.GetDecimal(12),
-            reader.GetDecimal(13), reader.GetDecimal(14), reader.GetDecimal(15));
+        while (await reader.ReadAsync(cancellationToken))
+            values.Add(reader.GetInt32(0), new OriginalLine(reader.GetGuid(1), reader.GetString(2), reader.GetDecimal(3),
+                reader.GetDecimal(4), reader.GetDecimal(5), reader.GetString(6), reader.GetDecimal(7),
+                reader.GetDecimal(8), reader.GetDecimal(9), reader.GetDecimal(10),
+                reader.GetDecimal(11), reader.GetDecimal(12), reader.GetDecimal(13),
+                reader.GetDecimal(14), reader.GetDecimal(15), reader.GetDecimal(16)));
+        return values;
     }
 
     private static async Task<RefundSettlementContext> ValidateRefundAsync(
@@ -514,39 +541,105 @@ public sealed class SqlSalesReturnStore(
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
     }
 
+    private static async Task<IReadOnlyList<SalesReturnChargeSnapshot>> LoadOriginalChargesAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid originalDocumentId,
+        IReadOnlyCollection<Guid>? requestedIds, CancellationToken cancellationToken)
+    {
+        if (requestedIds is not { Count: > 0 }) return [];
+        if (requestedIds.Count > 10 || requestedIds.Any(id => id == Guid.Empty) ||
+            requestedIds.Distinct().Count() != requestedIds.Count)
+            throw new SalesReturnValidationException("Los cargos seleccionados para devolver no son válidos.");
+        await using var command = new SqlCommand("""
+            WITH Requested AS (
+              SELECT DISTINCT TRY_CONVERT(uniqueidentifier,[value]) AppliedChargeId
+              FROM OPENJSON(@Ids)
+            )
+            SELECT charge.AppliedChargeId,charge.ChargeId,charge.Code,charge.Name,charge.Amount,
+                   charge.InvoicedAmount,charge.ExpenseAmount,charge.InvoicedUntaxedAmount,
+                   charge.InvoicedTaxAmount,charge.TaxCode,charge.TaxRate,
+                   charge.SupplierUntaxedAmount,charge.SupplierVatAmount,
+                   charge.SupplierId,charge.ExpenseAccountId,charge.CostCenterId
+            FROM dbo.DocumentProcessingPayloads payload WITH(UPDLOCK,HOLDLOCK)
+            CROSS APPLY OPENJSON(payload.PayloadJson,N'$.charges') WITH(
+              AppliedChargeId uniqueidentifier N'$.appliedChargeId',ChargeId uniqueidentifier N'$.chargeId',
+              Code nvarchar(32) N'$.code',Name nvarchar(120) N'$.name',Amount decimal(19,4) N'$.amount',
+              InvoicedAmount decimal(19,4) N'$.invoicedAmount',ExpenseAmount decimal(19,4) N'$.expenseAmount',
+              InvoicedUntaxedAmount decimal(19,4) N'$.invoicedUntaxedAmount',InvoicedTaxAmount decimal(19,4) N'$.invoicedTaxAmount',
+              TaxCode nvarchar(16) N'$.taxCode',TaxRate decimal(9,6) N'$.taxRate',
+              SupplierUntaxedAmount decimal(19,4) N'$.supplierUntaxedAmount',SupplierVatAmount decimal(19,4) N'$.supplierVatAmount',
+              SupplierId uniqueidentifier N'$.supplier.supplierId',ExpenseAccountId uniqueidentifier N'$.expenseAccountId',
+              CostCenterId uniqueidentifier N'$.costCenterId') charge
+            JOIN Requested requested ON requested.AppliedChargeId=charge.AppliedChargeId
+            LEFT JOIN dbo.SalesReturnCharges returned WITH(UPDLOCK,HOLDLOCK)
+              ON returned.AppliedChargeId=charge.AppliedChargeId
+            WHERE payload.DocumentId=@DocumentId
+              AND payload.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+              AND returned.AppliedChargeId IS NULL;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@Ids", JsonSerializer.Serialize(requestedIds));
+        command.Parameters.AddWithValue("@DocumentId", originalDocumentId);
+        var values = new List<SalesReturnChargeSnapshot>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            values.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
+                reader.GetDecimal(4), reader.GetDecimal(5), reader.GetDecimal(6), reader.GetDecimal(7),
+                reader.GetDecimal(8), reader.GetString(9), reader.GetDecimal(10), reader.GetDecimal(11),
+                reader.GetDecimal(12), reader.GetGuid(13), reader.GetGuid(14),
+                reader.IsDBNull(15) ? null : reader.GetGuid(15)));
+        if (values.Count != requestedIds.Count)
+            throw new SalesReturnConflictException("Uno o más cargos ya fueron devueltos o no pertenecen a la factura.");
+        return values;
+    }
+
     private static async Task InsertLinesAsync(
         SqlConnection connection, SqlTransaction transaction, Guid returnId,
-        Guid originalId, IEnumerable<SalesReturnLineSnapshot> lines,
+        Guid originalId, IReadOnlyList<SalesReturnLineSnapshot> lines,
         CancellationToken cancellationToken)
     {
-        foreach (var line in lines)
-        {
-            await using var command = new SqlCommand("""
-                INSERT dbo.SalesReturnLines
-                  (ReturnId,OriginalDocumentId,LineNumber,OriginalLineNumber,ProductId,
-                   DescriptionSnapshot,Quantity,UnitPrice,DiscountAmount,TaxCode,TaxRate,
-                   UntaxedAmount,TaxAmount,LineTotal,RecognizedUnitCost,InventoryDisposition)
-                VALUES(@ReturnId,@OriginalId,@Line,@OriginalLine,@ProductId,@Description,
-                   @Quantity,@UnitPrice,@Discount,@TaxCode,@TaxRate,@Untaxed,@Tax,@Total,@Cost,@Disposition);
-                """, connection, transaction);
-            command.Parameters.AddWithValue("@ReturnId", returnId);
-            command.Parameters.AddWithValue("@OriginalId", originalId);
-            command.Parameters.AddWithValue("@Line", line.LineNumber);
-            command.Parameters.AddWithValue("@OriginalLine", line.OriginalLineNumber);
-            command.Parameters.AddWithValue("@ProductId", line.ProductId);
-            command.Parameters.AddWithValue("@Description", line.Description);
-            AddDecimal(command,"@Quantity",line.Quantity,19,6);
-            AddDecimal(command,"@UnitPrice",line.UnitPrice,19,4);
-            AddDecimal(command,"@Discount",line.DiscountAmount,19,4);
-            command.Parameters.AddWithValue("@TaxCode", line.TaxCode);
-            AddDecimal(command,"@TaxRate",line.TaxRate,9,6);
-            AddDecimal(command,"@Untaxed",line.UntaxedAmount,19,4);
-            AddDecimal(command,"@Tax",line.TaxAmount,19,4);
-            AddDecimal(command,"@Total",line.LineTotal,19,4);
-            AddDecimal(command,"@Cost",line.RecognizedUnitCost,19,6);
-            command.Parameters.AddWithValue("@Disposition", line.InventoryDisposition);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
+        await using var command = new SqlCommand("""
+            INSERT dbo.SalesReturnLines
+              (ReturnId,OriginalDocumentId,LineNumber,OriginalLineNumber,ProductId,
+               DescriptionSnapshot,Quantity,UnitPrice,DiscountAmount,TaxCode,TaxRate,
+               UntaxedAmount,TaxAmount,LineTotal,RecognizedUnitCost,InventoryDisposition)
+            SELECT @ReturnId,@OriginalId,input.LineNumber,input.OriginalLineNumber,input.ProductId,
+               input.Description,input.Quantity,input.UnitPrice,input.DiscountAmount,input.TaxCode,input.TaxRate,
+               input.UntaxedAmount,input.TaxAmount,input.LineTotal,input.RecognizedUnitCost,input.InventoryDisposition
+            FROM OPENJSON(@Lines) WITH(LineNumber int,OriginalLineNumber int,ProductId uniqueidentifier,
+               Description nvarchar(300),Quantity decimal(19,6),UnitPrice decimal(19,4),
+               DiscountAmount decimal(19,4),TaxCode nvarchar(16),TaxRate decimal(9,6),
+               UntaxedAmount decimal(19,4),TaxAmount decimal(19,4),LineTotal decimal(19,4),
+               RecognizedUnitCost decimal(19,6),InventoryDisposition nvarchar(24)) input;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@ReturnId", returnId);
+        command.Parameters.AddWithValue("@OriginalId", originalId);
+        command.Parameters.AddWithValue("@Lines", JsonSerializer.Serialize(lines));
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != lines.Count)
+            throw new DBConcurrencyException("Las líneas de la devolución no se guardaron completamente.");
+    }
+
+    private static async Task InsertChargesAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid returnId, Guid originalId,
+        IReadOnlyList<SalesReturnChargeSnapshot> charges, CancellationToken cancellationToken)
+    {
+        if (charges.Count == 0) return;
+        await using var command = new SqlCommand("""
+            INSERT dbo.SalesReturnCharges(ReturnId,OriginalDocumentId,AppliedChargeId,ChargeId,Code,Name,
+              Amount,InvoicedAmount,ExpenseAmount,InvoicedUntaxedAmount,InvoicedTaxAmount,
+              TaxCode,TaxRate,SupplierUntaxedAmount,SupplierVatAmount,SupplierId,ExpenseAccountId,CostCenterId)
+            SELECT @ReturnId,@OriginalId,input.AppliedChargeId,input.ChargeId,input.Code,input.Name,
+              input.Amount,input.InvoicedAmount,input.ExpenseAmount,input.InvoicedUntaxedAmount,input.InvoicedTaxAmount,
+              input.TaxCode,input.TaxRate,input.SupplierUntaxedAmount,input.SupplierVatAmount,input.SupplierId,input.ExpenseAccountId,input.CostCenterId
+            FROM OPENJSON(@Charges) WITH(
+              AppliedChargeId uniqueidentifier,ChargeId uniqueidentifier,Code nvarchar(32),Name nvarchar(120),
+              Amount decimal(19,4),InvoicedAmount decimal(19,4),ExpenseAmount decimal(19,4),
+              InvoicedUntaxedAmount decimal(19,4),InvoicedTaxAmount decimal(19,4),SupplierUntaxedAmount decimal(19,4),
+              TaxCode nvarchar(16),TaxRate decimal(9,6),SupplierVatAmount decimal(19,4),SupplierId uniqueidentifier,ExpenseAccountId uniqueidentifier,CostCenterId uniqueidentifier) input;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@ReturnId", returnId);
+        command.Parameters.AddWithValue("@OriginalId", originalId);
+        command.Parameters.AddWithValue("@Charges", JsonSerializer.Serialize(charges));
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != charges.Count)
+            throw new DBConcurrencyException("Los cargos de la devolución no se guardaron completamente.");
     }
 
     private static async Task InsertJobAsync(

@@ -70,7 +70,34 @@ public sealed record PosSalePaymentContract(
     string? ApprovalNumber = null,
     Guid? BankAccountId = null,
     string? Notes = null,
-    decimal? TenderedAmount = null);
+    decimal? TenderedAmount = null,
+    decimal RoundingAdjustment = 0m)
+{
+    public decimal CollectedAmount => Amount + RoundingAdjustment;
+}
+
+public static class PosPaymentRoundingPolicy
+{
+    public static decimal Adjustment(decimal netAmount) =>
+        decimal.Round(netAmount / 100m, 0, MidpointRounding.AwayFromZero) * 100m - netAmount;
+
+    public static decimal RoundedTotal(decimal netAmount) =>
+        netAmount + Adjustment(netAmount);
+
+    public static bool IsValid(
+        decimal netAmount,
+        IEnumerable<PosSalePaymentContract> payments)
+    {
+        var values = payments.ToArray();
+        var adjustment = values.Sum(payment => payment.RoundingAdjustment);
+        return values.Count(payment => payment.RoundingAdjustment != 0m) <= 1 &&
+            values.All(payment => payment.RoundingAdjustment is > -50m and <= 50m &&
+                payment.CollectedAmount > 0m &&
+                (payment.TenderedAmount is null ||
+                 payment.MethodCode == "Cash" && payment.TenderedAmount >= payment.CollectedAmount)) &&
+            (values.Length == 0 || adjustment == Adjustment(netAmount));
+    }
+}
 
 public sealed record PosSaleDocumentNumberContract(
     Guid SeriesId,
@@ -118,7 +145,9 @@ public sealed record PosSaleCommercialSnapshotContract(
     string? CustomerName = null)
 {
     public decimal NetPayableAmount =>
-        Withholding?.NetAmount ?? PayableAmount;
+        Withholding is null
+            ? PayableAmount
+            : Withholding.NetAmount + PayableRoundingAmount;
 }
 
 public sealed record PosSaleUblAddressContract(

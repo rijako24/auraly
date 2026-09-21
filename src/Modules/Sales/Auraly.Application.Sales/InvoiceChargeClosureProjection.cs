@@ -20,7 +20,8 @@ public static class InvoiceChargeClosureProjection
             .Select(payment => new InvoiceChargePaymentShare(payment.PaymentNumber, payment.Amount)).ToList();
         if (sale.Credit is { Amount: > 0 } credit) payments.Add(new(0, credit.Amount));
         var totalApplied = payments.Sum(payment => payment.AppliedAmount);
-        var gross = sale.CommercialSnapshot.PayableAmount;
+        var gross = sale.CommercialSnapshot.PayableAmount -
+            sale.CommercialSnapshot.PayableRoundingAmount;
         return charges.Select(charge => {
             var collectedOrCredit = gross == 0 ? 0 : MonetaryRounding.RoundLineAmount(
                 charge.InvoicedAmount * totalApplied / gross);

@@ -12,12 +12,13 @@ public static class PosReceiptPrintMapping
             line.Quantity, line.UnitPrice, line.Discount, line.Tax, line.Total, line.TaxCode, line.TaxRate, line.UnitCode)).ToArray(),
         receipt.Payments.Select(payment => new OfflineSalePayment(payment.MethodCode, payment.Amount,
             payment.Reference, payment.CardFranchiseCode, payment.ApprovalNumber, payment.BankAccountId,
-            payment.Notes, payment.TenderedAmount)).ToArray(),
+            payment.Notes, payment.TenderedAmount, payment.RoundingAdjustment)).ToArray(),
         receipt.UntaxedAmount, receipt.TaxAmount, receipt.PayableAmount, receipt.Cufe, receipt.QrPayload,
         paperWidth, receipt.DocumentType, receipt.CompanyName, receipt.CompanyLogoSource,
         receipt.WithholdingTotal, receipt.NetPayableAmount, receipt.Withholdings, receipt.CustomerName,
         CreditAcknowledgement: receipt.CreditAcknowledgement, InvoicePrintDetails: receipt.InvoicePrintDetails,
-        CustomerPhone: receipt.CustomerPhone, CustomerAddress: receipt.CustomerAddress);
+        CustomerPhone: receipt.CustomerPhone, CustomerAddress: receipt.CustomerAddress,
+        PayableRoundingAmount: receipt.PayableRoundingAmount);
 
     public static OnlineSalesReceipt ToPrintDocument(this PosReceipt receipt) => new(
         receipt.DocumentId.Value, receipt.DocumentType, receipt.DocumentNumber, receipt.FiscalNumber,
@@ -26,9 +27,10 @@ public static class PosReceiptPrintMapping
             line.Quantity, line.UnitPrice, line.Discount, line.Tax, line.Total, line.TaxCode, line.TaxRate, line.UnitCode)).ToArray(),
         receipt.Payments.Select(payment => new OnlineSalesPayment(payment.MethodCode, payment.Amount,
             payment.Reference, payment.CardFranchiseCode, payment.ApprovalNumber, payment.BankAccountId,
-            payment.Notes, payment.TenderedAmount)).ToArray(),
+            payment.Notes, payment.TenderedAmount, payment.RoundingAdjustment)).ToArray(),
         receipt.UntaxedAmount, receipt.TaxAmount, receipt.PayableAmount, receipt.Cufe, receipt.QrPayload, null,
         receipt.CustomerName ?? receipt.CustomerIdentification, receipt.CompanyName, receipt.CompanyLogoSource,
         receipt.WithholdingTotal, receipt.NetPayableAmount, receipt.Withholdings, receipt.CreditAcknowledgement,
-        receipt.InvoicePrintDetails, receipt.CustomerPhone, receipt.CustomerAddress);
+        receipt.InvoicePrintDetails, receipt.CustomerPhone, receipt.CustomerAddress,
+        PayableRoundingAmount: receipt.PayableRoundingAmount);
 }

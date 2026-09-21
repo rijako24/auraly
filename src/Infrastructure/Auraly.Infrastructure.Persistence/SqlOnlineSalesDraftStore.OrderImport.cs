@@ -77,10 +77,6 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         var importedLines = request.Lines.Select((line, index) =>
         {
             var unitPrice = Money(TaxExclusive(line.PublicUnitPrice, line.TaxRate));
-            var targetNetLineTotal = Money(
-                TaxExclusive(line.PublicLineTotal, line.TaxRate));
-            if (Money(line.Quantity * unitPrice) < targetNetLineTotal)
-                unitPrice = MoneyCeiling(targetNetLineTotal / line.Quantity);
             return new
             {
                 LineId = ids.NewId(),
@@ -204,9 +200,6 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
 
     private static decimal Money(decimal value) =>
         MonetaryRounding.RoundLineAmount(value);
-
-    private static decimal MoneyCeiling(decimal value) =>
-        MonetaryRounding.CeilingLineUnitPrice(value);
 
     private static async Task DemandOrderAsync(
         SqlConnection connection,

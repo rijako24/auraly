@@ -91,37 +91,37 @@ describe("calculatePaymentSettlement", () => {
     assert.equal(settlement.isValid, false);
   });
   it("applies the invoice total and returns cash change", () => {
-    const result = calculatePaymentSettlement(55, [
-      { methodCode: "Cash", amount: 60, reference: null },
+    const result = calculatePaymentSettlement(100, [
+      { methodCode: "Cash", amount: 110, reference: null },
     ]);
 
     assert.equal(result.isValid, true);
-    assert.equal(result.received, 60);
-    assert.equal(result.cashTendered, 60);
-    assert.equal(result.change, 5);
+    assert.equal(result.received, 110);
+    assert.equal(result.cashTendered, 110);
+    assert.equal(result.change, 10);
     assert.equal(shouldShowCashChange(result), true);
     assert.deepEqual(result.appliedPayments, [
-      { methodCode: "Cash", amount: 55, reference: null, tenderedAmount: 60 },
+      { methodCode: "Cash", amount: 100, reference: null, tenderedAmount: 110 },
     ]);
   });
 
   it("calculates change after applying a mixed payment", () => {
-    const result = calculatePaymentSettlement(55, [
-      { methodCode: "Cash", amount: 20, reference: null },
-      { methodCode: "DebitCard", amount: 40, reference: "AUTH-1" },
+    const result = calculatePaymentSettlement(100, [
+      { methodCode: "Cash", amount: 30, reference: null },
+      { methodCode: "DebitCard", amount: 80, reference: "AUTH-1" },
     ]);
 
     assert.equal(result.isValid, true);
-    assert.equal(result.change, 5);
+    assert.equal(result.change, 10);
     assert.deepEqual(result.appliedPayments, [
-      { methodCode: "Cash", amount: 15, reference: null, tenderedAmount: 20 },
-      { methodCode: "DebitCard", amount: 40, reference: "AUTH-1" },
+      { methodCode: "Cash", amount: 20, reference: null, tenderedAmount: 30 },
+      { methodCode: "DebitCard", amount: 80, reference: "AUTH-1" },
     ]);
   });
 
   it("rejects an excess received without cash", () => {
-    const result = calculatePaymentSettlement(55, [
-      { methodCode: "CreditCard", amount: 60, reference: null },
+    const result = calculatePaymentSettlement(100, [
+      { methodCode: "CreditCard", amount: 110, reference: null },
     ]);
 
     assert.equal(result.isValid, false);
@@ -130,8 +130,8 @@ describe("calculatePaymentSettlement", () => {
   });
 
   it("keeps the regular layout for an exact card payment", () => {
-    const result = calculatePaymentSettlement(55, [
-      { methodCode: "CreditCard", amount: 55, reference: "AUTH-2" },
+    const result = calculatePaymentSettlement(100, [
+      { methodCode: "CreditCard", amount: 100, reference: "AUTH-2" },
     ]);
 
     assert.equal(result.isValid, true);
@@ -140,17 +140,17 @@ describe("calculatePaymentSettlement", () => {
   });
 
   it("reports the missing amount", () => {
-    const result = calculatePaymentSettlement(55, [
+    const result = calculatePaymentSettlement(100, [
       { methodCode: "Cash", amount: 20, reference: null },
     ]);
 
     assert.equal(result.isValid, false);
-    assert.equal(result.missing, 35);
+    assert.equal(result.missing, 80);
     assert.equal(result.change, 0);
   });
 
   it("rejects duplicate cash rows", () => {
-    const result = calculatePaymentSettlement(55, [
+    const result = calculatePaymentSettlement(50, [
       { methodCode: "Cash", amount: 30, reference: null },
       { methodCode: "Cash", amount: 30, reference: null },
     ]);
@@ -159,12 +159,51 @@ describe("calculatePaymentSettlement", () => {
     assert.equal(result.hasDuplicateCash, true);
   });
 
-  it("keeps cent precision deterministic", () => {
-    const result = calculatePaymentSettlement(10.05, [
-      { methodCode: "Cash", amount: 20, reference: null },
+  it("rounds the invoice to the nearest hundred and keeps a positive adjustment separate", () => {
+    const result = calculatePaymentSettlement(10_450.45, [
+      { methodCode: "Cash", amount: 20_000, reference: null },
     ]);
 
-    assert.equal(result.appliedPayments[0].amount, 10.05);
-    assert.equal(result.change, 9.95);
+    assert.equal(result.paymentTotal, 10_500);
+    assert.equal(result.appliedPayments[0].amount, 10_450.45);
+    assert.equal(result.appliedPayments[0].roundingAdjustment, 49.55);
+    assert.equal(result.appliedPayments[0].tenderedAmount, 20_000);
+    assert.equal(result.change, 9_500);
+  });
+
+  it("rounds down to the nearest hundred and keeps a negative adjustment separate", () => {
+    const result = calculatePaymentSettlement(10_749, [
+      { methodCode: "DebitCard", amount: 10_700, reference: "AUTH-3" },
+    ]);
+
+    assert.equal(result.paymentTotal, 10_700);
+    assert.deepEqual(result.appliedPayments, [
+      {
+        methodCode: "DebitCard",
+        amount: 10_749,
+        reference: "AUTH-3",
+        roundingAdjustment: -49,
+      },
+    ]);
+  });
+
+  it("rounds an exact midpoint upward", () => {
+    const result = calculatePaymentSettlement(10_750, [
+      { methodCode: "Cash", amount: 10_800, reference: null },
+    ]);
+
+    assert.equal(result.paymentTotal, 10_800);
+    assert.equal(result.appliedPayments[0].roundingAdjustment, 50);
+  });
+
+  it("uses the rounded total for a sale financed completely on customer credit", () => {
+    const result = calculatePaymentSettlement(10_450.45, [
+      { methodCode: "Credit", amount: 10_500, reference: null },
+    ]);
+
+    assert.equal(result.paymentTotal, 10_500);
+    assert.deepEqual(result.appliedPayments, [
+      { methodCode: "Credit", amount: 10_500, reference: null },
+    ]);
   });
 });

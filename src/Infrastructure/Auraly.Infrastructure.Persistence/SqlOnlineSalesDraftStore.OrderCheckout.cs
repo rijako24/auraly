@@ -116,9 +116,12 @@ public sealed partial class SqlOnlineSalesDraftStore
 
         await DemandCurrentOrderSourceAsync(connection, transaction, user, source, ct);
         var lines = BuildOrderSaleLines(source.Lines);
-        var untaxed = lines.Sum(line => line.UntaxedAmount);
-        var taxAmount = lines.Sum(line => line.TaxAmount);
-        var payable = lines.Sum(line => line.LineTotal);
+        var untaxed = lines.Sum(line => line.UntaxedAmount) +
+            (source.Charges?.Sum(charge => charge.InvoicedUntaxedAmount) ?? 0m);
+        var taxAmount = lines.Sum(line => line.TaxAmount) +
+            (source.Charges?.Sum(charge => charge.InvoicedTaxAmount) ?? 0m);
+        var payable = lines.Sum(line => line.LineTotal) +
+            (source.Charges?.Sum(charge => charge.InvoicedAmount) ?? 0m);
         if (settlement.Context.BusinessId != source.BusinessId ||
             settlement.Context.CustomerId != source.CustomerId ||
             settlement.Context.TaxExclusiveAmount != untaxed ||
@@ -127,8 +130,11 @@ public sealed partial class SqlOnlineSalesDraftStore
             settlement.Withholding.NetAmount + settlement.Withholding.WithholdingTotal != payable)
             throw new OnlineSalesDraftConcurrencyException(
                 "El pedido cambió mientras se calculaban sus valores de facturación.");
-        if (request.Payments.Sum(payment => payment.Amount) +
-            (request.Credit?.Amount ?? 0m) != settlement.Withholding.NetAmount)
+        var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(
+            settlement.Withholding.NetAmount);
+        if (request.Payments.Sum(payment => payment.CollectedAmount) +
+            (request.Credit?.Amount ?? 0m) !=
+                settlement.Withholding.NetAmount + roundingAdjustment)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
 
@@ -144,11 +150,14 @@ public sealed partial class SqlOnlineSalesDraftStore
                 string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim(),
                 payment.BankAccountId,
                 string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
-                payment.TenderedAmount)).ToArray();
-        var taxes = lines.GroupBy(line => line.TaxCode, StringComparer.Ordinal)
-            .Select(group => new PosSaleTaxContract(
-                group.Key, group.Sum(line => line.TaxAmount)))
-            .OrderBy(value => value.Code, StringComparer.Ordinal).ToArray();
+                payment.TenderedAmount,
+                payment.RoundingAdjustment)).ToArray();
+        if (!PosPaymentRoundingPolicy.IsValid(settlement.Withholding.NetAmount, payments))
+            throw new OnlineSalesDraftValidationException(
+                "El ajuste al peso no corresponde al total original de la venta.");
+        var taxes = PosSaleTaxSummary.Calculate(
+            lines.Select(line => new PosSaleTaxContract(line.TaxCode, line.TaxAmount)),
+            source.Charges);
 
         PosSaleUploadRequest upload;
         if (request.DocumentType == PosSaleDocumentTypes.Invoice)
@@ -177,7 +186,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 connection, transaction, source.BusinessId, source.CustomerId,
                 source.CustomerPartySiteId, configuration, ct);
             var cufe = CufeCalculator.Calculate(new CufeInput(
-                fiscalNumber, now, untaxed, payable,
+                fiscalNumber, now, untaxed, payable + roundingAdjustment,
                 configuration.SupplierTaxId, customer.Identification,
                 fiscalMaterial.TechnicalKey, fiscalMaterial.Environment,
                 taxes.Select(value => new FiscalTaxAmount(value.Code, value.Amount))),
@@ -192,14 +201,16 @@ public sealed partial class SqlOnlineSalesDraftStore
                     documentNumber.FullNumber),
                 new PosSaleCommercialSnapshotContract(
                     PosSaleDocumentTypes.Invoice, now, customer.Identification,
-                    taxes, untaxed, taxAmount, payable, settlement.Withholding),
+                    taxes, untaxed, taxAmount, payable + roundingAdjustment,
+                    settlement.Withholding, roundingAdjustment),
                 new PosSaleFiscalSnapshotContract(
                     configuration.FiscalSeriesId, configuration.FiscalAuthorizationId,
                     configuration.AuthorizationNumber, PosSaleDocumentTypes.Invoice,
                     fiscalNumber, configuration.FiscalPrefix, fiscalConsecutive, now,
                     configuration.SupplierTaxId, customer.Identification,
                     (int)configuration.Environment, configuration.TechnicalKeyVersion,
-                    taxes, untaxed, taxAmount, payable, cufe.Cufe, cufe.QrPayload),
+                    taxes, untaxed, taxAmount, payable + roundingAdjustment,
+                    cufe.Cufe, cufe.QrPayload, roundingAdjustment),
                 lines, payments,
                 new PosSaleUblSnapshotContract(
                     configuration.FiscalIssuerConfigurationId,
@@ -225,7 +236,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                         .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))),
                 source.CustomerId, SaleSourceModes.Online, source.OrderId,
                 BuildOrderCredit(user, source, request, creditValidation),
-                CustomerPartySiteId: source.CustomerPartySiteId);
+                CustomerPartySiteId: source.CustomerPartySiteId,
+                Charges: source.Charges is { Count: > 0 } ? source.Charges : null);
         }
         else
         {
@@ -249,11 +261,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                     number.FullNumber),
                 new PosSaleCommercialSnapshotContract(
                     PosSaleDocumentTypes.Receipt, now, identification,
-                    taxes, untaxed, taxAmount, payable, settlement.Withholding),
+                    taxes, untaxed, taxAmount, payable + roundingAdjustment,
+                    settlement.Withholding, roundingAdjustment),
                 null, lines, payments, null, source.CustomerId,
                 SaleSourceModes.Online, source.OrderId,
                 BuildOrderCredit(user, source, request, creditValidation),
-                CustomerPartySiteId: source.CustomerPartySiteId);
+                CustomerPartySiteId: source.CustomerPartySiteId,
+                Charges: source.Charges is { Count: > 0 } ? source.Charges : null);
         }
 
         if (upload.FiscalSnapshot is not null)
@@ -451,12 +465,17 @@ public sealed partial class SqlOnlineSalesDraftStore
         foreach (var payment in request.Payments)
             value.Append('|').Append(payment.MethodCode).Append(':')
                 .Append(payment.Amount.ToString(CultureInfo.InvariantCulture)).Append(':')
+                .Append(payment.RoundingAdjustment.ToString(CultureInfo.InvariantCulture)).Append(':')
                 .Append(payment.Reference?.Trim()).Append(':')
                 .Append(payment.BankAccountId?.ToString("D")).Append(':')
                 .Append(payment.Notes?.Trim());
         if (request.Credit is not null)
             value.Append("|credit:")
                 .Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture));
+        foreach (var charge in source.Charges ?? [])
+            value.Append("|charge:").Append(charge.AppliedChargeId.ToString("D")).Append(':')
+                .Append(charge.ChargeId.ToString("D")).Append(':').Append(charge.Version).Append(':')
+                .Append(charge.Amount.ToString(CultureInfo.InvariantCulture));
         return Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(value.ToString())));
     }

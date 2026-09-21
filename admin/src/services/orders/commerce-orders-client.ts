@@ -143,6 +143,13 @@ export type InvoiceOrdersResponse = {
   creditValidationIssues?: OrderCreditValidationIssue[] | null;
 };
 
+export type OrderInvoiceChargeSelection = {
+  chargeId: string;
+  chargeVersion: number;
+  supplierId: string;
+  manualAmount: number | null;
+};
+
 export type RecoverOrderResult = {
   orderId: string;
   draftId: string;
@@ -237,6 +244,7 @@ export function invoiceCommerceOrders(request: {
   bankAccountId?: string | null;
   paymentNotes?: string | null;
   documentType?: "SalesInvoice" | "SalesReceipt";
+  charge?: OrderInvoiceChargeSelection | null;
 }, idempotencyKey = crypto.randomUUID()) {
   return orderRequest<InvoiceOrdersResponse>(
     "/api/commerce/v1/orders/invoice",
@@ -258,6 +266,7 @@ export function validateCommerceOrderCredit(request: {
   bankAccountId?: string | null;
   paymentNotes?: string | null;
   documentType?: "SalesInvoice" | "SalesReceipt";
+  charge?: OrderInvoiceChargeSelection | null;
 }) {
   return orderRequest<OrderCreditValidationIssue[]>(
     "/api/commerce/v1/orders/invoice/credit-validation",

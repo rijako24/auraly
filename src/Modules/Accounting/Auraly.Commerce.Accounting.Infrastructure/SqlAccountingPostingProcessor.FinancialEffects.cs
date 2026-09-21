@@ -313,7 +313,7 @@ public sealed partial class SqlAccountingPostingProcessor
             movement.Parameters.AddWithValue("@Count", sale.Payments.Count);
             movement.Parameters.Add("@Payments", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(
                 sale.Payments.Select(payment => new { Id = ids.NewId(), payment.PaymentNumber,
-                    payment.MethodCode, payment.Amount, payment.Reference,
+                    payment.MethodCode, Amount = payment.CollectedAmount, payment.Reference,
                     SourceKey = $"sale:{sale.DocumentId:D}:{payment.PaymentNumber}" }));
             await movement.ExecuteNonQueryAsync(token);
         }
@@ -346,6 +346,9 @@ public sealed partial class SqlAccountingPostingProcessor
             settlement.Parameters.AddWithValue("@At", value.ReturnedAt);
             await settlement.ExecuteNonQueryAsync(token);
         }
+
+        await ApplySalesReturnChargeFinancialEffectsAsync(
+            connection, transaction, value, token);
 
         if (value.EconomicResolution == ReturnEconomicResolutions.Refund)
         {
@@ -444,6 +447,61 @@ public sealed partial class SqlAccountingPostingProcessor
             createCredit.Parameters.AddWithValue("@Now", now);
             await createCredit.ExecuteNonQueryAsync(token);
         }
+    }
+
+    private async Task ApplySalesReturnChargeFinancialEffectsAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        SalesReturnDocumentPayload value, CancellationToken token)
+    {
+        if (value.Charges is not { Count: > 0 }) return;
+        var now = timeProvider.GetUtcNow();
+        var rows = value.Charges.Select(charge => new
+        {
+            charge.AppliedChargeId,
+            charge.SupplierId,
+            TransactionId = ids.NewId(),
+            SupplierCreditId = ids.NewId()
+        }).ToArray();
+        await using var command = new SqlCommand("""
+            DECLARE @Input TABLE(AppliedChargeId uniqueidentifier PRIMARY KEY,SupplierId uniqueidentifier,
+              TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier);
+            INSERT @Input SELECT AppliedChargeId,SupplierId,TransactionId,SupplierCreditId
+            FROM OPENJSON(@Rows) WITH(AppliedChargeId uniqueidentifier,SupplierId uniqueidentifier,
+              TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier);
+            DECLARE @Effects TABLE(AppliedChargeId uniqueidentifier PRIMARY KEY,SupplierId uniqueidentifier,
+              PayableId uniqueidentifier,OriginalAmount decimal(19,4),OutstandingAmount decimal(19,4),
+              PayableCredit decimal(19,4),SupplierCredit decimal(19,4),TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier);
+            INSERT @Effects
+            SELECT input.AppliedChargeId,input.SupplierId,payable.PayableId,payable.OriginalAmount,payable.OutstandingAmount,
+              CASE WHEN payable.OutstandingAmount<payable.OriginalAmount THEN payable.OutstandingAmount ELSE payable.OriginalAmount END,
+              payable.OriginalAmount-CASE WHEN payable.OutstandingAmount<payable.OriginalAmount THEN payable.OutstandingAmount ELSE payable.OriginalAmount END,
+              input.TransactionId,input.SupplierCreditId
+            FROM @Input input
+            JOIN dbo.Payables payable WITH(UPDLOCK,HOLDLOCK)
+              ON payable.BusinessId=@BusinessId AND payable.SourceDocumentId=input.AppliedChargeId
+             AND payable.SourceDocumentType=N'Expense' AND payable.SupplierId=input.SupplierId;
+            IF (SELECT COUNT(*) FROM @Effects)<>@Count
+              THROW 51607,'No fue posible localizar la cuenta por pagar de uno o más cargos.',1;
+            UPDATE payable SET OutstandingAmount=payable.OutstandingAmount-effect.PayableCredit,
+              Status=CASE WHEN effect.PayableCredit=effect.OriginalAmount AND effect.OutstandingAmount=effect.OriginalAmount
+                THEN N'Cancelled' WHEN payable.OutstandingAmount-effect.PayableCredit=0 THEN N'Paid' ELSE N'PartiallyPaid' END
+            FROM dbo.Payables payable JOIN @Effects effect ON effect.PayableId=payable.PayableId;
+            INSERT dbo.PayableTransactions(PayableTransactionId,PayableId,TransactionType,Amount,SourceDocumentId,OccurredAt,CreatedAt)
+            SELECT TransactionId,PayableId,N'Credit',PayableCredit,@ReturnId,@At,@Now FROM @Effects WHERE PayableCredit>0;
+            INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,SourceDocumentId,SourceDocumentType,
+              OriginalAmount,AvailableAmount,Status,CreatedAt)
+            SELECT SupplierCreditId,@BusinessId,SupplierId,AppliedChargeId,N'SalesReturnCharge',
+              SupplierCredit,SupplierCredit,N'Open',@Now FROM @Effects WHERE SupplierCredit>0;
+            INSERT dbo.SalesReturnChargeFinancialEffects(ReturnId,AppliedChargeId,PayableId,PayableCreditAmount,SupplierCreditAmount,CreatedAt)
+            SELECT @ReturnId,AppliedChargeId,PayableId,PayableCredit,SupplierCredit,@Now FROM @Effects;
+            """, connection, transaction);
+        command.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(rows);
+        command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        command.Parameters.AddWithValue("@ReturnId", value.ReturnId);
+        command.Parameters.AddWithValue("@At", value.ReturnedAt);
+        command.Parameters.AddWithValue("@Now", now);
+        command.Parameters.AddWithValue("@Count", rows.Length);
+        await command.ExecuteNonQueryAsync(token);
     }
 
     private Task ApplyGoodsReceiptFinancialEffectsAsync(

@@ -61,7 +61,8 @@ public sealed class OrderBatchInvoiceTests(
                 new InvoiceOrdersRequest(
                     workSessionId, fixture.WarehouseId, userId, [orderId], "Cash", null),
                 $"closed-line-total-{Guid.NewGuid():N}");
-            Assert.Equal("Completed", response.Status);
+            Assert.True(response.Status == "Completed",
+                string.Join(" | ", response.Results.Select(result => result.Error)));
             var result = Assert.Single(response.Results);
             Assert.Equal("Invoiced", result.Status);
             documentId = result.DocumentId

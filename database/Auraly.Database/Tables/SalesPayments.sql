@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[SalesPayments]
     [PaymentNumber] INT NOT NULL,
     [MethodCode] NVARCHAR(32) NOT NULL,
     [Amount] DECIMAL(19, 4) NOT NULL,
+    [RoundingAdjustment] DECIMAL(19, 4) NOT NULL CONSTRAINT [DF_SalesPayments_RoundingAdjustment] DEFAULT (0),
     [TenderedAmount] DECIMAL(19, 4) NULL,
     [Reference] NVARCHAR(160) NULL,
     [Notes] NVARCHAR(500) NULL,
@@ -15,8 +16,10 @@ CREATE TABLE [dbo].[SalesPayments]
     CONSTRAINT [FK_SalesPayments_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesPayments_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [CK_SalesPayments_Amount] CHECK ([PaymentNumber] > 0 AND [Amount] > 0),
+    CONSTRAINT [CK_SalesPayments_RoundingAdjustment] CHECK
+      ([RoundingAdjustment]>-50 AND [RoundingAdjustment]<=50 AND [Amount]+[RoundingAdjustment]>0),
     CONSTRAINT [CK_SalesPayments_TenderedAmount] CHECK
-      ([TenderedAmount] IS NULL OR ([MethodCode]=N'Cash' AND [TenderedAmount]>=[Amount])),
+      ([TenderedAmount] IS NULL OR ([MethodCode]=N'Cash' AND [TenderedAmount]>=[Amount]+[RoundingAdjustment])),
     CONSTRAINT [CK_SalesPayments_CardData] CHECK (
         ([CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL) OR
         ([MethodCode] IN (N'Card',N'DebitCard',N'CreditCard') AND

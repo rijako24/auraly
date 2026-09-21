@@ -279,14 +279,14 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               WHERE business.BusinessId=@BusinessId AND settings.Status=N'Ready') THEN 1 ELSE 0 END;
             INSERT INTO dbo.SalesPayments
             (
-                DocumentId, PaymentNumber, MethodCode, Amount, TenderedAmount,
+                DocumentId, PaymentNumber, MethodCode, Amount, RoundingAdjustment, TenderedAmount,
                 Reference, Notes, CardFranchiseCode, ApprovalNumber, BankAccountId, RegisteredAt
             )
             SELECT
-                @DocumentId, input.PaymentNumber, input.MethodCode, input.Amount, input.TenderedAmount,
+                @DocumentId, input.PaymentNumber, input.MethodCode, input.Amount, input.RoundingAdjustment, input.TenderedAmount,
                 input.Reference, input.Notes, input.CardFranchiseCode, input.ApprovalNumber, input.BankAccountId, @RegisteredAt
             FROM OPENJSON(@Payments) WITH(
-              PaymentNumber int,MethodCode nvarchar(32),Amount decimal(19,4),TenderedAmount decimal(19,4),
+              PaymentNumber int,MethodCode nvarchar(32),Amount decimal(19,4),RoundingAdjustment decimal(19,4),TenderedAmount decimal(19,4),
               Reference nvarchar(160),Notes nvarchar(500),CardFranchiseCode nvarchar(64),
               ApprovalNumber nvarchar(100),BankAccountId uniqueidentifier) input
             WHERE input.MethodCode<>N'Transfer' OR

@@ -79,6 +79,18 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
         return await ReadAsync(command, page, pageSize, ct);
     }
 
+    public async Task<InvoiceChargeDefinition?> ReadAsync(InvoiceChargeActor actor,
+        Guid chargeId, long version, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand(ReadSql, connection);
+        AddScope(command, actor);
+        AddPage(command, 1, 1, null, true, chargeId,
+            requestedVersions: JsonSerializer.Serialize(new[] { new { ChargeId = chargeId, Version = version } }));
+        return (await ReadAsync(command, 1, 1, ct)).Items.SingleOrDefault();
+    }
+
     internal static async Task<InvoiceChargeDefinition?> ReadOneAsync(SqlConnection connection,
         SqlTransaction transaction, Guid tenantId, Guid businessId, Guid chargeId, CancellationToken ct)
     {

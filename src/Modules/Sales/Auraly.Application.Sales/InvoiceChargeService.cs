@@ -17,11 +17,27 @@ public interface IInvoiceChargeStore
         string? search, bool includeInactive, CancellationToken ct, long? throughCursor = null);
     Task<InvoiceChargeDefinition> SaveAsync(InvoiceChargeActor actor,
         SaveInvoiceChargeRequest request, CancellationToken ct);
+    Task<InvoiceChargeDefinition?> ReadAsync(InvoiceChargeActor actor,
+        Guid chargeId, long version, CancellationToken ct);
 }
 
 public sealed class InvoiceChargeService(IInvoiceChargeStore store,
     IPosSynchronizationOutboxDispatcher synchronization, IExpenseStore expenses, ICatalogStore catalog)
 {
+    public async Task<InvoiceChargeSelection> ResolveForSaleAsync(
+        InvoiceChargeActor actor, Guid appliedChargeId, Guid chargeId, long version,
+        Guid supplierId, decimal? manualAmount, CancellationToken ct = default)
+    {
+        Demand(actor, CommercePermissionCodes.SalesCreate);
+        if (appliedChargeId == Guid.Empty || chargeId == Guid.Empty || version < 1 ||
+            supplierId == Guid.Empty)
+            throw new InvoiceChargeValidationException("Selecciona un cargo y un proveedor válidos.");
+        var definition = await store.ReadAsync(actor, chargeId, version, ct)
+            ?? throw new InvoiceChargeValidationException(
+                "La versión seleccionada del cargo ya no está disponible para esta sede.");
+        return new(appliedChargeId, definition, supplierId, manualAmount);
+    }
+
     public Task<InvoiceChargeHistoryPage> HistoryAsync(InvoiceChargeActor actor, DateOnly from, DateOnly to,
         int page, int pageSize, string? search, CancellationToken ct = default)
     {

@@ -41,6 +41,30 @@ la cuenta de gasto y del centro predeterminado. Asumir un costo no crea una
 entrada de efectivo; pagar al proveedor posteriormente sí produce el egreso
 normal, sin registrar nuevamente el gasto.
 
+El total a pagar se redondea al múltiplo de COP 100 más cercano; el punto medio
+se resuelve alejándose de cero. La pantalla presenta directamente ese valor.
+El subtotal exacto de líneas e impuestos permanece congelado y
+`PayableRoundingAmount` explica la diferencia firmada hasta el total fiscal:
+positiva al subir y negativa al bajar. `SalesPayments.Amount` conserva la parte
+exacta aplicada y `RoundingAdjustment` guarda la misma diferencia para que caja,
+banco o cartera reciban el total oficial. La política se usa en contado y
+crédito, web, Edge y facturación masiva de pedidos. CUFE, UBL, impresión,
+reporting y cierre publican el total redondeado; bases e impuestos no se
+redistribuyen.
+
+La facturación masiva conserva el botón directo existente y ofrece **Agregar
+cargo** únicamente con pedidos seleccionados. El modal elige la definición y el
+proveedor una vez; cada pedido recalcula la regla sobre su propio total y se
+emite por el endpoint canónico de facturación. La prevalidación de cupo incluye
+el importe facturado del cargo y realiza una consulta por lote.
+
+Una devolución muestra los cargos congelados de la factura y permite conservarlos
+o devolverlos. Devolver un cargo incluido aumenta la nota crédito al cliente;
+devolver uno asumido no altera ese total. En ambos casos el motor contable revierte
+el gasto del proveedor: cancela la cuenta por pagar aún abierta o crea un saldo a
+favor del proveedor por la parte ya pagada. La selección y los efectos son
+idempotentes y no recalculan la configuración vigente.
+
 El writer común `SqlExpenseStore.PersistAcceptedAsync` persiste gastos manuales
 y gastos originados por cargos, retenciones y fuentes financieras en la misma
 transacción de aceptación. Los nuevos gastos entran directamente a
@@ -161,6 +185,22 @@ Una venta web pertenece a la sede activa y al turno del cajero. `BusinessId`,
 `DeviceId` es nulo en una venta web porque el navegador no representa un equipo
 POS Edge enrolado. El documento conserva `SourceMode=Online`, `BusinessId`,
 `WorkSessionId` y `SoldByUserId`. No existe `RegisterId` en el esquema vigente.
+
+## Propiedad del cálculo de líneas
+
+El comando canónico que agrega un producto, y los comandos explícitos que editan
+cantidad, precio o descuento, son los únicos propietarios de la fórmula comercial
+de la línea. Allí se calcula y cierra `PublicLineTotal`. Desde ese momento, pausar
+una venta, guardarla como pedido, recuperarla, facturarla y pagarla transportan el
+snapshot sin exigir que `cantidad × precio - descuentos` reconstruya exactamente
+el total cerrado. Esta diferencia es válida en cantidades fraccionarias y en los
+límites de redondeo monetario.
+
+Las etapas posteriores solo validan la estructura y las identidades que les
+pertenecen, además de la consistencia fiscal interna del documento congelado. No
+reprecian, no crean descuentos de compensación y no rechazan un snapshot por esa
+ecuación. Una edición comercial posterior sí vuelve a invocar el propietario
+canónico y produce un nuevo total cerrado.
 
 ## Flujo transaccional
 

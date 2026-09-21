@@ -19,7 +19,8 @@ public sealed record CompletePaymentRequest(
     string? ApprovalNumber = null,
     Guid? BankAccountId = null,
     string? Notes = null,
-    decimal? TenderedAmount = null);
+    decimal? TenderedAmount = null,
+    decimal RoundingAdjustment = 0m);
 
 public sealed record CompleteCreditRequest(
     decimal Amount);
@@ -195,7 +196,8 @@ internal static class PosSaleHostModule
                         payment.ApprovalNumber,
                         payment.BankAccountId,
                         payment.Notes,
-                        payment.TenderedAmount))
+                        payment.TenderedAmount,
+                        payment.RoundingAdjustment))
                     .ToArray();
                 PosSaleCreditTerms? credit = null;
                 var ublSnapshot = request.UblSnapshot;

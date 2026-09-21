@@ -21,7 +21,7 @@ public sealed class SqlSalesReportingProjectionWriter(
     IAuralyIdGenerator ids,
     TimeProvider timeProvider)
 {
-    private const short ProjectionVersion = 2;
+    private const short ProjectionVersion = 3;
 
     public async Task ProjectSaleAsync(
         SalesReportingSqlSession session,
@@ -43,11 +43,13 @@ public sealed class SqlSalesReportingProjectionWriter(
             value.CommercialSnapshot.DocumentType, 1, now, cancellationToken,
             chargeUntaxed: value.Charges?.Sum(charge => charge.InvoicedUntaxedAmount) ?? 0,
             chargeTax: value.Charges?.Sum(charge => charge.InvoicedTaxAmount) ?? 0,
-            chargeTotal: value.Charges?.Sum(charge => charge.InvoicedAmount) ?? 0);
+            chargeTotal: value.Charges?.Sum(charge => charge.InvoicedAmount) ?? 0,
+            roundingAdjustment: value.CommercialSnapshot.PayableRoundingAmount);
 
         var discount = value.Lines.Sum(line => line.DiscountAmount);
         var gross = value.CommercialSnapshot.UntaxedAmount + discount;
         var credit = value.Credit?.Amount ?? 0m;
+        var reportedTotal = value.CommercialSnapshot.PayableAmount;
         await ApplyDailyDeltaAsync(
             session, value.BusinessId, localDate.Date,
             documentCount: 1,
@@ -58,11 +60,11 @@ public sealed class SqlSalesReportingProjectionWriter(
             returns: 0,
             netUntaxed: value.CommercialSnapshot.UntaxedAmount,
             netTax: value.CommercialSnapshot.TaxAmount,
-            netTotal: value.CommercialSnapshot.PayableAmount,
+            netTotal: reportedTotal,
             netCost: recognizedCost,
-            grossProfit: value.CommercialSnapshot.PayableAmount - recognizedCost,
+            grossProfit: reportedTotal - recognizedCost,
             creditSales: credit,
-            collected: value.Payments.Sum(payment => payment.Amount),
+            collected: value.Payments.Sum(payment => payment.CollectedAmount),
             refunded: 0,
             now, cancellationToken);
         await RefreshProductRotationAsync(session, value.BusinessId, value.DocumentId,
@@ -369,7 +371,7 @@ public sealed class SqlSalesReportingProjectionWriter(
               DocumentId,TenantId,BusinessId,DocumentType,DocumentNumber,FiscalNumber,
               IssuedAt,BusinessLocalDate,TimeZoneId,WarehouseId,WarehouseName,WorkSessionId,SellerId,SellerName,
               CustomerId,PartySiteId,CustomerIdentification,CustomerName,SourceMode,FiscalStatus,
-              CurrencyCode,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,
+              CurrencyCode,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,RoundingAdjustmentAmount,
               CreditAmount,CollectedAmount,RecognizedCostAmount,ProjectionVersion,
               SourcePayloadHash,ProjectedAt
             )
@@ -379,7 +381,7 @@ public sealed class SqlSalesReportingProjectionWriter(
                    COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
                             NULLIF(CONCAT(p.FirstName,N' ',p.LastName),N' '),N'Consumidor final'),
                    d.SourceMode,d.FiscalStatus,@Currency,@Gross,@Discount,d.UntaxedAmount,
-                   d.TaxAmount,d.PayableAmount,d.CreditAmount,@Collected,@Cost,@Version,
+                   d.TaxAmount,d.PayableAmount,@Rounding,d.CreditAmount,@Collected,@Cost,@Version,
                    d.PayloadHash,@ProjectedAt
             FROM dbo.SalesDocuments d
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
@@ -398,7 +400,8 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@SellerName", seller.SellerName);
         AddDecimal(command, "@Gross", value.CommercialSnapshot.UntaxedAmount + value.Lines.Sum(x => x.DiscountAmount), 19, 4);
         AddDecimal(command, "@Discount", value.Lines.Sum(x => x.DiscountAmount), 19, 4);
-        AddDecimal(command, "@Collected", value.Payments.Sum(x => x.Amount), 19, 4);
+        AddDecimal(command, "@Rounding", value.CommercialSnapshot.PayableRoundingAmount, 19, 4);
+        AddDecimal(command, "@Collected", value.Payments.Sum(x => x.CollectedAmount), 19, 4);
         AddDecimal(command, "@Cost", recognizedCost, 19, 4);
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@ProjectedAt", now);
@@ -503,7 +506,8 @@ public sealed class SqlSalesReportingProjectionWriter(
             """;
         var payments = value.Payments.Select(payment => new
         {
-            payment.PaymentNumber, MovementType = "Payment", payment.MethodCode, payment.Amount, payment.Reference
+            payment.PaymentNumber, MovementType = "Payment", payment.MethodCode,
+            Amount = payment.CollectedAmount, payment.Reference
         }).ToList();
         if (value.Credit is not null)
             payments.Add(new { PaymentNumber = 0, MovementType = "Credit", MethodCode = "Credit",
@@ -561,7 +565,10 @@ public sealed class SqlSalesReportingProjectionWriter(
         await InsertTaxFactsAsync(session, value.ReturnId, SalesReturnDocumentTypes.SalesReturn,
             value.TenantId, value.BusinessId, localDate, value.Lines.Select(line =>
                 new TaxFact(line.TaxCode, line.TaxRate, line.UntaxedAmount,
-                    line.TaxAmount, line.LineTotal)), -1m, now, cancellationToken);
+                    line.TaxAmount, line.LineTotal)).Concat((value.Charges ?? [])
+                .Where(charge => charge.InvoicedAmount > 0).Select(charge =>
+                    new TaxFact(charge.TaxCode, charge.TaxRate, charge.InvoicedUntaxedAmount,
+                        charge.InvoicedTaxAmount, charge.InvoicedAmount))), -1m, now, cancellationToken);
 
     private static async Task InsertTaxFactsAsync(
         SalesReportingSqlSession session,
@@ -728,7 +735,8 @@ public sealed class SqlSalesReportingProjectionWriter(
         SalesReportingSqlSession session, Guid businessId, Guid sourceDocumentId,
         string sourceDocumentType, long documentCount, DateTimeOffset now,
         CancellationToken cancellationToken,
-        decimal chargeUntaxed = 0, decimal chargeTax = 0, decimal chargeTotal = 0)
+        decimal chargeUntaxed = 0, decimal chargeTax = 0, decimal chargeTotal = 0,
+        decimal roundingAdjustment = 0)
     {
         const string sql = """
             WITH lineDimensions AS
@@ -762,9 +770,11 @@ public sealed class SqlSalesReportingProjectionWriter(
                 Discounts,Returns,
                 NetUntaxed+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeUntaxed ELSE 0 END NetUntaxed,
                 NetTax+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeTax ELSE 0 END NetTax,
-                NetTotal+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeTotal ELSE 0 END NetTotal,
+                NetTotal+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse')
+                  THEN @ChargeTotal+@RoundingAdjustment ELSE 0 END NetTotal,
                 NetCost,
-                GrossProfit+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @ChargeTotal ELSE 0 END GrossProfit
+                GrossProfit+CASE WHEN DimensionType IN(N'Customer',N'Seller',N'Warehouse')
+                  THEN @ChargeTotal+@RoundingAdjustment ELSE 0 END GrossProfit
               FROM lineDimensions
             )
             MERGE reporting.SalesReportDailyDimensionTotals WITH(HOLDLOCK) AS target
@@ -797,6 +807,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         AddDecimal(command, "@ChargeUntaxed", chargeUntaxed, 19, 4);
         AddDecimal(command, "@ChargeTax", chargeTax, 19, 4);
         AddDecimal(command, "@ChargeTotal", chargeTotal, 19, 4);
+        AddDecimal(command, "@RoundingAdjustment", roundingAdjustment, 19, 4);
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);

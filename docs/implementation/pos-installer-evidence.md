@@ -13,6 +13,29 @@ The installer bundles the Auraly desktop launcher, the production Next.js
 standalone build, Node.js runtime and the self-contained POS Edge host. It
 preserves `%LOCALAPPDATA%\Auraly\PosEdge` during an update.
 
+## Binary versions during upgrades (2026-09-21)
+
+Windows Installer compares numeric `FileVersion`, not the commit in
+`ProductVersion` or the version in `desktopsettings.json`. The DEV rc190
+installation log showed `Existing file is of an equal version` for Desktop
+and Edge; the UI had updated while both binaries still came from September 11.
+Those legacy binaries use `FileVersion=1.0.0.0`.
+
+The existing packaging script now publishes both .NET graphs with
+`FileVersion=1.<MSI product version>`; for example rc191 becomes `1.0.1.791`.
+The leading `1` preserves compatibility with the legacy file version, and the
+remaining components reuse the existing release ordering, including alpha,
+beta, rc and stable releases. `AssemblyVersion` remains unchanged. Packaging
+checks every Auraly EXE/DLL before signing and rejects a mixed payload.
+
+The transactional `afterInstallExecute` upgrade remains in place, as does the
+existing ownership of process shutdown and the SQLite data directory. No
+history or returns endpoint is duplicated to accommodate obsolete binaries.
+Restoring an older release requires its installer repair or reinstall; publishing
+a new release must always use a greater release version.
+
+Reference: [Windows Installer file versioning rules](https://learn.microsoft.com/en-us/windows/win32/msi/file-versioning-rules).
+
 ## Process ownership during updates
 
 The desktop launcher assigns its Node.js and POS Edge children to one Windows

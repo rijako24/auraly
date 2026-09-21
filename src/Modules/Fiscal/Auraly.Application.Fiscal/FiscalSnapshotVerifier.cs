@@ -200,7 +200,7 @@ public static class FiscalSnapshotValidator
         }
 
         var financedAmount = request.Credit?.Amount ?? 0m;
-        if (request.Payments.Sum(payment => payment.Amount) + financedAmount !=
+        if (request.Payments.Sum(payment => payment.CollectedAmount) + financedAmount !=
                 request.CommercialSnapshot.NetPayableAmount ||
             request.Payments.Any(payment => payment.PaymentNumber <= 0 || payment.Amount <= 0) ||
             request.Credit is { Amount: <= 0m })

@@ -16,6 +16,7 @@ import {
   Pencil,
   Printer,
   Receipt,
+  ReceiptText,
   RotateCcw,
   Search,
   SlidersHorizontal,
@@ -45,7 +46,9 @@ import {
   type CommerceOrderListItem,
   type CommerceOrderPage,
   type OrderCreditValidationIssue,
+  type OrderInvoiceChargeSelection,
 } from "@/services/orders/commerce-orders-client";
+import type { InvoiceChargePage } from "@/services/api/invoice-charges";
 import { orderOperationErrorMessage } from "@/services/orders/order-http-error";
 import { orderInvoiceFailureDetails } from "@/services/orders/order-invoice-result";
 import {
@@ -59,6 +62,7 @@ import {
 } from "@/services/pos/pos-order-print-routing";
 import { getOrderAvailability } from "./order-availability";
 import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
+import { OrderInvoiceChargeDialog } from "./order-invoice-charge-dialog";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -94,6 +98,7 @@ type OrdersWorkspaceProps = {
     printAfterInvoice: boolean,
     idempotencyKey: string,
     onProgress: (progress: OrderInvoiceSequenceProgress) => void,
+    charge?: OrderInvoiceChargeSelection | null,
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -108,6 +113,7 @@ type OrdersWorkspaceProps = {
   }>;
   onExpand?: () => void;
   onConfigurePrinting?: () => void;
+  onLoadInvoiceCharges?: (page: number) => Promise<InvoiceChargePage>;
   onCountChange?: (count: number) => void;
   routeOptions?: Array<{ routeId: string; name: string }>;
   source?: number;
@@ -146,6 +152,7 @@ export function OrdersWorkspace({
   onInvoiceSelected,
   onExpand,
   onConfigurePrinting,
+  onLoadInvoiceCharges,
   onCountChange,
   routeOptions = [],
   source,
@@ -180,6 +187,7 @@ export function OrdersWorkspace({
   const invoiceAttemptRef = useRef<{ fingerprint: string; key: string } | null>(null);
   const [creditValidationIssues, setCreditValidationIssues] = useState<OrderCreditValidationIssue[]>([]);
   const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
+  const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
   const pageSize = compact ? 8 : 20;
 
   const orderFilters = useMemo<Omit<CommerceOrderFilters, "page" | "pageSize">>(() => ({
@@ -329,7 +337,7 @@ export function OrdersWorkspace({
     }
   }
 
-  async function invoiceSelected(requestedPaymentMethodCode: "Cash" | "Credit") {
+  async function invoiceSelected(requestedPaymentMethodCode: "Cash" | "Credit", charge?: OrderInvoiceChargeSelection | null) {
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
     if (selectedOrders.length > ORDER_INVOICE_BATCH_LIMIT) {
       setError(`Puedes facturar máximo ${ORDER_INVOICE_BATCH_LIMIT} pedidos por lote.`);
@@ -349,6 +357,7 @@ export function OrdersWorkspace({
       documentType,
       paymentMethodCode: requestedPaymentMethodCode,
       printAfterInvoice,
+      charge: charge ?? null,
     });
     if (invoiceAttemptRef.current?.fingerprint !== fingerprint) {
       invoiceAttemptRef.current = { fingerprint, key: crypto.randomUUID() };
@@ -411,6 +420,7 @@ export function OrdersWorkspace({
         printAfterInvoice,
         idempotencyKey,
         updateProgress,
+        charge,
       );
       invoiceAttemptRef.current = null;
       if (result.creditValidationIssues?.length) {
@@ -455,6 +465,7 @@ export function OrdersWorkspace({
       }
       setSelected(new Map());
       setAllMatchingSelected(false);
+      setChargeDialogOpen(false);
       void refresh(true);
     } catch (caught) {
       setError(orderOperationErrorMessage(caught, "No fue posible facturar los pedidos."));
@@ -747,6 +758,16 @@ export function OrdersWorkspace({
                       ? "Emitir a crédito"
                       : "Emitir en efectivo"} ({selectedOrders.length})
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!selectedOrders.length || working || selectingAll || !onInvoiceSelected || !onLoadInvoiceCharges}
+                  onClick={() => setChargeDialogOpen(true)}
+                  className="col-span-2 w-full whitespace-nowrap border-teal-300 text-teal-800 hover:bg-teal-50 sm:col-span-1 sm:w-auto"
+                >
+                  <ReceiptText className="mr-2 h-4 w-4" />
+                  Agregar cargo ({selectedOrders.length})
+                </Button>
               </div>
             </div>
           </div>
@@ -908,6 +929,14 @@ export function OrdersWorkspace({
           </div>
         </div>
       </div>
+      {chargeDialogOpen && onLoadInvoiceCharges && <OrderInvoiceChargeDialog
+        orderCount={selectedOrders.length}
+        total={selectedOrders.reduce((sum, order) => sum + order.total, 0)}
+        busy={working}
+        loadPage={onLoadInvoiceCharges}
+        onInvoice={(charge) => invoiceSelected(paymentMethodCode, charge)}
+        onClose={() => { if (!working) setChargeDialogOpen(false); }}
+      />}
 
       {detail && (
         <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/55 p-4 backdrop-blur-sm">

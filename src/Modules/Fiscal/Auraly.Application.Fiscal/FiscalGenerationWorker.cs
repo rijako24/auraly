@@ -370,7 +370,13 @@ public sealed class FiscalGenerationWorker(
                 line.DiscountAmount, line.UntaxedAmount,
                 [new DianTax(line.TaxCode, item.TaxName, line.UntaxedAmount,
                     line.TaxAmount, line.TaxRate)]);
-        }).ToArray();
+        }).ToList();
+        foreach (var charge in (snapshot.Return.Charges ?? []).Where(charge => charge.InvoicedAmount > 0m))
+            lines.Add(new DianCreditNoteLine(
+                lines.Count + 1, charge.Code, "999", charge.Name, "EA", 1m,
+                charge.InvoicedUntaxedAmount, 0m, charge.InvoicedUntaxedAmount,
+                [new DianTax(charge.TaxCode, TaxName(charge.TaxCode),
+                    charge.InvoicedUntaxedAmount, charge.InvoicedTaxAmount, charge.TaxRate)]));
         var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
         var cude = CudeCalculator.Calculate(new CudeInput(
             snapshot.FiscalNumber, snapshot.Return.ReturnedAt,

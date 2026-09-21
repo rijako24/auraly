@@ -11,7 +11,11 @@ public sealed record OnlineSalesPayment(
     string? ApprovalNumber = null,
     Guid? BankAccountId = null,
     string? Notes = null,
-    decimal? TenderedAmount = null);
+    decimal? TenderedAmount = null,
+    decimal RoundingAdjustment = 0m)
+{
+    public decimal CollectedAmount => Amount + RoundingAdjustment;
+}
 
 public sealed record OnlineSalesCreditTerms(
     decimal Amount);
@@ -102,7 +106,8 @@ public sealed record OnlineSalesReceipt(
     SalesInvoicePrintDetails? InvoicePrintDetails = null,
     string? CustomerPhone = null,
     string? CustomerAddress = null,
-    IReadOnlyList<SalesReceiptTaxTotal>? TaxTotals = null);
+    IReadOnlyList<SalesReceiptTaxTotal>? TaxTotals = null,
+    decimal PayableRoundingAmount = 0m);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

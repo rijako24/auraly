@@ -3,6 +3,7 @@
 import { ChevronLeft, Eye, Loader2, Printer, ReceiptText, Search, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DatePicker } from "@/components/ui/date-picker";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { PosCatalogProduct, PosCatalogSearchPage, PosCustomer, PosCustomerSearchPage, PosIssuedSaleFilters, PosIssuedSaleSearchPage, PosIssuedSaleSummary, PosPrintableReceipt } from "@/services/pos/pos-edge-client";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
@@ -44,7 +45,26 @@ export function PosInvoiceSearchDialog({busy,onSearch,onSearchCustomers,onSearch
   const productPicker=product?{key:product.productId,label:`${product.name} · ${product.reference??product.productCode}`,value:product} : null;
   return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-2 sm:p-4" data-pos-focus-surface="modal"><section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" className="flex max-h-[96vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
     <header className="flex items-start justify-between gap-4 bg-gradient-to-r from-slate-950 via-teal-950 to-cyan-800 p-4 text-white sm:p-5"><div><h2 className="flex items-center gap-2 text-xl font-semibold"><ReceiptText className="h-5 w-5 text-cyan-300"/>{detail?"Detalle de factura":"Facturas y comprobantes"}</h2><p className="mt-1 text-sm text-cyan-50/75">Consulta histórica en servidor, detalle original y reimpresión auditada.</p></div><button type="button" onClick={detail?()=>setDetail(null):onCancel} disabled={busy} className="grid h-10 w-10 place-items-center rounded-xl bg-white/10 hover:bg-white/20" aria-label={detail?"Volver":"Cerrar"}>{detail?<ChevronLeft/>:<X/>}</button></header>
-    {detail?<div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"><div className="grid gap-3 rounded-2xl border bg-slate-50 p-4 sm:grid-cols-3"><div><small className="text-slate-500">Documento</small><p className="font-bold">{detail.documentNumber}</p></div><div><small className="text-slate-500">Cliente</small><p className="font-bold">{detail.customerName}</p><p className="text-xs text-slate-500">{detail.customerIdentification}</p></div><div><small className="text-slate-500">Fecha y total</small><p>{dateTime.format(new Date(detail.issuedAt))}</p><p className="text-lg font-black text-teal-800">{money.format(detail.payableAmount)}</p></div></div><div className="mt-4 overflow-x-auto rounded-2xl border"><table className="w-full min-w-[560px] text-sm"><thead className="bg-slate-950 text-left text-white"><tr><th className="p-3">Producto</th><th className="p-3 text-right">Cantidad</th><th className="p-3 text-right">Precio</th><th className="p-3 text-right">Total</th></tr></thead><tbody>{detail.lines.map((line,index)=><tr key={`${line.productCode}-${index}`} className="border-t"><td className="p-3"><strong>{line.description}</strong><small className="block text-slate-500">{line.productCode}</small></td><td className="p-3 text-right">{line.quantity}</td><td className="p-3 text-right">{money.format(line.unitPrice)}</td><td className="p-3 text-right font-bold">{money.format(line.total)}</td></tr>)}</tbody></table></div></div>:<>
+    {detail?<div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"><div className="grid gap-3 rounded-2xl border bg-slate-50 p-4 sm:grid-cols-3"><div><small className="text-slate-500">Documento</small><p className="font-bold">{detail.documentNumber}</p></div><div><small className="text-slate-500">Cliente</small><p className="font-bold">{detail.customerName}</p><p className="text-xs text-slate-500">{detail.customerIdentification}</p></div><div><small className="text-slate-500">Fecha y total</small><p>{dateTime.format(new Date(detail.issuedAt))}</p><p className="text-lg font-black text-teal-800">{money.format(detail.payableAmount)}</p></div></div><div className="mt-4 overflow-hidden rounded-2xl border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Producto</TableHead>
+              <TableHead className="text-right">Cantidad</TableHead>
+              <TableHead className="text-right">Precio</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {detail.lines.map((line,index)=><TableRow key={`${line.productCode}-${index}`}>
+              <TableCell><strong>{line.description}</strong><small className="block text-slate-500">{line.productCode}</small></TableCell>
+              <TableCell className="text-right">{line.quantity}</TableCell>
+              <TableCell className="text-right">{money.format(line.unitPrice)}</TableCell>
+              <TableCell className="text-right font-bold">{money.format(line.total)}</TableCell>
+            </TableRow>)}
+          </TableBody>
+        </Table>
+      </div></div>:<>
       <div className="border-b bg-slate-50 p-3 sm:p-5"><div className="mb-3 flex items-center gap-2 text-sm font-bold text-teal-900"><SlidersHorizontal className="h-4 w-4"/>Filtros en servidor</div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="grid gap-1.5 text-sm font-medium sm:col-span-2"><span>Número de factura o DIAN</span><span className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"/><input ref={input} autoFocus value={filters.search} onChange={e=>setFilters(v=>({...v,search:e.target.value}))} className="h-10 w-full rounded-xl border bg-white pl-9 pr-9 outline-none focus:ring-2 focus:ring-teal-600" placeholder="Ej. FV-1024"/>{loading&&<span className="absolute right-4 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center"><Loader2 className="h-4 w-4 animate-spin text-teal-700"/></span>}</span></label>
         <ServerPicker label="Cliente y sede" placeholder="Buscar cliente o sede" selected={customerPicker} onSelect={setCustomer} onSearch={async(q,s)=>{const p=await onSearchCustomers(q,s);return{...p,items:p.items.map(i=>({key:`${i.customerId}:${i.partySiteId}`,label:`${i.name}${i.siteName?` · ${i.siteName}`:""}`,value:i}))}}}/>

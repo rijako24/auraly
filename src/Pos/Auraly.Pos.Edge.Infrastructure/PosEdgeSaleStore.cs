@@ -52,7 +52,11 @@ public sealed record OfflineSalePayment(
     string? ApprovalNumber = null,
     Guid? BankAccountId = null,
     string? Notes = null,
-    decimal? TenderedAmount = null);
+    decimal? TenderedAmount = null,
+    decimal RoundingAdjustment = 0m)
+{
+    public decimal CollectedAmount => Amount + RoundingAdjustment;
+}
 
 public sealed record PosEdgeIssueCommand(
     UserId UserId,
@@ -562,7 +566,11 @@ public sealed class PosEdgeSaleStore
                 technicalKey,
                 environment,
                 qrValidationUrl,
-                command.Lines, command.Charges));
+                command.Lines, command.Charges,
+                PosPaymentRoundingPolicy.Adjustment(
+                    command.Withholding?.NetAmount ??
+                    command.Lines.Sum(line => line.LineTotal) +
+                    (command.Charges?.Sum(charge => charge.InvoicedAmount) ?? 0m))));
             invoice = confirmed.Invoice;
             snapshot = invoice.FiscalSnapshot
                 ?? throw new InvalidOperationException("The sale was not fiscally frozen.");
@@ -592,7 +600,9 @@ public sealed class PosEdgeSaleStore
             DocumentNumber = documentNumber.FullNumber,
             FiscalNumber = fiscalNumber?.FullNumber ?? string.Empty,
             Cufe = snapshot?.Cufe ?? string.Empty,
-            Total = invoice.PayableAmount,
+            Total = invoice.PayableAmount + (snapshot?.PayableRoundingAmount ??
+                PosPaymentRoundingPolicy.Adjustment(
+                    command.Withholding?.NetAmount ?? invoice.PayableAmount)),
             IssuedAt = command.IssuedAt,
             FiscalSnapshotJson = payload,
             RemoteFiscalStatus = isFiscal
@@ -620,7 +630,9 @@ public sealed class PosEdgeSaleStore
             fiscalNumber?.FullNumber,
             snapshot?.Cufe,
             snapshot?.QrPayload,
-            invoice.PayableAmount,
+            invoice.PayableAmount + (snapshot?.PayableRoundingAmount ??
+                PosPaymentRoundingPolicy.Adjustment(
+                    command.Withholding?.NetAmount ?? invoice.PayableAmount)),
             outboxMessageId,
             WasAlreadyIssued: false,
             upload);
@@ -1056,7 +1068,8 @@ public sealed class PosEdgeSaleStore
                     payment.ApprovalNumber,
                     payment.BankAccountId,
                     payment.Notes,
-                    payment.TenderedAmount))
+                    payment.TenderedAmount,
+                    payment.RoundingAdjustment))
                 .ToArray()
             : command.Credit is not null
                 ? []
@@ -1071,12 +1084,16 @@ public sealed class PosEdgeSaleStore
             withholding.WithholdingTotal != withholding.Lines.Sum(line => line.Amount) ||
             withholding.NetAmount + withholding.WithholdingTotal != invoice.PayableAmount)
             throw new InvalidOperationException("The withholding snapshot does not reconcile with the sale.");
-        if (payments.Sum(payment => payment.Amount) +
-                (command.Credit?.Amount ?? 0m) != withholding.NetAmount)
+        var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(withholding.NetAmount);
+        if (payments.Sum(payment => payment.CollectedAmount) +
+                (command.Credit?.Amount ?? 0m) != withholding.NetAmount + roundingAdjustment)
         {
             throw new InvalidOperationException(
                 "Actual payments plus financed balance must equal the payable amount.");
         }
+        if (!PosPaymentRoundingPolicy.IsValid(withholding.NetAmount, payments))
+            throw new InvalidOperationException(
+                "The payment rounding adjustment does not match the original sale total.");
         if (payments.Any(payment =>
                 (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
                 (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber))))
@@ -1111,8 +1128,9 @@ public sealed class PosEdgeSaleStore
                 taxes,
                 invoice.UntaxedAmount,
                 invoice.TaxAmount,
-                invoice.PayableAmount,
+                invoice.PayableAmount + roundingAdjustment,
                 withholding,
+                roundingAdjustment,
                 CustomerName: command.CustomerName),
             snapshot is null || fiscalNumber is null || fiscalAuthorizationId is null
                 ? null
@@ -1134,7 +1152,8 @@ public sealed class PosEdgeSaleStore
                     snapshot.TaxAmount,
                     snapshot.PayableAmount,
                     snapshot.Cufe,
-                    snapshot.QrPayload),
+                    snapshot.QrPayload,
+                    snapshot.PayableRoundingAmount),
             lines,
             payments,
             snapshot is null ? null : command.UblSnapshot,

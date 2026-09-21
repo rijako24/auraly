@@ -109,6 +109,107 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     }
 
     [Fact]
+    public async Task Payment_rounding_makes_the_received_total_official_and_preserves_the_exact_subtotal()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate);
+        using (var defaults = await accounting.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(
+                       new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        const decimal fiscalTotal = 10_450.45m;
+        const decimal untaxed = 10_000m;
+        const decimal tax = 450.45m;
+        const decimal roundingAdjustment = 49.55m;
+        const decimal collected = 10_500m;
+        var source = fixture.CreateValidRequest(9_917);
+        var fiscal = source.FiscalSnapshot!;
+        var taxes = new[] { new PosSaleTaxContract("01", tax) };
+        var cufe = CufeCalculator.Calculate(new CufeInput(
+            fiscal.FiscalNumber, fiscal.IssuedAt, untaxed, collected,
+            ServerSliceFixture.SupplierTaxId, fiscal.CustomerIdentification,
+            new FiscalTechnicalKey(ServerSliceFixture.TechnicalKeyValue,
+                ServerSliceFixture.TechnicalKeyVersion),
+            FiscalEnvironment.Test,
+            [new FiscalTaxAmount("01", tax)]),
+            ServerSliceFixture.QrValidationUrl);
+        var invoice = WithUblSnapshot(source with
+        {
+            Lines = [source.Lines[0] with
+            {
+                UnitPrice = untaxed,
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                LineTotal = fiscalTotal,
+                TaxRate = tax / untaxed * 100m
+            }],
+            CommercialSnapshot = source.CommercialSnapshot with
+            {
+                Taxes = taxes,
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                PayableAmount = collected,
+                PayableRoundingAmount = roundingAdjustment
+            },
+            FiscalSnapshot = fiscal with
+            {
+                Taxes = taxes,
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                PayableAmount = collected,
+                PayableRoundingAmount = roundingAdjustment,
+                Cufe = cufe.Cufe,
+                QrPayload = cufe.QrPayload
+            },
+            Payments = [new PosSalePaymentContract(
+                1, "Cash", fiscalTotal, null,
+                TenderedAmount: collected,
+                RoundingAdjustment: roundingAdjustment)]
+        });
+
+        await SetWarehouseNegativeSalesPolicyAsync(false);
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(invoice);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+        }
+
+        await AssertBalancedAsync(invoice.DocumentId);
+        Assert.Equal(collected, await ScalarAsync<decimal>(
+            "SELECT PayableAmount FROM dbo.SalesDocuments WHERE DocumentId=@Id", invoice.DocumentId));
+        Assert.Equal(fiscalTotal, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.SalesPayments WHERE DocumentId=@Id", invoice.DocumentId));
+        Assert.Equal(roundingAdjustment, await ScalarAsync<decimal>(
+            "SELECT RoundingAdjustment FROM dbo.SalesPayments WHERE DocumentId=@Id", invoice.DocumentId));
+        Assert.Equal(collected, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.WorkSessionMovements WHERE DocumentId=@Id", invoice.DocumentId));
+        Assert.Equal(collected, await ScalarAsync<decimal>(
+            "SELECT TotalAmount FROM reporting.SalesReportDocuments WHERE DocumentId=@Id", invoice.DocumentId));
+        Assert.Equal(roundingAdjustment, await ScalarAsync<decimal>(
+            "SELECT RoundingAdjustmentAmount FROM reporting.SalesReportDocuments WHERE DocumentId=@Id", invoice.DocumentId));
+        Assert.Equal(collected, await ScalarAsync<decimal>(
+            "SELECT CollectedAmount FROM reporting.SalesReportDocuments WHERE DocumentId=@Id", invoice.DocumentId));
+        Assert.Equal(fiscalTotal, await ScalarAsync<decimal>(
+            "SELECT SUM(TotalAmount) FROM reporting.SalesReportTaxFacts WHERE SourceDocumentId=@Id", invoice.DocumentId));
+        Assert.Equal(collected, await AccountAmountAsync(
+            invoice.DocumentId, "110505", debit: true));
+        Assert.Equal(roundingAdjustment, await AccountAmountAsync(
+            invoice.DocumentId, "429598", debit: false));
+    }
+
+    [Fact]
     public async Task Automatic_cost_center_is_required_frozen_and_auditable_on_every_entry_line()
     {
         using var accounting = fixture.CreateAdminClient(

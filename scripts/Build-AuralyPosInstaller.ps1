@@ -144,6 +144,9 @@ if (-not [string]::IsNullOrWhiteSpace($normalizedThumbprint) -and
 }
 
 $msiProductVersion = ConvertTo-MsiProductVersion $Version
+# Keep the release ordering and exceed legacy binaries stamped 1.0.0.0.
+# MSI compares FileVersion, not the informational commit or desktopsettings.json.
+$binaryFileVersion = "1.$msiProductVersion"
 
 if (Test-Path -LiteralPath $artifacts) {
     Remove-Item -LiteralPath $artifacts -Recurse -Force
@@ -172,6 +175,7 @@ dotnet publish `
     --runtime win-x64 `
     --self-contained true `
     --output $edge `
+    "-p:FileVersion=$binaryFileVersion" `
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true
 if ($LASTEXITCODE -ne 0) { throw 'La publicación de POS Edge falló.' }
@@ -182,6 +186,7 @@ dotnet publish `
     --runtime win-x64 `
     --self-contained true `
     --output $desktopPublish `
+    "-p:FileVersion=$binaryFileVersion" `
     -p:PublishSingleFile=false
 if ($LASTEXITCODE -ne 0) { throw 'La publicación de Auraly Desktop falló.' }
 
@@ -231,6 +236,12 @@ $auralyBinaries = @(
 )
 if ($auralyBinaries.Count -eq 0) {
     throw 'La publicación del POS no produjo binarios Auraly para firmar.'
+}
+foreach ($binaryPath in $auralyBinaries) {
+    $actualVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($binaryPath).FileVersion
+    if ($actualVersion -ne $binaryFileVersion) {
+        throw "El binario '$binaryPath' tiene FileVersion '$actualVersion'; se esperaba '$binaryFileVersion'."
+    }
 }
 Invoke-AuralySigning $auralyBinaries
 
