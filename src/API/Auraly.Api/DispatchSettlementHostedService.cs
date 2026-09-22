@@ -123,21 +123,27 @@ public sealed class DispatchSettlementHostedService(
             // engine. Fiscal and accounting continue through their own durable outbox messages;
             // settlement never polls them and a retry cannot reapply completed intrinsic effects.
             var payments = await LoadPaymentsAsync(operation, token);
+            var depositBankAccountId = payments.Any(item => item.PaymentMethod == "Deposit")
+                ? await PrimaryBankAccountAsync(operation.TenantId, token)
+                : null;
             var paymentIdentity = new ReceivablesUserIdentity(operation.RequestedBy, operation.TenantId,
                 operation.BusinessId, new HashSet<string>(StringComparer.Ordinal)
                 { ReceivablesPermissionCodes.RegisterPayment });
             foreach (var item in payments)
             {
-                var accepted = await receivablesService.ConfirmPaymentAsync(paymentIdentity,
+                await receivablesService.ConfirmPaymentAsync(paymentIdentity,
                     $"dispatch-settlement:{operation.DispatchId:N}:payment:{item.SourceDocumentId:N}:{item.PaymentMethod}",
                     new ConfirmCustomerPaymentRequest(item.PaymentId, operation.BusinessId, item.CustomerId,
                         null, operation.RequestedAt, "COP",
-                        item.PaymentMethod == "Deposit" ? CustomerPaymentMethods.BankTransfer : CustomerPaymentMethods.Cash,
-                        item.Reference, $"Recaudo del despacho {operation.DispatchNumber}.",
-                        [new CustomerPaymentAllocationRequest(item.ReceivableId, item.Amount)]), token);
-                await documentWorker.ProcessOneAsync(new DocumentProcessingSignal(
-                    accepted.MovementId, operation.BusinessId, accepted.PaymentId,
-                    ReceivablesDocumentTypes.Payment), token);
+                        $"Recaudo del despacho {operation.DispatchNumber}.",
+                        [new CustomerPaymentAllocationRequest(item.ReceivableId, item.Amount)],
+                        [new CustomerPaymentTenderRequest(
+                            item.PaymentMethod == "Deposit"
+                                ? CustomerPaymentMethods.BankTransfer
+                                : CustomerPaymentMethods.Cash,
+                            item.Amount,
+                            BankAccountId: item.PaymentMethod == "Deposit" ? depositBankAccountId : null,
+                            Reference: item.Reference)]), token);
             }
             if (await EnsureCashDifferenceDocumentAsync(operation, token) is { } differenceSignal)
             {
@@ -191,6 +197,18 @@ public sealed class DispatchSettlementHostedService(
                 source, reader.GetGuid(1), reader.GetGuid(2), method, reader.GetDecimal(4), reader.IsDBNull(5) ? operation.DispatchNumber : reader.GetString(5)));
         }
         return values;
+    }
+
+    private async Task<Guid?> PrimaryBankAccountAsync(Guid tenantId, CancellationToken token)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand("""
+            SELECT BankAccountId FROM accounting.BankAccounts
+            WHERE TenantId=@TenantId AND IsActive=1 AND IsPrimary=1;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return await command.ExecuteScalarAsync(token) is Guid bankAccountId ? bankAccountId : null;
     }
 
     private async Task RescheduleAsync(Operation operation, string? error, bool attention, CancellationToken token)
