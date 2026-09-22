@@ -45,7 +45,8 @@ public sealed record ServiceInvoiceSnapshot(
     PosSaleUblSnapshotContract UblSnapshot,
     IReadOnlyList<ServiceInvoiceLineContract> Lines,
     PosSalePaymentContract Payment,
-    Guid? CustomerPartySiteId = null);
+    Guid? CustomerPartySiteId = null,
+    PosSaleCreditContract? Credit = null);
 
 public static class ServiceInvoiceSnapshotSerializer
 {

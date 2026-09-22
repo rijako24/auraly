@@ -2,37 +2,75 @@ using System.IO.Compression;
 using System.Text;
 using Azure.Communication.Email;
 using Auraly.Api;
+using Auraly.Application.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Contracts.Sales;
-using System.Text.Json;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed class FiscalInvoiceEmailPackageTests
 {
     [Theory]
-    [InlineData(0, 0)]
-    [InlineData(3000, 0)]
-    [InlineData(3000, 100)]
-    public void Email_preserves_real_payment_allocations_credit_and_withholding(decimal credit, decimal retained)
+    [InlineData(11900, 0)]
+    [InlineData(3000, 0.75)]
+    [InlineData(0, -0.25)]
+    public void Every_output_projects_the_same_immutable_snapshot(
+        decimal credit, decimal paymentRounding)
     {
-        var receipt = new OnlineSalesReceipt(Guid.NewGuid(), "SalesInvoice", "FE1", "FE1",
-            DateTimeOffset.UtcNow, "123", [], [], 10000, 1900, 11900, "cufe", "qr", null, "Cliente");
-        var payments = new OnlineSalesPayment[] {
-            new("Cash", 1000, null, TenderedAmount: 2000), new("Transfer", 10900 - credit - retained, "ABC") };
-        var withholding = retained == 0 ? null : JsonSerializer.Serialize(new {
-            grossAmount = 11900m, withholdingTotal = retained, netAmount = 11900m - retained,
-            lines = Array.Empty<object>() });
-        var projected = PlatformEmailOutboxHostedService.ApplyInvoiceSettlement(receipt, "FV-123",
-            JsonSerializer.Serialize(payments), credit, withholding);
-        Assert.Equal("FV-123", projected.DocumentNumber);
-        Assert.Equal(payments[0], projected.Payments[0]);
-        Assert.Equal(payments[1], projected.Payments[1]);
-        Assert.Equal(credit, projected.Payments.Where(x => x.MethodCode == "Credit").Sum(x => x.Amount));
-        Assert.Equal(11900m - retained, projected.NetPayableAmount);
-        Assert.Equal(retained, projected.WithholdingTotal);
-        Assert.Throws<InvalidOperationException>(() => PlatformEmailOutboxHostedService.ApplyInvoiceSettlement(
-            receipt, "FV-123", JsonSerializer.Serialize(payments), credit + 1, withholding));
+        var issued = new DateTimeOffset(2026, 9, 22, 12, 34, 0, TimeSpan.FromHours(-5));
+        var due = issued.AddDays(30);
+        var payments = credit == 11900m ? Array.Empty<PosSalePaymentContract>() :
+            new PosSalePaymentContract[] {
+                new(1, "Cash", 1000, null, TenderedAmount: 2000, RoundingAdjustment: paymentRounding),
+                new(2, "Transfer", 11900 - credit - 1000 - paymentRounding, "ABC", BankAccountId: Guid.NewGuid()) };
+        var request = new PosSaleUploadRequest(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            new(Guid.NewGuid(), PosSaleDocumentTypes.Invoice, "FV", "00", 124, 8, "FV00-00000124"),
+            new(PosSaleDocumentTypes.Invoice, issued, "123", [], 10000, 1900, 11900),
+            new(Guid.NewGuid(), Guid.NewGuid(), "1876", PosSaleDocumentTypes.Invoice,
+                "FVL124", "FVL", 124, issued, "900", "123", 1, "v1", [],
+                10000, 1900, 11900, "cufe", "qr"),
+            [new(1, Guid.NewGuid(), "Producto", "01", 1, 10000, 0, 1900, 10000, 11900, 19, 6000)],
+            payments, Credit: credit == 0 ? null : new(Guid.NewGuid(), credit, due));
+
+        var reprint = SalesInvoicePresentationMapper.From(request, "DianAccepted");
+        var emailPdf = SalesInvoicePresentationMapper.FromSnapshot(
+            request.DocumentNumber.DocumentType,
+            PosSaleContractSerializer.Serialize(request), "DianAccepted");
+
+        Assert.Equivalent(reprint, emailPdf, strict: true);
+        var renderer = new DianInvoicePdfRenderer();
+        Assert.Equal(renderer.RenderHtml(reprint), renderer.RenderHtml(emailPdf));
+    }
+
+    [Theory]
+    [InlineData(false, 0, 0)]
+    [InlineData(false, 100, 0)]
+    [InlineData(true, 0, 0)]
+    [InlineData(true, 0, 100)]
+    public void Issued_pos_snapshot_is_presented_without_revalidating_its_settlement(
+        bool hasCredit, decimal collected, decimal credit)
+    {
+        var issued = new DateTimeOffset(2026, 9, 22, 12, 34, 0, TimeSpan.FromHours(-5));
+        var due = issued.AddDays(30);
+        var request = new PosSaleUploadRequest(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            new(Guid.NewGuid(), PosSaleDocumentTypes.Invoice, "FV", "00", 124, 8, "FV00-00000124"),
+            new(PosSaleDocumentTypes.Invoice, issued, "123", [], 10000, 1900, 11900), null, [],
+            collected == 0 ? [] : [new(1, "Cash", collected, "Original")],
+            Credit: hasCredit ? new(Guid.NewGuid(), credit, due) : null);
+
+        var receipt = SalesInvoicePresentationMapper.From(request, "DianAccepted");
+
+        Assert.Equal(request.DocumentId, receipt.DocumentId);
+        Assert.Equal(11900m, receipt.PayableAmount);
+        Assert.Equal(collected, receipt.Payments.Where(payment => payment.MethodCode == "Cash").Sum(payment => payment.Amount));
+        if (hasCredit)
+            Assert.Equal(new OnlineSalesPayment("Credit", credit, due.ToString("O")), Assert.Single(receipt.Payments));
+        else if (collected == 0)
+            Assert.Empty(receipt.Payments);
+        else
+            Assert.Equal(new OnlineSalesPayment("Cash", collected, "Original"), Assert.Single(receipt.Payments));
     }
 
     [Fact]

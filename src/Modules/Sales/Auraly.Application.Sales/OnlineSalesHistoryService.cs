@@ -41,7 +41,6 @@ public interface IOnlineSalesHistoryStore
         Guid documentId,
         CancellationToken cancellationToken);
 }
-
 public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
 {
     public Task<OnlineSalesCustomerPage> SearchCustomersAsync(
@@ -113,7 +112,7 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
             user, context, documentId, cancellationToken);
         return stored is null
             ? null
-            : OnlineSalesReceiptMapper.From(stored.Request, stored.FiscalStatus);
+            : SalesInvoicePresentationMapper.From(stored.Request, stored.FiscalStatus);
     }
 
     public async Task<bool> RecordReprintAsync(
@@ -173,103 +172,4 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
             throw new OnlineSalesDraftValidationException(
                 "La sede es obligatoria.");
     }
-}
-
-public static class OnlineSalesReceiptMapper
-{
-    public static OnlineSalesReceipt From(
-        PosSaleUploadRequest request,
-        string? fiscalStatus)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        var snapshot = request.CommercialSnapshot;
-        var customerName = request.UblSnapshot?.Customer.RegistrationName
-            ?? snapshot.CustomerName
-            ?? "Consumidor final";
-        var ublLines = request.UblSnapshot?.Lines
-            .ToDictionary(line => line.LineNumber)
-            ?? [];
-        return new OnlineSalesReceipt(
-            request.DocumentId,
-            snapshot.DocumentType,
-            request.DocumentNumber.FullNumber,
-            request.FiscalSnapshot?.FiscalNumber,
-            snapshot.IssuedAt,
-            snapshot.CustomerIdentification,
-            request.Lines.Select(line => new OnlineSalesReceiptLine(
-                ublLines.GetValueOrDefault(line.LineNumber)?.ProductCode ?? line.ProductCodeSnapshot,
-                line.Description,
-                line.Quantity,
-                line.UnitPrice,
-                line.DiscountAmount,
-                line.TaxAmount,
-                line.LineTotal,
-                line.TaxCode,
-                line.TaxRate,
-                ublLines.GetValueOrDefault(line.LineNumber)?.UnitCode ?? "EA"))
-                .Concat((request.Charges ?? []).Where(charge => charge.InvoicedAmount > 0)
-                    .Select(charge => new OnlineSalesReceiptLine(charge.Code, charge.Name, 1,
-                        charge.InvoicedUntaxedAmount, 0, charge.InvoicedTaxAmount, charge.InvoicedAmount,
-                        charge.TaxCode, charge.TaxRate))).ToArray(),
-            request.Payments.Select(payment => new OnlineSalesPayment(
-                    payment.MethodCode,
-                    payment.Amount,
-                    payment.Reference,
-                    payment.CardFranchiseCode,
-                    payment.ApprovalNumber,
-                    payment.BankAccountId,
-                    payment.Notes,
-                    payment.TenderedAmount,
-                    payment.RoundingAdjustment))
-                .Concat(request.Credit is null
-                    ? []
-                    : [new OnlineSalesPayment("Credit", request.Credit.Amount, request.Credit.DueDate.ToString("O"))])
-                .ToArray(),
-            snapshot.UntaxedAmount,
-            snapshot.TaxAmount,
-            snapshot.PayableAmount,
-            request.FiscalSnapshot?.Cufe,
-            request.FiscalSnapshot?.QrPayload,
-            fiscalStatus,
-            customerName,
-            WithholdingTotal: snapshot.Withholding?.WithholdingTotal ?? 0m,
-            NetPayableAmount: snapshot.NetPayableAmount,
-            Withholdings: snapshot.Withholding?.Lines,
-            CreditAcknowledgement: request.Credit is null
-                ? null
-                : new CreditSaleAcknowledgement(
-                    request.DocumentId,
-                    request.DocumentNumber.FullNumber,
-                    snapshot.IssuedAt,
-                    customerName,
-                    snapshot.CustomerIdentification,
-                    request.Credit.Amount,
-                    request.Credit.RemainingCredit,
-                    request.Credit.SoldByName ?? "Usuario"),
-            InvoicePrintDetails: PrintDetails(request.UblSnapshot),
-            CustomerPhone: request.UblSnapshot?.Customer.Telephone,
-            CustomerAddress: request.UblSnapshot?.Customer.Address.AddressLine,
-            PayableRoundingAmount: snapshot.PayableRoundingAmount);
-    }
-
-    private static SalesInvoicePrintDetails? PrintDetails(
-        PosSaleUblSnapshotContract? snapshot) => snapshot is null
-        ? null
-        : new SalesInvoicePrintDetails(
-            snapshot.Supplier.RegistrationName,
-            snapshot.Supplier.Identification,
-            snapshot.Supplier.TaxResponsibilityCode,
-            snapshot.Supplier.Address.AddressLine,
-            snapshot.Customer.Address.AddressLine,
-            snapshot.Authorization.Number,
-            snapshot.Authorization.ValidFrom,
-            snapshot.Authorization.ValidUntil,
-            snapshot.Authorization.Prefix,
-            snapshot.Authorization.RangeStart,
-            snapshot.Authorization.RangeEnd,
-            snapshot.PaymentFormCode,
-            snapshot.PaymentMeansCode,
-            snapshot.DueDate,
-            snapshot.Supplier.Identification,
-            "Auraly");
 }

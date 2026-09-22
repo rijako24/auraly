@@ -12,10 +12,10 @@ CREATE PROCEDURE dbo.FiscalInvoiceDeliveryArtifactSave
 AS
 BEGIN
     SET NOCOUNT ON;
+    -- The graphical parameters remain only for rolling compatibility with the
+    -- previous API. PDF representations are generated in memory and are not stored.
     IF DATALENGTH(@AttachedDocument)=0 OR DATALENGTH(@AttachedDocumentHash)<>32
-       OR DATALENGTH(@GraphicalRepresentation)=0
-       OR DATALENGTH(@GraphicalRepresentationHash)<>32
-      THROW 51290,'The fiscal delivery artifacts are invalid.',1;
+      THROW 51290,'The signed AttachedDocument artifact is invalid.',1;
 
     IF NOT EXISTS(
       SELECT 1
@@ -47,23 +47,5 @@ BEGIN
       VALUES(NEWID(),@DocumentId,N'SignedAttachedDocument',1,@AttachedDocument,@AttachedDocumentHash,
              N'application/xml',@AttachedDocumentFileName,NULL,N'Auraly.Fiscal.Ubl',SYSDATETIMEOFFSET());
 
-    IF EXISTS(
-      SELECT 1 FROM dbo.FiscalArtifacts WITH(UPDLOCK,HOLDLOCK)
-      WHERE DocumentId=@DocumentId AND ArtifactType=N'GraphicalRepresentationPdf')
-    BEGIN
-      IF NOT EXISTS(
-        SELECT 1 FROM dbo.FiscalArtifacts
-        WHERE DocumentId=@DocumentId AND ArtifactType=N'GraphicalRepresentationPdf'
-          AND ArtifactVersion=1 AND ContentHash=@GraphicalRepresentationHash)
-        THROW 51293,'A different graphical representation artifact already exists.',1;
-    END
-    ELSE
-      INSERT dbo.FiscalArtifacts
-        (FiscalArtifactId,DocumentId,ArtifactType,ArtifactVersion,Content,ContentHash,
-         ContentType,FileName,TechnicalAnnexVersion,GeneratorVersion,CreatedAt)
-      VALUES(NEWID(),@DocumentId,N'GraphicalRepresentationPdf',1,
-             @GraphicalRepresentation,@GraphicalRepresentationHash,
-             N'application/pdf',@GraphicalRepresentationFileName,NULL,
-             N'Auraly.Fiscal.Pdf/v1',SYSDATETIMEOFFSET());
 END;
 GO

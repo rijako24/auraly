@@ -88,7 +88,7 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
 
 `SalesDocumentLines` conserva el impuesto de cada línea. Reporting agrupa la instantánea comercial por código y tarifa en `reporting.SalesReportTaxFacts`; DIAN y contabilidad consumen sus snapshots o documentos fuente inmutables. No existe una segunda tabla tributaria operacional y esa proyección no se replica en SQLite.
 
-`SalesPayments` es el modelo canónico inicial de los medios de pago de la venta y reemplaza la responsabilidad útil de Tesorería para esta rebanada. Su clave `(DocumentId, PaymentNumber)` impide duplicados. Cartera, cuentas por cobrar/pagar y movimientos de tesorería más amplios pertenecen a rebanadas posteriores.
+`SalesPayments` conserva los recaudos operativos de la venta; su clave `(DocumentId, PaymentNumber)` impide duplicados. El importe financiado original y su vencimiento pertenecen a `SalesDocuments.CreditAmount/CreditDueDate`. La representación de un documento ya emitido no reconstruye esos datos desde tablas operativas: `SalesInvoicePresentationMapper` los proyecta desde el snapshot inmutable de aceptación guardado en `DocumentProcessingPayloads`. Los cobros posteriores de cartera no alteran la distribución original de la factura.
 
 ## Idempotencia y recuperación
 
@@ -104,23 +104,34 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
 - ZIP: se genera una vez de forma determinística y se reutiliza.
 - Entrega al adquirente: después de `DianAccepted`, el contenedor electrónico
   incluye el `AttachedDocument` XML firmado y la representación gráfica PDF del
-  mismo `SignedXml`. Ambos artefactos se guardan con SHA-256 y versión inmutable
-  en `FiscalArtifacts`; un reintento de correo los reutiliza y no reconstruye la
-  factura ni hace otra llamada a DIAN. El ZIP sigue limitado a 2 MB. Esta regla
+  mismo snapshot inmutable de emisión. El `AttachedDocument` firmado se conserva
+  como artefacto fiscal; el PDF se genera en memoria al preparar cada entrega, se
+  adjunta al ZIP y se descarta. No se persisten nuevas representaciones PDF ni se
+  usa el XML firmado para reconstruirlas. Un reintento reutiliza el snapshot y los
+  XML persistidos, no repite una llamada a DIAN. El ZIP sigue limitado a 2 MB. Esta regla
   implementa el artículo 35 de la Resolución DIAN 000165 de 2023.
 - La representación enviada por correo reutiliza `sales-invoice` Carta v3 de
-  `HalfLetterDocumentRenderer`. `DianInvoicePdfRenderer` solo adapta el XML firmado
-  al contrato de impresión y convierte ese HTML mediante Chromium fijado por
-  Microsoft.Playwright. No existe una segunda plantilla de correo. La sustitución
-  del diseño anterior y la corrección de v3 fueron solicitadas expresamente;
-  los PDF ya persistidos conservan sus bytes y SHA-256, sin regeneración histórica.
+  `HalfLetterDocumentRenderer`. `SalesInvoicePresentationMapper` adapta el snapshot
+  inmutable al contrato de presentación y `DianInvoicePdfRenderer` convierte ese
+  HTML mediante Chromium fijado por Microsoft.Playwright. No existe una segunda
+  plantilla de correo. La sustitución
+  del diseño anterior y la corrección de v3 fueron solicitadas expresamente.
+  Los PDF históricos ya persistidos no se eliminan, pero la entrega ya no los lee
+  ni crea otros.
 - Por solicitud expresa, las representaciones impresas y el PDF omiten el bloque
   de forma de pago, plazo y vencimiento del encabezado. Los datos fiscales de pago
   se conservan en el XML; los medios y sus importes se mantienen en el detalle
-  inferior existente. El código fiscal del XML no se
-  convierte en un pago por el total: la consulta de entrega obtiene por conjunto
-  `SalesPayments`, el crédito original de `SalesDocuments` y las retenciones del
-  payload comercial. No consulta maestros ni añade viajes por línea/pago.
+  inferior existente. El código fiscal del XML no se convierte en un pago por el
+  total. `SalesInvoicePresentationMapper` es una función pura y única para POS
+  online, POS Edge, historial y representación fiscal: conserva los recaudos,
+  ajustes de redondeo, crédito original y vencimiento congelados en el snapshot.
+  No consulta tablas, no revalida la venta y no bloquea correo o reimpresión por
+  una segunda regla comercial. La validación pertenece exclusivamente a la
+  aceptación de la venta. La reimpresión toma esa proyección y aplica el formato
+  configurado de la impresora; no consume ni requiere el PDF fiscal. La consulta
+  de entrega trae el snapshot en el mismo resultado acotado y conserva temporalmente
+  las columnas anteriores al final del contrato para compatibilidad durante el
+  despliegue ordenado base de datos → API.
 - Carta v3 pagina filas completas y repite identificación, CUFE, QR y encabezado
   de tabla. El adaptador PDF usa contexto aislado por documento y bloquea peticiones
   de red; no modifica el XML ni recalcula precios/impuestos. La conversión tiene

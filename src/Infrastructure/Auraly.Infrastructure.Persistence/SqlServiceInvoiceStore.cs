@@ -406,7 +406,12 @@ public sealed class SqlServiceInvoiceStore(
                 lines,
                 new PosSalePaymentContract(1, paymentMethod, paidAmount,
                     request.PaymentReference?.Trim()),
-                customerPartySiteId);
+                customerPartySiteId,
+                request.CreditAmount > 0
+                    ? new PosSaleCreditContract(request.CustomerId,
+                        request.CreditAmount, request.CreditDueDate!.Value,
+                        PartySiteId: customerPartySiteId)
+                    : null);
             await SqlServiceInvoiceDocumentWriter.PersistAsync(
                 connection, transaction, ids,
                 new ServiceInvoiceDocumentWrite(

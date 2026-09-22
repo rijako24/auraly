@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Application.Fiscal;
+using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Commerce.Accounting.Contracts;
@@ -18,6 +19,90 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Delivery_reads_the_immutable_snapshot_without_persisting_a_pdf(bool creditOnly)
+    {
+        var context = await SeedAsync();
+        using var client = fixture.CreateAdminClient(ServiceInvoicePermissionCodes.Create, ServiceInvoicePermissionCodes.Issue);
+        client.DefaultRequestHeaders.Add("Idempotency-Key", context.IdempotencyKey);
+        var due = DateTimeOffset.UtcNow.AddDays(30);
+        var credit = creditOnly ? 119_000m : 50_000m;
+        using var response = await client.PostAsJsonAsync("/api/commerce/v1/service-invoices/issue",
+            new IssueServiceInvoiceRequest(fixture.BusinessId, context.CustomerId,
+                [new(context.ServiceId, 1)], "Transfer", "SNAPSHOT-PAYMENT",
+                credit, due));
+        response.EnsureSuccessStatusCode();
+        var issued = (await response.Content.ReadFromJsonAsync<IssuedServiceInvoice>())!;
+        await AcceptAtDianAsync(issued.DocumentId);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var query = new SqlCommand("""
+            DECLARE @MessageId uniqueidentifier=(SELECT DeliveryOutboxMessageId FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId);
+            EXEC dbo.FiscalInvoiceDeliveryRecipientGet @DocumentId,@MessageId,@TenantId;
+            """, connection);
+        query.Parameters.AddWithValue("@DocumentId", issued.DocumentId);
+        query.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        await using (var reader = await query.ExecuteReaderAsync())
+        {
+            Assert.True(await reader.ReadAsync());
+            Assert.True(reader.IsDBNull(10));
+            Assert.Equal(ServiceInvoiceDocumentTypes.ServiceInvoice, reader.GetString(22));
+            var receipt = SalesInvoicePresentationMapper.FromSnapshot(
+                reader.GetString(22), reader.GetString(21), "DianAccepted");
+            Assert.Equal(issued.DocumentId, receipt.DocumentId);
+            Assert.Equal(issued.PayableAmount, receipt.NetPayableAmount);
+            Assert.Equal(credit, Assert.Single(receipt.Payments
+                .Where(payment => payment.MethodCode == "Credit")).Amount);
+            Assert.Equal(issued.PayableAmount,
+                receipt.Payments.Sum(payment => payment.CollectedAmount));
+            if (creditOnly)
+                Assert.DoesNotContain(receipt.Payments,
+                    payment => payment.MethodCode != "Credit");
+            Assert.False(await reader.ReadAsync());
+            Assert.False(await reader.NextResultAsync());
+        }
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5), $"Delivery projection took {timer.Elapsed}.");
+        query.Parameters["@TenantId"].Value = Guid.NewGuid();
+        await using (var denied = await query.ExecuteReaderAsync())
+            Assert.False(await denied.ReadAsync());
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        var leaseId = Guid.NewGuid();
+        var attachedDocument = Encoding.UTF8.GetBytes("<AttachedDocument />");
+        var transientPdf = Encoding.UTF8.GetBytes("transient-pdf");
+        await using var save = new SqlCommand("""
+            DECLARE @MessageId uniqueidentifier=(SELECT DeliveryOutboxMessageId FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId);
+            UPDATE dbo.TenantProvisioningOutboxMessages SET LeaseId=@LeaseId
+            WHERE MessageId=@MessageId;
+            EXEC dbo.FiscalInvoiceDeliveryArtifactSave
+              @DocumentId,@MessageId,@TenantId,@LeaseId,
+              @AttachedDocument,@AttachedHash,N'AttachedDocument.xml',
+              @TransientPdf,@TransientPdfHash,N'Representacion.pdf';
+            SELECT
+              (SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedAttachedDocument'),
+              (SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType=N'GraphicalRepresentationPdf');
+            """, connection, transaction);
+        save.Parameters.AddWithValue("@DocumentId", issued.DocumentId);
+        save.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        save.Parameters.AddWithValue("@LeaseId", leaseId);
+        save.Parameters.AddWithValue("@AttachedDocument", attachedDocument);
+        save.Parameters.Add("@AttachedHash", System.Data.SqlDbType.Binary, 32).Value =
+            SHA256.HashData(attachedDocument);
+        save.Parameters.AddWithValue("@TransientPdf", transientPdf);
+        save.Parameters.Add("@TransientPdfHash", System.Data.SqlDbType.Binary, 32).Value =
+            SHA256.HashData(transientPdf);
+        await using (var saved = await save.ExecuteReaderAsync())
+        {
+            Assert.True(await saved.ReadAsync());
+            Assert.Equal(1, saved.GetInt32(0));
+            Assert.Equal(0, saved.GetInt32(1));
+        }
+        await transaction.RollbackAsync();
+    }
+
     [Fact]
     public async Task Service_invoice_customer_search_returns_independent_sites_with_and_tokens()
     {
@@ -260,12 +345,17 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         }
 
         await using var storedArtifact = new SqlCommand("""
-            SELECT COUNT(*) FROM dbo.FiscalArtifacts
-            WHERE DocumentId=@DocumentId
-              AND ArtifactType IN(N'SignedAttachedDocument',N'GraphicalRepresentationPdf');
+            SELECT
+              (SELECT COUNT(*) FROM dbo.FiscalArtifacts
+               WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedAttachedDocument'),
+              (SELECT COUNT(*) FROM dbo.FiscalArtifacts
+               WHERE DocumentId=@DocumentId AND ArtifactType=N'GraphicalRepresentationPdf');
             """, connection);
         storedArtifact.Parameters.AddWithValue("@DocumentId", first.DocumentId);
-        Assert.Equal(2, Convert.ToInt32(await storedArtifact.ExecuteScalarAsync()));
+        await using var artifactReader = await storedArtifact.ExecuteReaderAsync();
+        Assert.True(await artifactReader.ReadAsync());
+        Assert.Equal(1, artifactReader.GetInt32(0));
+        Assert.Equal(0, artifactReader.GetInt32(1));
     }
 
     [Fact]
