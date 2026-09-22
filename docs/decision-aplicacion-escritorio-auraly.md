@@ -115,7 +115,7 @@ El navegador no intenta emular capacidades locales. POS Edge no implementa otro 
 - reanudar una sesión de trabajo ya existente no despierta la outbox; únicamente crear una sesión operativa nueva encola y señala su apertura;
 - una vez enrolado, el equipo usa siempre el runtime local-first; no existe un archivo ni selector de modo que pueda contradecir el enrolamiento;
 - confirmar una venta escribe documento, numeración y outbox en una sola transacción SQLite;
-- Pedidos es siempre online: listar, recuperar, reclamar, guardar, actualizar y facturar usa directamente la API web canónica, aun en un equipo enrolado; Edge solo imprime el DTO que la web ya obtuvo y, al crear un pedido desde una venta local, limpia el borrador SQLite después de la confirmación autoritativa;
+- Pedidos es siempre online y conserva la API de Commerce como propietario: en web usa el cliente JWT existente; en un equipo enrolado `PosEdgeClient` pasa lista, detalle, reclamo, recuperación, guardado, actualización, impresión y facturación por el proxy autenticado de Edge. El proxy no decide reglas ni crea otro pedido; la recuperación hidrata únicamente el borrador SQLite de trabajo con el snapshot autoritativo y el servidor conserva inventario, claims, idempotencia y facturación;
 - la sincronización es idempotente y llega al mismo motor del servidor;
 - Web PubSub notifica cambios; no reemplaza la outbox ni la reconciliación por cursor;
 - reiniciar la aplicación no pierde ventas confirmadas ni trabajo durable.

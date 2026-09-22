@@ -1711,6 +1711,28 @@ public sealed class OrderRecoveryTests(
     }
 
     [Fact]
+    public async Task Enrolled_device_transport_reaches_the_same_orders_api()
+    {
+        using var client = fixture.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        client.DefaultRequestHeaders.Add(
+            "X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        client.DefaultRequestHeaders.Add(
+            "X-Auraly-User-Id", fixture.UserId.ToString("D"));
+        client.DefaultRequestHeaders.Add(
+            "X-Auraly-Business-Id", fixture.BusinessId.ToString("D"));
+
+        using var response = await client.GetAsync(
+            "/api/commerce/v1/orders?page=1&pageSize=1");
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Device orders returned {(int)response.StatusCode}: " +
+            await response.Content.ReadAsStringAsync());
+        Assert.NotNull(await response.Content.ReadFromJsonAsync<OrderPage>());
+    }
+
+    [Fact]
     public async Task Legacy_device_order_routes_are_not_exposed()
     {
         using var client = fixture.CreateClient();

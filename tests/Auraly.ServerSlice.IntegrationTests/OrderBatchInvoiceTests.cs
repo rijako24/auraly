@@ -3,7 +3,10 @@ using System.Net.Http.Json;
 using Auraly.Application.Orders;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Orders;
+using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
@@ -393,6 +396,146 @@ public sealed class OrderBatchInvoiceTests(
         Assert.Equal(2, reader.GetInt32(3));
         Assert.Equal(0, reader.GetInt32(4));
         Assert.Equal(0, reader.GetInt32(5));
+    }
+
+    [Fact]
+    public async Task Selected_orders_apply_the_same_configured_charge_to_each_invoice()
+    {
+        var userId = Guid.NewGuid();
+        var firstOrderId = Guid.NewGuid();
+        var secondOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, firstOrderId, secondOrderId);
+
+        using var admin = fixture.CreateAdminClient(
+            InvoiceChargePermissions.Read,
+            InvoiceChargePermissions.Configure,
+            ExpensePermissionCodes.Read,
+            ExpensePermissionCodes.Configure,
+            CatalogPermissionCodes.Update);
+        var options = (await admin.GetFromJsonAsync<ExpenseWorkspaceOptions>(
+            "/api/commerce/v1/expenses/options"))!;
+        var conceptId = Guid.NewGuid();
+        using (var conceptResponse = await admin.PutAsJsonAsync(
+                   $"/api/commerce/v1/expenses/concepts/{conceptId}",
+                   new SaveExpenseConceptRequest(
+                       conceptId,
+                       fixture.BusinessId,
+                       "Domicilio lote de pedidos",
+                       options.ExpenseAccounts.First().AccountId,
+                       options.CostCenters.First().CostCenterId,
+                       null,
+                       true)))
+            conceptResponse.EnsureSuccessStatusCode();
+
+        var chargeId = Guid.NewGuid();
+        var chargeCode = $"BATCH-{chargeId:N}"[..32];
+        using var taxResponse = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/tax-profiles",
+            new SaveTaxProfileRequest(
+                fixture.BusinessId,
+                chargeCode,
+                "Impuesto domicilio lote",
+                0));
+        taxResponse.EnsureSuccessStatusCode();
+        var tax = (await taxResponse.Content.ReadFromJsonAsync<TaxProfileSummary>())!;
+        using var chargeResponse = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/invoice-charges/{chargeId}",
+            new SaveInvoiceChargeRequest(
+                chargeId,
+                0,
+                chargeCode,
+                "Domicilio lote de pedidos",
+                true,
+                0,
+                "Fixed",
+                5000,
+                "Always",
+                null,
+                conceptId,
+                tax.TaxProfileId,
+                [],
+                [fixture.SupplierId],
+                tax.TaxProfileId));
+        Assert.True(chargeResponse.IsSuccessStatusCode,
+            await chargeResponse.Content.ReadAsStringAsync());
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var command = new InvoiceOrdersRequest(
+            workSessionId,
+            fixture.WarehouseId,
+            userId,
+            [firstOrderId, secondOrderId],
+            "Cash",
+            null,
+            Charge: new OrderInvoiceChargeSelection(
+                chargeId,
+                1,
+                fixture.SupplierId));
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var response = await InvoiceAsync(
+                client,
+                command,
+                $"orders-with-charge-{Guid.NewGuid():N}");
+            Assert.Equal("Completed", response.Status);
+            Assert.Equal(2, response.CompletedCount);
+            Assert.Equal(0, response.FailedCount);
+            Assert.Equal(
+                new decimal[] { 15000m, 25000m },
+                response.Results.Select(result => result.Receipt!.PayableAmount).Order().ToArray());
+            Assert.All(response.Results, result =>
+            {
+                var chargeLine = Assert.Single(
+                    result.Receipt!.Lines,
+                    line => string.Equals(
+                        line.ProductCode,
+                        chargeCode,
+                        StringComparison.OrdinalIgnoreCase));
+                Assert.Equal(5000m, chargeLine.Total);
+                Assert.Equal(
+                    result.Receipt.PayableAmount,
+                    Assert.Single(result.Receipt.Payments).Amount);
+            });
+
+            var queued = fixture.DrainDocumentSignals();
+            Assert.Equal(2, queued.Count);
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in queued)
+                await fixture.DocumentSignals.PublishAsync(signal);
+
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var verify = connection.CreateCommand();
+            verify.CommandText = """
+                SELECT COUNT(*),SUM(expense.GrossAmount),SUM(payable.OriginalAmount)
+                FROM dbo.Expenses expense
+                JOIN dbo.Payables payable
+                  ON payable.SourceDocumentId=expense.ExpenseId
+                 AND payable.SourceDocumentType=N'Expense'
+                WHERE expense.SourceInvoiceId IN (@FirstDocumentId,@SecondDocumentId);
+                """;
+            verify.Parameters.AddWithValue("@FirstDocumentId", response.Results[0].DocumentId!.Value);
+            verify.Parameters.AddWithValue("@SecondDocumentId", response.Results[1].DocumentId!.Value);
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(2, reader.GetInt32(0));
+            Assert.Equal(10000m, reader.GetDecimal(1));
+            Assert.Equal(10000m, reader.GetDecimal(2));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in fixture.DrainDocumentSignals())
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
     }
 
     private async Task WarmCashInvoicePathAsync()

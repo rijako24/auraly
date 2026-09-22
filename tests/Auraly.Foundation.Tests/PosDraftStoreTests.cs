@@ -225,6 +225,65 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
+    public async Task Recovered_order_replaces_the_active_sale_and_preserves_its_closed_snapshot()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var empty = await store.GetOrCreateActiveAsync(scope);
+            var orderId = Guid.NewGuid();
+            var customerId = Guid.NewGuid();
+            var partySiteId = Guid.NewGuid();
+            var first = Line(2m) with
+            {
+                UnitPrice = 12_345.67m,
+                Discount = 345.67m,
+                PublicLineTotal = 24_000m,
+                PriceSource = "Manual"
+            };
+            var second = Line(0.5m) with
+            {
+                ProductId = new ProductId(Guid.NewGuid()),
+                ProductCode = "P-2",
+                PublicLineTotal = 5_000m,
+                AllowsFractionalSale = true
+            };
+
+            var recovered = await store.ImportOrderAsync(
+                scope, orderId, "PED-100", customerId, partySiteId, "Entregar en recepción", [first, second]);
+
+            Assert.Equal(PosDraftStatus.Deleted, (await store.GetAsync(empty.DraftId))!.Status);
+            Assert.NotEqual(empty.DraftId, recovered.DraftId);
+            Assert.Equal(orderId, recovered.SourceOrderId);
+            Assert.Equal("PED-100", recovered.Reference);
+            Assert.Equal(customerId, recovered.CustomerId);
+            Assert.Equal(partySiteId, recovered.CustomerPartySiteId);
+            Assert.Equal("Entregar en recepción", recovered.Observation);
+            Assert.Equal(2, recovered.Lines.Count);
+            Assert.Equal(24_000m, recovered.Lines[0].PublicLineTotal);
+            Assert.Equal(29_000m, recovered.PayableAmount);
+            Assert.Equal(recovered.DraftId,
+                (await store.GetOrCreateActiveAsync(scope)).DraftId);
+        });
+    }
+
+    [Fact]
+    public async Task Recovered_order_does_not_replace_a_non_empty_active_sale()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var active = await store.AddOrIncrementLineAsync(scope, Line(1m));
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                store.ImportOrderAsync(scope, Guid.NewGuid(), "PED-101", Guid.NewGuid(),
+                    Guid.NewGuid(), null, [Line(1m)]));
+
+            Assert.Contains("Pausa o reinicia", error.Message);
+            Assert.Equal(active.DraftId, (await store.GetOrCreateActiveAsync(scope)).DraftId);
+            Assert.Single((await store.GetAsync(active.DraftId))!.Lines);
+        });
+    }
+
+    [Fact]
     public async Task Only_an_unpriced_generic_line_can_be_discarded_without_sensitive_authorization()
     {
         await WithStoreAsync(async (store, _, scope, _) =>

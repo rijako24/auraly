@@ -2,6 +2,25 @@ import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "
 import type { TenantBranding } from "@/services/api/tenants";
 import type { InventoryReasonItem } from "@/services/api/inventory";
 import type { ReferenceOption } from "@/services/api/reference-options";
+import type { SellerOrderResult } from "@/services/api/seller-orders";
+import { buildPosOrderUpdateLines } from "@/services/orders/pos-order-update-lines";
+import type {
+  CommerceOrderDetail,
+  CommerceOrderClaim,
+  CommerceOrderFilters,
+  CommerceOrderPage,
+  CommerceOrderPrintDocument,
+  InvoiceOrdersResponse,
+  OrderCreditValidationIssue,
+  OrderInvoiceChargeSelection,
+} from "@/services/orders/commerce-orders-client";
+import {
+  invoiceOrdersInSequence,
+  orderReceiptsFromEmission,
+  orderReceiptsForPrinting,
+  type OrderInvoiceSequenceProgress,
+} from "./pos-order-print-routing";
+import { toPrintableOrder } from "./pos-order-print-document";
 import type {
   ConfirmSalesReturnRequest,
   ReturnableSale,
@@ -195,6 +214,7 @@ export type PosDraftLineUpdate = Pick<
 
 export type PosDraft = {
   draftId: DraftId;
+  scope?: { businessId: string; warehouseId: string; deviceId: string; workSessionId: string; userId: string };
   customerId: string | null;
   customerPartySiteId?: string | null;
   sellerId: string | null;
@@ -208,6 +228,7 @@ export type PosDraft = {
   taxAmount: number;
   payableAmount: number;
   sourceOrderId?: string | null;
+  updatedAt?: string;
 };
 
 export type PosCaptureResult = {
@@ -685,6 +706,20 @@ export interface PosClient {
   createApproval(input: PosApprovalCreateInput): Promise<PosApprovalSummary>;
   approval(approvalRequestId: string): Promise<PosApprovalSummary>;
   invoiceCharges(page?: number): Promise<InvoiceChargePage>;
+  orders(filters: CommerceOrderFilters): Promise<CommerceOrderPage>;
+  order(orderId: string): Promise<CommerceOrderDetail>;
+  recoverOrder(orderId: string): Promise<PosDraft>;
+  renewRecoveredOrder(orderId: string): Promise<CommerceOrderClaim>;
+  releaseRecoveredOrder(orderId: string): Promise<{ released: boolean }>;
+  saveOrder(draft: PosDraft): Promise<{ order: SellerOrderResult; nextDraft: PosDraft }>;
+  printOrders(orderIds: string[]): Promise<{ printedCount: number }>;
+  invoiceOrders(
+    orderIds: string[], paymentMethodCode: string,
+    documentType: "SalesInvoice" | "SalesReceipt", paymentReference?: string | null,
+    bankAccountId?: string | null, paymentNotes?: string | null, printAfterInvoice?: boolean,
+    idempotencyKey?: string, onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
+    includeCreditAcknowledgement?: boolean, charge?: OrderInvoiceChargeSelection | null,
+  ): Promise<InvoiceOrdersResponse>;
   saveCharge(draftId: string, input: AddInvoiceCharge): Promise<PosDraft>;
   removeCharge(draftId: string, appliedChargeId: string): Promise<PosDraft>;
   activeDraft(): Promise<PosDraft>;
@@ -1345,6 +1380,159 @@ export class PosEdgeClient implements PosClient {
 
   invoiceCharges(page = 1) {
     return this.request<InvoiceChargePage>(`/edge/v1/invoice-charges?page=${page}`);
+  }
+
+  orders(filters: CommerceOrderFilters) {
+    const query = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== "") query.set(key, String(value));
+    });
+    return this.request<CommerceOrderPage>(`/edge/v1/orders?${query.toString()}`);
+  }
+
+  order(orderId: string) {
+    return this.request<CommerceOrderDetail>(`/edge/v1/orders/${orderId}`);
+  }
+
+  recoverOrder(orderId: string) {
+    const scope = this.requiredOrderScope();
+    return this.request<PosDraft>(`/edge/v1/orders/${orderId}/recover`, {
+      method: "POST",
+      body: JSON.stringify({ workSessionId: scope.workSessionId, userId: scope.userId }),
+    });
+  }
+
+  renewRecoveredOrder(orderId: string) {
+    const scope = this.requiredOrderScope();
+    return this.request<CommerceOrderClaim>(`/edge/v1/orders/${orderId}/claim`, {
+      method: "POST",
+      body: JSON.stringify({ workSessionId: scope.workSessionId, userId: scope.userId, leaseMinutes: 10 }),
+    });
+  }
+
+  releaseRecoveredOrder(orderId: string) {
+    const scope = this.requiredOrderScope();
+    return this.request<{ released: boolean }>(`/edge/v1/orders/${orderId}/claim/release`, {
+      method: "POST",
+      body: JSON.stringify({ workSessionId: scope.workSessionId, userId: scope.userId }),
+    });
+  }
+
+  async saveOrder(draft: PosDraft): Promise<{ order: SellerOrderResult; nextDraft: PosDraft }> {
+    if (draft.charges?.length)
+      throw new Error("Los cargos se guardan al facturar. Quita los cargos antes de guardar el pedido para evitar perderlos.");
+    if (!draft.customerId || !draft.customerPartySiteId || !draft.lines.length)
+      throw new Error("El pedido requiere cliente, sede y al menos un producto.");
+    const lines = buildPosOrderUpdateLines(draft.lines);
+    const scope = this.requiredOrderScope();
+    const idempotencyKey = `pos-order-${draft.draftId.value}-${draft.updatedAt ?? crypto.randomUUID()}`;
+    const order = draft.sourceOrderId
+      ? await this.request<SellerOrderResult>(`/edge/v1/orders/${draft.sourceOrderId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            customerId: draft.customerId,
+            partySiteId: draft.customerPartySiteId,
+            notes: draft.observation ?? null,
+            idempotencyKey,
+            lines,
+            workSessionId: scope.workSessionId,
+          }),
+        })
+      : await this.request<SellerOrderResult>("/edge/v1/orders", {
+          method: "POST",
+          body: JSON.stringify({
+            businessId: scope.businessId,
+            warehouseId: scope.warehouseId,
+            customerId: draft.customerId,
+            partySiteId: draft.customerPartySiteId,
+            routeId: null,
+            routeStopId: null,
+            capturedOffline: false,
+            notes: draft.observation ?? null,
+            idempotencyKey,
+            lines,
+          }),
+        });
+    return { order, nextDraft: await this.clearAfterOnlineCommit(draft.draftId.value) };
+  }
+
+  async printOrders(orderIds: string[]) {
+    const documents = await this.request<CommerceOrderPrintDocument[]>(
+      "/edge/v1/orders/print-batch",
+      { method: "POST", body: JSON.stringify({ orderIds }) },
+    );
+    for (const document of documents)
+      await this.printReceipt(toPrintableOrder(document, {
+        businessName: this.latestHealth?.businessName ?? "Empresa",
+        warehouseName: this.latestHealth?.warehouseName ?? "Sede",
+      }), null, "order-tickets");
+    return { printedCount: documents.length };
+  }
+
+  async invoiceOrders(
+    orderIds: string[], paymentMethodCode: string,
+    documentType: "SalesInvoice" | "SalesReceipt", paymentReference?: string | null,
+    bankAccountId?: string | null, paymentNotes?: string | null, printAfterInvoice = true,
+    idempotencyKey = crypto.randomUUID(), onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
+    includeCreditAcknowledgement = false, charge?: OrderInvoiceChargeSelection | null,
+  ): Promise<InvoiceOrdersResponse> {
+    const scope = this.requiredOrderScope();
+    const invoiceRequest = (requestedOrderIds: string[]) => ({
+      workSessionId: scope.workSessionId, warehouseId: scope.warehouseId,
+      userId: scope.userId, orderIds: requestedOrderIds, paymentMethodCode,
+      paymentReference: paymentReference ?? null, bankAccountId: bankAccountId ?? null,
+      paymentNotes: paymentNotes ?? null, documentType, charge: charge ?? null,
+    });
+    if (paymentMethodCode === "Credit") {
+      const issues = await this.request<OrderCreditValidationIssue[]>(
+        "/edge/v1/orders/invoice/credit-validation",
+        { method: "POST", body: JSON.stringify(invoiceRequest(orderIds)) },
+      );
+      if (issues.length) return {
+        operationId: "00000000-0000-0000-0000-000000000000", status: "CreditRejected",
+        requestedCount: orderIds.length, completedCount: 0, failedCount: 0,
+        isReplay: false, results: [], printStatus: "NotRequired", printError: null,
+        creditValidationIssues: issues,
+      };
+    }
+    const response = await invoiceOrdersInSequence(orderIds, idempotencyKey, {
+      invoiceOne: (orderId, orderIdempotencyKey) =>
+        this.request<InvoiceOrdersResponse>("/edge/v1/orders/invoice", {
+          method: "POST",
+          headers: { "Idempotency-Key": orderIdempotencyKey },
+          body: JSON.stringify(invoiceRequest([orderId])),
+        }),
+      printOne: printAfterInvoice
+        ? async (receipts) => {
+            for (const receipt of orderReceiptsForPrinting(
+              receipts,
+              includeCreditAcknowledgement,
+            )) await this.printReceipt(receipt, null, "pos");
+          }
+        : undefined,
+      onProgress,
+    });
+    if (!printAfterInvoice) response.printStatus = "NotRequired";
+    else if (orderReceiptsFromEmission(response.results).length > 0) {
+      try {
+        await this.openCashDrawer();
+      } catch (error) {
+        const drawerError = error instanceof Error
+          ? error.message
+          : "No fue posible abrir el cajón.";
+        response.printStatus = "Failed";
+        response.printError = [response.printError, drawerError].filter(Boolean).join(" · ");
+      }
+    }
+    return response;
+  }
+
+  private requiredOrderScope() {
+    const value = this.latestHealth;
+    if (!value?.userId || !value.workSessionId)
+      throw new PosEdgeError("Abre un turno antes de trabajar con pedidos.", 409);
+    return { userId: value.userId, workSessionId: value.workSessionId,
+      businessId: value.businessId, warehouseId: value.warehouseId };
   }
 
   saveCharge(draftId: string, input: AddInvoiceCharge) {

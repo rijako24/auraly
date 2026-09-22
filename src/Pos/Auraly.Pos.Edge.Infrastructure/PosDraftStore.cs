@@ -327,6 +327,113 @@ public sealed partial class PosDraftStore
         return await GetRequiredAsync(draftId.Value, cancellationToken);
     }
 
+    public async Task<PosDraft> ImportOrderAsync(
+        PosDraftScope scope,
+        Guid orderId,
+        string orderNumber,
+        Guid customerId,
+        Guid customerPartySiteId,
+        string? observation,
+        IReadOnlyList<PosDraftLineInput> lines,
+        CancellationToken cancellationToken = default)
+    {
+        if (orderId == Guid.Empty || string.IsNullOrWhiteSpace(orderNumber) || customerId == Guid.Empty ||
+            customerPartySiteId == Guid.Empty || lines.Count == 0)
+            throw new ArgumentException("El pedido requiere identidad, cliente, sede y líneas.");
+        foreach (var line in lines) ValidateLine(line);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+        await using (var guard = connection.CreateCommand())
+        {
+            guard.Transaction = transaction;
+            guard.CommandText = """
+                SELECT COUNT(*)
+                FROM PosDrafts draft
+                WHERE draft.BusinessId=@BusinessId AND draft.WarehouseId=@WarehouseId
+                  AND draft.DeviceId=@DeviceId AND draft.WorkSessionId=@WorkSessionId
+                  AND draft.UserId=@UserId AND draft.Status='Active'
+                  AND draft.SourceOrderId IS NULL
+                  AND EXISTS(SELECT 1 FROM PosDraftLines line WHERE line.DraftId=draft.DraftId);
+                """;
+            guard.Parameters.AddRange([
+                P("@BusinessId", scope.BusinessId.Value), P("@WarehouseId", scope.WarehouseId.Value),
+                P("@DeviceId", scope.DeviceId.Value), P("@WorkSessionId", scope.WorkSessionId.Value),
+                P("@UserId", scope.UserId.Value)
+            ]);
+            if (Convert.ToInt32(await guard.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) > 0)
+                throw new InvalidOperationException(
+                    "Pausa o reinicia la venta actual antes de recuperar un pedido.");
+        }
+        await ExecuteAsync(connection, transaction, """
+            UPDATE PosDrafts SET Status='Deleted',UpdatedAt=@Now
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND DeviceId=@DeviceId
+              AND WorkSessionId=@WorkSessionId AND UserId=@UserId AND Status='Active';
+            """,
+            [
+                P("@Now", Now()), P("@BusinessId", scope.BusinessId.Value),
+                P("@WarehouseId", scope.WarehouseId.Value), P("@DeviceId", scope.DeviceId.Value),
+                P("@WorkSessionId", scope.WorkSessionId.Value), P("@UserId", scope.UserId.Value)
+            ], cancellationToken);
+        var draftId = new DraftId(_idGenerator.NewId());
+        await InsertActiveAsync(connection, transaction, draftId, scope, customerId, null,
+            customerPartySiteId, cancellationToken);
+        await ExecuteAsync(connection, transaction, """
+            UPDATE PosDrafts SET SourceOrderId=@OrderId,Reference=@OrderNumber,Observation=@Observation
+            WHERE DraftId=@DraftId;
+            """,
+            [P("@OrderId", orderId), P("@OrderNumber", orderNumber.Trim()),
+                P("@Observation", Normalize(observation)), P("@DraftId", draftId.Value)],
+            cancellationToken);
+        var imported = lines.Select((line, index) => new
+        {
+            LineId = _idGenerator.NewId(),
+            ProductId = line.ProductId.Value,
+            line.ProductCode,
+            line.Description,
+            line.UnitCode,
+            line.TaxCode,
+            line.TaxRate,
+            line.Quantity,
+            line.BaseUnitPrice,
+            line.UnitPrice,
+            line.CurrencyCode,
+            line.PriceSource,
+            line.PriceChannelId,
+            line.Discount,
+            line.Note,
+            line.AllowsFractionalSale,
+            line.DocumentUnitCost,
+            line.AllowsDocumentCostOverride,
+            Position = index + 1,
+            line.PromotionDiscount,
+            PublicLineTotal = line.PublicLineTotal ?? CloseLineTotal(
+                line.Quantity, line.UnitPrice, line.Discount, line.PromotionDiscount)
+        }).ToArray();
+        await ExecuteAsync(connection, transaction, """
+            INSERT INTO PosDraftLines(
+              LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,
+              Quantity,BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,PriceChannelId,
+              Discount,Note,AllowsFractionalSale,DocumentUnitCost,AllowsDocumentCostOverride,
+              Position,IsPriceOverridden,PromotionDiscount,PublicLineTotal)
+            SELECT json_extract(value,'$.LineId'),@DraftId,json_extract(value,'$.ProductId'),
+              json_extract(value,'$.ProductCode'),json_extract(value,'$.Description'),
+              json_extract(value,'$.UnitCode'),json_extract(value,'$.TaxCode'),
+              json_extract(value,'$.TaxRate'),json_extract(value,'$.Quantity'),
+              json_extract(value,'$.BaseUnitPrice'),json_extract(value,'$.UnitPrice'),
+              json_extract(value,'$.CurrencyCode'),json_extract(value,'$.PriceSource'),
+              json_extract(value,'$.PriceChannelId'),json_extract(value,'$.Discount'),
+              json_extract(value,'$.Note'),json_extract(value,'$.AllowsFractionalSale'),
+              json_extract(value,'$.DocumentUnitCost'),json_extract(value,'$.AllowsDocumentCostOverride'),
+              json_extract(value,'$.Position'),0,json_extract(value,'$.PromotionDiscount'),
+              json_extract(value,'$.PublicLineTotal')
+            FROM json_each(@LinesJson);
+            """,
+            [P("@DraftId", draftId.Value), P("@LinesJson", JsonSerializer.Serialize(imported))],
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return await GetRequiredAsync(draftId, cancellationToken);
+    }
+
     public async Task<PosDraft> SetQuantityAsync(
         DraftId draftId,
         Guid lineId,

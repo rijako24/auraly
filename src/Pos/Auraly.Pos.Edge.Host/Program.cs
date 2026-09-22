@@ -6,6 +6,7 @@ using Auraly.BuildingBlocks.Infrastructure.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Parties;
+using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Application.Sales;
@@ -215,6 +216,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosRemoteApprovalClient>();
         builder.Services.AddSingleton<PosSalesHistoryServerClient>();
         builder.Services.AddSingleton<PosSalesReturnServerClient>();
+        builder.Services.AddSingleton<PosOrdersServerClient>();
         builder.Services.AddSingleton<PosSensitiveActionAuthorizer>();
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
@@ -1091,6 +1093,115 @@ public static class PosEdgeHostApplication
             await ServerReturnResult(() => server.ConfirmAsync(request,
                 RequiredSalesReturnUser(sessions), ct)));
 
+        edge.MapGet("/orders", async (HttpContext http, PosOrdersServerClient server,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Get,
+                $"api/commerce/v1/orders{http.Request.QueryString}", null,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Read), ct)));
+        edge.MapGet("/orders/{orderId:guid}", async (Guid orderId,
+            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Get,
+                $"api/commerce/v1/orders/{orderId:D}", null,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Read), ct)));
+        edge.MapPost("/orders/print-batch", async (JsonElement request,
+            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
+                "api/commerce/v1/orders/print-batch", request,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Read), ct)));
+        edge.MapPost("/orders/invoice/credit-validation", async (JsonElement request,
+            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
+                "api/commerce/v1/orders/invoice/credit-validation", request,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Invoice), ct)));
+        edge.MapPost("/orders/invoice", async (HttpContext http, JsonElement request,
+            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
+                "api/commerce/v1/orders/invoice", request,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Invoice), ct,
+                http.Request.Headers["Idempotency-Key"])));
+        edge.MapPost("/orders", async (JsonElement request,
+            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
+                "api/commerce/v1/seller-orders", request,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Create), ct)));
+        edge.MapPut("/orders/{orderId:guid}", async (Guid orderId, JsonElement request,
+            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Put,
+                $"api/commerce/v1/seller-orders/{orderId:D}", request,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Update, OrderPermissionCodes.Review), ct)));
+        edge.MapPost("/orders/{orderId:guid}/recover", async (Guid orderId,
+            JsonElement request, PosOrdersServerClient server, PosDraftStore drafts,
+            PosEdgeRuntimeContext context, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(async () =>
+            {
+                var user = RequiredOrderUser(sessions, OrderPermissionCodes.Recover);
+                var json = await server.SendAsync(HttpMethod.Post,
+                    $"api/commerce/v1/orders/{orderId:D}/prepare-edge-recovery", request,
+                    user, ct);
+                var prepared = JsonSerializer.Deserialize<EdgePreparedOrderRecovery>(json.GetRawText(),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                    ?? throw new PosOrdersServerException(502, "InvalidOrderResponse",
+                        "El servidor devolvió un pedido inválido.");
+                var order = prepared.Order;
+                if (!order.CustomerId.HasValue || !order.PartySiteId.HasValue ||
+                    order.Lines.Any(line => !line.ProductId.HasValue))
+                    throw new PosOrdersServerException(409, "InvalidOrderSnapshot",
+                        "El pedido no conserva cliente, sede o productos válidos.");
+                try
+                {
+                    return await drafts.ImportOrderAsync(context.ScopeFor(user), order.OrderId,
+                        order.OrderNumber, order.CustomerId.Value, order.PartySiteId.Value, order.Notes,
+                        order.Lines.Select(line =>
+                        {
+                            var promotion = string.Equals(line.PriceSource, "Promotion",
+                                StringComparison.OrdinalIgnoreCase);
+                            return new PosDraftLineInput(
+                                new ProductId(line.ProductId!.Value), line.ProductCode ?? string.Empty,
+                                line.ProductName, line.UnitCode, line.TaxCode, line.TaxRate,
+                                line.Quantity, line.UnitPrice, line.UnitPrice, order.Currency,
+                                line.PriceSource,
+                                Discount: promotion ? 0m : line.DiscountAmount,
+                                AllowsFractionalSale: line.Quantity != decimal.Truncate(line.Quantity),
+                                DocumentUnitCost: line.DocumentUnitCost,
+                                PromotionDiscount: promotion ? line.DiscountAmount : 0m,
+                                PublicLineTotal: line.LineTotal);
+                        }).ToArray(), ct);
+                }
+                catch (Exception importError)
+                {
+                    if (prepared.ClaimAcquiredByThisAttempt)
+                    {
+                        var release = JsonSerializer.SerializeToElement(new
+                            { workSessionId = user.WorkSessionId, userId = user.UserId });
+                        try
+                        {
+                            await server.SendAsync(HttpMethod.Post,
+                                $"api/commerce/v1/orders/{orderId:D}/claim/release", release,
+                                user, ct);
+                        }
+                        catch (Exception releaseError)
+                        {
+                            throw new AggregateException(
+                                "No fue posible importar el pedido ni liberar su ocupación.",
+                                importError, releaseError);
+                        }
+                    }
+                    throw;
+                }
+            }));
+        edge.MapPost("/orders/{orderId:guid}/claim", async (Guid orderId,
+            JsonElement request, PosOrdersServerClient server,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
+                $"api/commerce/v1/orders/{orderId:D}/claim", request,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Recover), ct)));
+        edge.MapPost("/orders/{orderId:guid}/claim/release", async (Guid orderId,
+            JsonElement request, PosOrdersServerClient server,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
+                $"api/commerce/v1/orders/{orderId:D}/claim/release", request,
+                RequiredOrderUser(sessions, OrderPermissionCodes.Recover), ct)));
+
         edge.MapPost("/capture", async (
             CaptureRequest request,
             PosCaptureService capture,
@@ -1417,6 +1528,27 @@ public static class PosEdgeHostApplication
         if (!user.Permissions.Contains("sales.returns.create", StringComparer.Ordinal))
             throw new PosSalesReturnServerException(403, "Forbidden",
                 "El usuario local no tiene permiso para procesar devoluciones.");
+        return user;
+    }
+
+    private static async Task<IResult> ServerOrderResult<T>(Func<Task<T>> action)
+    {
+        try { return Results.Ok(await action()); }
+        catch (PosOrdersServerException exception)
+        {
+            return Results.Problem(exception.Message,
+                statusCode: exception.StatusCode, title: exception.Code);
+        }
+    }
+
+    private static PosLocalUserSession RequiredOrderUser(
+        PosLocalSessionAccessor sessions, params string[] permissions)
+    {
+        var user = sessions.Required();
+        if (!permissions.Any(permission =>
+                user.Permissions.Contains(permission, StringComparer.Ordinal)))
+            throw new PosOrdersServerException(403, "Forbidden",
+                "El usuario local no tiene permiso para trabajar con pedidos.");
         return user;
     }
 

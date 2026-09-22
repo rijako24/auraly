@@ -363,6 +363,7 @@ export function OrdersWorkspace({
       invoiceAttemptRef.current = { fingerprint, key: crypto.randomUUID() };
     }
     const idempotencyKey = invoiceAttemptRef.current.key;
+    if (charge) setChargeDialogOpen(false);
     setWorking(true);
     setError(null);
     setNotice(null);

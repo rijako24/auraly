@@ -24,13 +24,12 @@ sólo permite que el modo online use adaptadores locales de periféricos; no cre
 un segundo motor de venta.
 
 Los pedidos son una excepción deliberada al propietario de datos de la venta:
-su único propietario es la API web de Pedidos y SQL Server, incluso cuando la
-caja está enrolada. POS Edge no expone endpoints ni persistencia paralela de
-pedidos; sólo recibe, como adaptador local de periféricos, el documento ya
-resuelto por la API para imprimirlo. Por ello crear, recuperar, editar, guardar
-o facturar un pedido requiere conexión. Al volver a una venta local se restaura
-el mismo `PosEdgeClient`; no se migra el pedido a SQLite ni se cambia el
-propietario de la venta iniciada localmente.
+su único propietario comercial es la API de Pedidos y SQL Server. La web usa
+`OnlinePosClient`; una caja enrolada conserva `PosEdgeClient` y pasa todas las
+operaciones online por el proxy local autenticado. La recuperación copia el
+snapshot a un borrador SQLite de trabajo, sin crear un maestro paralelo ni
+recalcular precio o inventario. Crear, recuperar, editar, guardar o facturar un
+pedido requiere conexión y vuelve siempre al caso de uso canónico del servidor.
 
 No se pregunta al cajero el modo en cada inicio y no se cambia de persistencia a
 mitad de una factura. La ausencia de Internet no se confunde con la ausencia de

@@ -38,8 +38,7 @@ import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
 import { orderOperationErrorMessage } from "@/services/orders/order-http-error";
 import {
-  loadCommerceOrder,
-  loadCommerceOrders,
+  type CommerceOrderFilters,
   type OrderInvoiceChargeSelection,
 } from "@/services/orders/commerce-orders-client";
 import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
@@ -256,7 +255,6 @@ export default function PosPage() {
   const captureInFlight = useRef(false);
   const router = useRouter();
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
-  const cloudUser = useAuthStore((state) => state.user);
   const cloudAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const logoutCloud = useAuthStore((state) => state.logout);
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
@@ -278,11 +276,6 @@ export default function PosPage() {
     client: PosEdgeClient;
     health: Awaited<ReturnType<PosClient["health"]>>;
   } | null>(null);
-  const webOrderClient = useRef<{
-    key: string;
-    client: OnlinePosClient;
-  } | null>(null);
-  const edgeClientBeforeOnlineOrder = useRef<PosEdgeClient | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
   const [workspaceChanging, setWorkspaceChanging] = useState(false);
   const [onlineOptions, setOnlineOptions] = useState<SalesWorkspaceOption[]>([]);
@@ -541,86 +534,42 @@ export default function PosPage() {
     setMessage("Revisa la novedad");
   }, [client?.mode]);
 
-  const getWebOrderClient = useCallback(async () => {
-    if (client instanceof OnlinePosClient) return client;
-    if (!cloudUser)
-      throw new Error("La sesión web de pedidos no está disponible.");
-    if (!workstation.businessId || !workstation.warehouseId)
-      throw new Error("Selecciona la sede y la bodega antes de trabajar con pedidos.");
-    const key = [
-      cloudUser.userId,
-      workstation.businessId,
-      workstation.warehouseId,
-      workstation.workSessionId ?? "no-session",
-      edgeEnrollmentToken ?? "browser",
-    ].join(":");
-    if (webOrderClient.current?.key === key)
-      return webOrderClient.current.client;
-    const context = await selectSalesWorkspace({
-      businessId: workstation.businessId,
-      businessName: workstation.businessName,
-      warehouseId: workstation.warehouseId,
-      warehouseCode: workstation.warehouseId,
-      warehouseName: workstation.warehouseName,
-      warehouseAllowsNegativeStockSales:
-        workstation.warehouseAllowsNegativeStockSales,
-      hasActiveEdgeEnrollment: Boolean(edgeEnrollmentToken),
-      fiscalReadyForOnlineSales: workstation.fiscalReady,
-      fiscalReadyForEnrollment: workstation.fiscalReady,
-      hasDianDocumentQuota: workstation.dianQuotaAvailable !== false,
-      fiscalWarningMessages: workstation.fiscalWarnings,
-    });
-    const online = new OnlinePosClient(
-      context,
-      cloudUser.userId,
-      `${cloudUser.firstName} ${cloudUser.lastName}`.trim() || cloudUser.username,
-      edgeEnrollmentToken,
-    );
-    webOrderClient.current = { key, client: online };
-    return online;
-  }, [
-    client,
-    cloudUser,
-    edgeEnrollmentToken,
-    workstation.businessId,
-    workstation.businessName,
-    workstation.dianQuotaAvailable,
-    workstation.fiscalReady,
-    workstation.fiscalWarnings,
-    workstation.warehouseAllowsNegativeStockSales,
-    workstation.warehouseId,
-    workstation.warehouseName,
-    workstation.workSessionId,
-  ]);
+  const getOrderClient = useCallback(async () => {
+    if (!client) throw new Error("El punto de venta no está disponible.");
+    return client;
+  }, [client]);
+
+  const loadOrders = useCallback(
+    (filters: CommerceOrderFilters & { page: number; pageSize: number }) =>
+      runOnlineOrderRequest(async () => (await getOrderClient()).orders(filters)),
+    [getOrderClient],
+  );
+
+  const loadOrder = useCallback(
+    (orderId: string) =>
+      runOnlineOrderRequest(async () => (await getOrderClient()).order(orderId)),
+    [getOrderClient],
+  );
 
   const recoverOrderOnline = useCallback(async (orderId: string) => {
     const { orderClient, recovered } = await runOnlineOrderRequest(async () => {
-      const online = await getWebOrderClient();
+      const online = await getOrderClient();
       return { orderClient: online, recovered: await online.recoverOrder(orderId) };
     });
-    if (client instanceof PosEdgeClient)
-      edgeClientBeforeOnlineOrder.current = client;
-    if (client !== orderClient) setClient(orderClient);
     return { orderClient, recovered };
-  }, [client, getWebOrderClient]);
+  }, [getOrderClient]);
 
   const saveDraftAsOnlineOrder = useCallback(async (value: PosDraft) => {
     return runOnlineOrderRequest(async () => {
-      const orderClient = await getWebOrderClient();
-      const edge = client instanceof PosEdgeClient ? client : null;
-      return orderClient.saveOrder(
-        value,
-        edge
-          ? () => edge.clearAfterOnlineCommit(value.draftId.value)
-          : undefined,
-      );
+      const orderClient = await getOrderClient();
+      return orderClient.saveOrder(value);
     });
-  }, [client, getWebOrderClient]);
+  }, [getOrderClient]);
 
   const printOrdersOnline = useCallback((orderIds: string[]) =>
     runOnlineOrderRequest(async () =>
-      (await getWebOrderClient()).printOrders(orderIds)),
-  [getWebOrderClient]);
+      (await getOrderClient()).printOrders(orderIds)),
+  [getOrderClient]);
   useEffect(() => {
     const saved = window.localStorage.getItem("auraly.pos.document-type");
     if (saved === "SalesInvoice" || saved === "SalesReceipt")
@@ -654,7 +603,7 @@ export default function PosPage() {
     if (sidePanel === "orders") return;
     let active = true;
     const range = orderDayRange(localOrderDateValue());
-    void loadCommerceOrders({ ...range, status: "Available", page: 1, pageSize: 1 })
+    void loadOrders({ ...range, status: "Available", page: 1, pageSize: 1 })
       .then((page) => {
         if (active) setOrdersCount(page.totalCount);
       })
@@ -662,7 +611,7 @@ export default function PosPage() {
         if (active) setOrdersCount(0);
       });
     return () => { active = false; };
-  }, [client, ordersRefreshVersion, sidePanel]);
+  }, [client, loadOrders, ordersRefreshVersion, sidePanel]);
 
   useEffect(() => {
     let active = true;
@@ -1060,7 +1009,7 @@ export default function PosPage() {
   }, [busy, client, draft, edgeReady, focusScanner, recoverOrderOnline]);
 
   useEffect(() => {
-    if (!(client instanceof OnlinePosClient) || !draft?.sourceOrderId || busy) return;
+    if (!client || !draft?.sourceOrderId || busy) return;
     const orderId = draft.sourceOrderId;
     const handleRenewalFailure = (caught: unknown) => {
       setError(caught instanceof Error
@@ -1196,10 +1145,6 @@ export default function PosPage() {
       setSidePanel("orders");
       setOrdersRefreshVersion((current) => current + 1);
       setMessage(`${saved.order.orderNumber} ${wasRecovered ? "actualizado" : "guardado"}; inventario reservado en Pedidos`);
-      if (wasRecovered && edgeClientBeforeOnlineOrder.current) {
-        setClient(edgeClientBeforeOnlineOrder.current);
-        edgeClientBeforeOnlineOrder.current = null;
-      }
     } catch (caught) {
       const detail = typeof caught === "object" && caught !== null && "message" in caught
         ? String((caught as { message: unknown }).message)
@@ -1881,7 +1826,7 @@ export default function PosPage() {
           paymentCounts: submitted.paymentCounts,
           note: submitted.note,
         });
-        if (draft?.sourceOrderId && client instanceof OnlinePosClient)
+        if (draft?.sourceOrderId)
           await client.releaseRecoveredOrder(draft.sourceOrderId).catch(() => undefined);
         setClosurePreview(null);
         setClosureAttempt(null);
@@ -2052,10 +1997,6 @@ export default function PosPage() {
           setMessage(draft.sourceOrderId
             ? "Pedido eliminado y venta reiniciada. Nueva venta lista."
             : "Venta reiniciada. Nueva venta lista.");
-          if (draft.sourceOrderId && edgeClientBeforeOnlineOrder.current) {
-            setClient(edgeClientBeforeOnlineOrder.current);
-            edgeClientBeforeOnlineOrder.current = null;
-          }
         },
       );
     } catch (caught) {
@@ -2157,10 +2098,6 @@ export default function PosPage() {
         setSidePanel("orders");
         setOrdersRefreshVersion((current) => current + 1);
         setMessage(`${saved.order.orderNumber} ${wasRecovered ? "actualizado" : "guardado"}; inventario reservado en Pedidos`);
-        if (wasRecovered && edgeClientBeforeOnlineOrder.current) {
-          setClient(edgeClientBeforeOnlineOrder.current);
-          edgeClientBeforeOnlineOrder.current = null;
-        }
         return;
       }
       setMessage(
@@ -2426,10 +2363,6 @@ export default function PosPage() {
       setError(null);
       setPaymentOpen(false);
       setSaleSettlement(null);
-      if (draft.sourceOrderId && edgeClientBeforeOnlineOrder.current) {
-        setClient(edgeClientBeforeOnlineOrder.current);
-        edgeClientBeforeOnlineOrder.current = null;
-      }
 
       const printAfterCompletedSale = async () => {
         try {
@@ -2765,7 +2698,7 @@ export default function PosPage() {
     charge?: OrderInvoiceChargeSelection | null,
   ) {
     const result = await runOnlineOrderRequest(async () => {
-      const orderClient = await getWebOrderClient();
+      const orderClient = await getOrderClient();
       return orderClient.invoiceOrders(
         orderIds,
         paymentMethodCode,
@@ -3756,8 +3689,8 @@ export default function PosPage() {
                 compact
                 initialStatus="Available"
                 activeOrderId={draft?.sourceOrderId}
-                loadPage={loadCommerceOrders}
-                loadDetail={loadCommerceOrder}
+                loadPage={loadOrders}
+                loadDetail={loadOrder}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={async (orders) =>
                   printOrdersOnline(orders.map((order) => order.orderId))}
@@ -3811,8 +3744,8 @@ export default function PosPage() {
               key={`expanded-orders-${ordersRefreshVersion}`}
               initialStatus="Available"
               activeOrderId={draft?.sourceOrderId}
-              loadPage={loadCommerceOrders}
-              loadDetail={loadCommerceOrder}
+              loadPage={loadOrders}
+              loadDetail={loadOrder}
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={async (orders) =>
                 printOrdersOnline(orders.map((order) => order.orderId))}

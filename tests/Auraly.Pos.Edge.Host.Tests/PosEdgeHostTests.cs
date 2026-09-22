@@ -460,20 +460,18 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Edge_does_not_expose_order_business_endpoints()
+    public async Task Order_proxy_requires_the_matching_local_order_permission()
     {
         using var page = await Client.GetAsync("/edge/v1/orders");
-        using var recover = await Client.PostAsync(
-            $"/edge/v1/orders/{Guid.NewGuid():D}/recover", null);
-        using var save = await Client.PostAsJsonAsync(
-            "/edge/v1/orders/save", new { draftId = Guid.NewGuid() });
+        using var recover = await Client.PostAsJsonAsync(
+            $"/edge/v1/orders/{Guid.NewGuid():D}/recover",
+            new { workSessionId = Guid.NewGuid(), userId = Guid.NewGuid() });
         using var invoice = await Client.PostAsJsonAsync(
             "/edge/v1/orders/invoice", new { orderIds = Array.Empty<Guid>() });
 
-        Assert.Equal(HttpStatusCode.NotFound, page.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, recover.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, save.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, invoice.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, page.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, recover.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, invoice.StatusCode);
     }
 
     [Fact]

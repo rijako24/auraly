@@ -42,7 +42,7 @@ Se encontraron siete causas de divergencia:
 | Validez y preparación de impresión | `PosPrinterConfigurationStore` | configuración local + catálogo de impresoras de Windows | `Periféricos` y trabajos | no aplica |
 | Emisión online | `OnlinePosClient`/API canónica | SQL Server | POS web e instalado no enrolado | navegador o POS Edge |
 | Emisión enrolada | `PosEdgeClient`/motor POS canónico | SQLite y outbox | POS enrolado | POS Edge |
-| Pedidos | API web de Pedidos | SQL Server | POS web y enrolado conectado | HTTP; POS Edge sólo imprime |
+| Pedidos | API de Pedidos | SQL Server; borrador de trabajo SQLite al recuperar en instalado | POS web y enrolado conectado | JWT web o proxy autenticado de POS Edge |
 | Render del documento | `PosPrintTemplateCatalog` y renderizadores compartidos | snapshot emitido | todos los modos | navegador o Windows |
 
 ## Flujo anterior y final
@@ -76,10 +76,11 @@ reimpresión explícita existente.
 | Otro tenant o dispositivo | alcance de venta validado por su motor; impresora local a la estación | sin configuración remota cruzada |
 | Reintento de venta confirmada | mismo snapshot, ningún efecto repetido | probado por regla pura de efecto |
 
-Los pedidos no se duplican en SQLite: crear, recuperar, editar, guardar y
-facturar pedidos usa siempre el propietario web existente. En una caja enrolada
-sin conexión se rechaza explícitamente esa operación; las ventas locales y sus
-borradores continúan funcionando con SQLite.
+Los pedidos no se duplican como maestro en SQLite. La recuperación instalada
+hidrata un borrador local transitorio y crear, guardar y facturar vuelve siempre
+al propietario de servidor mediante Edge. En una caja enrolada sin conexión se
+rechaza explícitamente esa operación; las demás ventas locales y sus borradores
+continúan funcionando con SQLite.
 
 ## Cobertura funcional ejecutada
 

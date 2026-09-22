@@ -134,11 +134,12 @@ validación o pendiente de reintento.
 - `POST /api/commerce/v1/orders/print-batch`
 - `POST /api/commerce/v1/orders/{orderId}/cancel`
 
-Los pedidos son siempre un recurso en linea. POS instalado y POS web consumen
-estos mismos contratos de Commerce; Edge no expone ni replica endpoints de
-pedidos. La unica diferencia instalada es la salida fisica de impresion, que
-reutiliza el transporte local despues de obtener el documento autoritativo de
-la API. En web, el mismo documento se presenta en el modal de impresion.
+Los pedidos son siempre un recurso en linea. POS web consume los contratos de
+Commerce con JWT. El POS instalado consume esos mismos casos de uso mediante
+endpoints locales de Edge que actúan como proxy autenticado del dispositivo.
+Edge no replica el maestro de pedidos ni sus reglas; al recuperar conserva en
+SQLite sólo el borrador de trabajo hidratado desde el snapshot autoritativo. En
+web, el mismo documento se presenta en el modal de impresión.
 
 Permisos:
 

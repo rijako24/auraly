@@ -2,11 +2,11 @@
 
 ## Decisión central
 
-La fuente canónica es el pedido que ya crea el bot en `dbo.Orders` y `dbo.OrderItems`. No se creó un segundo maestro de pedidos ni una copia específica para POS. El dashboard y el panel de Pedidos dentro del POS —web, instalado, enrolado o no enrolado— consultan y procesan esos registros directamente mediante la API web canónica. Edge no expone endpoints de estado comercial de pedidos.
+La fuente canónica es el pedido que ya crea el bot en `dbo.Orders` y `dbo.OrderItems`. No se creó un segundo maestro de pedidos. El dashboard y el POS web consultan la API con JWT; el POS instalado enrolado usa `PosEdgeClient` y endpoints locales que reenvían cada operación al mismo caso de uso de Commerce con la identidad del dispositivo y del usuario local. Edge no posee estado comercial alterno del pedido.
 
 Un pedido es comercial y no tributario. Guarda producto, cantidad, **precio público pactado incluido IVA**, descuento público y total comercial bruto. No congela el perfil ni la tarifa tributaria, la base gravable, CUFE, resolución o numeración fiscal. Al convertirlo en factura se consulta la configuración vigente del producto, se descompone el total público en base e impuesto y se construye entonces el snapshot fiscal inmutable.
 
-`OrderItems.UnitPrice`, `OrderItems.DiscountAmount`, `OrderItems.LineTotal` y `Orders.Total` usan siempre esa semántica pública/bruta, sin importar si el productor fue bot, captura de vendedor o POS. Todo productor aplica una sola vez `MonetaryRounding.CeilingLineUnitPrice` cuando el producto ingresa o se edita. El borrador online conserva tanto los importes netos para su cálculo interno como el snapshot público exacto; su adaptador copia ese snapshot al crear o actualizar el pedido. Recuperar, pausar, volver a guardar y facturar transportan los importes pactados sin volver a redondearlos ni reconstruirlos. En una instalación enrolada, crear un pedido desde una venta local escribe el pedido directamente por la API web y solo después limpia el borrador SQLite confirmado.
+`OrderItems.UnitPrice`, `OrderItems.DiscountAmount`, `OrderItems.LineTotal` y `Orders.Total` usan siempre esa semántica pública/bruta, sin importar si el productor fue bot, captura de vendedor o POS. Todo productor aplica una sola vez `MonetaryRounding.CeilingLineUnitPrice` cuando el producto ingresa o se edita. El borrador online conserva tanto los importes netos para su cálculo interno como el snapshot público exacto; su adaptador copia ese snapshot al crear o actualizar el pedido. Recuperar, pausar, volver a guardar y facturar transportan los importes pactados sin volver a redondearlos ni reconstruirlos. En una instalación enrolada, crear un pedido desde una venta local pasa por el proxy autenticado de Edge hacia el mismo writer de la API y solo después limpia el borrador SQLite confirmado.
 
 ## Alcance y aislamiento
 
@@ -69,12 +69,14 @@ pendientes, con cantidad solicitada y disponible, para reducirlas o eliminarlas.
 Productos sin control de inventario y bodegas que permiten negativos no generan
 revisión por existencia.
 
-Un pedido recuperado nunca se copia al borrador SQLite ni entra a la outbox. Aun
-en un equipo instalado, el navegador cambia ese trabajo al borrador online y lo
-guarda, pausa, recupera, cancela o factura mediante los endpoints web canónicos.
-El servidor vincula el pedido en la transacción operacional que procesa la venta
-y libera el claim; el pago se procesa por el motor contable canónico. Un reintento
-no duplica factura, pago, inventario ni vínculo.
+En web, el pedido recuperado hidrata el borrador online. En un equipo instalado,
+Edge reclama el pedido en el servidor e hidrata atómicamente el borrador SQLite
+con el snapshot cerrado, sin reprificar ni validar de nuevo catálogo o existencia.
+Ese borrador es sólo el trabajo local de la caja: guardar o facturar vuelve por
+el proxy al writer o al motor canónico del servidor. El servidor vincula el
+pedido en la transacción operacional y libera el claim; el pago se procesa por
+el motor contable canónico. Un reintento no duplica factura, pago, inventario ni
+vínculo.
 
 La preparación inicial del POS descarga clientes por páginas y cada registro
 incluye todas sus sedes activas en el mismo payload. El snapshot SQLite conserva
@@ -140,7 +142,7 @@ post-despliegue; no consultan nombres o direcciones para adivinar identidades.
 
 Permisos mínimos: `orders.read`, `orders.recover`, `orders.invoice`, `orders.cancel` y `orders.override-pricing`. Facturar también exige `sales.create`.
 
-Todas las operaciones de pedidos usan siempre el JWT del usuario y los endpoints `/api/commerce/v1/orders/**`, incluso cuando se ejecutan dentro de un POS enrolado. Esto incluye lista, detalle, reclamo, recuperación, renovación, liberación, creación, actualización, impresión documental y facturación. Edge participa únicamente como transporte físico: la web obtiene primero el DTO imprimible desde el servidor y luego lo entrega al endpoint genérico de impresión. Edge no reenvía ni posee estado, recuperación, guardado o facturación del pedido. Si la API no está disponible, la interfaz informa que Pedidos requiere conexión y conserva el borrador que todavía no haya sido confirmado.
+La web conserva el JWT del usuario y los endpoints `/api/commerce/v1/orders/**`. En el POS instalado, lista, detalle, reclamo, recuperación, renovación, liberación, creación, actualización, impresión y facturación entran por el único `PosEdgeClient`; el host exige el permiso local y reenvía al mismo endpoint canónico autenticado como dispositivo enrolado. El adaptador no contiene reglas de negocio. Si la API no está disponible, la interfaz informa que Pedidos requiere conexión y conserva el borrador que todavía no haya sido confirmado.
 
 ## Experiencia
 

@@ -283,7 +283,7 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
-    public void Orders_are_owned_by_the_web_api_and_edge_is_only_a_print_transport()
+    public void Orders_keep_the_server_as_owner_and_use_edge_as_the_installed_transport()
     {
         var page = File.ReadAllText(Path.Combine(
             RepositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
@@ -294,11 +294,12 @@ public sealed class ArchitectureDebtRatchetTests
         var edgeProgram = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "Program.cs"));
 
-        Assert.Contains("getWebOrderClient", page, StringComparison.Ordinal);
-        Assert.DoesNotContain("client.recoverOrder(", page, StringComparison.Ordinal);
-        Assert.DoesNotContain("client.saveOrder(", page, StringComparison.Ordinal);
-        Assert.DoesNotContain("/edge/v1/orders", edgeClient, StringComparison.Ordinal);
-        Assert.DoesNotContain("MapPosOrders", edgeProgram, StringComparison.Ordinal);
+        Assert.Contains("getOrderClient", page, StringComparison.Ordinal);
+        Assert.Contains("return client;", page, StringComparison.Ordinal);
+        Assert.Contains("/edge/v1/orders", edgeClient, StringComparison.Ordinal);
+        Assert.Contains("api/commerce/v1/orders", edgeProgram, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(
+            RepositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "PosOrdersServerClient.cs")));
         Assert.False(File.Exists(Path.Combine(
             RepositoryRoot, "src", "API", "Auraly.Api", "PosOrdersApi.cs")));
         Assert.Contains("loadCommerceOrderPrintBatch(orderIds)", onlineClient,
@@ -436,8 +437,17 @@ public sealed class ArchitectureDebtRatchetTests
         Assert.Contains("json_each(@PricesJson)", reprice, StringComparison.Ordinal);
         Assert.Single(Regex.Matches(reprice, @"ExecuteAsync\s*\("));
 
-        Assert.DoesNotContain("ImportOrderAsync(", posDraftStore,
+        var importStart = posDraftStore.IndexOf(
+            "public async Task<PosDraft> ImportOrderAsync(",
             StringComparison.Ordinal);
+        var importEnd = posDraftStore.IndexOf(
+            "public async Task<PosDraft> SetQuantityAsync(",
+            importStart,
+            StringComparison.Ordinal);
+        var importOrder = posDraftStore[importStart..importEnd];
+        Assert.Contains("FROM json_each(@LinesJson)", importOrder,
+            StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(importOrder, @"FROM\s+json_each\(@LinesJson\)"));
     }
 
     [Fact]

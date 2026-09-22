@@ -358,9 +358,20 @@ public sealed class PosArchitectureTests
         Assert.Contains("ordersExpanded && client", page, StringComparison.Ordinal);
         Assert.Contains("{ordersCount}", page, StringComparison.Ordinal);
         Assert.Contains("setSelectedCustomer(recoveredCustomer)", page, StringComparison.Ordinal);
-        Assert.Contains("loadPage={loadCommerceOrders}", page, StringComparison.Ordinal);
-        Assert.Contains("loadDetail={loadCommerceOrder}", page, StringComparison.Ordinal);
+        Assert.Contains("loadPage={loadOrders}", page, StringComparison.Ordinal);
+        Assert.Contains("loadDetail={loadOrder}", page, StringComparison.Ordinal);
+        Assert.Contains("(await getOrderClient()).orders(filters)", page,
+            StringComparison.Ordinal);
+        Assert.Contains("(await getOrderClient()).order(orderId)", page,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("setMessage(\"Los pedidos se consultan", page, StringComparison.Ordinal);
+
+        var chargeDialogClose = ordersWorkspace.IndexOf(
+            "if (charge) setChargeDialogOpen(false);", StringComparison.Ordinal);
+        var invoiceBatchCall = ordersWorkspace.IndexOf(
+            "const result = await onInvoiceSelected(", StringComparison.Ordinal);
+        Assert.True(chargeDialogClose >= 0 && chargeDialogClose < invoiceBatchCall,
+            "El modal de cargos debe cerrarse antes de esperar la facturación masiva.");
     }
 
     [Fact]

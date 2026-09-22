@@ -36,15 +36,15 @@ public static class SellerOrdersApi
     public static IEndpointRouteBuilder MapSellerOrdersApi(this IEndpointRouteBuilder endpoints)
     {
         var group=endpoints.MapGroup("/api/commerce/v1/seller-orders").RequireAuthorization();
-        group.MapPost("/catalog", async (ClaimsPrincipal principal, SellerCatalogRequest request,
+        group.MapPost("/catalog", async (HttpContext context, SellerCatalogRequest request,
             SellerOrderWriter writer, CancellationToken token) =>
-            await Execute(() => writer.CatalogAsync(Actor(principal), request, token)));
-        group.MapPost("", async (ClaimsPrincipal principal, CreateSellerOrderRequest request,
+            await Execute(() => writer.CatalogAsync(Actor(context), request, token)));
+        group.MapPost("", async (HttpContext context, CreateSellerOrderRequest request,
             SellerOrderWriter writer, CancellationToken token) =>
-            await Execute(() => writer.CreateAsync(Actor(principal), request, token)));
-        group.MapPut("/{orderId:guid}", async (ClaimsPrincipal principal, Guid orderId, UpdateSellerOrderRequest request,
+            await Execute(() => writer.CreateAsync(Actor(context), request, token)));
+        group.MapPut("/{orderId:guid}", async (HttpContext context, Guid orderId, UpdateSellerOrderRequest request,
             SellerOrderWriter writer, CancellationToken token) =>
-            await Execute(() => writer.UpdateReviewAsync(Actor(principal), orderId, request, token)));
+            await Execute(() => writer.UpdateReviewAsync(Actor(context), orderId, request, token)));
         return endpoints;
     }
 
@@ -58,9 +58,23 @@ public static class SellerOrdersApi
         { return Results.Problem(error.Message,statusCode:error.Number==51300?400:409); }
     }
 
-    private static SellerOrderActor Actor(ClaimsPrincipal principal) => new(
-        Required(principal,ClaimTypes.NameIdentifier),Required(principal,"tenant_id"),Required(principal,"business_id"),
-        principal.FindAll("permission").Select(value=>value.Value).ToHashSet(StringComparer.Ordinal));
+    private static SellerOrderActor Actor(HttpContext context)
+    {
+        var principal = context.User;
+        if (principal.HasClaim(claim => claim.Type == PosAuthenticationDefaults.DeviceIdClaim))
+            return new SellerOrderActor(
+                RequiredHeader(context, "X-Auraly-User-Id"),
+                Required(principal, PosAuthenticationDefaults.TenantIdClaim),
+                RequiredHeader(context, "X-Auraly-Business-Id"),
+                new HashSet<string>(
+                    ["orders.create", "orders.update", "orders.review"],
+                    StringComparer.Ordinal));
+        return new SellerOrderActor(
+            Required(principal,ClaimTypes.NameIdentifier),Required(principal,"tenant_id"),Required(principal,"business_id"),
+            principal.FindAll("permission").Select(value=>value.Value).ToHashSet(StringComparer.Ordinal));
+    }
+    private static Guid RequiredHeader(HttpContext context,string name)=>Guid.TryParse(context.Request.Headers[name],out var value)&&value!=Guid.Empty
+        ?value:throw new SellerOrderForbiddenException($"El dispositivo no envió el encabezado requerido '{name}'.");
     private static Guid Required(ClaimsPrincipal principal,string type)=>Guid.TryParse(principal.FindFirstValue(type),out var value)
         ?value:throw new SellerOrderForbiddenException($"The authenticated identity lacks claim '{type}'.");
 }

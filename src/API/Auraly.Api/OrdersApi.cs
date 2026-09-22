@@ -13,7 +13,7 @@ public static class OrdersApi
         this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/commerce/v1/orders")
-            .RequireAuthorization("orders.user");
+            .RequireAuthorization("orders.transport");
 
         group.MapGet("/", async (
             HttpContext context,
@@ -36,7 +36,7 @@ public static class OrdersApi
             bool? onlyMine,
             CancellationToken ct) =>
             await Handle(() => service.PageAsync(
-                context.User.ToOrderUserActor(),
+                context.ToOrderUserActor(),
                 new OrderPageRequest(
                     page ?? 1,
                     pageSize ?? 50,
@@ -62,7 +62,7 @@ public static class OrdersApi
             OrderService service,
             CancellationToken ct) =>
             await Handle(() => service.GetAsync(
-                context.User.ToOrderUserActor(), orderId, ct)));
+                context.ToOrderUserActor(), orderId, ct)));
 
         group.MapPost("/print-batch", async (
             HttpContext context,
@@ -70,7 +70,7 @@ public static class OrdersApi
             OrderService service,
             CancellationToken ct) =>
             await Handle(() => service.GetPrintBatchAsync(
-                context.User.ToOrderUserActor(), request, ct)));
+                context.ToOrderUserActor(), request, ct)));
 
         group.MapPost("/print-batch/render", async (HttpContext context,
             OrderPrintRenderRequest request, OrderService service, CancellationToken ct) =>
@@ -79,7 +79,7 @@ public static class OrdersApi
                 if (request.Format is not ("Receipt" or "HalfLetter" or "HalfLegal" or "Letter") ||
                     request.PaperWidthMillimeters is not (58 or 80))
                     throw new OrderValidationException("Selecciona un formato de impresión válido.");
-                var orders = await service.GetPrintBatchAsync(context.User.ToOrderUserActor(),
+                var orders = await service.GetPrintBatchAsync(context.ToOrderUserActor(),
                     new(request.OrderIds), ct);
                 var documents = orders.Select(order => new OnlineSalesReceipt(
                     order.OrderId, "Order", order.OrderNumber, null, order.CreatedAt,
@@ -103,7 +103,7 @@ public static class OrdersApi
             OrderService service,
             CancellationToken ct) =>
             await Handle(() => service.ClaimAsync(
-                context.User.ToOrderUserActor(request.WorkSessionId), orderId, request, ct)));
+                context.ToOrderUserActor(request.WorkSessionId), orderId, request, ct)));
 
         group.MapPost("/{orderId:guid}/claim/release", async (
             HttpContext context,
@@ -114,7 +114,7 @@ public static class OrdersApi
             await Handle(async () =>
             {
                 await service.ReleaseClaimAsync(
-                    context.User.ToOrderUserActor(request.WorkSessionId), orderId, request, ct);
+                    context.ToOrderUserActor(request.WorkSessionId), orderId, request, ct);
                 return new { released = true };
             }));
 
@@ -125,7 +125,7 @@ public static class OrdersApi
             OrderRecoveryService service,
             CancellationToken ct) =>
             await Handle(() => service.RecoverAsync(
-                context.User.ToOrderUserActor(request.WorkSessionId),
+                context.ToOrderUserActor(request.WorkSessionId),
                 orderId,
                 request,
                 context.Request.Headers["Idempotency-Key"].ToString(),
@@ -138,7 +138,7 @@ public static class OrdersApi
             CancellationToken ct) =>
             await Handle(async () =>
             {
-                var actor = context.User.ToOrderUserActor(request.WorkSessionId);
+                var actor = context.ToOrderUserActor(request.WorkSessionId);
                 return await service.InvoiceAsync(
                     actor,
                     request,
@@ -152,7 +152,7 @@ public static class OrdersApi
             OrderBatchService service,
             CancellationToken ct) =>
             await Handle(() => service.ValidateCreditAsync(
-                context.User.ToOrderUserActor(request.WorkSessionId),
+                context.ToOrderUserActor(request.WorkSessionId),
                 request,
                 ct)));
 
@@ -163,10 +163,23 @@ public static class OrdersApi
             OrderCancellationService service,
             CancellationToken ct) =>
             await Handle(() => service.CancelAsync(
-                context.User.ToOrderUserActor(request.WorkSessionId),
+                context.ToOrderUserActor(request.WorkSessionId),
                 orderId,
                 request,
                 context.Request.Headers["Idempotency-Key"].ToString(),
+                ct)));
+
+        group.MapPost("/{orderId:guid}/prepare-edge-recovery", async (
+            HttpContext context,
+            Guid orderId,
+            ClaimOrderRequest request,
+            OrderRecoveryService service,
+            CancellationToken ct) =>
+            await Handle(() => service.PrepareAsync(
+                context.ToOrderUserActor(request.WorkSessionId),
+                orderId,
+                request.WorkSessionId,
+                request.UserId,
                 ct)));
 
         group.MapPost("/{orderId:guid}/emission/retry", async (
@@ -175,7 +188,7 @@ public static class OrdersApi
             OrderService service,
             CancellationToken ct) =>
             await Handle(() => service.RetryEmissionAsync(
-                context.User.ToOrderUserActor(), orderId, ct)));
+                context.ToOrderUserActor(), orderId, ct)));
 
 
         return endpoints;
@@ -232,9 +245,34 @@ public static class OrdersApi
 public static class OrdersClaimsPrincipalExtensions
 {
     public static OrderActor ToOrderUserActor(
-        this ClaimsPrincipal principal,
-        Guid? workSessionId = null) =>
-        new(
+        this HttpContext context,
+        Guid? workSessionId = null)
+    {
+        var principal = context.User;
+        if (principal.HasClaim(claim => claim.Type == PosAuthenticationDefaults.DeviceIdClaim))
+        {
+            var headerSession = OptionalHeaderGuid(context, "X-Auraly-Work-Session-Id");
+            if (workSessionId.HasValue && headerSession.HasValue && workSessionId != headerSession)
+                throw new OrderForbiddenException(
+                    "La sesión solicitada no coincide con el dispositivo autenticado.");
+            return new OrderActor(
+                RequiredHeaderGuid(context, "X-Auraly-User-Id"),
+                RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
+                RequiredHeaderGuid(context, "X-Auraly-Business-Id"),
+                workSessionId ?? headerSession,
+                RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
+                new HashSet<string>(
+                [
+                    OrderPermissionCodes.Read,
+                    OrderPermissionCodes.Create,
+                    OrderPermissionCodes.Update,
+                    OrderPermissionCodes.Review,
+                    OrderPermissionCodes.Recover,
+                    OrderPermissionCodes.Invoice,
+                    OrderPermissionCodes.Cancel
+                ], StringComparer.Ordinal));
+        }
+        return new OrderActor(
             RequiredGuid(principal, ClaimTypes.NameIdentifier),
             RequiredGuid(principal, "tenant_id"),
             RequiredGuid(principal, "business_id"),
@@ -243,6 +281,18 @@ public static class OrdersClaimsPrincipalExtensions
             principal.FindAll("permission")
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));
+    }
+
+    private static Guid RequiredHeaderGuid(HttpContext context, string name) =>
+        Guid.TryParse(context.Request.Headers[name], out var value) && value != Guid.Empty
+            ? value
+            : throw new OrderForbiddenException(
+                $"El dispositivo no envió el encabezado requerido '{name}'.");
+
+    private static Guid? OptionalHeaderGuid(HttpContext context, string name) =>
+        Guid.TryParse(context.Request.Headers[name], out var value) && value != Guid.Empty
+            ? value
+            : null;
 
     private static Guid RequiredGuid(
         ClaimsPrincipal principal,
