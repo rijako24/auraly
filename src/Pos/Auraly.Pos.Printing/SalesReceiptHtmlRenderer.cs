@@ -78,7 +78,8 @@ public sealed class SalesReceiptHtmlRenderer
             ? $"<div class=\"cufe\"><strong>CUFE</strong><br>{Encode(receipt.Cufe!)}</div><div class=\"qr\">{qrSvg}</div>"
             : string.Empty;
         var customerContact = isOrder && template.Version >= 2
-            ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone)
+            ? OrderContactPresentation.Html(receipt.CustomerName, receipt.CustomerIdentification,
+                receipt.CustomerAddress, receipt.CustomerPhone)
             : isFiscal && template.Version >= 3 && receipt.InvoicePrintDetails is { } invoiceDetails
                 ? OrderContactPresentation.OptionalHtml(
                     string.IsNullOrWhiteSpace(receipt.CustomerAddress)
@@ -86,6 +87,11 @@ public sealed class SalesReceiptHtmlRenderer
                         : receipt.CustomerAddress,
                     receipt.CustomerPhone)
                 : string.Empty;
+        var customerDetails = isOrder && template.Version >= 2
+            ? customerContact
+            : $"<div class=\"pair\"><span>Cliente</span><strong>{Encode(receipt.CustomerName ?? receipt.CustomerIdentification)}</strong></div>" +
+              $"<div class=\"pair\"><span>Identificación</span><strong>{Encode(receipt.CustomerIdentification)}</strong></div>" +
+              customerContact;
         var fiscalDetails = isFiscal && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
             ? FiscalDetails(details)
@@ -226,9 +232,7 @@ public sealed class SalesReceiptHtmlRenderer
                   {{(string.IsNullOrWhiteSpace(scope) ? string.Empty : $"<div class=\"scope muted\">{Encode(scope)}</div>")}}
                 </header>
                 <hr class="rule">
-                <div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName ?? receipt.CustomerIdentification)}}</strong></div>
-                <div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>
-                {{customerContact}}
+                {{customerDetails}}
                 {{fiscalDetails}}
                 <hr class="rule">
                 {{lines}}

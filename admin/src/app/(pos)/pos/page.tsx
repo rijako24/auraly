@@ -36,6 +36,7 @@ import {
 import { realtimeReconnectDelay } from "@/lib/realtime-reconnect-policy";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
+import { orderOperationErrorMessage } from "@/services/orders/order-http-error";
 import {
   loadCommerceOrder,
   loadCommerceOrders,
@@ -138,6 +139,8 @@ import {
   shouldSaveOrderAfterCustomerSelection,
 } from "./pos-order-save-availability";
 import { consumeOrderRecoveryUrl } from "./pos-order-recovery-url";
+import { completedOrderRecoveryPresentation } from "./pos-order-recovery-presentation";
+import { isOnlinePosTransportFailure, posOperationErrorMessage } from "./pos-operation-error";
 import { capturedLineAfterAddition, shouldOpenGenericProductPricing } from "./pos-capture-presentation";
 import { capturePosFunctionShortcut, isPosCashDrawerShortcut, isPosDenominationCalculatorShortcut, POS_ACTION_SHORTCUTS } from "./pos-function-shortcut";
 import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
@@ -524,29 +527,17 @@ export default function PosPage() {
     setProductSearchFocusRequest((current) => current + 1);
   }, []);
   const showError = useCallback((caught: unknown) => {
-    const status = caught instanceof PosEdgeError ? caught.status : 0;
-    const onlineTransportFailure = client?.mode === "online" && caught instanceof TypeError;
-    const publicError = caught instanceof Error
-      ? posPublicError(caught.message, "No fue posible completar la operación.")
-      : null;
+    const mode = client?.mode ?? null;
+    const onlineTransportFailure = isOnlinePosTransportFailure(mode, caught);
     if (onlineTransportFailure) {
       setEdgeReady(false);
       setServerConnected(false);
     }
-    const text = onlineTransportFailure
-      ? "No hay conexión con Auraly. La venta en línea requiere conexión con el servidor."
-      : client?.mode === "online" && caught instanceof PosEdgeError
-        ? publicError
-        : status === 409 && caught instanceof PosEdgeError
-          ? publicError
-          : status === 404
-            ? "Producto no encontrado en el catálogo local"
-            : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
-                ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
-                : status === 503
-                  ? "La bodega exige validar inventario y no hay conexión"
-                  : "No fue posible acceder a los servicios locales del equipo";
-    setError(text);
+    setError(posOperationErrorMessage(
+      mode,
+      caught,
+      caught instanceof PosEdgeError ? caught : null,
+    ));
     setMessage("Revisa la novedad");
   }, [client?.mode]);
 
@@ -1042,26 +1033,31 @@ export default function PosPage() {
     setError(null);
     void recoverOrderOnline(orderId)
       .then(({ orderClient, recovered }) => {
+        const presentation = completedOrderRecoveryPresentation(
+          recovered.lines.map((line) => line.lineId),
+        );
         setDraft(recovered);
+        setError(presentation.error);
         setSelectedCustomer(null);
         if (recovered.customerId) {
           void orderClient.customer(recovered.customerId, recovered.customerPartySiteId)
             .then(setSelectedCustomer)
             .catch(() => setMessage("Pedido recuperado; no fue posible actualizar el cliente."));
         }
-        setSelectedLineId(recovered.lines[0]?.lineId ?? null);
+        setSelectedLineId(presentation.selectedLineId);
         setSidePanel("temporaries");
-        setMessage(`Pedido recuperado · ${recovered.lines.length} líneas`);
+        setMessage(presentation.message);
       })
       .catch((caught) => {
         recoveredOrderFromUrl.current = null;
-        showError(caught);
+        setError(orderOperationErrorMessage(caught, "No fue posible recuperar el pedido."));
+        setMessage("Revisa la novedad del pedido");
       })
       .finally(() => {
         setBusy(false);
         focusScanner();
       });
-  }, [busy, client, draft, edgeReady, focusScanner, recoverOrderOnline, showError]);
+  }, [busy, client, draft, edgeReady, focusScanner, recoverOrderOnline]);
 
   useEffect(() => {
     if (!(client instanceof OnlinePosClient) || !draft?.sourceOrderId || busy) return;
@@ -2742,15 +2738,19 @@ export default function PosPage() {
     const recoveredCustomer = recovered.customerId
       ? await orderClient.customer(recovered.customerId, recovered.customerPartySiteId).catch(() => null)
       : null;
+    const presentation = completedOrderRecoveryPresentation(
+      recovered.lines.map((line) => line.lineId),
+    );
     setDraft(recovered);
     setSelectedCustomer(recoveredCustomer);
-    if (recovered.customerId && !recoveredCustomer)
-      setError("El pedido se recuperó, pero no fue posible cargar los datos del cliente.");
-    setSelectedLineId(recovered.lines[0]?.lineId ?? null);
+    setError(recovered.customerId && !recoveredCustomer
+      ? "El pedido se recuperó, pero no fue posible cargar los datos del cliente."
+      : presentation.error);
+    setSelectedLineId(presentation.selectedLineId);
     setOrdersExpanded(false);
     setSidePanel("orders");
     setOrdersRefreshVersion((current) => current + 1);
-    setMessage("Pedido recuperado \u00b7 " + recovered.lines.length + " l\u00edneas");
+    setMessage(presentation.message);
     focusScanner();
   }
 

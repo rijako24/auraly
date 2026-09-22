@@ -761,12 +761,14 @@ export function OrdersWorkspace({
                 <Button
                   type="button"
                   variant="outline"
+                  size="icon"
                   disabled={!selectedOrders.length || working || selectingAll || !onInvoiceSelected || !onLoadInvoiceCharges}
                   onClick={() => setChargeDialogOpen(true)}
-                  className="col-span-2 w-full whitespace-nowrap border-teal-300 text-teal-800 hover:bg-teal-50 sm:col-span-1 sm:w-auto"
+                  className="col-span-2 h-10 w-10 justify-self-end border-teal-300 text-teal-800 hover:bg-teal-50 sm:col-span-1 sm:justify-self-auto"
+                  title={`Facturar ${selectedOrders.length} ${selectedOrders.length === 1 ? "pedido" : "pedidos"} con cargo`}
+                  aria-label={`Facturar ${selectedOrders.length} ${selectedOrders.length === 1 ? "pedido" : "pedidos"} con cargo`}
                 >
-                  <ReceiptText className="mr-2 h-4 w-4" />
-                  Agregar cargo ({selectedOrders.length})
+                  <ReceiptText className="h-4 w-4" />
                 </Button>
               </div>
             </div>

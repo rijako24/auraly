@@ -161,7 +161,8 @@ public sealed class HalfLetterDocumentRenderer
             }
             : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
         var customerContact = isOrder && template.Version >= 2
-            ? OrderContactPresentation.Html(receipt.CustomerAddress, receipt.CustomerPhone)
+            ? OrderContactPresentation.Html(receipt.CustomerName, receipt.CustomerIdentification,
+                receipt.CustomerAddress, receipt.CustomerPhone)
             : isInvoice && template.Version >= 3 && receipt.InvoicePrintDetails is { } invoiceDetails
                 ? OrderContactPresentation.OptionalHtml(
                     string.IsNullOrWhiteSpace(receipt.CustomerAddress)
@@ -169,6 +170,11 @@ public sealed class HalfLetterDocumentRenderer
                         : receipt.CustomerAddress,
                     receipt.CustomerPhone)
                 : string.Empty;
+        var customerDetails = isOrder && template.Version >= 2
+            ? customerContact
+            : $"<div class=\"pair\"><span>Cliente</span><strong>{Encode(receipt.CustomerName)}</strong></div>" +
+              $"<div class=\"pair\"><span>Identificación</span><strong>{Encode(receipt.CustomerIdentification)}</strong></div>" +
+              customerContact;
         var fiscalDetails = isInvoice && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
             ? FiscalDetails(details)
@@ -241,7 +247,7 @@ public sealed class HalfLetterDocumentRenderer
         return $$"""
           <article class="document" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
             <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>N.º de ticket</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
-            <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{customerContact}}{{fiscalNumber}}</section>
+            <section class="meta">{{customerDetails}}{{fiscalNumber}}</section>
             {{fiscalDetails}}
             <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
             {{detailSection}}

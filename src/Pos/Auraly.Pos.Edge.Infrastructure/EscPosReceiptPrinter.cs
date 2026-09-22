@@ -52,12 +52,17 @@ public sealed class EscPosReceiptRenderer
             WriteWrapped(stream, scope, columns);
         WriteLine(stream, new string('-', columns));
         Write(stream, AlignLeft);
-        WriteBoldLine(stream, Pair("Cliente", receipt.CustomerName ?? receipt.CustomerIdentification, columns));
-        WriteBoldLine(stream, Pair("Identificacion", receipt.CustomerIdentification, columns));
         if (isOrder)
         {
+            WriteBoldLine(stream, Pair("Cliente", receipt.CustomerName ?? receipt.CustomerIdentification, columns));
+            WriteLine(stream, Pair("Identificacion", receipt.CustomerIdentification, columns));
             WriteWrapped(stream, $"Direccion: {OrderContactPresentation.Value(receipt.CustomerAddress)}", columns);
             WriteWrapped(stream, $"Telefono: {OrderContactPresentation.Value(receipt.CustomerPhone)}", columns);
+        }
+        else
+        {
+            WriteBoldLine(stream, Pair("Cliente", receipt.CustomerName ?? receipt.CustomerIdentification, columns));
+            WriteBoldLine(stream, Pair("Identificacion", receipt.CustomerIdentification, columns));
         }
         if (isFiscal && receipt.InvoicePrintDetails is { } details)
         {

@@ -50,6 +50,17 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   };
   const completed = new Set<string>();
   const sequence: string[] = [];
+  const invoiceRequests: Array<{
+    orderIds: string[];
+    charge?: {
+      chargeId: string;
+      chargeVersion: number;
+      supplierId: string;
+      manualAmount: number | null;
+    } | null;
+  }> = [];
+  const supplierId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+  const chargeId = "99999999-9999-9999-9999-999999999999";
 
   await page.context().addCookies([{ name: "auth_token", value: "e2e", url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ tenantId, businessId, user }) => {
@@ -89,6 +100,31 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId };
     else if (path.endsWith("/routes")) body = { items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 0 };
     else if (path.endsWith("/tenants/branding")) body = { tenantId, displayName: "Empresa prueba", legalName: null, logoUrl: null };
+    else if (path.endsWith("/invoice-charges")) body = {
+      items: [{
+        chargeId,
+        businessId,
+        version: 1,
+        code: "DOMICILIO",
+        name: "Domicilio",
+        calculationMode: "Fixed",
+        value: 6000,
+        inclusionMode: "UpToInvoiceAmount",
+        invoiceAmountLimit: 80000,
+        isActive: true,
+        suppliers: [{
+          supplierId,
+          name: "Domiciliario prueba",
+          identification: "900999999",
+          defaultPaymentDueDays: 0,
+          isActive: true,
+        }],
+      }],
+      page: 1,
+      pageSize: 100,
+      totalPages: 1,
+      totalCount: 1,
+    };
     else if (path.endsWith("/orders/print-batch") && route.request().method() === "POST") {
       const request = route.request().postDataJSON() as { orderIds: string[] };
       body = orders
@@ -116,7 +152,8 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
       const items = orders.filter((order) => !completed.has(order.orderId));
       body = { items, page: 1, pageSize: 20, totalCount: items.length, hasMore: false };
     } else if (path.endsWith("/orders/invoice") && route.request().method() === "POST") {
-      const request = route.request().postDataJSON() as { orderIds: string[] };
+      const request = route.request().postDataJSON() as (typeof invoiceRequests)[number];
+      invoiceRequests.push(request);
       expect(request.orderIds).toHaveLength(1);
       const order = orders.find((candidate) => candidate.orderId === request.orderIds[0])!;
       sequence.push(`invoice:start:${order.orderNumber}`);
@@ -191,5 +228,41 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
     "print:start:FV-003",
     "print:end:FV-003",
     "drawer",
+  ]);
+  expect(invoiceRequests).toHaveLength(3);
+  expect(invoiceRequests.every((request) => request.charge == null)).toBe(true);
+
+  orders.push(...Array.from({ length: 2 }, (_, index) => ({
+    ...orders[index],
+    orderId: `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa${index + 4}`,
+    orderNumber: `PED-00${index + 4}`,
+    customerName: `Cliente ${index + 4}`,
+    customerIdentification: `90000000${index + 4}`,
+    customerId: `bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb${index + 4}`,
+    partySiteId: `cccccccc-cccc-cccc-cccc-ccccccccccc${index + 4}`,
+  })));
+  sequence.length = 0;
+  await page.reload();
+  await expect(page.getByText("PED-004")).toBeVisible();
+  await page.getByRole("checkbox", { name: "Seleccionar disponibles" }).click();
+  const chargeButton = page.getByRole("button", { name: "Facturar 2 pedidos con cargo" });
+  await expect(chargeButton).toBeVisible();
+  const chargeButtonBox = await chargeButton.boundingBox();
+  expect(chargeButtonBox?.width).toBeLessThanOrEqual(44);
+  await chargeButton.click();
+  const chargeDialog = page.getByRole("dialog", { name: "Facturar pedidos con cargo" });
+  await chargeDialog.getByRole("button", { name: /Domicilio/ }).click();
+  await chargeDialog.getByRole("button", { name: "Facturar 2 pedidos con cargo" }).click();
+  await expect(page.getByText("2/2", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect.poll(() => invoiceRequests.length).toBe(5);
+  expect(invoiceRequests.slice(3)).toEqual([
+    expect.objectContaining({
+      orderIds: [orders[3].orderId],
+      charge: { chargeId, chargeVersion: 1, supplierId, manualAmount: null },
+    }),
+    expect.objectContaining({
+      orderIds: [orders[4].orderId],
+      charge: { chargeId, chargeVersion: 1, supplierId, manualAmount: null },
+    }),
   ]);
 });

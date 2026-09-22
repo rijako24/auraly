@@ -12,6 +12,34 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public void Receipt_maps_only_invoice_charges_collected_from_the_customer()
+    {
+        var supplier = new InvoiceChargeSupplier(
+            Guid.NewGuid(), "Domiciliario", "900100200", 0, true);
+        var charged = new AppliedInvoiceCharge(
+            Guid.NewGuid(), Guid.NewGuid(), 1, "DOM", "Domicilio", 60_000m,
+            6_000m, 6_000m, 0m, 5_042.02m, 957.98m, "01", 19m,
+            6_000m, 0m, Guid.NewGuid(), Guid.NewGuid(), null, null, supplier);
+        var companyExpense = charged with
+        {
+            AppliedChargeId = Guid.NewGuid(),
+            Code = "AGOTADO",
+            Name = "Agotado",
+            InvoicedAmount = 0m,
+            ExpenseAmount = 6_000m,
+            InvoicedUntaxedAmount = 0m,
+            InvoicedTaxAmount = 0m
+        };
+
+        var receipt = OnlineSalesReceiptMapper.From(
+            fixture.CreateValidRequest(1_982) with { Charges = [charged, companyExpense] },
+            "DianAccepted");
+
+        Assert.Contains(receipt.Lines, line => line.ProductCode == "DOM" && line.Total == 6_000m);
+        Assert.DoesNotContain(receipt.Lines, line => line.ProductCode == "AGOTADO");
+    }
+
     [Theory]
     [InlineData("Receipt", 58)]
     [InlineData("Receipt", 80)]

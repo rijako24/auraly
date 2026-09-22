@@ -500,6 +500,12 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("Producto &amp; prueba", html);
         Assert.Contains("3001234567", esc);
         Assert.Contains("Calle 10 # 20-30", esc);
+        Assert.True(esc.IndexOf("Cliente pedido", StringComparison.Ordinal) <
+                    esc.IndexOf("Identificacion", StringComparison.Ordinal));
+        Assert.True(esc.IndexOf("Identificacion", StringComparison.Ordinal) <
+                    esc.IndexOf("Direccion", StringComparison.Ordinal));
+        Assert.True(esc.IndexOf("Direccion", StringComparison.Ordinal) <
+                    esc.IndexOf("Telefono", StringComparison.Ordinal));
         Assert.Contains("3001234567", html);
         Assert.Contains("Calle 10 # 20-30 &lt;porter", html);
         Assert.Contains("data-auraly-report-version=\"2\"", html);
@@ -542,6 +548,13 @@ public sealed class EscPosReceiptRendererTests
         Assert.Equal(copies, html.Split("Cliente pedido").Length - 1);
         Assert.Equal(copies, html.Split("3001234567").Length - 1);
         Assert.Equal(copies, html.Split("Calle 10 # 20-30 &lt;porter").Length - 1);
+        Assert.Equal(copies * 4, html.Split("order-customer-field").Length - 1);
+        Assert.True(html.IndexOf("Cliente pedido", StringComparison.Ordinal) <
+                    html.IndexOf("Identificación", StringComparison.Ordinal));
+        Assert.True(html.IndexOf("Identificación", StringComparison.Ordinal) <
+                    html.IndexOf("Dirección", StringComparison.Ordinal));
+        Assert.True(html.IndexOf("Dirección", StringComparison.Ordinal) <
+                    html.IndexOf("Teléfono", StringComparison.Ordinal));
         var historical = new HalfLetterDocumentRenderer().Render([receipt], format, templateVersion: 1);
         Assert.DoesNotContain("3001234567", historical);
     }
