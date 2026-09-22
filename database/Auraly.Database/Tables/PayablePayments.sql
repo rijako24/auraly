@@ -13,9 +13,7 @@ CREATE TABLE [dbo].[SupplierPayments]
     [PayloadHash] BINARY(32) NOT NULL,
     [PaidAt] DATETIMEOFFSET(7) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
-    [PaymentMethod] NVARCHAR(24) NOT NULL,
-    [BankAccountId] UNIQUEIDENTIFIER NULL,
-    [Reference] NVARCHAR(120) NULL,
+    [PaymentBreakdownJson] NVARCHAR(MAX) NOT NULL,
     [Notes] NVARCHAR(1000) NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [Status] NVARCHAR(24) NOT NULL,
@@ -29,20 +27,17 @@ CREATE TABLE [dbo].[SupplierPayments]
     CONSTRAINT [FK_SupplierPayments_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_SupplierPayments_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_SupplierPayments_Users] FOREIGN KEY ([ConfirmedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
-    CONSTRAINT [FK_SupplierPayments_BankAccounts] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [UQ_SupplierPayments_Business_Number] UNIQUE ([BusinessId], [DocumentNumber]),
     CONSTRAINT [UQ_SupplierPayments_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [CK_SupplierPayments_Total] CHECK ([TotalAmount] > 0),
     CONSTRAINT [CK_SupplierPayments_Currency] CHECK ([CurrencyCode] = 'COP'),
-    CONSTRAINT [CK_SupplierPayments_Method] CHECK ([PaymentMethod] IN (N'Cash', N'BankTransfer')),
-    CONSTRAINT [CK_SupplierPayments_BankAccount] CHECK
-      ([BankAccountId] IS NULL OR [PaymentMethod]=N'BankTransfer'),
+    CONSTRAINT [CK_SupplierPayments_Breakdown] CHECK (ISJSON([PaymentBreakdownJson])=1),
     CONSTRAINT [CK_SupplierPayments_Status] CHECK ([Status] IN (N'Accepted', N'Processed'))
 );
 GO
 CREATE INDEX [IX_SupplierPayments_Business_Paid]
     ON [dbo].[SupplierPayments] ([BusinessId], [PaidAt] DESC)
-    INCLUDE ([SupplierId], [Status], [TotalAmount], [PaymentMethod]);
+    INCLUDE ([SupplierId], [Status], [TotalAmount]);
 GO
 
 CREATE TABLE [dbo].[SupplierPaymentApplications]

@@ -40,6 +40,8 @@ public sealed record RegisterDeviceWorkSessionRequest(
     Guid BusinessId,
     DateTimeOffset OpenedAt);
 
+public sealed record DeviceWorkSessionSnapshot(Guid WorkSessionId, Guid UserId, DateTimeOffset OpenedAt);
+
 public sealed record CloseWorkSessionRequest(
     decimal? CountedCash,
     string? Note,
@@ -91,6 +93,11 @@ public sealed record WorkSessionCreditSale(
     string DocumentNumber,
     decimal Amount);
 
+public sealed record WorkSessionPortfolioApplication(string DocumentNumber,decimal Amount);
+public sealed record WorkSessionPortfolioPayment(Guid PaymentId,string PaymentDocumentNumber,
+    string PartyName,decimal TotalAmount,DateTimeOffset PaidAt,
+    IReadOnlyList<WorkSessionPortfolioApplication> Applications);
+
 public sealed record WorkSessionCashMovementDetail(
     Guid DocumentId,
     string Direction,
@@ -136,7 +143,9 @@ public sealed record WorkSessionClosureView(
     IReadOnlyList<WorkSessionCreditSale>? CreditSales = null,
     int ReceiptTemplateVersion = 1,
     IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null,
-    IReadOnlyList<WorkSessionInvoiceCharge>? InvoiceCharges = null);
+    IReadOnlyList<WorkSessionInvoiceCharge>? InvoiceCharges = null,
+    IReadOnlyList<WorkSessionPortfolioPayment>? ReceivablePayments = null,
+    IReadOnlyList<WorkSessionPortfolioPayment>? PayablePayments = null);
 
 public sealed record WorkSessionClosureReceiptRequest(
     string? CompanyName = null,
@@ -167,7 +176,9 @@ public sealed record WorkSessionClosurePreviewView(
     long ReturnCount = 0,
     IReadOnlyList<WorkSessionCreditSale>? CreditSales = null,
     IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null,
-    IReadOnlyList<WorkSessionInvoiceCharge>? InvoiceCharges = null);
+    IReadOnlyList<WorkSessionInvoiceCharge>? InvoiceCharges = null,
+    IReadOnlyList<WorkSessionPortfolioPayment>? ReceivablePayments = null,
+    IReadOnlyList<WorkSessionPortfolioPayment>? PayablePayments = null);
 
 public sealed record WorkSessionCashDifferencePayload(
     Guid WorkSessionClosureId,

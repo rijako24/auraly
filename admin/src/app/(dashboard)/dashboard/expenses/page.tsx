@@ -72,4 +72,4 @@ function ConceptForm({businessId,options,onSaved}:{businessId:string;options:Exp
 }
 
 function Metric({label,value}:{label:string;value:number}){return <Card><CardContent className="p-5"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-bold">{money.format(value)}</p></CardContent></Card>}
-function Field({label,children}:{label:string;children:React.ReactNode}){return <label className="space-y-2"><Label>{label}</Label>{children}</label>}
+function Field({label,children}:{label:string;children:React.ReactNode}){return <div className="space-y-2"><Label>{label}</Label>{children}</div>}

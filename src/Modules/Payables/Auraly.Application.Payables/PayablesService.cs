@@ -1,4 +1,5 @@
-using Auraly.Application.DocumentProcessing;
+using Auraly.BuildingBlocks.Domain.Payments;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.Contracts.Payables;
 using Auraly.Domain.Payables;
 
@@ -16,22 +17,37 @@ public interface IPayablesStore
         Guid payableId,
         CancellationToken cancellationToken);
 
+    Task<SupplierPortfolioPage> ListSuppliersAsync(
+        PayablesUserIdentity user, SupplierPortfolioQuery query, CancellationToken cancellationToken);
+
     Task<SupplierPaymentHistoryPage> PaymentHistoryAsync(
         PayablesUserIdentity user, Guid supplierId, int page, int pageSize,
         CancellationToken cancellationToken);
+    Task<SupplierPaymentHistoryPage> ListPaymentsAsync(PayablesUserIdentity user,
+        SupplierPaymentHistoryQuery query,CancellationToken cancellationToken);
 
     Task<SupplierPaymentAcceptance> AcceptPaymentAsync(
         PayablesUserIdentity user,
         string idempotencyKey,
         ConfirmSupplierPaymentRequest request,
         PayableSettlement settlement,
+        PaymentTenderBreakdown tenders,
         CancellationToken cancellationToken);
 }
 
 public sealed class PayablesService(
     IPayablesStore store,
-    IDocumentProcessingSignalPublisher signalPublisher)
+    AccountingProcessingCoordinator accounting)
 {
+    public Task<SupplierPortfolioPage> ListSuppliersAsync(PayablesUserIdentity user,
+        SupplierPortfolioQuery query, CancellationToken cancellationToken = default)
+    {
+        Require(user, PayablesPermissionCodes.Read);
+        if (query.Page < 1 || query.PageSize is < 1 or > 100)
+            throw new PayablesValidationException("Invalid pagination.");
+        return store.ListSuppliersAsync(user, query with { Search = Normalize(query.Search, 120) }, cancellationToken);
+    }
+
     public Task<PayablePage> ListAsync(
         PayablesUserIdentity user,
         PayableQuery query,
@@ -65,6 +81,14 @@ public sealed class PayablesService(
         return store.PaymentHistoryAsync(user, supplierId, page, pageSize, cancellationToken);
     }
 
+    public Task<SupplierPaymentHistoryPage> ListPaymentsAsync(PayablesUserIdentity user,
+        SupplierPaymentHistoryQuery query,CancellationToken cancellationToken=default)
+    {
+        Require(user,PayablesPermissionCodes.Read);
+        if(query.Page<1||query.PageSize is <1 or >100)throw new PayablesValidationException("Invalid pagination.");
+        return store.ListPaymentsAsync(user,query with { Search=Normalize(query.Search,120) },cancellationToken);
+    }
+
     public async Task<SupplierPaymentAcceptance> ConfirmPaymentAsync(
         PayablesUserIdentity user,
         string idempotencyKey,
@@ -81,10 +105,8 @@ public sealed class PayablesService(
         if (request.PaidAt == default) throw new PayablesValidationException("PaidAt is required.");
         if (string.IsNullOrWhiteSpace(request.CurrencyCode))
             throw new PayablesValidationException("CurrencyCode is required.");
-        if (string.IsNullOrWhiteSpace(request.PaymentMethod))
-            throw new PayablesValidationException("PaymentMethod is required.");
-        if (request.Allocations is null)
-            throw new PayablesValidationException("Allocations are required.");
+        if (request.Allocations is null || request.Payments is null)
+            throw new PayablesValidationException("Allocations and payments are required.");
         if (string.IsNullOrWhiteSpace(idempotencyKey))
             throw new PayablesValidationException("Idempotency-Key is required.");
         if (idempotencyKey.Length > 160)
@@ -92,10 +114,6 @@ public sealed class PayablesService(
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
         if (currency != "COP")
             throw new PayablesValidationException("Only COP supplier payments are supported in this slice.");
-        var method = request.PaymentMethod.Trim();
-        if (!SupplierPaymentMethods.IsSupported(method))
-            throw new PayablesValidationException("PaymentMethod must be Cash or BankTransfer.");
-
         PayableSettlement settlement;
         try
         {
@@ -107,24 +125,47 @@ public sealed class PayablesService(
             throw new PayablesValidationException(exception.Message, exception);
         }
 
-        var normalized = request with
+        var payments = request.Payments.Select(NormalizeTender).ToArray();
+        PaymentTenderBreakdown breakdown;
+        try
         {
-            CurrencyCode = currency,
-            PaymentMethod = method,
-            Reference = Normalize(request.Reference, 120),
-            Notes = Normalize(request.Notes, 1000)
-        };
+            breakdown = PaymentTenderBreakdown.Create(payments.Select(ToDomain), settlement.TotalAmount,
+                settlement.Allocations.Count, SupportedMethods);
+            foreach (var tender in breakdown.Tenders)
+            {
+                if (tender.MethodCode == SupplierPaymentMethods.BankTransfer &&
+                    string.IsNullOrWhiteSpace(tender.Reference))
+                    throw new ArgumentException("A bank transfer requires a reference.");
+                if (tender.MethodCode != SupplierPaymentMethods.BankTransfer && tender.BankAccountId is not null)
+                    throw new ArgumentException("Only a bank transfer can select a bank account.");
+            }
+        }
+        catch (ArgumentException exception)
+        {
+            throw new PayablesValidationException(exception.Message, exception);
+        }
+        var normalized = request with { CurrencyCode = currency,
+            Notes = Normalize(request.Notes, 1000), Payments = payments };
         var acceptance = await store.AcceptPaymentAsync(
-            user, idempotencyKey.Trim(), normalized, settlement, cancellationToken);
-        await signalPublisher.PublishAsync(
-            new DocumentProcessingSignal(
-                acceptance.MovementId,
-                request.BusinessId,
-                request.PaymentId,
-                PayablesDocumentTypes.Payment),
-            cancellationToken);
+            user, idempotencyKey.Trim(), normalized, settlement, breakdown, cancellationToken);
+        if (!acceptance.IdempotentReplay)
+            await accounting.RequestPostingAsync(request.BusinessId, request.PaymentId,
+                PayablesDocumentTypes.Payment, cancellationToken);
         return acceptance;
     }
+
+    private static readonly IReadOnlySet<string> SupportedMethods = new HashSet<string>(
+        [SupplierPaymentMethods.Cash, SupplierPaymentMethods.BankTransfer], StringComparer.Ordinal);
+
+    private static SupplierPaymentTenderRequest NormalizeTender(SupplierPaymentTenderRequest value) => value with
+    {
+        MethodCode = value.MethodCode?.Trim() ?? string.Empty, Reference = Normalize(value.Reference, 120),
+        Notes = Normalize(value.Notes, 500)
+    };
+
+    private static PaymentTender ToDomain(SupplierPaymentTenderRequest value) => new(
+        value.MethodCode, value.Amount, value.TenderedAmount, value.BankAccountId,
+        value.Reference, value.Notes);
 
     private static string? Normalize(string? value, int maximumLength)
     {

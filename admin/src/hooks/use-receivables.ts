@@ -12,14 +12,16 @@ export function useReceivables(params: {
   page: number;
   pageSize: number;
   search?: string;
+  customerId?: string;
   status?: ReceivableStatus;
   overdue?: boolean;
+  enabled?: boolean;
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
     queryKey: ["receivables", businessId, params],
     queryFn: () => receivablesApi.list(params),
-    enabled: !!businessId,
+    enabled: !!businessId && params.enabled !== false,
     placeholderData: keepPreviousData,
   });
 }

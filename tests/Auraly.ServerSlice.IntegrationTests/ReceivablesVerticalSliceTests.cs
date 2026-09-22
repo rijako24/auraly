@@ -18,6 +18,34 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Preexisting_portfolio_is_created_without_a_sale_and_posts_through_accounting()
+    {
+        var (customerId,userId,partySiteId)=await ConfigureAsync();
+        using var client=fixture.CreateUserClient(userId,
+            ReceivablesPermissionCodes.Read,ReceivablesPermissionCodes.ManageCredit);
+        var receivableId=Guid.NewGuid();
+        var counterpart=await AccountIdByCodeAsync("413595");
+        var request=new ImportPreexistingReceivablesRequest(fixture.BusinessId,
+            [new PreexistingReceivableItemRequest(receivableId,customerId,null,partySiteId,
+                $"OPEN-{receivableId:N}",new DateTimeOffset(2026,8,1,9,0,0,TimeSpan.FromHours(-5)),
+                new DateTimeOffset(2026,9,1,9,0,0,TimeSpan.FromHours(-5)),125_000m,counterpart,
+                "Saldo inicial del cliente")]);
+
+        using var response=await client.PostAsJsonAsync(
+            "/api/commerce/v1/receivables/preexisting/import",request);
+        Assert.Equal(HttpStatusCode.Accepted,response.StatusCode);
+        var accepted=await response.Content.ReadFromJsonAsync<ImportPreexistingReceivablesAcceptance>();
+        Assert.Equal(receivableId,Assert.Single(accepted!.ReceivableIds));
+        Assert.Equal(125_000m,await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",receivableId));
+        Assert.Equal(ReceivablesDocumentTypes.PreexistingReceivable,await ScalarAsync<string>(
+            "SELECT SourceDocumentType FROM dbo.Receivables WHERE ReceivableId=@Id",receivableId));
+        Assert.Equal(0,await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE DocumentId=@Id",receivableId));
+        Assert.Equal(1,await CountAsync("AccountingEntries","SourceDocumentId",receivableId));
+    }
+
+    [Fact]
     public async Task Credit_receivables_keep_the_selected_site_and_share_the_customer_balance()
     {
         var (customerId, userId, northSiteId, centerSiteId) = await ConfigureWithSitesAsync();
@@ -147,10 +175,10 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             var partialAmount = decimal.Round(receivable.OriginalAmount * .4m, 4);
             var payment = new ConfirmCustomerPaymentRequest(
                 Guid.NewGuid(), fixture.BusinessId, customerId,
-                workSession.WorkSessionId, DateTimeOffset.UtcNow, "COP",
-                CustomerPaymentMethods.Cash, null, "Abono sin contabilidad",
+                workSession.WorkSessionId, DateTimeOffset.UtcNow, "COP", "Abono sin contabilidad",
                 [new CustomerPaymentAllocationRequest(
-                    receivable.ReceivableId, partialAmount)]);
+                    receivable.ReceivableId, partialAmount)],
+                [new CustomerPaymentTenderRequest(CustomerPaymentMethods.Cash,partialAmount,partialAmount)]);
             var paymentKey = $"commercial-payment-{payment.PaymentId:N}";
             using (var response = await SendAsync(client,
                        "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))
@@ -423,9 +451,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var partialAmount = decimal.Round(receivable.OriginalAmount * 0.4m, 4);
         var payment = new ConfirmCustomerPaymentRequest(
             Guid.NewGuid(), fixture.BusinessId, customerId,
-            workSession.WorkSessionId, DateTimeOffset.UtcNow, "COP",
-            CustomerPaymentMethods.Cash, null, "Abono E2E",
-            [new CustomerPaymentAllocationRequest(receivable.ReceivableId, partialAmount)]);
+            workSession.WorkSessionId, DateTimeOffset.UtcNow, "COP", "Abono E2E",
+            [new CustomerPaymentAllocationRequest(receivable.ReceivableId, partialAmount)],
+            [new CustomerPaymentTenderRequest(CustomerPaymentMethods.Cash,partialAmount,partialAmount)]);
         var paymentKey = $"receivable-payment-{payment.PaymentId:N}";
         CustomerPaymentAcceptance acceptance;
         using (var response = await SendAsync(client,
@@ -451,11 +479,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(1, await CountAsync(
             "ReceivableTransactions", "SourceDocumentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
-            "ServerOutboxMessages", "DocumentId", payment.PaymentId));
-        Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", payment.PaymentId));
         Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'receivable-payment:',CONVERT(nvarchar(36),@Id))",
+            "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id AND MovementType=N'ReceivablePayment'",
             payment.PaymentId));
         Assert.Equal(partialAmount,
             await AccountAmountAsync(payment.PaymentId, "110505", true));
@@ -469,7 +495,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             var replay = await response.Content.ReadFromJsonAsync<CustomerPaymentAcceptance>();
             Assert.NotNull(replay);
             Assert.True(replay.IdempotentReplay);
-            Assert.Equal(acceptance.MovementId, replay.MovementId);
+            Assert.Equal(acceptance.AccountingJobId, replay.AccountingJobId);
         }
         Assert.Equal(1, await CountAsync(
             "ReceivableTransactions", "SourceDocumentId", payment.PaymentId));
@@ -479,7 +505,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var first = payment with
         {
             PaymentId = Guid.NewGuid(),
-            Allocations = [new(receivable.ReceivableId, concurrentAmount)]
+            Allocations = [new(receivable.ReceivableId, concurrentAmount)],
+            Payments = [new CustomerPaymentTenderRequest(
+                CustomerPaymentMethods.Cash,concurrentAmount,concurrentAmount)]
         };
         var second = first with { PaymentId = Guid.NewGuid() };
         var responses = await Task.WhenAll(
@@ -546,9 +574,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var paidBeforeReturn = decimal.Round(receivable.OriginalAmount * .25m, 4);
         var payment = new ConfirmCustomerPaymentRequest(
             Guid.NewGuid(), fixture.BusinessId, customerId, workSession.WorkSessionId,
-            DateTimeOffset.UtcNow, "COP", CustomerPaymentMethods.Cash, null,
-            "Abono anterior a devolucion",
-            [new CustomerPaymentAllocationRequest(receivable.ReceivableId, paidBeforeReturn)]);
+            DateTimeOffset.UtcNow, "COP", "Abono anterior a devolucion",
+            [new CustomerPaymentAllocationRequest(receivable.ReceivableId, paidBeforeReturn)],
+            [new CustomerPaymentTenderRequest(CustomerPaymentMethods.Cash,paidBeforeReturn,paidBeforeReturn)]);
         using (var response = await SendAsync(client,
                    "/api/commerce/v1/receivable-payments/confirm", payment,
                    $"pre-return-payment-{payment.PaymentId:N}"))
@@ -609,8 +637,8 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             ReceivablesPermissionCodes.RegisterPayment);
         var payment = new ConfirmCustomerPaymentRequest(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), null,
-            DateTimeOffset.UtcNow, "COP", CustomerPaymentMethods.Cash,
-            null, null, [new(Guid.NewGuid(), 1m)]);
+            DateTimeOffset.UtcNow, "COP", null, [new(Guid.NewGuid(), 1m)],
+            [new CustomerPaymentTenderRequest(CustomerPaymentMethods.Cash,1m,1m)]);
         using var response = await SendAsync(scoped,
             "/api/commerce/v1/receivable-payments/confirm", payment,
             $"wrong-business-{payment.PaymentId:N}");
@@ -994,6 +1022,17 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@Id", id);
         return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!, typeof(T));
+    }
+
+    private async Task<Guid> AccountIdByCodeAsync(string code)
+    {
+        await using var connection=new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command=new SqlCommand(
+            "SELECT AccountId FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=@Code",connection);
+        command.Parameters.AddWithValue("@TenantId",fixture.TenantId);
+        command.Parameters.AddWithValue("@Code",code);
+        return (Guid)(await command.ExecuteScalarAsync() ?? throw new InvalidOperationException("Missing test account."));
     }
 
     private async Task<Guid?> NullableGuidAsync(string sql, Guid id)

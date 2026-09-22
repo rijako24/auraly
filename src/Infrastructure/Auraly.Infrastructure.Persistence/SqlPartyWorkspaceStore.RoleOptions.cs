@@ -22,6 +22,9 @@ public sealed partial class SqlPartyWorkspaceStore
               AND (@RoleId IS NULL OR partyRole.{role.IdColumn}=@RoleId)
               AND (@PartyId IS NULL OR party.PartyId=@PartyId)
               AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
+                   OR party.LegalName LIKE N'%'+@Search+N'%'
+                   OR party.FirstName LIKE N'%'+@Search+N'%'
+                   OR party.LastName LIKE N'%'+@Search+N'%'
                    OR party.Identification LIKE N'%'+@Search+N'%'
                    OR party.NormalizedIdentification LIKE N'%'+@Search+N'%');
 
@@ -37,6 +40,9 @@ public sealed partial class SqlPartyWorkspaceStore
               AND (@RoleId IS NULL OR partyRole.{role.IdColumn}=@RoleId)
               AND (@PartyId IS NULL OR party.PartyId=@PartyId)
               AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
+                   OR party.LegalName LIKE N'%'+@Search+N'%'
+                   OR party.FirstName LIKE N'%'+@Search+N'%'
+                   OR party.LastName LIKE N'%'+@Search+N'%'
                    OR party.Identification LIKE N'%'+@Search+N'%'
                    OR party.NormalizedIdentification LIKE N'%'+@Search+N'%')
             ORDER BY party.DisplayName,party.PartyId

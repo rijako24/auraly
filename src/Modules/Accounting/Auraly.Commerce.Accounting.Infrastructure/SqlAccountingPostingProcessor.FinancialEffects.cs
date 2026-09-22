@@ -54,6 +54,11 @@ public sealed partial class SqlAccountingPostingProcessor
                     connection, transaction, customerPayment, cancellationToken);
                 affectedCustomerId = customerPayment.CustomerId;
                 break;
+            case "PreexistingReceivable":
+                var opening=PreexistingReceivableContractSerializer.Deserialize(source.PayloadJson);
+                await ApplyPreexistingReceivableAsync(connection,transaction,opening,cancellationToken);
+                affectedCustomerId=opening.CustomerId;
+                break;
             case "GoodsReceipt":
                 await ApplyGoodsReceiptFinancialEffectsAsync(
                     connection, transaction,
@@ -449,6 +454,22 @@ public sealed partial class SqlAccountingPostingProcessor
         }
     }
 
+    private async Task ApplyPreexistingReceivableAsync(SqlConnection connection,SqlTransaction transaction,
+        PreexistingReceivablePayload value,CancellationToken token)
+    {
+        await using var command=new SqlCommand("""
+            INSERT dbo.Receivables(ReceivableId,BusinessId,CustomerId,PartySiteId,SourceDocumentId,
+              SourceDocumentType,DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
+            VALUES(@Id,@BusinessId,@CustomerId,@PartySiteId,@Id,N'PreexistingReceivable',@Number,N'COP',
+              @Amount,@Amount,@DueDate,N'Open',@Now);
+            INSERT dbo.ReceivableTransactions(ReceivableTransactionId,ReceivableId,TransactionType,Amount,
+              SourceDocumentId,OccurredAt,CreatedAt)
+            VALUES(@TransactionId,@Id,N'Opening',@Amount,@Id,@IssuedAt,@Now);
+            """,connection,transaction);
+        command.Parameters.AddWithValue("@Id",value.ReceivableId);command.Parameters.AddWithValue("@TransactionId",ids.NewId());command.Parameters.AddWithValue("@BusinessId",value.BusinessId);command.Parameters.AddWithValue("@CustomerId",value.CustomerId);command.Parameters.AddWithValue("@PartySiteId",(object?)value.PartySiteId??DBNull.Value);command.Parameters.AddWithValue("@Number",value.DocumentNumber);AddMoney(command,"@Amount",value.Amount);command.Parameters.AddWithValue("@DueDate",value.DueDate);command.Parameters.AddWithValue("@IssuedAt",value.IssuedAt);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
+        if(await command.ExecuteNonQueryAsync(token)!=2)throw new DBConcurrencyException("The preexisting receivable was not opened atomically.");
+    }
+
     private async Task ApplySalesReturnChargeFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
         SalesReturnDocumentPayload value, CancellationToken token)
@@ -730,11 +751,11 @@ public sealed partial class SqlAccountingPostingProcessor
         complete.Parameters.AddWithValue("@Now", now);
         if (await complete.ExecuteNonQueryAsync(token) != 1)
             throw new DBConcurrencyException("The supplier payment could not be completed.");
-        if (payment.PaymentMethod != "Cash" || payment.WorkSessionId is null) return;
-        await InsertSessionMovementAsync(connection, transaction, payment.WorkSessionId.Value,
-            payment.PaymentId, "PayablePayment", "Cash", -payment.TotalAmount,
-            payment.Reference, payment.PaidAt, payment.ConfirmedByUserId,
-            $"payable-payment:{payment.PaymentId:N}", token);
+        if (payment.WorkSessionId is null) return;
+        await InsertPaymentSessionMovementsAsync(connection, transaction,
+            payment.WorkSessionId.Value, payment.PaymentId, "PayablePayment",
+            payment.Payments.Select(item => (item.LineNumber, item.MethodCode, -item.Amount, item.Reference)),
+            payment.PaidAt, payment.ConfirmedByUserId, "payable-payment", token);
     }
 
     private async Task ApplyReceivablePaymentFinancialEffectsAsync(
@@ -796,10 +817,10 @@ public sealed partial class SqlAccountingPostingProcessor
         if (await complete.ExecuteNonQueryAsync(token) != 1)
             throw new DBConcurrencyException("The customer payment could not be completed.");
         if (payment.WorkSessionId is Guid sessionId)
-            await InsertSessionMovementAsync(connection, transaction, sessionId, null,
-                "ReceivablePayment", payment.PaymentMethod, payment.TotalAmount,
-                payment.Reference, payment.PaidAt, payment.ConfirmedByUserId,
-                $"receivable-payment:{payment.PaymentId:D}", token);
+            await InsertPaymentSessionMovementsAsync(connection, transaction,
+                sessionId, payment.PaymentId, "ReceivablePayment",
+                payment.Payments.Select(item => (item.LineNumber, item.MethodCode, item.Amount, item.Reference)),
+                payment.PaidAt, payment.ConfirmedByUserId, "receivable-payment", token);
     }
 
     private async Task ApplyCashMovementFinancialEffectsAsync(
@@ -848,6 +869,37 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@SourceKey", sourceKey);
         command.Parameters.AddWithValue("@At", occurredAt);
         command.Parameters.AddWithValue("@UserId", userId);
+        await command.ExecuteNonQueryAsync(token);
+    }
+
+    private async Task InsertPaymentSessionMovementsAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid sessionId, Guid paymentId,
+        string movementType, IEnumerable<(int LineNumber, string MethodCode, decimal Amount, string? Reference)> values,
+        DateTimeOffset occurredAt, Guid userId, string sourcePrefix, CancellationToken token)
+    {
+        var rows = values.Select(value => new
+        {
+            MovementId = ids.NewId(), value.LineNumber, value.MethodCode, value.Amount, value.Reference,
+            SourceKey = $"{sourcePrefix}:{paymentId:N}:{value.LineNumber}"
+        }).ToArray();
+        await using var command = new SqlCommand("""
+            INSERT dbo.WorkSessionMovements
+              (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,BusinessDate,
+               MovementType,PaymentMethodCode,Amount,Reference,SourceKey,OccurredAt,RecordedByUserId)
+            SELECT input.MovementId,@SessionId,@PaymentId,NULL,CONVERT(date,@At),@Type,
+                   input.MethodCode,input.Amount,input.Reference,input.SourceKey,@At,@UserId
+            FROM OPENJSON(@Rows) WITH(
+              MovementId uniqueidentifier,LineNumber int,MethodCode nvarchar(32),Amount decimal(19,4),
+              Reference nvarchar(160),SourceKey nvarchar(160)) input;
+            IF @@ROWCOUNT<>@Count THROW 51608,'The work-session payment breakdown was not recorded atomically.',1;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@SessionId", sessionId);
+        command.Parameters.AddWithValue("@PaymentId", paymentId);
+        command.Parameters.AddWithValue("@At", occurredAt);
+        command.Parameters.AddWithValue("@Type", movementType);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@Count", rows.Length);
+        command.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(rows);
         await command.ExecuteNonQueryAsync(token);
     }
 }

@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   Clock3,
   ClipboardList,
+  CircleDollarSign,
+  Landmark,
   Loader2,
   LogOut,
   Package,
@@ -155,6 +157,7 @@ import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
 import type { PosPreparationHealth } from "./pos-preparation-progress";
 import { posPublicError } from "./pos-public-error";
 import { saleRequiresBelowCostAuthorization } from "./pos-sale-authorization";
+import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
 
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -384,6 +387,8 @@ export default function PosPage() {
   const [temporaryName, setTemporaryName] = useState("");
   const [chargesOpen, setChargesOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [portfolioReceivableOpen,setPortfolioReceivableOpen]=useState(false);
+  const [portfolioPayableOpen,setPortfolioPayableOpen]=useState(false);
   const [saleSettlement, setSaleSettlement] = useState<import("@/services/pos/pos-edge-client").PosSaleSettlement | null>(null);
   const [saleSettlementError, setSaleSettlementError] = useState(false);
   const [inventoryResolution, setInventoryResolution] = useState<PosInventoryValidation | null>(null);
@@ -1175,6 +1180,21 @@ export default function PosPage() {
     .includes("work-sessions.cash.drawer.open");
   const canReadProductAvailability = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.inventory.availability.read");
+  const canReceivePortfolio=activePosPermissions.includes("receivables.payments.create");
+  const canPayPortfolio=activePosPermissions.includes("payables.payments.create");
+
+  useEffect(()=>{
+    const handle=(event:KeyboardEvent)=>{
+      if(!event.ctrlKey||event.altKey||event.metaKey||event.shiftKey)return;
+      const key=event.key.toLowerCase();if(key!=="f"&&key!=="g")return;
+      event.preventDefault();event.stopPropagation();
+      if(!serverConnected||!workstation.workSessionId){setMessage("Esta operación requiere conexión con Auraly y una sesión abierta");return;}
+      if(busy||paymentOpen||portfolioReceivableOpen||portfolioPayableOpen)return;
+      if(key==="f"&&canReceivePortfolio)setPortfolioReceivableOpen(true);
+      if(key==="g"&&canPayPortfolio)setPortfolioPayableOpen(true);
+    };
+    window.addEventListener("keydown",handle,true);return()=>window.removeEventListener("keydown",handle,true);
+  },[busy,canPayPortfolio,canReceivePortfolio,paymentOpen,portfolioPayableOpen,portfolioReceivableOpen,serverConnected,workstation.workSessionId]);
 
   const openCashDrawer = useCallback(async () => {
     if (!client || busy || !workstation.workSessionId) return;
@@ -3040,6 +3060,8 @@ export default function PosPage() {
               <span className="hidden md:inline">Denominaciones</span>
               <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+D</kbd>
             </button>
+            {canReceivePortfolio&&<button type="button" onClick={()=>setPortfolioReceivableOpen(true)} disabled={busy||!serverConnected||!workstation.workSessionId} title="Abono a cartera (Ctrl+F)" aria-keyshortcuts="Control+F" className="flex h-8 items-center gap-1.5 rounded-full border border-emerald-300/20 px-3 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-300/10 hover:text-white disabled:opacity-40"><CircleDollarSign className="h-3.5 w-3.5"/><span className="hidden lg:inline">Abono cartera</span><kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F</kbd></button>}
+            {canPayPortfolio&&<button type="button" onClick={()=>setPortfolioPayableOpen(true)} disabled={busy||!serverConnected||!workstation.workSessionId} title="Pago a proveedores (Ctrl+G)" aria-keyshortcuts="Control+G" className="flex h-8 items-center gap-1.5 rounded-full border border-amber-300/20 px-3 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10 hover:text-white disabled:opacity-40"><Landmark className="h-3.5 w-3.5"/><span className="hidden lg:inline">Pagar proveedor</span><kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+G</kbd></button>}
           </div>
           {client.mode === "edge" && (
             <button
@@ -4135,6 +4157,8 @@ export default function PosPage() {
           </form>
         </div>
       )}
+      <PortfolioPaymentWizard direction="receivable" open={portfolioReceivableOpen} onOpenChange={setPortfolioReceivableOpen} businessId={workstation.businessId} workSessionId={workstation.workSessionId} edgeClient={client instanceof PosEdgeClient?client:null} onCompleted={()=>setMessage("Abono a cartera registrado")}/>
+      <PortfolioPaymentWizard direction="payable" open={portfolioPayableOpen} onOpenChange={setPortfolioPayableOpen} businessId={workstation.businessId} workSessionId={workstation.workSessionId} edgeClient={client instanceof PosEdgeClient?client:null} onCompleted={()=>setMessage("Pago a proveedor registrado")}/>
       {pricingTransition && <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/45 p-4" role="status" aria-live="assertive"><div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl"><Loader2 className="mx-auto h-8 w-8 animate-spin text-teal-700"/><h2 className="mt-4 text-lg font-semibold">Actualizando precios</h2><p className="mt-1 text-sm text-slate-500">Aplicando la lista o el canal del cliente a todos los productos de la venta.</p></div></div>}
     </main>
   );

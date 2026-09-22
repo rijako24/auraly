@@ -87,9 +87,7 @@ CREATE TABLE [dbo].[CustomerPayments]
     [PayloadHash] BINARY(32) NOT NULL,
     [PaidAt] DATETIMEOFFSET(7) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
-    [PaymentMethod] NVARCHAR(24) NOT NULL,
-    [BankAccountId] UNIQUEIDENTIFIER NULL,
-    [Reference] NVARCHAR(120) NULL,
+    [PaymentBreakdownJson] NVARCHAR(MAX) NOT NULL,
     [Notes] NVARCHAR(1000) NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [Status] NVARCHAR(24) NOT NULL,
@@ -103,14 +101,11 @@ CREATE TABLE [dbo].[CustomerPayments]
     CONSTRAINT [FK_CustomerPayments_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_CustomerPayments_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_CustomerPayments_Users] FOREIGN KEY ([ConfirmedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
-    CONSTRAINT [FK_CustomerPayments_BankAccounts] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [UQ_CustomerPayments_Business_Number] UNIQUE ([BusinessId],[DocumentNumber]),
     CONSTRAINT [UQ_CustomerPayments_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [CK_CustomerPayments_Total] CHECK ([TotalAmount] > 0),
     CONSTRAINT [CK_CustomerPayments_Currency] CHECK ([CurrencyCode] = 'COP'),
-    CONSTRAINT [CK_CustomerPayments_Method] CHECK ([PaymentMethod] IN (N'Cash',N'BankTransfer',N'DebitCard',N'CreditCard')),
-    CONSTRAINT [CK_CustomerPayments_BankAccount] CHECK
-      ([BankAccountId] IS NULL OR [PaymentMethod]=N'BankTransfer'),
+    CONSTRAINT [CK_CustomerPayments_Breakdown] CHECK (ISJSON([PaymentBreakdownJson])=1),
     CONSTRAINT [CK_CustomerPayments_Status] CHECK ([Status] IN (N'Accepted',N'Processed'))
 );
 GO

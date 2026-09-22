@@ -12,14 +12,16 @@ export function usePayables(params: {
   page: number;
   pageSize: number;
   search?: string;
+  supplierId?: string;
   status?: PayableStatus;
   overdue?: boolean;
+  enabled?: boolean;
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
     queryKey: ["payables", businessId, params],
     queryFn: () => payablesApi.list(params),
-    enabled: !!businessId,
+    enabled: !!businessId && params.enabled !== false,
     placeholderData: keepPreviousData,
   });
 }

@@ -79,9 +79,9 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
             await SeedPaymentSeriesAsync();
             var payment = new ConfirmSupplierPaymentRequest(
                 Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId,
-                receivedAt.AddHours(1), "COP", SupplierPaymentMethods.Cash,
-                "RABBIT-CASH", "Pago procesado por el broker real",
-                [new SupplierPaymentAllocationRequest(payableId, 2_000m)]);
+                receivedAt.AddHours(1), "COP", "Pago procesado por el broker real",
+                [new SupplierPaymentAllocationRequest(payableId, 2_000m)],
+                [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash,2_000m,2_000m,Reference:"RABBIT-CASH")]);
             await ConfirmPaymentAsync(client, payment);
             var paymentSignal = Assert.Single(fixture.DrainDocumentSignals());
             Assert.Equal(PayablesDocumentTypes.Payment, paymentSignal.DocumentType);

@@ -56,12 +56,12 @@ export interface ConfirmSupplierPaymentRequest {
   supplierId: string;
   paidAt: string;
   currencyCode: string;
-  paymentMethod: "Cash" | "BankTransfer";
-  bankAccountId: string | null;
-  reference: string | null;
   notes: string | null;
   allocations: Array<{ payableId: string; amount: number }>;
+  payments: SupplierPaymentTender[];
+  workSessionId: string | null;
 }
+export interface SupplierPaymentTender {methodCode:"Cash"|"BankTransfer";amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null}
 
 export interface PaymentSettlementConfiguration {
   bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean }>;
@@ -69,18 +69,21 @@ export interface PaymentSettlementConfiguration {
 
 export interface SupplierPaymentAcceptance {
   paymentId: string;
-  movementId: string;
+  accountingJobId: string;
   documentNumber: string;
   status: string;
-  processingSequence: number;
   idempotentReplay: boolean;
 }
 export interface SupplierPaymentHistoryPage {
-  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;paymentMethod:string;reference:string|null;totalAmount:number;status:string;appliedDocumentCount:number}>;
+  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:SupplierPaymentTender[];supplierId:string|null;supplierName:string|null}>;
   page:number;pageSize:number;totalCount:number;totalPages:number;
 }
+export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number}
 
 export const payablesApi = {
+  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
+  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
+  currentWorkSession:(businessId:string)=>apiClient.post<{workSessionId:string}>("/commerce/v1/work-sessions/current",{businessId,warehouseId:null,deviceId:null}),
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   paymentHistory: (supplierId:string,page=1,pageSize=5) =>

@@ -5,6 +5,8 @@ using System.Text.Json;
 using Auraly.Application.Receivables;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Payments;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Receivables;
 using Auraly.Domain.Receivables;
 using Microsoft.Data.SqlClient;
@@ -16,6 +18,59 @@ public sealed class SqlReceivablesStore(
     IAuralyIdGenerator ids,
     TimeProvider timeProvider) : IReceivablesStore
 {
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    public async Task<CustomerPortfolioPage> ListCustomersAsync(ReceivablesUserIdentity user,
+        CustomerPortfolioQuery query, CancellationToken token)
+    {
+        await using var connection=connections.Create(); await connection.OpenAsync(token);
+        await using var command=new SqlCommand("""
+            WITH Portfolio AS(
+              SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
+                COALESCE(p.Identification,N'') Identification,COUNT(*) InvoiceCount,
+                SUM(r.OriginalAmount) OriginalAmount,SUM(r.OriginalAmount-r.OutstandingAmount) PaidAmount,
+                SUM(r.OutstandingAmount) OutstandingAmount,
+                SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN r.OutstandingAmount ELSE 0 END) OverdueAmount
+              FROM dbo.Receivables r
+              JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
+              JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
+              JOIN dbo.Parties p ON p.PartyId=c.PartyId
+              WHERE r.BusinessId=@BusinessId AND b.TenantId=@TenantId
+                AND (@Search IS NULL OR p.DisplayName LIKE N'%' + @Search + N'%'
+                  OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%')
+              GROUP BY r.CustomerId,p.DisplayName,p.LegalName,p.Identification)
+            SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0)
+            FROM Portfolio WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0)
+              OR (@Overdue=0 AND OverdueAmount=0);
+            WITH Portfolio AS(
+              SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
+                COALESCE(p.Identification,N'') Identification,COUNT(*) InvoiceCount,
+                SUM(r.OriginalAmount) OriginalAmount,SUM(r.OriginalAmount-r.OutstandingAmount) PaidAmount,
+                SUM(r.OutstandingAmount) OutstandingAmount,
+                SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN r.OutstandingAmount ELSE 0 END) OverdueAmount
+              FROM dbo.Receivables r
+              JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
+              JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
+              JOIN dbo.Parties p ON p.PartyId=c.PartyId
+              WHERE r.BusinessId=@BusinessId AND b.TenantId=@TenantId
+                AND (@Search IS NULL OR p.DisplayName LIKE N'%' + @Search + N'%'
+                  OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%')
+              GROUP BY r.CustomerId,p.DisplayName,p.LegalName,p.Identification)
+            SELECT CustomerId,CustomerName,Identification,InvoiceCount,OriginalAmount,PaidAmount,
+              OutstandingAmount,OverdueAmount FROM Portfolio
+            WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0) OR (@Overdue=0 AND OverdueAmount=0)
+            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,CustomerName
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """,connection);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);
+        command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);
+        command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
+        await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);
+        var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);
+        await reader.NextResultAsync(token);var items=new List<CustomerPortfolioItem>();
+        while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7)));
+        return new(items,query.Page,query.PageSize,count,outstanding,overdue);
+    }
+
     public async Task<ReceivablePage> ListAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token)
     {
         await using var connection = connections.Create();
@@ -73,40 +128,58 @@ public sealed class SqlReceivablesStore(
         return new(items,query.Page,query.PageSize,count,outstanding,overdue);
     }
 
-    public async Task<CustomerPaymentHistoryPage> PaymentHistoryAsync(ReceivablesUserIdentity user,
-        Guid customerId, int page, int pageSize, CancellationToken token)
+    public Task<CustomerPaymentHistoryPage> PaymentHistoryAsync(ReceivablesUserIdentity user,
+        Guid customerId, int page, int pageSize, CancellationToken token) =>
+        ListPaymentsAsync(user,new(page,pageSize,null,customerId),token);
+
+    public async Task<CustomerPaymentHistoryPage> ListPaymentsAsync(ReceivablesUserIdentity user,
+        CustomerPaymentHistoryQuery query,CancellationToken token)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token);
         await using var command=new SqlCommand("""
             SELECT COUNT(*) FROM dbo.CustomerPayments payment
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
+            INNER JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId
+            INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
-              AND payment.CustomerId=@CustomerId;
+              AND (@CustomerId IS NULL OR payment.CustomerId=@CustomerId)
+              AND (@Search IS NULL OR payment.DocumentNumber LIKE N'%' + @Search + N'%'
+                OR party.DisplayName LIKE N'%' + @Search + N'%' OR party.LegalName LIKE N'%' + @Search + N'%'
+                OR party.Identification LIKE N'%' + @Search + N'%');
             SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
-              payment.PaymentMethod,payment.Reference,payment.TotalAmount,payment.Status,
-              COUNT(application.ReceivableId) AppliedDocumentCount
+              payment.TotalAmount,payment.Status,payment.PaymentBreakdownJson,
+              COUNT(application.ReceivableId) AppliedDocumentCount,payment.CustomerId,
+              COALESCE(party.DisplayName,party.LegalName,party.Identification) CustomerName
             FROM dbo.CustomerPayments payment
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
+            INNER JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId
+            INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             LEFT JOIN dbo.CustomerPaymentApplications application ON application.PaymentId=payment.PaymentId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
-              AND payment.CustomerId=@CustomerId
+              AND (@CustomerId IS NULL OR payment.CustomerId=@CustomerId)
+              AND (@Search IS NULL OR payment.DocumentNumber LIKE N'%' + @Search + N'%'
+                OR party.DisplayName LIKE N'%' + @Search + N'%' OR party.LegalName LIKE N'%' + @Search + N'%'
+                OR party.Identification LIKE N'%' + @Search + N'%')
             GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
-              payment.PaymentMethod,payment.Reference,payment.TotalAmount,payment.Status
+              payment.TotalAmount,payment.Status,payment.PaymentBreakdownJson,payment.CustomerId,
+              party.DisplayName,party.LegalName,party.Identification
             ORDER BY payment.PaidAt DESC,payment.PaymentId DESC
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
         command.Parameters.AddWithValue("@TenantId",user.TenantId);
-        command.Parameters.AddWithValue("@CustomerId",customerId);
-        command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);
-        command.Parameters.AddWithValue("@PageSize",pageSize);
+        command.Parameters.AddWithValue("@CustomerId",(object?)query.CustomerId??DBNull.Value);
+        command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);
+        command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);
+        command.Parameters.AddWithValue("@PageSize",query.PageSize);
         await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token);
         var total=reader.GetInt32(0); await reader.NextResultAsync(token);
         var items=new List<CustomerPaymentHistoryItem>();
         while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),
-            reader.GetDateTimeOffset(2),reader.GetString(3),reader.GetString(4),
-            reader.IsDBNull(5)?null:reader.GetString(5),reader.GetDecimal(6),reader.GetString(7),reader.GetInt32(8)));
-        return new(items,page,pageSize,total);
+            reader.GetDateTimeOffset(2),reader.GetString(3),reader.GetDecimal(4),reader.GetString(5),reader.GetInt32(7),
+            JsonSerializer.Deserialize<CustomerPaymentTenderSnapshot[]>(reader.GetString(6),Json) ?? [],
+            reader.GetGuid(8),reader.GetString(9)));
+        return new(items,query.Page,query.PageSize,total);
     }
 
     public async Task<ReceivableDetail?> GetAsync(ReceivablesUserIdentity user, Guid id, CancellationToken token)
@@ -199,14 +272,18 @@ public sealed class SqlReceivablesStore(
         return (await GetCreditProfileAsync(user,customerId,token))!;
     }
 
-    public async Task<CustomerPaymentAcceptance> AcceptPaymentAsync(ReceivablesUserIdentity user,string key,ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,CancellationToken token)
+    public async Task<CustomerPaymentAcceptance> AcceptPaymentAsync(ReceivablesUserIdentity user,string key,
+        ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,
+        PaymentTenderBreakdown tenders,CancellationToken token)
     {
-        var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { request.PaymentId,request.BusinessId,request.CustomerId,request.WorkSessionId,request.PaidAt,request.CurrencyCode,request.PaymentMethod,request.BankAccountId,request.Reference,request.Notes,settlement.Allocations }));
+        var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { request.PaymentId,request.BusinessId,
+            request.CustomerId,request.WorkSessionId,request.PaidAt,request.CurrencyCode,request.Notes,
+            settlement.Allocations,tenders.Tenders }));
         for(var attempt=1;;attempt++)
         {
             try
             {
-                return await AcceptPaymentAttemptAsync(user,key,request,settlement,hash,token);
+                return await AcceptPaymentAttemptAsync(user,key,request,settlement,tenders,hash,token);
             }
             catch(SqlException exception) when(exception.Number==1205&&attempt<3)
             {
@@ -220,117 +297,188 @@ public sealed class SqlReceivablesStore(
         }
     }
 
-    private async Task<CustomerPaymentAcceptance> AcceptPaymentAttemptAsync(ReceivablesUserIdentity user,string key,ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,byte[] hash,CancellationToken token)
+    public async Task<ImportPreexistingReceivablesAcceptance> ImportPreexistingAsync(
+        ReceivablesUserIdentity user,ImportPreexistingReceivablesRequest request,CancellationToken token)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(token);
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);
+        try
+        {
+            var resolvedCustomers=new Dictionary<Guid,Guid>();
+            await using(var validate=new SqlCommand("""
+                DECLARE @Input TABLE(ReceivableId uniqueidentifier PRIMARY KEY,CustomerId uniqueidentifier NULL,
+                  CustomerIdentification nvarchar(64) NULL,
+                  PartySiteId uniqueidentifier NULL,DocumentNumber nvarchar(80),CounterpartAccountId uniqueidentifier);
+                INSERT @Input SELECT ReceivableId,CustomerId,CustomerIdentification,PartySiteId,DocumentNumber,CounterpartAccountId
+                FROM OPENJSON(@Items) WITH(ReceivableId uniqueidentifier,CustomerId uniqueidentifier,CustomerIdentification nvarchar(64),
+                  PartySiteId uniqueidentifier,DocumentNumber nvarchar(80),CounterpartAccountId uniqueidentifier);
+                IF (SELECT COUNT(*) FROM @Input)<>@Count THROW 51320,N'El lote contiene identificadores duplicados.',1;
+                IF EXISTS(SELECT 1 FROM @Input i OUTER APPLY(SELECT TOP(1)c.CustomerId,c.PartyId FROM dbo.Customers c
+                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.BusinessId=@BusinessId AND c.IsActive=1
+                    AND ((i.CustomerId IS NOT NULL AND c.CustomerId=i.CustomerId) OR (i.CustomerId IS NULL
+                      AND (p.Identification=i.CustomerIdentification OR p.NormalizedIdentification=i.CustomerIdentification)))) c
+                  WHERE c.CustomerId IS NULL)
+                  THROW 51321,N'Un cliente no pertenece al negocio o está inactivo.',1;
+                IF EXISTS(SELECT 1 FROM @Input i CROSS APPLY(SELECT TOP(1)c.CustomerId,c.PartyId FROM dbo.Customers c
+                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.BusinessId=@BusinessId AND c.IsActive=1
+                    AND ((i.CustomerId IS NOT NULL AND c.CustomerId=i.CustomerId) OR (i.CustomerId IS NULL
+                      AND (p.Identification=i.CustomerIdentification OR p.NormalizedIdentification=i.CustomerIdentification)))) c
+                  LEFT JOIN dbo.PartySites site ON site.PartySiteId=i.PartySiteId AND site.PartyId=c.PartyId
+                  WHERE i.PartySiteId IS NOT NULL AND site.PartySiteId IS NULL)
+                  THROW 51322,N'Una sede no pertenece al cliente indicado.',1;
+                IF EXISTS(SELECT 1 FROM @Input i LEFT JOIN dbo.AccountingAccounts account
+                  ON account.AccountId=i.CounterpartAccountId AND account.TenantId=@TenantId
+                  AND account.IsActive=1 AND account.AllowsPosting=1 WHERE account.AccountId IS NULL)
+                  THROW 51323,N'Una cuenta contrapartida no es imputable o no pertenece al tenant.',1;
+                IF EXISTS(SELECT 1 FROM @Input i JOIN dbo.Receivables r ON r.BusinessId=@BusinessId
+                  AND (r.ReceivableId=i.ReceivableId OR r.DocumentNumber=i.DocumentNumber))
+                  THROW 51324,N'La factura ya existe en cartera.',1;
+                SELECT i.ReceivableId,c.CustomerId FROM @Input i CROSS APPLY(SELECT TOP(1)c.CustomerId FROM dbo.Customers c
+                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.BusinessId=@BusinessId AND c.IsActive=1
+                    AND ((i.CustomerId IS NOT NULL AND c.CustomerId=i.CustomerId) OR (i.CustomerId IS NULL
+                      AND (p.Identification=i.CustomerIdentification OR p.NormalizedIdentification=i.CustomerIdentification)))) c;
+                """,connection,transaction))
+            {
+                validate.Parameters.AddWithValue("@Items",JsonSerializer.Serialize(request.Items));validate.Parameters.AddWithValue("@Count",request.Items.Count);
+                validate.Parameters.AddWithValue("@BusinessId",user.BusinessId);validate.Parameters.AddWithValue("@TenantId",user.TenantId);
+                try{await using var reader=await validate.ExecuteReaderAsync(token);while(await reader.ReadAsync(token))resolvedCustomers.Add(reader.GetGuid(0),reader.GetGuid(1));}catch(SqlException error)when(error.Number is >=51320 and <=51324){throw new ReceivablesValidationException(error.Message);}
+            }
+            var payloads=request.Items.Select(item=>new PreexistingReceivablePayload(user.TenantId,user.BusinessId,
+                item.ReceivableId,resolvedCustomers[item.ReceivableId],item.PartySiteId,user.UserId,item.DocumentNumber,item.IssuedAt,
+                item.DueDate,item.Amount,item.CounterpartAccountId,item.Notes)).ToArray();
+            var now=timeProvider.GetUtcNow();
+            var sources=payloads.Select(payload=>new SqlAccountingPostingJobWriter.Source(user.TenantId,user.BusinessId,
+                payload.ReceivableId,ReceivablesDocumentTypes.PreexistingReceivable,
+                PreexistingReceivableContractSerializer.Serialize(payload),now,ids.NewId())).ToArray();
+            await SqlAccountingPostingJobWriter.InsertSourcesAsync(connection,transaction,sources,now,
+                AccountingJobRequirement.PreserveCommercialEffects,token);
+            await transaction.CommitAsync(token);
+            return new(payloads.Length,payloads.Select(x=>x.ReceivableId).ToArray());
+        }
+        catch{await transaction.RollbackAsync(CancellationToken.None);throw;}
+    }
+
+    private async Task<CustomerPaymentAcceptance> AcceptPaymentAttemptAsync(ReceivablesUserIdentity user,string key,
+        ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,
+        PaymentTenderBreakdown tenders,byte[] hash,CancellationToken token)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token);
         await using var tx=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);
         try
         {
             var replay=await FindReplayAsync(connection,tx,user.BusinessId,request.PaymentId,key,hash,token); if(replay is not null){await tx.CommitAsync(token);return replay;}
-            if(request.PaymentMethod==CustomerPaymentMethods.BankTransfer && request.BankAccountId is null)
-                request=request with { BankAccountId=await ResolvePrimaryBankAccountAsync(connection,tx,user.TenantId,token) };
-            await ValidateAllocationsAsync(connection,tx,user,request,settlement,token);
+            await ValidateAllocationsAsync(connection,tx,user,request,settlement,tenders,token);
             var number=await AllocateNumberAsync(connection,tx,user.BusinessId,token); var now=timeProvider.GetUtcNow();
-            var sequence=await AllocateSequenceAsync(connection,tx,user.BusinessId,now,token); var movementId=ids.NewId();
+            var movementId=ids.NewId();
+            var paymentSnapshots=tenders.Tenders.Select((x,i)=>new CustomerPaymentTenderSnapshot(
+                i+1,x.MethodCode,x.Amount,x.TenderedAmount,x.BankAccountId,x.Reference,x.Notes,
+                x.CardFranchiseCode,x.ApprovalNumber)).ToArray();
             var payload=new CustomerPaymentDocumentPayload(user.TenantId,user.BusinessId,request.PaymentId,request.CustomerId,user.UserId,
                 request.WorkSessionId,number.FullNumber,number.SeriesId,number.Prefix,number.SeriesCode,number.Consecutive,request.PaidAt,
-                request.CurrencyCode,request.PaymentMethod,request.Reference,request.Notes,settlement.TotalAmount,
+                request.CurrencyCode,request.Notes,settlement.TotalAmount,
                 settlement.Allocations.Select((x,i)=>new CustomerPaymentAllocationSnapshot(i+1,x.ReceivableId,x.Amount)).ToArray(),
-                request.BankAccountId);
-            var json=CustomerPaymentContractSerializer.Serialize(payload); var payloadHash=SHA256.HashData(Encoding.UTF8.GetBytes(json));
-            await InsertAcceptedAsync(connection,tx,user,key,request,settlement,number,hash,movementId,sequence,json,payloadHash,now,token);
-            await tx.CommitAsync(token); return new(request.PaymentId,movementId,number.FullNumber,"Accepted",sequence,false);
+                paymentSnapshots);
+            var json=CustomerPaymentContractSerializer.Serialize(payload);
+            await InsertAcceptedAsync(connection,tx,user,key,request,settlement,number,hash,
+                JsonSerializer.Serialize(paymentSnapshots),now,token);
+            await SqlAccountingPostingJobWriter.InsertSourceAsync(connection,tx,user.TenantId,user.BusinessId,
+                request.PaymentId,ReceivablesDocumentTypes.Payment,json,request.PaidAt,ids,timeProvider,token,
+                AccountingJobRequirement.PreserveCommercialEffects,movementId);
+            await tx.CommitAsync(token); return new(request.PaymentId,movementId,number.FullNumber,"Accepted",false);
         }
         catch { await tx.RollbackAsync(CancellationToken.None); throw; }
     }
 
-    private static async Task ValidateAllocationsAsync(SqlConnection c,SqlTransaction t,ReceivablesUserIdentity user,ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,CancellationToken token)
+    private static async Task ValidateAllocationsAsync(SqlConnection c,SqlTransaction t,ReceivablesUserIdentity user,
+        ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,
+        PaymentTenderBreakdown tenders,CancellationToken token)
     {
-        foreach(var allocation in settlement.Allocations.OrderBy(x=>x.ReceivableId))
-        {
-            await using var command=new SqlCommand("""
-                SELECT r.CustomerId,r.CurrencyCode,r.OutstandingAmount,r.Status,
-                  COALESCE(SUM(CASE WHEN p.Status=N'Accepted' THEN a.Amount ELSE 0 END),0)
-                FROM dbo.Receivables r WITH(UPDLOCK,HOLDLOCK)
-                INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
-                LEFT JOIN dbo.CustomerPaymentApplications a WITH(UPDLOCK,HOLDLOCK) ON a.ReceivableId=r.ReceivableId AND a.AppliedAt IS NULL
-                LEFT JOIN dbo.CustomerPayments p WITH(UPDLOCK,HOLDLOCK) ON p.PaymentId=a.PaymentId
-                WHERE r.ReceivableId=@Id AND r.BusinessId=@BusinessId AND b.TenantId=@TenantId
-                GROUP BY r.CustomerId,r.CurrencyCode,r.OutstandingAmount,r.Status;
-                """,c,t);
-            command.Parameters.AddWithValue("@Id",allocation.ReceivableId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);
-            await using var reader=await command.ExecuteReaderAsync(token);
-            if(!await reader.ReadAsync(token)) throw new ReceivablesValidationException("An allocation references an unknown receivable.");
-            if(reader.GetGuid(0)!=request.CustomerId||reader.GetString(1)!=request.CurrencyCode) throw new ReceivablesValidationException("All receivables must belong to the selected customer and currency.");
-            if(reader.GetString(3) is "Paid" or "Cancelled") throw new ReceivablesValidationException("A settled receivable cannot receive a payment.");
-            if(allocation.Amount>reader.GetDecimal(2)-reader.GetDecimal(4)) throw new ReceivablesConflictException("The allocation exceeds the unreserved balance.");
-        }
-        if(request.WorkSessionId is Guid sessionId)
-        {
-            await using var session=new SqlCommand("SELECT COUNT_BIG(1) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK) WHERE WorkSessionId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId AND UserId=@UserId AND Status=N'Open'",c,t);
-            session.Parameters.AddWithValue("@Id",sessionId);session.Parameters.AddWithValue("@TenantId",user.TenantId);session.Parameters.AddWithValue("@BusinessId",user.BusinessId);session.Parameters.AddWithValue("@UserId",user.UserId);
-            if(Convert.ToInt64(await session.ExecuteScalarAsync(token))!=1) throw new ReceivablesValidationException("The work session is not open for this user.");
-        }
-        await ValidateBankAccountAsync(c,t,user.TenantId,request.PaymentMethod,request.BankAccountId,token);
+        await using var command=new SqlCommand("""
+            DECLARE @Input TABLE(ReceivableId uniqueidentifier PRIMARY KEY,Amount decimal(19,4));
+            INSERT @Input SELECT ReceivableId,Amount FROM OPENJSON(@Allocations)
+              WITH(ReceivableId uniqueidentifier,Amount decimal(19,4));
+            IF (SELECT COUNT(*) FROM @Input)<>@Count THROW 51310,'The allocation batch is invalid.',1;
+            IF EXISTS(
+              SELECT 1 FROM @Input input
+              LEFT JOIN dbo.Receivables r WITH(UPDLOCK,HOLDLOCK) ON r.ReceivableId=input.ReceivableId
+                AND r.BusinessId=@BusinessId
+              LEFT JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
+              OUTER APPLY(SELECT COALESCE(SUM(a.Amount),0) Reserved
+                FROM dbo.CustomerPaymentApplications a WITH(UPDLOCK,HOLDLOCK)
+                JOIN dbo.CustomerPayments p WITH(UPDLOCK,HOLDLOCK) ON p.PaymentId=a.PaymentId
+                WHERE a.ReceivableId=input.ReceivableId AND a.AppliedAt IS NULL AND p.Status=N'Accepted') pending
+              WHERE r.ReceivableId IS NULL OR b.BusinessId IS NULL OR r.CustomerId<>@CustomerId
+                OR r.CurrencyCode<>@Currency OR r.Status IN(N'Paid',N'Cancelled')
+                OR input.Amount>r.OutstandingAmount-pending.Reserved)
+              THROW 51311,'An allocation is unavailable or outside the selected customer.',1;
+            IF @SessionId IS NOT NULL AND NOT EXISTS(
+              SELECT 1 FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
+              WHERE WorkSessionId=@SessionId AND TenantId=@TenantId AND BusinessId=@BusinessId
+                AND UserId=@UserId AND Status=N'Open')
+              THROW 51312,'The work session is not open for this user.',1;
+            DECLARE @AccountingReady bit=CONVERT(bit,CASE WHEN EXISTS(
+              SELECT 1 FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId AND Status=N'Ready'
+                AND EffectiveFrom<=CONVERT(date,@PaidAt)) THEN 1 ELSE 0 END);
+            IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(
+                MethodCode nvarchar(32),BankAccountId uniqueidentifier)
+              WHERE MethodCode=N'BankTransfer' AND @AccountingReady=1 AND BankAccountId IS NULL)
+              THROW 51313,'Select a bank account for every transfer.',1;
+            IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(
+                MethodCode nvarchar(32),BankAccountId uniqueidentifier) input
+              WHERE input.BankAccountId IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM accounting.BankAccounts bank
+                WHERE bank.BankAccountId=input.BankAccountId AND bank.TenantId=@TenantId AND bank.IsActive=1))
+              THROW 51314,'A selected bank account is not active for this tenant.',1;
+            """,c,t);
+        command.Parameters.AddWithValue("@Allocations",JsonSerializer.Serialize(settlement.Allocations));
+        command.Parameters.AddWithValue("@Payments",JsonSerializer.Serialize(tenders.Tenders));
+        command.Parameters.AddWithValue("@Count",settlement.Allocations.Count);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);
+        command.Parameters.AddWithValue("@CustomerId",request.CustomerId);command.Parameters.AddWithValue("@Currency",request.CurrencyCode);
+        command.Parameters.AddWithValue("@SessionId",(object?)request.WorkSessionId??DBNull.Value);
+        command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@PaidAt",request.PaidAt);
+        try { await command.ExecuteNonQueryAsync(token); }
+        catch(SqlException ex) when(ex.Number is >=51310 and <=51314)
+        { if(ex.Number==51311) throw new ReceivablesConflictException(ex.Message); throw new ReceivablesValidationException(ex.Message); }
     }
 
-    private static async Task InsertAcceptedAsync(SqlConnection c,SqlTransaction t,ReceivablesUserIdentity user,string key,ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,AuralyDocumentNumberAssignment number,byte[] hash,Guid movementId,long sequence,string json,byte[] payloadHash,DateTimeOffset now,CancellationToken token)
+    private static async Task InsertAcceptedAsync(SqlConnection c,SqlTransaction t,ReceivablesUserIdentity user,
+        string key,ConfirmCustomerPaymentRequest request,ReceivableSettlement settlement,
+        AuralyDocumentNumberAssignment number,byte[] hash,string breakdownJson,DateTimeOffset now,CancellationToken token)
     {
         await using(var command=new SqlCommand("""
-            INSERT dbo.CustomerPayments(PaymentId,BusinessId,CustomerId,WorkSessionId,DocumentSeriesId,DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,PaidAt,CurrencyCode,PaymentMethod,BankAccountId,Reference,Notes,TotalAmount,Status,ConfirmedByUserId,AcceptedAt)
-            VALUES(@Id,@BusinessId,@CustomerId,@SessionId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,@Key,@Hash,@PaidAt,@Currency,@Method,@BankAccountId,@Reference,@Notes,@Total,N'Accepted',@UserId,@Now);
+            INSERT dbo.CustomerPayments(PaymentId,BusinessId,CustomerId,WorkSessionId,DocumentSeriesId,DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,PaidAt,CurrencyCode,PaymentBreakdownJson,Notes,TotalAmount,Status,ConfirmedByUserId,AcceptedAt)
+            VALUES(@Id,@BusinessId,@CustomerId,@SessionId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,@Key,@Hash,@PaidAt,@Currency,@Breakdown,@Notes,@Total,N'Accepted',@UserId,@Now);
             """,c,t))
         {
             command.Parameters.AddWithValue("@Id",request.PaymentId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@CustomerId",request.CustomerId);command.Parameters.AddWithValue("@SessionId",(object?)request.WorkSessionId??DBNull.Value);
             command.Parameters.AddWithValue("@SeriesId",number.SeriesId);command.Parameters.AddWithValue("@Number",number.FullNumber);command.Parameters.AddWithValue("@Prefix",number.Prefix);command.Parameters.AddWithValue("@SeriesCode",number.SeriesCode);command.Parameters.AddWithValue("@Consecutive",number.Consecutive);
-            command.Parameters.AddWithValue("@Key",key);command.Parameters.Add("@Hash",SqlDbType.Binary,32).Value=hash;command.Parameters.AddWithValue("@PaidAt",request.PaidAt);command.Parameters.AddWithValue("@Currency",request.CurrencyCode);command.Parameters.AddWithValue("@Method",request.PaymentMethod);
-            command.Parameters.AddWithValue("@BankAccountId",(object?)request.BankAccountId??DBNull.Value);
-            command.Parameters.AddWithValue("@Reference",(object?)request.Reference??DBNull.Value);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);Money(command,"@Total",settlement.TotalAmount);command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@Now",now);await command.ExecuteNonQueryAsync(token);
+            command.Parameters.AddWithValue("@Key",key);command.Parameters.Add("@Hash",SqlDbType.Binary,32).Value=hash;command.Parameters.AddWithValue("@PaidAt",request.PaidAt);command.Parameters.AddWithValue("@Currency",request.CurrencyCode);command.Parameters.AddWithValue("@Breakdown",breakdownJson);
+            command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);Money(command,"@Total",settlement.TotalAmount);command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@Now",now);await command.ExecuteNonQueryAsync(token);
         }
-        for(var i=0;i<settlement.Allocations.Count;i++)
-        {
-            await using var command=new SqlCommand("INSERT dbo.CustomerPaymentApplications(PaymentId,LineNumber,ReceivableId,Amount) VALUES(@PaymentId,@Line,@ReceivableId,@Amount)",c,t);
-            command.Parameters.AddWithValue("@PaymentId",request.PaymentId);command.Parameters.AddWithValue("@Line",i+1);command.Parameters.AddWithValue("@ReceivableId",settlement.Allocations[i].ReceivableId);Money(command,"@Amount",settlement.Allocations[i].Amount);await command.ExecuteNonQueryAsync(token);
-        }
-        await using var job=new SqlCommand("""
-            INSERT dbo.DocumentProcessingJobs(JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
-            VALUES(@JobId,@BusinessId,@Sequence,@DocumentId,N'ReceivablePayment',N'Pending',@Now,@Now);
-            INSERT dbo.DocumentProcessingPayloads(DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
-            VALUES(@DocumentId,N'ReceivablePayment',@BusinessId,1,@Payload,@PayloadHash,@Now);
+        await using var applications=new SqlCommand("""
+            INSERT dbo.CustomerPaymentApplications(PaymentId,LineNumber,ReceivableId,Amount)
+            SELECT @PaymentId,input.[key]+1,value.ReceivableId,value.Amount
+            FROM OPENJSON(@Allocations) input CROSS APPLY OPENJSON(input.value)
+              WITH(ReceivableId uniqueidentifier,Amount decimal(19,4)) value;
+            IF @@ROWCOUNT<>@Count THROW 51315,'The applications were not inserted atomically.',1;
             """,c,t);
-        job.Parameters.AddWithValue("@JobId",movementId);job.Parameters.AddWithValue("@BusinessId",user.BusinessId);job.Parameters.AddWithValue("@Sequence",sequence);job.Parameters.AddWithValue("@DocumentId",request.PaymentId);job.Parameters.AddWithValue("@Now",now);job.Parameters.AddWithValue("@Payload",json);job.Parameters.Add("@PayloadHash",SqlDbType.Binary,32).Value=payloadHash;await job.ExecuteNonQueryAsync(token);
-    }
-
-    private static async Task ValidateBankAccountAsync(SqlConnection c,SqlTransaction t,Guid tenantId,string method,Guid? bankAccountId,CancellationToken token)
-    {
-        if(method!=CustomerPaymentMethods.BankTransfer)
-        {
-            if(bankAccountId is not null) throw new ReceivablesValidationException("Only a bank transfer can select a bank account.");
-            return;
-        }
-        if(bankAccountId is null) return;
-        await using var command=new SqlCommand("SELECT COUNT_BIG(1) FROM accounting.BankAccounts WHERE BankAccountId=@Id AND TenantId=@TenantId AND IsActive=1",c,t);
-        command.Parameters.AddWithValue("@Id",bankAccountId.Value); command.Parameters.AddWithValue("@TenantId",tenantId);
-        if(Convert.ToInt64(await command.ExecuteScalarAsync(token))!=1) throw new ReceivablesValidationException("The selected bank account is not active for this tenant.");
-    }
-
-    private static async Task<Guid?> ResolvePrimaryBankAccountAsync(SqlConnection c,SqlTransaction t,Guid tenantId,CancellationToken token)
-    {
-        await using var command=new SqlCommand("SELECT BankAccountId FROM accounting.BankAccounts WHERE TenantId=@TenantId AND IsPrimary=1 AND IsActive=1",c,t);
-        command.Parameters.AddWithValue("@TenantId",tenantId);
-        return await command.ExecuteScalarAsync(token) is Guid id ? id : null;
+        applications.Parameters.AddWithValue("@PaymentId",request.PaymentId);
+        applications.Parameters.AddWithValue("@Allocations",JsonSerializer.Serialize(settlement.Allocations));
+        applications.Parameters.AddWithValue("@Count",settlement.Allocations.Count);
+        await applications.ExecuteNonQueryAsync(token);
     }
 
     private static async Task<CustomerPaymentAcceptance?> FindReplayAsync(SqlConnection c,SqlTransaction t,Guid businessId,Guid paymentId,string key,byte[] hash,CancellationToken token)
     {
         await using var command=new SqlCommand("""
-            SELECT p.PaymentId,p.DocumentNumber,p.Status,j.ProcessingSequence,j.JobId,p.PayloadHash FROM dbo.CustomerPayments p
-            INNER JOIN dbo.DocumentProcessingJobs j ON j.DocumentId=p.PaymentId AND j.DocumentType=N'ReceivablePayment'
+            SELECT p.PaymentId,p.DocumentNumber,p.Status,j.AccountingPostingJobId,p.PayloadHash FROM dbo.CustomerPayments p
+            INNER JOIN dbo.AccountingPostingJobs j ON j.SourceDocumentId=p.PaymentId AND j.SourceDocumentType=N'ReceivablePayment'
             WHERE p.BusinessId=@BusinessId AND (p.PaymentId=@PaymentId OR p.IdempotencyKey=@Key);
             """,c,t);command.Parameters.AddWithValue("@BusinessId",businessId);command.Parameters.AddWithValue("@PaymentId",paymentId);command.Parameters.AddWithValue("@Key",key);
         await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))return null;
-        if(!reader.GetFieldValue<byte[]>(5).AsSpan().SequenceEqual(hash))throw new ReceivablesConflictException("The idempotency key or PaymentId was reused with another payload.");
-        return new(reader.GetGuid(0),reader.GetGuid(4),reader.GetString(1),reader.GetString(2),reader.GetInt64(3),true);
+        if(!reader.GetFieldValue<byte[]>(4).AsSpan().SequenceEqual(hash))throw new ReceivablesConflictException("The idempotency key or PaymentId was reused with another payload.");
+        return new(reader.GetGuid(0),reader.GetGuid(3),reader.GetString(1),reader.GetString(2),true);
     }
 
     private static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(SqlConnection c,SqlTransaction t,Guid businessId,CancellationToken token)
@@ -343,10 +491,6 @@ public sealed class SqlReceivablesStore(
         Guid id;string prefix,code;byte padding;long end,next;await using(var reader=await select.ExecuteReaderAsync(token)){if(!await reader.ReadAsync(token))throw new ReceivablesValidationException("No active ReceivablePayment series is configured.");id=reader.GetGuid(0);prefix=reader.GetString(1);code=reader.GetString(2);padding=reader.GetByte(3);end=reader.GetInt64(4);next=reader.GetInt64(5);}if(next>end)throw new ReceivablesValidationException("The ReceivablePayment series is exhausted.");
         await using var update=new SqlCommand("IF EXISTS(SELECT 1 FROM dbo.DocumentSeriesCursors WHERE DocumentSeriesId=@Id) UPDATE dbo.DocumentSeriesCursors SET NextConsecutive=@Next,UpdatedAt=SYSDATETIMEOFFSET() WHERE DocumentSeriesId=@Id ELSE INSERT dbo.DocumentSeriesCursors(DocumentSeriesId,NextConsecutive,UpdatedAt) VALUES(@Id,@Next,SYSDATETIMEOFFSET())",c,t);update.Parameters.AddWithValue("@Id",id);update.Parameters.AddWithValue("@Next",next+1);await update.ExecuteNonQueryAsync(token);
         return AuralyDocumentNumberAssignment.Create(id,AuralyDocumentTypes.ReceivablePayment,prefix,code,next,padding);
-    }
-    private static async Task<long> AllocateSequenceAsync(SqlConnection c,SqlTransaction t,Guid businessId,DateTimeOffset now,CancellationToken token)
-    {
-        await using var command=new SqlCommand("IF NOT EXISTS(SELECT 1 FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@Id) INSERT dbo.BusinessProcessingCursors(BusinessId,LastAssignedSequence,LastCompletedSequence,UpdatedAt) VALUES(@Id,0,0,@Now); UPDATE dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK) SET LastAssignedSequence=LastAssignedSequence+1,UpdatedAt=@Now OUTPUT inserted.LastAssignedSequence WHERE BusinessId=@Id;",c,t);command.Parameters.AddWithValue("@Id",businessId);command.Parameters.AddWithValue("@Now",now);return Convert.ToInt64(await command.ExecuteScalarAsync(token));
     }
     private static void AddQuery(SqlCommand c,ReceivablesUserIdentity u,ReceivableQuery q,DateTimeOffset now){c.Parameters.AddWithValue("@BusinessId",u.BusinessId);c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.AddWithValue("@CustomerId",(object?)q.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@PartySiteId",(object?)q.PartySiteId??DBNull.Value);c.Parameters.AddWithValue("@Status",(object?)q.Status??DBNull.Value);c.Parameters.AddWithValue("@Overdue",(object?)q.Overdue??DBNull.Value);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@Now",now);}
     private static void Money(SqlCommand c,string name,decimal value){var p=c.Parameters.Add(name,SqlDbType.Decimal);p.Precision=19;p.Scale=4;p.Value=value;}

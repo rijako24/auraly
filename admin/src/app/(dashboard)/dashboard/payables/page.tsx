@@ -1,27 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CalendarClock, Landmark, Plus, ReceiptText, WalletCards } from "lucide-react";
-import { toast } from "sonner";
-import { useConfirmSupplierPayment, usePayableDetail, usePayables } from "@/hooks/use-payables";
+import { usePayableDetail, usePayables } from "@/hooks/use-payables";
 import { useAuthStore } from "@/stores/auth-store";
-import { useBusinessContextStore } from "@/stores/business-context-store";
-import { payablesApi, type PayableDetail, type PayableListItem, type PayableStatus } from "@/services/api/payables";
+import { type PayableDetail, type PayableListItem, type PayableStatus } from "@/services/api/payables";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
+import { PortfolioLedgerTabs, type PortfolioLedgerTab } from "@/components/payments/portfolio-ledger-tabs";
 
 const statusLabels: Record<PayableStatus, string> = {
   Open: "Pendiente",
@@ -31,7 +26,6 @@ const statusLabels: Record<PayableStatus, string> = {
 };
 
 export default function PayablesPage() {
-  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canPay = permissions.has("payables.payments.create");
   const [page, setPage] = useState(1);
@@ -39,34 +33,22 @@ export default function PayablesPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<PayableStatus | "all">("all");
   const [overdue, setOverdue] = useState(false);
+  const [activeTab, setActiveTab] = useState<PortfolioLedgerTab>("invoices");
+  const [supplierId, setSupplierId] = useState<string>();
   const [selectedId, setSelectedId] = useState<string>();
-  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [portfolioPaymentOpen,setPortfolioPaymentOpen]=useState(false);
   const [paymentTarget,setPaymentTarget]=useState<PayableDetail>();
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState<"Cash" | "BankTransfer">("BankTransfer");
-  const [bankAccountId, setBankAccountId] = useState("");
-  const [reference, setReference] = useState("");
-  const [notes, setNotes] = useState("");
 
   const query = usePayables({
     page, pageSize,
     search: search.trim() || undefined,
+    supplierId,
     status: status === "all" ? undefined : status,
     overdue: overdue || undefined,
+    enabled: activeTab === "invoices",
   });
   const detailQuery = usePayableDetail(selectedId);
-  const confirmPayment = useConfirmSupplierPayment();
-  const settlementQuery = useQuery({queryKey:["payment-settlement-configuration"],queryFn:payablesApi.settlementConfiguration,enabled:paymentOpen});
   const detail = detailQuery.data;
-
-  useEffect(() => {
-    if (paymentOpen && paymentTarget) setAmount(String(paymentTarget.outstandingAmount));
-  }, [paymentOpen, paymentTarget]);
-  useEffect(() => {
-    if (!paymentOpen || method !== "BankTransfer" || bankAccountId) return;
-    const accounts = settlementQuery.data?.bankAccounts ?? [];
-    setBankAccountId((accounts.find(account => account.isPrimary) ?? accounts[0])?.bankAccountId ?? "");
-  }, [bankAccountId, method, paymentOpen, settlementQuery.data]);
 
   const columns = useMemo<ColumnDef<PayableListItem>[]>(() => [
     {
@@ -115,41 +97,7 @@ export default function PayablesPage() {
 
   const openPayment = () => {
     if (!detail || detail.outstandingAmount <= 0) return;
-    setMethod("BankTransfer"); setBankAccountId(""); setReference(""); setNotes("");
-    setAmount(String(detail.outstandingAmount)); setPaymentTarget(detail); setSelectedId(undefined); setPaymentOpen(true);
-  };
-
-  const submitPayment = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!paymentTarget || !businessId) return;
-    const parsed = Number(amount);
-    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > paymentTarget.outstandingAmount) {
-      toast.error("El valor debe ser mayor que cero y no superar el saldo.");
-      return;
-    }
-    if (method === "BankTransfer" && !bankAccountId) {
-      toast.error("Selecciona la cuenta bancaria desde la que se hará la transferencia.");
-      return;
-    }
-    try {
-      const accepted = await confirmPayment.mutateAsync({
-        paymentId: crypto.randomUUID(),
-        businessId,
-        supplierId: paymentTarget.supplierId,
-        paidAt: new Date().toISOString(),
-        currencyCode: paymentTarget.currencyCode,
-        paymentMethod: method,
-        bankAccountId: method === "BankTransfer" ? bankAccountId : null,
-        reference: reference.trim() || null,
-        notes: notes.trim() || null,
-        allocations: [{ payableId: paymentTarget.payableId, amount: parsed }],
-      });
-      setPaymentOpen(false);setPaymentTarget(undefined);
-      void query.refetch();
-      toast.success(`${accepted.documentNumber} fue recibido y quedó en procesamiento.`);
-    } catch {
-      toast.error("No fue posible registrar el pago. El saldo pudo cambiar; actualiza el detalle.");
-    }
+    setPaymentTarget(detail); setSelectedId(undefined); setPortfolioPaymentOpen(true);
   };
 
   return (
@@ -157,7 +105,7 @@ export default function PayablesPage() {
       <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por pagar</h1>
         <p className="text-muted-foreground">Obligaciones creadas por las entradas de mercancía y sus pagos aplicados.</p></div>
-        <Button asChild><Link href="/dashboard/purchasing/goods-receipts"><Plus className="mr-2 h-4 w-4"/>Crear cuenta por pagar</Link></Button>
+        <div className="flex gap-2">{canPay&&<Button onClick={()=>{setPaymentTarget(undefined);setPortfolioPaymentOpen(true)}}><Landmark className="mr-2 h-4 w-4"/>Pagar proveedores</Button>}<Button variant="outline" asChild><Link href="/dashboard/purchasing/goods-receipts"><Plus className="mr-2 h-4 w-4"/>Crear cuenta por pagar</Link></Button></div>
       </header>
 
       <section className="grid gap-3 md:grid-cols-3">
@@ -168,7 +116,7 @@ export default function PayablesPage() {
 
       <section className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_13rem_12rem]">
         <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Documento, proveedor o identificación" />
-        <Select value={status} onValueChange={(value) => { setStatus(value as PayableStatus | "all"); setPage(1); }}>
+        {activeTab==="invoices"&&<Select value={status} onValueChange={(value) => { setStatus(value as PayableStatus | "all"); setPage(1); }}>
           <SelectTrigger><SelectValue placeholder="Todos los estados" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos los estados</SelectItem>
@@ -177,20 +125,22 @@ export default function PayablesPage() {
             <SelectItem value="Paid">Pagadas</SelectItem>
             <SelectItem value="Cancelled">Canceladas</SelectItem>
           </SelectContent>
-        </Select>
-        <Button variant={overdue ? "destructive" : "outline"} onClick={() => { setOverdue((value) => !value); setPage(1); }}>
+        </Select>}
+        {activeTab!=="payments"&&<Button variant={overdue ? "destructive" : "outline"} onClick={() => { setOverdue((value) => !value); setPage(1); }}>
           <CalendarClock className="mr-2 h-4 w-4" /> Solo vencidas
-        </Button>
+        </Button>}
       </section>
 
+      <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={value=>{setActiveTab(value);if(value!=="invoices")setSupplierId(undefined)}} search={search.trim()||undefined} overdue={overdue} onPartyClick={id=>{setSupplierId(id);setPage(1);setActiveTab("invoices")}}>
       {query.isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudieron cargar las obligaciones. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div>
       ) : (
-        <DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading}
+        <><div className="mb-3 flex items-center justify-between">{supplierId?<Badge variant="secondary">Cartera del proveedor seleccionado</Badge>:<span/>}{supplierId&&<Button size="sm" variant="ghost" onClick={()=>{setSupplierId(undefined);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading}
           page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages}
           totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }}
-          onRowClick={(item) => setSelectedId(item.payableId)} enableRowSelection={false} />
+          onRowClick={(item) => setSelectedId(item.payableId)} enableRowSelection={false} /></>
       )}
+      </PortfolioLedgerTabs>
 
       <Dialog open={!!selectedId} onOpenChange={(open) => !open && setSelectedId(undefined)}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
@@ -225,19 +175,7 @@ export default function PayablesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={paymentOpen} onOpenChange={open=>{setPaymentOpen(open);if(!open)setPaymentTarget(undefined)}}>
-        <DialogContent className="sm:max-w-lg">
-          <form className="space-y-5" onSubmit={submitPayment}>
-            <DialogHeader><DialogTitle>Registrar pago</DialogTitle><DialogDescription>El pago se aplicará a {paymentTarget?.documentNumber} mediante el motor transaccional.</DialogDescription></DialogHeader>
-            <div className="space-y-2"><Label htmlFor="payable-amount">Valor</Label><FormattedNumberInput id="payable-amount" kind="currency" value={amount} onValueChange={(value) => setAmount(value?.toString() ?? "")} /></div>
-            <div className="space-y-2"><Label>Medio de pago</Label><Select value={method} onValueChange={(value) => {setMethod(value as "Cash" | "BankTransfer");setBankAccountId("")}}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="BankTransfer">Transferencia bancaria</SelectItem><SelectItem value="Cash">Efectivo</SelectItem></SelectContent></Select></div>
-            {method === "BankTransfer" && <div className="space-y-2"><Label>Cuenta bancaria</Label><Select value={bankAccountId} onValueChange={setBankAccountId}><SelectTrigger><SelectValue placeholder={settlementQuery.isLoading ? "Cargando cuentas..." : "Selecciona una cuenta"}/></SelectTrigger><SelectContent>{(settlementQuery.data?.bankAccounts ?? []).map(account=><SelectItem key={account.bankAccountId} value={account.bankAccountId}>{account.displayName}{account.isPrimary ? " · Principal" : ""}</SelectItem>)}</SelectContent></Select></div>}
-            <div className="space-y-2"><Label htmlFor="payable-reference">Referencia</Label><Input id="payable-reference" maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Comprobante o referencia bancaria" /></div>
-            <div className="space-y-2"><Label htmlFor="payable-notes">Notas</Label><Textarea id="payable-notes" maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></div>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => {setPaymentOpen(false);setPaymentTarget(undefined)}}>Cancelar</Button><Button type="submit" disabled={confirmPayment.isPending || (method === "BankTransfer" && (!bankAccountId || settlementQuery.isLoading))}>{confirmPayment.isPending ? "Registrando..." : "Registrar pago"}</Button></DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open)setPaymentTarget(undefined)}} initialInvoiceId={paymentTarget?.payableId} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:null}/>
     </div>
   );
 }

@@ -7,6 +7,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Auraly.Contracts.Payables\Auraly.Contracts.Payables.csproj" />
     <ProjectReference Include="..\Auraly.Domain.Payables\Auraly.Domain.Payables.csproj" />
-    <ProjectReference Include="..\..\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\Accounting\Auraly.Commerce.Accounting.Application\Auraly.Commerce.Accounting.Application.csproj" />
   </ItemGroup>
 </Project>

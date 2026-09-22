@@ -8,6 +8,9 @@ namespace Auraly.Application.WorkSessions;
 
 public interface IWorkSessionStore
 {
+    Task<IReadOnlyList<DeviceWorkSessionSnapshot>> ReadOpenForEnrollmentAsync(
+        Guid tenantId, Guid businessId, Guid deviceId, CancellationToken cancellationToken);
+
     Task<WorkSessionView?> CurrentAsync(
         WorkSessionIdentity identity,
         CancellationToken cancellationToken);

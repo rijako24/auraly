@@ -401,7 +401,8 @@ function Publish-Database {
             '20260916_AddGenericProductMode.sql',
             '20260916_RemoveNonOperationalReportingSources.sql',
             '20260921_PreserveOrderItemQuantityPrecision.sql',
-            '20260907_AlignReceivablesWithAccountingSource.sql')
+            '20260907_AlignReceivablesWithAccountingSource.sql',
+            '20260922_MigratePortfolioPaymentBreakdowns.sql')
         if (-not $ValidateOnly) {
             foreach ($migration in $reviewedMigrations) {
                 Invoke-ReviewedPreDacpacMigration `

@@ -61,6 +61,13 @@ Si aparece una nueva capacidad con semantica realmente distinta, primero se regi
   componentes, jobs y submayores. El modo del trabajo se congela al aceptar la
   fuente; activar contabilidad después no contabiliza retroactivamente el
   historial comercial.
+- Los recaudos de CxC y pagos de CxP usan un contrato nativo `payments[]`: una
+  factura admite varios medios; varias facturas admiten exactamente un medio.
+  Ambos conservan `WorkSessionId` cuando nacen en una sesión y el cierre lee los
+  documentos aceptados sin bloquearse por el estado asincrónico del asiento.
+- El POS ejecuta recaudos y pagos a proveedores exclusivamente online mediante
+  el proxy autenticado de Edge. No existe captura, cola ni sincronización offline
+  de esos movimientos.
 - Un nuevo documento contabilizable agrega su regla de posting al motor existente y reutiliza `AccountingPostingJobs` y la unicidad por documento fuente.
 - Su fuente inmutable pertenece a `AccountingSourceDocuments`; el job contable no depende por FK de `DocumentProcessingJobs`.
 - No se crea un posting service por modulo, un asiento directo desde un endpoint ni una segunda tabla de trabajos contables.
