@@ -12,13 +12,14 @@ BEGIN
            graphicalRepresentation.Content,graphicalRepresentation.FileName,
            issuer.CertificateProvider,issuer.CertificateKeyReference,
            issuer.CertificateThumbprint,issuer.TestSetId,statusResponse.Content,
-           (SELECT payment.MethodCode,payment.Amount,payment.Reference,
-                   payment.CardFranchiseCode,payment.ApprovalNumber,payment.BankAccountId,
-                   payment.Notes,payment.TenderedAmount
-            FROM dbo.SalesPayments payment WHERE payment.DocumentId=sale.DocumentId
-            ORDER BY payment.PaymentNumber FOR JSON PATH) AS PaymentsJson,
+           COALESCE((SELECT payment.MethodCode,payment.Amount,payment.Reference,
+                            payment.CardFranchiseCode,payment.ApprovalNumber,payment.BankAccountId,
+                            payment.Notes,payment.TenderedAmount,payment.RoundingAdjustment
+                     FROM dbo.SalesPayments payment WHERE payment.DocumentId=sale.DocumentId
+                     ORDER BY payment.PaymentNumber FOR JSON PATH),N'[]') AS PaymentsJson,
            sale.CreditAmount,
-           JSON_QUERY(payload.PayloadJson,'$.commercialSnapshot.withholding') AS WithholdingJson
+           JSON_QUERY(payload.PayloadJson,'$.commercialSnapshot.withholding') AS WithholdingJson,
+           sale.CreditDueDate
     FROM dbo.FiscalDocuments fiscal
     JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
      AND business.TenantId=@TenantId

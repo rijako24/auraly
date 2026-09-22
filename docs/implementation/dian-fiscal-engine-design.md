@@ -88,7 +88,7 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
 
 `SalesDocumentLines` conserva el impuesto de cada línea. Reporting agrupa la instantánea comercial por código y tarifa en `reporting.SalesReportTaxFacts`; DIAN y contabilidad consumen sus snapshots o documentos fuente inmutables. No existe una segunda tabla tributaria operacional y esa proyección no se replica en SQLite.
 
-`SalesPayments` es el modelo canónico inicial de los medios de pago de la venta y reemplaza la responsabilidad útil de Tesorería para esta rebanada. Su clave `(DocumentId, PaymentNumber)` impide duplicados. Cartera, cuentas por cobrar/pagar y movimientos de tesorería más amplios pertenecen a rebanadas posteriores.
+`SalesPayments` conserva los recaudos de la venta; su clave `(DocumentId, PaymentNumber)` impide duplicados. El importe financiado original y su vencimiento pertenecen a `SalesDocuments.CreditAmount/CreditDueDate`. La presentación combina ambas fuentes como medios de pago mediante `OnlineSalesReceiptMapper`, incluyendo siempre el crédito cuando existe. Los cobros posteriores de cartera no alteran la distribución original de la factura.
 
 ## Idempotencia y recuperación
 
@@ -120,7 +120,19 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   inferior existente. El código fiscal del XML no se
   convierte en un pago por el total: la consulta de entrega obtiene por conjunto
   `SalesPayments`, el crédito original de `SalesDocuments` y las retenciones del
-  payload comercial. No consulta maestros ni añade viajes por línea/pago.
+  payload comercial. Una factura totalmente a crédito proyecta `SalesPayments`
+  como el arreglo vacío `[]` y conserva el importe en `CreditAmount`; no usa
+  `NULL` para representar la ausencia de recaudos. `OnlineSalesReceiptMapper`
+  compone una sola vez la regla de presentación para POS online, POS Edge,
+  historial y correo: conserva recaudos con sus ajustes de redondeo y agrega
+  el crédito original con su vencimiento. La conversión del snapshot ya emitido
+  es presentación pura: no vuelve a validar ni bloquea emisión, cierre o
+  reimpresión del POS. La validación comercial permanece en la aceptación de
+  la venta. La entrega por correo conserva su comprobación de consistencia
+  entre las proyecciones fiscal y comercial antes de generar el PDF, incluidas
+  retenciones y ajuste al peso. El worker solo deserializa y llama al mapper.
+  La consulta trae también `RoundingAdjustment` y `CreditDueDate` en el mismo
+  resultado; no consulta maestros ni añade viajes por línea/pago.
 - Carta v3 pagina filas completas y repite identificación, CUFE, QR y encabezado
   de tabla. El adaptador PDF usa contexto aislado por documento y bloquea peticiones
   de red; no modifica el XML ni recalcula precios/impuestos. La conversión tiene

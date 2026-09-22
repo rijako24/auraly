@@ -1,5 +1,6 @@
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Taxation.Contracts;
 
 namespace Auraly.Application.Sales;
 
@@ -211,7 +212,7 @@ public static class OnlineSalesReceiptMapper
                     .Select(charge => new OnlineSalesReceiptLine(charge.Code, charge.Name, 1,
                         charge.InvoicedUntaxedAmount, 0, charge.InvoicedTaxAmount, charge.InvoicedAmount,
                         charge.TaxCode, charge.TaxRate))).ToArray(),
-            request.Payments.Select(payment => new OnlineSalesPayment(
+            ComposePayments(request.Payments.Select(payment => new OnlineSalesPayment(
                     payment.MethodCode,
                     payment.Amount,
                     payment.Reference,
@@ -220,11 +221,8 @@ public static class OnlineSalesReceiptMapper
                     payment.BankAccountId,
                     payment.Notes,
                     payment.TenderedAmount,
-                    payment.RoundingAdjustment))
-                .Concat(request.Credit is null
-                    ? []
-                    : [new OnlineSalesPayment("Credit", request.Credit.Amount, request.Credit.DueDate.ToString("O"))])
-                .ToArray(),
+                    payment.RoundingAdjustment)),
+                request.Credit?.Amount, request.Credit?.DueDate),
             snapshot.UntaxedAmount,
             snapshot.TaxAmount,
             snapshot.PayableAmount,
@@ -251,6 +249,39 @@ public static class OnlineSalesReceiptMapper
             CustomerAddress: request.UblSnapshot?.Customer.Address.AddressLine,
             PayableRoundingAmount: snapshot.PayableRoundingAmount);
     }
+
+    public static OnlineSalesReceipt ApplySettlement(OnlineSalesReceipt receipt,
+        string documentNumber, IReadOnlyList<OnlineSalesPayment> payments, decimal creditAmount,
+        DateTimeOffset? creditDueDate, WithholdingCalculationSnapshot? withholding)
+    {
+        var netAmount = withholding is null
+            ? receipt.PayableAmount
+            : withholding.NetAmount + receipt.PayableRoundingAmount;
+        // Delivery reconciles its separately loaded fiscal and commercial projections.
+        // This check must not run when presenting an already issued POS snapshot.
+        if (creditAmount < 0 || (payments.Count == 0 && creditAmount == 0) ||
+            payments.Any(payment => string.IsNullOrWhiteSpace(payment.MethodCode) ||
+                payment.MethodCode == "Credit" || payment.Amount <= 0) ||
+            payments.Sum(payment => payment.CollectedAmount) + creditAmount != netAmount)
+            throw new InvalidOperationException("The invoice payment detail does not match its payable amount.");
+
+        return receipt with
+        {
+            DocumentNumber = documentNumber,
+            Payments = ComposePayments(payments, creditAmount > 0 ? creditAmount : null, creditDueDate),
+            WithholdingTotal = withholding?.WithholdingTotal ?? 0m,
+            NetPayableAmount = netAmount,
+            Withholdings = withholding?.Lines
+        };
+    }
+
+    private static IReadOnlyList<OnlineSalesPayment> ComposePayments(
+        IEnumerable<OnlineSalesPayment> payments, decimal? creditAmount,
+        DateTimeOffset? creditDueDate) =>
+        creditAmount is { } amount
+            ? payments.Append(new OnlineSalesPayment("Credit", amount,
+                creditDueDate?.ToString("O"))).ToArray()
+            : payments.ToArray();
 
     private static SalesInvoicePrintDetails? PrintDetails(
         PosSaleUblSnapshotContract? snapshot) => snapshot is null

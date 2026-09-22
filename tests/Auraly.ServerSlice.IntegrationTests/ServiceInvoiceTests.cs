@@ -18,6 +18,64 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Delivery_query_projects_credit_and_collections_in_one_tenant_scoped_result(bool creditOnly)
+    {
+        var context = await SeedAsync();
+        using var client = fixture.CreateAdminClient(ServiceInvoicePermissionCodes.Create, ServiceInvoicePermissionCodes.Issue);
+        client.DefaultRequestHeaders.Add("Idempotency-Key", context.IdempotencyKey);
+        using var response = await client.PostAsJsonAsync("/api/commerce/v1/service-invoices/issue",
+            new IssueServiceInvoiceRequest(fixture.BusinessId, context.CustomerId, [new(context.ServiceId, 1)], "Transfer"));
+        response.EnsureSuccessStatusCode();
+        var issued = (await response.Content.ReadFromJsonAsync<IssuedServiceInvoice>())!;
+        await AcceptAtDianAsync(issued.DocumentId);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        var due = new DateTimeOffset(2026, 10, 22, 0, 0, 0, TimeSpan.FromHours(-5));
+        // Exercise the persisted delivery contract without changing the issued fixture outside this transaction.
+        await using (var arrange = new SqlCommand("""
+            IF @CreditOnly=1 DELETE dbo.SalesPayments WHERE DocumentId=@DocumentId;
+            ELSE UPDATE dbo.SalesPayments SET MethodCode=N'Cash',Amount=1,RoundingAdjustment=0.5,
+                BankAccountId=NULL,Notes=NULL WHERE DocumentId=@DocumentId;
+            UPDATE dbo.SalesDocuments SET CreditAmount=PayableAmount-@Collected,CreditDueDate=@Due
+            WHERE DocumentId=@DocumentId;
+            """, connection, transaction))
+        {
+            arrange.Parameters.AddWithValue("@DocumentId", issued.DocumentId);
+            arrange.Parameters.AddWithValue("@CreditOnly", creditOnly);
+            arrange.Parameters.AddWithValue("@Collected", creditOnly ? 0m : 1.5m);
+            arrange.Parameters.AddWithValue("@Due", due);
+            await arrange.ExecuteNonQueryAsync();
+        }
+        await using var query = new SqlCommand("""
+            DECLARE @MessageId uniqueidentifier=(SELECT DeliveryOutboxMessageId FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId);
+            EXEC dbo.FiscalInvoiceDeliveryRecipientGet @DocumentId,@MessageId,@TenantId;
+            """, connection, transaction);
+        query.Parameters.AddWithValue("@DocumentId", issued.DocumentId);
+        query.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        await using (var reader = await query.ExecuteReaderAsync())
+        {
+            Assert.True(await reader.ReadAsync());
+            var payments = System.Text.Json.JsonSerializer.Deserialize<OnlineSalesPayment[]>(reader.GetString(17))!;
+            if (creditOnly) Assert.Empty(payments);
+            else Assert.Equal(0.5m, Assert.Single(payments).RoundingAdjustment);
+            Assert.Equal(reader.GetDecimal(5), payments.Sum(payment => payment.CollectedAmount) + reader.GetDecimal(18));
+            Assert.Equal(due, reader.GetFieldValue<DateTimeOffset>(20));
+            Assert.False(await reader.ReadAsync());
+            Assert.False(await reader.NextResultAsync());
+        }
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5), $"Delivery projection took {timer.Elapsed}.");
+        query.Parameters["@TenantId"].Value = Guid.NewGuid();
+        await using (var denied = await query.ExecuteReaderAsync())
+            Assert.False(await denied.ReadAsync());
+        await transaction.RollbackAsync();
+    }
+
     [Fact]
     public async Task Service_invoice_customer_search_returns_independent_sites_with_and_tokens()
     {
