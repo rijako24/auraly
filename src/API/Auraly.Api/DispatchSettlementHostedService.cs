@@ -123,9 +123,6 @@ public sealed class DispatchSettlementHostedService(
             // engine. Fiscal and accounting continue through their own durable outbox messages;
             // settlement never polls them and a retry cannot reapply completed intrinsic effects.
             var payments = await LoadPaymentsAsync(operation, token);
-            var depositBankAccountId = payments.Any(item => item.PaymentMethod == "Deposit")
-                ? await PrimaryBankAccountAsync(operation.TenantId, token)
-                : null;
             var paymentIdentity = new ReceivablesUserIdentity(operation.RequestedBy, operation.TenantId,
                 operation.BusinessId, new HashSet<string>(StringComparer.Ordinal)
                 { ReceivablesPermissionCodes.RegisterPayment });
@@ -142,7 +139,7 @@ public sealed class DispatchSettlementHostedService(
                                 ? CustomerPaymentMethods.BankTransfer
                                 : CustomerPaymentMethods.Cash,
                             item.Amount,
-                            BankAccountId: item.PaymentMethod == "Deposit" ? depositBankAccountId : null,
+                            BankAccountId: item.BankAccountId,
                             Reference: item.Reference)]), token);
             }
             if (await EnsureCashDifferenceDocumentAsync(operation, token) is { } differenceSignal)
@@ -194,21 +191,11 @@ public sealed class DispatchSettlementHostedService(
             var source = reader.GetGuid(0);
             var method = reader.GetString(3);
             values.Add(new(DeterministicGuid($"dispatch:{operation.DispatchId:N}:payment:{source:N}:{method}"),
-                source, reader.GetGuid(1), reader.GetGuid(2), method, reader.GetDecimal(4), reader.IsDBNull(5) ? operation.DispatchNumber : reader.GetString(5)));
+                source, reader.GetGuid(1), reader.GetGuid(2), method, reader.GetDecimal(4),
+                reader.IsDBNull(5) ? operation.DispatchNumber : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6)));
         }
         return values;
-    }
-
-    private async Task<Guid?> PrimaryBankAccountAsync(Guid tenantId, CancellationToken token)
-    {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(token);
-        await using var command = new SqlCommand("""
-            SELECT BankAccountId FROM accounting.BankAccounts
-            WHERE TenantId=@TenantId AND IsActive=1 AND IsPrimary=1;
-            """, connection);
-        command.Parameters.AddWithValue("@TenantId", tenantId);
-        return await command.ExecuteScalarAsync(token) is Guid bankAccountId ? bankAccountId : null;
     }
 
     private async Task RescheduleAsync(Operation operation, string? error, bool attention, CancellationToken token)
@@ -360,5 +347,5 @@ public sealed class DispatchSettlementHostedService(
     private sealed record ReturnWork(Guid ReturnId, Guid SourceDocumentId, bool NotDelivered,
         string ReasonCode, IReadOnlyList<ReturnLine> Lines);
     private sealed record PaymentWork(Guid PaymentId, Guid SourceDocumentId, Guid CustomerId,
-        Guid ReceivableId, string PaymentMethod, decimal Amount, string Reference);
+        Guid ReceivableId, string PaymentMethod, decimal Amount, string Reference, Guid? BankAccountId);
 }
