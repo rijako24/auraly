@@ -345,12 +345,17 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         }
 
         await using var storedArtifact = new SqlCommand("""
-            SELECT COUNT(*) FROM dbo.FiscalArtifacts
-            WHERE DocumentId=@DocumentId
-              AND ArtifactType IN(N'SignedAttachedDocument',N'GraphicalRepresentationPdf');
+            SELECT
+              (SELECT COUNT(*) FROM dbo.FiscalArtifacts
+               WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedAttachedDocument'),
+              (SELECT COUNT(*) FROM dbo.FiscalArtifacts
+               WHERE DocumentId=@DocumentId AND ArtifactType=N'GraphicalRepresentationPdf');
             """, connection);
         storedArtifact.Parameters.AddWithValue("@DocumentId", first.DocumentId);
-        Assert.Equal(2, Convert.ToInt32(await storedArtifact.ExecuteScalarAsync()));
+        await using var artifactReader = await storedArtifact.ExecuteReaderAsync();
+        Assert.True(await artifactReader.ReadAsync());
+        Assert.Equal(1, artifactReader.GetInt32(0));
+        Assert.Equal(0, artifactReader.GetInt32(1));
     }
 
     [Fact]
