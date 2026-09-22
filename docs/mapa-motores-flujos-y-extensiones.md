@@ -30,8 +30,8 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Consultar o editar la empresa propia | `tenant.profile.read/update` → `TenantsController` limita el recurso a `User.TenantId` → `TenantService`; el plan se proyecta en solo lectura desde la suscripción canónica | conceder `tenants.*` al administrador cliente, confiar en el `tenantId` del navegador o duplicar el perfil empresarial |
 | Cargos de facturación | catálogo versionado `InvoiceChargeService`/`SqlInvoiceChargeStore` → `InvoiceChargeCalculation` compartido por borrador online y Edge → snapshot de la venta → writer común de Gastos | otro medio de pago, producto ficticio, cálculo en UI o tabla paralela de cargos emitidos |
 | Gasto manual o asociado a una factura | `ExpenseService` o handler de venta → `SqlExpenseStore.PersistAcceptedAsync` → fuentes/trabajos financieros canónicos → `SqlAccountingPostingProcessor` abre CxP y marca el gasto procesado | consumir cursor operativo para gastos nuevos, abrir CxP desde POS o volver a registrar gasto al pagar al proveedor |
-| Recaudar CxC o pagar CxP | wizard compartido → `ReceivablesService`/`PayablesService` → aceptación transaccional de aplicaciones y `payments[]` → `AccountingSourceDocuments`/`AccountingPostingJobs` → `SqlAccountingPostingProcessor`; desde POS, Edge actúa solo como proxy online autenticado | guardar el pago offline, usar `DocumentProcessingJobs`, crear otro motor, refetch automático posterior o contabilizar desde UI/API |
-| Importar cartera preexistente | lote paginado y acotado de `ReceivablesService` → fuentes contables `PreexistingReceivable` → `SqlAccountingPostingProcessor` crea CxC y asiento con contrapartida elegida | inventar venta, inventario, documento DIAN, tabla de importación o saldo directo fuera del motor |
+| Recaudar CxC o pagar CxP | wizard compartido → `ReceivablesService`/`PayablesService` → aceptación transaccional de aplicaciones y `payments[]` → `AccountingSourceDocuments`/`AccountingPostingJobs` → `SqlAccountingPostingProcessor`; desde POS, Edge actúa solo como proxy online autenticado. Los historiales paginados incluyen medios y aplicaciones por factura en el mismo viaje de lectura. | guardar el pago offline, usar `DocumentProcessingJobs`, crear otro motor, refetch automático posterior o contabilizar desde UI/API |
+| Importar cartera preexistente | lote acotado de `ReceivablesService`; al importar por identificación resuelve el cliente y su sede activa (preferentemente principal) antes de crear fuentes contables `PreexistingReceivable` → `SqlAccountingPostingProcessor` crea CxC y asiento con contrapartida elegida | inventar venta, inventario, documento DIAN, tabla de importación o saldo directo fuera del motor |
 
 La navegación muestra una sola entrada **Empresa**. Con `tenant.profile.read`
 abre el perfil propio; con el permiso de plataforma `tenants.read` abre el listado
@@ -123,6 +123,11 @@ Documento comercial completado → `SalesReportingProcessingCoordinator` → col
   Reporting cercano al módulo propietario; no consulta desde la página, no
   recalcula nómina y no crea una cola o proyección paralela sin benchmark.
 - Ventas usa proyección física por su volumen, costo y agregaciones.
+- Los cobros posteriores de CxC y pagos de CxP son movimientos financieros, no
+  ventas nuevas: no se agregan a `SalesReportPaymentFacts` ni al ingreso de
+  ventas. Sus encabezados, aplicaciones y medios por fila son la fuente de
+  reportes financieros operativos; el libro mayor y cierre de sesión conservan
+  sus vistas contables y de caja respectivas.
 - La rotación de producto es una proyección persistida de esos hechos en
   `reporting.ProductRotationSnapshots`, con clave negocio + bodega + producto.
   `SqlSalesReportingProjectionWriter` es su único writer; Purchasing, Catalog y

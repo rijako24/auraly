@@ -63,6 +63,8 @@ Si aparece una nueva capacidad con semantica realmente distinta, primero se regi
   historial comercial.
 - Los recaudos de CxC y pagos de CxP usan un contrato nativo `payments[]`: una
   factura admite varios medios; varias facturas admiten exactamente un medio.
+  `CustomerPaymentTenders` y `SupplierPaymentTenders` guardan una fila por medio,
+  vinculada al encabezado correspondiente, como `SalesPayments` en facturación.
   Ambos conservan `WorkSessionId` cuando nacen en una sesión y el cierre lee los
   documentos aceptados sin bloquearse por el estado asincrónico del asiento.
 - El POS ejecuta recaudos y pagos a proveedores exclusivamente online mediante

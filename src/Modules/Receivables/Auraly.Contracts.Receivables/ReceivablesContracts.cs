@@ -28,7 +28,7 @@ public static class CustomerPaymentMethods
 public sealed record ReceivablesUserIdentity(Guid UserId, Guid TenantId, Guid BusinessId,
     IReadOnlySet<string> Permissions);
 public sealed record ReceivableQuery(int Page, int PageSize, string? Search, Guid? CustomerId,
-    string? Status, bool? Overdue, Guid? PartySiteId = null);
+    string? Status, bool? Overdue, Guid? PartySiteId = null, bool OutstandingOnly = false);
 public sealed record ReceivableListItem(Guid ReceivableId, Guid CustomerId, string CustomerName,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
     DateTimeOffset DueDate, string Status, bool IsOverdue, DateTimeOffset CreatedAt,
@@ -72,7 +72,9 @@ public sealed record CustomerPaymentAcceptance(Guid PaymentId, Guid AccountingJo
 public sealed record CustomerPaymentHistoryItem(Guid PaymentId, string DocumentNumber,
     DateTimeOffset PaidAt, string CurrencyCode, decimal TotalAmount, string Status,
     int AppliedDocumentCount, IReadOnlyList<CustomerPaymentTenderSnapshot> Payments,
+    IReadOnlyList<CustomerPaymentHistoryApplication> Applications,
     Guid? CustomerId = null, string? CustomerName = null);
+public sealed record CustomerPaymentHistoryApplication(Guid ReceivableId,string DocumentNumber,decimal Amount);
 public sealed record CustomerPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? CustomerId);
 public sealed record CustomerPaymentHistoryPage(IReadOnlyList<CustomerPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount)

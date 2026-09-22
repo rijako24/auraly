@@ -75,7 +75,7 @@ export interface SupplierPaymentAcceptance {
   idempotentReplay: boolean;
 }
 export interface SupplierPaymentHistoryPage {
-  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:SupplierPaymentTender[];supplierId:string|null;supplierName:string|null}>;
+  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:SupplierPaymentTender[];applications:Array<{payableId:string;documentNumber:string;amount:number}>;supplierId:string|null;supplierName:string|null}>;
   page:number;pageSize:number;totalCount:number;totalPages:number;
 }
 export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number}
@@ -95,6 +95,7 @@ export const payablesApi = {
     supplierId?: string;
     status?: PayableStatus;
     overdue?: boolean;
+    outstandingOnly?: boolean;
   }) => apiClient.get<PayablePage>(
     "/commerce/v1/payables",
     withPagedDefaults(params),

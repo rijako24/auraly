@@ -11,7 +11,7 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export type PortfolioLedgerTab = "parties" | "invoices" | "payments";
 type PartyRow={id:string;name:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number};
-type PaymentRow={paymentId:string;paidAt:string;partyName:string|null;documentNumber:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;totalAmount:number;currencyCode:string};
+type PaymentRow={paymentId:string;paidAt:string;partyName:string|null;documentNumber:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string};
 type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number};
 
 export function PortfolioLedgerTabs({
@@ -21,6 +21,7 @@ export function PortfolioLedgerTabs({
   search,
   overdue,
   onPartyClick,
+  onInvoiceClick,
   children,
 }: {
   direction: "receivable" | "payable";
@@ -29,6 +30,7 @@ export function PortfolioLedgerTabs({
   search?: string;
   overdue?: boolean;
   onPartyClick: (partyId: string) => void;
+  onInvoiceClick: (invoiceId: string) => void;
   children: ReactNode;
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
@@ -46,8 +48,14 @@ export function PortfolioLedgerTabs({
   const payments = useQuery<Page<PaymentRow>>({
     queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search],
     queryFn: async () => {
-      if(direction === "receivable") { const result=await receivablesApi.payments({ page, pageSize: 20, search }); return {...result,items:result.items.map(item=>({...item,partyName:item.customerName}))}; }
-      const result=await payablesApi.payments({ page, pageSize: 20, search }); return {...result,items:result.items.map(item=>({...item,partyName:item.supplierName}))};
+      if(direction === "receivable") {
+        const result=await receivablesApi.payments({ page, pageSize: 20, search });
+        return {...result,items:result.items.map(item=>({...item,partyName:item.customerName,
+          applications:item.applications.map(application=>({...application,invoiceId:application.receivableId}))}))};
+      }
+      const result=await payablesApi.payments({ page, pageSize: 20, search });
+      return {...result,items:result.items.map(item=>({...item,partyName:item.supplierName,
+        applications:item.applications.map(application=>({...application,invoiceId:application.payableId}))}))};
     },
     enabled: !!businessId && value === "payments",
     placeholderData: keepPreviousData,
@@ -76,7 +84,7 @@ export function PortfolioLedgerTabs({
     <TabsContent value="payments" className="mt-0">
       <LedgerTable loading={loading} failed={failed} isEmpty={paymentItems.length === 0} empty={`No hay ${direction === "receivable" ? "recaudos" : "pagos"} para estos filtros.`}>
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">Fecha</th><th>{direction === "receivable" ? "Cliente" : "Proveedor"}</th><th>Comprobante</th><th>Facturas</th><th>Medios</th><th className="pr-3 text-right">Total</th></tr></thead>
-        <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="font-mono text-xs">{item.documentNumber}</td><td>{item.appliedDocumentCount}</td><td>{item.payments.map(payment => paymentLabel(payment.methodCode)).join(" + ")}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode)}</td></tr>)}</tbody>
+        <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="font-mono text-xs">{item.documentNumber}</td><td><details><summary className="cursor-pointer">{item.appliedDocumentCount} factura{item.appliedDocumentCount===1?"":"s"}</summary><div className="mt-2 space-y-1">{item.applications.map(application=><div key={application.invoiceId} className="flex items-center gap-2 whitespace-nowrap"><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={()=>onInvoiceClick(application.invoiceId)}>{application.documentNumber}</button><span>{formatCurrency(application.amount,item.currencyCode)}</span></div>)}</div></details></td><td>{item.payments.map(payment => paymentLabel(payment.methodCode)).join(" + ")}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode)}</td></tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>

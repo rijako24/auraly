@@ -744,8 +744,7 @@ public sealed partial class SqlWorkSessionStore(
                 FROM dbo.CustomerPayments payment
                 INNER JOIN SessionScope session ON session.WorkSessionId=payment.WorkSessionId
                   AND session.BusinessId=payment.BusinessId
-                CROSS APPLY OPENJSON(payment.PaymentBreakdownJson) WITH(
-                  MethodCode nvarchar(32),Amount decimal(19,4)) tender
+                INNER JOIN dbo.CustomerPaymentTenders tender ON tender.PaymentId=payment.PaymentId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=tender.MethodCode
                 WHERE payment.Status IN(N'Accepted',N'Processed')
@@ -754,8 +753,7 @@ public sealed partial class SqlWorkSessionStore(
                 FROM dbo.SupplierPayments payment
                 INNER JOIN SessionScope session ON session.WorkSessionId=payment.WorkSessionId
                   AND session.BusinessId=payment.BusinessId
-                CROSS APPLY OPENJSON(payment.PaymentBreakdownJson) WITH(
-                  MethodCode nvarchar(32),Amount decimal(19,4)) tender
+                INNER JOIN dbo.SupplierPaymentTenders tender ON tender.PaymentId=payment.PaymentId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=tender.MethodCode
                 WHERE payment.Status IN(N'Accepted',N'Processed')

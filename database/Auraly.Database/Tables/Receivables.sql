@@ -87,7 +87,6 @@ CREATE TABLE [dbo].[CustomerPayments]
     [PayloadHash] BINARY(32) NOT NULL,
     [PaidAt] DATETIMEOFFSET(7) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
-    [PaymentBreakdownJson] NVARCHAR(MAX) NOT NULL,
     [Notes] NVARCHAR(1000) NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [Status] NVARCHAR(24) NOT NULL,
@@ -105,11 +104,32 @@ CREATE TABLE [dbo].[CustomerPayments]
     CONSTRAINT [UQ_CustomerPayments_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [CK_CustomerPayments_Total] CHECK ([TotalAmount] > 0),
     CONSTRAINT [CK_CustomerPayments_Currency] CHECK ([CurrencyCode] = 'COP'),
-    CONSTRAINT [CK_CustomerPayments_Breakdown] CHECK (ISJSON([PaymentBreakdownJson])=1),
     CONSTRAINT [CK_CustomerPayments_Status] CHECK ([Status] IN (N'Accepted',N'Processed'))
 );
 GO
 CREATE INDEX [IX_CustomerPayments_Business_Paid] ON [dbo].[CustomerPayments] ([BusinessId],[PaidAt] DESC) INCLUDE ([CustomerId],[Status],[TotalAmount]);
+GO
+
+CREATE TABLE [dbo].[CustomerPaymentTenders]
+(
+    [PaymentId] UNIQUEIDENTIFIER NOT NULL,
+    [LineNumber] INT NOT NULL,
+    [MethodCode] NVARCHAR(32) NOT NULL,
+    [Amount] DECIMAL(19,4) NOT NULL,
+    [TenderedAmount] DECIMAL(19,4) NULL,
+    [BankAccountId] UNIQUEIDENTIFIER NULL,
+    [Reference] NVARCHAR(160) NULL,
+    [Notes] NVARCHAR(500) NULL,
+    [CardFranchiseCode] NVARCHAR(64) NULL,
+    [ApprovalNumber] NVARCHAR(100) NULL,
+    CONSTRAINT [PK_CustomerPaymentTenders] PRIMARY KEY CLUSTERED ([PaymentId],[LineNumber]),
+    CONSTRAINT [FK_CustomerPaymentTenders_Payment] FOREIGN KEY ([PaymentId]) REFERENCES [dbo].[CustomerPayments] ([PaymentId]),
+    CONSTRAINT [FK_CustomerPaymentTenders_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
+    CONSTRAINT [CK_CustomerPaymentTenders_Amount] CHECK ([LineNumber]>0 AND [Amount]>0),
+    CONSTRAINT [CK_CustomerPaymentTenders_Cash] CHECK ([TenderedAmount] IS NULL OR ([MethodCode]=N'Cash' AND [TenderedAmount]>=[Amount]))
+);
+GO
+CREATE INDEX [IX_CustomerPaymentTenders_BankAccount] ON [dbo].[CustomerPaymentTenders] ([BankAccountId]) WHERE [BankAccountId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[CustomerPaymentApplications]

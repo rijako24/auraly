@@ -1,4 +1,5 @@
 "use client";
+
 import { useState } from "react";
 import { useMutation,useQuery } from "@tanstack/react-query";
 import { Download,FileUp,Loader2 } from "lucide-react";
@@ -10,14 +11,34 @@ import { Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,Dialog
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select,SelectContent,SelectItem,SelectTrigger,SelectValue } from "@/components/ui/select";
+import { buildPreexistingReceivablesImport,parsePreexistingReceivablesCsv,preexistingReceivablesTemplate,type ParsedPreexistingReceivable } from "./preexisting-receivables-template";
 
 export function PreexistingReceivablesImport({businessId,open,onOpenChange,onCompleted}:{businessId:string;open:boolean;onOpenChange:(value:boolean)=>void;onCompleted:()=>void}){
- const accounts=useQuery({queryKey:["accounting-accounts",businessId],queryFn:accountingApi.accounts,enabled:open&&!!businessId});
- const [accountId,setAccountId]=useState("");const [rows,setRows]=useState<ParsedRow[]>([]);const [fileName,setFileName]=useState("");
- const mutation=useMutation({mutationFn:()=>receivablesApi.importPreexisting({businessId,items:rows.map(row=>({receivableId:crypto.randomUUID(),customerId:null,customerIdentification:row.identification,partySiteId:null,documentNumber:row.documentNumber,issuedAt:`${row.issuedAt}T12:00:00-05:00`,dueDate:`${row.dueDate}T12:00:00-05:00`,amount:row.amount,counterpartAccountId:accountId,notes:row.notes}))}),onSuccess:value=>{toast.success(`${value.acceptedCount} facturas quedaron aceptadas por el motor contable.`);onOpenChange(false);setRows([]);setFileName("");onCompleted();},onError:error=>toast.error(error instanceof Error?error.message:"No fue posible importar la cartera.")});
- async function read(file:File|null){setRows([]);setFileName(file?.name??"");if(!file)return;try{setRows(parse(await file.text()));}catch(error){toast.error(error instanceof Error?error.message:"La plantilla no es válida.");}}
- return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>Importar cartera preexistente</DialogTitle><DialogDescription>La factura se crea directamente en cartera y el motor contable registra el saldo. No genera venta, inventario ni documento DIAN.</DialogDescription></DialogHeader><div className="space-y-4"><Button type="button" variant="outline" onClick={downloadPreexistingReceivablesTemplate}><Download className="mr-2 h-4 w-4"/>Descargar plantilla vacía</Button><div className="space-y-2"><Label>Cuenta contrapartida</Label><Select value={accountId} onValueChange={setAccountId}><SelectTrigger><SelectValue placeholder="Selecciona la contrapartida contable"/></SelectTrigger><SelectContent>{(accounts.data??[]).filter(x=>x.isActive&&x.allowsPosting).map(x=><SelectItem key={x.accountId} value={x.accountId}>{x.code} · {x.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">Cartera se debita automáticamente; esta cuenta recibe el crédito.</p></div><div className="space-y-2"><Label>Plantilla CSV diligenciada</Label><Input type="file" accept=".csv,text/csv" onChange={event=>void read(event.target.files?.[0]??null)}/></div>{fileName&&<div className="rounded-xl border bg-muted/30 p-4 text-sm"><b>{fileName}</b><p>{rows.length} factura{rows.length===1?"":"s"} lista{rows.length===1?"":"s"} para importar.</p></div>}</div><DialogFooter><Button variant="outline" onClick={()=>onOpenChange(false)}>Cancelar</Button><Button disabled={!accountId||rows.length===0||mutation.isPending} onClick={()=>mutation.mutate()}>{mutation.isPending?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<FileUp className="mr-2 h-4 w-4"/>}Importar cartera</Button></DialogFooter></DialogContent></Dialog>;
+  const accounts=useQuery({queryKey:["accounting-accounts",businessId],queryFn:accountingApi.accounts,enabled:open&&!!businessId});
+  const [accountId,setAccountId]=useState("");
+  const [rows,setRows]=useState<ParsedPreexistingReceivable[]>([]);
+  const [fileName,setFileName]=useState("");
+  const mutation=useMutation({
+    mutationFn:()=>receivablesApi.importPreexisting(buildPreexistingReceivablesImport(businessId,accountId,rows)),
+    onSuccess:value=>{toast.success(`${value.acceptedCount} facturas quedaron aceptadas por el motor contable.`);onOpenChange(false);setRows([]);setFileName("");onCompleted();},
+    onError:error=>toast.error(error instanceof Error?error.message:"No fue posible importar la cartera.")
+  });
+  async function read(file:File|null){
+    setRows([]);setFileName(file?.name??"");if(!file)return;
+    try{setRows(parsePreexistingReceivablesCsv(await file.text()));}
+    catch(error){toast.error(error instanceof Error?error.message:"La plantilla no es válida.");}
+  }
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-2xl">
+    <DialogHeader><DialogTitle>Importar cartera preexistente</DialogTitle><DialogDescription>La factura se crea directamente en cartera y el motor contable registra el saldo. No genera venta, inventario ni documento DIAN.</DialogDescription></DialogHeader>
+    <div className="space-y-4"><Button type="button" variant="outline" onClick={downloadPreexistingReceivablesTemplate}><Download className="mr-2 h-4 w-4"/>Descargar plantilla vacía</Button>
+      <div className="space-y-2"><Label>Cuenta contrapartida</Label><Select value={accountId} onValueChange={setAccountId}><SelectTrigger><SelectValue placeholder="Selecciona la contrapartida contable"/></SelectTrigger><SelectContent>{(accounts.data??[]).filter(value=>value.isActive&&value.allowsPosting).map(value=><SelectItem key={value.accountId} value={value.accountId}>{value.code} · {value.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">Cartera se debita automáticamente; esta cuenta recibe el crédito.</p></div>
+      <div className="space-y-2"><Label>Plantilla CSV diligenciada</Label><Input type="file" accept=".csv,text/csv" onChange={event=>void read(event.target.files?.[0]??null)}/><p className="text-xs text-muted-foreground">Una factura por fila; fechas AAAA-MM-DD y saldo numérico sin separadores de miles. El cliente debe existir con la identificación indicada.</p></div>
+      {fileName&&<div className="rounded-xl border bg-muted/30 p-4 text-sm"><b>{fileName}</b><p>{rows.length} factura{rows.length===1?"":"s"} lista{rows.length===1?"":"s"} para importar.</p></div>}
+    </div><DialogFooter><Button variant="outline" onClick={()=>onOpenChange(false)}>Cancelar</Button><Button disabled={!accountId||rows.length===0||mutation.isPending} onClick={()=>mutation.mutate()}>{mutation.isPending?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<FileUp className="mr-2 h-4 w-4"/>}Importar cartera</Button></DialogFooter>
+  </DialogContent></Dialog>;
 }
-type ParsedRow={identification:string;documentNumber:string;issuedAt:string;dueDate:string;amount:number;notes:string|null};
-function parse(text:string):ParsedRow[]{const lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(Boolean);if(lines.length<2)throw new Error("La plantilla no contiene facturas.");const header=lines[0].split(";").map(x=>x.trim().toLowerCase());const required=["identificacion_cliente","numero_factura","fecha_emision","fecha_vencimiento","saldo"];if(required.some(x=>!header.includes(x)))throw new Error(`La plantilla requiere: ${required.join(", ")}.`);if(lines.length>101)throw new Error("Cada importación admite máximo 100 facturas.");const index=(name:string)=>header.indexOf(name);return lines.slice(1).map((line,offset)=>{const cells=line.split(";").map(x=>x.trim());const amount=Number(cells[index("saldo")]);const issuedAt=cells[index("fecha_emision")],dueDate=cells[index("fecha_vencimiento")];if(!cells[index("identificacion_cliente")]||!cells[index("numero_factura")]||!/^\d{4}-\d{2}-\d{2}$/.test(issuedAt)||!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)||!Number.isFinite(amount)||amount<=0)throw new Error(`La fila ${offset+2} contiene datos inválidos.`);return {identification:cells[index("identificacion_cliente")],documentNumber:cells[index("numero_factura")],issuedAt,dueDate,amount,notes:index("notas")>=0?cells[index("notas")]||null:null};});}
-export function downloadPreexistingReceivablesTemplate(){const content="\uFEFFidentificacion_cliente;numero_factura;fecha_emision;fecha_vencimiento;saldo;notas\r\n";const url=URL.createObjectURL(new Blob([content],{type:"text/csv;charset=utf-8"}));const link=document.createElement("a");link.href=url;link.download="plantilla-cartera-preexistente.csv";link.click();URL.revokeObjectURL(url);}
+
+export function downloadPreexistingReceivablesTemplate(){
+  const url=URL.createObjectURL(new Blob([preexistingReceivablesTemplate],{type:"text/csv;charset=utf-8"}));
+  const link=document.createElement("a");link.href=url;link.download="plantilla-cartera-preexistente.csv";link.click();URL.revokeObjectURL(url);
+}

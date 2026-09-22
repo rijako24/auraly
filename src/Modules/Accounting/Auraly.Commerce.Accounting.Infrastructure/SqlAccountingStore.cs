@@ -2105,8 +2105,8 @@ public sealed class SqlAccountingStore(
                       WHEN EXISTS(SELECT 1 FROM dbo.SalesPayments WHERE BankAccountId=@BankAccountId)
                         OR EXISTS(SELECT 1 FROM dbo.SalesReturns WHERE BankAccountId=@BankAccountId)
                         OR EXISTS(SELECT 1 FROM dbo.SalesReturnSettlements WHERE BankAccountId=@BankAccountId)
-                        OR EXISTS(SELECT 1 FROM dbo.SupplierPayments WHERE BankAccountId=@BankAccountId)
-                        OR EXISTS(SELECT 1 FROM dbo.CustomerPayments WHERE BankAccountId=@BankAccountId)
+                        OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentTenders WHERE BankAccountId=@BankAccountId)
+                        OR EXISTS(SELECT 1 FROM dbo.CustomerPaymentTenders WHERE BankAccountId=@BankAccountId)
                         OR EXISTS(SELECT 1 FROM accounting.BankReconciliations WHERE BankAccountId=@BankAccountId)
                       THEN 1 ELSE 0 END;
                     """, connection, transaction);

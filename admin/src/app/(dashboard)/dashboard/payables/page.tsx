@@ -131,7 +131,7 @@ export default function PayablesPage() {
         </Button>}
       </section>
 
-      <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={value=>{setActiveTab(value);if(value!=="invoices")setSupplierId(undefined)}} search={search.trim()||undefined} overdue={overdue} onPartyClick={id=>{setSupplierId(id);setPage(1);setActiveTab("invoices")}}>
+      <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={value=>{setActiveTab(value);if(value!=="invoices")setSupplierId(undefined)}} search={search.trim()||undefined} overdue={overdue} onPartyClick={id=>{setSupplierId(id);setPage(1);setActiveTab("invoices")}} onInvoiceClick={setSelectedId}>
       {query.isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudieron cargar las obligaciones. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div>
       ) : (
@@ -175,7 +175,7 @@ export default function PayablesPage() {
         </DialogContent>
       </Dialog>
 
-      <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open)setPaymentTarget(undefined)}} initialInvoiceId={paymentTarget?.payableId} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:null}/>
+      <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open)setPaymentTarget(undefined)}} initialInvoice={paymentTarget?{id:paymentTarget.payableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:null}/>
     </div>
   );
 }

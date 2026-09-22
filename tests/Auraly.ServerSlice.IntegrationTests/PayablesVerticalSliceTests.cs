@@ -68,7 +68,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId,
             occurredAt.AddHours(1), "COP", "Abono por transferencia",
             [new SupplierPaymentAllocationRequest(payableId, 40_000m)],
-            [new SupplierPaymentTenderRequest(SupplierPaymentMethods.BankTransfer,40_000m,
+            [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash,10_000m,10_000m),
+             new SupplierPaymentTenderRequest(SupplierPaymentMethods.BankTransfer,30_000m,
                 BankAccountId:bankAccount.BankAccountId,Reference:"TRX-9001")]);
         var key = $"payables-payment-{payment.PaymentId:N}";
         using (var response = await SendAsync(
@@ -89,6 +90,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT Status FROM dbo.Payables WHERE PayableId=@Id", payableId));
         Assert.Equal(1, await CountAsync(
             "SupplierPaymentApplications", "PaymentId", payment.PaymentId));
+        Assert.Equal(2, await CountAsync(
+            "SupplierPaymentTenders", "PaymentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "PayableTransactions", "SourceDocumentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
@@ -98,10 +101,19 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(paymentHistory);
         Assert.Equal(5, paymentHistory.PageSize);
         Assert.Contains(paymentHistory.Items, item => item.PaymentId == payment.PaymentId
-            && item.AppliedDocumentCount == 1);
+            && item.AppliedDocumentCount == 1
+            && item.Payments.Count == 2
+            && item.Payments[0].MethodCode == SupplierPaymentMethods.Cash
+            && item.Payments[0].Amount == 10_000m
+            && item.Payments[1].MethodCode == SupplierPaymentMethods.BankTransfer
+            && item.Payments[1].Amount == 30_000m
+            && item.Applications.Count == 1
+            && item.Applications[0].PayableId == payableId
+            && item.Applications[0].Amount == 40_000m);
         Assert.True(await PayloadHashMatchesAsync(payment.PaymentId));
         Assert.Equal(40_000m, await AccountAmountAsync(payment.PaymentId, "220505", true));
-        Assert.Equal(40_000m, await AccountAmountAsync(
+        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "110505", false));
+        Assert.Equal(30_000m, await AccountAmountAsync(
             payment.PaymentId, bankAccount.AccountingAccountCode, false));
 
         using (var duplicate = await SendAsync(
@@ -114,6 +126,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         }
         Assert.Equal(1, await CountAsync(
             "PayableTransactions", "SourceDocumentId", payment.PaymentId));
+        Assert.Equal(2, await CountAsync(
+            "SupplierPaymentTenders", "PaymentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", payment.PaymentId));
 
@@ -337,6 +351,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Contains($"{table}:{column}", new[]
         {
             "SupplierPaymentApplications:PaymentId",
+            "SupplierPaymentTenders:PaymentId",
             "PayableTransactions:SourceDocumentId",
             "AccountingEntries:SourceDocumentId",
             "SupplierPayments:PaymentId"

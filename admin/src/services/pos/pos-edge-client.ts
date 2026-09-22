@@ -1389,12 +1389,12 @@ export class PosEdgeClient implements PosClient {
     const query=new URLSearchParams({role,search,page:String(page),pageSize:String(pageSize)});
     return this.request<PartyRoleOptionPage>(`/edge/v1/portfolio/parties?${query}`);
   }
-  portfolioReceivables(customerId:string){
-    const query=new URLSearchParams({customerId,page:"1",pageSize:"100"});
+  portfolioReceivables(customerId:string,page:number,pageSize:number){
+    const query=new URLSearchParams({customerId,page:String(page),pageSize:String(pageSize),outstandingOnly:"true"});
     return this.request<ReceivablePage>(`/edge/v1/portfolio/receivables?${query}`);
   }
-  portfolioPayables(supplierId:string){
-    const query=new URLSearchParams({supplierId,page:"1",pageSize:"100"});
+  portfolioPayables(supplierId:string,page:number,pageSize:number){
+    const query=new URLSearchParams({supplierId,page:String(page),pageSize:String(pageSize),outstandingOnly:"true"});
     return this.request<PayablePage>(`/edge/v1/portfolio/payables?${query}`);
   }
   portfolioSettlementConfiguration(){return this.request<PaymentSettlementConfiguration>("/edge/v1/portfolio/settlement-configuration");}

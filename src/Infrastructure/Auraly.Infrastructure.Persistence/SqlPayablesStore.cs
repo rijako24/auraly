@@ -68,6 +68,7 @@ public sealed class SqlPayablesStore(
             AND b.TenantId=@TenantId
             AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
             AND (@Status IS NULL OR p.Status=@Status)
+            AND (@OutstandingOnly=0 OR p.OutstandingAmount>0)
             AND (@Overdue IS NULL OR
                  (@Overdue=1 AND p.OutstandingAmount>0 AND p.DueDate<@Now) OR
                  (@Overdue=0 AND (p.OutstandingAmount=0 OR p.DueDate>=@Now)))
@@ -144,21 +145,37 @@ public sealed class SqlPayablesStore(
               AND (@SupplierId IS NULL OR payment.SupplierId=@SupplierId)
               AND (@Search IS NULL OR payment.DocumentNumber LIKE N'%' + @Search + N'%'
                 OR supplier.Name LIKE N'%' + @Search + N'%' OR supplier.Identification LIKE N'%' + @Search + N'%');
-            SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
-              payment.TotalAmount,payment.Status,payment.PaymentBreakdownJson,
-              COUNT(application.PayableId) AppliedDocumentCount,payment.SupplierId,supplier.Name
-            FROM dbo.SupplierPayments payment
+            DECLARE @Page TABLE(PaymentId uniqueidentifier PRIMARY KEY);
+            INSERT @Page(PaymentId)
+            SELECT payment.PaymentId FROM dbo.SupplierPayments payment
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
-            LEFT JOIN dbo.SupplierPaymentApplications application ON application.PaymentId=payment.PaymentId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@SupplierId IS NULL OR payment.SupplierId=@SupplierId)
               AND (@Search IS NULL OR payment.DocumentNumber LIKE N'%' + @Search + N'%'
                 OR supplier.Name LIKE N'%' + @Search + N'%' OR supplier.Identification LIKE N'%' + @Search + N'%')
-            GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
-              payment.TotalAmount,payment.Status,payment.PaymentBreakdownJson,payment.SupplierId,supplier.Name
             ORDER BY payment.PaidAt DESC,payment.PaymentId DESC
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
+              payment.TotalAmount,payment.Status,
+              COUNT(application.PayableId) AppliedDocumentCount,payment.SupplierId,supplier.Name
+            FROM @Page page INNER JOIN dbo.SupplierPayments payment ON payment.PaymentId=page.PaymentId
+            INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
+            INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
+            LEFT JOIN dbo.SupplierPaymentApplications application ON application.PaymentId=payment.PaymentId
+            WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
+            GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
+              payment.TotalAmount,payment.Status,payment.SupplierId,supplier.Name
+            ORDER BY payment.PaidAt DESC,payment.PaymentId DESC;
+            SELECT tender.PaymentId,tender.LineNumber,tender.MethodCode,tender.Amount,tender.TenderedAmount,
+              tender.BankAccountId,tender.Reference,tender.Notes,tender.CardFranchiseCode,tender.ApprovalNumber
+            FROM dbo.SupplierPaymentTenders tender INNER JOIN @Page page ON page.PaymentId=tender.PaymentId
+            ORDER BY tender.PaymentId,tender.LineNumber;
+            SELECT application.PaymentId,application.PayableId,payable.DocumentNumber,application.Amount
+            FROM dbo.SupplierPaymentApplications application
+            INNER JOIN @Page page ON page.PaymentId=application.PaymentId
+            INNER JOIN dbo.Payables payable ON payable.PayableId=application.PayableId
+            ORDER BY application.PaymentId,application.LineNumber;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
         command.Parameters.AddWithValue("@TenantId",user.TenantId);
@@ -170,10 +187,20 @@ public sealed class SqlPayablesStore(
         var total=reader.GetInt32(0); await reader.NextResultAsync(cancellationToken);
         var items=new List<SupplierPaymentHistoryItem>();
         while(await reader.ReadAsync(cancellationToken)) items.Add(new(reader.GetGuid(0),reader.GetString(1),
-            reader.GetDateTimeOffset(2),reader.GetString(3),reader.GetDecimal(4),reader.GetString(5),reader.GetInt32(7),
-            JsonSerializer.Deserialize<SupplierPaymentTenderSnapshot[]>(reader.GetString(6),Json) ?? [],
-            reader.GetGuid(8),reader.GetString(9)));
-        return new(items,query.Page,query.PageSize,total);
+            reader.GetDateTimeOffset(2),reader.GetString(3),reader.GetDecimal(4),reader.GetString(5),reader.GetInt32(6),
+            [],[],reader.GetGuid(7),reader.GetString(8)));
+        var byPayment=items.ToDictionary(item=>item.PaymentId,_=>new List<SupplierPaymentTenderSnapshot>());
+        var applications=items.ToDictionary(item=>item.PaymentId,_=>new List<SupplierPaymentHistoryApplication>());
+        await reader.NextResultAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken)) byPayment[reader.GetGuid(0)].Add(new(
+            reader.GetInt32(1),reader.GetString(2),reader.GetDecimal(3),
+            reader.IsDBNull(4)?null:reader.GetDecimal(4),reader.IsDBNull(5)?null:reader.GetGuid(5),
+            reader.IsDBNull(6)?null:reader.GetString(6),reader.IsDBNull(7)?null:reader.GetString(7)));
+        await reader.NextResultAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken)) applications[reader.GetGuid(0)].Add(new(
+            reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3)));
+        return new(items.Select(item=>item with { Payments=byPayment[item.PaymentId],Applications=applications[item.PaymentId] }).ToArray(),
+            query.Page,query.PageSize,total);
     }
 
     public async Task<PayableDetail?> GetAsync(
@@ -334,6 +361,7 @@ public sealed class SqlPayablesStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@SupplierId", (object?)query.SupplierId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Status", (object?)query.Status ?? DBNull.Value);
+        command.Parameters.AddWithValue("@OutstandingOnly", query.OutstandingOnly);
         command.Parameters.AddWithValue("@Overdue", (object?)query.Overdue ?? DBNull.Value);
         command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value);
         command.Parameters.AddWithValue("@Now", now);
@@ -478,16 +506,16 @@ public sealed class SqlPayablesStore(
         SqlConnection connection, SqlTransaction transaction, PayablesUserIdentity user,
         ConfirmSupplierPaymentRequest request, PayableSettlement settlement,
         AuralyDocumentNumberAssignment number, string idempotencyKey, byte[] requestHash,
-        string breakdownJson, DateTimeOffset now, CancellationToken cancellationToken)
+        string tendersJson, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
             INSERT dbo.SupplierPayments
               (PaymentId,BusinessId,SupplierId,WorkSessionId,DocumentSeriesId,DocumentNumber,
                DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,
-               PayloadHash,PaidAt,CurrencyCode,PaymentBreakdownJson,Notes,TotalAmount,
+               PayloadHash,PaidAt,CurrencyCode,Notes,TotalAmount,
                Status,ConfirmedByUserId,AcceptedAt)
             VALUES(@Id,@BusinessId,@SupplierId,@WorkSessionId,@SeriesId,@Number,@Prefix,@SeriesCode,
-               @Consecutive,@Key,@Hash,@PaidAt,@Currency,@Breakdown,@Notes,@Total,
+               @Consecutive,@Key,@Hash,@PaidAt,@Currency,@Notes,@Total,
                N'Accepted',@UserId,@Now);
             """, connection, transaction);
         command.Parameters.AddWithValue("@Id", request.PaymentId);
@@ -503,12 +531,25 @@ public sealed class SqlPayablesStore(
         command.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = requestHash;
         command.Parameters.AddWithValue("@PaidAt", request.PaidAt);
         command.Parameters.AddWithValue("@Currency", request.CurrencyCode);
-        command.Parameters.AddWithValue("@Breakdown", breakdownJson);
         command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
         AddMoney(command, "@Total", settlement.TotalAmount);
         command.Parameters.AddWithValue("@UserId", user.UserId);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var tenders=new SqlCommand("""
+            INSERT dbo.SupplierPaymentTenders(PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,
+              BankAccountId,Reference,Notes,CardFranchiseCode,ApprovalNumber)
+            SELECT @PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,BankAccountId,Reference,Notes,
+              CardFranchiseCode,ApprovalNumber
+            FROM OPENJSON(@Tenders) WITH(LineNumber int,MethodCode nvarchar(32),Amount decimal(19,4),
+              TenderedAmount decimal(19,4),BankAccountId uniqueidentifier,Reference nvarchar(160),
+              Notes nvarchar(500),CardFranchiseCode nvarchar(64),ApprovalNumber nvarchar(100));
+            IF @@ROWCOUNT<>@Count THROW 51215,'The payment methods were not inserted atomically.',1;
+            """,connection,transaction);
+        tenders.Parameters.AddWithValue("@PaymentId",request.PaymentId);
+        tenders.Parameters.AddWithValue("@Tenders",tendersJson);
+        tenders.Parameters.AddWithValue("@Count",request.Payments.Count);
+        await tenders.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task InsertApplicationsAsync(

@@ -18,11 +18,11 @@ public static class PayablesApi
         endpoints.MapGet(
                 "/api/commerce/v1/payables",
                 async (HttpContext context, int page, int pageSize, string? search,
-                    Guid? supplierId, string? status, bool? overdue,
+                    Guid? supplierId, string? status, bool? overdue, bool? outstandingOnly,
                     PayablesService service, CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListAsync(
                         context.User.ToPayablesIdentity(),
-                        new PayableQuery(page, pageSize, search, supplierId, status, overdue),
+                        new PayableQuery(page, pageSize, search, supplierId, status, overdue, outstandingOnly==true),
                         cancellationToken), Results.Ok))
             .RequireAuthorization("payables.user");
 

@@ -74,7 +74,7 @@ export interface CustomerPaymentAcceptance {
   idempotentReplay: boolean;
 }
 export interface CustomerPaymentHistoryPage {
-  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:CustomerPaymentTender[];customerId:string|null;customerName:string|null}>;
+  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:CustomerPaymentTender[];applications:Array<{receivableId:string;documentNumber:string;amount:number}>;customerId:string|null;customerName:string|null}>;
   page:number;pageSize:number;totalCount:number;totalPages:number;
 }
 export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number}
@@ -118,6 +118,7 @@ export const receivablesApi = {
     partySiteId?: string;
     status?: ReceivableStatus;
     overdue?: boolean;
+    outstandingOnly?: boolean;
   }) => apiClient.get<ReceivablePage>(
     "/commerce/v1/receivables",
     withPagedDefaults(params),

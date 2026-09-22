@@ -33,7 +33,8 @@ public sealed record PayableQuery(
     string? Search,
     Guid? SupplierId,
     string? Status,
-    bool? Overdue);
+    bool? Overdue,
+    bool OutstandingOnly = false);
 
 public sealed record PayableListItem(
     Guid PayableId,
@@ -139,7 +140,9 @@ public sealed record SupplierPaymentAcceptance(
 public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentNumber,
     DateTimeOffset PaidAt, string CurrencyCode, decimal TotalAmount, string Status,
     int AppliedDocumentCount, IReadOnlyList<SupplierPaymentTenderSnapshot> Payments,
+    IReadOnlyList<SupplierPaymentHistoryApplication> Applications,
     Guid? SupplierId = null, string? SupplierName = null);
+public sealed record SupplierPaymentHistoryApplication(Guid PayableId,string DocumentNumber,decimal Amount);
 public sealed record SupplierPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? SupplierId);
 public sealed record SupplierPaymentHistoryPage(IReadOnlyList<SupplierPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount)

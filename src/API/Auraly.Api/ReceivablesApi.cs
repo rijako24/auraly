@@ -10,8 +10,8 @@ public static class ReceivablesApi
     {
         endpoints.MapGet("/api/commerce/v1/receivables/customers",async(HttpContext context,int page,int pageSize,string? search,bool? overdue,ReceivablesService service,CancellationToken token)=>
             await Execute(()=>service.ListCustomersAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,overdue),token),Results.Ok)).RequireAuthorization("receivables.user");
-        endpoints.MapGet("/api/commerce/v1/receivables",async(HttpContext context,int page,int pageSize,string? search,Guid? customerId,string? status,bool? overdue,ReceivablesService service,CancellationToken token)=>
-            await Execute(()=>service.ListAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,customerId,status,overdue),token),Results.Ok)).RequireAuthorization("receivables.user");
+        endpoints.MapGet("/api/commerce/v1/receivables",async(HttpContext context,int page,int pageSize,string? search,Guid? customerId,string? status,bool? overdue,bool? outstandingOnly,ReceivablesService service,CancellationToken token)=>
+            await Execute(()=>service.ListAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,customerId,status,overdue,OutstandingOnly:outstandingOnly==true),token),Results.Ok)).RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/receivables/{receivableId:guid}",async(HttpContext context,Guid receivableId,ReceivablesService service,CancellationToken token)=>
             await Execute(async()=>{var value=await service.GetAsync(context.User.ToReceivablesIdentity(),receivableId,token);return value is null?Results.NotFound():Results.Ok(value);})).RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/customers/{customerId:guid}/credit",async(HttpContext context,Guid customerId,ReceivablesService service,CancellationToken token)=>

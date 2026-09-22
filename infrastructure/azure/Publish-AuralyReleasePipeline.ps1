@@ -402,7 +402,7 @@ function Publish-Database {
             '20260916_RemoveNonOperationalReportingSources.sql',
             '20260921_PreserveOrderItemQuantityPrecision.sql',
             '20260907_AlignReceivablesWithAccountingSource.sql',
-            '20260922_MigratePortfolioPaymentBreakdowns.sql')
+            '20260922_MigratePortfolioPaymentTenders.sql')
         if (-not $ValidateOnly) {
             foreach ($migration in $reviewedMigrations) {
                 Invoke-ReviewedPreDacpacMigration `

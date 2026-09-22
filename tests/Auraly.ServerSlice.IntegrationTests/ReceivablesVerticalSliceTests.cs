@@ -26,23 +26,55 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var receivableId=Guid.NewGuid();
         var counterpart=await AccountIdByCodeAsync("413595");
         var request=new ImportPreexistingReceivablesRequest(fixture.BusinessId,
-            [new PreexistingReceivableItemRequest(receivableId,customerId,null,partySiteId,
+            [new PreexistingReceivableItemRequest(receivableId,null,ServerSliceFixture.UniqueNit(customerId),null,
                 $"OPEN-{receivableId:N}",new DateTimeOffset(2026,8,1,9,0,0,TimeSpan.FromHours(-5)),
                 new DateTimeOffset(2026,9,1,9,0,0,TimeSpan.FromHours(-5)),125_000m,counterpart,
                 "Saldo inicial del cliente")]);
 
         using var response=await client.PostAsJsonAsync(
             "/api/commerce/v1/receivables/preexisting/import",request);
-        Assert.Equal(HttpStatusCode.Accepted,response.StatusCode);
+        Assert.True(response.StatusCode==HttpStatusCode.Accepted,
+            await response.Content.ReadAsStringAsync());
         var accepted=await response.Content.ReadFromJsonAsync<ImportPreexistingReceivablesAcceptance>();
         Assert.Equal(receivableId,Assert.Single(accepted!.ReceivableIds));
         Assert.Equal(125_000m,await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",receivableId));
+        Assert.Equal(customerId,await NullableGuidAsync(
+            "SELECT CustomerId FROM dbo.Receivables WHERE ReceivableId=@Id",receivableId));
+        Assert.Equal(partySiteId,await NullableGuidAsync(
+            "SELECT PartySiteId FROM dbo.Receivables WHERE ReceivableId=@Id",receivableId));
         Assert.Equal(ReceivablesDocumentTypes.PreexistingReceivable,await ScalarAsync<string>(
             "SELECT SourceDocumentType FROM dbo.Receivables WHERE ReceivableId=@Id",receivableId));
         Assert.Equal(0,await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE DocumentId=@Id",receivableId));
         Assert.Equal(1,await CountAsync("AccountingEntries","SourceDocumentId",receivableId));
+
+        var validId=Guid.NewGuid();
+        var invalidId=Guid.NewGuid();
+        var batch=new ImportPreexistingReceivablesRequest(fixture.BusinessId,
+            [new PreexistingReceivableItemRequest(validId,null,ServerSliceFixture.UniqueNit(customerId),null,
+                $"OPEN-{validId:N}",new DateTimeOffset(2026,8,1,9,0,0,TimeSpan.FromHours(-5)),
+                new DateTimeOffset(2026,9,1,9,0,0,TimeSpan.FromHours(-5)),25_000m,counterpart,null),
+             new PreexistingReceivableItemRequest(invalidId,null,"CLIENTE-INEXISTENTE",null,
+                $"OPEN-{invalidId:N}",new DateTimeOffset(2026,8,1,9,0,0,TimeSpan.FromHours(-5)),
+                new DateTimeOffset(2026,9,1,9,0,0,TimeSpan.FromHours(-5)),30_000m,counterpart,null)]);
+        using var rejected=await client.PostAsJsonAsync(
+            "/api/commerce/v1/receivables/preexisting/import",batch);
+        Assert.Equal(HttpStatusCode.BadRequest,rejected.StatusCode);
+        Assert.Equal(0,await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Receivables WHERE ReceivableId=@Id",validId));
+
+        var duplicateNumber=$"DUP-{Guid.NewGuid():N}";
+        var duplicateBatch=new ImportPreexistingReceivablesRequest(fixture.BusinessId,
+            [new PreexistingReceivableItemRequest(Guid.NewGuid(),null,ServerSliceFixture.UniqueNit(customerId),null,
+                duplicateNumber,new DateTimeOffset(2026,8,1,9,0,0,TimeSpan.FromHours(-5)),
+                new DateTimeOffset(2026,9,1,9,0,0,TimeSpan.FromHours(-5)),10_000m,counterpart,null),
+             new PreexistingReceivableItemRequest(Guid.NewGuid(),null,ServerSliceFixture.UniqueNit(customerId),null,
+                duplicateNumber,new DateTimeOffset(2026,8,1,9,0,0,TimeSpan.FromHours(-5)),
+                new DateTimeOffset(2026,9,1,9,0,0,TimeSpan.FromHours(-5)),20_000m,counterpart,null)]);
+        using var duplicate=await client.PostAsJsonAsync(
+            "/api/commerce/v1/receivables/preexisting/import",duplicateBatch);
+        Assert.Equal(HttpStatusCode.BadRequest,duplicate.StatusCode);
     }
 
     [Fact]
@@ -207,7 +239,10 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             Assert.NotNull(paymentHistory);
             Assert.Equal(5, paymentHistory.PageSize);
             Assert.Contains(paymentHistory.Items, item => item.PaymentId == payment.PaymentId
-                && item.AppliedDocumentCount == 1);
+                && item.AppliedDocumentCount == 1
+                && item.Applications.Count == 1
+                && item.Applications[0].ReceivableId == receivable.ReceivableId
+                && item.Applications[0].Amount == partialAmount);
 
             var returnRequest = new ConfirmSalesReturnRequest(
                 Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
@@ -476,6 +511,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             receivable.ReceivableId));
         Assert.Equal(1, await CountAsync(
             "CustomerPaymentApplications", "PaymentId", payment.PaymentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.CustomerPaymentTenders WHERE PaymentId=@Id AND MethodCode=N'Cash'",
+            payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "ReceivableTransactions", "SourceDocumentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
@@ -499,6 +537,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         }
         Assert.Equal(1, await CountAsync(
             "ReceivableTransactions", "SourceDocumentId", payment.PaymentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.CustomerPaymentTenders WHERE PaymentId=@Id",
+            payment.PaymentId));
 
         var remaining = receivable.OriginalAmount - partialAmount;
         var concurrentAmount = decimal.Round(remaining * 0.75m, 4);
