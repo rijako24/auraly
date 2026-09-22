@@ -369,7 +369,8 @@ public sealed class SqlReceivablesStore(
                   AND account.IsActive=1 AND account.AllowsPosting=1 WHERE account.AccountId IS NULL)
                   THROW 51323,N'Una cuenta contrapartida no es imputable o no pertenece al tenant.',1;
                 IF EXISTS(SELECT 1 FROM @Input i JOIN dbo.Receivables r ON r.BusinessId=@BusinessId
-                  AND (r.ReceivableId=i.ReceivableId OR r.DocumentNumber=i.DocumentNumber))
+                  AND (r.ReceivableId=i.ReceivableId OR r.DocumentNumber=i.DocumentNumber)
+                  WHERE r.ReceivableId<>i.ReceivableId OR r.SourceDocumentType<>N'PreexistingReceivable')
                   THROW 51324,N'La factura ya existe en cartera.',1;
                 SELECT i.ReceivableId,c.CustomerId,site.PartySiteId FROM @Input i CROSS APPLY(SELECT TOP(1)c.CustomerId,c.PartyId FROM dbo.Customers c
                   JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.BusinessId=@BusinessId AND c.IsActive=1
@@ -396,6 +397,11 @@ public sealed class SqlReceivablesStore(
                 AccountingJobRequirement.PreserveCommercialEffects,token);
             await transaction.CommitAsync(token);
             return new(payloads.Length,payloads.Select(x=>x.ReceivableId).ToArray());
+        }
+        catch(SqlException error) when(error.Number==51732)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new ReceivablesConflictException("Una factura del lote ya fue aceptada con datos distintos.");
         }
         catch{await transaction.RollbackAsync(CancellationToken.None);throw;}
     }

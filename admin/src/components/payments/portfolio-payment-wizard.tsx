@@ -34,6 +34,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
   const [selected,setSelected]=useState<Record<string,string>>({});
   const [selectedLimits,setSelectedLimits]=useState<Record<string,number>>({});
   const [tenders,setTenders]=useState<Tender[]>([{methodCode:"Cash",amount:"",bankAccountId:"",reference:"",cardFranchiseCode:"",approvalNumber:""}]);
+  const pendingAttempt=useRef<{fingerprint:string;paymentId:string;paidAt:string;sessionId:string|null}|null>(null);
   const role=direction==="receivable"?"Customer":"Supplier";
   const partyId=direction==="receivable"?party?.customerId:party?.supplierId;
   useEffect(()=>{if(open){const party=initialPartyRef.current;const invoice=initialInvoiceRef.current;setStep(1);setParty(party??null);setInvoicePage(1);setSelected(invoice?{[invoice.id]:String(invoice.outstanding)}:{});setSelectedLimits(invoice?{[invoice.id]:invoice.outstanding}:{});setTenders([{methodCode:"Cash",amount:"",bankAccountId:"",reference:"",cardFranchiseCode:"",approvalNumber:""}]);}},[open]);
@@ -48,13 +49,19 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
   useEffect(()=>{if(step!==2)return;setTenders(current=>{if(allocations.length>1)return [{...current[0],amount:String(total)}];if(current.length===1&&!current[0].amount)return [{...current[0],amount:String(total)}];return current;});},[step,allocations.length,total]);
   const mutation=useMutation({mutationFn:async()=>{
     if(!businessId||!partyId)throw new Error("Falta el tercero.");
-    const sessionId=workSessionId===undefined?(direction==="receivable"?await receivablesApi.currentWorkSession(businessId):await payablesApi.currentWorkSession(businessId)).workSessionId:workSessionId;
-    const paymentId=crypto.randomUUID();
-    if(direction==="receivable"){const request={paymentId,businessId,customerId:partyId,workSessionId:sessionId??null,paidAt:new Date().toISOString(),currencyCode:"COP",notes:null,allocations:allocations.map(x=>({receivableId:x.id,amount:x.amount})),payments:tenders.map(toCustomerTender)};return edgeClient?edgeClient.confirmPortfolioReceivable(request,`receivable-payment-${paymentId}`):receivablesApi.confirmPayment(request,`receivable-payment-${paymentId}`);}
-    const request={paymentId,businessId,supplierId:partyId,workSessionId:sessionId??null,paidAt:new Date().toISOString(),currencyCode:"COP",notes:null,allocations:allocations.map(x=>({payableId:x.id,amount:x.amount})),payments:tenders.map(toSupplierTender)};return edgeClient?edgeClient.confirmPortfolioPayable(request,`payable-payment-${paymentId}`):payablesApi.confirmPayment(request,`payable-payment-${paymentId}`);
-  },onSuccess:accepted=>{toast.success(`${accepted.documentNumber} quedó registrado.`);onOpenChange(false);onCompleted?.();},onError:error=>toast.error(error instanceof Error?error.message:"No fue posible registrar el movimiento.")});
+    const fingerprint=JSON.stringify({direction,businessId,partyId,workSessionId,allocations,tenders});
+    let attempt=pendingAttempt.current;
+    if(!attempt||attempt.fingerprint!==fingerprint){
+      const sessionId=workSessionId===undefined?(direction==="receivable"?await receivablesApi.currentWorkSession(businessId):await payablesApi.currentWorkSession(businessId)).workSessionId:workSessionId;
+      attempt={fingerprint,paymentId:crypto.randomUUID(),paidAt:new Date().toISOString(),sessionId:sessionId??null};
+      pendingAttempt.current=attempt;
+    }
+    const {paymentId,paidAt,sessionId}=attempt;
+    if(direction==="receivable"){const request={paymentId,businessId,customerId:partyId,workSessionId:sessionId,paidAt,currencyCode:"COP",notes:null,allocations:allocations.map(x=>({receivableId:x.id,amount:x.amount})),payments:tenders.map(toCustomerTender)};return edgeClient?edgeClient.confirmPortfolioReceivable(request,`receivable-payment-${paymentId}`):receivablesApi.confirmPayment(request,`receivable-payment-${paymentId}`);}
+    const request={paymentId,businessId,supplierId:partyId,workSessionId:sessionId,paidAt,currencyCode:"COP",notes:null,allocations:allocations.map(x=>({payableId:x.id,amount:x.amount})),payments:tenders.map(toSupplierTender)};return edgeClient?edgeClient.confirmPortfolioPayable(request,`payable-payment-${paymentId}`):payablesApi.confirmPayment(request,`payable-payment-${paymentId}`);
+  },onSuccess:accepted=>{pendingAttempt.current=null;toast.success(`${accepted.documentNumber} quedó registrado.`);onOpenChange(false);onCompleted?.();},onError:error=>toast.error(error instanceof Error?error.message:"No fue posible registrar el movimiento.")});
   const validateStepOne=()=>{if(!partyId||allocations.length===0){toast.error("Selecciona un tercero y al menos una factura.");return false;}if(allocations.some(x=>x.amount>(selectedLimits[x.id]??0))){toast.error("Ningún abono puede superar el saldo de la factura.");return false;}return true;};
-  const canPay=total>0&&Math.abs(tenderTotal-total)<0.005&&tenders.every(validTender)&&!(allocations.length>1&&tenders.length>1);
+  const canPay=total>0&&Number(tenderTotal.toFixed(4))===Number(total.toFixed(4))&&tenders.every(validTender)&&!(allocations.length>1&&tenders.length>1);
   const methods=direction==="receivable"?receivableMethods:payableMethods;
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="flex max-h-[92dvh] w-[96vw] max-w-4xl flex-col overflow-hidden p-0">
     <DialogHeader className="border-b px-6 py-5"><DialogTitle>{direction==="receivable"?"Abono a cartera":"Pago a proveedores"}</DialogTitle><DialogDescription>Paso {step} de 2 · {step===1?"Selecciona las facturas y el valor de cada una.":"Confirma cómo se realiza el pago."}</DialogDescription></DialogHeader>

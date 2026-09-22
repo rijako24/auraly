@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef,useState } from "react";
 import { useMutation,useQuery } from "@tanstack/react-query";
 import { Download,FileUp,Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -18,9 +18,15 @@ export function PreexistingReceivablesImport({businessId,open,onOpenChange,onCom
   const [accountId,setAccountId]=useState("");
   const [rows,setRows]=useState<ParsedPreexistingReceivable[]>([]);
   const [fileName,setFileName]=useState("");
+  const pendingImport=useRef<{fingerprint:string;request:ReturnType<typeof buildPreexistingReceivablesImport>}|null>(null);
   const mutation=useMutation({
-    mutationFn:()=>receivablesApi.importPreexisting(buildPreexistingReceivablesImport(businessId,accountId,rows)),
-    onSuccess:value=>{toast.success(`${value.acceptedCount} facturas quedaron aceptadas por el motor contable.`);onOpenChange(false);setRows([]);setFileName("");onCompleted();},
+    mutationFn:()=>{
+      const fingerprint=JSON.stringify({businessId,accountId,rows});
+      if(pendingImport.current?.fingerprint!==fingerprint)
+        pendingImport.current={fingerprint,request:buildPreexistingReceivablesImport(businessId,accountId,rows)};
+      return receivablesApi.importPreexisting(pendingImport.current.request);
+    },
+    onSuccess:value=>{pendingImport.current=null;toast.success(`${value.acceptedCount} facturas quedaron aceptadas por el motor contable.`);onOpenChange(false);setRows([]);setFileName("");onCompleted();},
     onError:error=>toast.error(error instanceof Error?error.message:"No fue posible importar la cartera.")
   });
   async function read(file:File|null){

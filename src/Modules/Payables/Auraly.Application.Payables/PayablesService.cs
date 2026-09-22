@@ -107,6 +107,8 @@ public sealed class PayablesService(
             throw new PayablesValidationException("CurrencyCode is required.");
         if (request.Allocations is null || request.Payments is null)
             throw new PayablesValidationException("Allocations and payments are required.");
+        if (request.Allocations.Any(item => item is null) || request.Payments.Any(item => item is null))
+            throw new PayablesValidationException("Allocations and payments cannot contain empty rows.");
         if (string.IsNullOrWhiteSpace(idempotencyKey))
             throw new PayablesValidationException("Idempotency-Key is required.");
         if (idempotencyKey.Length > 160)

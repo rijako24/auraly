@@ -115,6 +115,31 @@ public sealed class OnlineSalesOrderCheckoutLineMapperTests
     }
 
     [Fact]
+    public void DocumentUpdate_RaisesThePublicPriceWithoutCreatingADiscount()
+    {
+        var evaluation = SaleLineMonetaryPolicy.EvaluateDocumentUpdate(
+            new(
+                Quantity: 2m,
+                PublicUnitPrice: 10_000m,
+                PromotionDiscount: 0m,
+                DocumentUnitCost: 7_000m,
+                TaxRate: 19m,
+                AllowsDocumentCostOverride: false),
+            new(
+                Description: "Producto",
+                PublicUnitPrice: 13_000m,
+                Discount: 0m,
+                DocumentUnitCost: 7_000m));
+
+        Assert.True(evaluation.IsValid);
+        Assert.True(evaluation.Update!.PriceChanged);
+        Assert.Equal(13_000m, evaluation.Update.PublicUnitPrice);
+        Assert.Equal(0m, evaluation.Update.Discount);
+        Assert.Equal(26_000m, evaluation.Update.PublicLineTotal);
+        Assert.Equal(10_924.37m, evaluation.Update.UntaxedUnitPrice);
+    }
+
+    [Fact]
     public void DocumentUpdate_UsesTheSameDiscountLimitForEveryPersistenceEngine()
     {
         var evaluation = SaleLineMonetaryPolicy.EvaluateDocumentUpdate(

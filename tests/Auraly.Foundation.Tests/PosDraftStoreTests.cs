@@ -213,6 +213,31 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
+    public async Task Document_line_edit_can_raise_a_stocked_products_public_price_without_a_discount()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var draft = await store.AddOrIncrementLineAsync(
+                scope,
+                Line(quantity: 2m) with { DocumentUnitCost = 7_000m });
+            var original = Assert.Single(draft.Lines);
+
+            var updated = await store.UpdateLinesAsync(
+                draft.DraftId,
+                [new(original.LineId, original.Description, 13_000m, 0m, 7_000m)]);
+
+            var line = Assert.Single(updated.Lines);
+            Assert.Equal(13_000m, line.PublicUnitPrice);
+            Assert.Equal(0m, line.Discount);
+            Assert.Equal(26_000m, line.PublicLineTotal);
+            Assert.Equal(26_000m, updated.PayableAmount);
+            Assert.True(line.IsPriceOverridden);
+            Assert.Equal("Manual", line.PriceSource);
+            Assert.Null(line.PriceChannelId);
+        });
+    }
+
+    [Fact]
     public async Task Captured_document_cost_is_frozen_when_the_product_manages_inventory()
     {
         await WithStoreAsync(async (store, _, scope, _) =>

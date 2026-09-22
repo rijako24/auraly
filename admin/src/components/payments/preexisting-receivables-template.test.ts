@@ -32,7 +32,9 @@ test("upload identifies invalid rows, dates, balances and due dates",()=>{
     "123;FAC-1;2026-02-30;2026-03-10;50;",
     "123;FAC-1;2026-03-10;2026-02-10;50;",
     "123;FAC-1;2026-01-10;2026-02-10;0;",
-    "123;FAC-1;2026-01-10;2026-02-10;abc;"
+    "123;FAC-1;2026-01-10;2026-02-10;abc;",
+    "123;FAC-1;2026-01-10;2026-02-10;50.12345;",
+    `123;${"F".repeat(65)};2026-01-10;2026-02-10;50;`
   ]) assert.throws(()=>row(value),/fila 2 contiene datos inválidos/);
 });
 

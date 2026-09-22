@@ -16,31 +16,6 @@ public sealed partial class SqlWorkSessionStore(
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public async Task<IReadOnlyList<DeviceWorkSessionSnapshot>> ReadOpenForEnrollmentAsync(
-        Guid tenantId, Guid businessId, Guid deviceId, CancellationToken cancellationToken)
-    {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            SELECT session.WorkSessionId,session.UserId,session.OpenedAt
-            FROM dbo.WorkSessions session
-            JOIN dbo.EnrolledDevices device ON device.DeviceId=session.DeviceId
-              AND device.TenantId=session.TenantId AND device.IsActive=1
-            JOIN dbo.AppUsers person ON person.UserId=session.UserId
-              AND person.TenantId=session.TenantId AND person.IsActive=1
-            WHERE session.TenantId=@TenantId AND session.BusinessId=@BusinessId
-              AND session.DeviceId=@DeviceId AND session.Status=N'Open';
-            """, connection);
-        command.Parameters.AddWithValue("@TenantId", tenantId);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@DeviceId", deviceId);
-        var result = new List<DeviceWorkSessionSnapshot>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            result.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetDateTimeOffset(2)));
-        return result;
-    }
-
     public async Task<WorkSessionView?> CurrentAsync(
         WorkSessionIdentity identity,
         CancellationToken cancellationToken)

@@ -34,7 +34,6 @@ public enum SaleLineDocumentUpdateError
 {
     InvalidValues,
     FrozenInventoryCost,
-    NonGenericPriceChange,
     GenericProductDiscount,
     DiscountExceedsLineValue
 }
@@ -67,10 +66,6 @@ public static class SaleLineMonetaryPolicy
             !current.AllowsDocumentCostOverride)
             return Invalid(SaleLineDocumentUpdateError.FrozenInventoryCost,
                 "El costo de inventario de la línea queda congelado cuando se agrega el producto.");
-        if (!current.AllowsDocumentCostOverride &&
-            requested.PublicUnitPrice != current.PublicUnitPrice)
-            return Invalid(SaleLineDocumentUpdateError.NonGenericPriceChange,
-                "El precio público base solo se puede reemplazar en un producto genérico.");
         if (current.AllowsDocumentCostOverride && requested.Discount != 0)
             return Invalid(SaleLineDocumentUpdateError.GenericProductDiscount,
                 "Un producto genérico siempre tiene descuento cero.");

@@ -1186,7 +1186,8 @@ export default function PosPage() {
   useEffect(()=>{
     const handle=(event:KeyboardEvent)=>{
       if(!event.ctrlKey||event.altKey||event.metaKey||event.shiftKey)return;
-      const key=event.key.toLowerCase();if(key!=="f"&&key!=="g")return;
+      const key=event.key.toLowerCase();if((key!=="f"&&key!=="g")||
+        (key==="f"&&!canReceivePortfolio)||(key==="g"&&!canPayPortfolio))return;
       event.preventDefault();event.stopPropagation();
       if(!serverConnected||!workstation.workSessionId){setMessage("Esta operación requiere conexión con Auraly y una sesión abierta");return;}
       if(busy||paymentOpen||portfolioReceivableOpen||portfolioPayableOpen)return;

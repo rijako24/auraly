@@ -102,8 +102,10 @@ public sealed class ReceivablesService(
             throw new ReceivablesValidationException("Allocations and payments are required.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
             throw new ReceivablesValidationException("A valid Idempotency-Key is required.");
-        var currency = request.CurrencyCode.Trim().ToUpperInvariant();
+        var currency = request.CurrencyCode?.Trim().ToUpperInvariant();
         if (currency != "COP") throw new ReceivablesValidationException("Only COP is accepted.");
+        if (request.Allocations.Any(x => x is null) || request.Payments.Any(x => x is null))
+            throw new ReceivablesValidationException("Allocations and payments cannot contain empty rows.");
         ReceivableSettlement settlement;
         try { settlement = ReceivableSettlement.Create(request.Allocations.Select(x => new ReceivableAllocation(x.ReceivableId, x.Amount))); }
         catch (ArgumentException ex) { throw new ReceivablesValidationException(ex.Message, ex); }
@@ -132,7 +134,8 @@ public sealed class ReceivablesService(
         Require(user,ReceivablesPermissionCodes.ManageCredit);
         if(request.BusinessId!=user.BusinessId)throw new ReceivablesForbiddenException("The portfolio belongs to another business.");
         if(request.Items is null||request.Items.Count is <1 or >100)throw new ReceivablesValidationException("Import between 1 and 100 receivables per batch.");
-        if(request.Items.Any(x=>x.ReceivableId==Guid.Empty||((x.CustomerId is null||x.CustomerId==Guid.Empty)&&string.IsNullOrWhiteSpace(x.CustomerIdentification))||x.CounterpartAccountId==Guid.Empty||x.Amount<=0||x.IssuedAt==default||x.DueDate==default||string.IsNullOrWhiteSpace(x.DocumentNumber)))throw new ReceivablesValidationException("Every portfolio row must contain customer, invoice, dates, amount and counterpart account.");
+        if(request.Items.Any(x=>x is null))throw new ReceivablesValidationException("Portfolio rows cannot be empty.");
+        if(request.Items.Any(x=>x.ReceivableId==Guid.Empty||((x.CustomerId is null||x.CustomerId==Guid.Empty)&&string.IsNullOrWhiteSpace(x.CustomerIdentification))||x.CounterpartAccountId==Guid.Empty||x.Amount<=0||x.Amount>=1000000000000000m||x.Amount!=decimal.Round(x.Amount,4)||x.IssuedAt==default||x.DueDate==default||x.DueDate<x.IssuedAt||string.IsNullOrWhiteSpace(x.DocumentNumber)||x.DocumentNumber.Trim().Length>64))throw new ReceivablesValidationException("Every portfolio row must contain a valid customer, invoice, dates, amount and counterpart account.");
         var normalized=request with { Items=request.Items.Select(x=>x with { DocumentNumber=x.DocumentNumber.Trim(),CustomerIdentification=Normalize(x.CustomerIdentification,64),Notes=Normalize(x.Notes,500) }).ToArray() };
         var result=await store.ImportPreexistingAsync(user,normalized,token);
         foreach(var id in result.ReceivableIds)await accounting.RequestPostingAsync(user.BusinessId,id,ReceivablesDocumentTypes.PreexistingReceivable,token);

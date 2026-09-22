@@ -1,9 +1,8 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   payablesApi,
-  type ConfirmSupplierPaymentRequest,
   type PayableStatus,
 } from "@/services/api/payables";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -32,21 +31,5 @@ export function usePayableDetail(payableId?: string) {
     queryKey: ["payable", businessId, payableId],
     queryFn: () => payablesApi.get(payableId!),
     enabled: !!businessId && !!payableId,
-  });
-}
-
-export function useConfirmSupplierPayment() {
-  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (request: ConfirmSupplierPaymentRequest) =>
-      payablesApi.confirmPayment(request, `payable-payment-${request.paymentId}`),
-    onSuccess: (_, request) => {
-      request.allocations.forEach((allocation) =>
-        queryClient.invalidateQueries({
-          queryKey: ["payable", businessId, allocation.payableId],
-        }),
-      );
-    },
   });
 }

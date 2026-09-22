@@ -1,9 +1,8 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   receivablesApi,
-  type ConfirmCustomerPaymentRequest,
   type ReceivableStatus,
 } from "@/services/api/receivables";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -32,19 +31,5 @@ export function useReceivableDetail(receivableId?: string) {
     queryKey: ["receivable", businessId, receivableId],
     queryFn: () => receivablesApi.get(receivableId!),
     enabled: !!businessId && !!receivableId,
-  });
-}
-
-export function useConfirmCustomerPayment() {
-  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (request: ConfirmCustomerPaymentRequest) =>
-      receivablesApi.confirmPayment(request, `receivable-payment-${request.paymentId}`),
-    onSuccess: (_, request) => {
-      request.allocations.forEach(({ receivableId }) =>
-        client.invalidateQueries({ queryKey: ["receivable", businessId, receivableId] }),
-      );
-    },
   });
 }

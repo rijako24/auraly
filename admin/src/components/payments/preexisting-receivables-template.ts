@@ -21,10 +21,11 @@ export function parsePreexistingReceivablesCsv(text:string):ParsedPreexistingRec
   const index=(name:string)=>header.indexOf(name);
   return lines.slice(1).map((line,offset)=>{
     const cells=line.split(";").map(value=>value.trim());
-    const amount=Number(cells[index("saldo")]);
+    const rawAmount=cells[index("saldo")];const amount=Number(rawAmount);
     const issuedAt=cells[index("fecha_emision")],dueDate=cells[index("fecha_vencimiento")];
     if(!cells[index("identificacion_cliente")]||!cells[index("numero_factura")]||
-       !validDate(issuedAt)||!validDate(dueDate)||dueDate<issuedAt||!Number.isFinite(amount)||amount<=0)
+       cells[index("numero_factura")].length>64||!validDate(issuedAt)||!validDate(dueDate)||dueDate<issuedAt||
+       !/^\d+(?:\.\d{1,4})?$/.test(rawAmount)||!Number.isFinite(amount)||amount<=0||amount>=1_000_000_000_000_000)
       throw new Error(`La fila ${offset+2} contiene datos inválidos.`);
     return {identification:cells[index("identificacion_cliente")],documentNumber:cells[index("numero_factura")],
       issuedAt,dueDate,amount,notes:index("notas")>=0?cells[index("notas")]||null:null};

@@ -49,6 +49,18 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE DocumentId=@Id",receivableId));
         Assert.Equal(1,await CountAsync("AccountingEntries","SourceDocumentId",receivableId));
 
+        using var replay=await client.PostAsJsonAsync(
+            "/api/commerce/v1/receivables/preexisting/import",request);
+        Assert.Equal(HttpStatusCode.Accepted,replay.StatusCode);
+        Assert.Equal(1,await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Receivables WHERE ReceivableId=@Id",receivableId));
+        Assert.Equal(1,await CountAsync("AccountingEntries","SourceDocumentId",receivableId));
+
+        var changed=request with { Items=[Assert.Single(request.Items) with { Amount=126_000m }] };
+        using var changedResponse=await client.PostAsJsonAsync(
+            "/api/commerce/v1/receivables/preexisting/import",changed);
+        Assert.Equal(HttpStatusCode.Conflict,changedResponse.StatusCode);
+
         var validId=Guid.NewGuid();
         var invalidId=Guid.NewGuid();
         var batch=new ImportPreexistingReceivablesRequest(fixture.BusinessId,
