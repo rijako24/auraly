@@ -678,7 +678,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Stocked_product_preserves_inventory_cost_when_document_lines_are_applied()
+    public async Task Stocked_product_accepts_a_higher_public_price_and_preserves_inventory_cost()
     {
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.SalesCreate,
@@ -712,17 +712,38 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         var line = Assert.Single(captured.Lines);
         Assert.False(line.AllowsDocumentCostOverride);
 
-        using var update = Mutation(
+        using var raisePrice = Mutation(
             HttpMethod.Put,
             $"/api/commerce/v1/pos/drafts/{captured.DraftId:D}/lines",
             new UpdateOnlineSalesDraftLinesRequest(
                 [new(
                     line.LineId,
                     line.Description,
-                    line.UnitPrice,
-                    line.Discount,
-                    line.DocumentUnitCost + 1_000m)],
+                    line.PublicUnitPrice + 3_000m,
+                    0m,
+                    line.DocumentUnitCost)],
                 captured.Version),
+            Guid.NewGuid().ToString("D"));
+        using var raisePriceResponse = await client.SendAsync(raisePrice);
+        raisePriceResponse.EnsureSuccessStatusCode();
+        var repriced = await raisePriceResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>()
+            ?? throw new InvalidOperationException("The line update response was empty.");
+        var repricedLine = Assert.Single(repriced.Lines);
+        Assert.Equal(line.PublicUnitPrice + 3_000m, repricedLine.PublicUnitPrice);
+        Assert.Equal(0m, repricedLine.Discount);
+        Assert.Equal("Manual", repricedLine.PriceSource);
+
+        using var update = Mutation(
+            HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{repriced.DraftId:D}/lines",
+            new UpdateOnlineSalesDraftLinesRequest(
+                [new(
+                    repricedLine.LineId,
+                    repricedLine.Description,
+                    repricedLine.PublicUnitPrice,
+                    repricedLine.Discount,
+                    repricedLine.DocumentUnitCost + 1_000m)],
+                repriced.Version),
             Guid.NewGuid().ToString("D"));
         using var updateResponse = await client.SendAsync(update);
         Assert.Equal(HttpStatusCode.BadRequest, updateResponse.StatusCode);
@@ -731,8 +752,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 
         using var cleanup = Mutation(
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{captured.DraftId:D}/reset",
-            new ResetOnlineSalesDraftRequest(captured.Version),
+            $"/api/commerce/v1/pos/drafts/{repriced.DraftId:D}/reset",
+            new ResetOnlineSalesDraftRequest(repriced.Version),
             Guid.NewGuid().ToString("D"));
         using var cleanupResponse = await client.SendAsync(cleanup);
         cleanupResponse.EnsureSuccessStatusCode();
