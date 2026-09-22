@@ -23,25 +23,39 @@ public sealed class SqlPayablesStore(
     {
         await using var connection=connections.Create();await connection.OpenAsync(token);
         await using var command=new SqlCommand("""
-            WITH Portfolio AS(
+            WITH Paid AS(
+              SELECT application.PayableId,SUM(application.Amount) PaidAmount
+              FROM dbo.SupplierPaymentApplications application
+              JOIN dbo.Payables scoped ON scoped.PayableId=application.PayableId
+              WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
+              GROUP BY application.PayableId),
+            Portfolio AS(
               SELECT p.SupplierId,s.Name SupplierName,COALESCE(s.Identification,N'') Identification,
                 COUNT(*) InvoiceCount,SUM(p.OriginalAmount) OriginalAmount,
-                SUM(p.OriginalAmount-p.OutstandingAmount) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
+                SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
                 SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount
               FROM dbo.Payables p JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
               JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
+              LEFT JOIN Paid paid ON paid.PayableId=p.PayableId
               WHERE p.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND (@Search IS NULL OR s.Name LIKE N'%' + @Search + N'%' OR s.Identification LIKE N'%' + @Search + N'%')
               GROUP BY p.SupplierId,s.Name,s.Identification)
             SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0)
             FROM Portfolio WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0) OR (@Overdue=0 AND OverdueAmount=0);
-            WITH Portfolio AS(
+            WITH Paid AS(
+              SELECT application.PayableId,SUM(application.Amount) PaidAmount
+              FROM dbo.SupplierPaymentApplications application
+              JOIN dbo.Payables scoped ON scoped.PayableId=application.PayableId
+              WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
+              GROUP BY application.PayableId),
+            Portfolio AS(
               SELECT p.SupplierId,s.Name SupplierName,COALESCE(s.Identification,N'') Identification,
                 COUNT(*) InvoiceCount,SUM(p.OriginalAmount) OriginalAmount,
-                SUM(p.OriginalAmount-p.OutstandingAmount) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
+                SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
                 SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount
               FROM dbo.Payables p JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
               JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
+              LEFT JOIN Paid paid ON paid.PayableId=p.PayableId
               WHERE p.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND (@Search IS NULL OR s.Name LIKE N'%' + @Search + N'%' OR s.Identification LIKE N'%' + @Search + N'%')
               GROUP BY p.SupplierId,s.Name,s.Identification)

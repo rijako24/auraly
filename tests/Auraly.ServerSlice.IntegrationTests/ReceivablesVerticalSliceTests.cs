@@ -593,6 +593,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var (customerId, userId, partySiteId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
             CommercePermissionCodes.SalesCreate,
+            ReceivablesPermissionCodes.Read,
             ReceivablesPermissionCodes.ManageCredit,
             SalesReturnPermissionCodes.Read,
             ReceivablesPermissionCodes.RegisterPayment,
@@ -664,6 +665,14 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(0, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.CustomerCredits WHERE SourceReturnId=@Id",
             request.ReturnId));
+        using (var portfolioResponse=await client.GetAsync(
+                   $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&search={ServerSliceFixture.UniqueNit(customerId)}"))
+        {
+            portfolioResponse.EnsureSuccessStatusCode();
+            var portfolio=await portfolioResponse.Content.ReadFromJsonAsync<CustomerPortfolioPage>();
+            Assert.Equal(paidBeforeReturn,Assert.Single(portfolio!.Items,
+                item=>item.CustomerId==customerId).PaidAmount);
+        }
 
         var fullyPaidRequest = request with
         {

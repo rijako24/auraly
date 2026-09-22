@@ -147,3 +147,7 @@ CREATE TABLE [dbo].[CustomerPaymentApplications]
     CONSTRAINT [CK_CustomerPaymentApplications_Amount] CHECK ([Amount] > 0)
 );
 GO
+CREATE INDEX [IX_CustomerPaymentApplications_Receivable_Applied]
+    ON [dbo].[CustomerPaymentApplications] ([ReceivableId], [AppliedAt])
+    INCLUDE ([PaymentId], [Amount]);
+GO

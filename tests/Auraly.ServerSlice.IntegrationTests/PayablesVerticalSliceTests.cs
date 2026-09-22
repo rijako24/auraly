@@ -169,6 +169,23 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal(0, await CountAsync(
             "SupplierPayments", "PaymentId", overpayment.PaymentId));
+
+        async Task<SupplierPortfolioItem> SupplierPortfolioAsync()
+        {
+            var page=await client.GetFromJsonAsync<SupplierPortfolioPage>(
+                "/api/commerce/v1/payables/suppliers?page=1&pageSize=100");
+            return Assert.Single(page!.Items,item=>item.SupplierId==fixture.SupplierId);
+        }
+        var paidBeforeAdjustment=(await SupplierPortfolioAsync()).PaidAmount;
+        await using (var connection=new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var adjustment=new SqlCommand(
+                "UPDATE dbo.Payables SET OutstandingAmount=OutstandingAmount-1 WHERE PayableId=@Id",connection);
+            adjustment.Parameters.AddWithValue("@Id",payableId);
+            Assert.Equal(1,await adjustment.ExecuteNonQueryAsync());
+        }
+        Assert.Equal(paidBeforeAdjustment,(await SupplierPortfolioAsync()).PaidAmount);
     }
 
     [Fact]

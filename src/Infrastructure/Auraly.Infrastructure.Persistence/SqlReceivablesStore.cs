@@ -24,16 +24,23 @@ public sealed class SqlReceivablesStore(
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token);
         await using var command=new SqlCommand("""
-            WITH Portfolio AS(
+            WITH Paid AS(
+              SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
+              FROM dbo.CustomerPaymentApplications application
+              JOIN dbo.Receivables scoped ON scoped.ReceivableId=application.ReceivableId
+              WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
+              GROUP BY application.ReceivableId),
+            Portfolio AS(
               SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                 COALESCE(p.Identification,N'') Identification,COUNT(*) InvoiceCount,
-                SUM(r.OriginalAmount) OriginalAmount,SUM(r.OriginalAmount-r.OutstandingAmount) PaidAmount,
+                SUM(r.OriginalAmount) OriginalAmount,SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,
                 SUM(r.OutstandingAmount) OutstandingAmount,
                 SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN r.OutstandingAmount ELSE 0 END) OverdueAmount
               FROM dbo.Receivables r
               JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
               JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
               JOIN dbo.Parties p ON p.PartyId=c.PartyId
+              LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId
               WHERE r.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND (@Search IS NULL OR p.DisplayName LIKE N'%' + @Search + N'%'
                   OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%')
@@ -41,16 +48,23 @@ public sealed class SqlReceivablesStore(
             SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0)
             FROM Portfolio WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0)
               OR (@Overdue=0 AND OverdueAmount=0);
-            WITH Portfolio AS(
+            WITH Paid AS(
+              SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
+              FROM dbo.CustomerPaymentApplications application
+              JOIN dbo.Receivables scoped ON scoped.ReceivableId=application.ReceivableId
+              WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
+              GROUP BY application.ReceivableId),
+            Portfolio AS(
               SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                 COALESCE(p.Identification,N'') Identification,COUNT(*) InvoiceCount,
-                SUM(r.OriginalAmount) OriginalAmount,SUM(r.OriginalAmount-r.OutstandingAmount) PaidAmount,
+                SUM(r.OriginalAmount) OriginalAmount,SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,
                 SUM(r.OutstandingAmount) OutstandingAmount,
                 SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN r.OutstandingAmount ELSE 0 END) OverdueAmount
               FROM dbo.Receivables r
               JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
               JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
               JOIN dbo.Parties p ON p.PartyId=c.PartyId
+              LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId
               WHERE r.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND (@Search IS NULL OR p.DisplayName LIKE N'%' + @Search + N'%'
                   OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%')
