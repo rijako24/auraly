@@ -326,7 +326,7 @@ public sealed class OnlineSalesCheckoutService(
                 "La factura no superó la validación fiscal interna y no fue enviada a la DIAN. " +
                 "Consulta el documento fiscal antes de volver a facturar el pedido.");
         return new(
-            OnlineSalesReceiptMapper.From(prepared.Request, reception.Status),
+            SalesInvoicePresentationMapper.From(prepared.Request, reception.Status),
             prepared.IsReplay || reception.IsDuplicate);
     }
 
@@ -379,7 +379,7 @@ public sealed class OnlineSalesCheckoutService(
                 "La factura no superó la validación fiscal interna y no fue enviada a la DIAN. " +
                 "Consulta el documento fiscal antes de volver a facturar el pedido.");
         return new CompleteOnlineSalesDraftResponse(
-            OnlineSalesReceiptMapper.From(prepared.Request, reception.Status),
+            SalesInvoicePresentationMapper.From(prepared.Request, reception.Status),
             prepared.NextDraft,
             prepared.IsReplay || reception.IsDuplicate);
     }

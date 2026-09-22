@@ -9,7 +9,7 @@ BEGIN
            fiscal.FiscalNumber,fiscal.IssuedAt,sale.PayableAmount,
            signedXml.Content,applicationResponse.Content,
            attachedDocument.Content,attachedDocument.FileName,
-           graphicalRepresentation.Content,graphicalRepresentation.FileName,
+           CAST(NULL AS VARBINARY(MAX)),CAST(NULL AS NVARCHAR(256)),
            issuer.CertificateProvider,issuer.CertificateKeyReference,
            issuer.CertificateThumbprint,issuer.TestSetId,statusResponse.Content,
            COALESCE((SELECT payment.MethodCode,payment.Amount,payment.Reference,
@@ -19,7 +19,9 @@ BEGIN
                      ORDER BY payment.PaymentNumber FOR JSON PATH),N'[]') AS PaymentsJson,
            sale.CreditAmount,
            JSON_QUERY(payload.PayloadJson,'$.commercialSnapshot.withholding') AS WithholdingJson,
-           sale.CreditDueDate
+           sale.CreditDueDate,
+           COALESCE(payload.PayloadJson,serviceSnapshot.SnapshotJson) AS SnapshotJson,
+           sale.DocumentType
     FROM dbo.FiscalDocuments fiscal
     JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
      AND business.TenantId=@TenantId
@@ -28,6 +30,8 @@ BEGIN
     LEFT JOIN dbo.DocumentProcessingPayloads payload
       ON payload.DocumentId=sale.DocumentId AND payload.DocumentType=sale.DocumentType
      AND payload.BusinessId=sale.BusinessId
+    LEFT JOIN sales.SalesDocumentServiceFiscalSnapshots serviceSnapshot
+      ON serviceSnapshot.DocumentId=sale.DocumentId
     JOIN dbo.FiscalDocumentProcesses process ON process.DocumentId=fiscal.DocumentId
      AND process.BusinessId=fiscal.BusinessId
     JOIN dbo.FiscalIssuerConfigurations issuer
@@ -49,12 +53,6 @@ BEGIN
         AND artifact.ArtifactType=N'SignedAttachedDocument'
       ORDER BY artifact.ArtifactVersion DESC) attachedDocument
     OUTER APPLY(
-      SELECT TOP(1) artifact.Content,artifact.FileName
-      FROM dbo.FiscalArtifacts artifact
-      WHERE artifact.DocumentId=fiscal.DocumentId
-        AND artifact.ArtifactType=N'GraphicalRepresentationPdf'
-      ORDER BY artifact.ArtifactVersion DESC) graphicalRepresentation
-    OUTER APPLY(
       SELECT TOP(1) artifact.Content
       FROM dbo.FiscalArtifacts artifact
       WHERE artifact.DocumentId=fiscal.DocumentId
@@ -64,6 +62,7 @@ BEGIN
       AND fiscal.DeliveryOutboxMessageId=@MessageId
       AND fiscal.FiscalStatus=N'DianAccepted'
       AND fiscal.DeliveredAt IS NULL
+      AND COALESCE(payload.PayloadJson,serviceSnapshot.SnapshotJson) IS NOT NULL
       AND NULLIF(LTRIM(RTRIM(fiscal.DeliveryEmail)),N'') IS NOT NULL;
 END;
 GO

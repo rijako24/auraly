@@ -32,7 +32,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             InvoicedTaxAmount = 0m
         };
 
-        var receipt = OnlineSalesReceiptMapper.From(
+        var receipt = SalesInvoicePresentationMapper.From(
             fixture.CreateValidRequest(1_982) with { Charges = [charged, companyExpense] },
             "DianAccepted");
 
@@ -48,7 +48,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
     {
         using var client = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
         // These IDs were never uploaded: presentation must not issue a history/QR lookup.
-        var receipt = OnlineSalesReceiptMapper.From(fixture.CreateValidRequest(1981), "DianAccepted");
+        var receipt = SalesInvoicePresentationMapper.From(fixture.CreateValidRequest(1981), "DianAccepted");
         var request = new SalesReceiptsRenderRequest([receipt], format, width, "Sede", AutoPrint: false);
         using var response = await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/receipts/render", request);
         response.EnsureSuccessStatusCode();

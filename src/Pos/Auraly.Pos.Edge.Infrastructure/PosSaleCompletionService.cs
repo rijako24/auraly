@@ -324,7 +324,7 @@ public sealed class PosSaleCompletionService(
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;
-        var payload = OnlineSalesReceiptMapper.From(immutable, null)
+        var payload = SalesInvoicePresentationMapper.From(immutable, null)
             .ToPosReceipt(identity.PrintJobId, command.PaperWidthMillimeters);
 
         // Issuance owns the sale lifecycle. Printing is a post-effect and must
@@ -361,7 +361,7 @@ public sealed class PosSaleCompletionService(
                 nameof(paperWidthMillimeters), "Receipt width must be 58 or 80 mm.");
         var immutable = await sales.GetIssuedUploadAsync(documentId, ct)
             ?? throw new KeyNotFoundException("The issued sale does not exist locally.");
-        var payload = OnlineSalesReceiptMapper.From(immutable, null)
+        var payload = SalesInvoicePresentationMapper.From(immutable, null)
             .ToPosReceipt(Guid.NewGuid(), paperWidthMillimeters);
 
         await printer.PrintAsync(payload, ct);

@@ -4,10 +4,9 @@ using System.Net;
 using System.Text.Json;
 using Azure;
 using Azure.Communication.Email;
+using Auraly.Application.Sales;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
-using Auraly.Application.Sales;
-using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
@@ -165,7 +164,7 @@ public sealed class PlatformEmailOutboxHostedService(
         }
         else
         {
-            var deliveryArtifactsChanged = false;
+            var attachedDocumentCreated = false;
             if (signedAttachedDocument is null)
             {
                 if (invoice.ApplicationResponse is not { Length: > 0 })
@@ -194,31 +193,22 @@ public sealed class PlatformEmailOutboxHostedService(
                 signedAttachedDocument = signed.SignedXml;
                 signedAttachedDocumentFileName =
                     $"AttachedDocument-{SafeFileName(invoice.FiscalNumber)}.xml";
-                deliveryArtifactsChanged = true;
+                attachedDocumentCreated = true;
             }
-            var pdf = invoice.GraphicalRepresentationPdf;
-            var pdfFileName = invoice.GraphicalRepresentationPdfFileName;
-            if (pdf is null)
-            {
-                var fiscalReceipt = invoicePdfs.ReadReceipt(invoice.SignedXml);
-                var receipt = ApplyInvoiceSettlement(fiscalReceipt with { DocumentId = invoice.DocumentId },
-                    invoice.DocumentNumber, invoice.PaymentsJson, invoice.CreditAmount, invoice.WithholdingJson,
-                    invoice.CreditDueDate);
-                pdf = await invoicePdfs.RenderAsync(receipt, cancellationToken);
-                pdfFileName =
-                    $"RepresentacionGrafica-{SafeFileName(invoice.FiscalNumber)}.pdf";
-                deliveryArtifactsChanged = true;
-            }
-            if (deliveryArtifactsChanged)
-                await SaveFiscalDeliveryArtifactsAsync(
+            if (attachedDocumentCreated)
+                await SaveSignedAttachedDocumentAsync(
                     invoice, message,
                     signedAttachedDocument,
                     System.Security.Cryptography.SHA256.HashData(signedAttachedDocument),
                     signedAttachedDocumentFileName ?? "AttachedDocument.xml",
-                    pdf,
-                    System.Security.Cryptography.SHA256.HashData(pdf),
-                    pdfFileName ?? "RepresentacionGrafica.pdf",
                     cancellationToken);
+            // The PDF is a transient delivery representation. It comes from the same immutable
+            // issuance snapshot as the fiscal XML and is never persisted.
+            var receipt = SalesInvoicePresentationMapper.FromSnapshot(
+                invoice.DocumentType, invoice.SnapshotJson, "DianAccepted");
+            var pdf = await invoicePdfs.RenderAsync(receipt, cancellationToken);
+            var pdfFileName =
+                $"RepresentacionGrafica-{SafeFileName(invoice.FiscalNumber)}.pdf";
             container = BuildFiscalContainer(
                 signedAttachedDocumentFileName ?? "AttachedDocument.xml",
                 signedAttachedDocument,
@@ -236,19 +226,6 @@ public sealed class PlatformEmailOutboxHostedService(
         await SendAsync(client, invoice.Email, subject, html, plain, cancellationToken,
             [new(attachmentFileName,
                 "application/zip", new BinaryData(container))]);
-    }
-
-    internal static OnlineSalesReceipt ApplyInvoiceSettlement(OnlineSalesReceipt fiscalReceipt,
-        string documentNumber, string paymentsJson, decimal creditAmount, string? withholdingJson,
-        DateTimeOffset? creditDueDate = null)
-    {
-        var payments = JsonSerializer.Deserialize<OnlineSalesPayment[]>(paymentsJson)
-            ?? throw new InvalidOperationException("The invoice has no payment presentation data.");
-        var withholding = withholdingJson is null ? null :
-            JsonSerializer.Deserialize<WithholdingCalculationSnapshot>(withholdingJson,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        return OnlineSalesReceiptMapper.ApplySettlement(fiscalReceipt, documentNumber,
-            payments, creditAmount, creditDueDate, withholding);
     }
 
     private async Task SendAsync(EmailClient client, string recipient, string subject,
@@ -345,24 +322,20 @@ public sealed class PlatformEmailOutboxHostedService(
                 reader.IsDBNull(7) ? null : (byte[])reader[7],
                 reader.IsDBNull(8) ? null : (byte[])reader[8],
                 reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.IsDBNull(10) ? null : (byte[])reader[10],
-                reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.GetString(12), reader.GetString(13), reader.GetString(14),
                 !reader.IsDBNull(15), reader.IsDBNull(16) ? null : (byte[])reader[16],
                 reader.GetString(17), reader.GetDecimal(18), reader.IsDBNull(19) ? null : reader.GetString(19),
-                reader.IsDBNull(20) ? null : reader.GetFieldValue<DateTimeOffset>(20))
+                reader.IsDBNull(20) ? null : reader.GetFieldValue<DateTimeOffset>(20),
+                reader.GetString(21), reader.GetString(22))
             : null;
     }
 
-    private async Task SaveFiscalDeliveryArtifactsAsync(
+    private async Task SaveSignedAttachedDocumentAsync(
         FiscalInvoiceRecipient invoice,
         ClaimedMessage message,
         byte[] attachedDocument,
         byte[] attachedDocumentHash,
         string attachedDocumentFileName,
-        byte[] graphicalRepresentation,
-        byte[] graphicalRepresentationHash,
-        string graphicalRepresentationFileName,
         CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
@@ -378,9 +351,9 @@ public sealed class PlatformEmailOutboxHostedService(
         command.Parameters.AddWithValue("@AttachedDocument", attachedDocument);
         command.Parameters.AddWithValue("@AttachedDocumentHash", attachedDocumentHash);
         command.Parameters.AddWithValue("@AttachedDocumentFileName", attachedDocumentFileName);
-        command.Parameters.AddWithValue("@GraphicalRepresentation", graphicalRepresentation);
-        command.Parameters.AddWithValue("@GraphicalRepresentationHash", graphicalRepresentationHash);
-        command.Parameters.AddWithValue("@GraphicalRepresentationFileName", graphicalRepresentationFileName);
+        command.Parameters.AddWithValue("@GraphicalRepresentation", Array.Empty<byte>());
+        command.Parameters.Add("@GraphicalRepresentationHash", SqlDbType.Binary, 32).Value = DBNull.Value;
+        command.Parameters.AddWithValue("@GraphicalRepresentationFileName", string.Empty);
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -734,8 +707,6 @@ public sealed class PlatformEmailOutboxHostedService(
         byte[]? ApplicationResponse,
         byte[]? SignedAttachedDocument,
         string? SignedAttachedDocumentFileName,
-        byte[]? GraphicalRepresentationPdf,
-        string? GraphicalRepresentationPdfFileName,
         string CertificateProvider,
         string CertificateKeyReference,
         string CertificateThumbprint,
@@ -744,6 +715,8 @@ public sealed class PlatformEmailOutboxHostedService(
         string PaymentsJson,
         decimal CreditAmount,
         string? WithholdingJson,
-        DateTimeOffset? CreditDueDate);
+        DateTimeOffset? CreditDueDate,
+        string SnapshotJson,
+        string DocumentType);
     private sealed record RecipientContext(string TenantName, string Name);
 }
