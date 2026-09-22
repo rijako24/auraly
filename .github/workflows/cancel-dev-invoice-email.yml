@@ -61,18 +61,37 @@ jobs:
           JOIN dbo.Parties party ON party.PartyId=customer.PartyId
           JOIN dbo.Businesses business ON business.BusinessId=sale.BusinessId
           JOIN dbo.Tenants tenant ON tenant.TenantId=business.TenantId
-          JOIN dbo.TenantProvisioningOutboxMessages message ON message.MessageId=fiscal.DeliveryOutboxMessageId
-          WHERE message.Type=N'FiscalInvoiceDelivery'
+          LEFT JOIN dbo.TenantProvisioningOutboxMessages message ON message.MessageId=fiscal.DeliveryOutboxMessageId
+          WHERE (message.Type=N'FiscalInvoiceDelivery' OR message.MessageId IS NULL)
             AND tenant.Name COLLATE Latin1_General_100_CI_AI LIKE N'%aural%'
-            AND party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE N'%ari%caribe%'
+            AND party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE N'%caribe%'
             AND fiscal.IssuedAt>=DATEADD(HOUR,-12,@Now)
           ORDER BY fiscal.IssuedAt DESC,fiscal.DocumentId DESC;
 
-          IF @MessageId IS NULL
+          IF @DocumentId IS NULL
             THROW 51000,'No recent invoice email was found for the requested customer in the Auraly DEV tenant.',1;
 
           DECLARE @Result NVARCHAR(24);
-          IF @ProcessedAt IS NULL AND @DeliveredAt IS NULL
+          IF @DeliveredAt IS NOT NULL
+            SET @Result=N'already-sent';
+          ELSE IF @MessageId IS NULL
+          BEGIN
+            SET @MessageId=NEWID();
+            INSERT dbo.TenantProvisioningOutboxMessages
+              (MessageId,TenantId,Type,Payload,OccurredAt,ProcessedAt,AvailableAt,LastError)
+            SELECT @MessageId,business.TenantId,N'FiscalInvoiceDelivery',
+                   CONCAT(N'{"documentId":"',CONVERT(NVARCHAR(36),fiscal.DocumentId),N'","businessId":"',CONVERT(NVARCHAR(36),fiscal.BusinessId),N'"}'),
+                   @Now,@Now,@Now,N'Cancelled manually in DEV at customer request before queueing.'
+            FROM dbo.FiscalDocuments fiscal
+            JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
+            WHERE fiscal.DocumentId=@DocumentId AND fiscal.DeliveryOutboxMessageId IS NULL;
+            IF @@ROWCOUNT<>1 THROW 51001,'The target invoice changed while cancellation was being applied.',1;
+            UPDATE dbo.FiscalDocuments
+            SET DeliveryOutboxMessageId=@MessageId
+            WHERE DocumentId=@DocumentId AND DeliveryOutboxMessageId IS NULL;
+            SET @Result=N'prevented';
+          END
+          ELSE IF @ProcessedAt IS NULL
           BEGIN
             UPDATE dbo.TenantProvisioningOutboxMessages
             SET ProcessedAt=@Now,LeaseId=NULL,LeaseExpiresAt=NULL,
@@ -80,7 +99,7 @@ jobs:
             WHERE MessageId=@MessageId AND ProcessedAt IS NULL;
             SET @Result=CASE WHEN @@ROWCOUNT=1 THEN N'cancelled' ELSE N'raced' END;
           END
-          ELSE SET @Result=N'already-sent';
+          ELSE SET @Result=N'already-processed';
 
           COMMIT TRANSACTION;
           SELECT @Result AS Result,@DocumentNumber AS DocumentNumber,@FiscalNumber AS FiscalNumber,
