@@ -68,11 +68,11 @@ export default function ReceivablesPage() {
 
   return <div className="space-y-6">
     <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por cobrar</h1><p className="text-muted-foreground">Facturas financiadas, vencimientos y recaudos aplicados por el motor contable.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={downloadPreexistingReceivablesTemplate}><Download className="mr-2 h-4 w-4"/>Descargar plantilla</Button>{canImport&&<Button variant="outline" onClick={()=>setImportOpen(true)}><FileUp className="mr-2 h-4 w-4"/>Importar cartera</Button>}{canReceive&&<Button onClick={()=>{setPaymentTarget(undefined);setPortfolioPaymentOpen(true)}}><CircleDollarSign className="mr-2 h-4 w-4"/>Abono a cartera</Button>}<Button variant="outline" asChild><Link href="/pos"><Plus className="mr-2 h-4 w-4"/>Crear cuenta por cobrar</Link></Button></div></header>
-    <section className="grid gap-3 md:grid-cols-3">
+    {activeTab==="invoices"&&<section className="grid gap-3 md:grid-cols-3">
       <SummaryCard icon={WalletCards} label="Saldo pendiente" value={formatCurrency(query.data?.totalOutstanding ?? 0)} />
       <SummaryCard icon={AlertTriangle} label="Saldo vencido" value={formatCurrency(query.data?.totalOverdue ?? 0)} danger={(query.data?.totalOverdue ?? 0) > 0} />
       <SummaryCard icon={ReceiptText} label="Facturas encontradas" value={String(query.data?.totalCount ?? 0)} />
-    </section>
+    </section>}
     <section className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_13rem_12rem]">
       <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Factura, cliente, identificación o sede" />
       {activeTab==="invoices"&&<Select value={status} onValueChange={(value) => { setStatus(value as ReceivableStatus | "all"); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Open">Pendientes</SelectItem><SelectItem value="PartiallyPaid">Abono parcial</SelectItem><SelectItem value="Paid">Pagadas</SelectItem><SelectItem value="Cancelled">Canceladas</SelectItem></SelectContent></Select>}

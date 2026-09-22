@@ -108,11 +108,11 @@ export default function PayablesPage() {
         <div className="flex gap-2">{canPay&&<Button onClick={()=>{setPaymentTarget(undefined);setPortfolioPaymentOpen(true)}}><Landmark className="mr-2 h-4 w-4"/>Pagar proveedores</Button>}<Button variant="outline" asChild><Link href="/dashboard/purchasing/goods-receipts"><Plus className="mr-2 h-4 w-4"/>Crear cuenta por pagar</Link></Button></div>
       </header>
 
-      <section className="grid gap-3 md:grid-cols-3">
+      {activeTab==="invoices"&&<section className="grid gap-3 md:grid-cols-3">
         <SummaryCard icon={WalletCards} label="Saldo pendiente" value={formatCurrency(query.data?.totalOutstanding ?? 0)} />
         <SummaryCard icon={AlertTriangle} label="Saldo vencido" value={formatCurrency(query.data?.totalOverdue ?? 0)} danger={(query.data?.totalOverdue ?? 0) > 0} />
         <SummaryCard icon={ReceiptText} label="Obligaciones encontradas" value={String(query.data?.totalCount ?? 0)} />
-      </section>
+      </section>}
 
       <section className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_13rem_12rem]">
         <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Documento, proveedor o identificación" />
