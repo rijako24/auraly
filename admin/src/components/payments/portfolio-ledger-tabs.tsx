@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { payablesApi } from "@/services/api/payables";
@@ -34,8 +34,10 @@ export function PortfolioLedgerTabs({
   children: ReactNode;
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
-  const [page, setPage] = useState(1);
-  useEffect(() => setPage(1), [direction, search, overdue, value]);
+  const pageKey=JSON.stringify([direction,search,overdue,value]);
+  const [pagination,setPagination]=useState({key:pageKey,page:1});
+  const page=pagination.key===pageKey?pagination.page:1;
+  const setPage=(next:number)=>setPagination({key:pageKey,page:next});
   const parties = useQuery<Page<PartyRow>>({
     queryKey: [direction === "receivable" ? "receivable-customers" : "payable-suppliers",businessId, page, search, overdue],
     queryFn: async () => {
