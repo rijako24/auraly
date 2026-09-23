@@ -2,24 +2,34 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { payablesApi } from "@/services/api/payables";
 import { receivablesApi } from "@/services/api/receivables";
+import type { ReceivableStatus } from "@/services/api/receivables";
+import type { PayableStatus } from "@/services/api/payables";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export type PortfolioLedgerTab = "parties" | "invoices" | "payments";
-type PartyRow={id:string;name:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number};
+export type PartyRow={id:string;name:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number};
 type PaymentRow={paymentId:string;paidAt:string;partyName:string|null;documentNumber:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string};
-type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number};
+type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding?:number;totalOverdue?:number;totalInvoiceCount?:number};
 
 export function PortfolioLedgerTabs({
   direction,
   value,
   onValueChange,
   search,
+  partyId,
+  status,
   overdue,
+  from,
+  to,
+  paymentAccepted,
+  onRefreshInvoices,
   onPartyClick,
   onInvoiceClick,
   children,
@@ -28,34 +38,42 @@ export function PortfolioLedgerTabs({
   value: PortfolioLedgerTab;
   onValueChange: (value: PortfolioLedgerTab) => void;
   search?: string;
+  partyId?: string;
+  status?: ReceivableStatus | PayableStatus;
   overdue?: boolean;
-  onPartyClick: (partyId: string) => void;
+  from?: string;
+  to?: string;
+  paymentAccepted?: boolean;
+  onRefreshInvoices: () => void;
+  onPartyClick: (party: PartyRow) => void;
   onInvoiceClick: (invoiceId: string) => void;
   children: ReactNode;
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
-  const pageKey=JSON.stringify([direction,search,overdue,value]);
+  const pageKey=JSON.stringify([direction,search,partyId,status,overdue,from,to,value]);
   const [pagination,setPagination]=useState({key:pageKey,page:1});
   const page=pagination.key===pageKey?pagination.page:1;
   const setPage=(next:number)=>setPagination({key:pageKey,page:next});
   const parties = useQuery<Page<PartyRow>>({
-    queryKey: [direction === "receivable" ? "receivable-customers" : "payable-suppliers",businessId, page, search, overdue],
+    queryKey: [direction === "receivable" ? "receivable-customers" : "payable-suppliers",businessId, value === "parties" ? page : 1, search, partyId, status, overdue, from, to],
     queryFn: async () => {
-      if(direction === "receivable") { const result=await receivablesApi.customerPortfolio({ page, pageSize: 20, search, overdue: overdue || undefined }); return {...result,items:result.items.map(item=>({id:item.customerId,name:item.customerName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount}))}; }
-      const result=await payablesApi.supplierPortfolio({ page, pageSize: 20, search, overdue: overdue || undefined }); return {...result,items:result.items.map(item=>({id:item.supplierId,name:item.supplierName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount}))};
+      const filters = { page: value === "parties" ? page : 1, pageSize: 20, search, status, overdue: overdue || undefined, from, to };
+      if(direction === "receivable") { const result=await receivablesApi.customerPortfolio({...filters,customerId:partyId}); return {...result,items:result.items.map(item=>({id:item.customerId,name:item.customerName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount}))}; }
+      const result=await payablesApi.supplierPortfolio({...filters,supplierId:partyId}); return {...result,items:result.items.map(item=>({id:item.supplierId,name:item.supplierName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount}))};
     },
-    enabled: !!businessId && value === "parties",
+    enabled: !!businessId,
     placeholderData: keepPreviousData,
   });
   const payments = useQuery<Page<PaymentRow>>({
-    queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search],
+    queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search, partyId, status, overdue, from, to],
     queryFn: async () => {
+      const filters = { page, pageSize: 20, search, status, overdue: overdue || undefined, from, to };
       if(direction === "receivable") {
-        const result=await receivablesApi.payments({ page, pageSize: 20, search });
+        const result=await receivablesApi.payments({...filters,customerId:partyId});
         return {...result,items:result.items.map(item=>({...item,partyName:item.customerName,
           applications:item.applications.map(application=>({...application,invoiceId:application.receivableId}))}))};
       }
-      const result=await payablesApi.payments({ page, pageSize: 20, search });
+      const result=await payablesApi.payments({...filters,supplierId:partyId});
       return {...result,items:result.items.map(item=>({...item,partyName:item.supplierName,
         applications:item.applications.map(application=>({...application,invoiceId:application.payableId}))}))};
     },
@@ -64,22 +82,31 @@ export function PortfolioLedgerTabs({
   });
 
   const partyItems = parties.data?.items ?? [];
+  const summary={totalOutstanding:parties.data?.totalOutstanding??0,
+    totalOverdue:parties.data?.totalOverdue??0,totalInvoiceCount:parties.data?.totalInvoiceCount??0};
   const paymentItems = payments.data?.items ?? [];
   const current = value === "parties" ? parties.data : payments.data;
   const loading = value === "parties" ? parties.isLoading : payments.isLoading;
   const failed = value === "parties" ? parties.isError : payments.isError;
 
   return <Tabs value={value} onValueChange={next => onValueChange(next as PortfolioLedgerTab)} className="space-y-4">
+    {paymentAccepted&&<div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-950"><span>Pago registrado. El saldo cambiará cuando el motor aplique el movimiento.</span><Button variant="outline" size="sm" disabled={value==="parties"?parties.isFetching:value==="payments"?payments.isFetching:false} onClick={()=>void(value==="parties"?parties.refetch():value==="payments"?payments.refetch():onRefreshInvoices())}><RefreshCw className="mr-2 h-4 w-4"/>Actualizar saldos</Button></div>}
+    <section className="grid gap-3 md:grid-cols-3" aria-label="Resumen de cartera">
+      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo pendiente</p><p className="mt-1 text-2xl font-semibold">{formatCurrency(summary.totalOutstanding)}</p></CardContent></Card>
+      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo vencido</p><p className="mt-1 text-2xl font-semibold text-destructive">{formatCurrency(summary.totalOverdue)}</p></CardContent></Card>
+      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">{direction === "receivable" ? "Facturas encontradas" : "Obligaciones encontradas"}</p><p className="mt-1 text-2xl font-semibold">{summary.totalInvoiceCount}</p></CardContent></Card>
+    </section>
     <TabsList className="grid h-auto w-full grid-cols-3">
       <TabsTrigger value="parties">{direction === "receivable" ? "Clientes" : "Proveedores"}</TabsTrigger>
       <TabsTrigger value="invoices">Facturas</TabsTrigger>
       <TabsTrigger value="payments">{direction === "receivable" ? "Recaudos" : "Pagos"}</TabsTrigger>
     </TabsList>
+    {value !== "invoices" && <div className="flex justify-end"><Button type="button" variant="outline" size="sm" disabled={value === "parties" ? parties.isFetching : payments.isFetching} onClick={() => void (value === "parties" ? parties.refetch() : payments.refetch())}><RefreshCw className="mr-2 h-4 w-4"/>Actualizar</Button></div>}
     <TabsContent value="invoices" className="mt-0">{children}</TabsContent>
     <TabsContent value="parties" className="mt-0">
       <LedgerTable loading={loading} failed={failed} isEmpty={partyItems.length === 0} empty="No hay terceros con cartera para estos filtros.">
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">{direction === "receivable" ? "Cliente" : "Proveedor"}</th><th>Facturas</th><th>Valor original</th><th>Pagado</th><th>Saldo</th><th className="pr-3">Vencido</th></tr></thead>
-        <tbody>{partyItems.map(item => <tr key={item.id} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item.id)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount)}</td><td>{formatCurrency(item.paidAmount)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount)}</td></tr>)}</tbody>
+        <tbody>{partyItems.map(item => <tr key={item.id} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount)}</td><td>{formatCurrency(item.paidAmount)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount)}</td></tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>

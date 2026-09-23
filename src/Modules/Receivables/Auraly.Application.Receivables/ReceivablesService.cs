@@ -36,6 +36,7 @@ public sealed class ReceivablesService(
         Require(user, ReceivablesPermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
             throw new ReceivablesValidationException("Invalid pagination.");
+        ValidateLedgerFilters(query.Status, query.From, query.To);
         return store.ListCustomersAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
     }
 
@@ -43,8 +44,7 @@ public sealed class ReceivablesService(
     {
         Require(user, ReceivablesPermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100) throw new ReceivablesValidationException("Invalid pagination.");
-        if (query.Status is not null && query.Status is not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled"))
-            throw new ReceivablesValidationException("The receivable status is invalid.");
+        ValidateLedgerFilters(query.Status, query.From, query.To);
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
     }
 
@@ -76,7 +76,16 @@ public sealed class ReceivablesService(
     {
         Require(user,ReceivablesPermissionCodes.Read);
         if(query.Page<1||query.PageSize is <1 or >100)throw new ReceivablesValidationException("Invalid pagination.");
+        ValidateLedgerFilters(query.Status, query.From, query.To);
         return store.ListPaymentsAsync(user,query with { Search=Normalize(query.Search,120) },token);
+    }
+
+    private static void ValidateLedgerFilters(string? status, DateOnly? from, DateOnly? to)
+    {
+        if (status is not null and not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled"))
+            throw new ReceivablesValidationException("The receivable status is invalid.");
+        if (from > to)
+            throw new ReceivablesValidationException("The date range is invalid.");
     }
 
     public async Task<CustomerCreditProfile> UpdateCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId,

@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, HandCoins, Landmark, PackageCheck, ReceiptText, RotateCcw, Search, ShieldCheck } from "lucide-react";
@@ -111,6 +111,7 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [quantities, setQuantities] = useState<Record<number, number>>({});
   const [returnCharges, setReturnCharges] = useState(false);
+  const retry = useRef<{ fingerprint: string; request: import("@/services/api/sales-returns").ConfirmSalesReturnRequest } | null>(null);
   if (!sale || !businessId) return null;
   const selection = calculateSalesReturnSelection(sale.lines, quantities);
   const selectedLineNumbers = new Set(selection.selectedLineNumbers);
@@ -189,11 +190,12 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
     if (transferRefund && !settlementReference.trim()) { toast.error("Registra la referencia de la transferencia."); setTransferDialogOpen(true); return; }
     if (transferRefund && accountingEnabled && !selectedBankAccountId) { toast.error("Configura o selecciona la cuenta bancaria de salida."); return; }
     try {
-      const result = await confirm.mutateAsync({
-        returnId: crypto.randomUUID(), businessId, warehouseId: sale.warehouseId,
-        originalDocumentId: sale.documentId, returnedAt: new Date().toISOString(),
+      const draft: import("@/services/api/sales-returns").ConfirmSalesReturnRequest = {
+        returnId: "", businessId, warehouseId: sale.warehouseId,
+        originalDocumentId: sale.documentId, returnedAt: "",
         returnScopeCode,
         economicResolution, refundMethodCode: economicResolution === "Refund" ? resolutionMethod as SalesReturnRefundMethod : null,
+        localRefundAmount: runtime?.client.mode === "edge" ? estimated : undefined,
         reasonDescription: configuredReasons?.find(reason => reason.code === reasonCode)?.name ?? reasonCode,
         reasonCode, notes: notes.trim() || null,
         workSessionId, originalPaymentNumber: cardRefund ? Number(originalPaymentNumber) : null,
@@ -204,7 +206,14 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
           ? availableCharges.map((charge) => charge.appliedChargeId)
           : [],
         lines: chosen.map((line) => ({ originalLineNumber: line.originalLineNumber, quantity: quantities[line.originalLineNumber], inventoryDisposition: "Sellable" as const })),
-      });
+      };
+      const fingerprint = JSON.stringify(draft);
+      const request = retry.current?.fingerprint === fingerprint
+        ? retry.current.request
+        : { ...draft, returnId: crypto.randomUUID(), returnedAt: new Date().toISOString() };
+      retry.current = { fingerprint, request };
+      const result = await confirm.mutateAsync(request);
+      retry.current = null;
       toast.success(`Devolución ${result.documentNumber} aceptada por el motor documental.`);
       if (resolutionMethod === "Cash") await onCashRefundConfirmed?.();
       onClose();

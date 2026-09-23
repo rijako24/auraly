@@ -42,10 +42,17 @@ public sealed class SqlReceivablesStore(
               JOIN dbo.Parties p ON p.PartyId=c.PartyId
               LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId
               WHERE r.BusinessId=@BusinessId AND b.TenantId=@TenantId
+                AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
+                AND (@Status IS NULL OR r.Status=@Status)
+                AND (@From IS NULL OR r.CreatedAt>=@From)
+                AND (@To IS NULL OR r.CreatedAt<@To)
+                AND (@Overdue IS NULL OR (@Overdue=1 AND r.OutstandingAmount>0 AND r.DueDate<@Now)
+                  OR (@Overdue=0 AND (r.OutstandingAmount=0 OR r.DueDate>=@Now)))
                 AND (@Search IS NULL OR p.DisplayName LIKE N'%' + @Search + N'%'
-                  OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%')
+                  OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%'
+                  OR r.DocumentNumber LIKE N'%' + @Search + N'%')
               GROUP BY r.CustomerId,p.DisplayName,p.LegalName,p.Identification)
-            SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0)
+            SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0),COALESCE(SUM(InvoiceCount),0)
             FROM Portfolio WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0)
               OR (@Overdue=0 AND OverdueAmount=0);
             WITH Paid AS(
@@ -66,8 +73,15 @@ public sealed class SqlReceivablesStore(
               JOIN dbo.Parties p ON p.PartyId=c.PartyId
               LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId
               WHERE r.BusinessId=@BusinessId AND b.TenantId=@TenantId
+                AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
+                AND (@Status IS NULL OR r.Status=@Status)
+                AND (@From IS NULL OR r.CreatedAt>=@From)
+                AND (@To IS NULL OR r.CreatedAt<@To)
+                AND (@Overdue IS NULL OR (@Overdue=1 AND r.OutstandingAmount>0 AND r.DueDate<@Now)
+                  OR (@Overdue=0 AND (r.OutstandingAmount=0 OR r.DueDate>=@Now)))
                 AND (@Search IS NULL OR p.DisplayName LIKE N'%' + @Search + N'%'
-                  OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%')
+                  OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%'
+                  OR r.DocumentNumber LIKE N'%' + @Search + N'%')
               GROUP BY r.CustomerId,p.DisplayName,p.LegalName,p.Identification)
             SELECT CustomerId,CustomerName,Identification,InvoiceCount,OriginalAmount,PaidAmount,
               OutstandingAmount,OverdueAmount FROM Portfolio
@@ -77,12 +91,15 @@ public sealed class SqlReceivablesStore(
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);
+        command.Parameters.AddWithValue("@CustomerId",(object?)query.CustomerId??DBNull.Value);
+        command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
+        AddDateRange(command,query.From,query.To);
         command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
         await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);
-        var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);
+        var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);var invoices=reader.GetInt32(3);
         await reader.NextResultAsync(token);var items=new List<CustomerPortfolioItem>();
         while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7)));
-        return new(items,query.Page,query.PageSize,count,outstanding,overdue);
+        return new(items,query.Page,query.PageSize,count,outstanding,overdue,invoices);
     }
 
     public async Task<ReceivablePage> ListAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token)
@@ -94,6 +111,8 @@ public sealed class SqlReceivablesStore(
             AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
             AND (@PartySiteId IS NULL OR r.PartySiteId=@PartySiteId)
             AND (@Status IS NULL OR r.Status=@Status)
+            AND (@From IS NULL OR r.CreatedAt>=@From)
+            AND (@To IS NULL OR r.CreatedAt<@To)
             AND (@OutstandingOnly=0 OR r.OutstandingAmount>0)
             AND (@Overdue IS NULL OR (@Overdue=1 AND r.OutstandingAmount>0 AND r.DueDate<@Now)
                  OR (@Overdue=0 AND (r.OutstandingAmount=0 OR r.DueDate>=@Now)))
@@ -158,9 +177,22 @@ public sealed class SqlReceivablesStore(
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@CustomerId IS NULL OR payment.CustomerId=@CustomerId)
+              AND (@From IS NULL OR payment.PaidAt>=@From)
+              AND (@To IS NULL OR payment.PaidAt<@To)
+              AND (@Status IS NULL AND @Overdue IS NULL OR EXISTS(
+                SELECT 1 FROM dbo.CustomerPaymentApplications application
+                JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
+                WHERE application.PaymentId=payment.PaymentId
+                  AND (@Status IS NULL OR invoice.Status=@Status)
+                  AND (@Overdue IS NULL OR (@Overdue=1 AND invoice.OutstandingAmount>0 AND invoice.DueDate<@Now)
+                    OR (@Overdue=0 AND (invoice.OutstandingAmount=0 OR invoice.DueDate>=@Now)))))
               AND (@Search IS NULL OR payment.DocumentNumber LIKE N'%' + @Search + N'%'
                 OR party.DisplayName LIKE N'%' + @Search + N'%' OR party.LegalName LIKE N'%' + @Search + N'%'
-                OR party.Identification LIKE N'%' + @Search + N'%');
+                OR party.Identification LIKE N'%' + @Search + N'%'
+                OR EXISTS(SELECT 1 FROM dbo.CustomerPaymentApplications application
+                  JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
+                  WHERE application.PaymentId=payment.PaymentId
+                    AND invoice.DocumentNumber LIKE N'%' + @Search + N'%'));
             DECLARE @Page TABLE(PaymentId uniqueidentifier PRIMARY KEY);
             INSERT @Page(PaymentId)
             SELECT payment.PaymentId FROM dbo.CustomerPayments payment
@@ -169,9 +201,22 @@ public sealed class SqlReceivablesStore(
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@CustomerId IS NULL OR payment.CustomerId=@CustomerId)
+              AND (@From IS NULL OR payment.PaidAt>=@From)
+              AND (@To IS NULL OR payment.PaidAt<@To)
+              AND (@Status IS NULL AND @Overdue IS NULL OR EXISTS(
+                SELECT 1 FROM dbo.CustomerPaymentApplications application
+                JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
+                WHERE application.PaymentId=payment.PaymentId
+                  AND (@Status IS NULL OR invoice.Status=@Status)
+                  AND (@Overdue IS NULL OR (@Overdue=1 AND invoice.OutstandingAmount>0 AND invoice.DueDate<@Now)
+                    OR (@Overdue=0 AND (invoice.OutstandingAmount=0 OR invoice.DueDate>=@Now)))))
               AND (@Search IS NULL OR payment.DocumentNumber LIKE N'%' + @Search + N'%'
                 OR party.DisplayName LIKE N'%' + @Search + N'%' OR party.LegalName LIKE N'%' + @Search + N'%'
-                OR party.Identification LIKE N'%' + @Search + N'%')
+                OR party.Identification LIKE N'%' + @Search + N'%'
+                OR EXISTS(SELECT 1 FROM dbo.CustomerPaymentApplications application
+                  JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
+                  WHERE application.PaymentId=payment.PaymentId
+                    AND invoice.DocumentNumber LIKE N'%' + @Search + N'%'))
             ORDER BY payment.PaidAt DESC,payment.PaymentId DESC
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
@@ -202,6 +247,10 @@ public sealed class SqlReceivablesStore(
         command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@CustomerId",(object?)query.CustomerId??DBNull.Value);
         command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);
+        command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
+        command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);
+        command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
+        AddDateRange(command,query.From,query.To);
         command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);
         command.Parameters.AddWithValue("@PageSize",query.PageSize);
         await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token);
@@ -568,6 +617,11 @@ public sealed class SqlReceivablesStore(
         await using var update=new SqlCommand("IF EXISTS(SELECT 1 FROM dbo.DocumentSeriesCursors WHERE DocumentSeriesId=@Id) UPDATE dbo.DocumentSeriesCursors SET NextConsecutive=@Next,UpdatedAt=SYSDATETIMEOFFSET() WHERE DocumentSeriesId=@Id ELSE INSERT dbo.DocumentSeriesCursors(DocumentSeriesId,NextConsecutive,UpdatedAt) VALUES(@Id,@Next,SYSDATETIMEOFFSET())",c,t);update.Parameters.AddWithValue("@Id",id);update.Parameters.AddWithValue("@Next",next+1);await update.ExecuteNonQueryAsync(token);
         return AuralyDocumentNumberAssignment.Create(id,AuralyDocumentTypes.ReceivablePayment,prefix,code,next,padding);
     }
-    private static void AddQuery(SqlCommand c,ReceivablesUserIdentity u,ReceivableQuery q,DateTimeOffset now){c.Parameters.AddWithValue("@BusinessId",u.BusinessId);c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.AddWithValue("@CustomerId",(object?)q.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@PartySiteId",(object?)q.PartySiteId??DBNull.Value);c.Parameters.AddWithValue("@Status",(object?)q.Status??DBNull.Value);c.Parameters.AddWithValue("@OutstandingOnly",q.OutstandingOnly);c.Parameters.AddWithValue("@Overdue",(object?)q.Overdue??DBNull.Value);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@Now",now);}
+    private static void AddQuery(SqlCommand c,ReceivablesUserIdentity u,ReceivableQuery q,DateTimeOffset now){c.Parameters.AddWithValue("@BusinessId",u.BusinessId);c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.AddWithValue("@CustomerId",(object?)q.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@PartySiteId",(object?)q.PartySiteId??DBNull.Value);c.Parameters.AddWithValue("@Status",(object?)q.Status??DBNull.Value);c.Parameters.AddWithValue("@OutstandingOnly",q.OutstandingOnly);c.Parameters.AddWithValue("@Overdue",(object?)q.Overdue??DBNull.Value);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@Now",now);AddDateRange(c,q.From,q.To);}
+    private static void AddDateRange(SqlCommand command,DateOnly? from,DateOnly? to)
+    {
+        command.Parameters.AddWithValue("@From",(object?)from?.ToDateTime(TimeOnly.MinValue,DateTimeKind.Utc)??DBNull.Value);
+        command.Parameters.AddWithValue("@To",(object?)to?.AddDays(1).ToDateTime(TimeOnly.MinValue,DateTimeKind.Utc)??DBNull.Value);
+    }
     private static void Money(SqlCommand c,string name,decimal value){var p=c.Parameters.Add(name,SqlDbType.Decimal);p.Precision=19;p.Scale=4;p.Value=value;}
 }

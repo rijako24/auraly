@@ -14,6 +14,8 @@ export function useReceivables(params: {
   customerId?: string;
   status?: ReceivableStatus;
   overdue?: boolean;
+  from?: string;
+  to?: string;
   enabled?: boolean;
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);

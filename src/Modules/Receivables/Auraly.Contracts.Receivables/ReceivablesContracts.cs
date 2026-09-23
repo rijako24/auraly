@@ -28,7 +28,8 @@ public static class CustomerPaymentMethods
 public sealed record ReceivablesUserIdentity(Guid UserId, Guid TenantId, Guid BusinessId,
     IReadOnlySet<string> Permissions);
 public sealed record ReceivableQuery(int Page, int PageSize, string? Search, Guid? CustomerId,
-    string? Status, bool? Overdue, Guid? PartySiteId = null, bool OutstandingOnly = false);
+    string? Status, bool? Overdue, Guid? PartySiteId = null, bool OutstandingOnly = false,
+    DateOnly? From = null, DateOnly? To = null);
 public sealed record ReceivableListItem(Guid ReceivableId, Guid CustomerId, string CustomerName,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
     DateTimeOffset DueDate, string Status, bool IsOverdue, DateTimeOffset CreatedAt,
@@ -75,18 +76,21 @@ public sealed record CustomerPaymentHistoryItem(Guid PaymentId, string DocumentN
     IReadOnlyList<CustomerPaymentHistoryApplication> Applications,
     Guid? CustomerId = null, string? CustomerName = null);
 public sealed record CustomerPaymentHistoryApplication(Guid ReceivableId,string DocumentNumber,decimal Amount);
-public sealed record CustomerPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? CustomerId);
+public sealed record CustomerPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? CustomerId,
+    string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null);
 public sealed record CustomerPaymentHistoryPage(IReadOnlyList<CustomerPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
-public sealed record CustomerPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue);
+public sealed record CustomerPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue,
+    Guid? CustomerId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null);
 public sealed record CustomerPortfolioItem(Guid CustomerId, string CustomerName,
     string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
     decimal OutstandingAmount, decimal OverdueAmount);
 public sealed record CustomerPortfolioPage(IReadOnlyList<CustomerPortfolioItem> Items,
-    int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue)
+    int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
+    int TotalInvoiceCount = 0)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }

@@ -15,19 +15,18 @@ Entrada de mercancía procesada
   -> consulta paginada del admin
   -> confirmación de pago autenticada
   -> reserva transaccional de aplicaciones
-  -> DocumentProcessingJobs + payload inmutable
-  -> un mensaje RabbitMQ para ese documento
-  -> motor secuencial del Business
+  -> AccountingSourceDocuments + AccountingPostingJobs durables
+  -> SqlAccountingPostingProcessor
   -> aplicaciones + movimientos de cartera
   -> saldo y estado de la obligación
   -> asiento contable
   -> evento de outbox del servidor
 ```
 
-No existe sondeo SQL ni sondeo periódico desde el frontend. La mutación invalida
-una vez su consulta al recibir la aceptación durable. La actualización asíncrona
-en tiempo real del admin se conectará al transporte push canónico cuando esa
-capacidad tenga un consumidor de interfaz completo.
+No existe sondeo periódico desde el frontend. La aceptación durable informa el
+comprobante, pero el saldo sólo cambia cuando se aplica el trabajo financiero.
+El admin muestra ese estado y ofrece actualización explícita de la vista activa;
+no consulta automáticamente otra vez la cartera al recibir la aceptación.
 
 ## Fronteras
 
@@ -35,8 +34,8 @@ capacidad tenga un consumidor de interfaz completo.
 - `Auraly.Contracts.Payables` contiene contratos API, permisos y el payload
   inmutable del documento `PayablePayment`.
 - `Auraly.Application.Payables` aplica autorización y coordina el caso de uso.
-- `Auraly.Infrastructure.Persistence` conserva la transacción SQL y el handler
-  del motor, igual que los demás documentos operativos actuales.
+- `Auraly.Infrastructure.Persistence` conserva la aceptación SQL y las fuentes
+  financieras durables.
 - `Auraly.Api` expone los endpoints autenticados.
 - `Auraly.Commerce.Accounting.Infrastructure` contabiliza el documento
   completado sin duplicar el procesamiento comercial.
@@ -111,7 +110,12 @@ Incluye:
 - detalle con trazabilidad de movimientos;
 - modal de abono con efectivo o transferencia y selector de cuenta bancaria;
 - importes COP formateados y estados legibles;
-- invalidación puntual después de aceptar un pago.
+- actualización explícita de saldos e historial después de aceptar un pago.
+
+En la caja preparada Edge guarda primero el pago y sus medios en SQLite; solo
+después lo confirma con identidad del dispositivo en el servicio canónico.
+El comprobante autoritativo actualiza la misma proyección por `PaymentId`. El
+cierre de la caja se calcula localmente, incluso sin conexión.
 
 El backend admite un pago aplicado a varias obligaciones del mismo proveedor.
 La primera pantalla registra un abono desde una obligación para mantener el flujo

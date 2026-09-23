@@ -24,16 +24,24 @@ public sealed class PosSalesReturnServerClient(
                 "La devolución requiere un identificador válido.");
         var result = await SendAsync(
             "api/pos/v1/sales-returns/confirm", body, user, id.ToString("D"), token);
-        if (result.TryGetProperty("workSessionId", out var sessionValue) &&
-            sessionValue.ValueKind == JsonValueKind.String &&
-            Guid.TryParse(sessionValue.GetString(), out var workSessionId) &&
-            workSessionId == user.WorkSessionId &&
-            result.TryGetProperty("refundMethodCode", out var methodValue) &&
+        if (!result.TryGetProperty("returnId", out var acceptedId) ||
+            !Guid.TryParse(acceptedId.GetString(), out var confirmedId) || confirmedId != id)
+            throw new PosSalesReturnServerException(502, "InvalidReturnAcceptance",
+                "La devolución fue aceptada, pero la respuesta no coincide. Reintenta con el mismo identificador.");
+        if (result.TryGetProperty("refundMethodCode", out var methodValue) &&
             methodValue.ValueKind == JsonValueKind.String &&
             result.TryGetProperty("totalAmount", out var amountValue) &&
             amountValue.TryGetDecimal(out var amount) && amount > 0)
+        {
+            if (!result.TryGetProperty("workSessionId", out var sessionValue) ||
+                sessionValue.ValueKind != JsonValueKind.String ||
+                !Guid.TryParse(sessionValue.GetString(), out var workSessionId) ||
+                workSessionId != user.WorkSessionId)
+                throw new PosSalesReturnServerException(502, "InvalidReturnAcceptance",
+                    "La devolución fue aceptada, pero no coincide con la sesión local. Reintenta con el mismo identificador.");
             await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
                 id, workSessionId, methodValue.GetString()!, amount), token);
+        }
         return result;
     }
 

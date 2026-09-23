@@ -58,7 +58,7 @@ export function PagedEntitySelect<T>({
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(() => {
-    const timeout = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    const timeout = window.setTimeout(() => setDebouncedSearch(search.trim()), 100);
     return () => window.clearTimeout(timeout);
   }, [search]);
 
@@ -109,7 +109,7 @@ export function PagedEntitySelect<T>({
           {query.isError && <div className="p-4 text-sm text-destructive">No fue posible consultar. <button className="underline" onClick={() => void query.refetch()}>Reintentar</button></div>}
           {!query.isLoading && !query.isError && entries.length === 0 && <CommandEmpty>{emptyMessage}</CommandEmpty>}
           {!query.isLoading && !query.isError && entries.length > 0 && <div className="px-3 py-2 text-xs text-muted-foreground">{Math.min(entries.length, total).toLocaleString("es-CO")} de {total.toLocaleString("es-CO")}</div>}
-          {entries.map(({ option, item }) => <CommandItem key={option.value} value={option.value} onSelect={() => { onChange(option.value, option, item); setOpen(false); }} className="items-start">
+          {entries.map(({ option, item }) => <CommandItem key={option.value} value={option.value} onSelect={() => { if(item||option.value!==value)onChange(option.value, option, item); setOpen(false); }} className="items-start">
             <Check className={cn("mr-2 mt-0.5 h-4 w-4 shrink-0", value === option.value ? "opacity-100" : "opacity-0")}/>
             <span className="min-w-0"><span className="block truncate">{option.label}</span>{option.description && <small className="block truncate text-muted-foreground">{option.description}</small>}</span>
           </CommandItem>)}

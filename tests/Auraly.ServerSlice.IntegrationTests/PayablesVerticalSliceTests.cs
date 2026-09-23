@@ -116,6 +116,19 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(30_000m, await AccountAmountAsync(
             payment.PaymentId, bankAccount.AccountingAccountCode, false));
 
+        var paymentDate = DateOnly.FromDateTime(payment.PaidAt.UtcDateTime).ToString("yyyy-MM-dd");
+        var createdDate = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
+        var supplierFilter = $"supplierId={fixture.SupplierId:D}&status=PartiallyPaid&from={createdDate}&to={createdDate}";
+        var supplierPage = await client.GetFromJsonAsync<SupplierPortfolioPage>(
+            $"/api/commerce/v1/payables/suppliers?page=1&pageSize=20&{supplierFilter}");
+        Assert.Contains(supplierPage!.Items, item => item.SupplierId == fixture.SupplierId && item.InvoiceCount > 0);
+        var invoicePage = await client.GetFromJsonAsync<PayablePage>(
+            $"/api/commerce/v1/payables?page=1&pageSize=20&{supplierFilter}");
+        Assert.Contains(invoicePage!.Items, item => item.PayableId == payableId);
+        var paymentsPage = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
+            $"/api/commerce/v1/payable-payments?page=1&pageSize=20&supplierId={fixture.SupplierId:D}&status=PartiallyPaid&from={paymentDate}&to={paymentDate}");
+        Assert.Contains(paymentsPage!.Items, item => item.PaymentId == payment.PaymentId);
+
         using (var duplicate = await SendAsync(
                    client, "/api/commerce/v1/payable-payments/confirm", payment, key))
         {

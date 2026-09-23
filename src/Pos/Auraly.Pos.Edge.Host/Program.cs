@@ -11,6 +11,7 @@ using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Application.Sales;
 using Auraly.Pos.Edge.Infrastructure;
+using Microsoft.Data.Sqlite;
 
 namespace Auraly.Pos.Edge.Host;
 
@@ -311,7 +312,7 @@ public static class PosEdgeHostApplication
                 }
                 SetCorsHeaders(context.Response, allowedOrigin);
                 context.Response.Headers.AccessControlAllowMethods = "GET,POST,PUT,DELETE,OPTIONS";
-                context.Response.Headers.AccessControlAllowHeaders = "Content-Type,X-Auraly-Edge-Session,X-Auraly-User-Session,X-Auraly-Supervisor-Secret,X-Auraly-Approval-Id,X-Auraly-Operation-Id";
+                context.Response.Headers.AccessControlAllowHeaders = "Content-Type,Idempotency-Key,X-Auraly-Edge-Session,X-Auraly-User-Session,X-Auraly-Supervisor-Secret,X-Auraly-Approval-Id,X-Auraly-Operation-Id";
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
                 return;
             }
@@ -1090,9 +1091,34 @@ public static class PosEdgeHostApplication
             await ServerReturnResult(() => server.BootstrapAsync(request,
                 RequiredSalesReturnUser(sessions), ct)));
         edge.MapPost("/server-returns/confirm", async (JsonElement request,
-            PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
-            await ServerReturnResult(() => server.ConfirmAsync(request,
-                RequiredSalesReturnUser(sessions), ct)));
+            PosSalesReturnServerClient server, PosLocalSessionAccessor sessions,
+            PosOfflineWorkSessionClosureStore closureStore, CancellationToken ct) =>
+            await ServerReturnResult(async () =>
+            {
+                var user = RequiredSalesReturnUser(sessions);
+                if (!request.TryGetProperty("returnId", out var returnValue) ||
+                    !Guid.TryParse(returnValue.GetString(), out var returnId) || returnId == Guid.Empty)
+                    throw new PosSalesReturnServerException(400, "InvalidReturnId",
+                        "La devolución requiere un identificador válido.");
+                var isRefund = request.TryGetProperty("economicResolution", out var resolution) &&
+                    resolution.GetString() == "Refund";
+                decimal localAmount = 0;
+                if (isRefund && (!request.TryGetProperty("localRefundAmount", out var amountValue) ||
+                    !amountValue.TryGetDecimal(out localAmount) || localAmount <= 0))
+                    throw new PosSalesReturnServerException(400, "MissingLocalRefundAmount",
+                        "La devolución requiere el valor de reintegro para guardarse primero en la caja local.");
+                var method = isRefund
+                    ? request.GetProperty("refundMethodCode").GetString() ?? ""
+                    : "CustomerCredit";
+                var inserted = await closureStore.PrepareRefundAsync(new PosLocalWorkSessionRefund(
+                    returnId, user.WorkSessionId, method, localAmount), ct);
+                try { return await server.ConfirmAsync(request, user, ct); }
+                catch (PosSalesReturnServerException error) when (inserted && error.StatusCode is >= 400 and < 500 and not 408 and not 409 and not 429)
+                {
+                    await closureStore.RemoveRefundAsync(returnId, user.WorkSessionId, ct);
+                    throw;
+                }
+            }));
 
         edge.MapGet("/orders", async (HttpContext http, PosOrdersServerClient server,
             PosLocalSessionAccessor sessions, CancellationToken ct) =>
@@ -1121,15 +1147,25 @@ public static class PosEdgeHostApplication
                 RequiredOrderUser(sessions, OrderPermissionCodes.Invoice), ct,
                 http.Request.Headers["Idempotency-Key"])));
         edge.MapPost("/orders", async (JsonElement request,
-            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
-            await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
-                "api/commerce/v1/seller-orders", request,
-                RequiredOrderUser(sessions, OrderPermissionCodes.Create), ct)));
+            PosOrdersServerClient server, PosCustomerOutboxUploader customers,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(async () =>
+            {
+                var user = RequiredOrderUser(sessions, OrderPermissionCodes.Create);
+                await EnsureOrderCustomerUploadedAsync(request, customers, ct);
+                return await server.SendAsync(HttpMethod.Post,
+                    "api/commerce/v1/seller-orders", request, user, ct);
+            }));
         edge.MapPut("/orders/{orderId:guid}", async (Guid orderId, JsonElement request,
-            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
-            await ServerOrderResult(() => server.SendAsync(HttpMethod.Put,
-                $"api/commerce/v1/seller-orders/{orderId:D}", request,
-                RequiredOrderUser(sessions, OrderPermissionCodes.Update, OrderPermissionCodes.Review), ct)));
+            PosOrdersServerClient server, PosCustomerOutboxUploader customers,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerOrderResult(async () =>
+            {
+                var user = RequiredOrderUser(sessions, OrderPermissionCodes.Update, OrderPermissionCodes.Review);
+                await EnsureOrderCustomerUploadedAsync(request, customers, ct);
+                return await server.SendAsync(HttpMethod.Put,
+                    $"api/commerce/v1/seller-orders/{orderId:D}", request, user, ct);
+            }));
         edge.MapPost("/orders/{orderId:guid}/recover", async (Guid orderId,
             JsonElement request, PosOrdersServerClient server, PosDraftStore drafts,
             PosEdgeRuntimeContext context, PosLocalSessionAccessor sessions, CancellationToken ct) =>
@@ -1204,31 +1240,54 @@ public static class PosEdgeHostApplication
                 RequiredOrderUser(sessions, OrderPermissionCodes.Recover), ct)));
 
         edge.MapGet("/portfolio/parties",async(HttpContext http,PosOrdersServerClient server,
-            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendAsync(
-                HttpMethod.Get,$"api/commerce/v1/parties/role-options{http.Request.QueryString}",null,
-                RequiredPortfolioUser(sessions,"receivables.read","payables.read"),ct)));
+            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendPortfolioAsync(
+                HttpMethod.Get,$"api/pos/v1/portfolio/parties/role-options{http.Request.QueryString}",null,
+                RequiredPortfolioUser(sessions,http.Request.Query["role"]=="Customer"?"receivables.read":"payables.read",
+                    http.Request.Query["role"]=="Customer"?"receivables.payments.create":"payables.payments.create"),ct)));
         edge.MapGet("/portfolio/receivables",async(HttpContext http,PosOrdersServerClient server,
-            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendAsync(
-                HttpMethod.Get,$"api/commerce/v1/receivables{http.Request.QueryString}",null,
-                RequiredPortfolioUser(sessions,"receivables.read"),ct)));
+            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendPortfolioAsync(
+                HttpMethod.Get,$"api/pos/v1/receivables{http.Request.QueryString}",null,
+                RequiredPortfolioUser(sessions,"receivables.read","receivables.payments.create"),ct)));
         edge.MapGet("/portfolio/payables",async(HttpContext http,PosOrdersServerClient server,
-            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendAsync(
-                HttpMethod.Get,$"api/commerce/v1/payables{http.Request.QueryString}",null,
-                RequiredPortfolioUser(sessions,"payables.read"),ct)));
+            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendPortfolioAsync(
+                HttpMethod.Get,$"api/pos/v1/payables{http.Request.QueryString}",null,
+                RequiredPortfolioUser(sessions,"payables.read","payables.payments.create"),ct)));
         edge.MapGet("/portfolio/settlement-configuration",async(PosOrdersServerClient server,
-            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendAsync(
-                HttpMethod.Get,"api/commerce/v1/pos/settlement-configuration",null,
+            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendPortfolioAsync(
+                HttpMethod.Get,"api/pos/v1/accounting/settlement-configuration",null,
                 RequiredPortfolioUser(sessions,"receivables.payments.create","payables.payments.create"),ct)));
         edge.MapPost("/portfolio/receivable-payments",async(HttpContext http,JsonElement request,
-            PosOrdersServerClient server,PosLocalSessionAccessor sessions,CancellationToken ct)=>
-            await ServerOrderResult(()=>server.SendAsync(HttpMethod.Post,
-                "api/commerce/v1/receivable-payments/confirm",request,
-                RequiredPortfolioUser(sessions,"receivables.payments.create"),ct,http.Request.Headers["Idempotency-Key"])));
+            PosOrdersServerClient server,PosLocalSessionAccessor sessions,
+            PosOfflineWorkSessionClosureStore closureStore,CancellationToken ct)=>
+            await ServerOrderResult(async()=>
+            {
+                var user=RequiredPortfolioUser(sessions,"receivables.payments.create");
+                var paymentId=request.GetProperty("paymentId").GetGuid();
+                var inserted=await PreparePortfolioPaymentAsync(closureStore,request,user,"Receivable",ct);
+                JsonElement accepted;
+                try { accepted=await server.SendPortfolioAsync(HttpMethod.Post,"api/pos/v1/receivable-payments/confirm",request,
+                    user,ct,http.Request.Headers["Idempotency-Key"]); }
+                catch(PosOrdersServerException error) when(inserted && error.StatusCode is >=400 and <500 and not 408 and not 409 and not 429)
+                { await closureStore.RemovePortfolioPaymentAsync(paymentId,user.WorkSessionId,ct); throw; }
+                await RecordAcceptedPortfolioPaymentAsync(closureStore,request,accepted,user,"Receivable",ct);
+                return accepted;
+            }));
         edge.MapPost("/portfolio/payable-payments",async(HttpContext http,JsonElement request,
-            PosOrdersServerClient server,PosLocalSessionAccessor sessions,CancellationToken ct)=>
-            await ServerOrderResult(()=>server.SendAsync(HttpMethod.Post,
-                "api/commerce/v1/payable-payments/confirm",request,
-                RequiredPortfolioUser(sessions,"payables.payments.create"),ct,http.Request.Headers["Idempotency-Key"])));
+            PosOrdersServerClient server,PosLocalSessionAccessor sessions,
+            PosOfflineWorkSessionClosureStore closureStore,CancellationToken ct)=>
+            await ServerOrderResult(async()=>
+            {
+                var user=RequiredPortfolioUser(sessions,"payables.payments.create");
+                var paymentId=request.GetProperty("paymentId").GetGuid();
+                var inserted=await PreparePortfolioPaymentAsync(closureStore,request,user,"Payable",ct);
+                JsonElement accepted;
+                try { accepted=await server.SendPortfolioAsync(HttpMethod.Post,"api/pos/v1/payable-payments/confirm",request,
+                    user,ct,http.Request.Headers["Idempotency-Key"]); }
+                catch(PosOrdersServerException error) when(inserted && error.StatusCode is >=400 and <500 and not 408 and not 409 and not 429)
+                { await closureStore.RemovePortfolioPaymentAsync(paymentId,user.WorkSessionId,ct); throw; }
+                await RecordAcceptedPortfolioPaymentAsync(closureStore,request,accepted,user,"Payable",ct);
+                return accepted;
+            }));
 
         edge.MapPost("/capture", async (
             CaptureRequest request,
@@ -1547,6 +1606,11 @@ public static class PosEdgeHostApplication
             return Results.Problem(exception.Message,
                 statusCode: exception.StatusCode, title: exception.Code);
         }
+        catch (HttpRequestException)
+        {
+            return Results.Problem("No hay conexión con Auraly. Reintenta la devolución con los mismos datos.",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private static PosLocalUserSession RequiredSalesReturnUser(
@@ -1559,6 +1623,14 @@ public static class PosEdgeHostApplication
         return user;
     }
 
+    private static async Task EnsureOrderCustomerUploadedAsync(JsonElement request,
+        PosCustomerOutboxUploader customers, CancellationToken cancellationToken)
+    {
+        if (request.TryGetProperty("customerId", out var property) &&
+            Guid.TryParse(property.GetString(), out var customerId) && customerId != Guid.Empty)
+            await customers.EnsureUploadedForOrderAsync(customerId, cancellationToken);
+    }
+
     private static async Task<IResult> ServerOrderResult<T>(Func<Task<T>> action)
     {
         try { return Results.Ok(await action()); }
@@ -1566,6 +1638,55 @@ public static class PosEdgeHostApplication
         {
             return Results.Problem(exception.Message,
                 statusCode: exception.StatusCode, title: exception.Code);
+        }
+    }
+
+    private static Task<bool> PreparePortfolioPaymentAsync(
+        PosOfflineWorkSessionClosureStore closureStore, JsonElement request,
+        PosLocalUserSession user, string direction, CancellationToken cancellationToken) =>
+        closureStore.PreparePortfolioPaymentAsync(
+            ReadLocalPortfolioPayment(request, user, direction, "Pendiente de confirmación"),
+            cancellationToken);
+
+    private static PosLocalPortfolioPayment ReadLocalPortfolioPayment(
+        JsonElement request, PosLocalUserSession user, string direction,
+        string documentNumber)
+    {
+        var paymentId=request.GetProperty("paymentId").GetGuid();
+        var workSessionId=request.GetProperty("workSessionId").GetGuid();
+        if(workSessionId!=user.WorkSessionId)
+            throw new PosOrdersServerException(400,"InvalidWorkSession",
+                "El pago no corresponde a la sesión de caja local.");
+        var paidAt=request.GetProperty("paidAt").GetDateTimeOffset();
+        var tenders=request.GetProperty("payments").EnumerateArray()
+            .Select(value=>new PosLocalPortfolioTender(
+                value.GetProperty("methodCode").GetString()??"",
+                value.GetProperty("amount").GetDecimal())).ToArray();
+        return new PosLocalPortfolioPayment(paymentId,user.WorkSessionId,direction,
+            documentNumber,paidAt,tenders);
+    }
+
+    private static async Task RecordAcceptedPortfolioPaymentAsync(
+        PosOfflineWorkSessionClosureStore closureStore, JsonElement request,
+        JsonElement accepted, PosLocalUserSession user, string direction,
+        CancellationToken cancellationToken)
+    {
+        var paymentId=request.GetProperty("paymentId").GetGuid();
+        if(!accepted.TryGetProperty("paymentId",out var acceptedId)||
+           !Guid.TryParse(acceptedId.GetString(),out var authoritativeId)||
+           authoritativeId!=paymentId||
+           !accepted.TryGetProperty("documentNumber",out var number))
+            throw new PosOrdersServerException(502,"InvalidPortfolioPayment",
+                "El pago fue aceptado, pero su respuesta no coincide con la sesión local. Reintenta sin cambiar los valores.");
+        try
+        {
+            await closureStore.RecordPortfolioPaymentAsync(ReadLocalPortfolioPayment(
+                request,user,direction,number.GetString()??""),cancellationToken);
+        }
+        catch(SqliteException)
+        {
+            throw new PosOrdersServerException(503,"PortfolioProjectionPending",
+                "El pago fue aceptado, pero no se guardó aún en el cierre local. Reintenta sin cambiar los valores.");
         }
     }
 

@@ -8,6 +8,7 @@ using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
+using Auraly.Contracts.Parties;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Commerce.Taxation.Contracts;
@@ -35,8 +36,164 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
     private readonly List<string> _environmentKeys = [];
     private readonly RecordingPrinter _printer = new();
     private readonly RecordingClosurePrinter _closurePrinter = new();
+    private readonly UnavailableServerHandler _serverHandler = new();
     private HttpClient Client =>
         _client ?? throw new InvalidOperationException("The test host has not started.");
+
+    [Fact]
+    public async Task Provisional_closure_rows_remain_removable_after_a_retry()
+    {
+        var store = _factory!.Services.GetRequiredService<PosOfflineWorkSessionClosureStore>();
+        var sessionId = Guid.NewGuid();
+        var refund = new PosLocalWorkSessionRefund(Guid.NewGuid(), sessionId, "Cash", 3000m);
+        Assert.True(await store.PrepareRefundAsync(refund));
+        Assert.True(await store.PrepareRefundAsync(refund));
+        await store.RecordRefundAsync(refund);
+        Assert.False(await store.PrepareRefundAsync(refund));
+
+        var payment = new PosLocalPortfolioPayment(Guid.NewGuid(), sessionId, "Receivable",
+            "Pendiente de confirmación", DateTimeOffset.UtcNow,
+            [new PosLocalPortfolioTender("Cash", 3000m)]);
+        Assert.True(await store.PreparePortfolioPaymentAsync(payment));
+        Assert.True(await store.PreparePortfolioPaymentAsync(payment));
+        await store.RecordPortfolioPaymentAsync(payment with { DocumentNumber = "RCC-1" });
+        Assert.False(await store.PreparePortfolioPaymentAsync(payment));
+    }
+
+    [Fact]
+    public async Task Saving_an_order_with_a_new_local_customer_uploads_the_customer_first()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT WorkSessionId FROM PosLocalWorkSessions WHERE ClosedAt IS NULL LIMIT 1;";
+        var workSessionId = Guid.Parse((string)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "UPDATE Outbox SET Status='Uploaded' WHERE Status<>'Uploaded';";
+        await command.ExecuteNonQueryAsync();
+        var customers = _factory!.Services.GetRequiredService<PosCustomerOutboxStore>();
+        var customer = await customers.QueueAsync(new PosCreateCustomerInput(
+            "NaturalPerson", Guid.NewGuid(), "CC", "1000001", null, "Cliente nuevo",
+            null, "Cliente nuevo", null, null, null,
+            new PartySiteInput("PRINCIPAL", "Principal", Guid.NewGuid(), Guid.NewGuid(),
+                Guid.NewGuid(), "Calle 1", null, null, null, null)), workSessionId);
+        var paths = new List<string>();
+        _serverHandler.BeforeSend = request =>
+        {
+            paths.Add(request.RequestUri!.AbsolutePath);
+            return Task.CompletedTask;
+        };
+        _serverHandler.Reply = request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/pos/v1/customers" => new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = JsonContent.Create(new { customerId = customer.CustomerId,
+                    displayName = customer.Name, identification = customer.Identification })
+            },
+            "/api/commerce/v1/seller-orders" => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { orderId = Guid.NewGuid(), orderNumber = "PED-1" })
+            },
+            _ => null
+        };
+        using var response = await Client.PostAsJsonAsync("/edge/v1/orders", new
+        {
+            customerId = customer.CustomerId,
+            partySiteId = customer.PartySiteId
+        });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("/api/pos/v1/customers", paths);
+        Assert.Contains("/api/commerce/v1/seller-orders", paths);
+        Assert.True(paths.IndexOf("/api/pos/v1/customers") <
+                    paths.IndexOf("/api/commerce/v1/seller-orders"));
+        Assert.Equal("Uploaded", (await customers.DeliveryStatusAsync(customer.CustomerId))?.Status);
+    }
+
+    [Fact]
+    public async Task Prepared_box_persists_returns_and_portfolio_before_calling_server()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        await connection.OpenAsync();
+        await using var current = connection.CreateCommand();
+        current.CommandText = "SELECT WorkSessionId FROM PosLocalWorkSessions WHERE ClosedAt IS NULL LIMIT 1;";
+        var workSessionId = Guid.Parse((string)(await current.ExecuteScalarAsync())!);
+        var observed = new HashSet<string>();
+        _serverHandler.BeforeSend = async request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            var table = path.Contains("sales-returns", StringComparison.Ordinal)
+                ? "PosWorkSessionRefunds" : "PosWorkSessionPortfolioPayments";
+            await using var check = connection.CreateCommand();
+            check.CommandText = $"SELECT COUNT(*) FROM {table} WHERE WorkSessionId=$session;";
+            check.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
+            Assert.True((long)(await check.ExecuteScalarAsync())! > 0);
+            observed.Add(path);
+        };
+        var returnId = Guid.NewGuid();
+        using var returned = await Client.PostAsJsonAsync("/edge/v1/server-returns/confirm", new
+        {
+            returnId, workSessionId, economicResolution = "Refund",
+            refundMethodCode = "Cash", localRefundAmount = 12500m
+        });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, returned.StatusCode);
+        foreach (var (path, kind) in new[] {
+            ("receivable-payments", "Receivable"), ("payable-payments", "Payable") })
+        {
+            using var paid = await Client.PostAsJsonAsync($"/edge/v1/portfolio/{path}", new
+            {
+                paymentId = Guid.NewGuid(), workSessionId, paidAt = DateTimeOffset.UtcNow,
+                payments = new[] { new { methodCode = "Cash", amount = 5000m } }
+            });
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, paid.StatusCode);
+            Assert.Contains($"/api/pos/v1/{path}/confirm", observed);
+        }
+        Assert.Contains("/api/pos/v1/sales-returns/confirm", observed);
+        var store = _factory!.Services.GetRequiredService<PosOfflineWorkSessionClosureStore>();
+        Assert.Equal(12500m, Assert.Single(await store.ReadRefundsAsync(workSessionId)).Amount);
+        Assert.Equal(2, (await store.ReadPortfolioPaymentsAsync(workSessionId)).Count);
+    }
+
+    [Fact]
+    public async Task Failed_local_return_write_does_not_call_server()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DROP TABLE PosWorkSessionRefunds;";
+        await command.ExecuteNonQueryAsync();
+        var calls = _serverHandler.Count;
+        try
+        {
+            using var response = await Client.PostAsJsonAsync("/edge/v1/server-returns/confirm", new
+            {
+                returnId = Guid.NewGuid(), economicResolution = "Refund",
+                refundMethodCode = "Cash", localRefundAmount = 12500m
+            });
+            Assert.False(response.IsSuccessStatusCode);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException) { }
+        Assert.Equal(calls, _serverHandler.Count);
+    }
+
+    [Fact]
+    public async Task Confirmed_portfolio_payment_is_projected_once_into_its_local_session()
+    {
+        var store=_factory!.Services.GetRequiredService<PosOfflineWorkSessionClosureStore>();
+        var sessionId=Guid.NewGuid();
+        var payment=new PosLocalPortfolioPayment(Guid.NewGuid(),sessionId,"Receivable","RCC-1",
+            DateTimeOffset.UtcNow,[new("Cash",12500m),new("BankTransfer",7500m)]);
+        await store.RecordPortfolioPaymentAsync(payment);
+        await store.RecordPortfolioPaymentAsync(payment);
+        Assert.False(await store.PreparePortfolioPaymentAsync(payment with
+        {
+            DocumentNumber = "Pendiente de confirmación",
+            Tenders = [new PosLocalPortfolioTender("Cash", 1m)]
+        }));
+        var actual=Assert.Single(await store.ReadPortfolioPaymentsAsync(sessionId));
+        Assert.Equal(payment.PaymentId,actual.PaymentId);
+        Assert.Equal("RCC-1",actual.DocumentNumber);
+        Assert.Equal(20000m,actual.Tenders.Sum(tender=>tender.Amount));
+        Assert.Empty(await store.ReadPortfolioPaymentsAsync(Guid.NewGuid()));
+    }
 
     [Fact]
     public async Task Lost_enrollment_package_recovers_the_single_durable_device_identity()
@@ -466,6 +623,8 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         Assert.Equal(
             "http://127.0.0.1:47830",
             accepted.Headers.GetValues("Access-Control-Allow-Origin").Single());
+        Assert.Contains("Idempotency-Key",
+            accepted.Headers.GetValues("Access-Control-Allow-Headers").Single());
 
         using var rejected = new HttpRequestMessage(HttpMethod.Options, "/edge/v1/capture");
         rejected.Headers.Add("Origin", "https://malicious.example");
@@ -1495,7 +1654,7 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
                 services.RemoveAll<IPosWorkSessionClosurePrinter>();
                 services.AddSingleton<IPosWorkSessionClosurePrinter>(_closurePrinter);
                 services.RemoveAll<HttpClient>();
-                services.AddSingleton(new HttpClient(new UnavailableServerHandler())
+                services.AddSingleton(new HttpClient(_serverHandler)
                     { BaseAddress = new Uri("http://127.0.0.1:59999") });
             }));
         _client = _factory.CreateClient();
@@ -1513,7 +1672,8 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
                     userId,
                     "cashier",
                     "Cajera de prueba",
-                    ["sales.create", "sales.change-price", "sales.lines.cost-margin.read", "sales.reprint", "sales.void",
+                    ["sales.create", "sales.change-price", "sales.lines.cost-margin.read", "sales.reprint", "sales.void", "orders.create",
+                        "sales.returns.create", "receivables.payments.create", "payables.payments.create",
                         CommercePermissionCodes.SalesRemoveLine,
                         CommercePermissionCodes.SalesRestartDraft,
                         CommercePermissionCodes.SalesDeletePausedDraft,
@@ -1704,11 +1864,18 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
 
     private sealed class UnavailableServerHandler : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(
+        public int Count { get; private set; }
+        public Func<HttpRequestMessage, Task>? BeforeSend { get; set; }
+        public Func<HttpRequestMessage, HttpResponseMessage?>? Reply { get; set; }
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken) =>
-            Task.FromException<HttpResponseMessage>(
-                new HttpRequestException("Auraly Server is offline."));
+            CancellationToken cancellationToken)
+        {
+            Count++;
+            if (BeforeSend is not null) await BeforeSend(request);
+            if (Reply?.Invoke(request) is { } response) return response;
+            throw new HttpRequestException("Auraly Server is offline.");
+        }
     }
 
     private sealed class EnrollmentConflictHandler : HttpMessageHandler

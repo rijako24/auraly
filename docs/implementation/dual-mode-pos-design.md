@@ -30,6 +30,9 @@ operaciones online por el proxy local autenticado. La recuperación copia el
 snapshot a un borrador SQLite de trabajo, sin crear un maestro paralelo ni
 recalcular precio o inventario. Crear, recuperar, editar, guardar o facturar un
 pedido requiere conexión y vuelve siempre al caso de uso canónico del servidor.
+Si el cliente del pedido se creó en esta caja y aún está en el outbox, el proxy
+local completa primero su subida canónica; sólo entonces envía el pedido. Un
+cliente que no pudo sincronizarse deja el pedido sin guardar y muestra el fallo.
 
 No se pregunta al cajero el modo en cada inicio y no se cambia de persistencia a
 mitad de una factura. La ausencia de Internet no se confunde con la ausencia de
@@ -154,11 +157,17 @@ En una caja enrolada la UI no sincroniza datos. Lee las proyecciones locales y
 envía comandos al host; el sincronizador local es el único propietario de las
 subidas y bajadas de snapshots. Sus fallos y reintentos se exponen en Ctrl+L.
 La vista previa y la confirmación del cierre se construyen exclusivamente con
-las ventas, movimientos y sesión persistidos en SQLite para el turno local; no
-consultan Auraly Server ni vuelven a leer el lote al confirmar. El cierre ya
-congelado se encola y el sincronizador lo sube después. En web no enrolada, el
-cierre consulta directamente las tablas canónicas de SQL Server dentro de una
-transacción consistente, sin usar caché de navegador ni proyecciones locales.
+las ventas, devoluciones, pagos de cartera y movimientos persistidos en SQLite
+para el turno local; no consultan Auraly Server. El cierre ya congelado se encola
+y el sincronizador lo sube después. En web no enrolada, el cierre consulta las
+tablas canónicas de SQL Server. Para una devolución, abono o pago a proveedor de
+caja preparada, Edge escribe primero una proyección mínima local. Si SQLite
+falla, no envía el comando al servidor. Tras la aceptación actualiza la
+proyección con el importe y comprobante autoritativos; un reintento reutiliza el
+identificador del documento. Un rechazo definitivo revierte la proyección local.
+Una pérdida de respuesta deja el movimiento local con el importe estimado hasta
+que se reintente el mismo comando; esta limitación no se resuelve con una
+transacción distribuida entre SQLite y SQL Server.
 Los comandos que por contrato son síncronos con servidor —guardar/actualizar un
 pedido y las validaciones autoritativas de inventario restringido o saldo de
 cartera— también pasan por el host con credencial del dispositivo, nunca por el

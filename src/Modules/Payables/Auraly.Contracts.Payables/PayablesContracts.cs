@@ -34,7 +34,8 @@ public sealed record PayableQuery(
     Guid? SupplierId,
     string? Status,
     bool? Overdue,
-    bool OutstandingOnly = false);
+    bool OutstandingOnly = false,
+    DateOnly? From = null, DateOnly? To = null);
 
 public sealed record PayableListItem(
     Guid PayableId,
@@ -143,18 +144,21 @@ public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentN
     IReadOnlyList<SupplierPaymentHistoryApplication> Applications,
     Guid? SupplierId = null, string? SupplierName = null);
 public sealed record SupplierPaymentHistoryApplication(Guid PayableId,string DocumentNumber,decimal Amount);
-public sealed record SupplierPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? SupplierId);
+public sealed record SupplierPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? SupplierId,
+    string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null);
 public sealed record SupplierPaymentHistoryPage(IReadOnlyList<SupplierPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
-public sealed record SupplierPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue);
+public sealed record SupplierPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue,
+    Guid? SupplierId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null);
 public sealed record SupplierPortfolioItem(Guid SupplierId, string SupplierName,
     string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
     decimal OutstandingAmount, decimal OverdueAmount);
 public sealed record SupplierPortfolioPage(IReadOnlyList<SupplierPortfolioItem> Items,
-    int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue)
+    int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
+    int TotalInvoiceCount = 0)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }

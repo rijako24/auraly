@@ -674,6 +674,19 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 item=>item.CustomerId==customerId).PaidAmount);
         }
 
+        var paymentDate=DateOnly.FromDateTime(payment.PaidAt.UtcDateTime).ToString("yyyy-MM-dd");
+        var createdDate=DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
+        var customerFilter=$"customerId={customerId:D}&status=Paid&from={createdDate}&to={createdDate}";
+        var customers=await client.GetFromJsonAsync<CustomerPortfolioPage>(
+            $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&{customerFilter}");
+        Assert.Contains(customers!.Items,item=>item.CustomerId==customerId&&item.InvoiceCount>0);
+        var invoices=await client.GetFromJsonAsync<ReceivablePage>(
+            $"/api/commerce/v1/receivables?page=1&pageSize=20&{customerFilter}");
+        Assert.Contains(invoices!.Items,item=>item.ReceivableId==receivable.ReceivableId);
+        var payments=await client.GetFromJsonAsync<CustomerPaymentHistoryPage>(
+            $"/api/commerce/v1/receivable-payments?page=1&pageSize=20&customerId={customerId:D}&status=Paid&from={paymentDate}&to={paymentDate}");
+        Assert.Contains(payments!.Items,item=>item.PaymentId==payment.PaymentId);
+
         var fullyPaidRequest = request with
         {
             ReturnId = Guid.NewGuid(),

@@ -18,10 +18,9 @@ El recaudo es un documento financiero durable (`ReceivablePayment`). Su aceptaci
 crea una única fuente y trabajo financiero-contable. El único
 `SqlAccountingPostingProcessor` aplica en una transacción el pago, asignaciones,
 saldo de la obligación y movimiento financiero de la sesión. Si el trabajo
-congeló contabilidad activa también crea el asiento en esa transacción. El flujo
-heredado aún usa `DocumentProcessingJobs` para aceptar el recaudo; su handler no
-escribe cartera y debe migrar al ingreso financiero directo sin cambiar el
-propietario ni las tablas.
+congeló contabilidad activa también crea el asiento en esa transacción. El ingreso
+financiero es directo mediante `AccountingSourceDocuments` y
+`AccountingPostingJobs`; no usa `DocumentProcessingJobs`.
 
 ## Modelo
 
@@ -269,6 +268,9 @@ borran ni consolidan obligaciones ya emitidas.
 - La base impide una obligación duplicada por documento origen.
 - `PaymentId` e `IdempotencyKey` son únicos por negocio.
 - Un replay con el mismo contenido devuelve la aceptación previa; contenido distinto produce conflicto.
+- En caja preparada, el proxy local guarda primero una proyección mínima por
+  `PaymentId` y `WorkSessionId`; solo entonces confirma el recaudo en el servidor.
+  El cierre usa esa proyección local y un replay conserva el mismo identificador.
 - La aceptación usa aislamiento `Serializable`, bloqueos de actualización y reintento acotado de deadlock.
 - Dos abonos concurrentes que excedan el saldo no pueden ser aceptados ambos.
 - La configuración de cupo se actualiza en una transacción serializable.

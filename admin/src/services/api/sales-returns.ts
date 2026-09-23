@@ -91,6 +91,7 @@ export interface ConfirmSalesReturnRequest {
   returnScopeCode: SalesReturnScope;
   economicResolution: SalesReturnResolution;
   refundMethodCode: SalesReturnRefundMethod | null;
+  localRefundAmount?: number;
   reasonDescription: string;
   lines: Array<{
     originalLineNumber: number;

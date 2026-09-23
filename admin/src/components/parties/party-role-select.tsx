@@ -33,9 +33,10 @@ type PartyRoleSelectProps = {
   includePartyId?: boolean;
   preload?: boolean;
   loadPage?: (search:string,page:number,pageSize:number)=>Promise<{items:PartyRoleOption[];page:number;totalPages:number;totalCount:number}>;
+  sourceKey?: string;
 };
 
-export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, disabled, includePartyId = false, preload = false,loadPage }: PartyRoleSelectProps) {
+export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, disabled, includePartyId = false, preload = false,loadPage,sourceKey }: PartyRoleSelectProps) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [picked, setPicked] = useState<PagedEntityOption | null>(null);
   const getOption = useCallback((item: PartyRoleSelection) => ({
@@ -45,7 +46,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
   }), [includePartyId, role]);
   useEffect(() => { if (picked && picked.value !== value) setPicked(null); }, [picked, value]);
   const selectedQuery = useQuery({
-    queryKey: ["party-role-select-value", businessId, role ?? "Any", includePartyId, value],
+    queryKey: ["party-role-select-value", sourceKey??(loadPage ? "custom" : "web"), businessId, role ?? "Any", includePartyId, value],
     queryFn: async () => {
       const item = loadPage
         ? (await loadPage(value,1,10)).items.find(option=>(includePartyId||!role?option.partyId:option.roleId)===value)
@@ -60,7 +61,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
   useEffect(() => { onResolvedRef.current = onResolved; }, [onResolved]);
   useEffect(() => { if (selectedQuery.data) onResolvedRef.current?.(selectedQuery.data); }, [selectedQuery.data]);
   return <PagedEntitySelect
-    queryKey={["party-role-select", businessId, role ?? "Any", includePartyId]}
+    queryKey={["party-role-select", sourceKey??(loadPage ? "custom" : "web"), businessId, role ?? "Any", includePartyId]}
     value={value}
     onChange={(id, option, item) => {
       if (item) setPicked(option);

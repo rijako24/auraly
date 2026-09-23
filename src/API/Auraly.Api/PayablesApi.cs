@@ -1,6 +1,9 @@
 using System.Security.Claims;
 using Auraly.Application.Payables;
 using Auraly.Contracts.Payables;
+using Auraly.Application.WorkSessions;
+using Auraly.Contracts.WorkSessions;
+using Auraly.Platform.Application.Identity.Interfaces;
 
 namespace Auraly.Api;
 
@@ -11,18 +14,20 @@ public static class PayablesApi
         endpoints.MapGet(
                 "/api/commerce/v1/payables/suppliers",
                 async (HttpContext context,int page,int pageSize,string? search,bool? overdue,
+                    Guid? supplierId,string? status,DateOnly? from,DateOnly? to,
                     PayablesService service,CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListSuppliersAsync(context.User.ToPayablesIdentity(),
-                        new SupplierPortfolioQuery(page,pageSize,search,overdue),cancellationToken),Results.Ok))
+                        new SupplierPortfolioQuery(page,pageSize,search,overdue,supplierId,status,from,to),cancellationToken),Results.Ok))
             .RequireAuthorization("payables.user");
         endpoints.MapGet(
                 "/api/commerce/v1/payables",
                 async (HttpContext context, int page, int pageSize, string? search,
                     Guid? supplierId, string? status, bool? overdue, bool? outstandingOnly,
+                    DateOnly? from,DateOnly? to,
                     PayablesService service, CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListAsync(
                         context.User.ToPayablesIdentity(),
-                        new PayableQuery(page, pageSize, search, supplierId, status, overdue, outstandingOnly==true),
+                        new PayableQuery(page, pageSize, search, supplierId, status, overdue, outstandingOnly==true,from,to),
                         cancellationToken), Results.Ok))
             .RequireAuthorization("payables.user");
 
@@ -50,9 +55,10 @@ public static class PayablesApi
         endpoints.MapGet(
                 "/api/commerce/v1/payable-payments",
                 async (HttpContext context,int page,int pageSize,string? search,Guid? supplierId,
+                    string? status,bool? overdue,DateOnly? from,DateOnly? to,
                     PayablesService service,CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListPaymentsAsync(context.User.ToPayablesIdentity(),
-                        new SupplierPaymentHistoryQuery(page,pageSize,search,supplierId),cancellationToken),Results.Ok))
+                        new SupplierPaymentHistoryQuery(page,pageSize,search,supplierId,status,overdue,from,to),cancellationToken),Results.Ok))
             .RequireAuthorization("payables.user");
 
         endpoints.MapPost(
@@ -68,6 +74,27 @@ public static class PayablesApi
                             $"/api/commerce/v1/payable-payments/{value.PaymentId:D}", value);
                     }))
             .RequireAuthorization("payables.user");
+        var device=endpoints.MapGroup("/api/pos/v1").RequireAuthorization("pos.enrolled");
+        device.MapGet("/payables",async(HttpContext context,int page,int pageSize,string? search,Guid? supplierId,string? status,bool? overdue,bool? outstandingOnly,PayablesService service,WorkSessionService sessions,IUserService users,CancellationToken token)=>
+            await ExecuteAsync(async()=>
+            {
+                var actor=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,token);
+                actor.RequirePermission(PayablesPermissionCodes.Read);
+                return Results.Ok(await service.ListAsync(new PayablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
+                    actor.Permissions),
+                    new PayableQuery(page,pageSize,search,supplierId,status,overdue,outstandingOnly==true),token));
+            }));
+        device.MapPost("/payable-payments/confirm",async(HttpContext context,ConfirmSupplierPaymentRequest request,PayablesService service,WorkSessionService sessions,IUserService users,CancellationToken token)=>
+            await ExecuteAsync(async()=>
+            {
+                var actor=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,token);
+                actor.RequirePermission(PayablesPermissionCodes.RegisterPayment);
+                actor.RequirePayment(request.BusinessId,request.WorkSessionId);
+                var value=await service.ConfirmPaymentAsync(new PayablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
+                    actor.Permissions),
+                    context.Request.Headers["Idempotency-Key"].ToString(),request,token);
+                return Results.Accepted($"/api/commerce/v1/payable-payments/{value.PaymentId:D}",value);
+            }));
         return endpoints;
     }
 
@@ -75,6 +102,8 @@ public static class PayablesApi
     {
         try { return await action(); }
         catch (PayablesForbiddenException exception)
+        { return Results.Problem(exception.Message, statusCode: 403); }
+        catch (WorkSessionForbiddenException exception)
         { return Results.Problem(exception.Message, statusCode: 403); }
         catch (PayablesValidationException exception)
         { return Results.Problem(exception.Message, statusCode: 400); }

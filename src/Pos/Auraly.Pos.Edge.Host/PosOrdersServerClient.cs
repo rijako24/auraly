@@ -10,10 +10,15 @@ public sealed class PosOrdersServerClient(HttpClient http, PosDeviceCredentials 
 {
     public Task<JsonElement> SendAsync(HttpMethod method, string path, JsonElement? body,
         PosLocalUserSession user, CancellationToken token, string? idempotencyKey = null) =>
-        SendCoreAsync(method, path, body, user, token, idempotencyKey);
+        SendCoreAsync(method, path, body, user, token, idempotencyKey, "Pedidos");
+
+    public Task<JsonElement> SendPortfolioAsync(HttpMethod method, string path, JsonElement? body,
+        PosLocalUserSession user, CancellationToken token, string? idempotencyKey = null) =>
+        SendCoreAsync(method, path, body, user, token, idempotencyKey, "Cartera");
 
     private async Task<JsonElement> SendCoreAsync(HttpMethod method, string path, JsonElement? body,
-        PosLocalUserSession user, CancellationToken token, string? idempotencyKey)
+        PosLocalUserSession user, CancellationToken token, string? idempotencyKey,
+        string capability)
     {
         using var request = new HttpRequestMessage(method, path);
         if (body.HasValue) request.Content = JsonContent.Create(body.Value);
@@ -33,8 +38,8 @@ public sealed class PosOrdersServerClient(HttpClient http, PosDeviceCredentials 
             error is HttpRequestException ||
             error is TaskCanceledException && !token.IsCancellationRequested)
         {
-            throw new PosOrdersServerException(503, "OrdersUnavailable",
-                "No hay conexión con Auraly. Pedidos requiere conexión con el servidor.");
+            throw new PosOrdersServerException(503, capability=="Pedidos"?"OrdersUnavailable":"ServerUnavailable",
+                $"No hay conexión con Auraly. {capability} requiere conexión con el servidor.");
         }
         using (response)
         {
@@ -43,8 +48,10 @@ public sealed class PosOrdersServerClient(HttpClient http, PosDeviceCredentials 
                 var problem = await ReadProblemAsync(response, token);
                 throw new PosOrdersServerException((int)response.StatusCode,
                     problem?.Title?.StartsWith("Order", StringComparison.Ordinal) == true
-                        ? problem.Title : "OrdersUnavailable",
-                    problem?.Detail ?? "No fue posible procesar los pedidos.");
+                        ? problem.Title : capability=="Pedidos"?"OrdersUnavailable":"ServerRequestFailed",
+                    problem?.Detail ?? (capability=="Pedidos"
+                        ? "No fue posible procesar los pedidos."
+                        : "No fue posible procesar cartera."));
             }
             return await response.Content.ReadFromJsonAsync<JsonElement>(token);
         }

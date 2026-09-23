@@ -64,6 +64,7 @@ export interface ConfirmSupplierPaymentRequest {
 export interface SupplierPaymentTender {methodCode:"Cash"|"BankTransfer";amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null}
 
 export interface PaymentSettlementConfiguration {
+  isAccountingEnabled: boolean;
   bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean }>;
 }
 
@@ -78,11 +79,11 @@ export interface SupplierPaymentHistoryPage {
   items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:SupplierPaymentTender[];applications:Array<{payableId:string;documentNumber:string;amount:number}>;supplierId:string|null;supplierName:string|null}>;
   page:number;pageSize:number;totalCount:number;totalPages:number;
 }
-export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number}
+export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number}
 
 export const payablesApi = {
-  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
-  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
+  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;status?:PayableStatus;from?:string;to?:string})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
+  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
   currentWorkSession:(businessId:string)=>apiClient.post<{workSessionId:string}>("/commerce/v1/work-sessions/current",{businessId,warehouseId:null,deviceId:null}),
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
@@ -96,6 +97,8 @@ export const payablesApi = {
     status?: PayableStatus;
     overdue?: boolean;
     outstandingOnly?: boolean;
+    from?: string;
+    to?: string;
   }) => apiClient.get<PayablePage>(
     "/commerce/v1/payables",
     withPagedDefaults(params),

@@ -23,6 +23,10 @@ public sealed record PosLocalWorkSessionRefund(
     Guid WorkSessionId,
     string PaymentMethodCode,
     decimal Amount);
+public sealed record PosLocalPortfolioTender(string MethodCode, decimal Amount);
+public sealed record PosLocalPortfolioPayment(Guid PaymentId, Guid WorkSessionId,
+    string Direction, string DocumentNumber, DateTimeOffset PaidAt,
+    IReadOnlyList<PosLocalPortfolioTender> Tenders);
 
 public sealed class PosOfflineWorkSessionClosureStore(
     string connectionString,
@@ -48,31 +52,75 @@ public sealed class PosOfflineWorkSessionClosureStore(
               WorkSessionId TEXT NOT NULL,
               PaymentMethodCode TEXT NOT NULL,
               Amount TEXT NOT NULL,
-              CreatedAt TEXT NOT NULL);
+              CreatedAt TEXT NOT NULL,
+              Accepted INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS IX_PosWorkSessionRefunds_WorkSession
               ON PosWorkSessionRefunds(WorkSessionId);
+            CREATE TABLE IF NOT EXISTS PosWorkSessionPortfolioPayments(
+              PaymentId TEXT NOT NULL PRIMARY KEY,
+              WorkSessionId TEXT NOT NULL,
+              Direction TEXT NOT NULL CHECK(Direction IN ('Receivable','Payable')),
+              DocumentNumber TEXT NOT NULL,
+              PaidAt TEXT NOT NULL,
+              TendersJson TEXT NOT NULL,
+              Accepted INTEGER NOT NULL DEFAULT 0);
+            CREATE INDEX IF NOT EXISTS IX_PosWorkSessionPortfolioPayments_WorkSession
+              ON PosWorkSessionPortfolioPayments(WorkSessionId);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await AddAcceptedColumnIfMissingAsync(connection, "PosWorkSessionRefunds", cancellationToken);
+        await AddAcceptedColumnIfMissingAsync(connection, "PosWorkSessionPortfolioPayments", cancellationToken);
     }
+
+    private static async Task AddAcceptedColumnIfMissingAsync(SqliteConnection connection,
+        string table, CancellationToken cancellationToken)
+    {
+        await using var inspect = connection.CreateCommand();
+        inspect.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await inspect.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            if (reader.GetString(1) == "Accepted") return;
+        await reader.DisposeAsync();
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN Accepted INTEGER NOT NULL DEFAULT 0;";
+        await alter.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<bool> PrepareRefundAsync(PosLocalWorkSessionRefund value,
+        CancellationToken cancellationToken = default) =>
+        await WriteRefundAsync(value, false, cancellationToken);
 
     public async Task RecordRefundAsync(
         PosLocalWorkSessionRefund value,
         CancellationToken cancellationToken = default)
     {
+        await WriteRefundAsync(value, true, cancellationToken);
+    }
+
+    private async Task<bool> WriteRefundAsync(PosLocalWorkSessionRefund value,
+        bool accepted, CancellationToken cancellationToken)
+    {
         if (value.ReturnId == Guid.Empty || value.WorkSessionId == Guid.Empty ||
-            value.Amount <= 0 || string.IsNullOrWhiteSpace(value.PaymentMethodCode))
+            value.Amount < 0 || string.IsNullOrWhiteSpace(value.PaymentMethodCode))
             throw new ArgumentException("La devolución confirmada no es válida.", nameof(value));
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.Transaction = transaction;
+        command.CommandText = accepted ? """
             INSERT INTO PosWorkSessionRefunds(
-              ReturnId,WorkSessionId,PaymentMethodCode,Amount,CreatedAt)
-            VALUES($return,$session,$method,$amount,$now)
+              ReturnId,WorkSessionId,PaymentMethodCode,Amount,CreatedAt,Accepted)
+            VALUES($return,$session,$method,$amount,$now,1)
             ON CONFLICT(ReturnId) DO UPDATE SET
               WorkSessionId=excluded.WorkSessionId,
               PaymentMethodCode=excluded.PaymentMethodCode,
-              Amount=excluded.Amount;
+              Amount=excluded.Amount,Accepted=1;
+            """ : """
+            INSERT INTO PosWorkSessionRefunds(
+              ReturnId,WorkSessionId,PaymentMethodCode,Amount,CreatedAt,Accepted)
+            VALUES($return,$session,$method,$amount,$now,0)
+            ON CONFLICT(ReturnId) DO NOTHING;
             """;
         command.Parameters.AddWithValue("$return", value.ReturnId.ToString("D"));
         command.Parameters.AddWithValue("$session", value.WorkSessionId.ToString("D"));
@@ -80,7 +128,12 @@ public sealed class PosOfflineWorkSessionClosureStore(
         command.Parameters.AddWithValue(
             "$amount", value.Amount.ToString(System.Globalization.CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O"));
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
+        var provisional = !accepted && inserted == 0 &&
+            await ExistingProvisionalAsync(connection, transaction, "PosWorkSessionRefunds",
+                "ReturnId", value.ReturnId, value.WorkSessionId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return inserted == 1 || provisional;
     }
 
     public async Task<IReadOnlyList<PosLocalWorkSessionRefund>> ReadRefundsAsync(
@@ -93,7 +146,7 @@ public sealed class PosOfflineWorkSessionClosureStore(
         command.CommandText = """
             SELECT ReturnId,PaymentMethodCode,Amount
             FROM PosWorkSessionRefunds
-            WHERE WorkSessionId=$session
+            WHERE WorkSessionId=$session AND CAST(Amount AS REAL)>0
             ORDER BY CreatedAt,ReturnId;
             """;
         command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
@@ -104,6 +157,120 @@ public sealed class PosOfflineWorkSessionClosureStore(
                 Guid.Parse(reader.GetString(0)), workSessionId, reader.GetString(1),
                 decimal.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture)));
         return values;
+    }
+
+    public async Task RemoveRefundAsync(Guid returnId, Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM PosWorkSessionRefunds WHERE ReturnId=$id AND WorkSessionId=$session;
+            """;
+        command.Parameters.AddWithValue("$id", returnId.ToString("D"));
+        command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<bool> PreparePortfolioPaymentAsync(PosLocalPortfolioPayment value,
+        CancellationToken cancellationToken = default) =>
+        await WritePortfolioPaymentAsync(value, false, cancellationToken);
+
+    public async Task RecordPortfolioPaymentAsync(PosLocalPortfolioPayment value,
+        CancellationToken cancellationToken = default)
+    {
+        await WritePortfolioPaymentAsync(value, true, cancellationToken);
+    }
+
+    private async Task<bool> WritePortfolioPaymentAsync(PosLocalPortfolioPayment value,
+        bool accepted,
+        CancellationToken cancellationToken = default)
+    {
+        if(value.PaymentId==Guid.Empty||value.WorkSessionId==Guid.Empty||
+           value.Direction is not ("Receivable" or "Payable")||
+           string.IsNullOrWhiteSpace(value.DocumentNumber)||value.Tenders.Count==0||
+           value.Tenders.Any(tender=>string.IsNullOrWhiteSpace(tender.MethodCode)||tender.Amount<=0))
+            throw new ArgumentException("El pago de cartera confirmado no es válido.",nameof(value));
+        await using var connection=new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction=connection.BeginTransaction(IsolationLevel.Serializable);
+        await using var command=connection.CreateCommand();
+        command.Transaction=transaction;
+        command.CommandText=accepted ? """
+            INSERT INTO PosWorkSessionPortfolioPayments
+              (PaymentId,WorkSessionId,Direction,DocumentNumber,PaidAt,TendersJson,Accepted)
+            VALUES($id,$session,$direction,$number,$paidAt,$tenders,1)
+            ON CONFLICT(PaymentId) DO UPDATE SET
+              WorkSessionId=excluded.WorkSessionId,Direction=excluded.Direction,
+              DocumentNumber=excluded.DocumentNumber,PaidAt=excluded.PaidAt,
+              TendersJson=excluded.TendersJson,Accepted=1;
+            """ : """
+            INSERT INTO PosWorkSessionPortfolioPayments
+              (PaymentId,WorkSessionId,Direction,DocumentNumber,PaidAt,TendersJson,Accepted)
+            VALUES($id,$session,$direction,$number,$paidAt,$tenders,0)
+            ON CONFLICT(PaymentId) DO NOTHING;
+            """;
+        command.Parameters.AddWithValue("$id",value.PaymentId.ToString("D"));
+        command.Parameters.AddWithValue("$session",value.WorkSessionId.ToString("D"));
+        command.Parameters.AddWithValue("$direction",value.Direction);
+        command.Parameters.AddWithValue("$number",value.DocumentNumber);
+        command.Parameters.AddWithValue("$paidAt",value.PaidAt.ToString("O"));
+        command.Parameters.AddWithValue("$tenders",JsonSerializer.Serialize(value.Tenders,Json));
+        var inserted=await command.ExecuteNonQueryAsync(cancellationToken);
+        var provisional=!accepted&&inserted==0&&
+            await ExistingProvisionalAsync(connection,transaction,"PosWorkSessionPortfolioPayments",
+                "PaymentId",value.PaymentId,value.WorkSessionId,cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return inserted==1||provisional;
+    }
+
+    private static async Task<bool> ExistingProvisionalAsync(SqliteConnection connection,
+        SqliteTransaction transaction, string table, string keyColumn, Guid id,
+        Guid workSessionId, CancellationToken cancellationToken)
+    {
+        await using var command=connection.CreateCommand();
+        command.Transaction=transaction;
+        command.CommandText=$"SELECT Accepted FROM {table} WHERE {keyColumn}=$id AND WorkSessionId=$session;";
+        command.Parameters.AddWithValue("$id",id.ToString("D"));
+        command.Parameters.AddWithValue("$session",workSessionId.ToString("D"));
+        return await command.ExecuteScalarAsync(cancellationToken) is 0L;
+    }
+
+    public async Task<IReadOnlyList<PosLocalPortfolioPayment>> ReadPortfolioPaymentsAsync(
+        Guid workSessionId,CancellationToken cancellationToken = default)
+    {
+        await using var connection=new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            SELECT PaymentId,Direction,DocumentNumber,PaidAt,TendersJson
+            FROM PosWorkSessionPortfolioPayments WHERE WorkSessionId=$session
+            ORDER BY PaidAt,PaymentId;
+            """;
+        command.Parameters.AddWithValue("$session",workSessionId.ToString("D"));
+        var values=new List<PosLocalPortfolioPayment>();
+        await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken))
+            values.Add(new(Guid.Parse(reader.GetString(0)),workSessionId,reader.GetString(1),
+                reader.GetString(2),DateTimeOffset.Parse(reader.GetString(3)),
+                JsonSerializer.Deserialize<List<PosLocalPortfolioTender>>(reader.GetString(4),Json)??[]));
+        return values;
+    }
+
+    public async Task RemovePortfolioPaymentAsync(Guid paymentId, Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM PosWorkSessionPortfolioPayments
+            WHERE PaymentId=$id AND WorkSessionId=$session;
+            """;
+        command.Parameters.AddWithValue("$id", paymentId.ToString("D"));
+        command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     internal async Task<WorkSessionClosureView> QueueAsync(
@@ -306,6 +473,11 @@ public sealed class PosOfflineWorkSessionClosureService(
     PosWorkstationIdentity workstation,
     TimeProvider timeProvider)
 {
+    public async Task<bool> HasPendingLocalDocumentsAsync(
+        Guid workSessionId, CancellationToken cancellationToken) =>
+        await sales.HasPendingOutboxForWorkSessionAsync(workSessionId, cancellationToken) ||
+        await cashMovements.HasPendingForWorkSessionAsync(workSessionId, cancellationToken);
+
     public async Task<WorkSessionClosurePreviewView> PreviewAsync(
         PosLocalUserSession session,
         CancellationToken cancellationToken)
@@ -316,16 +488,20 @@ public sealed class PosOfflineWorkSessionClosureService(
             session.WorkSessionId, session.DisplayName, cancellationToken);
         var refunds = await store.ReadRefundsAsync(
             session.WorkSessionId, cancellationToken);
+        var portfolio = await store.ReadPortfolioPaymentsAsync(
+            session.WorkSessionId, cancellationToken);
         var openedAt = await identities.WorkSessionOpenedAtAsync(
             session.WorkSessionId, cancellationToken);
-        var lastActivity = localSales.Count == 0
-            ? openedAt
-            : localSales.Max(value => value.IssuedAt);
-        var totals = PaymentTotals(localSales, refunds, cashMovementDetails, null);
+        var lastActivity = localSales.Select(value=>value.IssuedAt)
+            .Concat(portfolio.Select(value=>value.PaidAt))
+            .DefaultIfEmpty(openedAt).Max();
+        var totals = PaymentTotals(localSales, refunds, cashMovementDetails, portfolio, null);
         var netCashMovements = cashMovementDetails.Sum(movement =>
             movement.Direction == CashMovementDirections.In
                 ? movement.Amount
                 : -movement.Amount);
+        var netPortfolio = portfolio.Sum(payment => payment.Tenders.Sum(tender =>
+            payment.Direction == "Receivable" ? tender.Amount : -tender.Amount));
         var creditSales = localSales
             .Where(value => value.CreditAmount > 0)
             .Select(value => new WorkSessionCreditSale(
@@ -345,8 +521,8 @@ public sealed class PosOfflineWorkSessionClosureService(
             lastActivity,
             localSales.Sum(value => value.Total),
             refunds.Sum(value => value.Amount),
-            netCashMovements,
-            localSales.Sum(value => value.Total) - refunds.Sum(value => value.Amount) + netCashMovements,
+            netCashMovements + netPortfolio,
+            localSales.Sum(value => value.Total) - refunds.Sum(value => value.Amount) + netCashMovements + netPortfolio,
             totals.Single(value => value.PaymentMethodCode == "Cash").NetAmount,
             totals,
             localSales.Count,
@@ -434,6 +610,7 @@ public sealed class PosOfflineWorkSessionClosureService(
         IReadOnlyList<PosLocalWorkSessionSale> sales,
         IReadOnlyList<PosLocalWorkSessionRefund> refunds,
         IReadOnlyList<WorkSessionCashMovementDetail> cashMovements,
+        IReadOnlyList<PosLocalPortfolioPayment> portfolio,
         IReadOnlyList<WorkSessionPaymentCount>? counts)
     {
         var amounts = sales.SelectMany(value => value.Payments)
@@ -450,6 +627,12 @@ public sealed class PosOfflineWorkSessionClosureService(
             .ToDictionary(group => group.Key, group => group.Sum(value => value.Amount),
                 StringComparer.OrdinalIgnoreCase);
         foreach (var method in refundAmounts.Keys) amounts.TryAdd(method, 0);
+        var portfolioAmounts=portfolio.SelectMany(payment=>payment.Tenders.Select(tender=>
+                (Method:ClosureMethod(tender.MethodCode),
+                 Amount:payment.Direction=="Receivable"?tender.Amount:-tender.Amount)))
+            .GroupBy(item=>item.Method,StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group=>group.Key,group=>group.Sum(item=>item.Amount),StringComparer.OrdinalIgnoreCase);
+        foreach(var method in portfolioAmounts.Keys)amounts.TryAdd(method,0);
         var counted = (counts ?? [])
             .GroupBy(value => value.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(value => value.CountedAmount),
@@ -459,12 +642,13 @@ public sealed class PosOfflineWorkSessionClosureService(
             .ThenBy(value => value.Key, StringComparer.Ordinal)
             .Select(value =>
             {
-                var other = value.Key.Equals("Cash", StringComparison.OrdinalIgnoreCase)
+                var other = portfolioAmounts.GetValueOrDefault(value.Key) +
+                    (value.Key.Equals("Cash", StringComparison.OrdinalIgnoreCase)
                     ? cashMovements.Sum(movement =>
                         movement.Direction == CashMovementDirections.In
                             ? movement.Amount
                             : -movement.Amount)
-                    : 0;
+                    : 0);
                 var refund = refundAmounts.GetValueOrDefault(value.Key);
                 var net = value.Value - refund + other;
                 var manual = RequiresManualCount(value.Key);
@@ -529,7 +713,7 @@ public sealed class PosOfflineWorkSessionClosureService(
     private static string ClosureMethod(string code) => code switch
     {
         "DebitCard" or "CreditCard" or "Card" => "Card",
-        "Transfer" => "Transfer",
+        "Transfer" or "BankTransfer" => "Transfer",
         "Cash" => "Cash",
         _ => code
     };
@@ -537,8 +721,7 @@ public sealed class PosOfflineWorkSessionClosureService(
 
 public sealed class PosWorkSessionClosureUploader(
     PosOfflineWorkSessionClosureStore store,
-    PosEdgeSaleStore sales,
-    PosCashMovementStore cashMovements,
+    PosOfflineWorkSessionClosureService offline,
     PosWorkSessionClosureServerClient server,
     PosSynchronizationEventLog events)
 {
@@ -546,9 +729,7 @@ public sealed class PosWorkSessionClosureUploader(
     {
         var item = await store.ClaimAsync(cancellationToken);
         if (item is null) return false;
-        if (await sales.HasPendingOutboxForWorkSessionAsync(
-                item.Value.Value.Closure.WorkSessionId, cancellationToken) ||
-            await cashMovements.HasPendingForWorkSessionAsync(
+        if (await offline.HasPendingLocalDocumentsAsync(
                 item.Value.Value.Closure.WorkSessionId, cancellationToken))
         {
             await store.ScheduleRetryAsync(

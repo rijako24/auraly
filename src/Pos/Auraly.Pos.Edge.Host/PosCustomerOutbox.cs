@@ -112,7 +112,7 @@ public sealed class PosCustomerOutboxStore(
     }
 
     public async Task<(Guid CustomerId, string Payload, int Attempts)?> ClaimAsync(
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, Guid? customerId = null)
     {
         var now = timeProvider.GetUtcNow();
         await using var connection = new SqliteConnection(connectionString);
@@ -124,6 +124,7 @@ public sealed class PosCustomerOutboxStore(
             SELECT DocumentId,Payload,AttemptCount FROM Outbox
             AS current
             WHERE current.Type=$type
+              AND ($customerId IS NULL OR current.DocumentId=$customerId)
               AND ((current.Status IN ('Pending','RetryScheduled') AND
                     (current.NextAttemptAt IS NULL OR current.NextAttemptAt<=$now))
                    OR (current.Status='Uploading' AND current.LastAttemptAt<$stale))
@@ -131,6 +132,7 @@ public sealed class PosCustomerOutboxStore(
             ORDER BY current.LocalSequence LIMIT 1;
             """;
         read.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CustomerCreated);
+        read.Parameters.AddWithValue("$customerId", (object?)customerId?.ToString("D") ?? DBNull.Value);
         read.Parameters.AddWithValue("$now", now.ToString("O"));
         read.Parameters.AddWithValue("$stale", now.AddMinutes(-2).ToString("O"));
         await using var reader = await read.ExecuteReaderAsync(cancellationToken);
@@ -168,6 +170,21 @@ public sealed class PosCustomerOutboxStore(
 
     public Task MarkFailedAsync(Guid customerId, string error, CancellationToken ct = default) =>
         UpdateAsync(customerId, PosOutboxStatus.FailedPermanent, null, error, removeLocal: true, ct);
+
+    public async Task<(string Status, string? Error)?> DeliveryStatusAsync(
+        Guid customerId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT Status,LastError FROM Outbox WHERE DocumentId=$id AND Type=$type;";
+        command.Parameters.AddWithValue("$id", customerId.ToString("D"));
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CustomerCreated);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? (reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1))
+            : null;
+    }
 
     public async Task<PosCustomerOutboxStatus> ReadStatusAsync(
         CancellationToken cancellationToken = default)
@@ -240,9 +257,34 @@ public sealed class PosCustomerOutboxUploader(
     PosCatalogSynchronizer synchronization,
     PosSynchronizationEventLog events)
 {
+    private readonly SemaphoreSlim uploadGate = new(1, 1);
+
+    public async Task EnsureUploadedForOrderAsync(Guid customerId, CancellationToken cancellationToken)
+    {
+        await uploadGate.WaitAsync(cancellationToken);
+        try
+        {
+            var status = await store.DeliveryStatusAsync(customerId, cancellationToken);
+            if (status is null || status.Value.Status == PosOutboxStatus.Uploaded) return;
+            await UploadNextCoreAsync(cancellationToken, customerId);
+            status = await store.DeliveryStatusAsync(customerId, cancellationToken);
+            if (status?.Status == PosOutboxStatus.Uploaded) return;
+            throw new PosOrdersServerException(503, "CustomerSynchronizationPending",
+                "El cliente aún no se ha sincronizado con Auraly. Reintenta guardar el pedido cuando termine la sincronización.");
+        }
+        finally { uploadGate.Release(); }
+    }
+
     public async Task<bool> UploadNextAsync(CancellationToken cancellationToken = default)
     {
-        var item = await store.ClaimAsync(cancellationToken);
+        await uploadGate.WaitAsync(cancellationToken);
+        try { return await UploadNextCoreAsync(cancellationToken); }
+        finally { uploadGate.Release(); }
+    }
+
+    private async Task<bool> UploadNextCoreAsync(CancellationToken cancellationToken, Guid? customerId = null)
+    {
+        var item = await store.ClaimAsync(cancellationToken, customerId);
         if (item is null) return false;
         CreateCustomerRequest request;
         try
@@ -272,7 +314,14 @@ public sealed class PosCustomerOutboxUploader(
                 if (created.CustomerId != item.Value.CustomerId)
                     throw new InvalidDataException("Auraly Server returned a different customer identifier.");
                 await store.MarkUploadedAsync(item.Value.CustomerId, cancellationToken);
-                await synchronization.SynchronizeCustomersAsync(cancellationToken);
+                try { await synchronization.SynchronizeCustomersAsync(cancellationToken); }
+                catch (Exception exception) when (exception is HttpRequestException ||
+                    exception is TaskCanceledException && !cancellationToken.IsCancellationRequested)
+                {
+                    events.Record("Warning", "Cliente",
+                        "Cliente subido; el catálogo de clientes quedó pendiente de actualizar",
+                        exception.Message);
+                }
                 events.Record("Success", "Cliente", $"Cliente local subido: {created.DisplayName}",
                     created.Identification);
                 return true;

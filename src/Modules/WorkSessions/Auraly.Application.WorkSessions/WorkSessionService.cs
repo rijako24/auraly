@@ -105,6 +105,21 @@ public sealed class WorkSessionService(
         return store.CurrentAsync(identity, cancellationToken);
     }
 
+    public async Task<WorkSessionView> RequireActiveDeviceSessionAsync(
+        Guid userId, Guid tenantId, Guid businessId, Guid deviceId,
+        Guid workSessionId, CancellationToken cancellationToken = default)
+    {
+        if (userId == Guid.Empty || tenantId == Guid.Empty || businessId == Guid.Empty ||
+            deviceId == Guid.Empty || workSessionId == Guid.Empty)
+            throw new WorkSessionForbiddenException("El dispositivo no identificó una sesión de trabajo válida.");
+        var session = await store.CurrentForDeviceAsync(
+            new WorkSessionIdentity(userId, tenantId, new HashSet<string>(), businessId),
+            businessId, deviceId, cancellationToken);
+        if (session is null || session.WorkSessionId != workSessionId)
+            throw new WorkSessionForbiddenException("La sesión de trabajo del dispositivo no está abierta.");
+        return session;
+    }
+
     public async Task<WorkSessionView> OpenOrResumeAsync(
         WorkSessionIdentity identity,
         OpenWorkSessionRequest request,

@@ -14,6 +14,8 @@ export function usePayables(params: {
   supplierId?: string;
   status?: PayableStatus;
   overdue?: boolean;
+  from?: string;
+  to?: string;
   enabled?: boolean;
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);

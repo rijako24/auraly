@@ -45,6 +45,7 @@ public sealed class PayablesService(
         Require(user, PayablesPermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
             throw new PayablesValidationException("Invalid pagination.");
+        ValidateLedgerFilters(query.Status,query.From,query.To);
         return store.ListSuppliersAsync(user, query with { Search = Normalize(query.Search, 120) }, cancellationToken);
     }
 
@@ -57,8 +58,7 @@ public sealed class PayablesService(
         if (query.Page < 1) throw new PayablesValidationException("Page must be greater than zero.");
         if (query.PageSize is < 1 or > 100)
             throw new PayablesValidationException("PageSize must be between 1 and 100.");
-        if (query.Status is not null && query.Status is not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled"))
-            throw new PayablesValidationException("The payable status is invalid.");
+        ValidateLedgerFilters(query.Status,query.From,query.To);
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, cancellationToken);
     }
 
@@ -86,7 +86,15 @@ public sealed class PayablesService(
     {
         Require(user,PayablesPermissionCodes.Read);
         if(query.Page<1||query.PageSize is <1 or >100)throw new PayablesValidationException("Invalid pagination.");
+        ValidateLedgerFilters(query.Status,query.From,query.To);
         return store.ListPaymentsAsync(user,query with { Search=Normalize(query.Search,120) },cancellationToken);
+    }
+
+    private static void ValidateLedgerFilters(string? status,DateOnly? from,DateOnly? to)
+    {
+        if(status is not null and not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled"))
+            throw new PayablesValidationException("The payable status is invalid.");
+        if(from>to)throw new PayablesValidationException("The date range is invalid.");
     }
 
     public async Task<SupplierPaymentAcceptance> ConfirmPaymentAsync(

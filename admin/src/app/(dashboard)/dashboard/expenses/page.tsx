@@ -13,13 +13,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DatePicker } from "@/components/ui/date-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { expensesApi, type ConfirmExpense, type ExpenseOptions, type ExpensePage } from "@/services/api/expenses";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import {businessStatusLabel} from "@/lib/accounting-labels";
-import { formatMoneyDraft, parseMoneyDraft } from "@/lib/money-input";
 import type { PurchaseEvidenceType } from "@/services/api/goods-receipts";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -27,7 +27,8 @@ const localNoon = (date:string) => `${date}T12:00:00-05:00`;
 
 export default function ExpensesPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
+  const userPermissions = useAuthStore((state) => state.user?.permissions);
+  const permissions = new Set(userPermissions ?? []);
   const [options,setOptions]=useState<ExpenseOptions|null>(null),[report,setReport]=useState<ExpensePage|null>(null);
   const [loading,setLoading]=useState(false),[creating,setCreating]=useState(false),[configuring,setConfiguring]=useState(false);
   const [page,setPage]=useState(1),[pageSize,setPageSize]=useState(25),[search,setSearch]=useState("");
@@ -51,8 +52,7 @@ export default function ExpensesPage() {
 
 function ExpenseForm({businessId,options,onSaved}:{businessId:string;options:ExpenseOptions;onSaved:()=>Promise<void>}){
   const today=new Date().toISOString().slice(0,10),[busy,setBusy]=useState(false);
-  const [form,setForm]=useState<ConfirmExpense>({expenseId:crypto.randomUUID(),businessId,supplierId:"",conceptId:"",costCenterId:null,supplierDocumentNumber:"",issuedAt:localNoon(today),dueDate:localNoon(today),currencyCode:"COP",description:"",taxExclusiveAmount:0,vatAmount:0,withholdingJurisdictionCode:"CO",evidenceUrl:null,purchaseEvidenceType:"SupplierElectronicInvoice"});
-  const [baseDraft,setBaseDraft]=useState("0"),[vatDraft,setVatDraft]=useState("0");
+  const [form,setForm]=useState<ConfirmExpense>(()=>({expenseId:newExpenseId(),businessId,supplierId:"",conceptId:"",costCenterId:null,supplierDocumentNumber:"",issuedAt:localNoon(today),dueDate:localNoon(today),currencyCode:"COP",description:"",taxExclusiveAmount:0,vatAmount:0,withholdingJurisdictionCode:"CO",evidenceUrl:null,purchaseEvidenceType:"SupplierElectronicInvoice"}));
   const concept=options.concepts.find(item=>item.conceptId===form.conceptId);
   const supplierInvoice=form.purchaseEvidenceType==="SupplierElectronicInvoice";
   const supportDocument=form.purchaseEvidenceType==="BuyerElectronicSupportDocument";
@@ -64,8 +64,8 @@ function ExpenseForm({businessId,options,onSaved}:{businessId:string;options:Exp
     <Field label={supplierInvoice?"Número de factura electrónica":"Referencia (opcional)"}><Input required={supplierInvoice} value={form.supplierDocumentNumber??""} onChange={event=>setForm({...form,supplierDocumentNumber:event.target.value||null})}/></Field>
     <Field label="Fecha de emisión"><DatePicker value={form.issuedAt.slice(0,10)} onChange={date=>setForm({...form,issuedAt:localNoon(date)})}/></Field>
     <Field label="Fecha de vencimiento"><DatePicker value={form.dueDate.slice(0,10)} onChange={date=>setForm({...form,dueDate:localNoon(date)})}/></Field>
-    <Field label="Base antes de IVA"><Input required inputMode="decimal" value={baseDraft} onFocus={event=>event.currentTarget.select()} onChange={event=>{const value=formatMoneyDraft(event.target.value);setBaseDraft(value);setForm({...form,taxExclusiveAmount:parseMoneyDraft(value)})}}/></Field>
-    <Field label="IVA"><Input required inputMode="decimal" value={vatDraft} onFocus={event=>event.currentTarget.select()} onChange={event=>{const value=formatMoneyDraft(event.target.value);setVatDraft(value);setForm({...form,vatAmount:parseMoneyDraft(value)})}}/></Field>
+    <Field label="Base antes de IVA"><FormattedNumberInput kind="currency" value={form.taxExclusiveAmount} onValueChange={value=>setForm(current=>({...current,taxExclusiveAmount:value??0}))}/></Field>
+    <Field label="IVA"><FormattedNumberInput kind="currency" value={form.vatAmount} onValueChange={value=>setForm(current=>({...current,vatAmount:value??0}))}/></Field>
     <div className="sm:col-span-2"><Field label="Descripción (opcional)"><Input value={form.description} onChange={event=>setForm({...form,description:event.target.value})} placeholder="Agrega detalle solo cuando haga falta"/></Field></div>
     <div className="sm:col-span-2 rounded-xl border bg-muted/30 p-3 text-sm"><b>Cuenta contable:</b> {concept?`${concept.expenseAccountCode} · ${concept.expenseAccountName}`:"se define con el concepto"}<p className="mt-1 text-muted-foreground"><b>Centro de costo:</b> {concept?.defaultCostCenterName??"Sin centro predeterminado"}. La retención se calcula con el perfil tributario del proveedor.</p>{supportDocument&&<p className="mt-1 text-amber-700">El documento soporte se emitirá a la DIAN; el proveedor residente debe tener un código postal DIAN de seis dígitos en su dirección principal.</p>}</div>
     <DialogFooter className="sm:col-span-2"><Button type="submit" disabled={busy||!form.supplierId||!form.conceptId||form.taxExclusiveAmount<=0||(supplierInvoice&&!form.supplierDocumentNumber?.trim())}>{busy&&<Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Confirmar gasto</Button></DialogFooter>
@@ -74,3 +74,10 @@ function ExpenseForm({businessId,options,onSaved}:{businessId:string;options:Exp
 
 function Metric({label,value}:{label:string;value:number}){return <Card><CardContent className="p-5"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-bold">{money.format(value)}</p></CardContent></Card>}
 function Field({label,children}:{label:string;children:React.ReactNode}){return <div className="space-y-2"><Label>{label}</Label>{children}</div>}
+function newExpenseId(){
+  if(typeof globalThis.crypto.randomUUID==="function")return globalThis.crypto.randomUUID();
+  const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6]=(bytes[6]&0x0f)|0x40;bytes[8]=(bytes[8]&0x3f)|0x80;
+  const hex=Array.from(bytes,byte=>byte.toString(16).padStart(2,"0")).join("");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}

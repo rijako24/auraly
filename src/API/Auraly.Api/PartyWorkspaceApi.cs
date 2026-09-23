@@ -1,5 +1,10 @@
 using Auraly.Application.Parties;
 using Auraly.Contracts.Parties;
+using Auraly.Application.WorkSessions;
+using Auraly.Contracts.WorkSessions;
+using Auraly.Contracts.Receivables;
+using Auraly.Contracts.Payables;
+using Auraly.Platform.Application.Identity.Interfaces;
 
 namespace Auraly.Api;
 
@@ -16,6 +21,21 @@ public static class PartyWorkspaceApi
             string role,string? search,Guid? roleId,Guid? partyId,CancellationToken ct)=>
             await Handle(async()=>Results.Ok(await service.RoleOptionsAsync(context.User.ToPartyUserIdentity(),page??1,
                 new PartyRoleOptionQuery(role,pageSize??25,search,roleId,partyId),ct))));
+        endpoints.MapGet("/api/commerce/v1/portfolio/parties/role-options", async(HttpContext context,PartyWorkspaceService service,
+            int? page,int? pageSize,string role,string? search,Guid? roleId,CancellationToken ct)=>
+            await Handle(async()=>
+            {
+                if(role is not ("Customer" or "Supplier"))
+                    throw new PartyValidationException("Solo se pueden consultar clientes o proveedores.");
+                var identity=context.User.ToPartyUserIdentity();
+                var portfolioPermission=role=="Customer"?ReceivablesPermissionCodes.Read:PayablesPermissionCodes.Read;
+                if(!identity.Permissions.Contains(portfolioPermission))
+                    throw new PartyForbiddenException("No tienes permiso para consultar esta cartera.");
+                var permission=role=="Customer"?PartyPermissionCodes.CustomerRead:PartyWorkspacePermissionCodes.SupplierRead;
+                var actor=identity with { Permissions=new HashSet<string>([permission],StringComparer.Ordinal) };
+                return Results.Ok(await service.RoleOptionsAsync(actor,page??1,
+                    new PartyRoleOptionQuery(role,pageSize??10,search,roleId,null),ct));
+            })).RequireAuthorization();
         parties.MapPost("/identity", async(
             HttpContext context,
             PartyWorkspaceService service,
@@ -71,6 +91,21 @@ public static class PartyWorkspaceApi
 
         parties.MapGet("/customer-pricing-options", async(HttpContext context,CommercialPartyRoleService service,CancellationToken ct)=>
             await Handle(async()=>Results.Ok(await service.PricingOptionsAsync(context.User.ToPartyUserIdentity(),ct))));
+        endpoints.MapGet("/api/pos/v1/portfolio/parties/role-options",async(HttpContext context,PartyWorkspaceService service,WorkSessionService sessions,IUserService users,
+            int? page,int? pageSize,string role,string? search,CancellationToken ct)=>
+            await Handle(async()=>
+            {
+                if(role is not ("Customer" or "Supplier"))
+                    throw new PartyValidationException("Solo se pueden consultar clientes o proveedores.");
+                var device=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,ct);
+                device.RequirePermission(role=="Customer"?ReceivablesPermissionCodes.Read:PayablesPermissionCodes.Read);
+                var permission=role=="Customer"?PartyPermissionCodes.CustomerRead:PartyWorkspacePermissionCodes.SupplierRead;
+                var rolePermissions=new HashSet<string>(device.Permissions,StringComparer.Ordinal) { permission };
+                var actor=new PartyActorIdentity(device.UserId,device.TenantId,device.BusinessId,
+                    rolePermissions);
+                return Results.Ok(await service.RoleOptionsAsync(actor,page??1,
+                    new PartyRoleOptionQuery(role,pageSize??25,search,null,null),ct));
+            })).RequireAuthorization("pos.enrolled");
         return endpoints;
     }
 
@@ -78,6 +113,7 @@ public static class PartyWorkspaceApi
     {
         try{return await action();}
         catch(PartyForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}
+        catch(WorkSessionForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}
         catch(PartyValidationException ex){return Results.Problem(ex.Message,statusCode:400);}
         catch(PartyConflictException ex){return Results.Problem(ex.Message,statusCode:409,title:"PartyConflict");}
     }

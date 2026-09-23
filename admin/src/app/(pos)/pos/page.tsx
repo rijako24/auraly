@@ -6,12 +6,9 @@ import {
   ArrowUpFromLine,
   Banknote,
   Barcode,
-  Calculator,
   CheckCircle2,
   Clock3,
   ClipboardList,
-  CircleDollarSign,
-  Landmark,
   Loader2,
   LogOut,
   Package,
@@ -1186,16 +1183,21 @@ export default function PosPage() {
   useEffect(()=>{
     const handle=(event:KeyboardEvent)=>{
       if(!event.ctrlKey||event.altKey||event.metaKey||event.shiftKey)return;
-      const key=event.key.toLowerCase();if((key!=="f"&&key!=="g")||
+      const key=event.key.toLowerCase();if((key!=="f"&&key!=="g"&&key!=="e"&&key!=="s")||
         (key==="f"&&!canReceivePortfolio)||(key==="g"&&!canPayPortfolio))return;
       event.preventDefault();event.stopPropagation();
+      if(key==="e"||key==="s"){
+        if(!busy&&!paymentOpen&&!cashMovementDirection&&workstation.workSessionId)
+          setCashMovementDirection(key==="e"?"In":"Out");
+        return;
+      }
       if(!serverConnected||!workstation.workSessionId){setMessage("Esta operación requiere conexión con Auraly y una sesión abierta");return;}
       if(busy||paymentOpen||portfolioReceivableOpen||portfolioPayableOpen)return;
       if(key==="f"&&canReceivePortfolio)setPortfolioReceivableOpen(true);
       if(key==="g"&&canPayPortfolio)setPortfolioPayableOpen(true);
     };
     window.addEventListener("keydown",handle,true);return()=>window.removeEventListener("keydown",handle,true);
-  },[busy,canPayPortfolio,canReceivePortfolio,paymentOpen,portfolioPayableOpen,portfolioReceivableOpen,serverConnected,workstation.workSessionId]);
+  },[busy,canPayPortfolio,canReceivePortfolio,cashMovementDirection,paymentOpen,portfolioPayableOpen,portfolioReceivableOpen,serverConnected,workstation.workSessionId]);
 
   const openCashDrawer = useCallback(async () => {
     if (!client || busy || !workstation.workSessionId) return;
@@ -3034,36 +3036,26 @@ export default function PosPage() {
               type="button"
               onClick={() => setCashMovementDirection("In")}
               disabled={busy || !workstation.workSessionId}
-              title="Registrar entrada de dinero"
+              title="Registrar entrada de dinero (Ctrl+E)"
+              aria-keyshortcuts="Control+E"
               className="flex h-8 items-center gap-1.5 rounded-full border border-emerald-300/20 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-300/10 hover:text-white disabled:opacity-40"
             >
               <ArrowDownToLine className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Entrada de dinero</span>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+E</kbd>
             </button>
             <button
               type="button"
               onClick={() => setCashMovementDirection("Out")}
               disabled={busy || !workstation.workSessionId}
-              title="Registrar salida de dinero"
+              title="Registrar salida de dinero (Ctrl+S)"
+              aria-keyshortcuts="Control+S"
               className="flex h-8 items-center gap-1.5 rounded-full border border-amber-300/20 px-3 text-xs font-semibold text-amber-200 transition hover:bg-amber-300/10 hover:text-white disabled:opacity-40"
             >
               <ArrowUpFromLine className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Salida de dinero</span>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+S</kbd>
             </button>
-            <button
-              type="button"
-              onClick={() => setDenominationCalculatorOpen(true)}
-              disabled={busy}
-              title="Calculadora de denominaciones (Ctrl+D)"
-              aria-keyshortcuts="Control+D"
-              className="flex h-8 items-center gap-1.5 rounded-full border border-teal-300/20 px-3 text-xs font-semibold text-teal-100 transition hover:bg-teal-300/10 hover:text-white disabled:opacity-40"
-            >
-              <Calculator className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Denominaciones</span>
-              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+D</kbd>
-            </button>
-            {canReceivePortfolio&&<button type="button" onClick={()=>setPortfolioReceivableOpen(true)} disabled={busy||!serverConnected||!workstation.workSessionId} title="Abono a cartera (Ctrl+F)" aria-keyshortcuts="Control+F" className="flex h-8 items-center gap-1.5 rounded-full border border-emerald-300/20 px-3 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-300/10 hover:text-white disabled:opacity-40"><CircleDollarSign className="h-3.5 w-3.5"/><span className="hidden lg:inline">Abono cartera</span><kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F</kbd></button>}
-            {canPayPortfolio&&<button type="button" onClick={()=>setPortfolioPayableOpen(true)} disabled={busy||!serverConnected||!workstation.workSessionId} title="Pago a proveedores (Ctrl+G)" aria-keyshortcuts="Control+G" className="flex h-8 items-center gap-1.5 rounded-full border border-amber-300/20 px-3 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10 hover:text-white disabled:opacity-40"><Landmark className="h-3.5 w-3.5"/><span className="hidden lg:inline">Pagar proveedor</span><kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+G</kbd></button>}
           </div>
           {client.mode === "edge" && (
             <button

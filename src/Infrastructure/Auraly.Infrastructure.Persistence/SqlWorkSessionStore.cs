@@ -576,9 +576,9 @@ public sealed partial class SqlWorkSessionStore(
                    s.UserId,CONCAT(u.FirstName,N' ',u.LastName),s.DeviceId,
                    s.OpenedAt,s.LastActivityAt,s.Status,b.TenantId
             FROM dbo.WorkSessions s{hint}
-            INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
+            INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId AND b.IsActive=1
             LEFT JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
-            INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
+            INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId AND u.IsActive=1
             WHERE s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open'
               AND s.BusinessId=@BusinessId
               AND ((@DeviceId IS NULL AND s.DeviceId IS NULL)
