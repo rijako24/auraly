@@ -18,7 +18,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Real_broker_processes_a_supplier_payment_once()
+    public async Task Real_broker_replays_a_supplier_payment_through_the_accounting_queue_once()
     {
         var rabbitConnection = Environment.GetEnvironmentVariable("AURALY_TEST_RABBITMQ");
         if (string.IsNullOrWhiteSpace(rabbitConnection))
@@ -33,8 +33,9 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
         var suffix = Guid.NewGuid().ToString("N");
         var documentQueue = $"auraly-tests-payables-{suffix}";
         var fiscalQueue = $"auraly-tests-payables-fiscal-{suffix}";
+        var accountingQueue = $"auraly-tests-payables-accounting-{suffix}";
         var options = new RabbitMqProcessingOptions(
-            rabbitConnection, documentQueue, fiscalQueue, $"auraly-tests-payables-accounting-{suffix}",
+            rabbitConnection, documentQueue, fiscalQueue, accountingQueue,
             $"auraly-tests-payables-reporting-{suffix}");
         await using var connection = new RabbitMqProcessingConnection(options);
         await using var transport = new RabbitMqProcessingTransport(
@@ -45,6 +46,10 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
             options,
             fixture.Services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<RabbitMqDocumentProcessingHostedService>.Instance);
+        using var accountingService = new RabbitMqAccountingProcessingHostedService(
+            connection, transport, options,
+            fixture.Services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<RabbitMqAccountingProcessingHostedService>.Instance);
 
         fixture.PauseDocumentProcessing();
         try
@@ -83,13 +88,18 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
                 [new SupplierPaymentAllocationRequest(payableId, 2_000m)],
                 [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash,2_000m,2_000m,Reference:"RABBIT-CASH")]);
             await ConfirmPaymentAsync(client, payment);
-            var paymentSignal = Assert.Single(fixture.DrainDocumentSignals());
-            Assert.Equal(PayablesDocumentTypes.Payment, paymentSignal.DocumentType);
-            await transport.PublishAsync(paymentSignal);
+            Assert.Empty(fixture.DrainDocumentSignals());
             await WaitUntilAsync(async () =>
                 await ReadScalarAsync<string>(
                     "SELECT Status FROM dbo.SupplierPayments WHERE PaymentId=@Id",
                     payment.PaymentId) == "Processed");
+
+            var paymentSignal = new AccountingProcessingSignal(
+                Guid.NewGuid(), fixture.BusinessId, payment.PaymentId, PayablesDocumentTypes.Payment);
+            await accountingService.StartAsync(CancellationToken.None);
+            await transport.PublishAsync(paymentSignal);
+            await WaitUntilAsync(async () =>
+                await QueueCountAsync(connection, accountingQueue) == 0);
 
             Assert.Equal(3_000m, await ReadScalarAsync<decimal>(
                 "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id",
@@ -101,7 +111,7 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
 
             await transport.PublishAsync(paymentSignal);
             await WaitUntilAsync(async () =>
-                await QueueCountAsync(connection, documentQueue) == 0);
+                await QueueCountAsync(connection, accountingQueue) == 0);
             Assert.Equal(3_000m, await ReadScalarAsync<decimal>(
                 "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id",
                 payableId));
@@ -114,11 +124,12 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
             fixture.DrainDocumentSignals();
             try
             {
+                await accountingService.StopAsync(CancellationToken.None);
                 await service.StopAsync(CancellationToken.None);
             }
             finally
             {
-                await DeleteQueuesAsync(connection, documentQueue, fiscalQueue);
+                await DeleteQueuesAsync(connection, documentQueue, fiscalQueue, accountingQueue);
             }
         }
     }
