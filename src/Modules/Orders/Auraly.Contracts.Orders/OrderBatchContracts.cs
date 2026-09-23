@@ -1,7 +1,9 @@
 using Auraly.Contracts.Sales;
+using System.Text.Json.Serialization;
 
 namespace Auraly.Contracts.Orders;
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record InvoiceOrdersRequest(
     Guid WorkSessionId,
     Guid WarehouseId,
@@ -12,7 +14,6 @@ public sealed record InvoiceOrdersRequest(
     string DocumentType = "SalesInvoice",
     Guid? BankAccountId = null,
     string? PaymentNotes = null,
-    OrderInvoiceChargeSelection? Charge = null,
     IReadOnlyList<OrderInvoiceChargeSelection>? Charges = null);
 
 public sealed record OrderInvoiceChargeSelection(

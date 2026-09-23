@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Auraly.Application.Orders;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Authorization;
@@ -18,6 +19,31 @@ public sealed class OrderBatchInvoiceTests(
     ServerSliceFixture fixture,
     ITestOutputHelper output)
 {
+    [Fact]
+    public void Legacy_single_charge_member_is_rejected_by_the_batch_contract()
+    {
+        var json = JsonSerializer.Serialize(new
+        {
+            workSessionId = Guid.NewGuid(),
+            warehouseId = Guid.NewGuid(),
+            userId = Guid.NewGuid(),
+            orderIds = new[] { Guid.NewGuid() },
+            paymentMethodCode = "Cash",
+            paymentReference = (string?)null,
+            documentType = "SalesInvoice",
+            charge = new
+            {
+                chargeId = Guid.NewGuid(),
+                chargeVersion = 1,
+                supplierId = Guid.NewGuid(),
+                manualAmount = (decimal?)null
+            }
+        });
+
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<InvoiceOrdersRequest>(
+            json, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
+
     [Fact]
     public async Task Fractional_order_uses_its_closed_line_total_without_a_rounding_discount()
     {

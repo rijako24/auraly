@@ -52,12 +52,12 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   const sequence: string[] = [];
   const invoiceRequests: Array<{
     orderIds: string[];
-    charge?: {
+    charges?: Array<{
       chargeId: string;
       chargeVersion: number;
       supplierId: string;
       manualAmount: number | null;
-    } | null;
+    }> | null;
   }> = [];
   const supplierId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
   const chargeId = "99999999-9999-9999-9999-999999999999";
@@ -230,7 +230,7 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
     "drawer",
   ]);
   expect(invoiceRequests).toHaveLength(3);
-  expect(invoiceRequests.every((request) => request.charge == null)).toBe(true);
+  expect(invoiceRequests.every((request) => request.charges == null)).toBe(true);
 
   orders.push(...Array.from({ length: 2 }, (_, index) => ({
     ...orders[index],
@@ -252,17 +252,18 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   await chargeButton.click();
   const chargeDialog = page.getByRole("dialog", { name: "Facturar pedidos con cargo" });
   await chargeDialog.getByRole("button", { name: /Domicilio/ }).click();
-  await chargeDialog.getByRole("button", { name: "Facturar 2 pedidos con cargo" }).click();
+  await chargeDialog.getByRole("button", { name: "Agregar cargo" }).click();
+  await chargeDialog.getByRole("button", { name: "Facturar 2 pedidos con 1 cargo" }).click();
   await expect(page.getByText("2/2", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect.poll(() => invoiceRequests.length).toBe(5);
   expect(invoiceRequests.slice(3)).toEqual([
     expect.objectContaining({
       orderIds: [orders[3].orderId],
-      charge: { chargeId, chargeVersion: 1, supplierId, manualAmount: null },
+      charges: [{ chargeId, chargeVersion: 1, supplierId, manualAmount: null }],
     }),
     expect.objectContaining({
       orderIds: [orders[4].orderId],
-      charge: { chargeId, chargeVersion: 1, supplierId, manualAmount: null },
+      charges: [{ chargeId, chargeVersion: 1, supplierId, manualAmount: null }],
     }),
   ]);
 });

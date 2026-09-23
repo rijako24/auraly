@@ -62,7 +62,7 @@ public sealed class OrderBatchService(
         var issues = await checkout.ValidateOrderCreditBatchAsync(
             identity,
             actor.BusinessId,
-            CreditAmounts(normalizedOrders, batchOrders, ChargeSelections(request), chargeDefinitions),
+            CreditAmounts(normalizedOrders, batchOrders, request.Charges ?? [], chargeDefinitions),
             cancellationToken);
         return issues.Select(MapCreditIssue).ToArray();
     }
@@ -99,7 +99,7 @@ public sealed class OrderBatchService(
             var creditIssues = await checkout.ValidateOrderCreditBatchAsync(
                 identity,
                 actor.BusinessId,
-                CreditAmounts(normalizedOrders, batchOrders, ChargeSelections(request), chargeDefinitions),
+                CreditAmounts(normalizedOrders, batchOrders, request.Charges ?? [], chargeDefinitions),
                 cancellationToken);
             if (creditIssues.Count > 0)
             {
@@ -232,7 +232,7 @@ public sealed class OrderBatchService(
                         line.PriceSource,
                         line.IsGenericProductSnapshot)).ToArray());
                 var productTotal = source.Lines.Sum(line => line.PublicLineTotal);
-                var requestedCharges = ChargeSelections(request);
+                var requestedCharges = request.Charges ?? [];
                 var charges = requestedCharges.Count == 0
                     ? []
                     : InvoiceChargeApplication.Calculate(productTotal, requestedCharges.Select((selection, index) =>
@@ -349,7 +349,7 @@ public sealed class OrderBatchService(
         InvoiceOrdersRequest request,
         CancellationToken cancellationToken)
     {
-        var selections = ChargeSelections(request);
+        var selections = request.Charges ?? [];
         if (selections.Count == 0) return [];
         return await invoiceCharges.ResolveDefinitionsForSaleAsync(
             new(actor.TenantId, actor.BusinessId, actor.UserId, actor.Permissions),
@@ -373,9 +373,6 @@ public sealed class OrderBatchService(
                     definitions[index], selection.SupplierId, selection.ManualAmount)).ToArray())
                 .Sum(charge => charge.InvoicedAmount);
         });
-
-    private static IReadOnlyList<OrderInvoiceChargeSelection> ChargeSelections(InvoiceOrdersRequest request) =>
-        request.Charges ?? (request.Charge is null ? [] : [request.Charge]);
 
     private static void Validate(
         OrderActor actor,
@@ -418,9 +415,8 @@ public sealed class OrderBatchService(
         if (actor.WorkSessionId is not null && actor.WorkSessionId != request.WorkSessionId)
             throw new OrderForbiddenException(
                 "La sesión solicitada no coincide con el dispositivo autenticado.");
-        var charges = ChargeSelections(request);
-        if (request.Charge is not null && request.Charges is not null ||
-            charges.Count > InvoiceChargeApplication.MaximumChargesPerInvoice ||
+        var charges = request.Charges ?? [];
+        if (charges.Count > InvoiceChargeApplication.MaximumChargesPerInvoice ||
             charges.Any(value => value.ChargeId == Guid.Empty || value.ChargeVersion < 1 || value.SupplierId == Guid.Empty) ||
             charges.Select(value => (value.ChargeId, value.ChargeVersion)).Distinct().Count() != charges.Count)
             throw new OrderValidationException("Selecciona hasta diez cargos distintos con proveedor válido.");
@@ -443,7 +439,7 @@ public sealed class OrderBatchService(
             request.BankAccountId?.ToString("D") ?? string.Empty,
             request.PaymentNotes ?? string.Empty,
             request.DocumentType,
-            string.Join(",", ChargeSelections(request).Select(charge => string.Join(":",
+            string.Join(",", (request.Charges ?? []).Select(charge => string.Join(":",
                 charge.ChargeId.ToString("D"), charge.ChargeVersion.ToString(),
                 charge.SupplierId.ToString("D"),
                 charge.ManualAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty))),
