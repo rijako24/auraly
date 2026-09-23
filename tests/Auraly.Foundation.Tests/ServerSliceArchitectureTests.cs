@@ -280,7 +280,7 @@ public sealed class ServerSliceArchitectureTests
 
         Assert.Contains("Microsoft.SignalRService/webPubSub", template, StringComparison.Ordinal);
         Assert.Contains("Free_F1", template, StringComparison.Ordinal);
-        Assert.Contains("Standard_S1", template, StringComparison.Ordinal);
+        Assert.DoesNotContain("Standard_S1", template, StringComparison.Ordinal);
         Assert.Contains("disableLocalAuth: true", template, StringComparison.Ordinal);
         Assert.Contains("Auraly__PosSynchronization__WebPubSub__Endpoint", template,
             StringComparison.Ordinal);

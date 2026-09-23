@@ -447,8 +447,8 @@ resource webPubSub 'Microsoft.SignalRService/webPubSub@2024-03-01' = {
   location: location
   tags: tags
   sku: {
-    name: environment == 'dev' ? 'Free_F1' : 'Standard_S1'
-    tier: environment == 'dev' ? 'Free' : 'Standard'
+    name: 'Free_F1'
+    tier: 'Free'
     capacity: 1
   }
   properties: {

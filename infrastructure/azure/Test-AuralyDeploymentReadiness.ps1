@@ -215,6 +215,10 @@ function Test-RemoteEnvironment {
     Assert-Condition ($null -ne $webPubSub) "Falta Web PubSub $webPubSubName."
     Assert-Condition ($webPubSub.Properties.provisioningState -eq 'Succeeded') `
         "Web PubSub $webPubSubName no termino de aprovisionarse."
+    Assert-Condition ($webPubSub.Sku.Name -eq 'Free_F1') `
+        "Web PubSub $webPubSubName usa $($webPubSub.Sku.Name); se esperaba Free_F1."
+    Assert-Condition ($webPubSub.Sku.Capacity -eq 1) `
+        "Web PubSub $webPubSubName usa capacidad $($webPubSub.Sku.Capacity); se esperaba 1."
     Assert-Condition ([bool]$webPubSub.Properties.disableLocalAuth) `
         "Web PubSub $webPubSubName debe bloquear autenticacion local."
 
