@@ -27,25 +27,68 @@ public sealed class PosEnrollmentServerException(
 
 public sealed class PosEdgeEnrollmentStore(
     string packagePath,
-    string keyDirectory)
+    string keyDirectory,
+    string databasePath)
 {
-    public PosEnrollmentPackage? Load()
+    public PosEnrollmentPackage? Load() => ReadStored()?.Package;
+
+    public LocalPosEnrollmentResult? LoadResultForEnrollment(Guid sessionId)
+    {
+        var stored = ReadStored();
+        return stored?.EnrollmentSessionId == sessionId
+            ? new("Enrolled", stored.Package.DeviceId, stored.Package.DocumentSeries.SeriesCode,
+                stored.ResetLocalStorage)
+            : null;
+    }
+
+    private StoredEnrollment? ReadStored()
     {
         if (!File.Exists(packagePath)) return null;
-        var protectedPayload = File.ReadAllText(packagePath);
         var json = PosEdgeProtectedSecret.UnprotectEnrollmentPackage(
-            keyDirectory, protectedPayload);
-        return JsonSerializer.Deserialize<PosEnrollmentPackage>(json)
-            ?? throw new InvalidDataException(
-                "The protected POS enrollment package is empty.");
+            keyDirectory, File.ReadAllText(packagePath));
+        using var document = JsonDocument.Parse(json);
+        var package = JsonSerializer.Deserialize<PosEnrollmentPackage>(json)
+            ?? throw new InvalidDataException("The protected POS enrollment package is empty.");
+        var sessionId = document.RootElement.TryGetProperty("LocalEnrollmentSessionId", out var session)
+            && session.ValueKind == JsonValueKind.String ? session.GetGuid() : (Guid?)null;
+        var reset = document.RootElement.TryGetProperty("ResetLocalStorage", out var pending) && pending.GetBoolean();
+        return new StoredEnrollment(package, sessionId, reset);
     }
 
     public void Save(PosEnrollmentPackage package)
     {
         ArgumentNullException.ThrowIfNull(package);
+        var prior = ReadStored();
+        SaveStored(new StoredEnrollment(package, prior?.EnrollmentSessionId, prior?.ResetLocalStorage ?? false));
+    }
+
+    public void SaveForNewEnrollment(PosEnrollmentPackage package, Guid sessionId)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        PosStorageBootstrap.ValidateEnrollmentContinuity(databasePath, package);
+        SaveStored(new StoredEnrollment(package, sessionId, true));
+    }
+
+    public void ResetLocalStorageIfRequired(string databasePath)
+    {
+        var stored = ReadStored();
+        if (stored?.ResetLocalStorage != true) return;
+        PosStorageBootstrap.ResetForNewEnrollment(databasePath, stored.Package);
+        SaveStored(stored with { ResetLocalStorage = false });
+    }
+
+    private sealed record StoredEnrollment(
+        PosEnrollmentPackage Package, Guid? EnrollmentSessionId, bool ResetLocalStorage);
+
+    private void SaveStored(StoredEnrollment stored)
+    {
+        // Keep the server package at the root so existing package readers remain compatible.
+        var payload = JsonSerializer.SerializeToNode(stored.Package)!.AsObject();
+        payload["LocalEnrollmentSessionId"] = stored.EnrollmentSessionId;
+        payload["ResetLocalStorage"] = stored.ResetLocalStorage;
+        var json = payload.ToJsonString();
         var directory = Path.GetDirectoryName(Path.GetFullPath(packagePath));
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-        var json = JsonSerializer.Serialize(package);
         var protectedPayload = PosEdgeProtectedSecret.ProtectEnrollmentPackage(
             keyDirectory, json);
         var temporaryPath = packagePath + ".new";
@@ -222,9 +265,24 @@ public sealed class PosEdgeEnrollmentClient(
     PosEdgeEnrollmentStore store,
     PosLocalDeviceIdentityRecovery identityRecovery)
 {
+    private readonly SemaphoreSlim gate = new(1, 1);
+
     public async Task<LocalPosEnrollmentResult> RedeemAsync(
         LocalPosEnrollmentRequest request,
         CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (store.LoadResultForEnrollment(request.EnrollmentSessionId) is { } accepted)
+                return accepted;
+            return await RedeemCoreAsync(request, cancellationToken);
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task<LocalPosEnrollmentResult> RedeemCoreAsync(
+        LocalPosEnrollmentRequest request, CancellationToken cancellationToken)
     {
         var installationId = $"{Environment.MachineName}:{Environment.UserName}";
         var storedDeviceId = store.Load()?.DeviceId;
@@ -238,27 +296,24 @@ public sealed class PosEdgeEnrollmentClient(
             {
                 package = await RedeemFromServerAsync(
                     request, installationId, existingDeviceId, cancellationToken);
-                foreach (var obsoleteDeviceId in candidates.Where(
-                             candidate => candidate != existingDeviceId))
-                    identityRecovery.Retire(obsoleteDeviceId);
                 break;
             }
             catch (PosEnrollmentServerException exception) when (IsRetiredDevice(exception))
             {
-                identityRecovery.Retire(existingDeviceId);
+                // Try the next existing identity. Local data is reset only after
+                // the server accepts the new enrollment and this host restarts.
             }
         }
 
         package ??= await RedeemFromServerAsync(
             request, installationId, null, cancellationToken);
         package = await CacheCompanyLogoAsync(package, cancellationToken);
-        store.Save(package);
-        return new LocalPosEnrollmentResult(
-            "Enrolled",
-            package.DeviceId,
-            package.DocumentSeries.SeriesCode,
-            RestartRequired: true);
+        store.SaveForNewEnrollment(package, request.EnrollmentSessionId);
+        return Result(package);
     }
+
+    private static LocalPosEnrollmentResult Result(PosEnrollmentPackage package) =>
+        new("Enrolled", package.DeviceId, package.DocumentSeries.SeriesCode, RestartRequired: true);
 
     private async Task<PosEnrollmentPackage> RedeemFromServerAsync(
         LocalPosEnrollmentRequest request,

@@ -72,6 +72,11 @@ public static class PosEnrollmentApi
                     await Handle(async () =>
                     {
                         var package = await service.RedeemAsync(request, ct);
+                        package = package with
+                        {
+                            InitialWorkSessions = await services.GetRequiredService<Auraly.Application.WorkSessions.IWorkSessionStore>()
+                                .ReadOpenForEnrollmentAsync(package.TenantId, package.BusinessId, package.DeviceId, ct)
+                        };
                         var identities = services.GetRequiredService<PosOfflineIdentityService>();
                         try
                         {

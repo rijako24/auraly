@@ -40,6 +40,8 @@ public sealed record RegisterDeviceWorkSessionRequest(
     Guid BusinessId,
     DateTimeOffset OpenedAt);
 
+public sealed record DeviceWorkSessionSnapshot(Guid WorkSessionId, Guid UserId, DateTimeOffset OpenedAt);
+
 public sealed record CloseWorkSessionRequest(
     decimal? CountedCash,
     string? Note,

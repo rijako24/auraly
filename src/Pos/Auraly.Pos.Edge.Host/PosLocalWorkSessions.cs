@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Contracts.Organization;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
 
@@ -25,6 +26,42 @@ public sealed class PosLocalWorkSessionStore(
     PosEdgeRuntimeContext runtime)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private const string CreateTableSql = """
+        CREATE TABLE IF NOT EXISTS PosLocalWorkSessions(
+            WorkSessionId TEXT NOT NULL PRIMARY KEY,
+            TenantId TEXT NOT NULL,
+            BusinessId TEXT NOT NULL,
+            DeviceId TEXT NOT NULL,
+            UserId TEXT NOT NULL,
+            OpenedAt TEXT NOT NULL,
+            ClosedAt TEXT NULL);
+        """;
+
+    internal static void RestoreEnrollmentSessions(
+        SqliteConnection connection, SqliteTransaction transaction, PosEnrollmentPackage package)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DROP TABLE IF EXISTS PosLocalWorkSessions;\n" + CreateTableSql + """
+
+            INSERT INTO PosLocalWorkSessions(WorkSessionId,TenantId,BusinessId,DeviceId,UserId,OpenedAt)
+            SELECT json_extract(value,'$.workSessionId'),$tenant,$business,$device,
+                   json_extract(value,'$.userId'),json_extract(value,'$.openedAt')
+            FROM json_each($sessions);
+            INSERT INTO Outbox(MessageId,DocumentId,WorkSessionId,LocalSequence,Type,Payload,Status,AttemptCount,CreatedAt,UploadedAt)
+            SELECT WorkSessionId,WorkSessionId,WorkSessionId,-ROW_NUMBER() OVER(ORDER BY WorkSessionId),$type,
+                   json_object('userId',UserId,'workSessionId',WorkSessionId,'businessId',BusinessId,'openedAt',OpenedAt),
+                   'Uploaded',0,OpenedAt,$now
+            FROM PosLocalWorkSessions;
+            """;
+        command.Parameters.AddWithValue("$tenant", package.TenantId.ToString("D"));
+        command.Parameters.AddWithValue("$business", package.BusinessId.ToString("D"));
+        command.Parameters.AddWithValue("$device", package.DeviceId.ToString("D"));
+        command.Parameters.AddWithValue("$sessions", JsonSerializer.Serialize(package.InitialWorkSessions, Json));
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionOpened);
+        command.Parameters.AddWithValue("$now", package.EnrolledAt.ToString("O"));
+        command.ExecuteNonQuery();
+    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -32,16 +69,7 @@ public sealed class PosLocalWorkSessionStore(
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            CREATE TABLE IF NOT EXISTS PosLocalWorkSessions(
-                WorkSessionId TEXT NOT NULL PRIMARY KEY,
-                TenantId TEXT NOT NULL,
-                BusinessId TEXT NOT NULL,
-                DeviceId TEXT NOT NULL,
-                UserId TEXT NOT NULL,
-                OpenedAt TEXT NOT NULL,
-                ClosedAt TEXT NULL);
-            """;
+        command.CommandText = CreateTableSql;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureTenantScopeAsync(connection, cancellationToken);
         await MigrateLegacyActiveSessionsAsync(connection, cancellationToken);
@@ -326,13 +354,15 @@ public sealed class PosWorkSessionOpenUploader(
             events.Record("Success", "WorkSession", "Sesión de caja local subida",
                 item.Value.WorkSessionId.ToString("D"));
         }
-        catch (Exception error) when (error is HttpRequestException or InvalidDataException)
+        catch (Exception error) when (error is HttpRequestException or InvalidDataException ||
+            error is TaskCanceledException && !cancellationToken.IsCancellationRequested)
         {
+            var retryable = PosSynchronizationFailurePresenter.IsRetryable(error);
             var seconds = Math.Min(300, 5 * Math.Pow(2, Math.Clamp(item.Value.Attempts, 0, 6)));
-            await UpdateAsync(item.Value.WorkSessionId, "RetryScheduled",
-                timeProvider.GetUtcNow().AddSeconds(seconds), error.Message, cancellationToken);
+            await UpdateAsync(item.Value.WorkSessionId, retryable ? "RetryScheduled" : "FailedPermanent",
+                retryable ? timeProvider.GetUtcNow().AddSeconds(seconds) : null, error.Message, cancellationToken);
             events.Record("Warning", "WorkSession", "Sesión de caja pendiente",
-                $"{item.Value.WorkSessionId:D} · {error.Message}");
+                PosSynchronizationFailurePresenter.EventDetail(error));
         }
         return true;
     }

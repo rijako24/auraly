@@ -1,5 +1,6 @@
 using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.WorkSessions;
 
 namespace Auraly.Contracts.Organization;
 
@@ -113,4 +114,6 @@ public sealed record PosEnrollmentPackage(
     string? CompanyName = null,
     string? CompanyLogoSource = null,
     OfflineAuthenticationLeaseAcquireResponse? InitialOfflineAccess = null,
-    PosOfflineIdentitySnapshot? InitialIdentitySnapshot = null);
+    PosOfflineIdentitySnapshot? InitialIdentitySnapshot = null,
+    bool? ReusesDevice = null,
+    IReadOnlyList<DeviceWorkSessionSnapshot>? InitialWorkSessions = null);

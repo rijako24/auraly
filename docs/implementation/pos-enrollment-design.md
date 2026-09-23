@@ -34,7 +34,39 @@ enrolado.
 9. El servidor crea la identidad del dispositivo, devuelve las series
    operativa y fiscal exclusivas, configuración derivada y credencial.
 10. POS Edge protege el paquete completo mediante el almacén de protección de
-    datos del sistema y lo escribe de forma atómica.
+    datos del sistema y lo escribe de forma atómica. Un enrolamiento nuevo aceptado
+    marca en ese mismo paquete que debe limpiar la instalación. Al reiniciar, antes
+    de componer stores o sincronizadores, limpia los datos operativos de SQLite,
+    comprobantes locales y configuración de impresora. Esto incluye facturas,
+    borradores, pedidos recuperados, outbox pendiente, autenticaciones, usuarios,
+    clientes, catálogo y checkpoints de descarga anteriores. Si el servidor recupera
+    la misma identidad, conserva únicamente los cursores de numeración de las series
+    confirmadas para ese dispositivo y la secuencia técnica de outbox: nunca vuelve
+    al inicio del rango ni descarta consecutivos consumidos sin conexión. Los datos
+    operativos se vacían en una transacción con `secure_delete`; las sesiones abiertas
+    se reconstruyen con el snapshot del servidor y sus aperturas quedan confirmadas,
+    sin una segunda subida. Un dispositivo realmente nuevo elimina la base completa.
+    La marca se retira solamente después de completar la
+    limpieza; los reinicios posteriores y reintentos de preparación conservan el
+    avance del mismo enrolamiento. Un canje rechazado no limpia datos locales.
+    El paquete nuevo y las claves necesarias para descifrarlo se conservan.
+    El canje informa `ReusesDevice` y `InitialWorkSessions`. El primero se persiste
+    en `PosEnrollmentSessions` para que recuperar una respuesta perdida de un
+    dispositivo nuevo no se confunda con recuperar una instalación anterior.
+    Edge verifica los cursores antes de guardar el nuevo paquete y nuevamente al
+    reiniciar. Si faltan, bloquea la reutilización; no inventa el siguiente número.
+    Un servidor sin este contrato exige actualización antes de activar la limpieza.
+    La reconstrucción de sesiones agrega una única consulta por conjunto, limitada
+    al tenant, sede, dispositivo y usuarios activos; no consulta por usuario.
+    La limpieza local no realiza llamadas de red y ejecuta las eliminaciones por
+    lote. Su presupuesto de referencia es menor a dos segundos para 1000 registros
+    (4 MiB), y para una base nueva y 101 comprobantes (6,25 MiB), medidos aisladamente.
+
+    El despliegue aplica primero la columna nullable `PosEnrollmentSessions.ReusesDevice`,
+    después la API y finalmente Desktop/Edge. Los paquetes locales anteriores siguen
+    cargando sin activar limpieza. Volver al binario anterior admite los campos
+    adicionales, pero no recupera datos operativos eliminados por un reenrolamiento
+    aceptado. No se restauran copias antiguas de SQLite sobre una numeración en uso.
 11. La misma respuesta de canje incluye el snapshot inicial completo de
     usuarios POS autorizados, sus verificadores locales y permisos; no existe
     una segunda descarga obligatoria de usuarios para terminar el enrolamiento.
@@ -103,8 +135,9 @@ La clave privada del certificado DIAN nunca llega al navegador ni al POS.
 La pantalla de fallo puede reiniciar el enrolamiento mediante `POST
 /edge/v1/enrollment/restart`. El endpoint exige loopback y el token opaco del
 lanzador, elimina únicamente el paquete protegido y reinicia el host en
-`EnrollmentRequired`; conserva SQLite, outbox, comprobantes, `DeviceId`, series
-y cursores locales. La interfaz confirma esta acción antes de ejecutarla.
+`EnrollmentRequired`; no elimina datos todavía. La limpieza completa ocurre cuando el servidor acepta
+el siguiente enrolamiento, conforme al paso 10. La interfaz confirma el reinicio
+del enrolamiento antes de ejecutarlo.
 
 El enrolamiento no descarga inventario. La preparación local mantiene todos los
 productos, códigos, precios de venta, impuestos, promociones, canales, clientes,
@@ -131,7 +164,8 @@ primera respuesta autenticada, sin polling ni una consulta adicional.
 El canal push mantiene su indicador independiente; ninguno de los dos condiciona
 el login local ni la lectura de la proyección SQLite.
 
-La pantalla de preparación usa un marco de altura estable. Su barra comienza en
+La pantalla de preparación usa un marco de altura mínima estable que crece con
+el contenido; errores y reintentos nunca desbordan el panel ni el contenedor. Su barra comienza en
 0 %, reserva los hitos de identidad y validación final, y avanza entre ellos con
 el porcentaje durable de productos realmente aplicado por `PosCatalogStore`;
 no estima avance por tiempo ni crea un proceso de seguimiento paralelo. Después
@@ -169,6 +203,5 @@ Esta rebanada no declara terminado:
 - instalador Windows y validación del reinicio automático como servicio.
 
 La selección local de impresora y balanza desde `Periféricos` está disponible
-con o sin enrolamiento. Es configuración de la estación instalada; en un equipo
-enrolado, la validez de los destinos de facturas y pedidos forma parte de
-`Ready`. La balanza sigue siendo una capacidad opcional.
+con o sin enrolamiento. Son capacidades opcionales y su configuración no
+condiciona `Ready`; un nuevo enrolamiento limpia la configuración anterior.

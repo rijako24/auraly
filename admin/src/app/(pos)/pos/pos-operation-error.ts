@@ -3,6 +3,7 @@ import { posPublicError } from "./pos-public-error";
 type EdgeFailure = {
   status: number;
   message: string;
+  code?: string;
 };
 
 export function isOnlinePosTransportFailure(
@@ -29,6 +30,10 @@ export function posOperationErrorMessage(
     return "No hay conexión con Auraly. La venta en línea requiere conexión con el servidor.";
   if (mode === "online")
     return publicError ?? "No fue posible completar la operación en Auraly.";
+  if (edgeFailure?.code?.startsWith("Order"))
+    return publicError ?? "No fue posible procesar el pedido en Auraly.";
+  if (status === 400 || status === 401 || status === 403 || status >= 500 && status !== 503)
+    return publicError ?? "Auraly no pudo completar la operación.";
   if (status === 409 && edgeFailure)
     return publicError ?? "No fue posible completar la operación local.";
   if (status === 404) return "Producto no encontrado en el catálogo local";

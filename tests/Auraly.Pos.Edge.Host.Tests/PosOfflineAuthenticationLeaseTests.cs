@@ -201,7 +201,7 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
         Assert.False(await identities.HasIdentitySnapshotAsync());
 
         var enrollmentPath = _databasePath + ".enrollment";
-        var enrollment = new PosEdgeEnrollmentStore(enrollmentPath, _keyDirectory);
+        var enrollment = new PosEdgeEnrollmentStore(enrollmentPath, _keyDirectory, _databasePath);
         var initialAccess = CreateResponse(_clock.GetUtcNow().AddHours(8));
         var identitySnapshot = new PosOfflineIdentitySnapshot(
             "enrollment-snapshot",

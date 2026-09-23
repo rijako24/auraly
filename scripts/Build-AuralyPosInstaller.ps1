@@ -4,6 +4,10 @@ param(
     [string]$Version = "0.0.0-dev",
     [string]$Configuration = "Release",
     [string]$ArtifactPath = "",
+    [ValidateRange(1024, 65535)]
+    [int]$WebPort = 47830,
+    [ValidateRange(1024, 65535)]
+    [int]$EdgePort = 47831,
     [ValidatePattern('^[0-9A-Fa-f]{40}$')]
     [string]$SigningCertificateThumbprint,
     [ValidatePattern('^https://')]
@@ -157,7 +161,7 @@ New-Item -ItemType Directory -Force -Path `
 
 Push-Location (Join-Path $root "admin")
 try {
-    $env:NEXT_PUBLIC_AURALY_POS_EDGE_URL = "http://127.0.0.1:47831"
+    $env:NEXT_PUBLIC_AURALY_POS_EDGE_URL = "http://127.0.0.1:$EdgePort"
     $env:AURALY_DESKTOP_BUILD = "1"
     npm run build
     if ($LASTEXITCODE -ne 0) {
@@ -218,8 +222,8 @@ Copy-Item -LiteralPath (Join-Path $root "admin\public") `
 $desktopSettings = @{
     apiUrl = $ApiUrl
     version = $Version
-    webPort = 47830
-    edgePort = 47831
+    webPort = $WebPort
+    edgePort = $EdgePort
     publisherCertificateThumbprint = $normalizedThumbprint
 } | ConvertTo-Json
 [IO.File]::WriteAllText(

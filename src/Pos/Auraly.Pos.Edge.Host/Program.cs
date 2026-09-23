@@ -114,7 +114,8 @@ public static class PosEdgeHostApplication
             packagePath = Path.Combine(
                 Path.GetDirectoryName(Path.GetFullPath(databasePath))!,
                 "enrollment.protected");
-        var enrollmentStore = new PosEdgeEnrollmentStore(packagePath, keyDirectory);
+        var enrollmentStore = new PosEdgeEnrollmentStore(packagePath, keyDirectory, databasePath);
+        enrollmentStore.ResetLocalStorageIfRequired(databasePath);
         var identityRecovery = new PosLocalDeviceIdentityRecovery(databasePath);
         var enrollment = enrollmentStore.Load();
         if (enrollment is null &&
@@ -442,7 +443,7 @@ public static class PosEdgeHostApplication
             try
             {
                 var result = await client.RedeemAsync(request, ct);
-                _ = Task.Run(async () =>
+                if (result.RestartRequired) _ = Task.Run(async () =>
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1));
                     lifetime.StopApplication();
@@ -1713,7 +1714,7 @@ public static class PosEdgeHostApplication
             try
             {
                 var result = await client.RedeemAsync(request, ct);
-                _ = Task.Run(async () =>
+                if (result.RestartRequired) _ = Task.Run(async () =>
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1));
                     lifetime.StopApplication();

@@ -29,10 +29,7 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
         this.root = root;
         this.configuration = configuration;
         this.shutdown = shutdown;
-        data = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Auraly",
-            "PosEdge");
+        data = Program.DataDirectory;
         Directory.CreateDirectory(data);
         Directory.CreateDirectory(Path.Combine(data, "logs"));
         sessionToken = Convert.ToHexString(

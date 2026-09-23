@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
+using Auraly.Application.WorkSessions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -49,6 +51,8 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.Equal(fixture.WarehouseId, package.WarehouseId);
         Assert.Matches("^(?!00)\\d{2}$", package.DocumentSeries.SeriesCode);
         Assert.NotEmpty(package.DeviceSecret);
+        Assert.False(package.ReusesDevice);
+        Assert.NotNull(package.InitialWorkSessions);
         Assert.NotNull(package.OfflineLeaseTrustedPublicKeys);
         Assert.Equal(
             fixture.OfflineLeasePublicKeyPem,
@@ -73,6 +77,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.NotNull(recovered);
         Assert.Equal(package.DeviceId, recovered.DeviceId);
         Assert.Equal(package.DocumentSeries.SeriesId, recovered.DocumentSeries.SeriesId);
+        Assert.False(recovered.ReusesDevice);
         Assert.NotEqual(package.DeviceSecret, recovered.DeviceSecret);
 
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -115,6 +120,24 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
             .ReadFromJsonAsync<PosEnrollmentPackage>();
         Assert.NotNull(firstPackage);
 
+        var openSessionId = Guid.NewGuid();
+        var openedAt = DateTimeOffset.UtcNow.AddHours(-1);
+        await using (var seed = new SqlConnection(fixture.ConnectionString))
+        {
+            await seed.OpenAsync();
+            await using var insert = new SqlCommand("""
+                INSERT dbo.WorkSessions(WorkSessionId,TenantId,BusinessId,UserId,DeviceId,OpenedAt,LastActivityAt,Status)
+                VALUES(@Session,@Tenant,@Business,@User,@Device,@Opened,@Opened,N'Open');
+                """, seed);
+            insert.Parameters.AddWithValue("@Session", openSessionId);
+            insert.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            insert.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            insert.Parameters.AddWithValue("@User", fixture.UserId);
+            insert.Parameters.AddWithValue("@Device", firstPackage.DeviceId);
+            insert.Parameters.AddWithValue("@Opened", openedAt);
+            await insert.ExecuteNonQueryAsync();
+        }
+
         using var secondAuthorizationResponse = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/enrollments",
             new CreatePosEnrollmentRequest(
@@ -133,6 +156,19 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         var secondPackage = await secondRedeemResponse.Content
             .ReadFromJsonAsync<PosEnrollmentPackage>();
         Assert.NotNull(secondPackage);
+        Assert.True(secondPackage.ReusesDevice);
+        var restored = Assert.Single(secondPackage.InitialWorkSessions!);
+        Assert.Equal(openSessionId, restored.WorkSessionId);
+        Assert.Equal(fixture.UserId, restored.UserId);
+        Assert.Equal(openedAt, restored.OpenedAt);
+        using (var scope = fixture.CreateScope())
+        {
+            var sessions = scope.ServiceProvider.GetRequiredService<IWorkSessionStore>();
+            Assert.Empty(await sessions.ReadOpenForEnrollmentAsync(
+                Guid.NewGuid(), fixture.BusinessId, firstPackage.DeviceId, default));
+            Assert.Empty(await sessions.ReadOpenForEnrollmentAsync(
+                fixture.TenantId, Guid.NewGuid(), firstPackage.DeviceId, default));
+        }
         Assert.Equal(firstPackage.DeviceId, secondPackage.DeviceId);
         Assert.Equal(firstPackage.DocumentSeries.SeriesId, secondPackage.DocumentSeries.SeriesId);
         Assert.Equal(firstPackage.DocumentSeries.SeriesCode, secondPackage.DocumentSeries.SeriesCode);

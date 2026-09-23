@@ -42,7 +42,8 @@ public sealed class PosOrdersServerClient(HttpClient http, PosDeviceCredentials 
             {
                 var problem = await ReadProblemAsync(response, token);
                 throw new PosOrdersServerException((int)response.StatusCode,
-                    problem?.Title ?? "OrdersUnavailable",
+                    problem?.Title?.StartsWith("Order", StringComparison.Ordinal) == true
+                        ? problem.Title : "OrdersUnavailable",
                     problem?.Detail ?? "No fue posible procesar los pedidos.");
             }
             return await response.Content.ReadFromJsonAsync<JsonElement>(token);

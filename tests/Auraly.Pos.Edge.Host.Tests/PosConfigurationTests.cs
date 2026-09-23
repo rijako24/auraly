@@ -57,7 +57,7 @@ public sealed class PosConfigurationTests
             var enrollment = EnrollmentPackage(allowsNegativeStock: false);
             var store = new PosEdgeEnrollmentStore(
                 Path.Combine(directory, "enrollment.protected"),
-                Path.Combine(directory, "keys"));
+                Path.Combine(directory, "keys"), Path.Combine(directory, "auraly-pos.db"));
             store.Save(enrollment);
             var runtime = new PosEdgeRuntimeContext(
                 new TenantId(enrollment.TenantId),
@@ -95,7 +95,7 @@ public sealed class PosConfigurationTests
             File.WriteAllText(databasePath, "audit-data");
             var store = new PosEdgeEnrollmentStore(
                 Path.Combine(directory, "enrollment.protected"),
-                Path.Combine(directory, "keys"));
+                Path.Combine(directory, "keys"), Path.Combine(directory, "auraly-pos.db"));
             store.Save(EnrollmentPackage(allowsNegativeStock: false));
 
             store.Clear();

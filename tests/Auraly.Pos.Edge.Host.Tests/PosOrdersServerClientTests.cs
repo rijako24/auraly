@@ -44,11 +44,13 @@ public sealed class PosOrdersServerClientTests
         Assert.Equal("batch:order", handler.Header("Idempotency-Key"));
     }
 
-    [Fact]
-    public async Task Server_problem_is_preserved_for_the_local_client()
+    [Theory]
+    [InlineData("OrderInventoryConflict", "OrderInventoryConflict")]
+    [InlineData("Internal Server Error", "OrdersUnavailable")]
+    public async Task Server_problem_is_preserved_for_the_local_client(string title, string code)
     {
         var handler = new RecordingHandler(HttpStatusCode.Conflict,
-            new ProblemDetails { Title = "OrderInventoryConflict", Detail = "Sin existencia." });
+            new ProblemDetails { Title = title, Detail = "Sin existencia." });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test/") };
         var runtime = new PosEdgeRuntimeContext(new TenantId(Guid.NewGuid()),
             new BusinessId(Guid.NewGuid()), new WarehouseId(Guid.NewGuid()),
@@ -64,7 +66,7 @@ public sealed class PosOrdersServerClientTests
                 JsonSerializer.SerializeToElement(new { }), session, default));
 
         Assert.Equal(409, error.StatusCode);
-        Assert.Equal("OrderInventoryConflict", error.Code);
+        Assert.Equal(code, error.Code);
         Assert.Equal("Sin existencia.", error.Message);
     }
 

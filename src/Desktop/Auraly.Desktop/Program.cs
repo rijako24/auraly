@@ -15,6 +15,16 @@ internal sealed record DesktopConfiguration(
 
 internal static class Program
 {
+    internal static string DataDirectory { get; } = ResolveDataDirectory();
+
+    private static string ResolveDataDirectory()
+    {
+        var configured = Environment.GetEnvironmentVariable("AURALY_POS_DATA_DIRECTORY");
+        return string.IsNullOrWhiteSpace(configured)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Auraly", "PosEdge")
+            : Path.GetFullPath(configured);
+    }
+
     private static readonly List<Process> Children = [];
     private static readonly AuralyChildProcessJob ChildProcessJob = new();
     private static readonly CancellationTokenSource Shutdown = new();
@@ -26,7 +36,14 @@ internal static class Program
         if (AuralyRenderedPrintCommand.TryParse(args, out var printCommand))
             return AuralyRenderedPrintRunner.Run(printCommand);
 
-        using var mutex = new Mutex(true, "Local\\Auraly.Desktop", out var first);
+        var defaultDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Auraly", "PosEdge");
+        var mutexName = "Local\\Auraly.Desktop";
+        if (!string.Equals(DataDirectory.TrimEnd(Path.DirectorySeparatorChar), defaultDirectory,
+                StringComparison.OrdinalIgnoreCase))
+            mutexName += "." + Convert.ToHexString(SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(DataDirectory.TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant())));
+        using var mutex = new Mutex(true, mutexName, out var first);
         if (!first) return 0;
 
         AppDomain.CurrentDomain.ProcessExit += (_, _) => StopChildren();
@@ -39,11 +56,7 @@ internal static class Program
         try
         {
             var configuration = LoadConfiguration(AppContext.BaseDirectory);
-            var dataDirectory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Auraly",
-                "PosEdge");
-            if (AuralyPendingUpdateStore.TryStartAtStartup(dataDirectory, configuration))
+            if (AuralyPendingUpdateStore.TryStartAtStartup(DataDirectory, configuration))
                 return 0;
             using var context = new AuralyDesktopApplicationContext(
                 AppContext.BaseDirectory,
@@ -217,11 +230,7 @@ internal static class Program
     {
         var process = Process.Start(info)
             ?? throw new InvalidOperationException($"Could not start {identity}.");
-        var logDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Auraly",
-            "PosEdge",
-            "logs");
+        var logDirectory = Path.Combine(DataDirectory, "logs");
         Directory.CreateDirectory(logDirectory);
         _ = PumpAsync(
             process.StandardOutput,

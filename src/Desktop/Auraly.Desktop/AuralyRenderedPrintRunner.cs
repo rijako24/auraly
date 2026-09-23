@@ -95,9 +95,7 @@ internal sealed class AuralyRenderedPrintForm : Form
                 ViewportWidth(command.PaperWidthMillimeters),
                 1200);
             await Task.Yield();
-            var profile = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Auraly", "PosEdge", "print-webview2");
+            var profile = Path.Combine(Program.DataDirectory, "print-webview2");
             Directory.CreateDirectory(profile);
             var environment = await CoreWebView2Environment.CreateAsync(
                 browserExecutableFolder: null,
@@ -371,9 +369,7 @@ internal sealed class AuralyRenderedPrintForm : Form
         }
         catch (Exception error)
         {
-            var logDirectory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Auraly", "PosEdge", "logs");
+            var logDirectory = Path.Combine(Program.DataDirectory, "logs");
             Directory.CreateDirectory(logDirectory);
             await File.AppendAllTextAsync(
                 Path.Combine(logDirectory, "print-error.log"),

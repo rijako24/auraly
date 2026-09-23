@@ -11,6 +11,7 @@ CREATE TABLE [dbo].[PosEnrollmentSessions]
     [ExpiresAt] DATETIMEOFFSET(7) NOT NULL,
     [RedeemedAt] DATETIMEOFFSET(7) NULL,
     [DeviceId] UNIQUEIDENTIFIER NULL,
+    [ReusesDevice] BIT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_PosEnrollmentSessions] PRIMARY KEY CLUSTERED ([EnrollmentSessionId]),
     CONSTRAINT [FK_PosEnrollmentSessions_Tenants] FOREIGN KEY ([TenantId])

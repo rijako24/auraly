@@ -124,6 +124,7 @@ public sealed class PosSynchronizationEventLogTests
         Assert.NotNull(detail);
         Assert.DoesNotContain("azurewebsites", detail, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(":443", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("automáticamente", detail, StringComparison.Ordinal);
     }
 
     [Fact]

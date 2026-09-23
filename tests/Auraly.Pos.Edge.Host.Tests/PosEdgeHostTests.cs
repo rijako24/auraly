@@ -22,7 +22,7 @@ using Xunit;
 
 namespace Auraly.Pos.Edge.Host.Tests;
 
-public sealed class PosEdgeHostTests : IAsyncLifetime
+public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output) : IAsyncLifetime
 {
     private const string Token = "test-session-token-with-at-least-32-bytes";
     private readonly string _path =
@@ -83,7 +83,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         };
         var client = new PosEdgeEnrollmentClient(
             http,
-            new PosEdgeEnrollmentStore(_path + ".enrollment", _secretPath),
+            new PosEdgeEnrollmentStore(_path + ".enrollment", _secretPath, _path),
             new PosLocalDeviceIdentityRecovery(_path));
 
         var exception = await Assert.ThrowsAsync<PosEnrollmentServerException>(() =>
@@ -92,13 +92,16 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Equal(409, exception.StatusCode);
         Assert.Equal("PosEnrollmentConflict", exception.Title);
         Assert.Equal("La organización alcanzó el máximo de cajas enroladas.", exception.Message);
+        Assert.True(File.Exists(_path));
+        Assert.False(File.Exists(_path + ".enrollment"));
     }
 
     [Fact]
     public async Task Enrollment_client_retires_revoked_local_identity_and_enrolls_as_new_device()
     {
         var path = Path.Combine(
-            Path.GetTempPath(), $"auraly-retired-device-{Guid.NewGuid():N}.db");
+            Path.GetTempPath(), $"auraly-retired-device-{Guid.NewGuid():N}", "auraly-pos.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var oldDeviceId = Guid.NewGuid();
         var newDeviceId = Guid.NewGuid();
         var package = CreateEnrollmentPackage(newDeviceId);
@@ -130,7 +133,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             var recovery = new PosLocalDeviceIdentityRecovery(path);
             var client = new PosEdgeEnrollmentClient(
                 http,
-                new PosEdgeEnrollmentStore(path + ".enrollment", _secretPath),
+                new PosEdgeEnrollmentStore(path + ".enrollment", _secretPath, path),
                 recovery);
 
             var result = await client.RedeemAsync(
@@ -138,6 +141,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
 
             Assert.Equal(newDeviceId, result.DeviceId);
             Assert.Equal(new Guid?[] { oldDeviceId, null }, handler.ExistingDeviceIds);
+            new PosEdgeEnrollmentStore(path + ".enrollment", _secretPath, path).ResetLocalStorageIfRequired(path);
             Assert.Null(recovery.ReadSingleDeviceId());
         }
         finally
@@ -149,10 +153,11 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Enrollment_client_reconciles_multiple_revoked_local_identities_without_deleting_history()
+    public async Task Enrollment_client_resets_all_previous_identities_only_when_the_new_host_starts()
     {
         var path = Path.Combine(
-            Path.GetTempPath(), $"auraly-retired-devices-{Guid.NewGuid():N}.db");
+            Path.GetTempPath(), $"auraly-retired-devices-{Guid.NewGuid():N}", "auraly-pos.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var retiredDeviceIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
         var newDeviceId = Guid.NewGuid();
         var package = CreateEnrollmentPackage(newDeviceId);
@@ -186,11 +191,12 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             var recovery = new PosLocalDeviceIdentityRecovery(path);
             var client = new PosEdgeEnrollmentClient(
                 http,
-                new PosEdgeEnrollmentStore(path + ".enrollment", _secretPath),
+                new PosEdgeEnrollmentStore(path + ".enrollment", _secretPath, path),
                 recovery);
 
-            var result = await client.RedeemAsync(
-                new LocalPosEnrollmentRequest(Guid.NewGuid(), "code"));
+            var request = new LocalPosEnrollmentRequest(Guid.NewGuid(), "code");
+            var result = await client.RedeemAsync(request);
+            Assert.Equal(result, await client.RedeemAsync(request));
 
             Assert.Equal(newDeviceId, result.DeviceId);
             Assert.Equal(3, handler.ExistingDeviceIds.Count);
@@ -198,13 +204,65 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             Assert.Equal(
                 retiredDeviceIds.Order(),
                 handler.ExistingDeviceIds.Take(2).Select(value => value!.Value).Order());
+            Assert.Equal(2, recovery.ReadActiveDeviceIds().Count);
+            var stored = new PosEdgeEnrollmentStore(path + ".enrollment", _secretPath, path);
+            var directory = Path.GetDirectoryName(path)!;
+            var receipts = Path.Combine(directory, "receipts");
+            Directory.CreateDirectory(receipts);
+            await File.WriteAllTextAsync(Path.Combine(receipts, "old-invoice.html"), "old invoice");
+            for (var index = 0; index < 100; index++)
+                await File.WriteAllBytesAsync(Path.Combine(receipts, $"receipt-{index}.html"), new byte[65536]);
+            await File.WriteAllTextAsync(Path.Combine(directory, "printer-settings.json"), "{}");
+            var resetDuration = Stopwatch.StartNew();
+            stored.ResetLocalStorageIfRequired(path);
+            resetDuration.Stop();
+            output.WriteLine($"New enrollment reset: {resetDuration.Elapsed.TotalMilliseconds:F1} ms; database + 101 receipts (6.25 MiB); 0 HTTP requests.");
             Assert.Empty(recovery.ReadActiveDeviceIds());
+            Assert.False(File.Exists(path));
+            Assert.False(Directory.Exists(receipts));
+            Assert.False(File.Exists(Path.Combine(directory, "printer-settings.json")));
+            await PosStorageBootstrap.InitializeAsync(path);
+            var identities = new PosLocalIdentityStore($"Data Source={path}", _secretPath,
+                new Auraly.BuildingBlocks.Infrastructure.Identifiers.Uuid7AuralyIdGenerator(TimeProvider.System), TimeProvider.System);
+            Assert.False(await identities.HasIdentitySnapshotAsync());
+            Assert.Equal("Empty", (await new PosCatalogStore($"Data Source={path}").StatusAsync()).Status);
+            // A normal restart of this same accepted enrollment never erases progress.
+            stored.ResetLocalStorageIfRequired(path);
+            Assert.True(File.Exists(path));
+            var replay = await client.RedeemAsync(request);
+            Assert.Equal(newDeviceId, replay.DeviceId);
+            Assert.False(replay.RestartRequired);
+            Assert.Equal(3, handler.ExistingDeviceIds.Count);
+            stored.ResetLocalStorageIfRequired(path);
+            Assert.True(File.Exists(path));
+            Assert.Equal(newDeviceId, stored.Load()!.DeviceId);
         }
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             if (File.Exists(path)) File.Delete(path);
             if (File.Exists(path + ".enrollment")) File.Delete(path + ".enrollment");
+        }
+    }
+
+    [Fact]
+    public async Task Legacy_protected_package_does_not_reset_local_storage()
+    {
+        var package = CreateEnrollmentPackage(Guid.NewGuid());
+        var packagePath = _path + ".enrollment";
+        try
+        {
+            await File.WriteAllTextAsync(packagePath, PosEdgeProtectedSecret.ProtectEnrollmentPackage(
+                _secretPath, JsonSerializer.Serialize(package)));
+            var store = new PosEdgeEnrollmentStore(packagePath, _secretPath, _path);
+            Assert.Equal(package.DeviceId, store.Load()!.DeviceId);
+            store.ResetLocalStorageIfRequired(_path);
+            Assert.True(File.Exists(_path));
+            Assert.Null(store.LoadResultForEnrollment(Guid.NewGuid()));
+        }
+        finally
+        {
+            File.Delete(packagePath);
         }
     }
 
@@ -1780,6 +1838,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             new PosEnrollmentDocumentSeries(
                 Guid.NewGuid(), "SalesReceipt", "CVI", seriesCode, 8, 1, 99_999_999),
             null,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow, ReusesDevice: false, InitialWorkSessions: []);
     }
 }

@@ -347,7 +347,7 @@ internal static class PosSynchronizationFailurePresenter
 
     public static string? StoredError(string? value) => string.IsNullOrWhiteSpace(value)
         ? null
-        : "Hay información pendiente de sincronizar. Auraly volverá a intentarlo automáticamente.";
+        : "Hay información pendiente de sincronizar. Revisa el detalle de sincronización.";
 }
 
 internal static class PosSynchronizationRetryPolicy

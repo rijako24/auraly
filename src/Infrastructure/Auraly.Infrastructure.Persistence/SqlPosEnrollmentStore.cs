@@ -220,7 +220,7 @@ public sealed class SqlPosEnrollmentStore(
                 ProductionActive: data.ProductionActive),
             receiptDocumentSeries,
             trustedPublicKeys,
-            now);
+            now, ReusesDevice: existing is not null && data.ReusesDevice is not false);
     }
 
     private static async Task EnsureDeviceCapacityAsync(
@@ -333,7 +333,7 @@ public sealed class SqlPosEnrollmentStore(
             WHERE DeviceId=@DeviceId AND TenantId=@TenantId;
             IF @@ROWCOUNT<>1 THROW 51003,'The existing POS device is not valid for this tenant.',1;
             UPDATE dbo.PosEnrollmentSessions
-            SET RedeemedAt=@Now,DeviceId=@DeviceId
+            SET RedeemedAt=@Now,DeviceId=@DeviceId,ReusesDevice=COALESCE(ReusesDevice,1)
             WHERE EnrollmentSessionId=@SessionId
               AND (RedeemedAt IS NULL OR DeviceId=@DeviceId);
             IF @@ROWCOUNT<>1 THROW 51002,'The enrollment session belongs to another device.',1;
@@ -370,7 +370,7 @@ public sealed class SqlPosEnrollmentStore(
                   SELECT 1 FROM dbo.FiscalIssuerConfigurations production
                   WHERE production.BusinessId=e.BusinessId AND production.Environment=1
                     AND production.IsActive=1
-              ) THEN 1 ELSE 0 END)
+              ) THEN 1 ELSE 0 END),e.ReusesDevice
             FROM dbo.PosEnrollmentSessions e WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.IsActive=1
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
@@ -414,7 +414,7 @@ public sealed class SqlPosEnrollmentStore(
             reader.IsDBNull(21) ? null : reader.GetString(21),
             reader.IsDBNull(22) ? null : reader.GetString(22),
             reader.IsDBNull(23) ? null : reader.GetString(23),
-            reader.GetBoolean(24));
+            reader.GetBoolean(24), reader.IsDBNull(25) ? null : reader.GetBoolean(25));
     }
 
     private static async Task<string> AllocateSeriesCodeAsync(
@@ -472,7 +472,7 @@ public sealed class SqlPosEnrollmentStore(
             VALUES(@DocumentSeriesId,1,@Now);
 
             UPDATE dbo.PosEnrollmentSessions
-            SET RedeemedAt=@Now,DeviceId=@DeviceId
+            SET RedeemedAt=@Now,DeviceId=@DeviceId,ReusesDevice=0
             WHERE EnrollmentSessionId=@SessionId AND RedeemedAt IS NULL;
             IF @@ROWCOUNT<>1 THROW 51002,'The enrollment session was already redeemed.',1;
             """;
@@ -590,5 +590,6 @@ public sealed class SqlPosEnrollmentStore(
         string? SupplierTaxId,
         string? TechnicalKeyVersion,
         string? QrValidationUrl,
-        bool ProductionActive);
+        bool ProductionActive,
+        bool? ReusesDevice);
 }

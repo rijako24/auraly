@@ -272,5 +272,7 @@ producción. No se puede afirmar paridad online si el estado vive solo en React.
   valida existencia actual y sin servidor aplica la regla offline provisionada.
 - Un borrador iniciado en un adaptador termina en ese adaptador.
 - Habilitar offline requiere enrolamiento; no migra silenciosamente borradores.
-- Deshabilitar o reenrolar exige outbox vacía o intervención explícita.
+- Un nuevo enrolamiento aceptado elimina todos los datos operativos locales,
+  incluida la outbox pendiente, según `pos-enrollment-design.md`. Reiniciar la
+  aplicación o reintentar una descarga del mismo enrolamiento no ejecuta esa limpieza.
 

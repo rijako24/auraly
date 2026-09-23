@@ -74,6 +74,10 @@ administrativa del usuario o tenant.
   sesión en SQLite con su ID definitivo y encola `WorkSessionOpened`. El servidor
   registra exactamente ese ID y nunca lo sustituye. La cola conserva el orden global
   apertura, documentos/movimientos y cierre, incluso entre dos jornadas consecutivas.
+  La subida de apertura reutiliza la clasificación canónica de errores: transporte,
+  timeout, 408, 429 y 5xx admiten reintento; un rechazo permanente queda visible como
+  `FailedPermanent` y no se repite indefinidamente. El detalle técnico se conserva
+  en la outbox; la interfaz muestra la causa segura sin atribuirla al servicio local.
 
 Una aplicación instalada que todavía no está enrolada conserva el modo online: los
 motivos de entrada y salida se consultan al servidor y los movimientos se confirman
@@ -89,7 +93,12 @@ el Edge completa la descarga inicial antes de habilitar ventas y luego mantiene 
 cambios mediante invalidaciones push recuperables. El desenrolamiento solo se ejecuta
 desde la administración Athena con `tenants.devices.revoke`: se publica al grupo del
 dispositivo, el Edge elimina únicamente su credencial protegida, conserva los datos
-locales para auditoría y reinicia en modo online. Si el equipo estaba desconectado,
+locales hasta que se acepte un nuevo enrolamiento y reinicia en modo online.
+El nuevo enrolamiento elimina los datos operativos locales, incluidas facturas y
+outbox pendiente, antes de iniciar su preparación. Si se recupera la misma identidad,
+conserva sus consecutivos y reconstruye las sesiones abiertas confirmadas por el
+servidor, sin crear otra sesión ni volver a subir esas aperturas. Un reinicio
+del mismo enrolamiento conserva sus datos y checkpoints. Si el equipo estaba desconectado,
 el rechazo de sus credenciales al reconectar produce el mismo corte local.
 
 No existe un modo funcional distinto llamado caja. La diferencia es únicamente si la

@@ -254,6 +254,20 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   await expect(page.getByRole("button", { name: "Salir de Auraly" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Repetir enrolamiento" })).toHaveCount(0);
 
+  for (const width of [390, 768, 1024]) {
+    await page.setViewportSize({ width, height: 720 });
+    const panel = page.locator('[aria-live="polite"]').filter({ has: page.getByRole("heading", { name: "No se pudo completar la preparación" }) });
+    const bounds = await panel.evaluate((element) => {
+      const frame = element.getBoundingClientRect();
+      const content = element.firstElementChild!.getBoundingClientRect();
+      return { contained: content.top >= frame.top && content.bottom <= frame.bottom + 1,
+        width: document.documentElement.scrollWidth, viewport: window.innerWidth };
+    });
+    expect(bounds.contained).toBe(true);
+    expect(bounds.width).toBeLessThanOrEqual(bounds.viewport);
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
   await page.getByRole("button", { name: "Reintentar preparación" }).click();
   await expect.poll(() => redeemAttempts).toBe(2);
   await expect.poll(() => completeCalls).toBe(1);

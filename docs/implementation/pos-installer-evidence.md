@@ -13,6 +13,22 @@ The installer bundles the Auraly desktop launcher, the production Next.js
 standalone build, Node.js runtime and the self-contained POS Edge host. It
 preserves `%LOCALAPPDATA%\Auraly\PosEdge` during an update.
 
+## Prueba local aislada (2026-09-22)
+
+`Build-AuralyPosInstaller.ps1 -PayloadOnly -ApiUrl http://127.0.0.1:5097
+-WebPort 57830 -EdgePort 57831` construye el mismo payload de Desktop sin
+publicarlo ni instalarlo sobre otra versión. Los puertos predeterminados del
+instalador siguen siendo 47830/47831. Antes de ejecutar el Desktop de prueba,
+`AURALY_POS_DATA_DIRECTORY` permite elegir una carpeta absoluta independiente
+para SQLite, claves, enrolamiento, WebView2, impresión y logs. Desktop conserva
+su propietario de procesos y reinicios; el mutex distingue esa carpeta del
+perfil instalado. Sin la variable, se conserva el comportamiento instalado.
+
+La API y su base de prueba deben configurarse por separado. Un payload que use
+una API local no publica cambios en Azure. Esta modalidad permite probar desde
+el login y la preparación con una carpeta vacía, sin reutilizar los datos del
+perfil instalado. Cerrar esa ventana termina solamente sus propios procesos.
+
 ## Binary versions during upgrades (2026-09-21)
 
 Windows Installer compares numeric `FileVersion`, not the commit in

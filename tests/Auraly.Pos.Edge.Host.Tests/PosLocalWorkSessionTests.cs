@@ -188,6 +188,33 @@ public sealed class PosLocalWorkSessionTests : IAsyncLifetime
         }
     }
 
+    [Theory]
+    [InlineData(403, "FailedPermanent")]
+    [InlineData(409, "FailedPermanent")]
+    [InlineData(500, "RetryScheduled")]
+    [InlineData(0, "RetryScheduled")]
+    public async Task Opening_failure_preserves_the_session_and_classifies_retry(int status, string expected)
+    {
+        var local = await store.OpenOrResumeAsync(Guid.NewGuid());
+        var handler = new StubHandler(_ => status == 0
+            ? throw new TaskCanceledException("request timeout")
+            : Task.FromResult(new HttpResponseMessage((System.Net.HttpStatusCode)status)));
+        var events = new PosSynchronizationEventLog(time);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://server.test") };
+        var uploader = new PosWorkSessionOpenUploader($"Data Source={path}", http,
+            new PosDeviceCredentials(deviceId.Value, "secret"), time, events);
+        Assert.True(await uploader.UploadNextAsync());
+        Assert.False(await uploader.UploadNextAsync());
+        await using var connection = new SqliteConnection($"Data Source={path}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT Status FROM Outbox WHERE DocumentId=$id;";
+        command.Parameters.AddWithValue("$id", local.WorkSessionId.ToString("D"));
+        Assert.Equal(expected, await command.ExecuteScalarAsync());
+        Assert.DoesNotContain("Response status", Assert.Single(events.Read()).Detail);
+        Assert.Equal(local.WorkSessionId, (await store.OpenOrResumeAsync(local.UserId)).WorkSessionId);
+    }
+
     public Task DisposeAsync()
     {
         SqliteConnection.ClearAllPools();
