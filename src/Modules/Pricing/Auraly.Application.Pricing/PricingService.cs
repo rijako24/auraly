@@ -20,6 +20,12 @@ public sealed record PreparedDirectProductPricePublication(
     decimal? TargetMarginPercent, decimal SalePrice, decimal? EffectiveMarginPercent,
     decimal RoundingIncrement, string RoundingMode);
 
+public sealed record PendingPricePublicationSelection(
+    IReadOnlyCollection<Guid>? ProductIds,
+    string? Search,
+    Guid? SupplierId,
+    Guid? SourceDocumentId);
+
 public sealed record PricePublicationStoreResult(
     PublishPricesResult Result,
     IReadOnlyList<Guid> TargetBusinessIds);
@@ -42,11 +48,9 @@ public interface IPricingStore
 {
     Task<PriceRevisionPage> ListAsync(PricingUserIdentity user, PriceRevisionQuery query, CancellationToken ct);
     Task<PriceProposalSource?> GetProposalAsync(PricingUserIdentity user, Guid proposalId, CancellationToken ct);
-    Task<IReadOnlyList<PriceProposalSource>> GetProposalsAsync(
-        PricingUserIdentity user, IReadOnlyCollection<Guid> proposalIds, CancellationToken ct);
     Task<IReadOnlyList<PreparedPricePublication>> GetPendingPublicationsAsync(
-        PricingUserIdentity user, PublishPendingPricesRequest request, CancellationToken ct);
-    Task ReviewAsync(PricingUserIdentity user, Guid proposalId, PriceCalculationResult calculation, byte[] expectedRowVersion, CancellationToken ct);
+        PricingUserIdentity user, PendingPricePublicationSelection selection, CancellationToken ct);
+    Task<ReviewedPricePreparation> ReviewAsync(PricingUserIdentity user, Guid proposalId, PriceCalculationResult calculation, byte[] expectedRowVersion, CancellationToken ct);
     Task RejectAsync(PricingUserIdentity user, Guid proposalId, byte[] expectedRowVersion, string? reason, CancellationToken ct);
     Task<PricePublicationStoreResult> PublishAsync(PricingUserIdentity user, IReadOnlyList<PreparedPricePublication> values, DateTimeOffset now, CancellationToken ct);
     Task<ProductPricingContext?> GetProductContextAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
@@ -79,7 +83,7 @@ public sealed class PricingService(
         return CalculateCore(request);
     }
 
-    public async Task ReviewAsync(PricingUserIdentity user, Guid proposalId, ReviewPriceProposalRequest request, CancellationToken ct)
+    public async Task<ReviewedPricePreparation> ReviewAsync(PricingUserIdentity user, Guid proposalId, ReviewPriceProposalRequest request, CancellationToken ct)
     {
         Require(user, PricingPermissionCodes.ReviewProposals);
         Require(user, PricingPermissionCodes.ReadCostBasis);
@@ -88,7 +92,8 @@ public sealed class PricingService(
         var calculation = CalculateForSource(source, request.InputMode,
             request.TargetMarginPercent, request.SalePrice,
             request.RoundingIncrement, request.RoundingMode);
-        await store.ReviewAsync(user, proposalId, calculation, DecodeToken(request.ConcurrencyToken), ct);
+        return await store.ReviewAsync(
+            user, proposalId, calculation, DecodeToken(request.ConcurrencyToken), ct);
     }
 
     public async Task RejectAsync(PricingUserIdentity user, Guid proposalId, RejectPriceProposalRequest request, CancellationToken ct)
@@ -103,51 +108,28 @@ public sealed class PricingService(
     {
         Require(user, PricingPermissionCodes.PublishPrices);
         Require(user, PricingPermissionCodes.ReadCostBasis);
-        if (request.Items is null || request.Items.Count == 0)
-            throw new PricingValidationException("At least one proposal is required.");
-        if (request.Items.Count > 1) Require(user, PricingPermissionCodes.BulkPublish);
-        if (request.Items.Select(x => x.ProposalId).Distinct().Count() != request.Items.Count)
-            throw new PricingValidationException("The publication batch is invalid.");
-
-        var sources = await store.GetProposalsAsync(
-            user, request.Items.Select(item => item.ProposalId).ToArray(), ct);
-        if (sources.Count != request.Items.Count)
-            throw new PricingNotFoundException("One or more price proposals were not found.");
-        var sourcesById = sources.ToDictionary(source => source.ProposalId);
-        var prepared = new List<PreparedPricePublication>(request.Items.Count);
-        foreach (var item in request.Items)
-        {
-            var source = sourcesById[item.ProposalId];
-            EnsureReviewable(source);
-            var expected = DecodeToken(item.ConcurrencyToken);
-            if (!source.RowVersion.AsSpan().SequenceEqual(expected))
-                throw new PricingConflictException("The proposal changed before publication.");
-            var result = CalculateForSource(source, item.InputMode,
-                item.TargetMarginPercent, item.SalePrice,
-                item.RoundingIncrement, item.RoundingMode);
-            prepared.Add(new(
-                source.ProposalId, source.ProductId, source.ObservedUnitCost,
-                source.CostBasisType, result.InputMode, result.TargetMarginPercent, result.RoundedSalePrice,
-                result.EffectiveMarginPercent, result.RoundingIncrement,
-                result.RoundingMode, expected, source.IsManual));
-        }
-
-        return await PublishPreparedAsync(user, prepared, ct);
-    }
-
-    public async Task<PublishPricesResult> PublishPendingAsync(
-        PricingUserIdentity user,
-        PublishPendingPricesRequest request,
-        CancellationToken ct)
-    {
-        Require(user, PricingPermissionCodes.PublishPrices);
-        Require(user, PricingPermissionCodes.BulkPublish);
-        Require(user, PricingPermissionCodes.ReadCostBasis);
+        var productIds = request.ProductIds?.Distinct().ToArray();
+        var publishesAllMatching = request.AllMatching is not null;
+        if (publishesAllMatching == (productIds is { Length: > 0 }))
+            throw new PricingValidationException(
+                "Selecciona productos específicos o todos los precios preparados que coinciden con los filtros.");
+        if (publishesAllMatching || productIds!.Length > 1)
+            Require(user, PricingPermissionCodes.BulkPublish);
+        var filter = request.AllMatching;
         var prepared = await store.GetPendingPublicationsAsync(
-            user, request with { Search = Normalize(request.Search, 120) }, ct);
+            user,
+            new(
+                productIds,
+                Normalize(filter?.Search, 120),
+                filter?.SupplierId,
+                filter?.SourceDocumentId),
+            ct);
+        if (productIds is not null && prepared.Count != productIds.Length)
+            throw new PricingConflictException(
+                "Uno o más precios seleccionados cambiaron o ya fueron publicados.");
         if (prepared.Count == 0)
             throw new PricingValidationException(
-                "No hay precios pendientes que coincidan con los filtros actuales.");
+                "La selección no contiene precios preparados pendientes.");
         return await PublishPreparedAsync(user, prepared, ct);
     }
 

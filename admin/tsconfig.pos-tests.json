@@ -157,6 +157,8 @@
     "src/lib/product-purchase-tax-treatment.test.ts",
     "src/lib/pricing-publication-draft.ts",
     "src/lib/pricing-publication-draft.test.ts",
+    "src/lib/pricing-publication-selection.ts",
+    "src/lib/pricing-publication-selection.test.ts",
     "src/lib/goods-receipt-calculator.ts",
     "src/lib/goods-receipt-calculator.test.ts",
     "src/lib/goods-receipt-confirmation.ts",

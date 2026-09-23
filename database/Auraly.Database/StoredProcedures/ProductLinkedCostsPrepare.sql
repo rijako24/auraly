@@ -98,7 +98,10 @@ BEGIN
     SELECT price.BusinessId,link.ProductId,price.Amount,rounded.PreparedAmount,
            cost.CostBasis,policy.TargetMargin,
            CASE WHEN net.NetSalePrice<=0 THEN NULL
-                ELSE ROUND(((net.NetSalePrice-cost.CostBasis)/net.NetSalePrice)*100,6) END,
+                ELSE ROUND(
+                    (CAST(net.NetSalePrice-cost.CostBasis AS DECIMAL(25,12))
+                     * CAST(100 AS DECIMAL(3,0)))
+                    / CAST(net.NetSalePrice AS DECIMAL(25,12)),6) END,
            policy.RoundingIncrement,policy.RoundingMode
     FROM @Links link
     INNER JOIN dbo.ProductPrices price WITH(UPDLOCK,HOLDLOCK)

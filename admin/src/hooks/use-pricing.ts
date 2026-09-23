@@ -5,7 +5,8 @@ import {
   pricingApi,
   type PriceCalculationRequest,
   type PriceProposalStatus,
-  type PublishPriceItem,
+  type PublishPricesRequest,
+  type ReviewPriceProposalRequest,
 } from "@/services/api/pricing";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -42,19 +43,17 @@ export const useCalculatePrice = () =>
   useMutation({ mutationFn: (request: PriceCalculationRequest) => pricingApi.calculate(request) });
 
 export const useReviewPrice = () =>
-  usePricingMutation(({ proposalId, ...request }: PublishPriceItem) =>
-    pricingApi.review(proposalId, request));
+  useMutation({ mutationFn: ({ proposalId, request }: {
+    proposalId: string;
+    request: ReviewPriceProposalRequest;
+  }) => pricingApi.review(proposalId, request) });
 
 export const useRejectPrice = () =>
   usePricingMutation((value: { proposalId: string; concurrencyToken: string; reason?: string }) =>
     pricingApi.reject(value.proposalId, value.concurrencyToken, value.reason));
 
 export const usePublishPrices = () =>
-  usePricingMutation((items: PublishPriceItem[]) => pricingApi.publish(items));
-
-export const usePublishPendingPrices = () =>
-  usePricingMutation((request: import("@/services/api/pricing").PublishPendingPricesRequest) =>
-    pricingApi.publishPending(request));
+  usePricingMutation((request: PublishPricesRequest) => pricingApi.publish(request));
 export function useProductPricingContext(productId?: string) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({

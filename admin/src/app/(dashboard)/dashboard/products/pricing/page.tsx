@@ -17,18 +17,20 @@ import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { usePriceProposals, usePublishPendingPrices, usePublishPrices, useRejectPrice } from "@/hooks/use-pricing";
+import { usePriceProposals, usePublishPrices, useRejectPrice, useReviewPrice } from "@/hooks/use-pricing";
 import {
-  buildPricePublicationItem,
+  buildPriceReviewRequest,
   changeDraftMargin,
   changeDraftSalePrice,
   createPricePublicationDraft,
   type PricePublicationDraft,
 } from "@/lib/pricing-publication-draft";
+import { buildPricePublicationRequest } from "@/lib/pricing-publication-selection";
 import type { ReportRow } from "@/lib/report-viewer";
 import { formatCurrency, formatDateTime, formatRelativeTime } from "@/lib/utils";
-import type { PriceProposalStatus, PriceRevisionListItem } from "@/services/api/pricing";
+import type { PriceInputMode, PriceProposalStatus, PriceRevisionListItem } from "@/services/api/pricing";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 const statuses: Record<PriceProposalStatus, string> = {
   PendingReview: "Pendiente",
@@ -41,6 +43,7 @@ const statuses: Record<PriceProposalStatus, string> = {
 export default function PricingPage() {
   const searchParams = useSearchParams();
   const sourceDocumentId = searchParams.get("sourceDocumentId") ?? undefined;
+  const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canReview = permissions.has("pricing.proposals.review");
   const canPublish = permissions.has("pricing.prices.publish");
@@ -52,11 +55,19 @@ export default function PricingPage() {
   const [status, setStatus] = useState<PriceProposalStatus | "Pending" | "all">("Pending");
   const [supplierId, setSupplierId] = useState("all");
   const [drafts, setDrafts] = useState<Record<string, PricePublicationDraft>>({});
-  const [hiddenProposalIds, setHiddenProposalIds] = useState<Set<string>>(new Set());
+  const [hiddenProductIds, setHiddenProductIds] = useState<Set<string>>(new Set());
+  const [savingProductIds, setSavingProductIds] = useState<Set<string>>(new Set());
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
   const [priceReportRows, setPriceReportRows] = useState<ReportRow[] | null>(null);
   const [historyProduct, setHistoryProduct] = useState<{ id: string; name: string }>();
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
+  const saveChainsRef = useRef(new Map<string, Promise<void>>());
+  const saveErrorsRef = useRef(new Map<string, string>());
+  const businessScopeVersionRef = useRef(0);
+  const publicationScopeKey = `${selectedBusinessId ?? ""}|${status}|${search.trim()}|${supplierId}|${sourceDocumentId ?? ""}`;
+  const publicationScopeKeyRef = useRef(publicationScopeKey);
+  publicationScopeKeyRef.current = publicationScopeKey;
   const query = usePriceProposals({
     page,
     pageSize,
@@ -66,8 +77,24 @@ export default function PricingPage() {
     sourceDocumentId,
   });
   const publish = usePublishPrices();
-  const publishPending = usePublishPendingPrices();
+  const review = useReviewPrice();
   const reject = useRejectPrice();
+
+  useEffect(() => {
+    businessScopeVersionRef.current += 1;
+    draftsRef.current = {};
+    saveChainsRef.current.clear();
+    saveErrorsRef.current.clear();
+    setDrafts({});
+    setHiddenProductIds(new Set());
+    setSavingProductIds(new Set());
+    setSaveErrors({});
+  }, [selectedBusinessId]);
+
+  useEffect(() => {
+    saveErrorsRef.current.clear();
+    setSaveErrors({});
+  }, [publicationScopeKey]);
 
   useEffect(() => {
     const rows = query.data?.items ?? [];
@@ -75,38 +102,123 @@ export default function PricingPage() {
     setDrafts((current) => {
       const next = { ...current };
       for (const row of rows) {
-        const existing = next[row.proposalId];
+        const existing = next[row.productId];
         if (!existing || existing.concurrencyToken !== row.concurrencyToken)
-          next[row.proposalId] = createPricePublicationDraft(row);
+          next[row.productId] = createPricePublicationDraft(row);
       }
       return next;
     });
   }, [query.data?.items]);
 
   const draftFor = useCallback((row: PriceRevisionListItem) =>
-    draftsRef.current[row.proposalId] ?? createPricePublicationDraft(row), []);
+    draftsRef.current[row.productId] ?? createPricePublicationDraft(row), []);
+
+  const replaceDraft = useCallback((
+    productId: string,
+    update: (current: PricePublicationDraft) => PricePublicationDraft,
+    fallback: PricePublicationDraft,
+  ) => {
+    const next = update(draftsRef.current[productId] ?? fallback);
+    const collection = { ...draftsRef.current, [productId]: next };
+    draftsRef.current = collection;
+    setDrafts(collection);
+    return next;
+  }, []);
+
+  const queueDraftSave = useCallback((
+    row: PriceRevisionListItem,
+    draft: PricePublicationDraft,
+    inputMode: PriceInputMode,
+  ) => {
+    const operationBusinessScopeVersion = businessScopeVersionRef.current;
+    const operationScopeKey = publicationScopeKey;
+    const previous = saveChainsRef.current.get(row.productId) ?? Promise.resolve();
+    setSavingProductIds((current) => new Set(current).add(row.productId));
+    saveErrorsRef.current.delete(row.productId);
+    setSaveErrors((current) => {
+      const next = { ...current };
+      delete next[row.productId];
+      return next;
+    });
+    const operation = previous.then(async () => {
+      const authority = draftsRef.current[row.productId] ?? draft;
+      try {
+        const saved = await review.mutateAsync({
+          proposalId: authority.proposalId,
+          request: buildPriceReviewRequest(row, {
+            ...draft,
+            proposalId: authority.proposalId,
+            concurrencyToken: authority.concurrencyToken,
+          }, inputMode),
+        });
+        if (businessScopeVersionRef.current !== operationBusinessScopeVersion) return;
+        replaceDraft(row.productId, (current) => ({
+          ...current,
+          proposalId: saved.proposalId,
+          concurrencyToken: saved.concurrencyToken,
+          ...(current.salePrice === draft.salePrice && current.margin === draft.margin
+            ? {
+                salePrice: saved.preparedAmount,
+                margin: saved.effectiveMarginPercent,
+              }
+            : {}),
+        }), draft);
+        saveErrorsRef.current.delete(row.productId);
+        setSaveErrors((current) => {
+          const next = { ...current };
+          delete next[row.productId];
+          return next;
+        });
+      } catch (error) {
+        if (businessScopeVersionRef.current !== operationBusinessScopeVersion ||
+            publicationScopeKeyRef.current !== operationScopeKey) return;
+        const message = error instanceof Error
+          ? error.message
+          : `No fue posible guardar el precio preparado de ${row.productName}.`;
+        saveErrorsRef.current.set(row.productId, message);
+        setSaveErrors((current) => ({ ...current, [row.productId]: message }));
+        toast.error(message);
+      }
+    });
+    saveChainsRef.current.set(row.productId, operation);
+    void operation.finally(() => {
+      if (saveChainsRef.current.get(row.productId) !== operation) return;
+      saveChainsRef.current.delete(row.productId);
+      setSavingProductIds((current) => {
+        const next = new Set(current);
+        next.delete(row.productId);
+        return next;
+      });
+    });
+  }, [publicationScopeKey, replaceDraft, review]);
 
   const updateMargin = useCallback((row: PriceRevisionListItem, margin: number | null) => {
-    setDrafts((current) => {
-      const draft = current[row.proposalId] ?? createPricePublicationDraft(row);
+    const fallback = createPricePublicationDraft(row);
+    let valid = true;
+    const next = replaceDraft(row.productId, (draft) => {
       try {
-        return { ...current, [row.proposalId]: changeDraftMargin(row, draft, margin) };
+        return changeDraftMargin(row, draft, margin);
       } catch {
-        return { ...current, [row.proposalId]: { ...draft, margin, salePrice: null } };
+        valid = false;
+        return { ...draft, margin, salePrice: null };
       }
-    });
-  }, []);
+    }, fallback);
+    if (valid) queueDraftSave(row, next, "Margin");
+  }, [queueDraftSave, replaceDraft]);
 
   const updateSalePrice = useCallback((row: PriceRevisionListItem, salePrice: number | null) => {
-    setDrafts((current) => {
-      const draft = current[row.proposalId] ?? createPricePublicationDraft(row);
+    const fallback = createPricePublicationDraft(row);
+    let valid = true;
+    const next = replaceDraft(row.productId, (draft) => {
       try {
-        return { ...current, [row.proposalId]: changeDraftSalePrice(row, draft, salePrice) };
+        return changeDraftSalePrice(row, draft, salePrice);
       } catch {
-        return { ...current, [row.proposalId]: { ...draft, salePrice } };
+        valid = false;
+        return { ...draft, salePrice };
       }
-    });
-  }, []);
+    }, fallback);
+    if (valid) queueDraftSave(row, next, "SalePrice");
+  }, [queueDraftSave, replaceDraft]);
 
   const navigatePricingGrid = useCallback((
     event: KeyboardEvent<HTMLInputElement>,
@@ -157,37 +269,55 @@ export default function PricingPage() {
     }
     try {
       for (const row of candidates) {
+        const draft = draftFor(row);
         await reject.mutateAsync({
-          proposalId: row.proposalId,
-          concurrencyToken: row.concurrencyToken,
+          proposalId: draft.proposalId,
+          concurrencyToken: draft.concurrencyToken,
           reason: "Descartada desde la lista de precios",
         });
-        setHiddenProposalIds((current) => new Set(current).add(row.proposalId));
+        setHiddenProductIds((current) => new Set(current).add(row.productId));
       }
       toast.success(candidates.length === 1 ? "Propuesta descartada." : "Propuestas descartadas.");
     } catch {
       toast.error("No fue posible descartar toda la selección.");
     }
-  }, [reject]);
+  }, [draftFor, reject]);
 
-  const publishRows = useCallback(async (rows: PriceRevisionListItem[]) => {
+  const publishRows = useCallback(async (
+    rows: PriceRevisionListItem[],
+    selection: { allMatching: boolean; selectedCount: number },
+  ) => {
     const candidates = rows.filter(isPublishable);
-    if (!candidates.length) {
+    if (!selection.allMatching && !candidates.length) {
       toast.info("La selección no contiene precios pendientes.");
       return;
     }
     try {
-      const items = candidates.map((row) =>
-        buildPricePublicationItem(row, draftFor(row)));
-      await publish.mutateAsync(items);
-      setHiddenProposalIds((current) => {
+      await Promise.all(saveChainsRef.current.values());
+      const selectedProductIds = new Set(candidates.map((row) => row.productId));
+      const hasRelevantSaveError = selection.allMatching
+        ? saveErrorsRef.current.size > 0
+        : [...saveErrorsRef.current.keys()].some((productId) => selectedProductIds.has(productId));
+      if (hasRelevantSaveError)
+        throw new Error("Hay precios que no pudieron guardarse. Corrígelos antes de publicar.");
+      const result = await publish.mutateAsync(buildPricePublicationRequest(
+        candidates,
+        selection.allMatching,
+        {
+          search: search.trim() || undefined,
+          supplierId: supplierId === "all" ? undefined : supplierId,
+          sourceDocumentId,
+        },
+      ));
+      const publishedProductIds = new Set(result.items.map((item) => item.productId));
+      setHiddenProductIds((current) => {
         const next = new Set(current);
-        candidates.forEach((row) => next.add(row.proposalId));
+        publishedProductIds.forEach((productId) => next.add(productId));
         return next;
       });
-      toast.success(candidates.length === 1
+      toast.success(result.items.length === 1
         ? "Precio publicado y notificado al punto de venta."
-        : `${candidates.length} precios publicados en una sola operación.`);
+        : `${result.items.length} precios publicados en una sola operación.`);
       return true;
     } catch (error) {
       toast.error(error instanceof Error
@@ -195,23 +325,7 @@ export default function PricingPage() {
         : "No fue posible publicar. Actualiza la lista y vuelve a intentar.");
       return false;
     }
-  }, [draftFor, publish]);
-
-  const publishAllPending = useCallback(async () => {
-    const total = query.data?.totalCount ?? 0;
-    if (!total || !window.confirm(`¿Publicar los ${total.toLocaleString("es-CO")} precios pendientes que coinciden con los filtros?`)) return;
-    try {
-      const result = await publishPending.mutateAsync({
-        search: search.trim() || undefined,
-        supplierId: supplierId === "all" ? undefined : supplierId,
-        sourceDocumentId,
-      });
-      setHiddenProposalIds(new Set());
-      toast.success(`${result.items.length.toLocaleString("es-CO")} precios publicados en una sola operación.`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible publicar todos los precios pendientes.");
-    }
-  }, [publishPending, query.data?.totalCount, search, sourceDocumentId, supplierId]);
+  }, [publish, search, sourceDocumentId, supplierId]);
 
   const openReport = useCallback((rows: PriceRevisionListItem[]) => {
     const candidates = rows.filter(isPublishable).flatMap((row) => {
@@ -287,7 +401,7 @@ export default function PricingPage() {
             kind="percent"
             commitMode="blur"
             value={draft.margin ?? ""}
-            disabled={!canPublish || !isPublishable(row.original)}
+            disabled={!canReview || !isPublishable(row.original)}
             onValueChange={(value) => updateMargin(row.original, value)}
             onKeyDown={(event) => navigatePricingGrid(event, row.original, "margin")}
             className="h-10 bg-background text-right font-medium"
@@ -307,12 +421,18 @@ export default function PricingPage() {
             kind="currency"
             commitMode="blur"
             value={draft.salePrice ?? ""}
-            disabled={!canPublish || !isPublishable(row.original)}
+            disabled={!canReview || !isPublishable(row.original)}
             onValueChange={(value) => updateSalePrice(row.original, value)}
             onKeyDown={(event) => navigatePricingGrid(event, row.original, "price")}
             className="h-10 border-primary/40 bg-primary/5 text-right font-semibold text-primary"
           />
-          <p className="text-xs text-muted-foreground">Valor final con IVA incluido</p>
+          <p className={`text-xs ${saveErrors[row.original.productId] ? "text-destructive" : "text-muted-foreground"}`}>
+            {savingProductIds.has(row.original.productId)
+              ? "Guardando precio preparado…"
+              : saveErrors[row.original.productId]
+                ? "No se guardó. Corrige el valor e intenta de nuevo."
+                : "Guardado en precio preparado · IVA incluido"}
+          </p>
         </div>;
       },
     },
@@ -334,38 +454,45 @@ export default function PricingPage() {
       header: "",
       cell: ({ row }) => <div className="flex items-center justify-end gap-1">
         {canReadHistory && <Button type="button" variant="ghost" size="sm" onClick={() => setHistoryProduct({ id: row.original.productId, name: row.original.productName })} aria-label={`Ver historial de ${row.original.productName}`}><History className="mr-2 h-4 w-4" />Historial</Button>}
-        {isPublishable(row.original) && canPublish && <Button type="button" variant="ghost" size="sm" disabled={publish.isPending} onClick={() => void publishRows([row.original])} aria-label={`Publicar precio de ${row.original.productName}`}><Send className="mr-2 h-4 w-4" />Publicar</Button>}
+        {isPublishable(row.original) && canPublish && <Button type="button" variant="ghost" size="sm" disabled={publish.isPending} onClick={() => void publishRows([row.original], { allMatching: false, selectedCount: 1 })} aria-label={`Publicar precio de ${row.original.productName}`}><Send className="mr-2 h-4 w-4" />Publicar</Button>}
         {isPublishable(row.original) && canReview && <Button type="button" variant="ghost" size="sm" disabled={reject.isPending} onClick={() => void rejectRows([row.original])} aria-label={`Descartar propuesta de ${row.original.productName}`}><XCircle className="mr-2 h-4 w-4" />Descartar</Button>}
       </div>,
     },
-  ], [canPublish, canReadHistory, canReview, draftFor, navigatePricingGrid, publish.isPending, publishRows, reject.isPending, rejectRows, updateMargin, updateSalePrice]);
+  ], [canPublish, canReadHistory, canReview, draftFor, navigatePricingGrid, publish.isPending, publishRows, reject.isPending, rejectRows, saveErrors, savingProductIds, updateMargin, updateSalePrice]);
 
   const bulkActions = useMemo(() => {
     const actions = [] as Array<{
       label: string;
-      onClick: (rows: PriceRevisionListItem[]) => void | boolean | Promise<void | boolean>;
+      onClick: (
+        rows: PriceRevisionListItem[],
+        selection: { allMatching: boolean; selectedCount: number },
+      ) => void | boolean | Promise<void | boolean>;
       variant?: "default" | "destructive";
       disabled?: boolean;
+      supportsAllMatching?: boolean;
     }>;
     if (canPublish && canBulk) actions.push({
       label: publish.isPending ? "Publicando..." : "Publicar selección",
       onClick: publishRows,
       disabled: publish.isPending,
+      supportsAllMatching: true,
     });
     if (canPublish || canReview) actions.push({
       label: "Reporte para mostradores",
       onClick: openReport,
+      supportsAllMatching: false,
     });
     if (canReview) actions.push({
       label: "Descartar selección",
       onClick: (rows) => void rejectRows(rows),
       variant: "destructive",
+      supportsAllMatching: false,
     });
     return actions;
   }, [canBulk, canPublish, canReview, openReport, publish.isPending, publishRows, rejectRows]);
 
   const visibleItems = status === "Pending"
-    ? (query.data?.items ?? []).filter((item) => !hiddenProposalIds.has(item.proposalId))
+    ? (query.data?.items ?? []).filter((item) => !hiddenProductIds.has(item.productId))
     : (query.data?.items ?? []);
 
   if (priceReportRows) return <ReportViewer
@@ -410,13 +537,6 @@ export default function PricingPage() {
       <Summary icon={Send} label="Publicación" value="Masiva y en una operación" />
     </section>
 
-    {status === "Pending" && canPublish && canBulk && (query.data?.totalCount ?? 0) > 0 && <section className="flex flex-col justify-between gap-3 rounded-2xl border border-primary/25 bg-primary/5 p-4 sm:flex-row sm:items-center">
-      <div><p className="font-semibold">Publicar todos los pendientes filtrados</p><p className="text-sm text-muted-foreground">Procesa los {(query.data?.totalCount ?? 0).toLocaleString("es-CO")} productos preparados sin límite funcional y en una sola petición.</p></div>
-      <Button type="button" className="shrink-0" disabled={publishPending.isPending || publish.isPending} onClick={() => void publishAllPending()}>
-        <Send className="mr-2 h-4 w-4" />{publishPending.isPending ? "Publicando todo…" : "Publicar todo"}
-      </Button>
-    </section>}
-
     <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_14rem_16rem]">
       <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Producto, código o proveedor" />
       <Select value={status} onValueChange={(value) => {
@@ -450,6 +570,9 @@ export default function PricingPage() {
       totalItems={query.data?.totalCount}
       onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }}
       enableRowSelection={bulkActions.length > 0}
+      selectAllMatching={status === "Pending"}
+      selectionScopeKey={publicationScopeKey}
+      getRowId={(row) => row.proposalId}
       bulkActions={bulkActions}
     />}
   </div>;

@@ -27,11 +27,8 @@ public static class PricingApi
         group.MapPut("/proposals/{proposalId:guid}", async (
             HttpContext context, Guid proposalId, ReviewPriceProposalRequest request,
             PricingService service, CancellationToken ct) =>
-            await ExecuteAsync(async () =>
-            {
-                await service.ReviewAsync(context.User.ToPricingIdentity(), proposalId, request, ct);
-                return Results.NoContent();
-            }));
+            await ExecuteAsync(() => service.ReviewAsync(
+                context.User.ToPricingIdentity(), proposalId, request, ct), Results.Ok));
 
         group.MapPost("/proposals/{proposalId:guid}/reject", async (
             HttpContext context, Guid proposalId, RejectPriceProposalRequest request,
@@ -46,12 +43,6 @@ public static class PricingApi
             HttpContext context, PublishPricesRequest request,
             PricingService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.PublishAsync(
-                context.User.ToPricingIdentity(), request, ct), Results.Ok));
-
-        group.MapPost("/publish-pending", async (
-            HttpContext context, PublishPendingPricesRequest request,
-            PricingService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.PublishPendingAsync(
                 context.User.ToPricingIdentity(), request, ct), Results.Ok));
 
         group.MapGet("/products/{productId:guid}/context", async (

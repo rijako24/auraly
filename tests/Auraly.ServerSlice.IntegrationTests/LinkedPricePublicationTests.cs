@@ -127,7 +127,7 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Publish_all_pending_processes_six_thousand_products_in_one_request()
+    public async Task Select_all_matching_processes_six_thousand_products_in_one_request()
     {
         const int batchSize = 6_000;
         var marker = $"BATCH-{Guid.NewGuid():N}"[..18];
@@ -139,8 +139,9 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
             using var pricing = PricingClient();
             var started = System.Diagnostics.Stopwatch.StartNew();
             using var publication = await pricing.PostAsJsonAsync(
-                "/api/commerce/v1/pricing/publish-pending",
-                new PublishPendingPricesRequest(marker, null, null));
+                "/api/commerce/v1/pricing/publish",
+                new PublishPricesRequest(
+                    null, new PricePublicationFilter(marker, null, null)));
             started.Stop();
             Assert.True(publication.IsSuccessStatusCode,
                 $"La publicación respondió {(int)publication.StatusCode} después de {started.Elapsed}: " +
@@ -169,10 +170,7 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
         HttpClient client, PriceRevisionListItem item) =>
         client.PostAsJsonAsync(
             "/api/commerce/v1/pricing/publish",
-            new PublishPricesRequest([new PublishPriceItem(
-                item.ProposalId,PriceInputModes.Margin,
-                item.TargetMarginPercent,null,1m,PricingRoundingModes.Nearest,
-                item.ConcurrencyToken)]));
+            new PublishPricesRequest([item.ProductId]));
 
     private static async Task<PriceRevisionPage> PendingAsync(HttpClient client) =>
         (await client.GetFromJsonAsync<PriceRevisionPage>(

@@ -1,7 +1,12 @@
-import type { PriceRevisionListItem, PublishPriceItem } from "@/services/api/pricing";
+import type {
+  PriceInputMode,
+  PriceRevisionListItem,
+  ReviewPriceProposalRequest,
+} from "@/services/api/pricing";
 import { recalculateProductPricing } from "./product-pricing-calculator";
 
 export type PricePublicationDraft = {
+  proposalId: string;
   salePrice: number | null;
   margin: number | null;
   concurrencyToken: string;
@@ -9,6 +14,7 @@ export type PricePublicationDraft = {
 
 export function createPricePublicationDraft(row: PriceRevisionListItem): PricePublicationDraft {
   return {
+    proposalId: row.proposalId,
     salePrice: row.suggestedSalePrice,
     margin: deriveMargin(row, row.suggestedSalePrice),
     concurrencyToken: row.concurrencyToken,
@@ -45,20 +51,20 @@ export function changeDraftSalePrice(
   return { ...current, margin: calculated.margin, salePrice: calculated.salePrice };
 }
 
-export function buildPricePublicationItem(
+export function buildPriceReviewRequest(
   row: PriceRevisionListItem,
   draft: PricePublicationDraft,
-): PublishPriceItem {
+  inputMode: PriceInputMode,
+): ReviewPriceProposalRequest {
   if (draft.salePrice === null || !Number.isFinite(draft.salePrice) || draft.salePrice <= 0)
     throw new RangeError(`El precio preparado de ${row.productName} no es válido.`);
 
-  // The prepared VAT-included price is authoritative. Publishing by margin
-  // would calculate it again and could replace the amount approved by the user.
+  // The server persists this edit as the next authoritative preparation before
+  // any selection can publish it.
   return {
-    proposalId: row.proposalId,
-    inputMode: "SalePrice",
-    targetMarginPercent: null,
-    salePrice: draft.salePrice,
+    inputMode,
+    targetMarginPercent: inputMode === "Margin" ? draft.margin : null,
+    salePrice: inputMode === "SalePrice" ? draft.salePrice : null,
     roundingIncrement: 1,
     roundingMode: "Nearest",
     concurrencyToken: draft.concurrencyToken,

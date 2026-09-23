@@ -55,8 +55,7 @@ export interface PriceCalculationResult extends PriceCalculationRequest {
   effectiveMarginPercent: number | null;
 }
 
-export interface PublishPriceItem {
-  proposalId: string;
+export interface ReviewPriceProposalRequest {
   inputMode: PriceInputMode;
   targetMarginPercent: number | null;
   salePrice: number | null;
@@ -64,6 +63,26 @@ export interface PublishPriceItem {
   roundingMode: PricingRoundingMode;
   concurrencyToken: string;
 }
+
+export interface ReviewedPricePreparation {
+  proposalId: string;
+  productId: string;
+  preparedAmount: number;
+  targetMarginPercent: number | null;
+  effectiveMarginPercent: number | null;
+  status: PriceProposalStatus;
+  concurrencyToken: string;
+}
+
+export interface PricePublicationFilter {
+  search?: string;
+  supplierId?: string;
+  sourceDocumentId?: string;
+}
+
+export type PublishPricesRequest =
+  | { productIds: string[]; allMatching?: never }
+  | { productIds?: never; allMatching: PricePublicationFilter };
 
 export interface ProductPricingContext {
   productId: string;
@@ -142,12 +161,6 @@ export interface PublishPricesResult {
   catalogCursor: number;
 }
 
-export interface PublishPendingPricesRequest {
-  search?: string;
-  supplierId?: string;
-  sourceDocumentId?: string;
-}
-
 export const pricingApi = {
   list: (params: {
     page: number;
@@ -160,16 +173,14 @@ export const pricingApi = {
     "/commerce/v1/pricing/proposals", withPagedDefaults(params)),
   calculate: (request: PriceCalculationRequest) =>
     apiClient.post<PriceCalculationResult>("/commerce/v1/pricing/calculate", request),
-  review: (proposalId: string, request: Omit<PublishPriceItem, "proposalId">) =>
-    apiClient.put<void>(`/commerce/v1/pricing/proposals/${proposalId}`, request),
+  review: (proposalId: string, request: ReviewPriceProposalRequest) =>
+    apiClient.put<ReviewedPricePreparation>(`/commerce/v1/pricing/proposals/${proposalId}`, request),
   reject: (proposalId: string, concurrencyToken: string, reason?: string) =>
     apiClient.post<void>(`/commerce/v1/pricing/proposals/${proposalId}/reject`, {
       concurrencyToken, reason: reason || null,
     }),
-  publish: (items: PublishPriceItem[]) =>
-    apiClient.post<PublishPricesResult>("/commerce/v1/pricing/publish", { items }),
-  publishPending: (request: PublishPendingPricesRequest) =>
-    apiClient.post<PublishPricesResult>("/commerce/v1/pricing/publish-pending", request),
+  publish: (request: PublishPricesRequest) =>
+    apiClient.post<PublishPricesResult>("/commerce/v1/pricing/publish", request),
   getProductContext: (productId: string) =>
     apiClient.get<ProductPricingContext>(`/commerce/v1/pricing/products/${productId}/context`),
   savePreparedProduct: (productId: string, request: PublishProductPriceRequest) =>

@@ -122,21 +122,23 @@ public sealed record ReviewPriceProposalRequest(
     string RoundingMode,
     string ConcurrencyToken);
 
-public sealed record PublishPriceItem(
+public sealed record ReviewedPricePreparation(
     Guid ProposalId,
-    string InputMode,
+    Guid ProductId,
+    decimal PreparedAmount,
     decimal? TargetMarginPercent,
-    decimal? SalePrice,
-    decimal RoundingIncrement,
-    string RoundingMode,
+    decimal? EffectiveMarginPercent,
+    string Status,
     string ConcurrencyToken);
 
-public sealed record PublishPricesRequest(IReadOnlyList<PublishPriceItem> Items);
-
-public sealed record PublishPendingPricesRequest(
+public sealed record PricePublicationFilter(
     string? Search,
     Guid? SupplierId,
     Guid? SourceDocumentId);
+
+public sealed record PublishPricesRequest(
+    IReadOnlyList<Guid>? ProductIds = null,
+    PricePublicationFilter? AllMatching = null);
 
 public sealed record ProductPricingContext(
     Guid ProductId,

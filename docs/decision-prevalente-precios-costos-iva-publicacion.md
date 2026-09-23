@@ -194,6 +194,15 @@ Muestra último costo, costo promedio, tratamiento del IVA de compra, IVA de ven
 - `Guardar propuesta`: actualiza `CostPrice`, margen y `SalePrice`; no publica.
 - `Publicar precio`: confirma `SalePrice` y lo copia a `PublicPrice` en una transacción con auditoría, `CatalogChanges`, outbox y notificación a POS.
 
+En la grilla, confirmar una edición de margen o precio ejecuta inmediatamente
+`Guardar propuesta`; el servidor devuelve la preparación y el token de concurrencia
+autoritativos sin una segunda lectura. `Seleccionar todo` representa todo el conjunto
+pendiente que coincide con los filtros del servidor, no solo la página visible. La
+publicación parcial o total recibe la selección, vuelve a cargar en lote las
+preparaciones vigentes desde `ProductPricePreparations` y publica esos valores. No
+existe un botón ni un endpoint paralelo de “publicar todo”, y el navegador nunca
+envía importes como autoridad de publicación.
+
 Ningún endpoint de producto puede escribir `PublicPrice`. POS, pedidos y facturación leen exclusivamente `PublicPrice`; POS Edge no descarga costos, promedio ni margen.
 
 ## 8. Snapshot tributario de cada venta

@@ -51,9 +51,13 @@ export interface DataTableProps<TData, TValue> {
   onSearch?: (value: string) => void;
   bulkActions?: {
     label: string;
-    onClick: (rows: TData[]) => void | boolean | Promise<void | boolean>;
+    onClick: (
+      rows: TData[],
+      selection: { allMatching: boolean; selectedCount: number },
+    ) => void | boolean | Promise<void | boolean>;
     variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
     disabled?: boolean;
+    supportsAllMatching?: boolean;
   }[];
   facetedFilters?: FacetedFilterConfig[];
   viewMode?: ViewMode;
@@ -62,6 +66,9 @@ export interface DataTableProps<TData, TValue> {
   listRenderer?: (item: TData) => React.ReactNode;
   onExport?: () => void;
   enableRowSelection?: boolean;
+  selectAllMatching?: boolean;
+  selectionScopeKey?: string;
+  getRowId?: (row: TData) => string;
   onRowClick?: (item: TData) => void;
   className?: string;
 }
@@ -87,6 +94,9 @@ export function DataTable<TData, TValue>({
   listRenderer,
   onExport,
   enableRowSelection = true,
+  selectAllMatching = false,
+  selectionScopeKey,
+  getRowId,
   onRowClick,
   className,
 }: DataTableProps<TData, TValue>) {
@@ -94,6 +104,7 @@ export function DataTable<TData, TValue>({
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = React.useState<Record<string, boolean>>({});
+  const [allMatchingSelected, setAllMatchingSelected] = React.useState(false);
   const [pagination, setPagination] = React.useState({
     pageIndex: Math.max((page ?? 1) - 1, 0),
     pageSize: pageSize ?? 20,
@@ -125,6 +136,11 @@ export function DataTable<TData, TValue>({
     });
   }, [onPaginationChange, page, pageSize]);
 
+  React.useEffect(() => {
+    setRowSelection({});
+    setAllMatchingSelected(false);
+  }, [selectionScopeKey]);
+
   const columnsWithSelection = React.useMemo<ColumnDef<TData, TValue>[]>(() => {
     if (!enableRowSelection) return columns;
     const selectColumn: ColumnDef<TData, TValue> = {
@@ -132,17 +148,37 @@ export function DataTable<TData, TValue>({
       header: ({ table }) => (
         <Checkbox
           checked={
+            allMatchingSelected ||
             table.getIsAllPageRowsSelected() ||
             (table.getIsSomePageRowsSelected() && "indeterminate")
           }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          onCheckedChange={(value) => {
+            if (!selectAllMatching) {
+              table.toggleAllPageRowsSelected(!!value);
+              return;
+            }
+            setRowSelection({});
+            setAllMatchingSelected(!!value);
+          }}
           aria-label="Seleccionar todo"
         />
       ),
-      cell: ({ row }) => (
+      cell: ({ row, table }) => (
         <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
+          checked={allMatchingSelected || row.getIsSelected()}
+          onCheckedChange={(value) => {
+            if (!allMatchingSelected) {
+              row.toggleSelected(!!value);
+              return;
+            }
+            const currentPageSelection = Object.fromEntries(
+              table.getRowModel().rows
+                .filter((candidate) => candidate.id !== row.id || !!value)
+                .map((candidate) => [candidate.id, true]),
+            );
+            setAllMatchingSelected(false);
+            setRowSelection(currentPageSelection);
+          }}
           aria-label="Seleccionar fila"
         />
       ),
@@ -150,7 +186,7 @@ export function DataTable<TData, TValue>({
       enableHiding: false,
     };
     return [selectColumn, ...columns];
-  }, [columns, enableRowSelection]);
+  }, [allMatchingSelected, columns, enableRowSelection, selectAllMatching]);
 
   const filteredData = React.useMemo(() => {
     let result = data;
@@ -203,6 +239,7 @@ export function DataTable<TData, TValue>({
     manualPagination: !!onPaginationChange,
     pageCount: controlledPageCount ?? -1,
     manualFiltering: !!onSearch,
+    getRowId,
   });
 
   const handleSearch = (value: string) => {
@@ -232,7 +269,10 @@ export function DataTable<TData, TValue>({
   };
 
   const selectedRows = table.getFilteredSelectedRowModel().rows.map((r) => r.original);
-  const hasSelection = selectedRows.length > 0;
+  const selectedCount = allMatchingSelected
+    ? (totalItems ?? filteredData.length)
+    : selectedRows.length;
+  const hasSelection = selectedCount > 0;
 
   const handleExport = () => {
     onExport?.();
@@ -277,17 +317,23 @@ export function DataTable<TData, TValue>({
       {hasSelection && bulkActions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 sm:px-4">
           <span className="text-sm font-medium">
-            {selectedRows.length} fila(s) seleccionada(s)
+            {selectedCount} fila(s) seleccionada(s)
           </span>
           {bulkActions.map((action) => (
             <Button
               key={action.label}
               variant={action.variant ?? "default"}
               size="sm"
-              disabled={action.disabled}
+              disabled={action.disabled || (allMatchingSelected && action.supportsAllMatching === false)}
               onClick={async () => {
-                const completed = await action.onClick(selectedRows);
-                if (completed !== false) setRowSelection({});
+                const completed = await action.onClick(selectedRows, {
+                  allMatching: allMatchingSelected,
+                  selectedCount,
+                });
+                if (completed !== false) {
+                  setRowSelection({});
+                  setAllMatchingSelected(false);
+                }
               }}
             >
               {action.label}

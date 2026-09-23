@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { PriceRevisionListItem } from "@/services/api/pricing";
 import {
-  buildPricePublicationItem,
+  buildPriceReviewRequest,
   changeDraftMargin,
   changeDraftSalePrice,
   createPricePublicationDraft,
@@ -34,11 +34,10 @@ const proposal: PriceRevisionListItem = {
 };
 
 describe("price publication draft", () => {
-  it("keeps the exact price prepared from product as the publication authority", () => {
+  it("saves the exact VAT-included grid price as the next preparation", () => {
     const draft = createPricePublicationDraft(proposal);
     assert.equal(draft.salePrice, 28_000);
-    assert.deepEqual(buildPricePublicationItem(proposal, draft), {
-      proposalId: "proposal-1",
+    assert.deepEqual(buildPriceReviewRequest(proposal, draft, "SalePrice"), {
       inputMode: "SalePrice",
       targetMarginPercent: null,
       salePrice: 28_000,
@@ -59,12 +58,12 @@ describe("price publication draft", () => {
     assert.equal(draft.salePrice, 29_750);
   });
 
-  it("rejects a zero prepared price before an atomic bulk publication is sent", () => {
+  it("rejects a zero price before the grid edit is persisted", () => {
     assert.throws(
-      () => buildPricePublicationItem(proposal, {
+      () => buildPriceReviewRequest(proposal, {
         ...createPricePublicationDraft(proposal),
         salePrice: 0,
-      }),
+      }, "SalePrice"),
       /no es válido/,
     );
   });

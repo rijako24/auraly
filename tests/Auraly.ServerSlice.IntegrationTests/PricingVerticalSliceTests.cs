@@ -86,18 +86,21 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
                    new ReviewPriceProposalRequest(
                        PriceInputModes.Margin, 20m, null, 50m,
                        PricingRoundingModes.Up, proposal.ConcurrencyToken)))
-            Assert.Equal(HttpStatusCode.NoContent, review.StatusCode);
+        {
+            Assert.Equal(HttpStatusCode.OK, review.StatusCode);
+            var saved = await review.Content.ReadFromJsonAsync<ReviewedPricePreparation>();
+            Assert.NotNull(saved);
+            Assert.Equal(productId, saved!.ProductId);
+            Assert.Equal(10_650m, saved.PreparedAmount);
+            Assert.False(string.IsNullOrWhiteSpace(saved.ConcurrencyToken));
+        }
 
         var approved = await pricing.GetFromJsonAsync<PriceRevisionPage>(
             "/api/commerce/v1/pricing/proposals?page=1&pageSize=20&status=Approved");
         var reviewed = Assert.Single(approved!.Items.Where(x => x.ProductId == productId));
         Assert.Equal(10_650m, reviewed.SuggestedSalePrice);
 
-        var publishRequest = new PublishPricesRequest([
-            new PublishPriceItem(
-                reviewed.ProposalId, PriceInputModes.Margin, 20m, null,
-                50m, PricingRoundingModes.Up, reviewed.ConcurrencyToken)
-        ]);
+        var publishRequest = new PublishPricesRequest([reviewed.ProductId]);
         using var publishedResponse = await pricing.PostAsJsonAsync(
             "/api/commerce/v1/pricing/publish", publishRequest);
         publishedResponse.EnsureSuccessStatusCode();
@@ -205,9 +208,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
 
         using var publicationResponse = await pricing.PostAsJsonAsync(
             "/api/commerce/v1/pricing/publish",
-            new PublishPricesRequest([new PublishPriceItem(
-                candidate.ProposalId, PriceInputModes.SalePrice, null, 5_500m,
-                1m, PricingRoundingModes.Nearest, candidate.ConcurrencyToken)]));
+            new PublishPricesRequest([candidate.ProductId]));
         publicationResponse.EnsureSuccessStatusCode();
         var remaining = await pricing.GetFromJsonAsync<PriceRevisionPage>(
             "/api/commerce/v1/pricing/proposals?page=1&pageSize=20&status=Pending");
@@ -297,9 +298,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             var reviewed = Assert.Single(approved!.Items.Where(item => item.ProductId == productId));
             using (var publication = await pricing.PostAsJsonAsync(
                        "/api/commerce/v1/pricing/publish",
-                       new PublishPricesRequest([new PublishPriceItem(
-                           reviewed.ProposalId, PriceInputModes.Margin, 20m, null, 1m,
-                           PricingRoundingModes.Nearest, reviewed.ConcurrencyToken)])))
+                       new PublishPricesRequest([reviewed.ProductId])))
                 publication.EnsureSuccessStatusCode();
 
             await sync.SynchronizeAsync();
@@ -357,9 +356,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         var latest = Assert.Single(pending!.Items.Where(item => item.ProductId == productId));
         using var publicationResponse = await pricing.PostAsJsonAsync(
             "/api/commerce/v1/pricing/publish",
-            new PublishPricesRequest([new PublishPriceItem(
-                latest.ProposalId, PriceInputModes.Margin, 20m, null, 1m,
-                PricingRoundingModes.Nearest, latest.ConcurrencyToken)]));
+            new PublishPricesRequest([latest.ProductId]));
         publicationResponse.EnsureSuccessStatusCode();
 
         Assert.Equal(11_250m, await ScalarAsync<decimal>(
@@ -639,9 +636,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         var candidate = Assert.Single(candidates!.Items.Where(item => item.ProductId == productId));
         using var publish = await pricing.PostAsJsonAsync(
             "/api/commerce/v1/pricing/publish",
-            new PublishPricesRequest([new PublishPriceItem(
-                candidate.ProposalId,PriceInputModes.SalePrice,null,salePrice,1m,
-                PricingRoundingModes.Nearest,candidate.ConcurrencyToken)]));
+            new PublishPricesRequest([candidate.ProductId]));
         publish.EnsureSuccessStatusCode();
     }
 

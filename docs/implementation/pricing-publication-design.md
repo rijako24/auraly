@@ -15,11 +15,15 @@ Conectar el costo observado por una entrada de mercanc?a con una propuesta revis
    completa en ProductPricePreparations.
 4. La vista Productos > Precios y rentabilidad consulta propuestas paginadas.
 5. El usuario edita margen sobre venta o precio de venta.
-6. La API vuelve a calcular el resultado con decimal y aplica el redondeo.
-7. La publicaci?n cierra el precio anterior e inserta una nueva versi?n.
-8. La misma transacci?n registra auditor?a, CatalogChanges y la outbox de sincronizaci?n.
-9. El worker de outbox env?a una invalidaci?n peque?a por el transporte push configurado.
-10. POS Edge descarga el delta por cursor y actualiza SQLite transaccionalmente.
+6. Al confirmar el campo, la API vuelve a calcular con decimal, aplica el redondeo
+   y persiste una nueva preparación pendiente.
+7. La selección parcial o total publica únicamente las preparaciones vigentes que
+   Pricing vuelve a cargar en lote desde SQL; seleccionar todo cubre todas las filas
+   del filtro, aunque no estén en la página visible.
+8. La publicaci?n cierra el precio anterior e inserta una nueva versi?n.
+9. La misma transacci?n registra auditor?a, CatalogChanges y la outbox de sincronizaci?n.
+10. El worker de outbox env?a una invalidaci?n peque?a por el transporte push configurado.
+11. POS Edge descarga el delta por cursor y actualiza SQLite transaccionalmente.
 
 No existe sondeo peri?dico. Al abrir o reconectar, la puesta al d?a por cursor recupera se?ales que se hubieran perdido.
 
@@ -101,8 +105,8 @@ La vista administrativa ofrece:
 - paginaci?n de servidor;
 - selecci?n individual o masiva;
 - edici?n bidireccional;
-- previsualizaci?n calculada por servidor;
-- guardar propuesta, rechazar y publicar;
+- previsualizaci?n local y guardado autoritativo al confirmar cada campo;
+- seleccionar todo el filtro del servidor, rechazar y publicar selección;
 - estados de carga, vac?o y error.
 
 La pantalla usa los componentes visuales actuales del admin de Auraly y no reproduce el formulario de Xion.
