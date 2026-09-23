@@ -2387,6 +2387,7 @@
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
+          "Auraly.Contracts.Purchasing": "[1.0.0, )",
           "Auraly.Domain.Expenses": "[1.0.0, )"
         }
       },
