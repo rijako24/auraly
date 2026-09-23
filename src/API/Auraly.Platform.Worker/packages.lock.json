@@ -1323,6 +1323,7 @@
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
+          "Auraly.Contracts.Purchasing": "[1.0.0, )",
           "Auraly.Domain.Expenses": "[1.0.0, )"
         }
       },
@@ -1390,7 +1391,7 @@
       "auraly.application.payables": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Contracts.Payables": "[1.0.0, )",
           "Auraly.Domain.Payables": "[1.0.0, )"
         }
@@ -1408,8 +1409,8 @@
       "auraly.application.receivables": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.BuildingBlocks.Application": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Contracts.Receivables": "[1.0.0, )",
           "Auraly.Domain.Receivables": "[1.0.0, )"
         }
@@ -1645,7 +1646,10 @@
         }
       },
       "auraly.domain.payables": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
       },
       "auraly.domain.pricing": {
         "type": "Project"
@@ -1654,7 +1658,10 @@
         "type": "Project"
       },
       "auraly.domain.receivables": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
       },
       "auraly.domain.returns": {
         "type": "Project"

@@ -1,1 +1,1 @@
-export { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "@/lib/money-input";
+export { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "../../../lib/money-input";

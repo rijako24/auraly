@@ -60,11 +60,17 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal("Opening", detail.Transactions[0].Type);
         }
 
+        var settlement = await client.GetFromJsonAsync<PosAccountingSettlementConfiguration>(
+            "/api/commerce/v1/pos/settlement-configuration");
+        var bankAccount = Assert.Single(settlement!.BankAccounts.Where(item => item.IsPrimary));
+
         var payment = new ConfirmSupplierPaymentRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId,
-            occurredAt.AddHours(1), "COP", SupplierPaymentMethods.BankTransfer,
-            "TRX-9001", "Abono por transferencia",
-            [new SupplierPaymentAllocationRequest(payableId, 40_000m)]);
+            occurredAt.AddHours(1), "COP", "Abono por transferencia",
+            [new SupplierPaymentAllocationRequest(payableId, 40_000m)],
+            [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash,10_000m,10_000m),
+             new SupplierPaymentTenderRequest(SupplierPaymentMethods.BankTransfer,30_000m,
+                BankAccountId:bankAccount.BankAccountId,Reference:"TRX-9001")]);
         var key = $"payables-payment-{payment.PaymentId:N}";
         using (var response = await SendAsync(
                    client, "/api/commerce/v1/payable-payments/confirm", payment, key))
@@ -84,10 +90,10 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT Status FROM dbo.Payables WHERE PayableId=@Id", payableId));
         Assert.Equal(1, await CountAsync(
             "SupplierPaymentApplications", "PaymentId", payment.PaymentId));
+        Assert.Equal(2, await CountAsync(
+            "SupplierPaymentTenders", "PaymentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "PayableTransactions", "SourceDocumentId", payment.PaymentId));
-        Assert.Equal(1, await CountAsync(
-            "ServerOutboxMessages", "DocumentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", payment.PaymentId));
         var paymentHistory = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
@@ -95,20 +101,20 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(paymentHistory);
         Assert.Equal(5, paymentHistory.PageSize);
         Assert.Contains(paymentHistory.Items, item => item.PaymentId == payment.PaymentId
-            && item.AppliedDocumentCount == 1);
+            && item.AppliedDocumentCount == 1
+            && item.Payments.Count == 2
+            && item.Payments[0].MethodCode == SupplierPaymentMethods.Cash
+            && item.Payments[0].Amount == 10_000m
+            && item.Payments[1].MethodCode == SupplierPaymentMethods.BankTransfer
+            && item.Payments[1].Amount == 30_000m
+            && item.Applications.Count == 1
+            && item.Applications[0].PayableId == payableId
+            && item.Applications[0].Amount == 40_000m);
         Assert.True(await PayloadHashMatchesAsync(payment.PaymentId));
         Assert.Equal(40_000m, await AccountAmountAsync(payment.PaymentId, "220505", true));
-        var settlementAccountCode = await ScalarAsync<string>(
-            """
-            SELECT COALESCE(a.Code,N'111020')
-            FROM dbo.SupplierPayments p
-            LEFT JOIN accounting.BankAccounts b ON b.BankAccountId=p.BankAccountId
-            LEFT JOIN dbo.AccountingAccounts a
-              ON a.TenantId=b.TenantId AND a.AccountId=b.AccountingAccountId
-            WHERE p.PaymentId=@Id
-            """, payment.PaymentId);
-        Assert.Equal(40_000m, await AccountAmountAsync(
-            payment.PaymentId, settlementAccountCode, false));
+        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "110505", false));
+        Assert.Equal(30_000m, await AccountAmountAsync(
+            payment.PaymentId, bankAccount.AccountingAccountCode, false));
 
         using (var duplicate = await SendAsync(
                    client, "/api/commerce/v1/payable-payments/confirm", payment, key))
@@ -120,6 +126,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         }
         Assert.Equal(1, await CountAsync(
             "PayableTransactions", "SourceDocumentId", payment.PaymentId));
+        Assert.Equal(2, await CountAsync(
+            "SupplierPaymentTenders", "PaymentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", payment.PaymentId));
 
@@ -151,7 +159,9 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         var overpayment = payment with
         {
             PaymentId = Guid.NewGuid(),
-            Allocations = [new SupplierPaymentAllocationRequest(payableId, 20_001m)]
+            Allocations = [new SupplierPaymentAllocationRequest(payableId, 20_001m)],
+            Payments = [new SupplierPaymentTenderRequest(SupplierPaymentMethods.BankTransfer,20_001m,
+                BankAccountId:bankAccount.BankAccountId,Reference:"TRX-OVERPAY")]
         };
         using (var response = await SendAsync(
                    client, "/api/commerce/v1/payable-payments/confirm", overpayment,
@@ -159,6 +169,23 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal(0, await CountAsync(
             "SupplierPayments", "PaymentId", overpayment.PaymentId));
+
+        async Task<SupplierPortfolioItem> SupplierPortfolioAsync()
+        {
+            var page=await client.GetFromJsonAsync<SupplierPortfolioPage>(
+                "/api/commerce/v1/payables/suppliers?page=1&pageSize=100");
+            return Assert.Single(page!.Items,item=>item.SupplierId==fixture.SupplierId);
+        }
+        var paidBeforeAdjustment=(await SupplierPortfolioAsync()).PaidAmount;
+        await using (var connection=new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var adjustment=new SqlCommand(
+                "UPDATE dbo.Payables SET OutstandingAmount=OutstandingAmount-1 WHERE PayableId=@Id",connection);
+            adjustment.Parameters.AddWithValue("@Id",payableId);
+            Assert.Equal(1,await adjustment.ExecuteNonQueryAsync());
+        }
+        Assert.Equal(paidBeforeAdjustment,(await SupplierPortfolioAsync()).PaidAmount);
     }
 
     [Fact]
@@ -171,8 +198,9 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
 
         var request = new ConfirmSupplierPaymentRequest(
             Guid.NewGuid(), Guid.NewGuid(), fixture.SupplierId,
-            DateTimeOffset.UtcNow, "COP", SupplierPaymentMethods.Cash,
-            null, null, [new SupplierPaymentAllocationRequest(Guid.NewGuid(), 1m)]);
+            DateTimeOffset.UtcNow, "COP", null,
+            [new SupplierPaymentAllocationRequest(Guid.NewGuid(), 1m)],
+            [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash,1m,1m)]);
         using var scoped = fixture.CreateAdminClient(PayablesPermissionCodes.RegisterPayment);
         using var response = await SendAsync(
             scoped, "/api/commerce/v1/payable-payments/confirm", request,
@@ -183,7 +211,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         {
             BusinessId = fixture.BusinessId,
             CurrencyCode = null!,
-            PaymentMethod = null!,
+            Payments = null!,
             Allocations = null!
         };
         using var invalidResponse = await SendAsync(
@@ -238,6 +266,24 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             await EnsureAccountAsync(connection, transaction, "143505", "Inventarios", "Asset", false);
             await EnsureAccountAsync(connection, transaction, "220505", "Proveedores", "Liability", true);
             await EnsureAccountAsync(connection, transaction, "111020", "Bancos", "Asset", false);
+            await using (var bank = new SqlCommand("""
+                IF NOT EXISTS(SELECT 1 FROM accounting.BankAccounts WHERE TenantId=@TenantId AND IsActive=1)
+                BEGIN
+                  DECLARE @OptionId uniqueidentifier=(SELECT TOP(1) OptionId FROM reference.Options
+                    WHERE CatalogCode=N'bank-account-type' AND Code=N'Checking' AND IsActive=1);
+                  INSERT accounting.BankAccounts(BankAccountId,TenantId,AccountingAccountId,AccountTypeOptionId,
+                    BankName,AccountNumber,DisplayName,CurrencyCode,IsPrimary,IsActive,
+                    CreatedByUserId,CreatedAt,UpdatedByUserId,UpdatedAt)
+                  SELECT NEWID(),@TenantId,AccountId,@OptionId,N'Banco pruebas',N'0001',N'Cuenta principal',N'COP',1,1,
+                    @UserId,SYSDATETIMEOFFSET(),@UserId,SYSDATETIMEOFFSET()
+                  FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'111020';
+                END
+                """, connection, transaction))
+            {
+                bank.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                bank.Parameters.AddWithValue("@UserId", fixture.UserId);
+                await bank.ExecuteNonQueryAsync();
+            }
             await using (var period = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.AccountingPeriods WHERE TenantId=@TenantId AND Status=N'Open' AND StartsOn<='2026-08-02' AND EndsOn>='2026-08-02')
                   INSERT dbo.AccountingPeriods(PeriodId,TenantId,Name,StartsOn,EndsOn,Status,CreatedAt)
@@ -322,8 +368,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Contains($"{table}:{column}", new[]
         {
             "SupplierPaymentApplications:PaymentId",
+            "SupplierPaymentTenders:PaymentId",
             "PayableTransactions:SourceDocumentId",
-            "ServerOutboxMessages:DocumentId",
             "AccountingEntries:SourceDocumentId",
             "SupplierPayments:PaymentId"
         });
@@ -354,8 +400,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
-            SELECT PayloadJson,PayloadHash FROM dbo.DocumentProcessingPayloads
-            WHERE DocumentId=@Id AND DocumentType=N'PayablePayment';
+            SELECT PayloadJson,PayloadHash FROM dbo.AccountingSourceDocuments
+            WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PayablePayment';
             """, connection);
         command.Parameters.AddWithValue("@Id", documentId);
         await using var reader = await command.ExecuteReaderAsync();

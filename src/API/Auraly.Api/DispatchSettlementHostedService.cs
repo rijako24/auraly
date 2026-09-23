@@ -128,16 +128,19 @@ public sealed class DispatchSettlementHostedService(
                 { ReceivablesPermissionCodes.RegisterPayment });
             foreach (var item in payments)
             {
-                var accepted = await receivablesService.ConfirmPaymentAsync(paymentIdentity,
+                await receivablesService.ConfirmPaymentAsync(paymentIdentity,
                     $"dispatch-settlement:{operation.DispatchId:N}:payment:{item.SourceDocumentId:N}:{item.PaymentMethod}",
                     new ConfirmCustomerPaymentRequest(item.PaymentId, operation.BusinessId, item.CustomerId,
                         null, operation.RequestedAt, "COP",
-                        item.PaymentMethod == "Deposit" ? CustomerPaymentMethods.BankTransfer : CustomerPaymentMethods.Cash,
-                        item.Reference, $"Recaudo del despacho {operation.DispatchNumber}.",
-                        [new CustomerPaymentAllocationRequest(item.ReceivableId, item.Amount)]), token);
-                await documentWorker.ProcessOneAsync(new DocumentProcessingSignal(
-                    accepted.MovementId, operation.BusinessId, accepted.PaymentId,
-                    ReceivablesDocumentTypes.Payment), token);
+                        $"Recaudo del despacho {operation.DispatchNumber}.",
+                        [new CustomerPaymentAllocationRequest(item.ReceivableId, item.Amount)],
+                        [new CustomerPaymentTenderRequest(
+                            item.PaymentMethod == "Deposit"
+                                ? CustomerPaymentMethods.BankTransfer
+                                : CustomerPaymentMethods.Cash,
+                            item.Amount,
+                            BankAccountId: item.BankAccountId,
+                            Reference: item.Reference)]), token);
             }
             if (await EnsureCashDifferenceDocumentAsync(operation, token) is { } differenceSignal)
             {
@@ -188,7 +191,9 @@ public sealed class DispatchSettlementHostedService(
             var source = reader.GetGuid(0);
             var method = reader.GetString(3);
             values.Add(new(DeterministicGuid($"dispatch:{operation.DispatchId:N}:payment:{source:N}:{method}"),
-                source, reader.GetGuid(1), reader.GetGuid(2), method, reader.GetDecimal(4), reader.IsDBNull(5) ? operation.DispatchNumber : reader.GetString(5)));
+                source, reader.GetGuid(1), reader.GetGuid(2), method, reader.GetDecimal(4),
+                reader.IsDBNull(5) ? operation.DispatchNumber : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6)));
         }
         return values;
     }
@@ -342,5 +347,5 @@ public sealed class DispatchSettlementHostedService(
     private sealed record ReturnWork(Guid ReturnId, Guid SourceDocumentId, bool NotDelivered,
         string ReasonCode, IReadOnlyList<ReturnLine> Lines);
     private sealed record PaymentWork(Guid PaymentId, Guid SourceDocumentId, Guid CustomerId,
-        Guid ReceivableId, string PaymentMethod, decimal Amount, string Reference);
+        Guid ReceivableId, string PaymentMethod, decimal Amount, string Reference, Guid? BankAccountId);
 }

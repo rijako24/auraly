@@ -87,9 +87,6 @@ CREATE TABLE [dbo].[CustomerPayments]
     [PayloadHash] BINARY(32) NOT NULL,
     [PaidAt] DATETIMEOFFSET(7) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
-    [PaymentMethod] NVARCHAR(24) NOT NULL,
-    [BankAccountId] UNIQUEIDENTIFIER NULL,
-    [Reference] NVARCHAR(120) NULL,
     [Notes] NVARCHAR(1000) NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [Status] NVARCHAR(24) NOT NULL,
@@ -103,18 +100,36 @@ CREATE TABLE [dbo].[CustomerPayments]
     CONSTRAINT [FK_CustomerPayments_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_CustomerPayments_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_CustomerPayments_Users] FOREIGN KEY ([ConfirmedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
-    CONSTRAINT [FK_CustomerPayments_BankAccounts] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [UQ_CustomerPayments_Business_Number] UNIQUE ([BusinessId],[DocumentNumber]),
     CONSTRAINT [UQ_CustomerPayments_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [CK_CustomerPayments_Total] CHECK ([TotalAmount] > 0),
     CONSTRAINT [CK_CustomerPayments_Currency] CHECK ([CurrencyCode] = 'COP'),
-    CONSTRAINT [CK_CustomerPayments_Method] CHECK ([PaymentMethod] IN (N'Cash',N'BankTransfer',N'DebitCard',N'CreditCard')),
-    CONSTRAINT [CK_CustomerPayments_BankAccount] CHECK
-      ([BankAccountId] IS NULL OR [PaymentMethod]=N'BankTransfer'),
     CONSTRAINT [CK_CustomerPayments_Status] CHECK ([Status] IN (N'Accepted',N'Processed'))
 );
 GO
 CREATE INDEX [IX_CustomerPayments_Business_Paid] ON [dbo].[CustomerPayments] ([BusinessId],[PaidAt] DESC) INCLUDE ([CustomerId],[Status],[TotalAmount]);
+GO
+
+CREATE TABLE [dbo].[CustomerPaymentTenders]
+(
+    [PaymentId] UNIQUEIDENTIFIER NOT NULL,
+    [LineNumber] INT NOT NULL,
+    [MethodCode] NVARCHAR(32) NOT NULL,
+    [Amount] DECIMAL(19,4) NOT NULL,
+    [TenderedAmount] DECIMAL(19,4) NULL,
+    [BankAccountId] UNIQUEIDENTIFIER NULL,
+    [Reference] NVARCHAR(160) NULL,
+    [Notes] NVARCHAR(500) NULL,
+    [CardFranchiseCode] NVARCHAR(64) NULL,
+    [ApprovalNumber] NVARCHAR(100) NULL,
+    CONSTRAINT [PK_CustomerPaymentTenders] PRIMARY KEY CLUSTERED ([PaymentId],[LineNumber]),
+    CONSTRAINT [FK_CustomerPaymentTenders_Payment] FOREIGN KEY ([PaymentId]) REFERENCES [dbo].[CustomerPayments] ([PaymentId]),
+    CONSTRAINT [FK_CustomerPaymentTenders_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
+    CONSTRAINT [CK_CustomerPaymentTenders_Amount] CHECK ([LineNumber]>0 AND [Amount]>0),
+    CONSTRAINT [CK_CustomerPaymentTenders_Cash] CHECK ([TenderedAmount] IS NULL OR ([MethodCode]=N'Cash' AND [TenderedAmount]>=[Amount]))
+);
+GO
+CREATE INDEX [IX_CustomerPaymentTenders_BankAccount] ON [dbo].[CustomerPaymentTenders] ([BankAccountId]) WHERE [BankAccountId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[CustomerPaymentApplications]
@@ -131,4 +146,8 @@ CREATE TABLE [dbo].[CustomerPaymentApplications]
     CONSTRAINT [CK_CustomerPaymentApplications_Line] CHECK ([LineNumber] > 0),
     CONSTRAINT [CK_CustomerPaymentApplications_Amount] CHECK ([Amount] > 0)
 );
+GO
+CREATE INDEX [IX_CustomerPaymentApplications_Receivable_Applied]
+    ON [dbo].[CustomerPaymentApplications] ([ReceivableId], [AppliedAt])
+    INCLUDE ([PaymentId], [Amount]);
 GO

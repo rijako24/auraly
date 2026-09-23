@@ -130,7 +130,9 @@ public static class WorkSessionClosureReceiptRenderer
             .ToArray();
 
         var version = value.ReceiptTemplateVersion;
-        var sections = CashMovementSection("Entradas de dinero", entries,
+        var sections = PortfolioSection("Abonos a cartera",value.ReceivablePayments??[])
+                       + PortfolioSection("Pagos a proveedores",value.PayablePayments??[])
+                       + CashMovementSection("Entradas de dinero", entries,
                            entries.Sum(item => item.Amount), version)
                        + CashMovementSection("Salidas de dinero", exits,
                            exits.Sum(item => item.Amount), version);
@@ -193,6 +195,14 @@ public static class WorkSessionClosureReceiptRenderer
                 return $"<tr class=\"cash-movement\"><td><strong>{Encode(detail.ReasonName)}</strong><small>{Encode(detail.DocumentNumber)} · {Date(detail.OccurredAt)} · {Encode(detail.ResponsibleName)}{reference}</small></td><td>{Money(detail.Amount)}</td></tr>";
             }));
         return $"<h2 class=\"section-title\">{Encode(title)}</h2><table class=\"rows cash-movements\"><tbody>{rows}</tbody><tfoot><tr><th>Total</th><th>{Money(total)}</th></tr></tfoot></table>";
+    }
+
+    private static string PortfolioSection(string title,IReadOnlyList<WorkSessionPortfolioPayment> payments)
+    {
+        if(payments.Count==0)return $"<h2 class=\"section-title\">{Encode(title)}</h2><table class=\"rows\"><tbody><tr><td>Sin movimientos</td><td>$ 0</td></tr></tbody></table>";
+        var rows=string.Join(string.Empty,payments.SelectMany(payment=>payment.Applications.Select(application=>
+            $"<tr><td><strong>{Encode(payment.PartyName)}</strong><small>{Encode(application.DocumentNumber)}</small></td><td>{Money(application.Amount)}</td></tr>")));
+        return $"<h2 class=\"section-title\">{Encode(title)}</h2><table class=\"rows credit-sales\"><tbody>{rows}</tbody><tfoot><tr><th>Total</th><th>{Money(payments.Sum(payment=>payment.TotalAmount))}</th></tr></tfoot></table>";
     }
 
     private static string DocumentV1(string body, int paperWidthMillimeters) => $$"""

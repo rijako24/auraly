@@ -4,12 +4,19 @@ CREATE PROCEDURE dbo.DispatchSettlementPaymentsGet
 AS
 BEGIN
     SET NOCOUNT ON;
+    DECLARE @PrimaryBankAccountId UNIQUEIDENTIFIER;
+    SELECT @PrimaryBankAccountId = bank.BankAccountId
+    FROM dbo.Businesses business
+    INNER JOIN accounting.BankAccounts bank ON bank.TenantId = business.TenantId
+        AND bank.IsPrimary = 1 AND bank.IsActive = 1
+    WHERE business.BusinessId = @BusinessId;
     SELECT source.SourceDocumentId,
            sale.CustomerId,
            receivable.ReceivableId,
            payment.PaymentMethod,
            SUM(payment.Amount),
-           MAX(payment.Reference)
+           MAX(payment.Reference),
+           CASE WHEN payment.PaymentMethod = N'Deposit' THEN @PrimaryBankAccountId ELSE NULL END
     FROM dbo.DispatchDeliveryPayments payment
     INNER JOIN dbo.DispatchSourceDocuments source
         ON source.DispatchSourceDocumentId = payment.DispatchSourceDocumentId

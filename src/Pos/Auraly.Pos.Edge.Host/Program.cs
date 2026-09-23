@@ -1202,6 +1202,33 @@ public static class PosEdgeHostApplication
                 $"api/commerce/v1/orders/{orderId:D}/claim/release", request,
                 RequiredOrderUser(sessions, OrderPermissionCodes.Recover), ct)));
 
+        edge.MapGet("/portfolio/parties",async(HttpContext http,PosOrdersServerClient server,
+            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendAsync(
+                HttpMethod.Get,$"api/commerce/v1/parties/role-options{http.Request.QueryString}",null,
+                RequiredPortfolioUser(sessions,"receivables.read","payables.read"),ct)));
+        edge.MapGet("/portfolio/receivables",async(HttpContext http,PosOrdersServerClient server,
+            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendAsync(
+                HttpMethod.Get,$"api/commerce/v1/receivables{http.Request.QueryString}",null,
+                RequiredPortfolioUser(sessions,"receivables.read"),ct)));
+        edge.MapGet("/portfolio/payables",async(HttpContext http,PosOrdersServerClient server,
+            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendAsync(
+                HttpMethod.Get,$"api/commerce/v1/payables{http.Request.QueryString}",null,
+                RequiredPortfolioUser(sessions,"payables.read"),ct)));
+        edge.MapGet("/portfolio/settlement-configuration",async(PosOrdersServerClient server,
+            PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendAsync(
+                HttpMethod.Get,"api/commerce/v1/pos/settlement-configuration",null,
+                RequiredPortfolioUser(sessions,"receivables.payments.create","payables.payments.create"),ct)));
+        edge.MapPost("/portfolio/receivable-payments",async(HttpContext http,JsonElement request,
+            PosOrdersServerClient server,PosLocalSessionAccessor sessions,CancellationToken ct)=>
+            await ServerOrderResult(()=>server.SendAsync(HttpMethod.Post,
+                "api/commerce/v1/receivable-payments/confirm",request,
+                RequiredPortfolioUser(sessions,"receivables.payments.create"),ct,http.Request.Headers["Idempotency-Key"])));
+        edge.MapPost("/portfolio/payable-payments",async(HttpContext http,JsonElement request,
+            PosOrdersServerClient server,PosLocalSessionAccessor sessions,CancellationToken ct)=>
+            await ServerOrderResult(()=>server.SendAsync(HttpMethod.Post,
+                "api/commerce/v1/payable-payments/confirm",request,
+                RequiredPortfolioUser(sessions,"payables.payments.create"),ct,http.Request.Headers["Idempotency-Key"])));
+
         edge.MapPost("/capture", async (
             CaptureRequest request,
             PosCaptureService capture,
@@ -1549,6 +1576,15 @@ public static class PosEdgeHostApplication
                 user.Permissions.Contains(permission, StringComparer.Ordinal)))
             throw new PosOrdersServerException(403, "Forbidden",
                 "El usuario local no tiene permiso para trabajar con pedidos.");
+        return user;
+    }
+
+    private static PosLocalUserSession RequiredPortfolioUser(
+        PosLocalSessionAccessor sessions,params string[] permissions)
+    {
+        var user=sessions.Required();
+        if(!permissions.Any(permission=>user.Permissions.Contains(permission,StringComparer.Ordinal)))
+            throw new PosOrdersServerException(403,"Forbidden","El usuario local no tiene permiso para gestionar cartera.");
         return user;
     }
 

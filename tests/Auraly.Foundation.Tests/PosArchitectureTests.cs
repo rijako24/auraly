@@ -367,7 +367,7 @@ public sealed class PosArchitectureTests
         Assert.DoesNotContain("setMessage(\"Los pedidos se consultan", page, StringComparison.Ordinal);
 
         var chargeDialogClose = ordersWorkspace.IndexOf(
-            "if (charge) setChargeDialogOpen(false);", StringComparison.Ordinal);
+            "if (charges?.length) setChargeDialogOpen(false);", StringComparison.Ordinal);
         var invoiceBatchCall = ordersWorkspace.IndexOf(
             "const result = await onInvoiceSelected(", StringComparison.Ordinal);
         Assert.True(chargeDialogClose >= 0 && chargeDialogClose < invoiceBatchCall,

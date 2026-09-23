@@ -2,6 +2,9 @@ import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "
 import type { TenantBranding } from "@/services/api/tenants";
 import type { InventoryReasonItem } from "@/services/api/inventory";
 import type { ReferenceOption } from "@/services/api/reference-options";
+import type { PartyRoleOptionPage } from "@/services/api/parties";
+import type { ConfirmCustomerPaymentRequest,CustomerPaymentAcceptance,PaymentSettlementConfiguration,ReceivablePage } from "@/services/api/receivables";
+import type { ConfirmSupplierPaymentRequest,PayablePage,SupplierPaymentAcceptance } from "@/services/api/payables";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
 import { buildPosOrderUpdateLines } from "@/services/orders/pos-order-update-lines";
 import type {
@@ -1381,6 +1384,22 @@ export class PosEdgeClient implements PosClient {
   invoiceCharges(page = 1) {
     return this.request<InvoiceChargePage>(`/edge/v1/invoice-charges?page=${page}`);
   }
+
+  portfolioParties(role:"Customer"|"Supplier",search:string,page:number,pageSize:number){
+    const query=new URLSearchParams({role,search,page:String(page),pageSize:String(pageSize)});
+    return this.request<PartyRoleOptionPage>(`/edge/v1/portfolio/parties?${query}`);
+  }
+  portfolioReceivables(customerId:string,page:number,pageSize:number){
+    const query=new URLSearchParams({customerId,page:String(page),pageSize:String(pageSize),outstandingOnly:"true"});
+    return this.request<ReceivablePage>(`/edge/v1/portfolio/receivables?${query}`);
+  }
+  portfolioPayables(supplierId:string,page:number,pageSize:number){
+    const query=new URLSearchParams({supplierId,page:String(page),pageSize:String(pageSize),outstandingOnly:"true"});
+    return this.request<PayablePage>(`/edge/v1/portfolio/payables?${query}`);
+  }
+  portfolioSettlementConfiguration(){return this.request<PaymentSettlementConfiguration>("/edge/v1/portfolio/settlement-configuration");}
+  confirmPortfolioReceivable(request:ConfirmCustomerPaymentRequest,idempotencyKey:string){return this.request<CustomerPaymentAcceptance>("/edge/v1/portfolio/receivable-payments",{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":idempotencyKey},body:JSON.stringify(request)});}
+  confirmPortfolioPayable(request:ConfirmSupplierPaymentRequest,idempotencyKey:string){return this.request<SupplierPaymentAcceptance>("/edge/v1/portfolio/payable-payments",{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":idempotencyKey},body:JSON.stringify(request)});}
 
   orders(filters: CommerceOrderFilters) {
     const query = new URLSearchParams();

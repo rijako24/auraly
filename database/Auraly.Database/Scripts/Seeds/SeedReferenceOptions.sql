@@ -181,7 +181,8 @@ VALUES
 ('73000000-0000-0000-0000-000000000018',N'accounting-document-type',N'Damage',N'Baja de inventario',NULL,240),
 ('73000000-0000-0000-0000-000000000019',N'accounting-document-type',N'ProductConversion',N'Conversión de producto',NULL,250),
 ('73000000-0000-0000-0000-00000000001A',N'accounting-document-type',N'WarehouseTransferReceipt',N'Recepción de traslado',NULL,260),
-('73000000-0000-0000-0000-00000000001B',N'accounting-document-type',N'DispatchCashDifference',N'Diferencia de recaudo',NULL,270);
+('73000000-0000-0000-0000-00000000001B',N'accounting-document-type',N'DispatchCashDifference',N'Diferencia de recaudo',NULL,270),
+('73000000-0000-0000-0000-00000000001C',N'accounting-document-type',N'PreexistingReceivable',N'Cartera preexistente',NULL,280);
 
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
 VALUES
