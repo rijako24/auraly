@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   deploy_dev:
-    if: github.event_name == 'push' || inputs.environment == 'dev'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.environment == 'dev')
     runs-on: ubuntu-latest
     name: Deploy DEV
     steps:
@@ -43,7 +43,7 @@ jobs:
           output_location: ""
 
   deploy_prod:
-    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'
     runs-on: ubuntu-latest
     name: Deploy PROD
     steps:
