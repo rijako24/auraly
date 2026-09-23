@@ -91,6 +91,25 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
         return (await ReadAsync(command, 1, 1, ct)).Items.SingleOrDefault();
     }
 
+    public async Task<IReadOnlyList<InvoiceChargeDefinition>> ReadManyAsync(
+        InvoiceChargeActor actor, IReadOnlyCollection<(Guid ChargeId, long Version)> versions,
+        CancellationToken ct)
+    {
+        if (versions.Count is < 1 or > InvoiceChargeApplication.MaximumChargesPerInvoice)
+            throw new ArgumentOutOfRangeException(nameof(versions));
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand(ReadSql, connection);
+        AddScope(command, actor);
+        AddPage(command, 1, InvoiceChargeApplication.MaximumChargesPerInvoice, null, true, null,
+            requestedVersions: JsonSerializer.Serialize(versions.Select(value => new
+            {
+                value.ChargeId,
+                value.Version
+            })));
+        return (await ReadAsync(command, 1, InvoiceChargeApplication.MaximumChargesPerInvoice, ct)).Items;
+    }
+
     internal static async Task<InvoiceChargeDefinition?> ReadOneAsync(SqlConnection connection,
         SqlTransaction transaction, Guid tenantId, Guid businessId, Guid chargeId, CancellationToken ct)
     {

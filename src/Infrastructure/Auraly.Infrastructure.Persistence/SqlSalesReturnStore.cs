@@ -135,6 +135,11 @@ public sealed class SqlSalesReturnStore(
             var settlement = new RefundSettlementContext(null, null, null, null);
             if (request.EconomicResolution == ReturnEconomicResolutions.Refund)
             {
+                request = request with
+                {
+                    WorkSessionId = await ResolveOpenWorkSessionAsync(
+                        connection, transaction, user, request.WorkSessionId, cancellationToken)
+                };
                 settlement = await ValidateRefundAsync(
                     connection, transaction, user, request, total, cancellationToken);
                 request = request with
@@ -174,7 +179,8 @@ public sealed class SqlSalesReturnStore(
                 cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new SalesReturnAcceptance(request.ReturnId, movementId,
-                number.FullNumber, "Accepted", sequence, false);
+                number.FullNumber, "Accepted", sequence, false, total,
+                request.RefundMethodCode, request.WorkSessionId);
         }
         catch (SalesReturnConflictException)
         {
@@ -209,7 +215,8 @@ public sealed class SqlSalesReturnStore(
     {
         const string sql = """
             SELECT r.ReturnId,r.DocumentNumber,r.Status,r.PayloadHash,
-                   j.ProcessingSequence,j.JobId
+                   j.ProcessingSequence,j.JobId,r.TotalAmount,
+                   r.RefundMethodCode,r.WorkSessionId
             FROM dbo.SalesReturns r WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.DocumentProcessingJobs j
               ON j.DocumentId=r.ReturnId AND j.DocumentType=N'SalesReturn'
@@ -226,7 +233,9 @@ public sealed class SqlSalesReturnStore(
             throw new SalesReturnConflictException(
                 "The idempotency key or ReturnId was reused with another payload.");
         return new SalesReturnAcceptance(reader.GetGuid(0), reader.GetGuid(5),
-            reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true);
+            reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true,
+            reader.GetDecimal(6), reader.IsDBNull(7) ? null : reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetGuid(8));
     }
 
     private static async Task<OriginalSale> LoadOriginalAsync(
@@ -332,21 +341,6 @@ public sealed class SqlSalesReturnStore(
         ConfirmSalesReturnRequest request, decimal requestedAmount,
         CancellationToken cancellationToken)
     {
-        if (request.WorkSessionId is not null)
-        {
-            await using var session = new SqlCommand("""
-                SELECT COUNT_BIG(*) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
-                WHERE WorkSessionId=@Id AND BusinessId=@BusinessId
-                  AND TenantId=@TenantId AND UserId=@UserId AND Status=N'Open';
-                """, connection, transaction);
-            session.Parameters.AddWithValue("@Id", request.WorkSessionId.Value);
-            session.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-            session.Parameters.AddWithValue("@UserId", user.UserId);
-            session.Parameters.AddWithValue("@TenantId", user.TenantId);
-            if (Convert.ToInt64(await session.ExecuteScalarAsync(cancellationToken)) != 1)
-                throw new SalesReturnValidationException(
-                    "La sesión operativa indicada no está abierta para el usuario actual.");
-        }
         if (request.RefundMethodCode == SalesReturnRefundMethods.Cash)
         {
             return new(null, null, null, null);
@@ -539,6 +533,27 @@ public sealed class SqlSalesReturnStore(
             """, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", originalDocumentId);
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+    }
+
+    private static async Task<Guid> ResolveOpenWorkSessionAsync(
+        SqlConnection connection, SqlTransaction transaction, SalesReturnUserIdentity user,
+        Guid? requestedWorkSessionId, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT WorkSessionId
+            FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND UserId=@UserId
+              AND Status=N'Open' AND (@RequestedId IS NULL OR WorkSessionId=@RequestedId);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@UserId", user.UserId);
+        command.Parameters.AddWithValue("@RequestedId", (object?)requestedWorkSessionId ?? DBNull.Value);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is Guid workSessionId
+            ? workSessionId
+            : throw new SalesReturnValidationException(
+                "La devolución requiere una sesión de trabajo abierta para el usuario actual.");
     }
 
     private static async Task<IReadOnlyList<SalesReturnChargeSnapshot>> LoadOriginalChargesAsync(

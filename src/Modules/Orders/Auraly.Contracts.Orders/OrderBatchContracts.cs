@@ -12,7 +12,8 @@ public sealed record InvoiceOrdersRequest(
     string DocumentType = "SalesInvoice",
     Guid? BankAccountId = null,
     string? PaymentNotes = null,
-    OrderInvoiceChargeSelection? Charge = null);
+    OrderInvoiceChargeSelection? Charge = null,
+    IReadOnlyList<OrderInvoiceChargeSelection>? Charges = null);
 
 public sealed record OrderInvoiceChargeSelection(
     Guid ChargeId,

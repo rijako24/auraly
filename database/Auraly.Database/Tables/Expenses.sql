@@ -34,6 +34,7 @@ CREATE TABLE [dbo].[Expenses]
     [DocumentConsecutive] BIGINT NOT NULL,
     [SupplierDocumentNumber] NVARCHAR(80) NULL,
     [SourceInvoiceId] UNIQUEIDENTIFIER NULL,
+    [PurchaseEvidenceType] NVARCHAR(40) NOT NULL CONSTRAINT [DF_Expenses_PurchaseEvidenceType] DEFAULT(N'SupplierElectronicInvoice'),
     [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
     [DueDate] DATETIMEOFFSET(7) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
@@ -55,7 +56,10 @@ CREATE TABLE [dbo].[Expenses]
     CONSTRAINT [UQ_Expenses_Business_Number] UNIQUE ([BusinessId],[DocumentNumber]),
     CONSTRAINT [UQ_Expenses_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [FK_Expenses_SourceInvoice] FOREIGN KEY ([BusinessId],[SourceInvoiceId]) REFERENCES [dbo].[SalesDocuments]([BusinessId],[DocumentId]),
-    CONSTRAINT [CK_Expenses_EvidenceOrigin] CHECK ([SupplierDocumentNumber] IS NOT NULL OR [SourceInvoiceId] IS NOT NULL),
+    CONSTRAINT [CK_Expenses_EvidenceOrigin] CHECK
+      ([SourceInvoiceId] IS NOT NULL OR [PurchaseEvidenceType]<>N'SupplierElectronicInvoice' OR [SupplierDocumentNumber] IS NOT NULL),
+    CONSTRAINT [CK_Expenses_PurchaseEvidenceType] CHECK ([PurchaseEvidenceType] IN
+      (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')),
     CONSTRAINT [FK_Expenses_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_Expenses_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers]([SupplierId]),
     CONSTRAINT [FK_Expenses_Concepts] FOREIGN KEY ([BusinessId],[ExpenseConceptId]) REFERENCES [dbo].[ExpenseConcepts]([BusinessId],[ExpenseConceptId]),

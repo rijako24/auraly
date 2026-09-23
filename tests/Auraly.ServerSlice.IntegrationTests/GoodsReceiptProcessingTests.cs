@@ -629,7 +629,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Expense_automatically_creates_support_document_only_for_a_supplier_that_requires_it()
+    public async Task Expense_uses_selected_evidence_and_only_support_document_is_sent_to_DIAN()
     {
         await ConfigureSupportDocumentAsync();
         await SetSupplierPurchaseEvidencePolicyAsync(
@@ -660,7 +660,8 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                 supportExpenseId, fixture.BusinessId, fixture.SupplierId,
                 conceptId, null, $"PROV-{supportExpenseId:N}", issuedAt,
                 issuedAt.AddDays(30), "COP", "Servicio de proveedor no obligado",
-                100_000m, 19_000m, null, null);
+                100_000m, 19_000m, null, null,
+                PurchaseEvidenceTypes.BuyerElectronicSupportDocument);
             using (var request = new HttpRequestMessage(HttpMethod.Post,
                        "/api/commerce/v1/expenses/confirm")
                    {
@@ -696,7 +697,8 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                            ordinaryExpenseId, fixture.BusinessId, fixture.SupplierId,
                            conceptId, null, $"PROV-{ordinaryExpenseId:N}", issuedAt.AddMinutes(1),
                            issuedAt.AddDays(30), "COP", "Gasto con soporte ordinario",
-                           50_000m, 0m, null, null))
+                           50_000m, 0m, null, null,
+                           PurchaseEvidenceTypes.InternalReceiptVoucher))
                    })
             {
                 request.Headers.Add("Idempotency-Key", $"expense-ordinary-{ordinaryExpenseId:N}");
@@ -706,6 +708,10 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(0, await ScalarAsync<int>(
                 "SELECT COUNT(*) FROM dbo.FiscalDocuments WHERE DocumentId=@Id",
                 ordinaryExpenseId));
+            Assert.Equal(PurchaseEvidenceTypes.InternalReceiptVoucher,
+                await ScalarAsync<string>(
+                    "SELECT PurchaseEvidenceType FROM dbo.Expenses WHERE ExpenseId=@Id",
+                    ordinaryExpenseId));
             using (var deactivate = await client.PutAsJsonAsync($"/api/commerce/v1/expenses/concepts/{conceptId}",
                 new SaveExpenseConceptRequest(conceptId, fixture.BusinessId, "Concepto retirado",
                     account.AccountId, center.CostCenterId, null, false))) deactivate.EnsureSuccessStatusCode();

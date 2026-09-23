@@ -2,6 +2,7 @@ using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Taxation.Application;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Expenses;
 
 namespace Auraly.Application.Expenses;
@@ -62,13 +63,20 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
             throw new ExpenseValidationException("Idempotency-Key es obligatorio y admite máximo 160 caracteres.");
         if (request.IssuedAt == default || request.DueDate < request.IssuedAt)
             throw new ExpenseValidationException("Las fechas del documento no son válidas.");
+        if (request.PurchaseEvidenceType is not (PurchaseEvidenceTypes.SupplierElectronicInvoice or
+            PurchaseEvidenceTypes.BuyerElectronicSupportDocument or PurchaseEvidenceTypes.InternalReceiptVoucher))
+            throw new ExpenseValidationException("El tipo de documento del gasto no es válido.");
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
         if (currency != "COP") throw new ExpenseValidationException("Por ahora los gastos se registran en COP.");
         ExpenseAmounts amounts;
         try { amounts = ExpenseAmounts.Create(request.TaxExclusiveAmount, request.VatAmount); }
         catch (ExpenseRuleException error) { throw new ExpenseValidationException(error.Message); }
+        var supplierDocumentNumber = Optional(request.SupplierDocumentNumber, 80);
+        if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.SupplierElectronicInvoice &&
+            supplierDocumentNumber is null)
+            throw new ExpenseValidationException("El número de la factura electrónica del proveedor es obligatorio.");
         var normalized = request with { CurrencyCode = currency,
-            SupplierDocumentNumber = Text(request.SupplierDocumentNumber, 80, "Número del proveedor"),
+            SupplierDocumentNumber = supplierDocumentNumber,
             Description = string.IsNullOrWhiteSpace(request.Description) ? "Gasto operativo" : Text(request.Description, 300, "Descripción"), EvidenceUrl = Optional(request.EvidenceUrl, 1000),
             WithholdingJurisdictionCode = Optional(request.WithholdingJurisdictionCode, 16) };
         var replay = await store.FindReplayAsync(user, idempotencyKey.Trim(), normalized, amounts, ct);

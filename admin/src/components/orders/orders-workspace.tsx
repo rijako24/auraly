@@ -98,7 +98,7 @@ type OrdersWorkspaceProps = {
     printAfterInvoice: boolean,
     idempotencyKey: string,
     onProgress: (progress: OrderInvoiceSequenceProgress) => void,
-    charge?: OrderInvoiceChargeSelection | null,
+    charges?: OrderInvoiceChargeSelection[] | null,
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -337,7 +337,7 @@ export function OrdersWorkspace({
     }
   }
 
-  async function invoiceSelected(requestedPaymentMethodCode: "Cash" | "Credit", charge?: OrderInvoiceChargeSelection | null) {
+  async function invoiceSelected(requestedPaymentMethodCode: "Cash" | "Credit", charges?: OrderInvoiceChargeSelection[] | null) {
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
     if (selectedOrders.length > ORDER_INVOICE_BATCH_LIMIT) {
       setError(`Puedes facturar máximo ${ORDER_INVOICE_BATCH_LIMIT} pedidos por lote.`);
@@ -357,13 +357,13 @@ export function OrdersWorkspace({
       documentType,
       paymentMethodCode: requestedPaymentMethodCode,
       printAfterInvoice,
-      charge: charge ?? null,
+      charges: charges ?? null,
     });
     if (invoiceAttemptRef.current?.fingerprint !== fingerprint) {
       invoiceAttemptRef.current = { fingerprint, key: crypto.randomUUID() };
     }
     const idempotencyKey = invoiceAttemptRef.current.key;
-    if (charge) setChargeDialogOpen(false);
+    if (charges?.length) setChargeDialogOpen(false);
     setWorking(true);
     setError(null);
     setNotice(null);
@@ -421,7 +421,7 @@ export function OrdersWorkspace({
         printAfterInvoice,
         idempotencyKey,
         updateProgress,
-        charge,
+        charges,
       );
       invoiceAttemptRef.current = null;
       if (result.creditValidationIssues?.length) {
@@ -937,7 +937,7 @@ export function OrdersWorkspace({
         total={selectedOrders.reduce((sum, order) => sum + order.total, 0)}
         busy={working}
         loadPage={onLoadInvoiceCharges}
-        onInvoice={(charge) => invoiceSelected(paymentMethodCode, charge)}
+        onInvoice={(charges) => invoiceSelected(paymentMethodCode, charges)}
         onClose={() => { if (!working) setChargeDialogOpen(false); }}
       />}
 

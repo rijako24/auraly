@@ -177,6 +177,7 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
   };
 
   const submit = async () => {
+    if (runtime && !runtime.context.workSessionId) { toast.error("Abre una sesión de caja antes de registrar la devolución."); return; }
     if (!reasonCode) { toast.error("Selecciona un motivo de devolución."); return; }
     if (chosen.length === 0) { toast.error("Indica al menos una cantidad por devolver."); return; }
     if (!selection.isValid) { toast.error("Una cantidad supera el saldo disponible."); return; }

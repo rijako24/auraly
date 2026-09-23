@@ -49,7 +49,7 @@ export function buildPricePublicationItem(
   row: PriceRevisionListItem,
   draft: PricePublicationDraft,
 ): PublishPriceItem {
-  if (draft.salePrice === null || !Number.isFinite(draft.salePrice) || draft.salePrice < 0)
+  if (draft.salePrice === null || !Number.isFinite(draft.salePrice) || draft.salePrice <= 0)
     throw new RangeError(`El precio preparado de ${row.productName} no es válido.`);
 
   // The prepared VAT-included price is authoritative. Publishing by margin

@@ -997,6 +997,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         {
             var runtime = scope.ServiceProvider.GetRequiredService<PosEdgeRuntimeContext>();
             var cashStore = scope.ServiceProvider.GetRequiredService<PosCashMovementStore>();
+            var closureStore = scope.ServiceProvider
+                .GetRequiredService<PosOfflineWorkSessionClosureStore>();
             var cashEntryReasonId = Guid.NewGuid();
             var cashExitReasonId = Guid.NewGuid();
             await cashStore.ReplaceReasonsAsync(
@@ -1024,6 +1026,12 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     Guid.NewGuid(), cashExitReasonId, 1_250m, DateTimeOffset.UtcNow,
                     "GASTO-LOCAL", "Salida local", null));
             exit.EnsureSuccessStatusCode();
+            await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
+                Guid.NewGuid(), currentSession.WorkSessionId, "Cash", .50m));
+            await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
+                Guid.NewGuid(), currentSession.WorkSessionId, "CreditCard", .25m));
+            await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
+                Guid.NewGuid(), currentSession.WorkSessionId, "Transfer", .125m));
         }
 
         var capture = await Client.PostAsJsonAsync(
@@ -1060,10 +1068,14 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.NotNull(preview);
         Assert.Equal(total, preview.Preview.TotalSales);
         Assert.Equal(3_750m, preview.Preview.TotalOther);
-        Assert.Equal(cashAmount + 3_750m, preview.Preview.ExpectedCash);
+        Assert.Equal(.875m, preview.Preview.TotalRefunds);
+        Assert.Equal(3, preview.Preview.ReturnCount);
+        Assert.Equal(total + 3_750m - .875m, preview.Preview.NetAmount);
+        Assert.Equal(cashAmount + 3_749.50m, preview.Preview.ExpectedCash);
         var cashTotal = preview.Preview.PaymentTotals
             .Single(value => value.PaymentMethodCode == "Cash");
-        Assert.Equal(cashAmount + 3_750m, cashTotal.NetAmount);
+        Assert.Equal(.50m, cashTotal.RefundAmount);
+        Assert.Equal(cashAmount + 3_749.50m, cashTotal.NetAmount);
         Assert.Equal(5_000m, cashTotal.CashEntryAmount);
         Assert.Equal(1_250m, cashTotal.CashExitAmount);
         var cashMovementDetails = Assert.IsAssignableFrom<
@@ -1080,10 +1092,13 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                 .Where(value => value.Direction == CashMovementDirections.Out)
                 .Sum(value => value.Amount));
         Assert.Equal(
-            cardAmount,
+            cardAmount - .25m,
             preview.Preview.PaymentTotals.Single(value => value.PaymentMethodCode == "Card").NetAmount);
         Assert.Equal(
-            transferAmount,
+            .25m,
+            preview.Preview.PaymentTotals.Single(value => value.PaymentMethodCode == "Card").RefundAmount);
+        Assert.Equal(
+            transferAmount - .125m,
             preview.Preview.PaymentTotals.Single(value => value.PaymentMethodCode == "Transfer").NetAmount);
         Assert.Equal(
             new[] { "Cash", "Card", "Transfer" },
@@ -1094,11 +1109,11 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var closeRequest = new CloseLocalWorkSessionRequest(
             operationId,
             preview.AuthorizationToken,
-            cashAmount + 3_750m,
+            cashAmount + 3_749.50m,
             [
-                new WorkSessionPaymentCount("Cash", cashAmount + 3_750m),
-                new WorkSessionPaymentCount("Card", cardAmount),
-                new WorkSessionPaymentCount("Transfer", transferAmount)
+                new WorkSessionPaymentCount("Cash", cashAmount + 3_749.50m),
+                new WorkSessionPaymentCount("Card", cardAmount - .25m),
+                new WorkSessionPaymentCount("Transfer", transferAmount - .125m)
             ],
             null);
         _closurePrinter.FailuresRemaining = 1;

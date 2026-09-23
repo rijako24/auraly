@@ -17,8 +17,10 @@ public sealed class PosSalesReturnServerClientTests
         var workSessionId = Guid.NewGuid();
         var handler = new ReturnHandler();
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test/") };
+        var store = new PosOfflineWorkSessionClosureStore(
+            "Data Source=:memory:", TimeProvider.System);
         var client = new PosSalesReturnServerClient(http,
-            new PosDeviceCredentials(deviceId, "device-secret"));
+            new PosDeviceCredentials(deviceId, "device-secret"), store);
         var session = new PosLocalUserSession(Guid.NewGuid(), workSessionId, userId,
             "cashier", "Cashier", ["sales.returns.create"],
             DateTimeOffset.UtcNow.AddHours(1), "session-token");
@@ -35,6 +37,47 @@ public sealed class PosSalesReturnServerClientTests
         Assert.Equal(deviceId.ToString("D"), handler.DeviceId);
         Assert.Equal(userId.ToString("D"), handler.UserId);
         Assert.Null(handler.WorkSessionId);
+    }
+
+    [Fact]
+    public async Task Confirmed_refund_is_projected_once_into_its_local_work_session()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-return-{Guid.NewGuid():N}.db");
+        try
+        {
+            var returnId = Guid.NewGuid();
+            var workSessionId = Guid.NewGuid();
+            var handler = new ConfirmReturnHandler(returnId, workSessionId);
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test/") };
+            var store = new PosOfflineWorkSessionClosureStore(
+                $"Data Source={path}", TimeProvider.System);
+            await store.InitializeAsync();
+            var client = new PosSalesReturnServerClient(http,
+                new PosDeviceCredentials(Guid.NewGuid(), "device-secret"), store);
+            var session = new PosLocalUserSession(Guid.NewGuid(), workSessionId, Guid.NewGuid(),
+                "cashier", "Cashier", ["sales.returns.create"],
+                DateTimeOffset.UtcNow.AddHours(1), "session-token");
+            var body = JsonSerializer.SerializeToElement(new
+            {
+                returnId,
+                economicResolution = "Refund",
+                refundMethodCode = "CreditCard",
+                workSessionId
+            });
+
+            await client.ConfirmAsync(body, session, default);
+            await client.ConfirmAsync(body, session, default);
+
+            var refund = Assert.Single(await store.ReadRefundsAsync(workSessionId));
+            Assert.Equal(returnId, refund.ReturnId);
+            Assert.Equal("CreditCard", refund.PaymentMethodCode);
+            Assert.Equal(12_500m, refund.Amount);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
 
     private sealed class ReturnHandler : HttpMessageHandler
@@ -59,5 +102,27 @@ public sealed class PosSalesReturnServerClientTests
 
         private static string? Header(HttpRequestMessage request, string name) =>
             request.Headers.TryGetValues(name, out var values) ? values.Single() : null;
+    }
+
+    private sealed class ConfirmReturnHandler(Guid returnId, Guid workSessionId)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Accepted)
+            {
+                Content = JsonContent.Create(new
+                {
+                    returnId,
+                    movementId = Guid.NewGuid(),
+                    documentNumber = "DVT-1",
+                    status = "Accepted",
+                    processingSequence = 1,
+                    idempotentReplay = false,
+                    totalAmount = 12_500m,
+                    refundMethodCode = "CreditCard",
+                    workSessionId
+                })
+            });
     }
 }

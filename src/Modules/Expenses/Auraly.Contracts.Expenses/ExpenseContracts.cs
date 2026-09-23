@@ -27,22 +27,26 @@ public sealed record ExpenseConceptView(Guid ConceptId, Guid BusinessId, string 
 
 public sealed record ExpenseWorkspaceOptions(IReadOnlyList<ExpenseConceptView> Concepts,
     IReadOnlyList<ExpenseSupplierOption> Suppliers, IReadOnlyList<ExpenseAccountOption> ExpenseAccounts,
-    IReadOnlyList<ExpenseCostCenterOption> CostCenters);
+    IReadOnlyList<ExpenseCostCenterOption> CostCenters,
+    IReadOnlyList<ExpensePurchaseEvidenceOption> PurchaseEvidenceTypes);
 public sealed record ExpenseSupplierOption(Guid SupplierId, string Identification, string Name);
 public sealed record ExpenseAccountOption(Guid AccountId, string Code, string Name);
 public sealed record ExpenseCostCenterOption(Guid CostCenterId, string Code, string Name, bool IsDefault);
+public sealed record ExpensePurchaseEvidenceOption(string Code, string Label, string Description);
 
 public sealed record ConfirmExpenseRequest(Guid ExpenseId, Guid BusinessId, Guid SupplierId, Guid ConceptId,
-    Guid? CostCenterId, string SupplierDocumentNumber, DateTimeOffset IssuedAt, DateTimeOffset DueDate,
+    Guid? CostCenterId, string? SupplierDocumentNumber, DateTimeOffset IssuedAt, DateTimeOffset DueDate,
     string CurrencyCode, string Description, decimal TaxExclusiveAmount, decimal VatAmount,
-    string? WithholdingJurisdictionCode, string? EvidenceUrl);
+    string? WithholdingJurisdictionCode, string? EvidenceUrl,
+    string PurchaseEvidenceType = "SupplierElectronicInvoice");
 
 public sealed record ExpenseDocumentPayload(Guid TenantId, Guid BusinessId, Guid ExpenseId, Guid SupplierId,
     Guid ConceptId, Guid ExpenseAccountId, Guid? CostCenterId, Guid ConfirmedByUserId, string DocumentNumber,
     Guid DocumentSeriesId, string DocumentPrefix, string DocumentSeriesCode, long DocumentConsecutive,
     string? SupplierDocumentNumber, DateTimeOffset IssuedAt, DateTimeOffset DueDate, string CurrencyCode,
     string Description, decimal TaxExclusiveAmount, decimal VatAmount, decimal GrossAmount,
-    string? EvidenceUrl, WithholdingCalculationSnapshot Withholding, Guid? SourceInvoiceId = null);
+    string? EvidenceUrl, WithholdingCalculationSnapshot Withholding, Guid? SourceInvoiceId = null,
+    string PurchaseEvidenceType = "SupplierElectronicInvoice");
 
 public sealed record ExpenseAcceptance(Guid ExpenseId, Guid MovementId, string DocumentNumber,
     string Status, long ProcessingSequence, bool IdempotentReplay, Guid? AccountingJobId = null, bool HasFiscalSupport = false);
@@ -50,7 +54,8 @@ public sealed record ExpenseAcceptance(Guid ExpenseId, Guid MovementId, string D
 public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, string? SupplierDocumentNumber,
     Guid SupplierId, string SupplierName, Guid ConceptId, string ConceptName, DateTimeOffset IssuedAt,
     DateTimeOffset DueDate, decimal GrossAmount, decimal WithholdingAmount, decimal NetPayable,
-    string CurrencyCode, string Status, string? EvidenceUrl);
+    string CurrencyCode, string Status, string? EvidenceUrl,
+    string PurchaseEvidenceType = "SupplierElectronicInvoice");
 public sealed record ExpensePage(IReadOnlyList<ExpenseListItem> Items, int Page, int PageSize, int TotalCount,
     decimal GrossTotal, decimal WithholdingTotal, decimal NetPayableTotal)
 { public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize); }

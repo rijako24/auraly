@@ -730,8 +730,10 @@ public sealed class SqlGoodsReceiptStore(
                     sellerIdentification, out var sellerVerificationDigit))
                 throw new PurchasingValidationException(
                     "El proveedor residente necesita un NIT numérico válido para generar el documento soporte.");
-            if (reader.IsDBNull(27) || reader.GetString(27).Trim() is not { Length: 6 } postalZone ||
-                !postalZone.All(char.IsDigit))
+            var postalZone = reader.IsDBNull(27)
+                ? string.Empty
+                : string.Concat(reader.GetString(27).Where(char.IsDigit));
+            if (postalZone.Length != 6)
                 throw new PurchasingValidationException(
                     "El proveedor residente necesita un código postal DIAN de seis dígitos para generar el documento soporte.");
             var seller = new PosSaleUblPartyContract(

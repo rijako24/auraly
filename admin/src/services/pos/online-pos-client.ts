@@ -1326,7 +1326,7 @@ export class OnlinePosClient implements PosClient {
     idempotencyKey = crypto.randomUUID(),
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
     includeCreditAcknowledgement = false,
-    charge?: OrderInvoiceChargeSelection | null,
+    charges?: OrderInvoiceChargeSelection[] | null,
   ): Promise<InvoiceOrdersResponse> {
     const printRoute = printAfterInvoice
       ? resolvePosOrderPrintRoute(this.edgeSessionToken)
@@ -1350,7 +1350,7 @@ export class OnlinePosClient implements PosClient {
       bankAccountId: bankAccountId ?? null,
       paymentNotes: paymentNotes ?? null,
       documentType,
-      charge: charge ?? null,
+      charges: charges ?? null,
     });
     if (paymentMethodCode === "Credit") {
       const creditValidationIssues = await validateCommerceOrderCredit(invoiceRequest(orderIds));

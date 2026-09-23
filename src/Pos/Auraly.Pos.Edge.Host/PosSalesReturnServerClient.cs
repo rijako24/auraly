@@ -5,7 +5,10 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Auraly.Pos.Edge.Host;
 
-public sealed class PosSalesReturnServerClient(HttpClient http, PosDeviceCredentials credentials)
+public sealed class PosSalesReturnServerClient(
+    HttpClient http,
+    PosDeviceCredentials credentials,
+    PosOfflineWorkSessionClosureStore closureStore)
 {
     public Task<JsonElement> SearchAsync(JsonElement body, PosLocalUserSession user, CancellationToken token) =>
         SendAsync("api/pos/v1/sales-returns/search", body, user, null, token);
@@ -13,13 +16,25 @@ public sealed class PosSalesReturnServerClient(HttpClient http, PosDeviceCredent
         SendAsync($"api/pos/v1/sales-returns/sales/{id:D}", body, user, null, token);
     public Task<JsonElement> BootstrapAsync(JsonElement body, PosLocalUserSession user, CancellationToken token) =>
         SendAsync("api/pos/v1/sales-returns/bootstrap", body, user, null, token);
-    public Task<JsonElement> ConfirmAsync(JsonElement body, PosLocalUserSession user, CancellationToken token)
+    public async Task<JsonElement> ConfirmAsync(JsonElement body, PosLocalUserSession user, CancellationToken token)
     {
         if (!body.TryGetProperty("returnId", out var value) ||
             !Guid.TryParse(value.GetString(), out var id) || id == Guid.Empty)
             throw new PosSalesReturnServerException(400, "InvalidReturnId",
                 "La devolución requiere un identificador válido.");
-        return SendAsync("api/pos/v1/sales-returns/confirm", body, user, id.ToString("D"), token);
+        var result = await SendAsync(
+            "api/pos/v1/sales-returns/confirm", body, user, id.ToString("D"), token);
+        if (result.TryGetProperty("workSessionId", out var sessionValue) &&
+            sessionValue.ValueKind == JsonValueKind.String &&
+            Guid.TryParse(sessionValue.GetString(), out var workSessionId) &&
+            workSessionId == user.WorkSessionId &&
+            result.TryGetProperty("refundMethodCode", out var methodValue) &&
+            methodValue.ValueKind == JsonValueKind.String &&
+            result.TryGetProperty("totalAmount", out var amountValue) &&
+            amountValue.TryGetDecimal(out var amount) && amount > 0)
+            await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
+                id, workSessionId, methodValue.GetString()!, amount), token);
+        return result;
     }
 
     private async Task<JsonElement> SendAsync(string path, JsonElement body,

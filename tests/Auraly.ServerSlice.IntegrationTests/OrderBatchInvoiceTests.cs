@@ -399,7 +399,7 @@ public sealed class OrderBatchInvoiceTests(
     }
 
     [Fact]
-    public async Task Selected_orders_apply_the_same_configured_charge_to_each_invoice()
+    public async Task Selected_orders_apply_multiple_configured_charges_to_each_invoice()
     {
         var userId = Guid.NewGuid();
         var firstOrderId = Guid.NewGuid();
@@ -459,6 +459,16 @@ public sealed class OrderBatchInvoiceTests(
                 tax.TaxProfileId));
         Assert.True(chargeResponse.IsSuccessStatusCode,
             await chargeResponse.Content.ReadAsStringAsync());
+        var secondChargeId = Guid.NewGuid();
+        var secondChargeCode = $"BATCH2-{secondChargeId:N}"[..32];
+        using var secondChargeResponse = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/invoice-charges/{secondChargeId}",
+            new SaveInvoiceChargeRequest(
+                secondChargeId, 0, secondChargeCode, "Seguro lote de pedidos", true, 1,
+                "Fixed", 2000, "Always", null, conceptId, tax.TaxProfileId, [],
+                [fixture.SupplierId], tax.TaxProfileId));
+        Assert.True(secondChargeResponse.IsSuccessStatusCode,
+            await secondChargeResponse.Content.ReadAsStringAsync());
 
         using var client = fixture.CreateUserClient(
             userId,
@@ -473,10 +483,11 @@ public sealed class OrderBatchInvoiceTests(
             [firstOrderId, secondOrderId],
             "Cash",
             null,
-            Charge: new OrderInvoiceChargeSelection(
-                chargeId,
-                1,
-                fixture.SupplierId));
+            Charges:
+            [
+                new OrderInvoiceChargeSelection(chargeId, 1, fixture.SupplierId),
+                new OrderInvoiceChargeSelection(secondChargeId, 1, fixture.SupplierId)
+            ]);
 
         fixture.PauseDocumentProcessing();
         try
@@ -489,17 +500,15 @@ public sealed class OrderBatchInvoiceTests(
             Assert.Equal(2, response.CompletedCount);
             Assert.Equal(0, response.FailedCount);
             Assert.Equal(
-                new decimal[] { 15000m, 25000m },
+                new decimal[] { 17000m, 27000m },
                 response.Results.Select(result => result.Receipt!.PayableAmount).Order().ToArray());
             Assert.All(response.Results, result =>
             {
-                var chargeLine = Assert.Single(
-                    result.Receipt!.Lines,
-                    line => string.Equals(
-                        line.ProductCode,
-                        chargeCode,
-                        StringComparison.OrdinalIgnoreCase));
-                Assert.Equal(5000m, chargeLine.Total);
+                var chargeLines = result.Receipt!.Lines.Where(line =>
+                    string.Equals(line.ProductCode, chargeCode, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(line.ProductCode, secondChargeCode, StringComparison.OrdinalIgnoreCase)).ToArray();
+                Assert.Equal(2, chargeLines.Length);
+                Assert.Equal(7000m, chargeLines.Sum(line => line.Total));
                 Assert.Equal(
                     result.Receipt.PayableAmount,
                     Assert.Single(result.Receipt.Payments).Amount);
@@ -526,9 +535,9 @@ public sealed class OrderBatchInvoiceTests(
             verify.Parameters.AddWithValue("@SecondDocumentId", response.Results[1].DocumentId!.Value);
             await using var reader = await verify.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
-            Assert.Equal(2, reader.GetInt32(0));
-            Assert.Equal(10000m, reader.GetDecimal(1));
-            Assert.Equal(10000m, reader.GetDecimal(2));
+            Assert.Equal(4, reader.GetInt32(0));
+            Assert.Equal(14000m, reader.GetDecimal(1));
+            Assert.Equal(14000m, reader.GetDecimal(2));
         }
         finally
         {

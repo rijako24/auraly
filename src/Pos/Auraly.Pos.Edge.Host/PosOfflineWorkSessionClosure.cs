@@ -18,6 +18,12 @@ internal sealed record PosQueuedWorkSessionClosure(
     WorkSessionClosureView Closure,
     DeviceCloseWorkSessionRequest Request);
 
+public sealed record PosLocalWorkSessionRefund(
+    Guid ReturnId,
+    Guid WorkSessionId,
+    string PaymentMethodCode,
+    decimal Amount);
+
 public sealed class PosOfflineWorkSessionClosureStore(
     string connectionString,
     TimeProvider timeProvider)
@@ -37,8 +43,67 @@ public sealed class PosOfflineWorkSessionClosureStore(
               WorkSessionId TEXT NOT NULL UNIQUE,
               Payload TEXT NOT NULL,
               CreatedAt TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS PosWorkSessionRefunds(
+              ReturnId TEXT NOT NULL PRIMARY KEY,
+              WorkSessionId TEXT NOT NULL,
+              PaymentMethodCode TEXT NOT NULL,
+              Amount TEXT NOT NULL,
+              CreatedAt TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS IX_PosWorkSessionRefunds_WorkSession
+              ON PosWorkSessionRefunds(WorkSessionId);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task RecordRefundAsync(
+        PosLocalWorkSessionRefund value,
+        CancellationToken cancellationToken = default)
+    {
+        if (value.ReturnId == Guid.Empty || value.WorkSessionId == Guid.Empty ||
+            value.Amount <= 0 || string.IsNullOrWhiteSpace(value.PaymentMethodCode))
+            throw new ArgumentException("La devolución confirmada no es válida.", nameof(value));
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO PosWorkSessionRefunds(
+              ReturnId,WorkSessionId,PaymentMethodCode,Amount,CreatedAt)
+            VALUES($return,$session,$method,$amount,$now)
+            ON CONFLICT(ReturnId) DO UPDATE SET
+              WorkSessionId=excluded.WorkSessionId,
+              PaymentMethodCode=excluded.PaymentMethodCode,
+              Amount=excluded.Amount;
+            """;
+        command.Parameters.AddWithValue("$return", value.ReturnId.ToString("D"));
+        command.Parameters.AddWithValue("$session", value.WorkSessionId.ToString("D"));
+        command.Parameters.AddWithValue("$method", value.PaymentMethodCode);
+        command.Parameters.AddWithValue(
+            "$amount", value.Amount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PosLocalWorkSessionRefund>> ReadRefundsAsync(
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT ReturnId,PaymentMethodCode,Amount
+            FROM PosWorkSessionRefunds
+            WHERE WorkSessionId=$session
+            ORDER BY CreatedAt,ReturnId;
+            """;
+        command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
+        var values = new List<PosLocalWorkSessionRefund>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            values.Add(new PosLocalWorkSessionRefund(
+                Guid.Parse(reader.GetString(0)), workSessionId, reader.GetString(1),
+                decimal.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture)));
+        return values;
     }
 
     internal async Task<WorkSessionClosureView> QueueAsync(
@@ -249,12 +314,14 @@ public sealed class PosOfflineWorkSessionClosureService(
             session.WorkSessionId, cancellationToken);
         var cashMovementDetails = await cashMovements.ReadWorkSessionDetailsAsync(
             session.WorkSessionId, session.DisplayName, cancellationToken);
+        var refunds = await store.ReadRefundsAsync(
+            session.WorkSessionId, cancellationToken);
         var openedAt = await identities.WorkSessionOpenedAtAsync(
             session.WorkSessionId, cancellationToken);
         var lastActivity = localSales.Count == 0
             ? openedAt
             : localSales.Max(value => value.IssuedAt);
-        var totals = PaymentTotals(localSales, cashMovementDetails, null);
+        var totals = PaymentTotals(localSales, refunds, cashMovementDetails, null);
         var netCashMovements = cashMovementDetails.Sum(movement =>
             movement.Direction == CashMovementDirections.In
                 ? movement.Amount
@@ -277,15 +344,15 @@ public sealed class PosOfflineWorkSessionClosureService(
             openedAt,
             lastActivity,
             localSales.Sum(value => value.Total),
-            0,
+            refunds.Sum(value => value.Amount),
             netCashMovements,
-            localSales.Sum(value => value.Total) + netCashMovements,
+            localSales.Sum(value => value.Total) - refunds.Sum(value => value.Amount) + netCashMovements,
             totals.Single(value => value.PaymentMethodCode == "Cash").NetAmount,
             totals,
             localSales.Count,
             localSales.Count(value => value.CreditAmount > 0),
             localSales.Sum(value => value.CreditAmount),
-            0,
+            refunds.Count,
             creditSales,
             cashMovementDetails,
             Auraly.Application.Sales.InvoiceChargeClosureProjection.MapPayments(
@@ -365,6 +432,7 @@ public sealed class PosOfflineWorkSessionClosureService(
 
     private static IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals(
         IReadOnlyList<PosLocalWorkSessionSale> sales,
+        IReadOnlyList<PosLocalWorkSessionRefund> refunds,
         IReadOnlyList<WorkSessionCashMovementDetail> cashMovements,
         IReadOnlyList<WorkSessionPaymentCount>? counts)
     {
@@ -377,6 +445,11 @@ public sealed class PosOfflineWorkSessionClosureService(
         amounts.TryAdd("Cash", 0);
         amounts.TryAdd("Card", 0);
         amounts.TryAdd("Transfer", 0);
+        var refundAmounts = refunds
+            .GroupBy(value => ClosureMethod(value.PaymentMethodCode), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Sum(value => value.Amount),
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var method in refundAmounts.Keys) amounts.TryAdd(method, 0);
         var counted = (counts ?? [])
             .GroupBy(value => value.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(value => value.CountedAmount),
@@ -392,11 +465,12 @@ public sealed class PosOfflineWorkSessionClosureService(
                             ? movement.Amount
                             : -movement.Amount)
                     : 0;
-                var net = value.Value + other;
+                var refund = refundAmounts.GetValueOrDefault(value.Key);
+                var net = value.Value - refund + other;
                 var manual = RequiresManualCount(value.Key);
                 var hasCount = counted.TryGetValue(value.Key, out var countedAmount);
                 return new WorkSessionPaymentTotal(
-                    value.Key, value.Value, 0, other, net,
+                    value.Key, value.Value, refund, other, net,
                     manual && hasCount ? countedAmount : null,
                     manual && hasCount ? countedAmount - net : null,
                     manual,

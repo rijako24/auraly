@@ -154,6 +154,7 @@ GO
 :r .\Migrations\20260914_BackfillReportingPartySites.sql
 :r .\Migrations\20260915_AllowCreditRejectedOrderBatchStatus.sql
 :r .\Migrations\20260921_PreserveOrderItemQuantityPrecision.sql
+:r .\Migrations\20260922_AddExpensePurchaseEvidenceType.sql
 GO
 
 PRINT 'Post-deployment scripts executed successfully.';

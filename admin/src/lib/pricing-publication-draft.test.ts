@@ -58,4 +58,14 @@ describe("price publication draft", () => {
     const draft = changeDraftMargin(proposal, createPricePublicationDraft(proposal), 20);
     assert.equal(draft.salePrice, 29_750);
   });
+
+  it("rejects a zero prepared price before an atomic bulk publication is sent", () => {
+    assert.throws(
+      () => buildPricePublicationItem(proposal, {
+        ...createPricePublicationDraft(proposal),
+        salePrice: 0,
+      }),
+      /no es válido/,
+    );
+  });
 });

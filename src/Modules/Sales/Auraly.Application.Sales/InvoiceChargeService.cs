@@ -19,6 +19,8 @@ public interface IInvoiceChargeStore
         SaveInvoiceChargeRequest request, CancellationToken ct);
     Task<InvoiceChargeDefinition?> ReadAsync(InvoiceChargeActor actor,
         Guid chargeId, long version, CancellationToken ct);
+    Task<IReadOnlyList<InvoiceChargeDefinition>> ReadManyAsync(InvoiceChargeActor actor,
+        IReadOnlyCollection<(Guid ChargeId, long Version)> versions, CancellationToken ct);
 }
 
 public sealed class InvoiceChargeService(IInvoiceChargeStore store,
@@ -36,6 +38,23 @@ public sealed class InvoiceChargeService(IInvoiceChargeStore store,
             ?? throw new InvoiceChargeValidationException(
                 "La versión seleccionada del cargo ya no está disponible para esta sede.");
         return new(appliedChargeId, definition, supplierId, manualAmount);
+    }
+
+    public async Task<IReadOnlyList<InvoiceChargeDefinition>> ResolveDefinitionsForSaleAsync(
+        InvoiceChargeActor actor, IReadOnlyCollection<(Guid ChargeId, long Version)> versions,
+        CancellationToken ct = default)
+    {
+        Demand(actor, CommercePermissionCodes.SalesCreate);
+        if (versions.Count is < 1 or > InvoiceChargeApplication.MaximumChargesPerInvoice ||
+            versions.Any(value => value.ChargeId == Guid.Empty || value.Version < 1) ||
+            versions.Distinct().Count() != versions.Count)
+            throw new InvoiceChargeValidationException("Selecciona entre uno y diez cargos distintos.");
+        var definitions = await store.ReadManyAsync(actor, versions, ct);
+        if (definitions.Count != versions.Count)
+            throw new InvoiceChargeValidationException(
+                "Una de las versiones de cargo seleccionadas ya no está disponible para esta sede.");
+        var byVersion = definitions.ToDictionary(value => (value.ChargeId, value.Version));
+        return versions.Select(value => byVersion[value]).ToArray();
     }
 
     public Task<InvoiceChargeHistoryPage> HistoryAsync(InvoiceChargeActor actor, DateOnly from, DateOnly to,

@@ -141,7 +141,10 @@ public sealed record SalesReturnAcceptance(
     string DocumentNumber,
     string Status,
     long ProcessingSequence,
-    bool IdempotentReplay);
+    bool IdempotentReplay,
+    decimal TotalAmount = 0,
+    string? RefundMethodCode = null,
+    Guid? WorkSessionId = null);
 
 public sealed record SalesReturnUserIdentity(
     Guid UserId,

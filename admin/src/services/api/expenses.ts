@@ -1,13 +1,14 @@
 import { apiClient } from "./client";
+import type { PurchaseEvidenceType } from "./goods-receipts";
 
 export type ExpenseConcept = { conceptId: string; businessId: string; code: string; name: string; expenseAccountId: string; expenseAccountCode: string; expenseAccountName: string; defaultCostCenterId: string | null; defaultCostCenterName: string | null; withholdingConceptCode: string | null; isActive: boolean };
 export type ExpenseSupplier = { supplierId: string; identification: string; name: string };
 export type ExpenseAccount = { accountId: string; code: string; name: string };
 export type ExpenseCostCenter = { costCenterId: string; code: string; name: string; isDefault: boolean };
-export type ExpenseOptions = { concepts: ExpenseConcept[]; suppliers: ExpenseSupplier[]; expenseAccounts: ExpenseAccount[]; costCenters: ExpenseCostCenter[] };
-export type ExpenseItem = { expenseId: string; documentNumber: string; supplierDocumentNumber: string | null; supplierId: string; supplierName: string; conceptId: string; conceptName: string; issuedAt: string; dueDate: string; grossAmount: number; withholdingAmount: number; netPayable: number; currencyCode: string; status: string; evidenceUrl: string | null };
+export type ExpenseOptions = { concepts: ExpenseConcept[]; suppliers: ExpenseSupplier[]; expenseAccounts: ExpenseAccount[]; costCenters: ExpenseCostCenter[]; purchaseEvidenceTypes: Array<{ code: PurchaseEvidenceType; label: string; description: string }> };
+export type ExpenseItem = { expenseId: string; documentNumber: string; supplierDocumentNumber: string | null; supplierId: string; supplierName: string; conceptId: string; conceptName: string; issuedAt: string; dueDate: string; grossAmount: number; withholdingAmount: number; netPayable: number; currencyCode: string; status: string; evidenceUrl: string | null; purchaseEvidenceType: PurchaseEvidenceType };
 export type ExpensePage = { items: ExpenseItem[]; page: number; pageSize: number; totalCount: number; totalPages: number; grossTotal: number; withholdingTotal: number; netPayableTotal: number };
-export type ConfirmExpense = { expenseId: string; businessId: string; supplierId: string; conceptId: string; costCenterId: string | null; supplierDocumentNumber: string; issuedAt: string; dueDate: string; currencyCode: "COP"; description: string; taxExclusiveAmount: number; vatAmount: number; withholdingJurisdictionCode: string | null; evidenceUrl: string | null };
+export type ConfirmExpense = { expenseId: string; businessId: string; supplierId: string; conceptId: string; costCenterId: string | null; supplierDocumentNumber: string | null; issuedAt: string; dueDate: string; currencyCode: "COP"; description: string; taxExclusiveAmount: number; vatAmount: number; withholdingJurisdictionCode: string | null; evidenceUrl: string | null; purchaseEvidenceType: PurchaseEvidenceType };
 export type SaveExpenseConcept = { conceptId: string; businessId: string; name: string; expenseAccountId: string; defaultCostCenterId: string | null; withholdingConceptCode: string | null; isActive: boolean };
 
 export const expensesApi = {

@@ -4,6 +4,7 @@ using Auraly.Application.Sales;
 using Auraly.Commerce.Taxation.Application;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -40,7 +41,10 @@ public sealed partial class SqlExpenseStore
                 sale.SoldByUserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode,
                 number.Consecutive, null, issuedAt, issuedAt.AddDays(supplier.DefaultPaymentDueDays),
                 "COP", charge.Name, charge.SupplierUntaxedAmount, charge.SupplierVatAmount,
-                charge.Amount, null, withholding, sale.DocumentId);
+                charge.Amount, null, withholding, sale.DocumentId,
+                supplier.PurchaseEvidencePolicy == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
+                    ? PurchaseEvidenceTypes.BuyerElectronicSupportDocument
+                    : PurchaseEvidenceTypes.InternalReceiptVoucher);
             return new AcceptedExpense(payload, $"invoice-charge:{charge.AppliedChargeId:N}",
                 SHA256.HashData(Encoding.UTF8.GetBytes(ExpenseContractSerializer.Serialize(payload))), ids.NewId());
         }).ToArray();

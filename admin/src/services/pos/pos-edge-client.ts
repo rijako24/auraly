@@ -718,7 +718,7 @@ export interface PosClient {
     documentType: "SalesInvoice" | "SalesReceipt", paymentReference?: string | null,
     bankAccountId?: string | null, paymentNotes?: string | null, printAfterInvoice?: boolean,
     idempotencyKey?: string, onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
-    includeCreditAcknowledgement?: boolean, charge?: OrderInvoiceChargeSelection | null,
+    includeCreditAcknowledgement?: boolean, charges?: OrderInvoiceChargeSelection[] | null,
   ): Promise<InvoiceOrdersResponse>;
   saveCharge(draftId: string, input: AddInvoiceCharge): Promise<PosDraft>;
   removeCharge(draftId: string, appliedChargeId: string): Promise<PosDraft>;
@@ -1474,14 +1474,14 @@ export class PosEdgeClient implements PosClient {
     documentType: "SalesInvoice" | "SalesReceipt", paymentReference?: string | null,
     bankAccountId?: string | null, paymentNotes?: string | null, printAfterInvoice = true,
     idempotencyKey = crypto.randomUUID(), onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
-    includeCreditAcknowledgement = false, charge?: OrderInvoiceChargeSelection | null,
+    includeCreditAcknowledgement = false, charges?: OrderInvoiceChargeSelection[] | null,
   ): Promise<InvoiceOrdersResponse> {
     const scope = this.requiredOrderScope();
     const invoiceRequest = (requestedOrderIds: string[]) => ({
       workSessionId: scope.workSessionId, warehouseId: scope.warehouseId,
       userId: scope.userId, orderIds: requestedOrderIds, paymentMethodCode,
       paymentReference: paymentReference ?? null, bankAccountId: bankAccountId ?? null,
-      paymentNotes: paymentNotes ?? null, documentType, charge: charge ?? null,
+      paymentNotes: paymentNotes ?? null, documentType, charges: charges ?? null,
     });
     if (paymentMethodCode === "Credit") {
       const issues = await this.request<OrderCreditValidationIssue[]>(

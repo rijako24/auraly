@@ -178,7 +178,7 @@ export default function PricingPage() {
     }
     try {
       const items = candidates.map((row) =>
-        buildPricePublicationItem(row, drafts[row.proposalId] ?? createPricePublicationDraft(row)));
+        buildPricePublicationItem(row, draftFor(row)));
       await publish.mutateAsync(items);
       setHiddenProposalIds((current) => {
         const next = new Set(current);
@@ -188,12 +188,14 @@ export default function PricingPage() {
       toast.success(candidates.length === 1
         ? "Precio publicado y notificado al punto de venta."
         : `${candidates.length} precios publicados en una sola operación.`);
+      return true;
     } catch (error) {
       toast.error(error instanceof Error
         ? error.message
         : "No fue posible publicar. Actualiza la lista y vuelve a intentar.");
+      return false;
     }
-  }, [drafts, publish]);
+  }, [draftFor, publish]);
 
   const publishAllPending = useCallback(async () => {
     const total = query.data?.totalCount ?? 0;
@@ -341,12 +343,14 @@ export default function PricingPage() {
   const bulkActions = useMemo(() => {
     const actions = [] as Array<{
       label: string;
-      onClick: (rows: PriceRevisionListItem[]) => void;
+      onClick: (rows: PriceRevisionListItem[]) => void | boolean | Promise<void | boolean>;
       variant?: "default" | "destructive";
+      disabled?: boolean;
     }>;
     if (canPublish && canBulk) actions.push({
       label: publish.isPending ? "Publicando..." : "Publicar selección",
-      onClick: (rows) => void publishRows(rows),
+      onClick: publishRows,
+      disabled: publish.isPending,
     });
     if (canPublish || canReview) actions.push({
       label: "Reporte para mostradores",

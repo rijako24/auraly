@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
+using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -10,6 +12,112 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Operational")]
 public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Enrolled_pos_rejects_a_refund_without_the_active_work_session()
+    {
+        var request = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, Guid.NewGuid(),
+            DateTimeOffset.UtcNow, ReturnEconomicResolutions.Refund,
+            SalesReturnRefundMethods.Cash, "Devolución sin sesión",
+            [new ConfirmSalesReturnLineRequest(
+                1, 1m, ReturnInventoryDispositions.Sellable)],
+            WorkSessionId: null, ReasonCode: "Other");
+        using var client = fixture.CreateClient();
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post, "/api/pos/v1/sales-returns/confirm")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        message.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        message.Headers.Add("X-Auraly-User-Id", fixture.UserId.ToString("D"));
+        message.Headers.Add("Idempotency-Key", request.ReturnId.ToString("D"));
+
+        using var response = await client.SendAsync(message);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains("no identificó el usuario o el negocio",
+            await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Closure_subtracts_each_refund_from_its_payment_method()
+    {
+        const long consecutive = 9_505;
+        var bankAccountId = await EnsureTransferBankAccountAsync();
+        var original = WithUblSnapshot(fixture.CreateValidRequest(consecutive) with
+        {
+            Payments =
+            [
+                new PosSalePaymentContract(1, "Cash", 4_000m, null),
+                new PosSalePaymentContract(2, "CreditCard", 4_000m,
+                    "SALE-9505", "Visa", "APPROVAL-9505"),
+                new PosSalePaymentContract(3, "Transfer", 3_900m, "TRANSFER-9505",
+                    BankAccountId: bankAccountId)
+            ]
+        });
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var uploadResponse = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
+        var originalJob = await JobEvidenceAsync(original.DocumentId);
+        Assert.True(originalJob.Status == "Completed", originalJob.LastError ?? originalJob.Status);
+
+        using var user = fixture.CreateAdminClient(
+            SalesReturnPermissionCodes.Create,
+            SalesReturnPermissionCodes.Confirm,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Close);
+        foreach (var (refundMethod, closureMethod) in new[]
+        {
+            (SalesReturnRefundMethods.Cash, "Cash"),
+            (SalesReturnRefundMethods.CreditCard, "Card"),
+            (SalesReturnRefundMethods.Transfer, "Transfer")
+        })
+        {
+            var before = await user.GetFromJsonAsync<WorkSessionClosurePreviewView>(
+                $"/api/commerce/v1/work-sessions/{fixture.WorkSessionId:D}/closure-preview");
+            Assert.NotNull(before);
+            var beforeMethod = Assert.Single(before.PaymentTotals,
+                value => value.PaymentMethodCode == closureMethod);
+            var request = new ConfirmSalesReturnRequest(
+                Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+                original.DocumentId, DateTimeOffset.UtcNow,
+                ReturnEconomicResolutions.Refund, refundMethod,
+                "Regresión de cierre por medio de pago",
+                [new ConfirmSalesReturnLineRequest(
+                    1, .2m, ReturnInventoryDispositions.Sellable)],
+                refundMethod == SalesReturnRefundMethods.Cash ? null : fixture.WorkSessionId,
+                refundMethod == SalesReturnRefundMethods.CreditCard ? 2 : null,
+                "Other",
+                BankAccountId: refundMethod == SalesReturnRefundMethods.Transfer
+                    ? bankAccountId
+                    : null,
+                SettlementReference: refundMethod == SalesReturnRefundMethods.Transfer
+                    ? "REFUND-TRANSFER-9505"
+                    : null);
+            using var message = Message(request, $"closure-refund-{request.ReturnId:N}");
+            using var response = await user.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var acceptance = await response.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
+            Assert.NotNull(acceptance);
+            Assert.Equal(2_380m, acceptance.TotalAmount);
+            Assert.Equal(refundMethod, acceptance.RefundMethodCode);
+            Assert.Equal(fixture.WorkSessionId, acceptance.WorkSessionId);
+
+            var after = await user.GetFromJsonAsync<WorkSessionClosurePreviewView>(
+                $"/api/commerce/v1/work-sessions/{fixture.WorkSessionId:D}/closure-preview");
+            Assert.NotNull(after);
+            var afterMethod = Assert.Single(after.PaymentTotals,
+                value => value.PaymentMethodCode == closureMethod);
+            Assert.Equal(beforeMethod.RefundAmount + 2_380m, afterMethod.RefundAmount);
+            Assert.Equal(beforeMethod.NetAmount - 2_380m, afterMethod.NetAmount);
+            Assert.Equal(before.TotalRefunds + 2_380m, after.TotalRefunds);
+            Assert.Equal(before.NetAmount - 2_380m, after.NetAmount);
+        }
+    }
+
     [Fact]
     public async Task Card_sale_can_be_refunded_in_cash_without_linking_the_original_payment()
     {
@@ -52,7 +160,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task User_with_create_permission_can_refund_without_an_operational_work_session()
+    public async Task Administrative_refund_uses_the_current_users_open_work_session()
     {
         var original = WithUblSnapshot(fixture.CreateValidRequest(9_504));
         using (var pos = fixture.CreateClient())
@@ -78,10 +186,13 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             request, $"sales-return-admin-cash-{request.ReturnId:N}");
         using var response = await user.SendAsync(message);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var acceptance = await response.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
+        Assert.NotNull(acceptance);
+        Assert.Equal(fixture.WorkSessionId, acceptance.WorkSessionId);
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id",
             request.ReturnId));
-        Assert.Equal(0, await ScalarAsync<int>(
+        Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'sales-return:',REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))",
             request.ReturnId));
     }
@@ -362,6 +473,51 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             "SELECT Status FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id";
         command.Parameters.AddWithValue("@Id", documentId);
         return Convert.ToString(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<(string Status, string? LastError)> JobEvidenceAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT Status,LastError FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id";
+        command.Parameters.AddWithValue("@Id", documentId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return (reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1));
+    }
+
+    private async Task<Guid> EnsureTransferBankAccountAsync()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read,
+            AccountingPermissionCodes.Configure);
+        var existing = await accounting.GetFromJsonAsync<BankAccountView[]>(
+            "/api/commerce/v1/accounting/bank-accounts?includeInactive=false") ?? [];
+        var available = existing.FirstOrDefault(account => account.IsActive);
+        if (available is not null)
+            return available.BankAccountId;
+
+        var accounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
+            "/api/commerce/v1/accounting/accounts") ?? [];
+        var postingAccount = Assert.Single(accounts, account => account.Code == "111005");
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var option = new SqlCommand("""
+            SELECT TOP(1) OptionId FROM reference.Options
+            WHERE CatalogCode=N'bank-account-type' AND Code=N'Checking' AND IsActive=1;
+            """, connection);
+        var optionId = (Guid)(await option.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("The bank-account-type seed is missing."));
+        var bankAccountId = Guid.NewGuid();
+        using var response = await accounting.PutAsJsonAsync(
+            $"/api/commerce/v1/accounting/bank-accounts/{bankAccountId:D}",
+            new SaveBankAccountRequest(bankAccountId, postingAccount.AccountId, optionId,
+                "Banco de prueba", $"{bankAccountId:N}"[..12],
+                "Cuenta de devoluciones", true, true, null));
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        return bankAccountId;
     }
 
     private async Task<decimal> InventoryValueAsync()

@@ -5,6 +5,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Sales;
 using Auraly.Application.Fiscal;
 using Auraly.Domain.Expenses;
@@ -43,7 +44,12 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
         while (await reader.ReadAsync(ct)) accounts.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2)));
         await reader.NextResultAsync(ct); var centers = new List<ExpenseCostCenterOption>();
         while (await reader.ReadAsync(ct)) centers.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3)));
-        return new(concepts, suppliers, accounts, centers);
+        return new(concepts, suppliers, accounts, centers,
+        [
+            new(PurchaseEvidenceTypes.SupplierElectronicInvoice, "Factura electrónica", "Factura electrónica emitida por el proveedor."),
+            new(PurchaseEvidenceTypes.InternalReceiptVoucher, "Comprobante interno", "Comprobante interno para respaldar el gasto."),
+            new(PurchaseEvidenceTypes.BuyerElectronicSupportDocument, "Documento soporte", "Documento soporte electrónico emitido y enviado a la DIAN.")
+        ]);
     }
 
     public async Task<IReadOnlyList<ExpenseConceptView>> ListConceptsAsync(ExpenseUserIdentity user, bool includeInactive, CancellationToken ct)
@@ -106,7 +112,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             SELECT COUNT(*),COALESCE(SUM(e.GrossAmount),0),COALESCE(SUM(e.WithholdingAmount),0),COALESCE(SUM(e.NetPayable),0)
               FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId WHERE {filter};
             SELECT e.ExpenseId,e.DocumentNumber,e.SupplierDocumentNumber,e.SupplierId,s.Name,e.ExpenseConceptId,c.Name,
-              e.IssuedAt,e.DueDate,e.GrossAmount,e.WithholdingAmount,e.NetPayable,e.CurrencyCode,e.Status,e.EvidenceUrl
+              e.IssuedAt,e.DueDate,e.GrossAmount,e.WithholdingAmount,e.NetPayable,e.CurrencyCode,e.Status,e.EvidenceUrl,e.PurchaseEvidenceType
               FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId
               WHERE {filter} ORDER BY e.IssuedAt DESC,e.ExpenseId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;
             """, connection);
@@ -118,7 +124,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
         await using var reader = await command.ExecuteReaderAsync(ct); await reader.ReadAsync(ct);
         var count = reader.GetInt32(0); var gross = reader.GetDecimal(1); var held = reader.GetDecimal(2); var net = reader.GetDecimal(3);
         await reader.NextResultAsync(ct); var items = new List<ExpenseListItem>();
-        while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14)));
+        while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15)));
         return new(items, page, pageSize, count, gross, held, net);
     }
 
@@ -150,8 +156,10 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
                 validate.Parameters.AddWithValue("@ConceptId", request.ConceptId); validate.Parameters.AddWithValue("@BusinessId", user.BusinessId); validate.Parameters.AddWithValue("@TenantId", user.TenantId); validate.Parameters.AddWithValue("@SupplierId", request.SupplierId); validate.Parameters.AddWithValue("@CenterId", (object?)request.CostCenterId ?? DBNull.Value);
                 await using var reader = await validate.ExecuteReaderAsync(ct); if (!await reader.ReadAsync(ct)) throw new ExpenseValidationException("Proveedor, concepto o centro de costo no pertenecen a la empresa."); accountId = reader.GetGuid(0); defaultCenter = reader.IsDBNull(1) ? null : reader.GetGuid(1); purchaseEvidencePolicy = reader.IsDBNull(2) ? null : reader.GetString(2);
             }
+            if (!PurchaseEvidenceTypes.AllowedFor(purchaseEvidencePolicy).Contains(request.PurchaseEvidenceType))
+                throw new ExpenseValidationException("El tipo de documento no está permitido por la política fiscal del proveedor.");
             var now = timeProvider.GetUtcNow();
-            var requiresSupport = purchaseEvidencePolicy == "BuyerElectronicSupportDocument";
+            var requiresSupport = request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument;
             if (requiresSupport && !await SqlDianDocumentQuota.TryReserveAsync(connection, tx,
                     user.BusinessId, request.ExpenseId, "SupportDocument", now, ct))
                 throw new ExpenseValidationException(
@@ -171,7 +179,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             }
             var number = await SqlOperationalDocumentAllocator.AllocateNumberAsync(connection, tx, user.BusinessId, ExpenseDocumentTypes.Expense, now, ct);
             var accountingJobId = ids.NewId(); var center = request.CostCenterId ?? defaultCenter;
-            var payload = new ExpenseDocumentPayload(user.TenantId, user.BusinessId, request.ExpenseId, request.SupplierId, request.ConceptId, accountId, center, user.UserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, request.SupplierDocumentNumber, request.IssuedAt, request.DueDate, request.CurrencyCode, request.Description, amounts.TaxExclusiveAmount, amounts.VatAmount, amounts.GrossAmount, request.EvidenceUrl, withholding);
+            var payload = new ExpenseDocumentPayload(user.TenantId, user.BusinessId, request.ExpenseId, request.SupplierId, request.ConceptId, accountId, center, user.UserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, request.SupplierDocumentNumber, request.IssuedAt, request.DueDate, request.CurrencyCode, request.Description, amounts.TaxExclusiveAmount, amounts.VatAmount, amounts.GrossAmount, request.EvidenceUrl, withholding, PurchaseEvidenceType: request.PurchaseEvidenceType);
             await PersistAcceptedAsync(connection, tx,
                 [new(payload, idempotencyKey, requestHash, accountingJobId)], now, ct);
             if (support is not null)

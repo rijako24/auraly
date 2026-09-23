@@ -69,7 +69,8 @@ public static class PosSalesReturnApi
     private static SalesReturnUserIdentity Validate(HttpContext context,
         PosSalesReturnContext requested, IReadOnlySet<string> permissions)
     {
-        if (requested.BusinessId == Guid.Empty || requested.WorkSessionId == Guid.Empty ||
+        if (requested.BusinessId == Guid.Empty || !requested.WorkSessionId.HasValue ||
+            requested.WorkSessionId.Value == Guid.Empty ||
             !Guid.TryParse(context.Request.Headers["X-Auraly-User-Id"], out var userId))
             throw new SalesReturnForbiddenException(
                 "El dispositivo no identificó el usuario o el negocio.");

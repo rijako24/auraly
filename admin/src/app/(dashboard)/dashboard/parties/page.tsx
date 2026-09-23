@@ -187,6 +187,7 @@ function CreateThirdPartyDialog({open,permissions,initialParty,onClose}:{open:bo
       siteName:found.primarySite?.name??current.siteName,
       addressLine:found.primarySite?.addressLine??current.addressLine,
       neighborhood:found.primarySite?.neighborhood??"",
+      postalCode:found.primarySite?.postalCode??"",
       googleMapsUrl:found.primarySite?.googleMapsUrl??"",
       googlePlaceId:found.primarySite?.googlePlaceId??"",
       latitude:found.primarySite?.latitude==null?"":String(found.primarySite.latitude),
@@ -232,6 +233,7 @@ function CreateThirdPartyDialog({open,permissions,initialParty,onClose}:{open:bo
     if(role==="Customer"&&allowsCreditSales&&(parsedCreditLimit!=null&&parsedCreditLimit<0))nextErrors.creditLimit="El cupo no puede ser negativo";
     if(role==="Customer"&&allowsCreditSales&&(!Number.isInteger(parsedCreditDueDays)||parsedCreditDueDays<0||parsedCreditDueDays>3650))nextErrors.creditDueDays="El vencimiento debe estar entre 0 y 3650 días";
     if(role==="Supplier"&&(!Number.isInteger(parsedSupplierPaymentDueDays)||parsedSupplierPaymentDueDays<0||parsedSupplierPaymentDueDays>3650))nextErrors.supplierPaymentDueDays="El plazo debe estar entre 0 y 3650 días";
+    if(role==="Supplier"&&supplierEvidencePolicy==="BuyerElectronicSupportDocument"&&!/^\d{6}$/.test(form.postalCode.trim()))nextErrors.postalCode="El documento soporte exige seis dígitos";
     if(role==="User"&&!form.email.trim())nextErrors.email="Este campo es requerido";
     if(role==="User"&&!username.trim())nextErrors.username="Este campo es requerido";
     if(role==="User"&&!password.trim())nextErrors.password="Este campo es requerido";

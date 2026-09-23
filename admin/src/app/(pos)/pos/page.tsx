@@ -1221,6 +1221,7 @@ export default function PosPage() {
         !event.ctrlKey &&
         shortcut === POS_ACTION_SHORTCUTS.returns &&
         serverConnected &&
+        Boolean(workstation.workSessionId) &&
         canCreateSalesReturns &&
         !busy &&
         !temporaryOpen &&
@@ -2695,7 +2696,7 @@ export default function PosPage() {
     idempotencyKey: string,
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
-    charge?: OrderInvoiceChargeSelection | null,
+    charges?: OrderInvoiceChargeSelection[] | null,
   ) {
     const result = await runOnlineOrderRequest(async () => {
       const orderClient = await getOrderClient();
@@ -2710,7 +2711,7 @@ export default function PosPage() {
         idempotencyKey,
         onProgress,
         true,
-        charge,
+        charges,
       );
     });
     setMessage(
@@ -3251,7 +3252,7 @@ export default function PosPage() {
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.invoices}</span>
               </button>
               <button type="button"
-                disabled={!serverConnected || !canCreateSalesReturns || busy}
+                disabled={!serverConnected || !workstation.workSessionId || !canCreateSalesReturns || busy}
                 onClick={() => setReturnsOpen(true)}
                 title={serverConnected ? "Abrir devoluciones" : "Requiere conexión con Auraly Server"}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
@@ -3694,7 +3695,7 @@ export default function PosPage() {
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={async (orders) =>
                   printOrdersOnline(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charge) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     paymentMethodCode,
@@ -3703,7 +3704,7 @@ export default function PosPage() {
                     idempotencyKey,
                     onProgress,
                     undefined,
-                    charge,
+                    charges,
                   )
                 }
                 onLoadInvoiceCharges={(page) => client.invoiceCharges(page)}
@@ -3749,7 +3750,7 @@ export default function PosPage() {
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={async (orders) =>
                 printOrdersOnline(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charge) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
@@ -3758,7 +3759,7 @@ export default function PosPage() {
                   idempotencyKey,
                   onProgress,
                   undefined,
-                  charge,
+                  charges,
                 )
               }
               onLoadInvoiceCharges={(page) => client.invoiceCharges(page)}

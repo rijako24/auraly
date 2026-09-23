@@ -58,11 +58,11 @@ public sealed class OrderBatchService(
             actor.Permissions);
         var normalizedOrders = request.OrderIds.Distinct().ToArray();
         var batchOrders = await orders.GetBatchAsync(actor, normalizedOrders, cancellationToken);
-        var chargeDefinition = await ResolveChargeDefinitionAsync(actor, request, cancellationToken);
+        var chargeDefinitions = await ResolveChargeDefinitionsAsync(actor, request, cancellationToken);
         var issues = await checkout.ValidateOrderCreditBatchAsync(
             identity,
             actor.BusinessId,
-            CreditAmounts(normalizedOrders, batchOrders, request.Charge, chargeDefinition),
+            CreditAmounts(normalizedOrders, batchOrders, ChargeSelections(request), chargeDefinitions),
             cancellationToken);
         return issues.Select(MapCreditIssue).ToArray();
     }
@@ -91,7 +91,7 @@ public sealed class OrderBatchService(
 
         var batchOrders = await orders.GetBatchAsync(
             actor, normalizedOrders, cancellationToken);
-        var chargeDefinition = await ResolveChargeDefinitionAsync(
+        var chargeDefinitions = await ResolveChargeDefinitionsAsync(
             actor, request, cancellationToken);
 
         if (request.PaymentMethodCode == "Credit")
@@ -99,7 +99,7 @@ public sealed class OrderBatchService(
             var creditIssues = await checkout.ValidateOrderCreditBatchAsync(
                 identity,
                 actor.BusinessId,
-                CreditAmounts(normalizedOrders, batchOrders, request.Charge, chargeDefinition),
+                CreditAmounts(normalizedOrders, batchOrders, ChargeSelections(request), chargeDefinitions),
                 cancellationToken);
             if (creditIssues.Count > 0)
             {
@@ -232,13 +232,15 @@ public sealed class OrderBatchService(
                         line.PriceSource,
                         line.IsGenericProductSnapshot)).ToArray());
                 var productTotal = source.Lines.Sum(line => line.PublicLineTotal);
-                var charge = request.Charge is null || chargeDefinition is null
-                    ? null
-                    : InvoiceChargeApplication.Calculate(productTotal, new InvoiceChargeSelection(
-                        DeterministicGuid($"order-charge:{lease.OperationId:N}:{orderId:N}:{request.Charge.ChargeId:N}"),
-                        chargeDefinition, request.Charge.SupplierId, request.Charge.ManualAmount));
-                source = source with { Charges = charge is null ? null : [charge] };
-                var payableAmount = productTotal + (charge?.InvoicedAmount ?? 0m);
+                var requestedCharges = ChargeSelections(request);
+                var charges = requestedCharges.Count == 0
+                    ? []
+                    : InvoiceChargeApplication.Calculate(productTotal, requestedCharges.Select((selection, index) =>
+                        new InvoiceChargeSelection(
+                            DeterministicGuid($"order-charge:{lease.OperationId:N}:{orderId:N}:{selection.ChargeId:N}"),
+                            chargeDefinitions[index], selection.SupplierId, selection.ManualAmount)).ToArray());
+                source = source with { Charges = charges.Count == 0 ? null : charges };
+                var payableAmount = productTotal + charges.Sum(charge => charge.InvoicedAmount);
                 var issued = await checkout.CompleteOrderAsync(
                     identity,
                     source,
@@ -342,34 +344,38 @@ public sealed class OrderBatchService(
             issue.AvailableCredit,
             issue.Reason);
 
-    private async Task<InvoiceChargeDefinition?> ResolveChargeDefinitionAsync(
+    private async Task<IReadOnlyList<InvoiceChargeDefinition>> ResolveChargeDefinitionsAsync(
         OrderActor actor,
         InvoiceOrdersRequest request,
         CancellationToken cancellationToken)
     {
-        if (request.Charge is null) return null;
-        var resolved = await invoiceCharges.ResolveForSaleAsync(
+        var selections = ChargeSelections(request);
+        if (selections.Count == 0) return [];
+        return await invoiceCharges.ResolveDefinitionsForSaleAsync(
             new(actor.TenantId, actor.BusinessId, actor.UserId, actor.Permissions),
-            DeterministicGuid($"resolve-charge:{request.Charge.ChargeId:N}:{request.Charge.ChargeVersion}"),
-            request.Charge.ChargeId, request.Charge.ChargeVersion,
-            request.Charge.SupplierId, request.Charge.ManualAmount, cancellationToken);
-        return resolved.Definition;
+            selections.Select(value => (value.ChargeId, value.ChargeVersion)).ToArray(),
+            cancellationToken);
     }
 
     private static IReadOnlyDictionary<Guid, decimal> CreditAmounts(
         IReadOnlyCollection<Guid> orderIds,
         IReadOnlyDictionary<Guid, OrderDetail> ordersById,
-        OrderInvoiceChargeSelection? selection,
-        InvoiceChargeDefinition? definition) =>
+        IReadOnlyList<OrderInvoiceChargeSelection> selections,
+        IReadOnlyList<InvoiceChargeDefinition> definitions) =>
         orderIds.ToDictionary(orderId => orderId, orderId =>
         {
-            if (selection is null || definition is null ||
+            if (selections.Count == 0 ||
                 !ordersById.TryGetValue(orderId, out var order)) return 0m;
             var productTotal = order.Lines.Sum(line => line.LineTotal);
-            return InvoiceChargeApplication.Calculate(productTotal, new InvoiceChargeSelection(
-                DeterministicGuid($"credit-charge:{orderId:N}:{selection.ChargeId:N}"),
-                definition, selection.SupplierId, selection.ManualAmount)).InvoicedAmount;
+            return InvoiceChargeApplication.Calculate(productTotal, selections.Select((selection, index) =>
+                new InvoiceChargeSelection(
+                    DeterministicGuid($"credit-charge:{orderId:N}:{selection.ChargeId:N}"),
+                    definitions[index], selection.SupplierId, selection.ManualAmount)).ToArray())
+                .Sum(charge => charge.InvoicedAmount);
         });
+
+    private static IReadOnlyList<OrderInvoiceChargeSelection> ChargeSelections(InvoiceOrdersRequest request) =>
+        request.Charges ?? (request.Charge is null ? [] : [request.Charge]);
 
     private static void Validate(
         OrderActor actor,
@@ -412,6 +418,12 @@ public sealed class OrderBatchService(
         if (actor.WorkSessionId is not null && actor.WorkSessionId != request.WorkSessionId)
             throw new OrderForbiddenException(
                 "La sesión solicitada no coincide con el dispositivo autenticado.");
+        var charges = ChargeSelections(request);
+        if (request.Charge is not null && request.Charges is not null ||
+            charges.Count > InvoiceChargeApplication.MaximumChargesPerInvoice ||
+            charges.Any(value => value.ChargeId == Guid.Empty || value.ChargeVersion < 1 || value.SupplierId == Guid.Empty) ||
+            charges.Select(value => (value.ChargeId, value.ChargeVersion)).Distinct().Count() != charges.Count)
+            throw new OrderValidationException("Selecciona hasta diez cargos distintos con proveedor válido.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 100)
             throw new OrderValidationException(
                 "Idempotency-Key es obligatorio y admite máximo 100 caracteres.");
@@ -431,10 +443,10 @@ public sealed class OrderBatchService(
             request.BankAccountId?.ToString("D") ?? string.Empty,
             request.PaymentNotes ?? string.Empty,
             request.DocumentType,
-            request.Charge?.ChargeId.ToString("D") ?? string.Empty,
-            request.Charge?.ChargeVersion.ToString() ?? string.Empty,
-            request.Charge?.SupplierId.ToString("D") ?? string.Empty,
-            request.Charge?.ManualAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+            string.Join(",", ChargeSelections(request).Select(charge => string.Join(":",
+                charge.ChargeId.ToString("D"), charge.ChargeVersion.ToString(),
+                charge.SupplierId.ToString("D"),
+                charge.ManualAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty))),
             string.Join(",", orderIds.Select(id => id.ToString("D"))));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
