@@ -18,6 +18,7 @@ test("gastos: seleccionar proveedor y concepto conserva la selección y envía s
   }, { user, businessId });
   let confirmation: Record<string, unknown> | undefined;
   let supplierQueries = 0;
+  const supplierSearches: string[] = [];
   await page.route("**/api/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -29,11 +30,13 @@ test("gastos: seleccionar proveedor y concepto conserva la selección y envía s
     else if (path.endsWith("/expenses/options")) body = {
       concepts: [{ conceptId, businessId, code: "DOM", name: "Domicilios", expenseAccountId: "account", expenseAccountCode: "513550", expenseAccountName: "Transporte", defaultCostCenterId: null, defaultCostCenterName: null, withholdingConceptCode: null, isActive: true }],
       suppliers: [], expenseAccounts: [{ accountId: "account", code: "513550", name: "Transporte" }], costCenters: [],
+      purchaseEvidenceTypes: [{ code: "SupplierElectronicInvoice", label: "Factura electrónica", description: "Factura del proveedor" }],
     };
     else if (path.endsWith("/expenses/confirm")) { confirmation = route.request().postDataJSON(); body = { expenseId: confirmation?.expenseId }; }
     else if (path.endsWith("/expenses")) body = { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0, grossTotal: 0, withholdingTotal: 0, netPayableTotal: 0 };
     else if (path.endsWith("/parties/role-options")) {
       supplierQueries++;
+      supplierSearches.push(url.searchParams.get("search") ?? "");
       expect(url.searchParams.get("role")).toBe("Supplier");
       body = { items: [{ role: "Supplier", roleId: supplierId, partyId: supplierId, displayName: "Domiciliario de prueba", identification: "PRUEBA-001" }], page: 1, totalPages: 1, totalCount: 1 };
     }
@@ -44,16 +47,20 @@ test("gastos: seleccionar proveedor y concepto conserva la selección y envía s
   const dialog = page.getByRole("dialog", { name: "Registrar gasto" });
   const supplier = dialog.getByRole("combobox", { name: "Seleccionar supplier" });
   await supplier.click();
+  const search = page.getByPlaceholder("Buscar por nombre o identificación…");
+  await search.fill("Domici");
+  await expect(search).toHaveValue("Domici");
+  await expect.poll(() => supplierSearches).toContain("Domici");
   await page.getByRole("option", { name: /Domiciliario de prueba/ }).click();
   await expect(supplier).toContainText("Domiciliario de prueba");
   await expect(supplier).toHaveAttribute("aria-expanded", "false");
   await dialog.getByRole("combobox").filter({ hasText: "Selecciona" }).click();
   await page.getByRole("option", { name: "Domicilios", exact: true }).click();
   await expect(dialog).toContainText("513550 · Transporte");
-  await dialog.getByLabel("Factura o soporte", { exact: true }).fill("PRUEBA-001");
-  await dialog.getByLabel("Base antes de IVA", { exact: true }).fill("5000");
+  await dialog.getByText("Número de factura electrónica", { exact: true }).locator("..").locator("input").fill("PRUEBA-001");
+  await dialog.getByText("Base antes de IVA", { exact: true }).locator("..").locator("input").fill("5000");
   await dialog.getByRole("button", { name: "Confirmar gasto" }).click();
   await expect(dialog).not.toBeVisible();
   expect(confirmation).toMatchObject({ supplierId, conceptId, businessId, taxExclusiveAmount: 5000 });
-  expect(supplierQueries).toBe(1);
+  expect(supplierQueries).toBeGreaterThanOrEqual(2);
 });

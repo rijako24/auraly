@@ -141,9 +141,7 @@ function LoginForm() {
         const verifiedUser = await authApi.me();
         rememberTenantKey(verifiedUser.tenantKey || effectiveTenantKey);
         setAuth(verifiedUser);
-        const redirect = searchParams.get("redirect")
-          ?? defaultStartRoute(verifiedUser.roles, verifiedUser.permissions);
-        router.push(redirect.startsWith("/") ? redirect : "/dashboard");
+        return verifiedUser;
       };
 
       if (edgeClient && !forceCloud) {
@@ -151,16 +149,16 @@ function LoginForm() {
         setLocalPosAvailable(true);
         if (requiresCloudWorkspace(localSession.permissions)) {
           const health = await edgeClient.health();
-          if (health.serverConnected) {
-            await loginToCloud(localSession.userId);
-            return;
-          }
-        }
-        useAuthStore.getState().clearAuth();
+          if (health.serverConnected) await loginToCloud(localSession.userId);
+          else useAuthStore.getState().clearAuth();
+        } else useAuthStore.getState().clearAuth();
         window.location.replace("/pos");
         return;
       }
-      await loginToCloud();
+      const verifiedUser = await loginToCloud();
+      const redirect = searchParams.get("redirect")
+        ?? defaultStartRoute(verifiedUser.roles, verifiedUser.permissions);
+      router.push(redirect.startsWith("/") ? redirect : "/dashboard");
     } catch (err) {
       const apiError = err as ApiError;
       setError(apiError?.message || (edgeClient && !forceCloud

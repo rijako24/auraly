@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useConfirmSalesReturn, useReturnableSales, type PosSalesReturnRuntime } from "@/hooks/use-sales-returns";
 import { calculateSalesReturnSelection, salesReturnPurchasedUnitPrice } from "./sales-return-calculation";
 import { salesReturnsApi, type ReturnableSale, type ReturnableSaleListItem, type SalesReturnRefundMethod, type SalesReturnResolution, type SalesReturnScope } from "@/services/api/sales-returns";
+import { workSessionsApi } from "@/services/api/work-sessions";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
@@ -210,7 +211,14 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
       const fingerprint = JSON.stringify(draft);
       const request = retry.current?.fingerprint === fingerprint
         ? retry.current.request
-        : { ...draft, returnId: crypto.randomUUID(), returnedAt: new Date().toISOString() };
+        : {
+            ...draft,
+            returnId: crypto.randomUUID(),
+            returnedAt: new Date().toISOString(),
+            workSessionId: runtime
+              ? workSessionId
+              : (await workSessionsApi.currentOrOpen(businessId)).workSessionId,
+          };
       retry.current = { fingerprint, request };
       const result = await confirm.mutateAsync(request);
       retry.current = null;

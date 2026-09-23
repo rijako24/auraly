@@ -891,9 +891,18 @@ export default function PosPage() {
           return;
         }
         if (active && client.mode === "edge") {
-          if (preparationActiveRef.current && health.status === "Ready") {
+          if (client instanceof PosEdgeClient && preparationActiveRef.current && health.status === "Ready") {
             // Keep the terminal checkpoint visible before opening the POS.
             await new Promise((resolve) => window.setTimeout(resolve, 350));
+            if (!active) return;
+            preparationActiveRef.current = false;
+            setPreparationActive(false);
+            setSetupNotice(null);
+            setSetupError(null);
+            await client.logout();
+            setEdgeReady(false);
+            setEdgeLoginState("required");
+            return;
           }
           if (!active) return;
           setEdgeLoginState(null);
@@ -2850,6 +2859,23 @@ export default function PosPage() {
     window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     setSetupLoading(true);
     try {
+      const enrolledClient = new PosEdgeClient(edgeEnrollmentToken, readEdgeUserSession());
+      const enrolledHealth = await enrolledClient.health();
+      if (resolvePosExecutionMode(true, enrolledHealth) === "edge") {
+        initialEdgeHealth.current = { client: enrolledClient, health: enrolledHealth };
+        setPreparationHealth(enrolledHealth);
+        if (enrolledHealth.status === "LoginRequired") {
+          preparationActiveRef.current = false;
+          setPreparationActive(false);
+        }
+        setEdgeLoginState(
+          isPosPreparationPending(enrolledHealth.status) ? "preparing" :
+            enrolledHealth.status === "LoginRequired" ? "required" : null,
+        );
+        setClient(enrolledClient);
+        setSetupNotice(null);
+        return;
+      }
       const pending = pendingEnrollment.current;
       const enrollment = pending?.businessId === option.businessId &&
         pending.warehouseId === option.warehouseId &&

@@ -50,10 +50,15 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   let completed = false;
   let catalogPrepared = false;
   let workSessionOpened = false;
+  let loggedOut = false;
   let redeemAttempts = 0;
   let completeCalls = 0;
   let workSessionCalls = 0;
   let cookieReturnCalls = 0;
+  let authorizationCalls = 0;
+  let cloudLoginCalls = 0;
+
+  await page.addInitScript(() => window.localStorage.setItem("auraly:last-tenant-key", "TEST"));
 
   await page.context().addCookies([{
     name: "auth_token",
@@ -110,6 +115,16 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
       });
       return;
     }
+    if (path === "/edge/v1/auth/logout") {
+      loggedOut = true;
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      return;
+    }
+    if (path === "/edge/v1/auth/login") {
+      loggedOut = false;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(localSession(false)) });
+      return;
+    }
     if (path === "/edge/v1/synchronization/refresh") {
       catalogPrepared = true;
       await route.fulfill({ status: 202, contentType: "application/json", body: "{}" });
@@ -120,7 +135,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          status: !redeemed ? "EnrollmentRequired" : !completed ? "IdentitySynchronizing" : !catalogPrepared ? "Synchronizing" : "Ready",
+          status: !redeemed ? "EnrollmentRequired" : !completed ? "IdentitySynchronizing" : !catalogPrepared ? "Synchronizing" : loggedOut ? "LoginRequired" : "Ready",
           initialEnrollmentSessionAvailable: redeemed && !completed,
           serverConnected: redeemed,
           pushConnected: redeemed,
@@ -130,11 +145,11 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
           businessName: redeemed ? "Sede prueba" : "",
           warehouseName: redeemed ? "Principal" : "",
           warehouseAllowsNegativeStockSales: false,
-          userDisplayName: completed ? "Admin Prueba" : "",
-          userId: completed ? userId : null,
-          workSessionId: workSessionOpened ? workSessionId : null,
+          userDisplayName: completed && !loggedOut ? "Admin Prueba" : "",
+          userId: completed && !loggedOut ? userId : null,
+          workSessionId: workSessionOpened && !loggedOut ? workSessionId : null,
           deviceId: redeemed ? "77777777-7777-7777-7777-777777777777" : null,
-          permissions: completed ? user.permissions : [],
+          permissions: completed && !loggedOut ? [...user.permissions, "catalog.read"] : [],
           fiscalReady: false,
           fiscalWarnings: [],
           dianQuotaAvailable: null,
@@ -219,7 +234,12 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown = {};
-    if (path === "/api/auth/me") body = user;
+    if (path === "/api/auth/login") {
+      cloudLoginCalls += 1;
+      expect(route.request().postDataJSON()).toMatchObject({ tenantKey: "TEST", username: "admin", password: "prueba-local" });
+      body = { user };
+    }
+    else if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/workspace/bootstrap")) {
       body = {
         tenantId,
@@ -232,6 +252,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
         maximumEnrolledDevices: 5,
       };
     } else if (path === "/api/commerce/v1/pos/enrollments") {
+      authorizationCalls += 1;
       body = {
         enrollmentSessionId: "88888888-8888-8888-8888-888888888888",
         redemptionCode: "123456",
@@ -278,16 +299,25 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   await expect(page.getByRole("button", { name: "Repetir enrolamiento" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Reintentar preparación" }).click();
-  await expect(page.locator("#pos-scanner")).toBeEnabled({ timeout: 15_000 });
+  await expect(page).toHaveURL(/\/login(?:\?|$)/, { timeout: 15_000 });
+  await expect.poll(() => loggedOut).toBe(true);
   expect(redeemAttempts).toBe(2);
   expect(completeCalls).toBe(1);
   expect(workSessionCalls).toBe(1);
 
   await page.reload();
-  await expect(page.locator("#pos-scanner")).toBeEnabled({ timeout: 15_000 });
+  await expect(page).toHaveURL(/\/login(?:\?|$)/, { timeout: 15_000 });
   expect(completeCalls).toBe(1);
   expect(workSessionCalls).toBe(1);
-
+  await page.goto("/pos#edgeToken=test-session-token-with-at-least-32-bytes");
+  await expect(page).toHaveURL(/\/login(?:\?|$)/, { timeout: 15_000 });
+  expect(authorizationCalls).toBe(1);
+  await page.getByLabel("Usuario").fill("admin");
+  await page.getByLabel("Contraseña", { exact: true }).fill("prueba-local");
+  await page.getByRole("button", { name: "Iniciar sesión" }).click();
+  await expect(page).toHaveURL(/\/pos(?:#|$)/, { timeout: 15_000 });
+  await expect(page.locator("#pos-scanner")).toBeEnabled({ timeout: 15_000 });
+  expect(cloudLoginCalls).toBe(1);
   const returns = page.getByRole("button", { name: /Devoluciones/ });
   await expect(returns).toBeEnabled();
   await returns.click();
@@ -307,6 +337,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
         "sales.returns.read",
         "sales.returns.create",
         "sales.returns.confirm",
+        "catalog.read",
       ],
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
       token: "local-user-session",

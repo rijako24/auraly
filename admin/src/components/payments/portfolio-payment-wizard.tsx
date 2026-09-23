@@ -17,6 +17,7 @@ import { payablesApi,type SupplierPaymentTender } from "@/services/api/payables"
 import { partiesApi } from "@/services/api/parties";
 import { referenceOptionsApi } from "@/services/api/reference-options";
 import { receivablesApi,type CustomerPaymentMethod,type CustomerPaymentTender } from "@/services/api/receivables";
+import { workSessionsApi } from "@/services/api/work-sessions";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { formatCurrency,formatDate } from "@/lib/utils";
@@ -68,7 +69,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     let attempt=pendingAttempt.current;
     if(!attempt){const saved=sessionStorage.getItem(attemptStorageKey);if(saved){const parsed=JSON.parse(saved) as PaymentAttempt;if(parsed?.fingerprint===fingerprint&&parsed.paymentId&&parsed.paidAt)attempt=parsed;}}
     if(!attempt||attempt.fingerprint!==fingerprint){
-      const sessionId=workSessionId===undefined?(direction==="receivable"?await receivablesApi.currentWorkSession(businessId):await payablesApi.currentWorkSession(businessId)).workSessionId:workSessionId;
+      const sessionId=workSessionId===undefined?(await workSessionsApi.currentOrOpen(businessId)).workSessionId:workSessionId;
       attempt={fingerprint,paymentId:crypto.randomUUID(),paidAt:new Date().toISOString(),sessionId:sessionId??null};
     }
     sessionStorage.setItem(attemptStorageKey,JSON.stringify(attempt));

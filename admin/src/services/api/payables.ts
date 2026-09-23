@@ -84,7 +84,6 @@ export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierN
 export const payablesApi = {
   supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;status?:PayableStatus;from?:string;to?:string})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
   payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
-  currentWorkSession:(businessId:string)=>apiClient.post<{workSessionId:string}>("/commerce/v1/work-sessions/current",{businessId,warehouseId:null,deviceId:null}),
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   paymentHistory: (supplierId:string,page=1,pageSize=5) =>

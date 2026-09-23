@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,7 @@ export function PagedEntitySelect<T>({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(() => {
@@ -91,12 +92,12 @@ export function PagedEntitySelect<T>({
 
   return <Popover modal open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild>
-      <Button type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("w-full justify-between font-normal", className)}>
+      <Button ref={triggerRef} type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("w-full justify-between font-normal", className)}>
         <span className="truncate">{selected?.label ?? placeholder}</span>
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/>
       </Button>
     </PopoverTrigger>
-    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start" portalContainer={triggerRef.current?.closest<HTMLElement>("[role='dialog']") ?? undefined}>
       <Command shouldFilter={false}>
         <CommandInput
           value={search}

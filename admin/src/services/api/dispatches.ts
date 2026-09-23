@@ -1,4 +1,5 @@
 import { apiClient, withPagedDefaults } from "./client";
+import { workSessionsApi } from "./work-sessions";
 import { loadDispatchSnapshot, loadPendingEvidence, queueDeliveryOperation, queueExpenseOperation, removePendingEvidence, saveDispatchSnapshot, savePendingEvidence } from "@/lib/dispatch-offline-store";
 
 export type DispatchStatus = "Draft" | "Prepared" | "InVerification" | "Verified" | "Released" | "InDelivery" | "PendingSettlement" | "SettlementProcessing" | "SettlementAttention" | "Closed" | "Cancelled";
@@ -56,7 +57,7 @@ export const dispatchesApi = {
   settle: async (id:string,cashReceived:number,notes:string|null) => {
     const businessId=window.localStorage.getItem("selected_business_id");
     if(!businessId)throw new Error("Selecciona la sede antes de recibir el dinero del despacho.");
-    const session=await apiClient.post<{workSessionId:string}>("/commerce/v1/work-sessions/current",{businessId,warehouseId:null,deviceId:null});
+    const session=await workSessionsApi.currentOrOpen(businessId);
     return rememberedExecution(apiClient.post<DispatchExecution>(`/commerce/v1/dispatches/${id}/settle`,{cashReceived,notes,idempotencyKey:crypto.randomUUID(),workSessionId:session.workSessionId}));
   },
 };

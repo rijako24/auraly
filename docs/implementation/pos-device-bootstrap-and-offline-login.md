@@ -43,6 +43,17 @@ login local ejecuta un asistente mediante un código de activación de un solo u
 8. registra cursores y el estado durable de preparación;
 9. habilita el login local.
 
+Al terminar la descarga inicial, la sesión local usada para el traspaso se cierra
+y la instalación vuelve a `/login`. El usuario inicia una sesión local nueva antes
+de vender. Un reingreso o reintento consulta primero el estado durable de POS Edge:
+si el dispositivo ya está enrolado, continúa desde ese estado y no solicita otra
+autorización con la sesión web que el traspaso revocó. El login local abre
+Facturación incluso si el usuario tiene permisos administrativos. Si el servidor
+está conectado y el usuario tiene acceso administrativo, ese mismo envío de
+credenciales obtiene además una sesión web para sus módulos, sin reutilizar la
+sesión web revocada durante el traspaso. Cada servicio sigue validando su propia
+sesión; la local nunca se presenta como credencial web.
+
 La bodega no se selecciona independientemente si la caja ya tiene una bodega
 asociada. La activación nunca recibe certificados fiscales ni secretos del
 servidor.
@@ -77,8 +88,10 @@ Antes de mostrar el login, una caja conectada obtiene del cursor local:
 Esta puesta al día empieza al abrir, pero no bloquea el login de un usuario ya
 provisionado. Sin Internet usa la última proyección local protegida. La ausencia
 o corrupción de esa proyección sí bloquea; su antigüedad, por sí sola, no.
-El login nunca solicita una actualización ni valida credenciales contra el
-servidor. Si el usuario no está en SQLite, la contraseña es incorrecta o todavía
+La validación local del login nunca solicita una actualización ni depende del
+servidor. Para usuarios con módulos administrativos, un equipo conectado puede
+abrir además la sesión web con las mismas credenciales después del login local.
+Si el usuario no está en SQLite, la contraseña es incorrecta o todavía
 no existe una proyección promovida, falla localmente. La sincronización de
 seguridad corre por su carril independiente y los cambios quedan disponibles en
 el siguiente intento, sin convertir el submit en una operación de red.
@@ -109,9 +122,10 @@ Después del login el menú se deriva de permisos efectivos:
 - módulos online aparecen según permisos;
 - sin conexión, una ruta online aparece deshabilitada con `Requiere conexión`;
 - con conexión, la API vuelve a validar usuario, negocio y permiso;
-- el login de una instalación enrolada abre Facturación con la sesión local; el
-  acceso a módulos administrativos requiere entrar explícitamente en modo Cloud
-  y crear allí la sesión web;
+- el login de una instalación enrolada abre Facturación con la sesión local y,
+  si hay conexión y permisos administrativos, crea también la sesión web. Si
+  estaba desconectada, el acceso administrativo solicita autenticación web al
+  volver la conexión;
 - dentro de Facturación, el único botón de salida abre el menú Cloud cuando el
   servidor está disponible y se convierte en `Cerrar sesión` cuando el equipo
   está trabajando únicamente con el runtime local;
