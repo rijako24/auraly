@@ -73,10 +73,13 @@ El script debe registrar `Auraly PDF runtime ready` y la API responder `/health`
 Los paquetes anteriores sin ese script conservan el arranque dotnet para rollback.
 No se regeneran binarios para corregir únicamente estos ajustes de infraestructura.
 
-Web PubSub se declara en el mismo resource group de cada ambiente. DEV usa
-`Free_F1`; producción usa `Standard_S1` únicamente cuando se aprueba y aplica la
-promoción productiva. La API publica con la identidad administrada de Auraly y
-el rol `Web PubSub Service Owner`; la autenticación local del recurso permanece
+Web PubSub se declara en el mismo resource group de cada ambiente. DEV y
+producción usan `Free_F1` mientras la carga medida permanezca dentro de 20
+conexiones concurrentes y 20.000 mensajes diarios. La promoción a `Standard_S1`
+requiere una decisión explícita basada en capacidad, costo y SLA, además de una
+ventana de mantenimiento porque el cambio de nivel puede alterar la IP pública y
+la propagación DNS. La API publica con la identidad administrada de Auraly y el
+rol `Web PubSub Service Owner`; la autenticación local del recurso permanece
 deshabilitada.
 
 ## Flujo rápido de DEV
@@ -184,8 +187,11 @@ Fecha de verificacion: 2026-08-12 (America/Bogota).
 - El preflight remoto pasa y ahora valida API, worker, versiones, configuracion,
   colas, sesiones, Web PubSub y salud HTTP.
 
-La infraestructura de produccion declara Web PubSub `Standard_S1`, pero no se
-aplico ninguna mutacion en `RG-AURALY-PROD` durante esta promocion a DEV.
+En ese cierre histórico la infraestructura de producción declaraba Web PubSub
+`Standard_S1`, pero no se aplicó ninguna mutación en `RG-AURALY-PROD` durante la
+promoción a DEV. La declaración vigente fue reducida posteriormente a `Free_F1`
+tras medir un máximo de 7 conexiones concurrentes y menos de 1 MiB de tráfico
+entre el 14 y el 22 de septiembre de 2026.
 
 ### Incidente de conectividad del login BFF
 
