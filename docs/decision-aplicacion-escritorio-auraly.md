@@ -22,7 +22,7 @@ No es técnicamente seguro ni posible que una página web instale silenciosament
 2. Si no existe tenant en la URL, el login solicita empresa, usuario y contraseña. El ejemplo de empresa es `@auraly`.
 3. Si el enlace contiene el tenant key, por ejemplo `?tenant=@auraly`, el campo empresa aparece resuelto y no se puede editar.
 4. Sin enrolamiento, el login siempre valida contra Auraly Server y un fallo de red no se sustituye por una credencial almacenada en el navegador.
-5. Con enrolamiento, la misma pantalla visual valida exclusivamente la identidad en el runtime local protegido y entra a Facturación. No encadena autenticación web ni espera al servidor; el acceso explícito a módulos administrativos usa el modo Cloud.
+5. Con enrolamiento, la misma pantalla valida primero la identidad en el runtime local protegido. Un perfil limitado a Facturación entra allí directamente y el botón superior cierra su sesión local. Si el perfil tiene módulos administrativos y el servidor está conectado, el mismo acceso establece además la sesión web y abre el menú autorizado; si falla ese segundo acceso, informa el error y permite continuar en Facturación local. Sin conexión, conserva Facturación local sin inventar permisos web.
 6. Un login online correcto recuerda el tenant key en ese dispositivo. Un intento fallido nunca reemplaza el valor recordado.
 7. El tenant key es inmutable después de crear la empresa. La aplicación puede copiar un enlace empresarial, pero no modificar la clave.
 

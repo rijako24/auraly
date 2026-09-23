@@ -33,6 +33,8 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Recaudar CxC o pagar CxP | wizard compartido → `ReceivablesService`/`PayablesService` → aceptación transaccional de aplicaciones y `payments[]` → `AccountingSourceDocuments`/`AccountingPostingJobs` → `SqlAccountingPostingProcessor`; desde POS preparado, Edge guarda primero la proyección mínima en SQLite y luego actúa como proxy online autenticado por dispositivo y sesión abierta. El cierre preparado usa esa proyección local. Los historiales paginados incluyen medios y aplicaciones por factura en el mismo viaje de lectura. | aceptar en servidor antes de escribir SQLite en caja preparada, usar `DocumentProcessingJobs`, crear otro motor, refetch automático posterior o contabilizar desde UI/API |
 | Importar cartera preexistente | lote acotado de `ReceivablesService`; al importar por identificación resuelve el cliente y su sede activa (preferentemente principal) antes de crear fuentes contables `PreexistingReceivable` → `SqlAccountingPostingProcessor` crea CxC y asiento con contrapartida elegida | inventar venta, inventario, documento DIAN, tabla de importación o saldo directo fuera del motor |
 
+La tirilla de cierre v6 muestra por separado las ventas, devoluciones, entradas y salidas manuales y el efecto neto de otros movimientos por medio de pago. En la caja preparada, su sección de cartera identifica los recaudos y pagos con el número de recibo conservado en SQLite; las versiones de tirilla ya emitidas permanecen inmutables.
+
 La navegación muestra una sola entrada **Empresa**. Con `tenant.profile.read`
 abre el perfil propio; con el permiso de plataforma `tenants.read` abre el listado
 administrativo y sustituye el acceso propio en el menú. Sidebar, menú móvil y

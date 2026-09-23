@@ -18,7 +18,7 @@ public static class WorkSessionClosureReceiptRenderer
         {
             1 => RenderV1(value, companyName, companyLogoSource, paperWidthMillimeters),
             2 => RenderV2(value, companyName, companyLogoSource, paperWidthMillimeters),
-            3 or 4 or 5 => RenderMovementClosure(value, companyName, companyLogoSource, paperWidthMillimeters),
+            3 or 4 or 5 or 6 => RenderMovementClosure(value, companyName, companyLogoSource, paperWidthMillimeters),
             _ => throw new InvalidOperationException(
                 $"La versión {value.ReceiptTemplateVersion} de la tirilla de cierre no está disponible.")
         };
@@ -81,10 +81,16 @@ public static class WorkSessionClosureReceiptRenderer
                 var cashDetails = IsCash(payment.PaymentMethodCode)
                     ? $"<div class=\"payment-details\"><span>Entradas <strong>{Money(version >= 4 ? payment.CashEntryAmount : Math.Max(0, payment.OtherAmount))}</strong></span><span>Salidas <strong>{Money(version >= 4 ? payment.CashExitAmount : Math.Abs(Math.Min(0, payment.OtherAmount)))}</strong></span></div>"
                     : string.Empty;
+                var otherNet = version >= 6
+                    ? payment.OtherAmount - payment.CashEntryAmount + payment.CashExitAmount
+                    : 0;
+                var otherDetails = otherNet == 0
+                    ? string.Empty
+                    : $"<div class=\"payment-details\"><span>Otros movimientos netos <strong>{Money(otherNet)}</strong></span></div>";
                 var reconciliation = payment.CountedAmount is not { } counted
                     ? string.Empty
                     : $"<div class=\"payment-details\"><span>{(IsCash(payment.PaymentMethodCode) ? "Efectivo esperado" : "Esperado")} <strong>{Money(payment.NetAmount)}</strong></span><span>{(IsCash(payment.PaymentMethodCode) ? "Efectivo contado" : "Contado")} <strong>{Money(counted)}</strong></span></div>{DifferenceBox(payment.Difference ?? counted - payment.NetAmount)}";
-                return $"<section class=\"payment\" data-payment-method=\"{Encode(payment.PaymentMethodCode)}\"><h3>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</h3><div class=\"payment-details\"><span>Ventas <strong>{Money(payment.SalesAmount)}</strong></span><span>Devoluciones <strong>{Money(payment.RefundAmount)}</strong></span></div>{cashDetails}{(version == 4 ? ChargePaymentRows(value.InvoiceCharges ?? [], payment.PaymentMethodCode) : string.Empty)}{reconciliation}</section>";
+                return $"<section class=\"payment\" data-payment-method=\"{Encode(payment.PaymentMethodCode)}\"><h3>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</h3><div class=\"payment-details\"><span>Ventas <strong>{Money(payment.SalesAmount)}</strong></span><span>Devoluciones <strong>{Money(payment.RefundAmount)}</strong></span></div>{cashDetails}{otherDetails}{(version == 4 ? ChargePaymentRows(value.InvoiceCharges ?? [], payment.PaymentMethodCode) : string.Empty)}{reconciliation}</section>";
             }));
         var creditRows = string.Join(string.Empty, creditSales.Select(credit => version >= 4
             ? $"<tr><td>{Encode(credit.CustomerName)}</td><td>{Encode(credit.DocumentNumber)}</td><td>{Money(credit.Amount)}</td></tr>"
@@ -130,8 +136,8 @@ public static class WorkSessionClosureReceiptRenderer
             .ToArray();
 
         var version = value.ReceiptTemplateVersion;
-        var sections = PortfolioSection("Abonos a cartera",value.ReceivablePayments??[])
-                       + PortfolioSection("Pagos a proveedores",value.PayablePayments??[])
+        var sections = PortfolioSection("Abonos a cartera",value.ReceivablePayments??[],version)
+                       + PortfolioSection("Pagos a proveedores",value.PayablePayments??[],version)
                        + CashMovementSection("Entradas de dinero", entries,
                            entries.Sum(item => item.Amount), version)
                        + CashMovementSection("Salidas de dinero", exits,
@@ -197,11 +203,13 @@ public static class WorkSessionClosureReceiptRenderer
         return $"<h2 class=\"section-title\">{Encode(title)}</h2><table class=\"rows cash-movements\"><tbody>{rows}</tbody><tfoot><tr><th>Total</th><th>{Money(total)}</th></tr></tfoot></table>";
     }
 
-    private static string PortfolioSection(string title,IReadOnlyList<WorkSessionPortfolioPayment> payments)
+    private static string PortfolioSection(string title,IReadOnlyList<WorkSessionPortfolioPayment> payments,int version)
     {
         if(payments.Count==0)return $"<h2 class=\"section-title\">{Encode(title)}</h2><table class=\"rows\"><tbody><tr><td>Sin movimientos</td><td>$ 0</td></tr></tbody></table>";
-        var rows=string.Join(string.Empty,payments.SelectMany(payment=>payment.Applications.Select(application=>
-            $"<tr><td><strong>{Encode(payment.PartyName)}</strong><small>{Encode(application.DocumentNumber)}</small></td><td>{Money(application.Amount)}</td></tr>")));
+        var rows=string.Join(string.Empty,payments.SelectMany(payment=>version >= 6 && payment.Applications.Count == 0
+            ? [$"<tr><td>{Encode(payment.PaymentDocumentNumber)}</td><td>{Money(payment.TotalAmount)}</td></tr>"]
+            : payment.Applications.Select(application=>
+                $"<tr><td><strong>{Encode(payment.PartyName)}</strong><small>{Encode(application.DocumentNumber)}</small></td><td>{Money(application.Amount)}</td></tr>")));
         return $"<h2 class=\"section-title\">{Encode(title)}</h2><table class=\"rows credit-sales\"><tbody>{rows}</tbody><tfoot><tr><th>Total</th><th>{Money(payments.Sum(payment=>payment.TotalAmount))}</th></tr></tfoot></table>";
     }
 

@@ -27,8 +27,12 @@ export function requiresCloudWorkspace(permissions: readonly string[]): boolean 
 export function canOpenPosAdministrativeMenu(
   cloudAuthenticated: boolean,
   enrolledRuntime: boolean,
+  localPermissions: readonly string[] = [],
+  cloudPermissions: readonly string[] = [],
 ): boolean {
-  return cloudAuthenticated || enrolledRuntime;
+  return enrolledRuntime
+    ? requiresCloudWorkspace(localPermissions)
+    : cloudAuthenticated && requiresCloudWorkspace(cloudPermissions);
 }
 
 export function posAdministrativeMenuTarget(cloudAuthenticated: boolean): string {

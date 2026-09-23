@@ -178,7 +178,10 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
     public async Task Confirmed_portfolio_payment_is_projected_once_into_its_local_session()
     {
         var store=_factory!.Services.GetRequiredService<PosOfflineWorkSessionClosureStore>();
-        var sessionId=Guid.NewGuid();
+        using var current = await Client.PostAsync("/edge/v1/work-sessions/current", null);
+        current.EnsureSuccessStatusCode();
+        var session = (await current.Content.ReadFromJsonAsync<PosLocalUserSession>())!;
+        var sessionId=session.WorkSessionId;
         var payment=new PosLocalPortfolioPayment(Guid.NewGuid(),sessionId,"Receivable","RCC-1",
             DateTimeOffset.UtcNow,[new("Cash",12500m),new("BankTransfer",7500m)]);
         await store.RecordPortfolioPaymentAsync(payment);
@@ -193,6 +196,13 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         Assert.Equal("RCC-1",actual.DocumentNumber);
         Assert.Equal(20000m,actual.Tenders.Sum(tender=>tender.Amount));
         Assert.Empty(await store.ReadPortfolioPaymentsAsync(Guid.NewGuid()));
+        var preview=await _factory.Services.GetRequiredService<PosOfflineWorkSessionClosureService>()
+            .PreviewAsync(session,CancellationToken.None);
+        var detail=Assert.Single(preview.ReceivablePayments!);
+        Assert.Equal("RCC-1",detail.PaymentDocumentNumber);
+        Assert.Equal(20000m,detail.TotalAmount);
+        Assert.Empty(preview.PayablePayments!);
+        Assert.Equal(12500m,preview.ExpectedCash);
     }
 
     [Fact]

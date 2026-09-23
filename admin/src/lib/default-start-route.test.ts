@@ -42,8 +42,10 @@ test("installed login distinguishes local POS access from administrative workspa
 });
 
 test("the POS menu button is available in web and enrolled runtimes", () => {
-  assert.equal(canOpenPosAdministrativeMenu(true, false), true);
-  assert.equal(canOpenPosAdministrativeMenu(false, true), true);
+  assert.equal(canOpenPosAdministrativeMenu(true, false, [], ["catalog.read"]), true);
+  assert.equal(canOpenPosAdministrativeMenu(true, false, [], ["sales.create"]), false);
+  assert.equal(canOpenPosAdministrativeMenu(false, true, ["sales.create"]), false);
+  assert.equal(canOpenPosAdministrativeMenu(false, true, ["sales.create", "catalog.read"]), true);
   assert.equal(canOpenPosAdministrativeMenu(false, false), false);
   assert.equal(posAdministrativeMenuTarget(true), "/dashboard");
   assert.equal(

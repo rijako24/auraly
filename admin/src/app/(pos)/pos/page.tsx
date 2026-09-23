@@ -256,6 +256,7 @@ export default function PosPage() {
   const router = useRouter();
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
   const cloudAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const cloudUserId = useAuthStore((state) => state.user?.userId);
   const logoutCloud = useAuthStore((state) => state.logout);
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
   const lineRows = useRef(new Map<string, HTMLTableRowElement>());
@@ -354,6 +355,8 @@ export default function PosPage() {
   const canOpenAdministrativeMenu = canOpenPosAdministrativeMenu(
     cloudAuthenticated,
     client?.mode === "edge",
+    edgePermissions,
+    permissions,
   );
   const canChangeWorkspace = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.workspace.change");
@@ -3004,10 +3007,12 @@ export default function PosPage() {
       <PosDesktopUpdater />
       <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
         <div className="flex items-center gap-2">
-          {canOpenAdministrativeMenu && (
+          {(canOpenAdministrativeMenu || client.mode === "edge") && (
             <PosExitMenuButton
-              target={posAdministrativeMenuTarget(cloudAuthenticated)}
-              localOnly={client.mode === "edge" && !serverConnected}
+              target={posAdministrativeMenuTarget(cloudAuthenticated && (
+                client.mode !== "edge" || cloudUserId === workstation.userId
+              ))}
+              localOnly={client.mode === "edge" && (!canOpenAdministrativeMenu || !serverConnected)}
               disabled={busy}
               onLocalLogout={() => void logoutLocal()}
             />

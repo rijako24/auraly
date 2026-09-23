@@ -17,7 +17,8 @@ public static class PosPrintTemplateCatalog
     public static readonly PosPrintTemplateVersion WorkSessionClosureV2 = new("work-session-closure", 2);
     public static readonly PosPrintTemplateVersion WorkSessionClosureV3 = new("work-session-closure", 3);
     public static readonly PosPrintTemplateVersion WorkSessionClosureV4 = new("work-session-closure", 4);
-    public static readonly PosPrintTemplateVersion WorkSessionClosure = new("work-session-closure", 5);
+    public static readonly PosPrintTemplateVersion WorkSessionClosureV5 = new("work-session-closure", 5);
+    public static readonly PosPrintTemplateVersion WorkSessionClosure = new("work-session-closure", 6);
     public static readonly PosPrintTemplateVersion CashEntryV1 = new("cash-entry", 1);
     public static readonly PosPrintTemplateVersion CashExitV1 = new("cash-exit", 1);
     public static readonly PosPrintTemplateVersion CashEntryV2 = new("cash-entry", 2);

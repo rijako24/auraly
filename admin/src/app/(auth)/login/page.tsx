@@ -29,7 +29,7 @@ import {
   resolvePosExecutionMode,
 } from "@/services/pos/pos-launch-session";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
-import { defaultStartRoute } from "@/lib/default-start-route";
+import { defaultStartRoute, requiresCloudWorkspace } from "@/lib/default-start-route";
 import {
   clearPreviousWebIdentityContext,
   runAuthenticationSessionReplacement,
@@ -60,6 +60,7 @@ function LoginForm() {
   const [edgeClient, setEdgeClient] = useState<PosEdgeClient | null>(null);
   const [preparedBusinessName, setPreparedBusinessName] = useState("");
   const [tenantKeyRequired, setTenantKeyRequired] = useState(false);
+  const [localPosAvailable, setLocalPosAvailable] = useState(false);
 
   useEffect(() => {
     if (!tenantFromUrl) {
@@ -104,10 +105,11 @@ function LoginForm() {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    setLocalPosAvailable(false);
     setIsLoading(true);
 
     try {
-      const loginToCloud = async () => {
+      const loginToCloud = async (expectedUserId?: string) => {
         // Remove the previous user's client-side identity before the server
         // atomically replaces the HttpOnly session cookies in its response.
         clearPreviousWebIdentityContext();
@@ -127,6 +129,10 @@ function LoginForm() {
             password,
           }),
         );
+        if (expectedUserId && response.user.userId !== expectedUserId) {
+          await useAuthStore.getState().logout();
+          throw new Error("La cuenta web no corresponde al usuario de esta caja. Verifica la empresa e inicia sesión nuevamente.");
+        }
         // A login starts from the immutable tenant that owns the user. Never
         // let a tenant/business persisted by a previous user race the first
         // authenticated requests of this session.
@@ -141,7 +147,15 @@ function LoginForm() {
       };
 
       if (edgeClient && !forceCloud) {
-        await edgeClient.login(username, password);
+        const localSession = await edgeClient.login(username, password);
+        setLocalPosAvailable(true);
+        if (requiresCloudWorkspace(localSession.permissions)) {
+          const health = await edgeClient.health();
+          if (health.serverConnected) {
+            await loginToCloud(localSession.userId);
+            return;
+          }
+        }
         useAuthStore.getState().clearAuth();
         window.location.replace("/pos");
         return;
@@ -189,6 +203,10 @@ function LoginForm() {
             <span>{error}</span>
           </div>
         )}
+        {localPosAvailable && <Button type="button" variant="outline" className="w-full" onClick={() => {
+          useAuthStore.getState().clearAuth();
+          window.location.replace("/pos");
+        }}>Continuar en facturación local</Button>}
         {(!edgeClient || forceCloud || tenantKeyRequired) && <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor="tenantKey" className="font-medium text-[#17383c]">

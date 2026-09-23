@@ -509,6 +509,8 @@ public sealed class PosOfflineWorkSessionClosureService(
                 value.DocumentNumber,
                 value.CreditAmount))
             .ToArray();
+        var receivablePayments = PortfolioDetails(portfolio, "Receivable");
+        var payablePayments = PortfolioDetails(portfolio, "Payable");
         return new WorkSessionClosurePreviewView(
             session.WorkSessionId,
             runtime.BusinessId.Value,
@@ -532,7 +534,9 @@ public sealed class PosOfflineWorkSessionClosureService(
             creditSales,
             cashMovementDetails,
             Auraly.Application.Sales.InvoiceChargeClosureProjection.MapPayments(
-                localSales.SelectMany(sale => sale.InvoiceCharges ?? []), ClosureMethod));
+                localSales.SelectMany(sale => sale.InvoiceCharges ?? []), ClosureMethod),
+            receivablePayments,
+            payablePayments);
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -574,7 +578,8 @@ public sealed class PosOfflineWorkSessionClosureService(
             preview.ReturnCount,
             preview.CreditSales,
             PosPrintTemplateCatalog.WorkSessionClosure.Version,
-            preview.CashMovements, preview.InvoiceCharges);
+            preview.CashMovements, preview.InvoiceCharges,
+            preview.ReceivablePayments, preview.PayablePayments);
         var queued = await store.QueueAsync(
             new PosQueuedWorkSessionClosure(
                 input.OperationId,
@@ -605,6 +610,14 @@ public sealed class PosOfflineWorkSessionClosureService(
         await workSessions.MarkClosedAsync(
             session.WorkSessionId, session.UserId, closedAt, cancellationToken);
     }
+
+    private static IReadOnlyList<WorkSessionPortfolioPayment> PortfolioDetails(
+        IReadOnlyList<PosLocalPortfolioPayment> payments, string direction) =>
+        payments.Where(payment => payment.Direction == direction)
+            .Select(payment => new WorkSessionPortfolioPayment(
+                payment.PaymentId, payment.DocumentNumber, string.Empty,
+                payment.Tenders.Sum(tender => tender.Amount), payment.PaidAt, []))
+            .ToArray();
 
     private static IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals(
         IReadOnlyList<PosLocalWorkSessionSale> sales,

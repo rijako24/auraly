@@ -250,6 +250,42 @@ public sealed class WorkSessionClosureReceiptRendererTests
     }
 
     [Fact]
+    public void Version_six_explains_local_portfolio_cash_without_changing_historical_receipts()
+    {
+        var baseClosure = Closure(6) with
+        {
+            TotalSales = 45_400m,
+            TotalRefunds = 4_300m,
+            TotalOther = 10_000m,
+            ExpectedCash = 41_100m,
+            PaymentTotals =
+            [
+                new("Cash", 35_400m, 4_300m, 10_000m, 41_100m, 10_000m, -31_100m, true),
+                new("Card", 10_000m, 0m, 0m, 10_000m, 0m, -10_000m, true)
+            ],
+            CashMovements = [],
+            ReceivablePayments = [new(Guid.NewGuid(), "RCC00-00000001", string.Empty,
+                10_000m, new DateTimeOffset(2026, 9, 23, 18, 0, 0, TimeSpan.Zero), [])]
+        };
+        var current = WorkSessionClosureReceiptRenderer.RenderHtml(baseClosure);
+        var cash = Section(current, "data-payment-method=\"Cash\"", "</section>");
+        Assert.Contains("Ventas <strong>$ 35.400</strong>", cash);
+        Assert.Contains("Devoluciones <strong>$ 4.300</strong>", cash);
+        Assert.Contains("Otros movimientos netos <strong>$ 10.000</strong>", cash);
+        Assert.Contains("Efectivo esperado <strong>$ 41.100</strong>", cash);
+        Assert.Contains("RCC00-00000001", Section(current, "Abonos a cartera", "Pagos a proveedores"));
+        Assert.Contains("data-auraly-report-version=\"6\"", current);
+
+        var historical = WorkSessionClosureReceiptRenderer.RenderHtml(baseClosure with
+        {
+            ReceiptTemplateVersion = 5,
+            ReceivablePayments = null
+        });
+        Assert.DoesNotContain("Otros movimientos netos", historical);
+        Assert.Contains("data-auraly-report-version=\"5\"", historical);
+    }
+
+    [Fact]
     public void Version_one_remains_available_for_historical_reprints()
     {
         var html = WorkSessionClosureReceiptRenderer.RenderHtml(Closure(1));
