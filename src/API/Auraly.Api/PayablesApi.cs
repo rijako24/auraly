@@ -9,13 +9,20 @@ public static class PayablesApi
     public static IEndpointRouteBuilder MapPayablesApi(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet(
+                "/api/commerce/v1/payables/suppliers",
+                async (HttpContext context,int page,int pageSize,string? search,bool? overdue,
+                    PayablesService service,CancellationToken cancellationToken) =>
+                    await ExecuteAsync(() => service.ListSuppliersAsync(context.User.ToPayablesIdentity(),
+                        new SupplierPortfolioQuery(page,pageSize,search,overdue),cancellationToken),Results.Ok))
+            .RequireAuthorization("payables.user");
+        endpoints.MapGet(
                 "/api/commerce/v1/payables",
                 async (HttpContext context, int page, int pageSize, string? search,
-                    Guid? supplierId, string? status, bool? overdue,
+                    Guid? supplierId, string? status, bool? overdue, bool? outstandingOnly,
                     PayablesService service, CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListAsync(
                         context.User.ToPayablesIdentity(),
-                        new PayableQuery(page, pageSize, search, supplierId, status, overdue),
+                        new PayableQuery(page, pageSize, search, supplierId, status, overdue, outstandingOnly==true),
                         cancellationToken), Results.Ok))
             .RequireAuthorization("payables.user");
 
@@ -38,6 +45,14 @@ public static class PayablesApi
                     await ExecuteAsync(() => service.PaymentHistoryAsync(
                         context.User.ToPayablesIdentity(), supplierId, page ?? 1, pageSize ?? 5,
                         cancellationToken), Results.Ok))
+            .RequireAuthorization("payables.user");
+
+        endpoints.MapGet(
+                "/api/commerce/v1/payable-payments",
+                async (HttpContext context,int page,int pageSize,string? search,Guid? supplierId,
+                    PayablesService service,CancellationToken cancellationToken) =>
+                    await ExecuteAsync(() => service.ListPaymentsAsync(context.User.ToPayablesIdentity(),
+                        new SupplierPaymentHistoryQuery(page,pageSize,search,supplierId),cancellationToken),Results.Ok))
             .RequireAuthorization("payables.user");
 
         endpoints.MapPost(

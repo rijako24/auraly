@@ -9,7 +9,9 @@ using Auraly.Commerce.Accounting.Domain;
 using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Dispatching;
+using Auraly.Contracts.Payables;
 using Auraly.Contracts.Purchasing;
+using Auraly.Contracts.Receivables;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -128,6 +130,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "ReceivablePayment" => FinancialFactsResult.Ready(
                     await LoadReceivablePaymentFactsAsync(
                         connection, transaction, source, cancellationToken)),
+                "PreexistingReceivable" => FinancialFactsResult.Ready(
+                    await LoadPreexistingReceivableFactsAsync(connection,transaction,source,cancellationToken)),
                 "CashReceipt" or "CashDisbursement" =>
                     await LoadCashMovementFactsAsync(
                         connection, transaction, source, cancellationToken),
@@ -1059,8 +1063,9 @@ public sealed partial class SqlAccountingPostingProcessor(
         SourceEnvelope source,
         CancellationToken cancellationToken)
     {
+        var payment = SupplierPaymentContractSerializer.Deserialize(source.PayloadJson);
         await using var command = new SqlCommand("""
-            SELECT s.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount,p.PaymentMethod,p.BankAccountId
+            SELECT s.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount
             FROM dbo.SupplierPayments p
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
             WHERE p.PaymentId=@DocumentId AND p.BusinessId=@BusinessId AND p.Status=N'Processed';
@@ -1075,16 +1080,13 @@ public sealed partial class SqlAccountingPostingProcessor(
         var number = reader.GetString(1);
         var currency = reader.GetString(2);
         var amount = reader.GetDecimal(3);
-        var method = reader.GetString(4);
-        var bankAccountId = reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5);
         await reader.DisposeAsync();
         if (!string.Equals(currency, "COP", StringComparison.Ordinal))
             throw new InvalidOperationException("Supplier payment accounting currently requires COP.");
-        var settlement = method == "BankTransfer" && bankAccountId is { } bankId
-            ? BankAccountCategory(bankId)
-            : await ResolveSourceCategoryAsync(connection, transaction,
-                "SupplierPaymentMethod", method, cancellationToken);
-        return FinancialFacts.PayablePayment(number, partyId, amount, settlement);
+        var settlements = await ResolvePaymentSettlementsAsync(connection, transaction,
+            payment.TenantId, "SupplierPaymentMethod", payment.Payments.Select(value =>
+                (value.MethodCode, value.Amount, value.BankAccountId)).ToArray(), cancellationToken);
+        return FinancialFacts.PayablePayment(number, partyId, amount, settlements);
     }
 
     private static async Task<FinancialFacts> LoadReceivablePaymentFactsAsync(
@@ -1093,8 +1095,9 @@ public sealed partial class SqlAccountingPostingProcessor(
         SourceEnvelope source,
         CancellationToken cancellationToken)
     {
+        var payment = CustomerPaymentContractSerializer.Deserialize(source.PayloadJson);
         await using var command = new SqlCommand("""
-            SELECT c.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount,p.PaymentMethod,p.BankAccountId
+            SELECT c.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount
             FROM dbo.CustomerPayments p
             INNER JOIN dbo.Customers c ON c.CustomerId=p.CustomerId
             WHERE p.PaymentId=@DocumentId AND p.BusinessId=@BusinessId AND p.Status=N'Processed';
@@ -1110,14 +1113,50 @@ public sealed partial class SqlAccountingPostingProcessor(
         if (reader.GetString(2) != "COP")
             throw new InvalidOperationException("Customer receipt accounting currently requires COP.");
         var amount = reader.GetDecimal(3);
-        var method = reader.GetString(4);
-        var bankAccountId = reader.IsDBNull(5) ? (Guid?)null : reader.GetGuid(5);
         await reader.DisposeAsync();
-        var settlement = method == "BankTransfer" && bankAccountId is { } bankId
-            ? BankAccountCategory(bankId)
-            : await ResolveSourceCategoryAsync(connection, transaction,
-                "CustomerPaymentMethod", method, cancellationToken);
-        return FinancialFacts.ReceivablePayment(number, partyId, amount, settlement);
+        var settlements = await ResolvePaymentSettlementsAsync(connection, transaction,
+            payment.TenantId, "CustomerPaymentMethod", payment.Payments.Select(value =>
+                (value.MethodCode, value.Amount, value.BankAccountId)).ToArray(), cancellationToken);
+        return FinancialFacts.ReceivablePayment(number, partyId, amount, settlements);
+    }
+
+    private static async Task<IReadOnlyList<(string Category, decimal Amount)>> ResolvePaymentSettlementsAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId, string sourceType,
+        IReadOnlyCollection<(string MethodCode, decimal Amount, Guid? BankAccountId)> payments,
+        CancellationToken cancellationToken)
+    {
+        var input = payments.Select((payment, index) => new
+        {
+            LineNumber = index + 1, payment.MethodCode, payment.Amount, payment.BankAccountId
+        }).ToArray();
+        await using var command = new SqlCommand("""
+            SELECT input.LineNumber,
+              CASE WHEN input.MethodCode=N'BankTransfer'
+                   THEN CONCAT(N'BankAccount:',CONVERT(nvarchar(36),bank.BankAccountId))
+                   ELSE mapping.Category END,
+              input.Amount
+            FROM OPENJSON(@Payments) WITH(
+              LineNumber int,MethodCode nvarchar(32),Amount decimal(19,4),BankAccountId uniqueidentifier) input
+            LEFT JOIN accounting.BankAccounts bank ON input.MethodCode=N'BankTransfer'
+              AND bank.BankAccountId=input.BankAccountId AND bank.TenantId=@TenantId AND bank.IsActive=1
+            LEFT JOIN dbo.AccountingConfigurationProfiles profile ON profile.IsDefault=1 AND profile.IsActive=1
+            LEFT JOIN dbo.AccountingSourceCategoryMappings mapping ON mapping.ProfileCode=profile.ProfileCode
+              AND mapping.SourceType=@SourceType AND mapping.SourceCode=input.MethodCode
+            WHERE (input.MethodCode=N'BankTransfer' AND bank.BankAccountId IS NOT NULL)
+               OR (input.MethodCode<>N'BankTransfer' AND mapping.Category IS NOT NULL)
+            ORDER BY input.LineNumber;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@Payments", JsonSerializer.Serialize(input));
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@SourceType", sourceType);
+        var result = new List<(string Category, decimal Amount)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result.Add((reader.GetString(1), reader.GetDecimal(2)));
+        if (result.Count != input.Length || decimal.Round(result.Sum(value => value.Amount), 4) !=
+            decimal.Round(input.Sum(value => value.Amount), 4))
+            throw new InvalidOperationException("The payment breakdown could not resolve every accounting destination.");
+        return result;
     }
 
     private static async Task<decimal> InventoryCostAsync(
@@ -1223,6 +1262,33 @@ public sealed partial class SqlAccountingPostingProcessor(
         return FinancialFacts.Manual(request.Description, request.Lines.Select(line =>
             new ManualLineSpec(line.AccountId, line.Debit, line.Credit, line.PartyId,
                 line.CostCenterId, line.Description)).ToArray());
+    }
+
+    private static async Task<FinancialFacts> LoadPreexistingReceivableFactsAsync(
+        SqlConnection connection,SqlTransaction transaction,SourceEnvelope source,CancellationToken token)
+    {
+        var payload=PreexistingReceivableContractSerializer.Deserialize(source.PayloadJson);
+        await using var command=new SqlCommand("""
+            SELECT TOP(1) mapping.AccountId,customer.PartyId
+            FROM dbo.Customers customer
+            JOIN dbo.AccountingAccountMappings mapping ON mapping.TenantId=@TenantId
+              AND mapping.Category=N'AccountsReceivable'
+              AND (mapping.BusinessId=@BusinessId OR mapping.BusinessId IS NULL)
+              AND mapping.EffectiveFrom<=CONVERT(date,@OccurredAt)
+              AND (mapping.EffectiveTo IS NULL OR mapping.EffectiveTo>=CONVERT(date,@OccurredAt))
+            JOIN dbo.AccountingAccounts account ON account.AccountId=mapping.AccountId
+              AND account.IsActive=1 AND account.AllowsPosting=1
+            WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+            ORDER BY CASE WHEN mapping.BusinessId=@BusinessId THEN 0 ELSE 1 END,mapping.EffectiveFrom DESC;
+            """,connection,transaction);
+        command.Parameters.AddWithValue("@TenantId",source.TenantId);command.Parameters.AddWithValue("@BusinessId",source.BusinessId);
+        command.Parameters.AddWithValue("@OccurredAt",source.OccurredAt);command.Parameters.AddWithValue("@CustomerId",payload.CustomerId);
+        await using var reader=await command.ExecuteReaderAsync(token);
+        if(!await reader.ReadAsync(token))throw new InvalidOperationException("AccountsReceivable mapping is missing for the imported portfolio date.");
+        var control=reader.GetGuid(0);var party=reader.GetGuid(1);var description=$"Cartera preexistente {payload.DocumentNumber}";
+        return FinancialFacts.Manual(description,[
+            new ManualLineSpec(control,payload.Amount,0,party,null,description),
+            new ManualLineSpec(payload.CounterpartAccountId,0,payload.Amount,party,null,description)]);
     }
 
     private static async Task<Guid> ReadAdjustmentPartyAsync(
@@ -1679,8 +1745,12 @@ public sealed partial class SqlAccountingPostingProcessor(
             return new(description, party, 0, 0, 0, 0, [], false, false, false, false,
                 DirectCategoryLines: lines);
         }
-        public static FinancialFacts PayablePayment(string number, Guid party, decimal total, string settlement) => new($"Pago a proveedor {number}", party, 0, 0, total, 0, [(settlement, total)], false, false, true, false);
-        public static FinancialFacts ReceivablePayment(string number, Guid partyId, decimal total, string settlement) => new($"Recaudo de cartera {number}", partyId, 0, 0, total, 0, [(settlement, total)], false, false, false, true);
+        public static FinancialFacts PayablePayment(string number, Guid party, decimal total,
+            IReadOnlyList<(string Category, decimal Amount)> settlements) =>
+            new($"Pago a proveedor {number}", party, 0, 0, total, 0, settlements, false, false, true, false);
+        public static FinancialFacts ReceivablePayment(string number, Guid partyId, decimal total,
+            IReadOnlyList<(string Category, decimal Amount)> settlements) =>
+            new($"Recaudo de cartera {number}", partyId, 0, 0, total, 0, settlements, false, false, false, true);
         public static FinancialFacts CashMovement(
             string number, bool isIn, decimal amount, string counterpart) =>
             new($"{(isIn ? "Ingreso" : "Egreso")} de caja {number}", null, 0, 0,

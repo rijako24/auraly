@@ -175,10 +175,8 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReceiptDocumentHan
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlExpenseDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPurchaseReturnDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPayablePaymentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashDisbursementDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlReceivablePaymentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesDebitNoteDocumentHandler>();
 builder.Services.AddScoped<SqlInventoryOperationProcessor>();

@@ -33,7 +33,8 @@ public sealed record PayableQuery(
     string? Search,
     Guid? SupplierId,
     string? Status,
-    bool? Overdue);
+    bool? Overdue,
+    bool OutstandingOnly = false);
 
 public sealed record PayableListItem(
     Guid PayableId,
@@ -87,23 +88,29 @@ public sealed record SupplierPaymentAllocationRequest(
     Guid PayableId,
     decimal Amount);
 
+public sealed record SupplierPaymentTenderRequest(string MethodCode, decimal Amount,
+    decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
+    string? Notes = null);
+
 public sealed record ConfirmSupplierPaymentRequest(
     Guid PaymentId,
     Guid BusinessId,
     Guid SupplierId,
     DateTimeOffset PaidAt,
     string CurrencyCode,
-    string PaymentMethod,
-    string? Reference,
     string? Notes,
     IReadOnlyCollection<SupplierPaymentAllocationRequest> Allocations,
-    Guid? WorkSessionId = null,
-    Guid? BankAccountId = null);
+    IReadOnlyCollection<SupplierPaymentTenderRequest> Payments,
+    Guid? WorkSessionId = null);
 
 public sealed record SupplierPaymentAllocationSnapshot(
     int LineNumber,
     Guid PayableId,
     decimal Amount);
+
+public sealed record SupplierPaymentTenderSnapshot(int LineNumber, string MethodCode, decimal Amount,
+    decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
+    string? Notes = null);
 
 public sealed record SupplierPaymentDocumentPayload(
     Guid TenantId,
@@ -118,26 +125,36 @@ public sealed record SupplierPaymentDocumentPayload(
     long DocumentConsecutive,
     DateTimeOffset PaidAt,
     string CurrencyCode,
-    string PaymentMethod,
-    string? Reference,
     string? Notes,
     decimal TotalAmount,
     IReadOnlyList<SupplierPaymentAllocationSnapshot> Allocations,
-    Guid? WorkSessionId = null,
-    Guid? BankAccountId = null);
+    IReadOnlyList<SupplierPaymentTenderSnapshot> Payments,
+    Guid? WorkSessionId = null);
 
 public sealed record SupplierPaymentAcceptance(
     Guid PaymentId,
-    Guid MovementId,
+    Guid AccountingJobId,
     string DocumentNumber,
     string Status,
-    long ProcessingSequence,
     bool IdempotentReplay);
 public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentNumber,
-    DateTimeOffset PaidAt, string CurrencyCode, string PaymentMethod, string? Reference,
-    decimal TotalAmount, string Status, int AppliedDocumentCount);
+    DateTimeOffset PaidAt, string CurrencyCode, decimal TotalAmount, string Status,
+    int AppliedDocumentCount, IReadOnlyList<SupplierPaymentTenderSnapshot> Payments,
+    IReadOnlyList<SupplierPaymentHistoryApplication> Applications,
+    Guid? SupplierId = null, string? SupplierName = null);
+public sealed record SupplierPaymentHistoryApplication(Guid PayableId,string DocumentNumber,decimal Amount);
+public sealed record SupplierPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? SupplierId);
 public sealed record SupplierPaymentHistoryPage(IReadOnlyList<SupplierPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
+public sealed record SupplierPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue);
+public sealed record SupplierPortfolioItem(Guid SupplierId, string SupplierName,
+    string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
+    decimal OutstandingAmount, decimal OverdueAmount);
+public sealed record SupplierPortfolioPage(IReadOnlyList<SupplierPortfolioItem> Items,
+    int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }

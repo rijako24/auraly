@@ -60,25 +60,25 @@ export interface ConfirmCustomerPaymentRequest {
   workSessionId: string | null;
   paidAt: string;
   currencyCode: string;
-  paymentMethod: CustomerPaymentMethod;
-  bankAccountId: string | null;
-  reference: string | null;
   notes: string | null;
   allocations: Array<{ receivableId: string; amount: number }>;
+  payments: CustomerPaymentTender[];
 }
+export interface CustomerPaymentTender { methodCode:CustomerPaymentMethod;amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null;cardFranchiseCode:string|null;approvalNumber:string|null }
 
 export interface CustomerPaymentAcceptance {
   paymentId: string;
-  movementId: string;
+  accountingJobId: string;
   documentNumber: string;
   status: string;
-  processingSequence: number;
   idempotentReplay: boolean;
 }
 export interface CustomerPaymentHistoryPage {
-  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;paymentMethod:string;reference:string|null;totalAmount:number;status:string;appliedDocumentCount:number}>;
+  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:CustomerPaymentTender[];applications:Array<{receivableId:string;documentNumber:string;amount:number}>;customerId:string|null;customerName:string|null}>;
   page:number;pageSize:number;totalCount:number;totalPages:number;
 }
+export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number}
+export interface ImportPreexistingReceivablesRequest {businessId:string;items:Array<{receivableId:string;customerId:string|null;customerIdentification:string|null;partySiteId:string|null;documentNumber:string;issuedAt:string;dueDate:string;amount:number;counterpartAccountId:string;notes:string|null}>}
 
 export interface PaymentSettlementConfiguration {
   bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean }>;
@@ -94,6 +94,10 @@ export interface CustomerCreditProfile {
 }
 
 export const receivablesApi = {
+  customerPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean})=>apiClient.get<CustomerPortfolioPage>("/commerce/v1/receivables/customers",withPagedDefaults(params)),
+  payments:(params:{page?:number;pageSize?:number;search?:string;customerId?:string})=>apiClient.get<CustomerPaymentHistoryPage>("/commerce/v1/receivable-payments",withPagedDefaults(params)),
+  currentWorkSession:(businessId:string)=>apiClient.post<{workSessionId:string}>("/commerce/v1/work-sessions/current",{businessId,warehouseId:null,deviceId:null}),
+  importPreexisting:(request:ImportPreexistingReceivablesRequest)=>apiClient.post<{acceptedCount:number;receivableIds:string[]}>("/commerce/v1/receivables/preexisting/import",request),
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   getCreditProfile: (customerId: string) =>
@@ -114,6 +118,7 @@ export const receivablesApi = {
     partySiteId?: string;
     status?: ReceivableStatus;
     overdue?: boolean;
+    outstandingOnly?: boolean;
   }) => apiClient.get<ReceivablePage>(
     "/commerce/v1/receivables",
     withPagedDefaults(params),

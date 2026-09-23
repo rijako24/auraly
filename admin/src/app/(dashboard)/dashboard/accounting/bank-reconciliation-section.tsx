@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, FileUp, Link2, Loader2, RotateCcw, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileUp, Link2, Loader2, RotateCcw, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { accountingApi, type BankAccount, type BankReconciliationDetail, type BankStatementLineImport } from "@/services/api/accounting";
 import { Button } from "@/components/ui/button";
@@ -80,7 +80,7 @@ export function BankReconciliationSection({ banks }: { banks: BankAccount[] }) {
   return <div className="space-y-5">
     <Card className="rounded-3xl">
       <CardHeader>
-        <CardTitle>Conciliación bancaria</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Conciliación bancaria</CardTitle><Button type="button" variant="outline" onClick={downloadBankTemplate}><Download className="mr-2 h-4 w-4"/>Descargar plantilla</Button></div>
         <p className="text-sm text-muted-foreground">Importa un CSV normalizado con fecha, descripción, referencia, valor y saldo. El valor usa punto decimal, sin separadores de miles: positivo para entradas y negativo para salidas. Se cruza contra el auxiliar PUC completo de la cuenta, incluyendo todas las sedes y pendientes anteriores.</p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -167,6 +167,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) { re
 function submit(event: FormEvent, mutate: () => void) { event.preventDefault(); mutate(); }
 function showError(error: unknown) { toast.error(error instanceof Error ? error.message : "No fue posible completar la operación"); }
 function bytesToBase64(bytes: Uint8Array) { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
+function downloadBankTemplate(){downloadCsv("plantilla-conciliacion-bancaria.csv","fecha;descripcion;referencia;valor;saldo\r\n");}
+function downloadCsv(name:string,value:string){const url=URL.createObjectURL(new Blob(["\uFEFF",value],{type:"text/csv;charset=utf-8"}));const link=document.createElement("a");link.href=url;link.download=name;link.click();URL.revokeObjectURL(url);}
 function parseInputMoney(value: string) { const clean = value.trim().replace(/\s/g, ""); if (!clean) return 0; if (clean.includes(",") && clean.includes(".")) { const decimal = clean.lastIndexOf(",") > clean.lastIndexOf(".") ? "," : "."; return Number(clean.replace(decimal === "," ? /\./g : /,/g, "").replace(decimal, ".")); } return Number(clean.replace(",", ".")); }
 function parseCsvMoney(value: string, lineNumber: number, field: string) { const clean = value.trim(); if (!/^-?\d+(?:\.\d{1,4})?$/.test(clean)) throw new Error(`La fila ${lineNumber} tiene ${field} ambiguo. Usa punto decimal y no uses separadores de miles.`); const parsed = Number(clean); if (!Number.isFinite(parsed)) throw new Error(`La fila ${lineNumber} tiene ${field} inválido.`); return parsed; }
 function parseStatement(text: string): BankStatementLineImport[] {

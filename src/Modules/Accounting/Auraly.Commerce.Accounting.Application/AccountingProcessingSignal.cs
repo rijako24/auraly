@@ -91,6 +91,7 @@ public static class AccountingProcessingPolicy
         "PurchaseReturn",
         "PayablePayment",
         "ReceivablePayment",
+        "PreexistingReceivable",
         "CashReceipt",
         "CashDisbursement",
         "Expense",

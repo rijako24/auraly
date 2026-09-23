@@ -1,27 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CalendarClock, CircleDollarSign, Plus, ReceiptText, WalletCards } from "lucide-react";
-import { toast } from "sonner";
-import { useConfirmCustomerPayment, useReceivableDetail, useReceivables } from "@/hooks/use-receivables";
+import { AlertTriangle, CalendarClock, CircleDollarSign, Download, FileUp, Plus, ReceiptText, WalletCards } from "lucide-react";
+import { useReceivableDetail, useReceivables } from "@/hooks/use-receivables";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
-import { receivablesApi, type CustomerPaymentMethod, type ReceivableDetail, type ReceivableListItem, type ReceivableStatus } from "@/services/api/receivables";
+import { type ReceivableDetail, type ReceivableListItem, type ReceivableStatus } from "@/services/api/receivables";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
+import { PortfolioLedgerTabs, type PortfolioLedgerTab } from "@/components/payments/portfolio-ledger-tabs";
+import { PreexistingReceivablesImport, downloadPreexistingReceivablesTemplate } from "@/components/payments/preexisting-receivables-import";
 
 const statusLabels: Record<ReceivableStatus, string> = {
   Open: "Pendiente",
@@ -29,53 +26,32 @@ const statusLabels: Record<ReceivableStatus, string> = {
   Paid: "Pagada",
   Cancelled: "Cancelada",
 };
-const paymentLabels: Record<CustomerPaymentMethod, string> = {
-  Cash: "Efectivo",
-  BankTransfer: "Transferencia bancaria",
-  DebitCard: "Tarjeta débito",
-  CreditCard: "Tarjeta crédito",
-};
-
 export default function ReceivablesPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canReceive = permissions.has("receivables.payments.create");
+  const canImport = permissions.has("receivables.credit.manage");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<ReceivableStatus | "all">("all");
   const [overdue, setOverdue] = useState(false);
+  const [activeTab, setActiveTab] = useState<PortfolioLedgerTab>("invoices");
+  const [customerId, setCustomerId] = useState<string>();
   const [selectedId, setSelectedId] = useState<string>();
-  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [portfolioPaymentOpen,setPortfolioPaymentOpen]=useState(false);
   const [paymentTarget,setPaymentTarget]=useState<ReceivableDetail>();
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState<CustomerPaymentMethod>("Cash");
-  const [bankAccountId, setBankAccountId] = useState("");
-  const [reference, setReference] = useState("");
-  const [notes, setNotes] = useState("");
 
   const query = useReceivables({
     page, pageSize, search: search.trim() || undefined,
+    customerId,
     status: status === "all" ? undefined : status,
     overdue: overdue || undefined,
+    enabled: activeTab === "invoices",
   });
   const detailQuery = useReceivableDetail(selectedId);
-  const confirmPayment = useConfirmCustomerPayment();
-  const settlementQuery = useQuery({
-    queryKey: ["payment-settlement-configuration"],
-    queryFn: receivablesApi.settlementConfiguration,
-    enabled: paymentOpen,
-  });
   const detail = detailQuery.data;
-
-  useEffect(() => {
-    if (paymentOpen && paymentTarget) setAmount(String(paymentTarget.outstandingAmount));
-  }, [paymentOpen, paymentTarget]);
-  useEffect(() => {
-    if (!paymentOpen || method !== "BankTransfer" || bankAccountId) return;
-    const accounts = settlementQuery.data?.bankAccounts ?? [];
-    setBankAccountId((accounts.find(account => account.isPrimary) ?? accounts[0])?.bankAccountId ?? "");
-  }, [bankAccountId, method, paymentOpen, settlementQuery.data]);
 
   const columns = useMemo<ColumnDef<ReceivableListItem>[]>(() => [
     { accessorKey: "documentNumber", header: "Factura", cell: ({ row }) => <div><p className="font-semibold">{row.original.documentNumber}</p><p className="text-xs text-muted-foreground">{receivableCustomerLabel(row.original)}</p></div> },
@@ -87,55 +63,34 @@ export default function ReceivablesPage() {
 
   const openPayment = () => {
     if (!detail || detail.outstandingAmount <= 0) return;
-    setMethod("Cash"); setBankAccountId(""); setReference(""); setNotes("");
-    setAmount(String(detail.outstandingAmount)); setPaymentTarget(detail); setSelectedId(undefined); setPaymentOpen(true);
-  };
-
-  const submitPayment = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!paymentTarget || !businessId) return;
-    const parsed = Number(amount);
-    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > paymentTarget.outstandingAmount) {
-      toast.error("El valor debe ser mayor que cero y no superar el saldo.");
-      return;
-    }
-    if (method === "BankTransfer" && !bankAccountId) {
-      toast.error("Selecciona la cuenta bancaria que recibirá la transferencia.");
-      return;
-    }
-    try {
-      const accepted = await confirmPayment.mutateAsync({
-        paymentId: crypto.randomUUID(), businessId, customerId: paymentTarget.customerId,
-        workSessionId: null, paidAt: new Date().toISOString(), currencyCode: paymentTarget.currencyCode,
-        paymentMethod: method, bankAccountId: method === "BankTransfer" ? bankAccountId : null,
-        reference: reference.trim() || null, notes: notes.trim() || null,
-        allocations: [{ receivableId: paymentTarget.receivableId, amount: parsed }],
-      });
-      setPaymentOpen(false);setPaymentTarget(undefined);
-      void query.refetch();
-      toast.success(`${accepted.documentNumber} fue recibido para procesamiento.`);
-    } catch {
-      toast.error("No fue posible registrar el abono. El saldo pudo cambiar; actualiza el detalle.");
-    }
+    setPaymentTarget(detail); setSelectedId(undefined); setPortfolioPaymentOpen(true);
   };
 
   return <div className="space-y-6">
-    <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por cobrar</h1><p className="text-muted-foreground">Facturas financiadas, vencimientos y recaudos aplicados por el motor documental.</p></div><Button asChild><Link href="/pos"><Plus className="mr-2 h-4 w-4"/>Crear cuenta por cobrar</Link></Button></header>
-    <section className="grid gap-3 md:grid-cols-3">
+    <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por cobrar</h1><p className="text-muted-foreground">Facturas financiadas, vencimientos y recaudos aplicados por el motor contable.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={downloadPreexistingReceivablesTemplate}><Download className="mr-2 h-4 w-4"/>Descargar plantilla</Button>{canImport&&<Button variant="outline" onClick={()=>setImportOpen(true)}><FileUp className="mr-2 h-4 w-4"/>Importar cartera</Button>}{canReceive&&<Button onClick={()=>{setPaymentTarget(undefined);setPortfolioPaymentOpen(true)}}><CircleDollarSign className="mr-2 h-4 w-4"/>Abono a cartera</Button>}<Button variant="outline" asChild><Link href="/pos"><Plus className="mr-2 h-4 w-4"/>Crear cuenta por cobrar</Link></Button></div></header>
+    {activeTab==="invoices"&&<section className="grid gap-3 md:grid-cols-3">
       <SummaryCard icon={WalletCards} label="Saldo pendiente" value={formatCurrency(query.data?.totalOutstanding ?? 0)} />
       <SummaryCard icon={AlertTriangle} label="Saldo vencido" value={formatCurrency(query.data?.totalOverdue ?? 0)} danger={(query.data?.totalOverdue ?? 0) > 0} />
       <SummaryCard icon={ReceiptText} label="Facturas encontradas" value={String(query.data?.totalCount ?? 0)} />
-    </section>
+    </section>}
     <section className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_13rem_12rem]">
       <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Factura, cliente, identificación o sede" />
-      <Select value={status} onValueChange={(value) => { setStatus(value as ReceivableStatus | "all"); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Open">Pendientes</SelectItem><SelectItem value="PartiallyPaid">Abono parcial</SelectItem><SelectItem value="Paid">Pagadas</SelectItem><SelectItem value="Cancelled">Canceladas</SelectItem></SelectContent></Select>
-      <Button variant={overdue ? "destructive" : "outline"} onClick={() => { setOverdue((value) => !value); setPage(1); }}><CalendarClock className="mr-2 h-4 w-4" /> Solo vencidas</Button>
+      {activeTab==="invoices"&&<Select value={status} onValueChange={(value) => { setStatus(value as ReceivableStatus | "all"); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Open">Pendientes</SelectItem><SelectItem value="PartiallyPaid">Abono parcial</SelectItem><SelectItem value="Paid">Pagadas</SelectItem><SelectItem value="Cancelled">Canceladas</SelectItem></SelectContent></Select>}
+      {activeTab!=="payments"&&<Button variant={overdue ? "destructive" : "outline"} onClick={() => { setOverdue((value) => !value); setPage(1); }}><CalendarClock className="mr-2 h-4 w-4" /> Solo vencidas</Button>}
     </section>
-    {query.isError ? <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudo cargar la cartera. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div> : <DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading} page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages} totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }} onRowClick={(item) => setSelectedId(item.receivableId)} enableRowSelection={false} />}
+    <PortfolioLedgerTabs direction="receivable" value={activeTab} onValueChange={value=>{setActiveTab(value);if(value!=="invoices")setCustomerId(undefined)}} search={search.trim()||undefined} overdue={overdue} onPartyClick={id=>{setCustomerId(id);setPage(1);setActiveTab("invoices")}} onInvoiceClick={setSelectedId}>
+      {query.isError ? <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudo cargar la cartera. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div> : <><div className="mb-3 flex items-center justify-between">{customerId?<Badge variant="secondary">Cartera del cliente seleccionado</Badge>:<span/>}{customerId&&<Button size="sm" variant="ghost" onClick={()=>{setCustomerId(undefined);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading} page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages} totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }} onRowClick={(item) => setSelectedId(item.receivableId)} enableRowSelection={false} /></>}
+    </PortfolioLedgerTabs>
 
     <Dialog open={!!selectedId} onOpenChange={(open) => !open && setSelectedId(undefined)}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{detail?.documentNumber ?? "Detalle de cartera"}</DialogTitle><DialogDescription>{detail ? `${receivableCustomerLabel(detail)}${detail.customerIdentification ? ` · ${detail.customerIdentification}` : ""}` : "Cargando información..."}</DialogDescription></DialogHeader>{detailQuery.isLoading ? <p className="py-8 text-center text-muted-foreground">Cargando trazabilidad...</p> : detail ? <div className="space-y-5"><dl className="grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-3"><Metric label="Valor original" value={formatCurrency(detail.originalAmount, detail.currencyCode)} /><Metric label="Saldo actual" value={formatCurrency(detail.outstandingAmount, detail.currencyCode)} emphasized /><Metric label="Vence" value={formatDate(detail.dueDate)} /></dl><section><h3 className="mb-3 text-sm font-semibold">Movimientos</h3><div className="space-y-2">{detail.transactions.map((transaction) => <div key={transaction.transactionId} className="flex items-center justify-between rounded-lg border p-3 text-sm"><div><p className="font-medium">{transaction.type === "Opening" ? "Cuenta por cobrar creada" : "Abono aplicado"}</p><p className="text-xs text-muted-foreground">{formatDateTime(transaction.occurredAt)}</p></div><span className={transaction.type === "Payment" ? "font-semibold text-emerald-700" : "font-semibold"}>{transaction.type === "Payment" ? "−" : "+"}{formatCurrency(transaction.amount, detail.currencyCode)}</span></div>)}</div></section><DialogFooter><Button variant="outline" onClick={() => setSelectedId(undefined)}>Cerrar</Button>{canReceive && detail.outstandingAmount > 0 && <Button onClick={openPayment}><CircleDollarSign className="mr-2 h-4 w-4" /> Registrar abono</Button>}</DialogFooter></div> : <p className="py-8 text-center text-destructive">No fue posible cargar la cuenta por cobrar.</p>}</DialogContent></Dialog>
 
-    <Dialog open={paymentOpen} onOpenChange={open=>{setPaymentOpen(open);if(!open)setPaymentTarget(undefined)}}><DialogContent className="sm:max-w-lg"><form className="space-y-5" onSubmit={submitPayment}><DialogHeader><DialogTitle>Registrar abono</DialogTitle><DialogDescription>El recaudo se aplicará a {paymentTarget?.documentNumber} de forma transaccional e idempotente.</DialogDescription></DialogHeader><div className="space-y-2"><Label htmlFor="receivable-amount">Valor</Label><FormattedNumberInput id="receivable-amount" kind="currency" value={amount} onValueChange={(value) => setAmount(value?.toString() ?? "")} /></div><div className="space-y-2"><Label>Medio de pago</Label><Select value={method} onValueChange={(value) => {setMethod(value as CustomerPaymentMethod);setBankAccountId("")}}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(paymentLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>{method === "BankTransfer" && <div className="space-y-2"><Label>Cuenta bancaria</Label><Select value={bankAccountId} onValueChange={setBankAccountId}><SelectTrigger><SelectValue placeholder={settlementQuery.isLoading ? "Cargando cuentas..." : "Selecciona una cuenta"}/></SelectTrigger><SelectContent>{(settlementQuery.data?.bankAccounts ?? []).map(account=><SelectItem key={account.bankAccountId} value={account.bankAccountId}>{account.displayName}{account.isPrimary ? " · Principal" : ""}</SelectItem>)}</SelectContent></Select></div>}<div className="space-y-2"><Label htmlFor="receivable-reference">Referencia</Label><Input id="receivable-reference" maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Comprobante o referencia" /></div><div className="space-y-2"><Label htmlFor="receivable-notes">Notas</Label><Textarea id="receivable-notes" maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></div><DialogFooter><Button type="button" variant="outline" onClick={() => {setPaymentOpen(false);setPaymentTarget(undefined)}}>Cancelar</Button><Button type="submit" disabled={confirmPayment.isPending || (method === "BankTransfer" && (!bankAccountId || settlementQuery.isLoading))}>{confirmPayment.isPending ? "Registrando..." : "Registrar abono"}</Button></DialogFooter></form></DialogContent></Dialog>
+    <PortfolioPaymentWizard direction="receivable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open)setPaymentTarget(undefined)}} initialInvoice={paymentTarget?{id:paymentTarget.receivableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.customerId,role:"Customer",displayName:paymentTarget.customerName,identification:paymentTarget.customerIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:paymentTarget.customerId,supplierId:null,sellerId:null,carrierId:null,employeeId:null,userId:null}:null}/>
+    {businessId && <PreexistingReceivablesImport
+      businessId={businessId}
+      open={importOpen}
+      onOpenChange={setImportOpen}
+      onCompleted={() => setActiveTab("invoices")}
+    />}
   </div>;
 }
 

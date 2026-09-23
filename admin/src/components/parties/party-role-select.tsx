@@ -32,9 +32,10 @@ type PartyRoleSelectProps = {
   disabled?: boolean;
   includePartyId?: boolean;
   preload?: boolean;
+  loadPage?: (search:string,page:number,pageSize:number)=>Promise<{items:PartyRoleOption[];page:number;totalPages:number;totalCount:number}>;
 };
 
-export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, disabled, includePartyId = false, preload = false }: PartyRoleSelectProps) {
+export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, disabled, includePartyId = false, preload = false,loadPage }: PartyRoleSelectProps) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [picked, setPicked] = useState<PagedEntityOption | null>(null);
   const getOption = useCallback((item: PartyRoleSelection) => ({
@@ -46,13 +47,12 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
   const selectedQuery = useQuery({
     queryKey: ["party-role-select-value", businessId, role ?? "Any", includePartyId, value],
     queryFn: async () => {
-      const item = (await partiesApi.roleOptions({
-        page: 1, pageSize: 1, role: role ?? "Any",
-        ...(includePartyId || !role ? { partyId: value } : { roleId: value }),
-      })).items[0];
+      const item = loadPage
+        ? (await loadPage(value,1,10)).items.find(option=>(includePartyId||!role?option.partyId:option.roleId)===value)
+        : (await partiesApi.roleOptions({page:1,pageSize:1,role:role??"Any",...(includePartyId||!role?{partyId:value}:{roleId:value})})).items[0];
       return item ? toSelection(item) : null;
     },
-    enabled: Boolean(businessId) && Boolean(value) && !selectedOption && picked?.value !== value && !leadingOptions?.some(option => option.value === value),
+    enabled: Boolean(businessId||loadPage) && Boolean(value) && !selectedOption && picked?.value !== value && !leadingOptions?.some(option => option.value === value),
     staleTime: 5 * 60 * 1000,
   });
   const resolvedSelected = selectedOption ?? (picked?.value === value ? picked : null) ?? (selectedQuery.data ? getOption(selectedQuery.data) : null);
@@ -67,9 +67,9 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
       onChange(id, item);
     }}
     loadPage={async (search, page, pageSize) => {
-      const result = await partiesApi.roleOptions({
-        page, pageSize, role: role ?? "Any", search: search || undefined,
-      });
+      const result = loadPage
+        ? await loadPage(search,page,pageSize)
+        : await partiesApi.roleOptions({page,pageSize,role:role??"Any",search:search||undefined});
       return { ...result, items: result.items.map(toSelection) };
     }}
     getOption={getOption}
@@ -77,7 +77,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
     leadingOptions={leadingOptions}
     placeholder={placeholder}
     ariaLabel={role ? `Seleccionar ${role.toLocaleLowerCase("es-CO")}` : "Seleccionar tercero"}
-    disabled={disabled || !businessId}
+    disabled={disabled || (!businessId&&!loadPage)}
     preload={preload}
   />;
 }

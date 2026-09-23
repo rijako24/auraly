@@ -15,11 +15,6 @@ on:
         description: Version SemVer inmutable (ej. 0.1.0-rc7)
         required: true
         type: string
-      ref:
-        description: Commit o rama para construir DEV; PROD ignora este valor y usa el release aprobado
-        required: true
-        default: main
-        type: string
       components:
         description: Componentes modificados separados por coma (database,function,api,admin,pos-installer). PROD reutiliza el alcance archivado.
         required: true
@@ -41,6 +36,7 @@ concurrency:
 jobs:
   release:
     name: Resolve immutable release
+    if: github.ref == 'refs/heads/main'
     # WiX 6.0.2 can lose its native pipe on console-less Windows 2025 runners.
     # Keep the release builder on the stable Windows generation until the
     # upstream fix (wixtoolset/wix#701) is available in a stable WiX release.
@@ -58,7 +54,7 @@ jobs:
         if: inputs.environment == 'dev'
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref }}
+          ref: main
           fetch-depth: 0
 
       - name: Checkout release tag for PROD
@@ -67,6 +63,20 @@ jobs:
         with:
           ref: auraly-v${{ inputs.version }}
           fetch-depth: 0
+
+      - name: Verify deployed commit belongs to origin/main
+        shell: pwsh
+        run: |
+          git fetch origin main --no-tags
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo consultar origin/main.' }
+          if ('${{ inputs.environment }}' -eq 'dev') {
+            $main = (git rev-parse origin/main).Trim()
+            $head = (git rev-parse HEAD).Trim()
+            if ($head -ne $main) { throw 'DEV debe desplegar exactamente origin/main.' }
+          } else {
+            git merge-base --is-ancestor HEAD origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'El release de PROD no pertenece a origin/main.' }
+          }
 
       - name: Setup .NET
         if: inputs.environment == 'dev'

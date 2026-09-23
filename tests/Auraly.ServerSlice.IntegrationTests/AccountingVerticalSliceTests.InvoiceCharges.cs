@@ -168,8 +168,8 @@ public sealed partial class AccountingVerticalSliceTests
                 candidate.AppliedChargeId == charge.AppliedChargeId) == true));
         var payableId = await ScalarAsync<Guid>("SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", firstCharge.AppliedChargeId);
         var payment = new ConfirmSupplierPaymentRequest(Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId,
-            issued[0].CommercialSnapshot.IssuedAt.AddHours(1), "COP", SupplierPaymentMethods.Cash, null,
-            "Pago domiciliario matriz", [new(payableId, firstCharge.Amount)], sessionId);
+            issued[0].CommercialSnapshot.IssuedAt.AddHours(1), "COP", "Pago domiciliario matriz",
+            [new(payableId, firstCharge.Amount)],[new(SupplierPaymentMethods.Cash,firstCharge.Amount,firstCharge.Amount)],sessionId);
         for (var attempt = 0; attempt < 2; attempt++)
         {
             using var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/payable-payments/confirm") { Content = JsonContent.Create(payment) };
@@ -265,8 +265,8 @@ public sealed partial class AccountingVerticalSliceTests
             sale.Charges?.Any(charge => charge.InvoicedAmount > 0) == true);
         var receivableId = await ScalarAsync<Guid>("SELECT ReceivableId FROM dbo.Receivables WHERE SourceDocumentId=@Id", creditSale.DocumentId);
         var collection = new ConfirmCustomerPaymentRequest(Guid.NewGuid(), fixture.BusinessId, creditSale.CustomerId!.Value,
-            sessionId, DateTimeOffset.UtcNow, "COP", CustomerPaymentMethods.Cash, null, "Recaudo factura con domicilio",
-            [new(receivableId, creditSale.Credit!.Amount)]);
+            sessionId, DateTimeOffset.UtcNow, "COP", "Recaudo factura con domicilio",
+            [new(receivableId, creditSale.Credit!.Amount)],[new(CustomerPaymentMethods.Cash,creditSale.Credit.Amount,creditSale.Credit.Amount)]);
         for (var attempt = 0; attempt < 2; attempt++)
         {
             using var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/receivable-payments/confirm")

@@ -226,6 +226,30 @@ public sealed class WorkSessionClosureReceiptRendererTests
     }
 
     [Fact]
+    public void Portfolio_sections_show_party_and_each_invoice_without_repeating_payment_methods()
+    {
+        var now=DateTimeOffset.UtcNow;
+        var closure=Closure(3) with
+        {
+            ReceivablePayments=[new(Guid.NewGuid(),"RCC-10","Cliente Uno",150m,now,
+                [new("FV-1",50m),new("FV-2",100m)])],
+            PayablePayments=[new(Guid.NewGuid(),"PGP-20","Proveedor Uno",80m,now,
+                [new("FC-9",80m)])]
+        };
+
+        var html=WorkSessionClosureReceiptRenderer.RenderHtml(closure);
+
+        var receivables=Section(html,"Abonos a cartera","Pagos a proveedores");
+        Assert.Contains("Cliente Uno",receivables);
+        Assert.Contains("FV-1",receivables);
+        Assert.Contains("FV-2",receivables);
+        var payables=Section(html,"Pagos a proveedores","Entradas de dinero");
+        Assert.Contains("Proveedor Uno",payables);
+        Assert.Contains("FC-9",payables);
+        Assert.DoesNotContain("Transferencia",receivables+payables,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Version_one_remains_available_for_historical_reprints()
     {
         var html = WorkSessionClosureReceiptRenderer.RenderHtml(Closure(1));

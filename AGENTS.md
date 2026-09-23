@@ -37,6 +37,10 @@ Antes de crear una clase, servicio, flujo, handler, endpoint, tabla, configuraci
 
 ## Forma de trabajar
 
+- Todo despliegue, incluido DEV, debe ejecutarse desde un commit ya integrado en
+  `origin/main`. No se publica desde ramas de trabajo, commits sueltos o un
+  checkout con cambios sin confirmar. El release de producción puede usar un
+  tag inmutable, siempre que su commit pertenezca a `origin/main`.
 - Trabajar siempre sobre el único checkout operativo, ya sea en la rama `main`
   o en una rama creada a partir de `main`. No crear `git worktree`, clones
   anidados ni copias paralelas del repositorio. Una tarea que requiera

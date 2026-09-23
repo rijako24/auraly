@@ -9,6 +9,8 @@
     "rootDir": "src"
   },
   "include": [
+    "src/components/payments/preexisting-receivables-template.ts",
+    "src/components/payments/preexisting-receivables-template.test.ts",
     "src/app/(pos)/pos/pos-money-input.ts",
     "src/app/(pos)/pos/pos-money-input.test.ts",
     "src/app/(pos)/pos/pos-cash-movement-keyboard.ts",
