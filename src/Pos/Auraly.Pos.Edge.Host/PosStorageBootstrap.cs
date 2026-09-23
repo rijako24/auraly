@@ -74,6 +74,55 @@ public static class PosStorageBootstrap
         "No se puede reutilizar esta caja porque falta su último consecutivo local. Su numeración no se reiniciará. Revisa la instalación o desenrola el dispositivo antes de preparar uno nuevo.",
         409, "PosEnrollmentNumberingUnavailable");
 
+    public static void ValidateRecoveredNumbering(string databasePath, IReadOnlyList<Guid> deviceIds)
+    {
+        if (deviceIds.Count == 0) return;
+        if (!File.Exists(databasePath)) throw MissingNumbering();
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false
+        }.ToString());
+        connection.Open();
+        using var tables = connection.CreateCommand();
+        tables.CommandText = """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type='table' AND name IN ('DocumentSeriesCursors','FiscalSeriesCursors');
+            """;
+        if (Convert.ToInt32(tables.ExecuteScalar()) != 2) throw MissingNumbering();
+        using var numbers = connection.CreateCommand();
+        numbers.CommandText = """
+            SELECT DeviceId,COUNT(DISTINCT DocumentType)
+            FROM DocumentSeriesCursors
+            WHERE DeviceId COLLATE NOCASE IN (SELECT value FROM json_each($devices))
+              AND IsActive=1
+              AND DocumentType IN ('SalesInvoice','SalesReceipt')
+              AND NextConsecutive>=1 AND NextConsecutive<=RangeEnd+1
+            GROUP BY DeviceId;
+            """;
+        numbers.Parameters.AddWithValue("$devices", System.Text.Json.JsonSerializer.Serialize(
+            deviceIds.Select(deviceId => deviceId.ToString("D"))));
+        try
+        {
+            var valid = new HashSet<Guid>();
+            using (var reader = numbers.ExecuteReader())
+                while (reader.Read())
+                    if (reader.GetInt32(1) == 2 && Guid.TryParse(reader.GetString(0), out var deviceId))
+                        valid.Add(deviceId);
+            if (deviceIds.Any(deviceId => !valid.Contains(deviceId))) throw MissingNumbering();
+            numbers.CommandText = """
+                SELECT COUNT(*) FROM FiscalSeriesCursors
+                WHERE DeviceId COLLATE NOCASE IN (SELECT value FROM json_each($devices))
+                  AND IsActive=1
+                  AND (NextConsecutive<RangeStart OR NextConsecutive>RangeEnd+1);
+                """;
+            if (Convert.ToInt32(numbers.ExecuteScalar()) != 0) throw MissingNumbering();
+        }
+        catch (SqliteException exception) when (exception.SqliteErrorCode == 1)
+        {
+            throw MissingNumbering();
+        }
+    }
+
     public static void ResetForNewEnrollment(string databasePath, PosEnrollmentPackage package)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);

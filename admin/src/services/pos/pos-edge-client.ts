@@ -668,6 +668,7 @@ export interface PosClient {
     dianQuotaAvailable: boolean | null;
     identityReady: boolean;
     initialEnrollmentSessionAvailable?: boolean;
+    recoverableLocalNumbering?: boolean;
     catalogStatus: string;
     synchronizationInProgress: boolean;
     automaticRetryScheduled?: boolean;
@@ -970,6 +971,7 @@ export class PosEdgeClient implements PosClient {
       dianQuotaAvailable: boolean | null;
       identityReady: boolean;
       initialEnrollmentSessionAvailable: boolean;
+      recoverableLocalNumbering?: boolean;
       catalogStatus: string;
       synchronizationInProgress: boolean;
       automaticRetryScheduled?: boolean;

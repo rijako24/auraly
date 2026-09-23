@@ -45,11 +45,13 @@ Después del login y de conocer el contexto operativo, Auraly comprueba si POS E
 
 - si está disponible pero no está enrolado, ofrece preparar el equipo mediante una opción explícita y un único botón para continuar;
 - si el usuario continúa sin preparar, el escritorio usa el mismo POS online del navegador y POS Edge se limita a periféricos y enrolamiento: no abre Web PubSub, no descarga proyecciones, no inicia sincronizadores y no mantiene outbox operativo;
-- si el usuario prepara el equipo, el enrolamiento se convierte en la única fuente de verdad para activar la operación local sincronizada;
+- si el usuario prepara el equipo, el enrolamiento se convierte en la única fuente de verdad para activar la operación local sincronizada; con el cupo lleno solo puede recuperar una identidad cuya numeración permanezca en la SQLite de esta instalación, y el canje valida transaccionalmente el cupo antes de crear cualquier dispositivo nuevo;
 - si no está disponible, muestra una tarjeta de instalación y permite seguir vendiendo online;
 - la descarga obtiene de una única API autenticada la versión, URL HTTPS y SHA-256 del instalador publicado;
 - el instalador es genérico: no contiene tenant, usuario, contraseña, token, sede ni caja;
 - al abrir Auraly, el login determina el tenant y el enrolamiento autorizado asocia el dispositivo con sede, bodega y caja;
+- al preparar de nuevo, Edge solo solicita conservar una identidad si la recupera de su paquete protegido o de la numeración en su propia SQLite; valida los consecutivos locales antes de solicitar al servidor que rote la credencial;
+- el nombre de máquina y usuario identifica la instalación para soporte, pero nunca autoriza reutilizar otra caja: dos instalaciones en el mismo equipo reciben dispositivos y series diferentes. Un reintento de la misma sesión de enrolamiento puede recuperar el dispositivo ya creado mediante esa sesión y su código;
 - una actualización preserva la base SQLite y la identidad protegida del dispositivo.
 
 El instalador inicial es un bundle WiX convencional, muestra una interfaz gráfica
@@ -100,7 +102,7 @@ El navegador no intenta emular capacidades locales. POS Edge no implementa otro 
 
 - sin enrolamiento conserva el flujo online: borrador y venta permanecen en la API, no se descargan datos operativos y no existe una conexión push local;
 - el usuario puede marcar `Preparar este equipo para trabajar sin conexión` antes de continuar; sin marcarla no se crea enrolamiento ni estado sincronizado;
-- el bootstrap consulta el cupo autoritativo y muestra uso/límite; sin permiso o sin cupo la opción queda deshabilitada y el canje vuelve a comprobar la capacidad bajo bloqueo transaccional para cubrir carreras entre cajas;
+- el bootstrap consulta el cupo autoritativo y muestra uso/límite; sin permiso la opción queda deshabilitada. Sin cupo solo permite recuperar una identidad con numeración local; el canje vuelve a comprobar la capacidad bajo bloqueo transaccional antes de crear una caja nueva para cubrir carreras entre cajas;
 - el catálogo, identidad autorizada, consecutivos y documentos necesarios se guardan localmente;
 - una vez completada la preparación, el paso del tiempo no invalida la identidad local ni obliga a contactar al servidor para iniciar sesión; el usuario puede entrar cuantas veces necesite con la credencial protegida descargada;
 - una conexión disponible actualiza usuarios, permisos, bloqueos y revocaciones mediante la sincronización de seguridad existente, pero una falla de red no convierte en inválida una preparación durable ya completada;

@@ -274,23 +274,7 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         var package = CreateEnrollmentPackage(newDeviceId);
         try
         {
-            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
-                $"Data Source={path}"))
-            {
-                await connection.OpenAsync();
-                await using var command = connection.CreateCommand();
-                command.CommandText = """
-                    CREATE TABLE DocumentSeriesCursors(
-                        SeriesId TEXT PRIMARY KEY,
-                        DeviceId TEXT NOT NULL,
-                        IsActive INTEGER NOT NULL);
-                    INSERT INTO DocumentSeriesCursors(SeriesId,DeviceId,IsActive)
-                    VALUES($series,$device,1);
-                    """;
-                command.Parameters.AddWithValue("$series", Guid.NewGuid().ToString("D"));
-                command.Parameters.AddWithValue("$device", oldDeviceId.ToString("D"));
-                await command.ExecuteNonQueryAsync();
-            }
+            await SeedRecoverableNumberingAsync(path, oldDeviceId);
 
             var handler = new RetiredEnrollmentHandler(oldDeviceId, package);
             using var http = new HttpClient(handler)
@@ -330,25 +314,7 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         var package = CreateEnrollmentPackage(newDeviceId);
         try
         {
-            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
-                             $"Data Source={path}"))
-            {
-                await connection.OpenAsync();
-                await using var command = connection.CreateCommand();
-                command.CommandText = """
-                    CREATE TABLE DocumentSeriesCursors(
-                        SeriesId TEXT PRIMARY KEY,
-                        DeviceId TEXT NOT NULL,
-                        IsActive INTEGER NOT NULL);
-                    INSERT INTO DocumentSeriesCursors(SeriesId,DeviceId,IsActive)
-                    VALUES($firstSeries,$firstDevice,1),($secondSeries,$secondDevice,1);
-                    """;
-                command.Parameters.AddWithValue("$firstSeries", Guid.NewGuid().ToString("D"));
-                command.Parameters.AddWithValue("$firstDevice", retiredDeviceIds[0].ToString("D"));
-                command.Parameters.AddWithValue("$secondSeries", Guid.NewGuid().ToString("D"));
-                command.Parameters.AddWithValue("$secondDevice", retiredDeviceIds[1].ToString("D"));
-                await command.ExecuteNonQueryAsync();
-            }
+            await SeedRecoverableNumberingAsync(path, retiredDeviceIds);
 
             var handler = new MultipleRetiredEnrollmentsHandler(retiredDeviceIds, package);
             using var http = new HttpClient(handler)
@@ -1992,6 +1958,36 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
                 Content = JsonContent.Create(package)
             };
         }
+    }
+
+    private static async Task SeedRecoverableNumberingAsync(string path, params Guid[] deviceIds)
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}");
+        await connection.OpenAsync();
+        await using var schema = connection.CreateCommand();
+        schema.CommandText = """
+            CREATE TABLE DocumentSeriesCursors(
+                SeriesId TEXT PRIMARY KEY,DeviceId TEXT NOT NULL,DocumentType TEXT NOT NULL,
+                NextConsecutive INTEGER NOT NULL,RangeEnd INTEGER NOT NULL,IsActive INTEGER NOT NULL);
+            CREATE TABLE FiscalSeriesCursors(
+                DeviceId TEXT NOT NULL,NextConsecutive INTEGER NOT NULL,
+                RangeStart INTEGER NOT NULL,RangeEnd INTEGER NOT NULL,IsActive INTEGER NOT NULL);
+            """;
+        await schema.ExecuteNonQueryAsync();
+        foreach (var deviceId in deviceIds)
+            foreach (var documentType in new[] { "SalesInvoice", "SalesReceipt" })
+            {
+                await using var insert = connection.CreateCommand();
+                insert.CommandText = """
+                    INSERT INTO DocumentSeriesCursors
+                      (SeriesId,DeviceId,DocumentType,NextConsecutive,RangeEnd,IsActive)
+                    VALUES($series,$device,$type,1,99999999,1);
+                    """;
+                insert.Parameters.AddWithValue("$series", Guid.NewGuid().ToString("D"));
+                insert.Parameters.AddWithValue("$device", deviceId.ToString("D"));
+                insert.Parameters.AddWithValue("$type", documentType);
+                await insert.ExecuteNonQueryAsync();
+            }
     }
 
     private static PosEnrollmentPackage CreateEnrollmentPackage(Guid deviceId)

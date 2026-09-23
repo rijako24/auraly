@@ -84,6 +84,7 @@ import {
   authorizePosEnrollment,
   redeemPosEnrollment,
   waitForRedeemedPosEdge,
+  type PosEnrollmentAuthorization,
 } from "@/services/pos/pos-enrollment";
 import {
   connectRedeemedPosEdge,
@@ -300,6 +301,12 @@ export default function PosPage() {
   const [setupNotice, setSetupNotice] = useState<string | null>(null);
   const [preparationActive, setPreparationActive] = useState(false);
   const preparationActiveRef = useRef(false);
+  const pendingEnrollment = useRef<{
+    authorization: PosEnrollmentAuthorization;
+    businessId: string;
+    warehouseId: string;
+  } | null>(null);
+  const recoverableLocalNumbering = useRef(false);
   const [preparationSelection, setPreparationSelection] = useState<{
     option: SalesWorkspaceOption;
     documentType: PosSaleDocumentType;
@@ -367,7 +374,9 @@ export default function PosPage() {
   ) {
     const displayName = bootstrap.userDisplayName.trim() || fallbackDisplayName;
     window.localStorage.setItem("selected_tenant_id", bootstrap.tenantId);
-    setCanEnrollOffline(bootstrap.canEnrollPosDevice);
+    const canReuseLocalDevice = bootstrap.hasEnrollmentPermission &&
+      recoverableLocalNumbering.current;
+    setCanEnrollOffline(bootstrap.canEnrollPosDevice || canReuseLocalDevice);
     setEnrollmentAvailability({
       active: bootstrap.activeEnrolledDeviceCount,
       maximum: bootstrap.maximumEnrolledDevices,
@@ -632,6 +641,7 @@ export default function PosPage() {
           try {
             const edgeClient = new PosEdgeClient(edgeToken, readEdgeUserSession());
             let health = await edgeClient.health();
+            recoverableLocalNumbering.current = health.recoverableLocalNumbering === true;
             if (health.userId && !health.workSessionId) {
               const session = await edgeClient.openWorkSession();
               health = {
@@ -2833,17 +2843,24 @@ export default function PosPage() {
     preparationActiveRef.current = true;
     setPreparationActive(true);
     setPreparationSelection({ option, documentType: initialDocumentType });
+    setPreparationHealth(null);
     setSetupError(null);
     setEdgeLoginError(null);
     setSetupNotice("Autorizando y preparando esta caja…");
     window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     setSetupLoading(true);
     try {
-      const enrollment = await authorizePosEnrollment(
-        option,
-        draft?.draftId.value,
-        authorization,
-      );
+      const pending = pendingEnrollment.current;
+      const enrollment = pending?.businessId === option.businessId &&
+        pending.warehouseId === option.warehouseId &&
+        Date.parse(pending.authorization.expiresAt) > Date.now() + 5_000
+        ? pending.authorization
+        : await authorizePosEnrollment(option, draft?.draftId.value, authorization);
+      pendingEnrollment.current = {
+        authorization: enrollment,
+        businessId: option.businessId,
+        warehouseId: option.warehouseId,
+      };
       setSetupNotice("Guardando la identidad segura de la caja…");
       await redeemPosEnrollment(edgeEnrollmentToken, enrollment);
       setSetupNotice("Reiniciando el servicio local y preparando usuarios, permisos y catálogo…");
@@ -2856,6 +2873,7 @@ export default function PosPage() {
       );
       setPreparationHealth(health);
       setClient(edgeClient);
+      pendingEnrollment.current = null;
       setSetupNotice(null);
     } catch (caught) {
       const message = caught instanceof Error

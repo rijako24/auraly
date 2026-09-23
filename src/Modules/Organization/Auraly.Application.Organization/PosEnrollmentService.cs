@@ -76,11 +76,6 @@ public sealed class PosEnrollmentService(
             throw new PosEnrollmentValidationException(
                 "El nombre del equipo no puede superar 160 caracteres.");
 
-        var capacity = await store.ReadCapacityAsync(user.TenantId, cancellationToken);
-        if (!capacity.HasAvailableCapacity)
-            throw new PosEnrollmentConflictException(
-                $"La organización alcanzó el máximo de {capacity.MaximumEnrolledDevices} cajas enroladas permitido. Comunícate con el administrador para liberar una caja o ampliar la capacidad.");
-
         var workspace = await store.ResolveWorkspaceAsync(
             user.TenantId, request with { DeviceName = deviceName }, cancellationToken)
             ?? throw new PosEnrollmentForbiddenException(

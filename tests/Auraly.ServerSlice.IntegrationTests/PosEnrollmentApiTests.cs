@@ -5,6 +5,8 @@ using Auraly.Contracts.Organization;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Auraly.Application.WorkSessions;
+using Auraly.Pos.Edge.Host;
+using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -96,7 +98,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Reenrollment_recovers_device_identity_when_local_package_was_lost()
+    public async Task Reenrollment_recovers_device_identity_from_local_numbering_when_package_was_lost()
     {
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.EnrolledDevicesEnroll);
@@ -138,7 +140,9 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
             await insert.ExecuteNonQueryAsync();
         }
 
-        using var secondAuthorizationResponse = await client.PostAsJsonAsync(
+        using var secondClient = fixture.CreateAdminClient(
+            CommercePermissionCodes.EnrolledDevicesEnroll);
+        using var secondAuthorizationResponse = await secondClient.PostAsJsonAsync(
             "/api/commerce/v1/pos/enrollments",
             new CreatePosEnrollmentRequest(
                 fixture.BusinessId, fixture.WarehouseId, "Equipo reconfigurable"));
@@ -146,12 +150,13 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         var secondAuthorization = await secondAuthorizationResponse.Content
             .ReadFromJsonAsync<PosEnrollmentAuthorization>();
         Assert.NotNull(secondAuthorization);
-        using var secondRedeemResponse = await client.PostAsJsonAsync(
+        using var secondRedeemResponse = await secondClient.PostAsJsonAsync(
             "/api/pos/v1/enrollments/redeem",
             new RedeemPosEnrollmentRequest(
                 secondAuthorization.EnrollmentSessionId,
                 secondAuthorization.RedemptionCode,
-                "WORKSTATION-REENROLL"));
+                "WORKSTATION-REENROLL",
+                firstPackage.DeviceId));
         secondRedeemResponse.EnsureSuccessStatusCode();
         var secondPackage = await secondRedeemResponse.Content
             .ReadFromJsonAsync<PosEnrollmentPackage>();
@@ -192,6 +197,107 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, reader.GetInt32(0));
         Assert.Equal(1, reader.GetInt32(1));
         Assert.Equal(1, reader.GetInt32(2));
+    }
+
+    [Fact]
+    public async Task New_installation_on_same_machine_gets_its_own_device_and_does_not_rotate_old_credentials()
+    {
+        using var client = fixture.CreateAdminClient(
+            CommercePermissionCodes.EnrolledDevicesEnroll);
+        var installationId = $"{Environment.MachineName}:{Environment.UserName}";
+        var first = await EnrollAsync(client, installationId);
+        using var secondClient = fixture.CreateAdminClient(
+            CommercePermissionCodes.EnrolledDevicesEnroll);
+        var directory = Path.Combine(Path.GetTempPath(), $"auraly-fresh-enrollment-{Guid.NewGuid():N}");
+        var databasePath = Path.Combine(directory, "auraly-pos.db");
+        PosEnrollmentPackage second;
+        try
+        {
+            using var authorizationResponse = await secondClient.PostAsJsonAsync(
+                "/api/commerce/v1/pos/enrollments",
+                new CreatePosEnrollmentRequest(
+                    fixture.BusinessId, fixture.WarehouseId, "Otra instalación en el mismo PC"));
+            authorizationResponse.EnsureSuccessStatusCode();
+            var authorization = await authorizationResponse.Content
+                .ReadFromJsonAsync<PosEnrollmentAuthorization>();
+            Assert.NotNull(authorization);
+            var store = new PosEdgeEnrollmentStore(
+                Path.Combine(directory, "enrollment.protected"),
+                Path.Combine(directory, "keys"), databasePath);
+            var edge = new PosEdgeEnrollmentClient(
+                secondClient, store, new PosLocalDeviceIdentityRecovery(databasePath));
+
+            Assert.False(File.Exists(databasePath));
+            var result = await edge.RedeemAsync(new LocalPosEnrollmentRequest(
+                authorization.EnrollmentSessionId, authorization.RedemptionCode));
+            Assert.True(result.RestartRequired);
+            second = store.Load()!;
+            Assert.False(second.ReusesDevice);
+            store.ResetLocalStorageIfRequired(databasePath);
+            await PosStorageBootstrap.InitializeAsync(databasePath);
+            Assert.True(File.Exists(databasePath));
+            Assert.False(store.LoadResultForEnrollment(authorization.EnrollmentSessionId)!.RestartRequired);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+
+        Assert.NotEqual(first.DeviceId, second.DeviceId);
+        Assert.NotEqual(first.DocumentSeries.SeriesId, second.DocumentSeries.SeriesId);
+        Assert.NotEqual(first.DocumentSeries.SeriesCode, second.DocumentSeries.SeriesCode);
+        Assert.False(second.ReusesDevice);
+        using var oldSync = DeviceRequest(
+            $"/api/pos/v1/identity/snapshot?businessId={fixture.BusinessId:D}",
+            first);
+        using var verificationClient = fixture.CreateAdminClient(
+            CommercePermissionCodes.EnrolledDevicesEnroll);
+        using var oldSyncResponse = await verificationClient.SendAsync(oldSync);
+        Assert.Equal(HttpStatusCode.OK, oldSyncResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Existing_device_can_reenroll_with_local_numbering_when_capacity_is_full()
+    {
+        var original = await ReadDeviceCapacityAsync();
+        using var firstClient = fixture.CreateAdminClient(
+            CommercePermissionCodes.EnrolledDevicesEnroll);
+        var first = await EnrollAsync(firstClient, "WORKSTATION-FULL-CAPACITY");
+        var activeCount = (await ReadDeviceCapacityAsync()).ActiveDevices;
+        await SetDeviceCapacityAsync(activeCount);
+        try
+        {
+            using var secondClient = fixture.CreateAdminClient(
+                CommercePermissionCodes.EnrolledDevicesEnroll);
+            using var authorizationResponse = await secondClient.PostAsJsonAsync(
+                "/api/commerce/v1/pos/enrollments",
+                new CreatePosEnrollmentRequest(
+                    fixture.BusinessId, fixture.WarehouseId, "Caja existente"));
+            authorizationResponse.EnsureSuccessStatusCode();
+            var authorization = await authorizationResponse.Content
+                .ReadFromJsonAsync<PosEnrollmentAuthorization>();
+            Assert.NotNull(authorization);
+            using var redeemResponse = await secondClient.PostAsJsonAsync(
+                "/api/pos/v1/enrollments/redeem",
+                new RedeemPosEnrollmentRequest(
+                    authorization.EnrollmentSessionId,
+                    authorization.RedemptionCode,
+                    "WORKSTATION-FULL-CAPACITY",
+                    first.DeviceId));
+            redeemResponse.EnsureSuccessStatusCode();
+            var reused = await redeemResponse.Content
+                .ReadFromJsonAsync<PosEnrollmentPackage>();
+            Assert.NotNull(reused);
+            Assert.True(reused.ReusesDevice);
+            Assert.Equal(first.DeviceId, reused.DeviceId);
+            Assert.Equal(first.DocumentSeries.SeriesId, reused.DocumentSeries.SeriesId);
+            Assert.Equal(activeCount, (await ReadDeviceCapacityAsync()).ActiveDevices);
+        }
+        finally
+        {
+            await SetDeviceCapacityAsync(original.MaximumDevices);
+        }
     }
 
     [Fact]

@@ -1816,6 +1816,7 @@ public static class PosEdgeHostApplication
         edge.MapGet("/health", () => Results.Ok(new
         {
             status = "EnrollmentRequired",
+            recoverableLocalNumbering = identityRecovery.ReadActiveDeviceIds().Count > 0,
             serverConnected = false,
             pushConnected = false,
             deviceSeriesCode = "",

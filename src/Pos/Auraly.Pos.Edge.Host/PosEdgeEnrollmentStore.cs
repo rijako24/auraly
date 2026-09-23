@@ -32,6 +32,20 @@ public sealed class PosEdgeEnrollmentStore(
 {
     public PosEnrollmentPackage? Load() => ReadStored()?.Package;
 
+    public Guid? LoadDeviceIdForReuse()
+    {
+        var package = Load();
+        if (package is null) return null;
+        // Validate before the server rotates the credential of this device.
+        PosStorageBootstrap.ValidateEnrollmentContinuity(
+            databasePath,
+            package with { ReusesDevice = true, InitialWorkSessions = [] });
+        return package.DeviceId;
+    }
+
+    public void ValidateRecoveredNumbering(IReadOnlyList<Guid> deviceIds) =>
+        PosStorageBootstrap.ValidateRecoveredNumbering(databasePath, deviceIds);
+
     public LocalPosEnrollmentResult? LoadResultForEnrollment(Guid sessionId)
     {
         var stored = ReadStored();
@@ -285,10 +299,12 @@ public sealed class PosEdgeEnrollmentClient(
         LocalPosEnrollmentRequest request, CancellationToken cancellationToken)
     {
         var installationId = $"{Environment.MachineName}:{Environment.UserName}";
-        var storedDeviceId = store.Load()?.DeviceId;
+        var storedDeviceId = store.LoadDeviceIdForReuse();
         var candidates = storedDeviceId.HasValue
             ? [storedDeviceId.Value]
             : identityRecovery.ReadActiveDeviceIds();
+        if (!storedDeviceId.HasValue && candidates.Count > 0)
+            store.ValidateRecoveredNumbering(candidates);
         PosEnrollmentPackage? package = null;
         foreach (var existingDeviceId in candidates)
         {
@@ -307,8 +323,9 @@ public sealed class PosEdgeEnrollmentClient(
 
         package ??= await RedeemFromServerAsync(
             request, installationId, null, cancellationToken);
-        package = await CacheCompanyLogoAsync(package, cancellationToken);
         store.SaveForNewEnrollment(package, request.EnrollmentSessionId);
+        package = await CacheCompanyLogoAsync(package, cancellationToken);
+        store.Save(package);
         return Result(package);
     }
 

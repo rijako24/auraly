@@ -91,6 +91,79 @@ public sealed class PosEnrollmentResetTests(Xunit.Abstractions.ITestOutputHelper
     }
 
     [Fact]
+    public async Task Missing_local_database_rejects_existing_identity_before_contacting_server()
+    {
+        Enrollments.Save(Package() with { ReusesDevice = false });
+        var handler = new UnexpectedEnrollmentRequestHandler();
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://api.example.test/")
+        };
+        var client = new PosEdgeEnrollmentClient(
+            http, Enrollments, new PosLocalDeviceIdentityRecovery(Database));
+
+        var error = await Assert.ThrowsAsync<PosEnrollmentServerException>(() =>
+            client.RedeemAsync(new LocalPosEnrollmentRequest(Guid.NewGuid(), "code")));
+
+        Assert.Equal("PosEnrollmentNumberingUnavailable", error.Title);
+        Assert.Equal(0, handler.RequestCount);
+        Assert.False(File.Exists(Database));
+    }
+
+    [Fact]
+    public async Task Incomplete_recovered_numbering_rejects_reuse_before_contacting_server()
+    {
+        var package = Package();
+        await PosStorageBootstrap.InitializeAsync(Database);
+        var sales = new PosEdgeSaleStore($"Data Source={Database}",
+            new ConfirmOfflineSaleService(new PermissionAuthorizer(
+                new PosLocalPermissionProvider(new PosLocalSessionAccessor()))));
+        await sales.ProvisionDocumentSeriesAsync(new(
+            package.DocumentSeries.SeriesId, new(package.DeviceId),
+            package.DocumentSeries.DocumentType, package.DocumentSeries.Prefix,
+            package.DocumentSeries.SeriesCode, package.DocumentSeries.Padding,
+            package.DocumentSeries.RangeStart, package.DocumentSeries.RangeEnd));
+        var handler = new UnexpectedEnrollmentRequestHandler();
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://api.example.test/")
+        };
+        var client = new PosEdgeEnrollmentClient(
+            http, Enrollments, new PosLocalDeviceIdentityRecovery(Database));
+
+        var error = await Assert.ThrowsAsync<PosEnrollmentServerException>(() =>
+            client.RedeemAsync(new LocalPosEnrollmentRequest(Guid.NewGuid(), "code")));
+
+        Assert.Equal("PosEnrollmentNumberingUnavailable", error.Title);
+        Assert.Equal(0, handler.RequestCount);
+        Assert.Null(Enrollments.Load());
+    }
+
+    [Fact]
+    public async Task Logo_failure_after_server_redemption_preserves_identity_for_retry()
+    {
+        var package = Package() with
+        {
+            ReusesDevice = false,
+            CompanyLogoSource = "http://invalid-logo.example.test/logo.png"
+        };
+        var handler = new EnrollmentPackageHandler(package);
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://api.example.test/")
+        };
+        var client = new PosEdgeEnrollmentClient(
+            http, Enrollments, new PosLocalDeviceIdentityRecovery(Database));
+        var request = new LocalPosEnrollmentRequest(Guid.NewGuid(), "code");
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => client.RedeemAsync(request));
+        Assert.Equal(package.DeviceId, Enrollments.Load()!.DeviceId);
+        Assert.True(Enrollments.LoadResultForEnrollment(request.EnrollmentSessionId)!.RestartRequired);
+        Assert.True((await client.RedeemAsync(request)).RestartRequired);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
     public void Old_server_cannot_trigger_a_reset_without_a_continuity_contract()
     {
         var error = Assert.Throws<PosEnrollmentServerException>(() => Enrollments.SaveForNewEnrollment(
@@ -121,5 +194,32 @@ public sealed class PosEnrollmentResetTests(Xunit.Abstractions.ITestOutputHelper
     {
         SqliteConnection.ClearAllPools();
         if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+    }
+
+    private sealed class UnexpectedEnrollmentRequestHandler : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            throw new InvalidOperationException("The server must not be contacted without local numbering.");
+        }
+    }
+
+    private sealed class EnrollmentPackageHandler(PosEnrollmentPackage package) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(package)
+            });
+        }
     }
 }

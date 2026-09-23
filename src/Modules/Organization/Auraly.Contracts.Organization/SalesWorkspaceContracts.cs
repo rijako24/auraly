@@ -26,7 +26,8 @@ public sealed record SalesWorkspaceBootstrap(
     bool CanEnrollPosDevice,
     int ActiveEnrolledDeviceCount,
     int MaximumEnrolledDevices,
-    string? EnrollmentUnavailableReason);
+    string? EnrollmentUnavailableReason,
+    bool HasEnrollmentPermission = false);
 
 public sealed record PosEnrollmentCapacity(
     int ActiveEnrolledDeviceCount,

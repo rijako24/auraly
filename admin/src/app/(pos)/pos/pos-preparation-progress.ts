@@ -39,7 +39,7 @@ export function posPreparationView(
       detail: "Estamos leyendo el checkpoint local para continuar justo donde quedó.",
       currentResource: "Estado del equipo",
       resourceProgress: null,
-      overallProgress: 0,
+      overallProgress: null,
       processedLabel: null,
       connectionLabel: "Conectando…",
       resumeLabel: "Buscando un punto de reanudación seguro",
@@ -50,7 +50,7 @@ export function posPreparationView(
   const completed = Math.max(0, health.preparationCompletedSteps ?? 0);
   const totalSteps = Math.max(0, health.preparationTotalSteps ?? 0);
   const overallProgress = health.preparationStage === "Identity"
-    ? 0
+    ? null
     : health.preparationStage === "CatalogStarting"
       ? 10
       : health.preparationStage === "Catalog"
@@ -107,7 +107,7 @@ export function posPreparationView(
       processedLabel: total > 0
         ? `${processed.toLocaleString("es-CO")} de ${total.toLocaleString("es-CO")} productos`
         : "0 productos en este negocio",
-      connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Sin conexión con Auraly",
+      connectionLabel: health.serverConnected ? "Conectada a Auraly" : "Verificando conexión con Auraly",
       resumeLabel: health.preparationCanResume
         ? "Progreso guardado · usa Reintentar si se detiene"
         : "Validando el catálogo descargado",

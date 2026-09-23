@@ -8,6 +8,7 @@ export type SalesWorkspaceBootstrap = {
   userDisplayName: string;
   options: SalesWorkspaceOption[];
   canEnrollPosDevice: boolean;
+  hasEnrollmentPermission: boolean;
   activeEnrolledDeviceCount: number;
   maximumEnrolledDevices: number;
   enrollmentUnavailableReason: string | null;

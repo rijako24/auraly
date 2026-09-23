@@ -43,7 +43,8 @@ public static class SalesWorkspaceApi
                         ? null
                         : !hasPermission
                             ? "Tu usuario no tiene permiso para enrolar cajas."
-                            : $"Ya están enroladas las {capacity.MaximumEnrolledDevices} cajas permitidas. Comunícate con el administrador para liberar una caja o ampliar la capacidad."));
+                            : $"Ya están enroladas las {capacity.MaximumEnrolledDevices} cajas permitidas. Comunícate con el administrador para liberar una caja o ampliar la capacidad.",
+                    hasPermission));
             }));
 
         group.MapGet("/options", async (

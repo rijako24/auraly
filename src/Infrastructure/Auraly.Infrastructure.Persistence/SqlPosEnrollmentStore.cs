@@ -127,13 +127,12 @@ public sealed class SqlPosEnrollmentStore(
         if (request.ExistingDeviceId.HasValue && existing is null)
             throw new PosEnrollmentDeviceUnavailableException(
                 "El equipo indicado no está enrolado o su serie operativa ya no está activa.");
-        if (existing is null)
+        if (existing is null && request.ExistingDeviceId is null)
         {
-            existing = await ReadExistingDeviceByInstallationAsync(
+            existing = await ReadRedeemedSessionDeviceAsync(
                 connection,
                 transaction,
                 request.EnrollmentSessionId,
-                request.InstallationId,
                 cancellationToken);
         }
         var data = await ReadProvisioningAsync(
@@ -282,31 +281,28 @@ public sealed class SqlPosEnrollmentStore(
             reader.GetInt64(9));
     }
 
-    private static async Task<ExistingDevice?> ReadExistingDeviceByInstallationAsync(
+    private static async Task<ExistingDevice?> ReadRedeemedSessionDeviceAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid enrollmentSessionId,
-        string installationId,
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT TOP(1)
-                   d.DeviceId,d.TenantId,ds.BusinessId,ds.DocumentSeriesId,
+            SELECT d.DeviceId,d.TenantId,ds.BusinessId,ds.DocumentSeriesId,
                    ds.DocumentType,ds.Prefix,ds.SeriesCode,ds.Padding,
                    ds.RangeStart,ds.RangeEnd
             FROM dbo.PosEnrollmentSessions enrollment WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.EnrolledDevices d WITH (UPDLOCK,HOLDLOCK)
-              ON d.TenantId=enrollment.TenantId AND d.Name=@InstallationId
+              ON d.DeviceId=enrollment.DeviceId AND d.TenantId=enrollment.TenantId
              AND d.IsActive=1
             JOIN dbo.DocumentSeries ds WITH (UPDLOCK,HOLDLOCK)
               ON ds.DeviceId=d.DeviceId AND ds.BusinessId=enrollment.BusinessId
              AND ds.DocumentType=N'SalesInvoice' AND ds.IsActive=1
             WHERE enrollment.EnrollmentSessionId=@EnrollmentSessionId
-            ORDER BY d.CreatedAt DESC,d.DeviceId;
+              AND enrollment.RedeemedAt IS NOT NULL;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         Add(command, "@EnrollmentSessionId", enrollmentSessionId);
-        Add(command, "@InstallationId", installationId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         return new ExistingDevice(

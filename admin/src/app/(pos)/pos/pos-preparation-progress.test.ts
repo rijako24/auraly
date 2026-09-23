@@ -23,7 +23,7 @@ test("shows real catalog counts and percentage", () => {
   assert.match(view.resumeLabel, /Reintentar/);
 });
 
-test("starts at zero, advances with real catalog work and reaches one hundred", () => {
+test("waits for a measured stage, advances with catalog work and reaches one hundred", () => {
   const healthProgress = [0, 25, 80, 100].map((catalogProgressPercent) => posPreparationView({
     serverConnected: true,
     identityReady: true,
@@ -49,7 +49,7 @@ test("starts at zero, advances with real catalog work and reaches one hundred", 
       }).overallProgress,
       ...healthProgress,
     ],
-    [0, 0, 10, 31, 78, 100],
+    [null, null, 10, 31, 78, 100],
   );
 });
 
@@ -98,7 +98,23 @@ test("does not invent a percentage while identity totals are unknown", () => {
   });
 
   assert.equal(view.resourceProgress, null);
+  assert.equal(view.overallProgress, null);
   assert.equal(view.currentResource, "usuarios y permisos");
+  assert.equal(view.connectionLabel, "Verificando conexión con Auraly");
+});
+
+test("does not declare the server disconnected while a catalog transfer has no connection verdict", () => {
+  const view = posPreparationView({
+    serverConnected: false,
+    identityReady: true,
+    catalogStatus: "Bootstrapping",
+    catalogProcessedProducts: 7,
+    catalogTotalProducts: 10,
+    catalogProgressPercent: 70,
+    preparationStage: "Catalog",
+  });
+
+  assert.equal(view.overallProgress, 69);
   assert.equal(view.connectionLabel, "Verificando conexión con Auraly");
 });
 
