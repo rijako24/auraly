@@ -114,6 +114,11 @@ IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name=N'CK_CustomerPayments_
     ALTER TABLE dbo.CustomerPayments DROP CONSTRAINT CK_CustomerPayments_Breakdown;
 IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name=N'CK_SupplierPayments_Breakdown')
     ALTER TABLE dbo.SupplierPayments DROP CONSTRAINT CK_SupplierPayments_Breakdown;
+IF COL_LENGTH(N'dbo.SupplierPayments',N'PaymentMethod') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM sys.indexes
+                WHERE object_id=OBJECT_ID(N'dbo.SupplierPayments')
+                  AND name=N'IX_SupplierPayments_Business_Paid')
+    DROP INDEX IX_SupplierPayments_Business_Paid ON dbo.SupplierPayments;
 
 IF COL_LENGTH(N'dbo.CustomerPayments',N'PaymentMethod') IS NOT NULL
     ALTER TABLE dbo.CustomerPayments DROP COLUMN PaymentMethod;
@@ -131,5 +136,11 @@ IF COL_LENGTH(N'dbo.CustomerPayments',N'PaymentBreakdownJson') IS NOT NULL
     ALTER TABLE dbo.CustomerPayments DROP COLUMN PaymentBreakdownJson;
 IF COL_LENGTH(N'dbo.SupplierPayments',N'PaymentBreakdownJson') IS NOT NULL
     ALTER TABLE dbo.SupplierPayments DROP COLUMN PaymentBreakdownJson;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes
+               WHERE object_id=OBJECT_ID(N'dbo.SupplierPayments')
+                 AND name=N'IX_SupplierPayments_Business_Paid')
+    CREATE INDEX IX_SupplierPayments_Business_Paid
+        ON dbo.SupplierPayments(BusinessId,PaidAt DESC)
+        INCLUDE(SupplierId,Status,TotalAmount);
 
 COMMIT TRANSACTION;
