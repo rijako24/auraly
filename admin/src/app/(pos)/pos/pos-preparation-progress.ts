@@ -36,13 +36,13 @@ export function posPreparationView(
   if (!health) {
     return {
       title: "Conectando con esta caja",
-      detail: "Estamos leyendo el checkpoint local para continuar justo donde quedó.",
-      currentResource: "Estado del equipo",
+      detail: "El servicio local se está reiniciando. La preparación continuará cuando vuelva a estar disponible.",
+      currentResource: "Servicio local",
       resourceProgress: null,
       overallProgress: null,
       processedLabel: null,
-      connectionLabel: "Conectando…",
-      resumeLabel: "Buscando un punto de reanudación seguro",
+      connectionLabel: "Reiniciando servicio local…",
+      resumeLabel: "Esperando la conexión con esta caja",
     };
   }
 

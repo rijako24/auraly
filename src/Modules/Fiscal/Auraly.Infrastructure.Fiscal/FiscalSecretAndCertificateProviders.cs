@@ -64,6 +64,43 @@ public sealed class ManagedFiscalSoftwarePinProvider(
             : credentials.ResolveSoftwarePinAsync(businessId, secretReference, cancellationToken);
 }
 
+// New credentials are written to Azure Key Vault. Existing fiscal snapshots keep
+// their immutable ProtectedDatabase references and must resolve through that store.
+public sealed class RoutedFiscalCredentialVault(
+    IFiscalCredentialVault azureKeyVault,
+    IFiscalCredentialVault protectedDatabase) : IFiscalCredentialVault
+{
+    public Task<FiscalCredentialReference> StoreAsync(
+        Guid tenantId, Guid businessId, string softwarePin, byte[] certificatePfx,
+        string certificatePassword, DateTimeOffset validFrom, DateTimeOffset validTo,
+        string thumbprint, CancellationToken cancellationToken) =>
+        azureKeyVault.StoreAsync(tenantId, businessId, softwarePin, certificatePfx,
+            certificatePassword, validFrom, validTo, thumbprint, cancellationToken);
+
+    public Task<string> StoreSupportDocumentSoftwarePinAsync(
+        Guid tenantId, Guid businessId, string softwarePin, CancellationToken cancellationToken) =>
+        azureKeyVault.StoreSupportDocumentSoftwarePinAsync(
+            tenantId, businessId, softwarePin, cancellationToken);
+
+    public Task<string> ResolveSoftwarePinAsync(
+        Guid businessId, string secretReference, CancellationToken cancellationToken) =>
+        Resolve(secretReference, "akv-secret://")
+            .ResolveSoftwarePinAsync(businessId, secretReference, cancellationToken);
+
+    public Task<byte[]> ResolveCertificatePfxAsync(
+        Guid businessId, string certificateKeyReference, CancellationToken cancellationToken) =>
+        Resolve(certificateKeyReference, "akv-certificate://")
+            .ResolveCertificatePfxAsync(businessId, certificateKeyReference, cancellationToken);
+
+    private IFiscalCredentialVault Resolve(string reference, string azureScheme) =>
+        reference.StartsWith(azureScheme, StringComparison.OrdinalIgnoreCase)
+            ? azureKeyVault
+            : reference.StartsWith("fiscal://tenant/", StringComparison.OrdinalIgnoreCase)
+                ? protectedDatabase
+                : throw new InvalidOperationException(
+                    "The fiscal credential reference has an unsupported scheme.");
+}
+
 public sealed class ManagedFiscalSigningCertificateProvider(
     IFiscalCredentialVault credentials,
     WindowsFiscalSigningCertificateProvider legacy) : IFiscalSigningCertificateProvider
@@ -76,6 +113,11 @@ public sealed class ManagedFiscalSigningCertificateProvider(
             return await legacy.ResolveAsync(reference, cancellationToken);
         if (reference.Provider is not ("AzureKeyVault" or "ProtectedDatabase"))
             throw new InvalidOperationException("The configured fiscal certificate provider is unsupported.");
+        if ((reference.Provider == "AzureKeyVault" &&
+             !reference.KeyReference.StartsWith("akv-certificate://", StringComparison.OrdinalIgnoreCase)) ||
+            (reference.Provider == "ProtectedDatabase" &&
+             !reference.KeyReference.StartsWith("fiscal://tenant/", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("The fiscal certificate provider and reference do not match.");
         var pfx = await credentials.ResolveCertificatePfxAsync(
             reference.BusinessId, reference.KeyReference, cancellationToken);
         var collection = new X509Certificate2Collection();

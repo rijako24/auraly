@@ -197,18 +197,39 @@ public sealed partial class AccountingVerticalSliceTests
             chargedSale.CommercialSnapshot.IssuedAt.AddHours(2),
             ReturnEconomicResolutions.CustomerCredit, null, "Devolución con cargo de facturación",
             [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
+            WorkSessionId: fixture.WorkSessionId,
             ReasonCode: "Other", ReturnedChargeIds: [firstCharge.AppliedChargeId]);
         using (var message = new HttpRequestMessage(
-                   HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+                   HttpMethod.Post, "/api/pos/v1/sales-returns/confirm")
                { Content = JsonContent.Create(chargeReturn) })
         {
             message.Headers.Add("Idempotency-Key", returnId.ToString("N"));
-            using var response = await admin.SendAsync(message);
+            message.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+            message.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+            message.Headers.Add("X-Auraly-User-Id", fixture.UserId.ToString("D"));
+            using var returnClient = fixture.CreateClient();
+            using var response = await returnClient.SendAsync(message);
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         }
         await AssertBalancedAsync(returnId);
+        Assert.Equal(fixture.WorkSessionId, await ScalarAsync<Guid>(
+            "SELECT WorkSessionId FROM dbo.SalesReturns WHERE ReturnId=@Id", returnId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id AND SettlementType=N'CustomerCredit' AND MethodCode IS NULL",
+            returnId));
+        Assert.Equal(await ScalarAsync<decimal>(
+            "SELECT TotalAmount FROM dbo.SalesReturns WHERE ReturnId=@Id", returnId),
+            await ScalarAsync<decimal>(
+                "SELECT SUM(Amount) FROM dbo.SalesReturnReceivableApplications WHERE ReturnId=@Id", returnId));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT('sales-return:',REPLACE(CONVERT(varchar(36),@Id),'-',''))",
+            returnId));
         Assert.Equal(firstCharge.Amount, await AccountAmountAsync(
             returnId, "519595", debit: false));
+        Assert.Equal(firstCharge.Amount, await AccountAmountAsync(
+            returnId, "133595", debit: true));
+        Assert.Equal(0, await AccountAmountAsync(
+            returnId, "220505", debit: true));
         Assert.Equal(firstCharge.Amount, await ScalarAsync<decimal>("""
             SELECT SupplierCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
             WHERE ReturnId=@Id;
@@ -221,6 +242,11 @@ public sealed partial class AccountingVerticalSliceTests
             SELECT PayableCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
             WHERE ReturnId=@Id;
             """, returnId));
+        var supplierPortfolio = await admin.GetFromJsonAsync<SupplierPortfolioPage>(
+            $"/api/commerce/v1/payables/suppliers?page=1&pageSize=20&supplierId={fixture.SupplierId:D}");
+        Assert.NotNull(supplierPortfolio);
+        Assert.True(Assert.Single(supplierPortfolio.Items).SupplierCreditAmount >= firstCharge.Amount);
+        Assert.True(supplierPortfolio.TotalSupplierCredit >= firstCharge.Amount);
 
         // A company-paid charge with an open payable is cancelled instead of creating credit.
         var companyCharge = expectedCharges.First(charge => charge.ExpenseAmount > 0 &&
@@ -247,6 +273,10 @@ public sealed partial class AccountingVerticalSliceTests
         await AssertBalancedAsync(companyReturnId);
         Assert.Equal(companyCharge.Amount, await AccountAmountAsync(
             companyReturnId, "519595", debit: false));
+        Assert.Equal(companyCharge.Amount, await AccountAmountAsync(
+            companyReturnId, "220505", debit: true));
+        Assert.Equal(0, await AccountAmountAsync(
+            companyReturnId, "133595", debit: true));
         Assert.Equal(companyCharge.Amount, await ScalarAsync<decimal>("""
             SELECT PayableCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
             WHERE ReturnId=@Id;
@@ -316,6 +346,45 @@ public sealed partial class AccountingVerticalSliceTests
             Assert.Contains("Agotados matriz", html);
             Assert.Contains("Registrado como gasto", html);
         }
+        // A partly paid charge splits the reversal between the payable and supplier credit.
+        var partialSale = issued.First(sale => sale.Credit is not null &&
+            sale.DocumentId != chargedSale.DocumentId && sale.DocumentId != companySale.DocumentId &&
+            sale.DocumentId != creditSale.DocumentId && sale.Charges?.Any(charge => charge.ExpenseAmount > 0) == true);
+        var partialCharge = partialSale.Charges!.Single(charge => charge.ExpenseAmount > 0);
+        var partialPayableId = await ScalarAsync<Guid>(
+            "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", partialCharge.AppliedChargeId);
+        var paidPart = decimal.Round(partialCharge.Amount / 2, 4);
+        var partialPayment = new ConfirmSupplierPaymentRequest(Guid.NewGuid(), fixture.BusinessId,
+            fixture.SupplierId, DateTimeOffset.UtcNow, "COP", "Abono parcial de cargo",
+            [new(partialPayableId, paidPart)],
+            [new(SupplierPaymentMethods.Cash, paidPart, paidPart)]);
+        using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/payable-payments/confirm")
+            { Content = JsonContent.Create(partialPayment) })
+        {
+            message.Headers.Add("Idempotency-Key", partialPayment.PaymentId.ToString("N"));
+            using var response = await admin.SendAsync(message);
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        }
+        await AssertBalancedAsync(partialPayment.PaymentId);
+        var partialReturnId = Guid.NewGuid();
+        var partialReturn = new ConfirmSalesReturnRequest(partialReturnId, fixture.BusinessId,
+            fixture.WarehouseId, partialSale.DocumentId,
+            partialSale.CommercialSnapshot.IssuedAt.AddHours(4),
+            ReturnEconomicResolutions.CustomerCredit, null, "Devolución de cargo parcialmente pagado",
+            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
+            ReasonCode: "Other", ReturnedChargeIds: [partialCharge.AppliedChargeId]);
+        using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+            { Content = JsonContent.Create(partialReturn) })
+        {
+            message.Headers.Add("Idempotency-Key", partialReturnId.ToString("N"));
+            using var response = await admin.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        await AssertBalancedAsync(partialReturnId);
+        Assert.Equal(partialCharge.Amount - paidPart, await AccountAmountAsync(
+            partialReturnId, "220505", debit: true));
+        Assert.Equal(paidPart, await AccountAmountAsync(
+            partialReturnId, "133595", debit: true));
         var date = DateOnly.FromDateTime(DianFiscalDateTime.InColombia(issued[0].CommercialSnapshot.IssuedAt).Date);
         var historyTimer = System.Diagnostics.Stopwatch.StartNew();
         using var historyResponse = await admin.GetAsync(

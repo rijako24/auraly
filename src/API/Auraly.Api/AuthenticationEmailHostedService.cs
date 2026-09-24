@@ -18,7 +18,8 @@ public sealed record PlatformEmailOptions(
     string SenderAddress,
     string PublicAppUrl,
     string LogoUrl,
-    string SupportEmail);
+    string SupportEmail,
+    bool DeliveryEnabled = true);
 
 public sealed class PlatformEmailOutboxHostedService(
     SqlServerConnectionFactory connections,
@@ -36,6 +37,11 @@ public sealed class PlatformEmailOutboxHostedService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!options.DeliveryEnabled)
+        {
+            logger.LogInformation("Platform email delivery is disabled for this environment.");
+            return;
+        }
         if (string.IsNullOrWhiteSpace(options.ConnectionString))
         {
             logger.LogWarning("Platform email delivery is disabled because Auraly:Email:ConnectionString is missing.");

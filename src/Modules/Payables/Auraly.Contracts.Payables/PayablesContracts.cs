@@ -157,10 +157,10 @@ public sealed record SupplierPortfolioQuery(int Page, int PageSize, string? Sear
     Guid? SupplierId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null);
 public sealed record SupplierPortfolioItem(Guid SupplierId, string SupplierName,
     string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
-    decimal OutstandingAmount, decimal OverdueAmount);
+    decimal OutstandingAmount, decimal OverdueAmount, decimal SupplierCreditAmount = 0);
 public sealed record SupplierPortfolioPage(IReadOnlyList<SupplierPortfolioItem> Items,
     int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
-    int TotalInvoiceCount = 0)
+    int TotalInvoiceCount = 0, decimal TotalSupplierCredit = 0)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }

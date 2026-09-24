@@ -29,14 +29,20 @@ public sealed class SqlPayablesStore(
               JOIN dbo.Payables scoped ON scoped.PayableId=application.PayableId
               WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
               GROUP BY application.PayableId),
+            Credits AS(
+              SELECT SupplierId,SUM(AvailableAmount) CreditAmount
+              FROM dbo.SupplierCredits WHERE BusinessId=@BusinessId AND AvailableAmount>0
+              GROUP BY SupplierId),
             Portfolio AS(
               SELECT p.SupplierId,s.Name SupplierName,COALESCE(s.Identification,N'') Identification,
                 COUNT(*) InvoiceCount,SUM(p.OriginalAmount) OriginalAmount,
                 SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
-                SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount
+                SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount,
+                MAX(COALESCE(credits.CreditAmount,0)) SupplierCreditAmount
               FROM dbo.Payables p JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
               JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
               LEFT JOIN Paid paid ON paid.PayableId=p.PayableId
+              LEFT JOIN Credits credits ON credits.SupplierId=p.SupplierId
               WHERE p.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
                 AND (@Status IS NULL OR p.Status=@Status)
@@ -47,41 +53,19 @@ public sealed class SqlPayablesStore(
                 AND (@Search IS NULL OR s.Name LIKE N'%' + @Search + N'%' OR s.Identification LIKE N'%' + @Search + N'%'
                   OR p.DocumentNumber LIKE N'%' + @Search + N'%')
               GROUP BY p.SupplierId,s.Name,s.Identification)
-            SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0),COALESCE(SUM(InvoiceCount),0)
-            FROM Portfolio WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0) OR (@Overdue=0 AND OverdueAmount=0);
-            WITH Paid AS(
-              SELECT application.PayableId,SUM(application.Amount) PaidAmount
-              FROM dbo.SupplierPaymentApplications application
-              JOIN dbo.Payables scoped ON scoped.PayableId=application.PayableId
-              WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
-              GROUP BY application.PayableId),
-            Portfolio AS(
-              SELECT p.SupplierId,s.Name SupplierName,COALESCE(s.Identification,N'') Identification,
-                COUNT(*) InvoiceCount,SUM(p.OriginalAmount) OriginalAmount,
-                SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
-                SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount
-              FROM dbo.Payables p JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
-              JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
-              LEFT JOIN Paid paid ON paid.PayableId=p.PayableId
-              WHERE p.BusinessId=@BusinessId AND b.TenantId=@TenantId
-                AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
-                AND (@Status IS NULL OR p.Status=@Status)
-                AND (@From IS NULL OR p.CreatedAt>=@From)
-                AND (@To IS NULL OR p.CreatedAt<@To)
-                AND (@Overdue IS NULL OR (@Overdue=1 AND p.OutstandingAmount>0 AND p.DueDate<@Now)
-                  OR (@Overdue=0 AND (p.OutstandingAmount=0 OR p.DueDate>=@Now)))
-                AND (@Search IS NULL OR s.Name LIKE N'%' + @Search + N'%' OR s.Identification LIKE N'%' + @Search + N'%'
-                  OR p.DocumentNumber LIKE N'%' + @Search + N'%')
-              GROUP BY p.SupplierId,s.Name,s.Identification)
-            SELECT SupplierId,SupplierName,Identification,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount
-            FROM Portfolio WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0) OR (@Overdue=0 AND OverdueAmount=0)
-            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,SupplierName
+            SELECT * INTO #Portfolio FROM Portfolio
+            WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0) OR (@Overdue=0 AND OverdueAmount=0);
+            SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0),COALESCE(SUM(InvoiceCount),0),COALESCE(SUM(SupplierCreditAmount),0)
+            FROM #Portfolio;
+            SELECT SupplierId,SupplierName,Identification,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount,SupplierCreditAmount
+            FROM #Portfolio
+            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,SupplierName,SupplierId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value);command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);AddDateRange(command,query.From,query.To);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
-        await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);var invoices=reader.GetInt32(3);await reader.NextResultAsync(token);
-        var items=new List<SupplierPortfolioItem>();while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7)));
-        return new(items,query.Page,query.PageSize,count,outstanding,overdue,invoices);
+        await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);var invoices=reader.GetInt32(3);var supplierCredit=reader.GetDecimal(4);await reader.NextResultAsync(token);
+        var items=new List<SupplierPortfolioItem>();while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.GetDecimal(8)));
+        return new(items,query.Page,query.PageSize,count,outstanding,overdue,invoices,supplierCredit);
     }
 
     public async Task<PayablePage> ListAsync(

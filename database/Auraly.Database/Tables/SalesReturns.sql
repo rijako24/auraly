@@ -66,7 +66,7 @@ CREATE TABLE [dbo].[SalesReturns]
                OR ([RefundMethodCode] NOT IN(N'DebitCard',N'CreditCard')
                    AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL))) OR
        ([EconomicResolution]=N'CustomerCredit' AND [RefundMethodCode] IS NULL
-          AND [OriginalPaymentNumber] IS NULL AND [WorkSessionId] IS NULL
+          AND [OriginalPaymentNumber] IS NULL
           AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL AND [BankAccountId] IS NULL)),
     CONSTRAINT [CK_SalesReturns_ReturnScope] CHECK ([ReturnScopeCode] IN(N'FullCancellation',N'Partial')),
     CONSTRAINT [CK_SalesReturns_Correction] CHECK ([CorrectionCode]=N'1'),

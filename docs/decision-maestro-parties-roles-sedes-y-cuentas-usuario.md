@@ -111,6 +111,14 @@ Representa sedes o establecimientos:
 
 El código es único por Party y solo puede existir una sede principal activa. Una sede no crea otra identidad ni repite el documento. Si tiene identificación legal distinta, es otra Party.
 
+Para el documento soporte de un proveedor residente, `SellerPostalZone` se toma
+exclusivamente de `PartySites.PostalCode` de su sede principal activa y se
+congela en el snapshot fiscal. La dirección fiscal del emisor pertenece a la
+configuración fiscal del negocio y no sustituye la del proveedor. El catálogo
+de ciudades no contiene código postal: una ciudad puede tener varios, por lo
+que no se infiere uno a partir de `CityId`. Si faltan la sede principal o su
+código postal de seis dígitos, la emisión se detiene con un error específico.
+
 Ejemplo POS:
 
 ```text

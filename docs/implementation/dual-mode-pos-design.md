@@ -161,7 +161,13 @@ las ventas, devoluciones, pagos de cartera y movimientos persistidos en SQLite
 para el turno local; no consultan Auraly Server. El cierre ya congelado se encola
 y el sincronizador lo sube después. En web no enrolada, el cierre consulta las
 tablas canónicas de SQL Server. Para una devolución, abono o pago a proveedor de
-caja preparada, Edge escribe primero una proyección mínima local. Si SQLite
+caja preparada, Edge escribe primero una proyección mínima local cuando
+`EconomicResolution=Refund` o se registra un pago de cartera. Un abono a la CxC
+mediante devolución no genera reintegro por ningún medio; después de la
+aceptación se proyecta localmente solo para los totales y el número de
+devoluciones del cierre. `EconomicResolution=CustomerCredit` determina el efecto
+en cartera aunque la devolución conserve `WorkSessionId` para identificar la
+sesión activa que la confirmó. Si una escritura local necesaria
 falla, no envía el comando al servidor. Tras la aceptación actualiza la
 proyección con el importe y comprobante autoritativos; un reintento reutiliza el
 identificador del documento. Un rechazo definitivo revierte la proyección local.

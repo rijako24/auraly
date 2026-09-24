@@ -305,6 +305,16 @@ Reglas:
 - el movimiento de inventario es una entrada y se procesa exactamente una vez;
 - efectivo genera salida de caja en la sesión correspondiente;
 - crédito reduce CxC antes de crear un saldo a favor;
+- si la factura incluía un cargo facturado por un proveedor, su devolución
+  reversa el gasto original y el IVA/retenciones correspondientes. La porción
+  aún pendiente reduce CxP (220505); la ya pagada crea `SupplierCredits` y
+  debita `SupplierCreditsReceivable` (133595). La suma de ambas debe coincidir
+  con la cuenta por pagar original del cargo;
+- `SupplierCredits.AvailableAmount` se muestra por proveedor en Cuentas por pagar
+  como saldo a favor separado del saldo pendiente; mostrarlo no lo aplica ni
+  convierte en un pago;
+- `WorkSessionId` identifica la sesión que confirmó la operación; únicamente
+  `EconomicResolution=Refund` con medio `Cash` genera salida de efectivo;
 - factura electrónica solicita nota crédito vinculada;
 - devolución confirmada no se elimina ni renumera.
 

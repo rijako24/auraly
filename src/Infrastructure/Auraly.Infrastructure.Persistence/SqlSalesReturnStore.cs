@@ -133,13 +133,17 @@ public sealed class SqlSalesReturnStore(
                     "El abono a cartera requiere saldo pendiente suficiente en la cuenta por cobrar de la venta.");
 
             var settlement = new RefundSettlementContext(null, null, null, null);
-            if (request.EconomicResolution == ReturnEconomicResolutions.Refund)
+            if (request.EconomicResolution == ReturnEconomicResolutions.Refund ||
+                request.WorkSessionId is not null)
             {
                 request = request with
                 {
                     WorkSessionId = await ResolveOpenWorkSessionAsync(
                         connection, transaction, user, request.WorkSessionId, cancellationToken)
                 };
+            }
+            if (request.EconomicResolution == ReturnEconomicResolutions.Refund)
+            {
                 settlement = await ValidateRefundAsync(
                     connection, transaction, user, request, total, cancellationToken);
                 request = request with

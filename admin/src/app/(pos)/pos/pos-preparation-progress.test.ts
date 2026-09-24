@@ -53,6 +53,14 @@ test("waits for a measured stage, advances with catalog work and reaches one hun
   );
 });
 
+test("identifies the service restart without claiming a catalog checkpoint is being read", () => {
+  const view = posPreparationView(null);
+  assert.equal(view.currentResource, "Servicio local");
+  assert.match(view.detail, /reiniciando/i);
+  assert.equal(view.overallProgress, null);
+  assert.doesNotMatch(view.detail, /checkpoint/i);
+});
+
 test("shows the reason and offers a manual retry after automatic retries fail", () => {
   const view = posPreparationView({
     serverConnected: false,

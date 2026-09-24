@@ -110,9 +110,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "SalesReceipt" => FinancialFactsResult.Ready(
                     await LoadInvoiceFactsAsync(
                         connection, transaction, source, cancellationToken)),
-                "SalesReturn" => FinancialFactsResult.Ready(
-                    await LoadReturnFactsAsync(
-                        connection, transaction, source, cancellationToken)),
+                "SalesReturn" => await LoadReturnFactsAsync(
+                    connection, transaction, source, cancellationToken),
                 "SalesDebitNote" => FinancialFactsResult.Ready(
                     await LoadDebitNoteFactsAsync(
                         connection, transaction, source, cancellationToken)),
@@ -709,7 +708,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             payments, revenueCategory, roundingAdjustment);
     }
 
-    private static async Task<FinancialFacts> LoadReturnFactsAsync(
+    private static async Task<FinancialFactsResult> LoadReturnFactsAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         SourceEnvelope source,
@@ -761,20 +760,27 @@ public sealed partial class SqlAccountingPostingProcessor(
             throw new InvalidOperationException("The sales return settlement does not reconcile with its total.");
         var cost = await InventoryCostAsync(connection, transaction, source.DocumentId, source.DocumentType, cancellationToken);
         var chargeReversals = new List<ManualLineSpec>();
+        var supplierCreditLines = new List<(decimal Amount, Guid? PartyId, Guid? CostCenterId, string Description)>();
         await using (var chargeLines = new SqlCommand("""
-            SELECT COUNT_BIG(*),COUNT_BIG(entry.SourceDocumentId)
+            SELECT COUNT_BIG(*),COUNT_BIG(entry.SourceDocumentId),COUNT_BIG(effect.ReturnId)
             FROM dbo.SalesReturnCharges charge
             LEFT JOIN dbo.AccountingEntries entry
               ON entry.SourceDocumentId=charge.AppliedChargeId AND entry.SourceDocumentType=N'Expense'
-             AND entry.BusinessId=@BusinessId
+             AND entry.BusinessId=@BusinessId AND entry.TenantId=@TenantId
+            LEFT JOIN dbo.SalesReturnChargeFinancialEffects effect
+              ON effect.ReturnId=charge.ReturnId AND effect.AppliedChargeId=charge.AppliedChargeId
             WHERE charge.ReturnId=@DocumentId;
 
-            SELECT line.AccountId,line.Credit,line.Debit,line.PartyId,line.CostCenterId,
-                   CONCAT(N'Reversión de cargo: ',charge.Name)
+            SELECT charge.AppliedChargeId,charge.SupplierVatAmount,
+                   effect.PayableCreditAmount,effect.SupplierCreditAmount,
+                   line.LineNumber,line.AccountId,line.Credit,line.Debit,
+                   line.PartyId,line.CostCenterId,CONCAT(N'Reversión de cargo: ',charge.Name)
             FROM dbo.SalesReturnCharges charge
+            JOIN dbo.SalesReturnChargeFinancialEffects effect
+              ON effect.ReturnId=charge.ReturnId AND effect.AppliedChargeId=charge.AppliedChargeId
             JOIN dbo.AccountingEntries entry
               ON entry.SourceDocumentId=charge.AppliedChargeId AND entry.SourceDocumentType=N'Expense'
-             AND entry.BusinessId=@BusinessId
+             AND entry.BusinessId=@BusinessId AND entry.TenantId=@TenantId
             JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
             WHERE charge.ReturnId=@DocumentId
             ORDER BY charge.AppliedChargeId,line.LineNumber;
@@ -782,18 +788,62 @@ public sealed partial class SqlAccountingPostingProcessor(
         {
             chargeLines.Parameters.AddWithValue("@DocumentId", source.DocumentId);
             chargeLines.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            chargeLines.Parameters.AddWithValue("@TenantId", source.TenantId);
             await using var reader = await chargeLines.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken) || reader.GetInt64(0) != reader.GetInt64(1))
+            if (!await reader.ReadAsync(cancellationToken) ||
+                reader.GetInt64(0) != reader.GetInt64(1) || reader.GetInt64(0) != reader.GetInt64(2))
                 throw new InvalidOperationException(
-                    "The returned invoice charge has no original accounting entry to reverse.");
+                    "The returned invoice charge has no original accounting entry or financial effect to reverse.");
+            var chargeCount = reader.GetInt64(0);
             await reader.NextResultAsync(cancellationToken);
+            var payableLines = new HashSet<Guid>();
             while (await reader.ReadAsync(cancellationToken))
-                chargeReversals.Add(new(reader.GetGuid(0), reader.GetDecimal(1), reader.GetDecimal(2),
-                    reader.IsDBNull(3) ? null : reader.GetGuid(3),
-                    reader.IsDBNull(4) ? null : reader.GetGuid(4), reader.GetString(5)));
+            {
+                var chargeId = reader.GetGuid(0);
+                var payableLineNumber = reader.GetDecimal(1) > 0 ? 3 : 2;
+                var payableCredit = reader.GetDecimal(2);
+                var supplierCredit = reader.GetDecimal(3);
+                var lineNumber = reader.GetInt32(4);
+                var accountId = reader.GetGuid(5);
+                var originalCredit = reader.GetDecimal(6);
+                var originalDebit = reader.GetDecimal(7);
+                Guid? lineParty = reader.IsDBNull(8) ? null : reader.GetGuid(8);
+                Guid? costCenter = reader.IsDBNull(9) ? null : reader.GetGuid(9);
+                var description = reader.GetString(10);
+                if (lineNumber == payableLineNumber)
+                {
+                    if (!payableLines.Add(chargeId) || originalDebit != 0 ||
+                        originalCredit != payableCredit + supplierCredit)
+                        throw new InvalidOperationException(
+                            "The returned invoice charge payable does not reconcile with its financial effect.");
+                    if (payableCredit > 0)
+                        chargeReversals.Add(new(accountId, payableCredit, 0,
+                            lineParty, costCenter, description));
+                    if (supplierCredit > 0)
+                        supplierCreditLines.Add((supplierCredit, lineParty, costCenter, description));
+                }
+                else
+                    chargeReversals.Add(new(accountId, originalCredit, originalDebit,
+                        lineParty, costCenter, description));
+            }
+            if (payableLines.Count != chargeCount)
+                throw new InvalidOperationException(
+                    "The returned invoice charge payable line is missing.");
         }
-        return FinancialFacts.Return(number, partyId, untaxed, tax, total, cost, settlements,
-            chargeReversals);
+        if (supplierCreditLines.Count > 0)
+        {
+            var accounts = await ResolveAccountsAsync(connection, transaction, source,
+                new HashSet<string>(StringComparer.Ordinal)
+                    { AccountingCategories.SupplierCreditsReceivable }, cancellationToken);
+            if (!accounts.TryGetValue(AccountingCategories.SupplierCreditsReceivable, out var accountId))
+                return FinancialFactsResult.Pending("MissingAccountMapping",
+                    "Supplier credits receivable has no active accounting mapping.");
+            chargeReversals.AddRange(supplierCreditLines.Select(line =>
+                new ManualLineSpec(accountId, line.Amount, 0,
+                    line.PartyId, line.CostCenterId, line.Description)));
+        }
+        return FinancialFactsResult.Ready(FinancialFacts.Return(number, partyId, untaxed,
+            tax, total, cost, settlements, chargeReversals));
     }
 
     private static async Task<FinancialFactsResult> LoadGoodsReceiptFactsAsync(

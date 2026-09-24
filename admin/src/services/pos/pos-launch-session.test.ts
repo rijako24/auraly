@@ -13,6 +13,7 @@ import {
   canIssuePosDocument,
   dianQuotaExhaustedMessage,
   fiscalConfigurationRequiredMessage,
+  localFiscalSeriesRequiredMessage,
   fiscalLaunchReadinessError,
   posDocumentReadinessError,
 } from "./pos-fiscal-guard";
@@ -77,9 +78,10 @@ test("an unenrolled installation opens the same shared Auraly login", () => {
 
 test("entering an electronic invoice reports the missing local resolution", () => {
   assert.equal(
-    posDocumentReadinessError("SalesInvoice", false, true),
-    fiscalConfigurationRequiredMessage,
+    posDocumentReadinessError("SalesInvoice", false, true, "edge"),
+    localFiscalSeriesRequiredMessage,
   );
+  assert.match(localFiscalSeriesRequiredMessage, /resolución online/);
   assert.equal(posDocumentReadinessError("SalesReceipt", false, true), null);
 });
 

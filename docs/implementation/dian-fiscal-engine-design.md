@@ -52,6 +52,12 @@ La antigua responsabilidad de `SalidaDeMercanciaFolio` no se migra. No hace falt
 
 Las devoluciones procesadas generan una nota crédito que referencia el número y CUFE originales. Su CUDE se calcula durante la generación fiscal, se persiste una sola vez y se usa sin renumerar en todos los reintentos. Facturas y notas crédito comparten workers, leases, artefactos, intentos y estados, pero conservan snapshots tipados distintos.
 
+La credencial de un snapshot fiscal histórico conserva su proveedor y referencia.
+En Azure, las altas nuevas se guardan en Key Vault; referencias anteriores
+`fiscal://tenant/` se resuelven con el almacén cifrado de SQL usando la llave
+del entorno. No se intenta interpretar una referencia de un proveedor con el
+otro, ni se cambia la credencial del snapshot para regenerar una nota.
+
 Al regenerar una nota crédito o débito rechazada, la fecha declarada de firma
 corresponde a la fecha fiscal congelada en la nota, igual que en facturas y
 documentos soporte. La DIAN exige que la fecha de generación y la de firma
@@ -123,6 +129,10 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   usa el XML firmado para reconstruirlas. Un reintento reutiliza el snapshot y los
   XML persistidos, no repite una llamada a DIAN. El ZIP sigue limitado a 2 MB. Esta regla
   implementa el artículo 35 de la Resolución DIAN 000165 de 2023.
+- El único consumidor del outbox de correo es `PlatformEmailOutboxHostedService`.
+  En DEV, `Auraly:Email:DeliveryEnabled=false` impide reclamar o enviar
+  cualquier mensaje, incluso si se configura una credencial; los pendientes
+  permanecen en el outbox. En producción la entrega continúa habilitada.
 - La representación enviada por correo reutiliza `sales-invoice` Carta v3 de
   `HalfLetterDocumentRenderer`. `SalesInvoicePresentationMapper` adapta el snapshot
   inmutable al contrato de presentación y `DianInvoicePdfRenderer` convierte ese

@@ -663,6 +663,69 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                 issuedAt.AddDays(30), "COP", "Servicio de proveedor no obligado",
                 100_000m, 19_000m, null, null,
                 PurchaseEvidenceTypes.BuyerElectronicSupportDocument);
+            await using (var db = new SqlConnection(fixture.ConnectionString))
+            {
+                await db.OpenAsync();
+                await using var postal = new SqlCommand("""
+                    SELECT PartySiteId,PostalCode FROM dbo.PartySites
+                    WHERE PartyId=@PartyId AND IsPrimary=1 AND IsActive=1;
+                    """, db);
+                postal.Parameters.AddWithValue("@PartyId", fixture.SupplierPartyId);
+                Guid primarySiteId;
+                string? originalPostalCode;
+                await using (var existing = await postal.ExecuteReaderAsync())
+                {
+                    Assert.True(await existing.ReadAsync());
+                    primarySiteId = existing.GetGuid(0);
+                    originalPostalCode = existing.IsDBNull(1) ? null : existing.GetString(1);
+                }
+                await using var update = new SqlCommand("""
+                    UPDATE dbo.PartySites SET PostalCode=@PostalCode
+                    WHERE PartySiteId=@SiteId;
+                    """, db);
+                update.Parameters.AddWithValue("@SiteId", primarySiteId);
+                var postalParameter = update.Parameters.Add("@PostalCode", System.Data.SqlDbType.NVarChar, 16);
+                try
+                {
+                    postalParameter.Value = DBNull.Value;
+                    Assert.Equal(1, await update.ExecuteNonQueryAsync());
+                    using var missingPostal = new HttpRequestMessage(HttpMethod.Post,
+                        "/api/commerce/v1/expenses/confirm") { Content = JsonContent.Create(expenseCommand) };
+                    missingPostal.Headers.Add("Idempotency-Key", $"expense-support-{supportExpenseId:N}");
+                    using var rejected = await client.SendAsync(missingPostal);
+                    Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+                    Assert.Contains("sede principal activa del proveedor",
+                        await rejected.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+                }
+                finally
+                {
+                    postalParameter.Value = (object?)originalPostalCode ?? DBNull.Value;
+                    Assert.Equal(1, await update.ExecuteNonQueryAsync());
+                }
+                await using var primary = new SqlCommand("""
+                    UPDATE dbo.PartySites SET IsPrimary=@IsPrimary
+                    WHERE PartySiteId=@SiteId;
+                    """, db);
+                primary.Parameters.AddWithValue("@SiteId", primarySiteId);
+                var primaryParameter = primary.Parameters.Add("@IsPrimary", System.Data.SqlDbType.Bit);
+                try
+                {
+                    primaryParameter.Value = false;
+                    Assert.Equal(1, await primary.ExecuteNonQueryAsync());
+                    using var missingPrimary = new HttpRequestMessage(HttpMethod.Post,
+                        "/api/commerce/v1/expenses/confirm") { Content = JsonContent.Create(expenseCommand) };
+                    missingPrimary.Headers.Add("Idempotency-Key", $"expense-support-{supportExpenseId:N}");
+                    using var rejected = await client.SendAsync(missingPrimary);
+                    Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+                    Assert.Contains("sede principal activa",
+                        await rejected.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+                }
+                finally
+                {
+                    primaryParameter.Value = true;
+                    Assert.Equal(1, await primary.ExecuteNonQueryAsync());
+                }
+            }
             using (var request = new HttpRequestMessage(HttpMethod.Post,
                        "/api/commerce/v1/expenses/confirm")
                    {

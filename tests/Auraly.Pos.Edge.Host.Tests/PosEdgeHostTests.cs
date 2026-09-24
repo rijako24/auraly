@@ -135,6 +135,18 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
             refundMethodCode = "Cash", localRefundAmount = 12500m
         });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, returned.StatusCode);
+        var customerCreditId = Guid.NewGuid();
+        using var credited = await Client.PostAsJsonAsync("/edge/v1/server-returns/confirm", new
+        {
+            returnId = customerCreditId, workSessionId, economicResolution = "CustomerCredit"
+        });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, credited.StatusCode);
+        await using (var noLocalRefund = connection.CreateCommand())
+        {
+            noLocalRefund.CommandText = "SELECT COUNT(*) FROM PosWorkSessionRefunds WHERE ReturnId=$id;";
+            noLocalRefund.Parameters.AddWithValue("$id", customerCreditId.ToString("D"));
+            Assert.Equal(0L, await noLocalRefund.ExecuteScalarAsync());
+        }
         foreach (var (path, kind) in new[] {
             ("receivable-payments", "Receivable"), ("payable-payments", "Payable") })
         {
@@ -1240,6 +1252,8 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
                 Guid.NewGuid(), currentSession.WorkSessionId, "CreditCard", .25m));
             await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
                 Guid.NewGuid(), currentSession.WorkSessionId, "Transfer", .125m));
+            await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
+                Guid.NewGuid(), currentSession.WorkSessionId, "CustomerCredit", .375m));
         }
 
         var capture = await Client.PostAsJsonAsync(
@@ -1276,9 +1290,9 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         Assert.NotNull(preview);
         Assert.Equal(total, preview.Preview.TotalSales);
         Assert.Equal(3_750m, preview.Preview.TotalOther);
-        Assert.Equal(.875m, preview.Preview.TotalRefunds);
-        Assert.Equal(3, preview.Preview.ReturnCount);
-        Assert.Equal(total + 3_750m - .875m, preview.Preview.NetAmount);
+        Assert.Equal(1.25m, preview.Preview.TotalRefunds);
+        Assert.Equal(4, preview.Preview.ReturnCount);
+        Assert.Equal(total + 3_750m - 1.25m, preview.Preview.NetAmount);
         Assert.Equal(cashAmount + 3_749.50m, preview.Preview.ExpectedCash);
         var cashTotal = preview.Preview.PaymentTotals
             .Single(value => value.PaymentMethodCode == "Cash");

@@ -54,7 +54,8 @@ public interface IWindowsRenderedPrintJob
         CancellationToken cancellationToken);
 }
 
-public sealed class SystemWindowsRenderedPrintJob : IWindowsRenderedPrintJob
+public sealed class SystemWindowsRenderedPrintJob(
+    IHostApplicationLifetime lifetime) : IWindowsRenderedPrintJob
 {
     public async Task PrintAsync(
         string printerName,
@@ -100,10 +101,37 @@ public sealed class SystemWindowsRenderedPrintJob : IWindowsRenderedPrintJob
         }
         if (!process.Start())
             throw new IOException("No fue posible iniciar la impresión local.");
-        await process.WaitForExitAsync(cancellationToken);
+        await WaitForExitAsync(process, cancellationToken, lifetime.ApplicationStopping);
         if (process.ExitCode != 0)
             throw new IOException(
                 $"La impresora '{printerName}' no pudo completar el trabajo.");
+    }
+
+    internal static async Task WaitForExitAsync(
+        System.Diagnostics.Process process,
+        CancellationToken requestCancelled,
+        CancellationToken applicationStopping)
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(
+            requestCancelled, applicationStopping);
+        try
+        {
+            await process.WaitForExitAsync(stopping.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // A printer dialog can outlive its request. It must not hold Edge's
+            // shutdown open when enrollment replaces the local host.
+            if (!process.HasExited)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) when (process.HasExited)
+                {
+                    // The print helper exited between the check and Kill.
+                }
+            }
+            throw;
+        }
     }
 }
 

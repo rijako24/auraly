@@ -125,8 +125,11 @@ if (string.Equals(fiscalCredentialStore, "AzureKeyVault", StringComparison.Ordin
         vaultUri.Scheme != Uri.UriSchemeHttps)
         throw new InvalidOperationException(
             "Auraly:Fiscal:KeyVaultUri must be an HTTPS Azure Key Vault URI when CredentialStore is AzureKeyVault.");
-    builder.Services.AddSingleton<IFiscalCredentialVault>(
-        AzureKeyVaultFiscalCredentialVault.Create(vaultUri));
+    builder.Services.AddSingleton<SqlProtectedFiscalCredentialVault>();
+    builder.Services.AddSingleton<IFiscalCredentialVault>(services =>
+        new RoutedFiscalCredentialVault(
+            AzureKeyVaultFiscalCredentialVault.Create(vaultUri),
+            services.GetRequiredService<SqlProtectedFiscalCredentialVault>()));
 }
 else if (string.Equals(fiscalCredentialStore, "ProtectedDatabase", StringComparison.OrdinalIgnoreCase))
 {
@@ -486,7 +489,9 @@ builder.Services.AddSingleton(new PlatformEmailOptions(
     builder.Configuration["Auraly:Email:SenderAddress"] ?? "DoNotReply@auralyapp.co",
     builder.Configuration["Auraly:Email:PublicAppUrl"] ?? "https://auralyapp.co",
     builder.Configuration["Auraly:Email:LogoUrl"] ?? "https://auralyapp.co/brand/auraly-mark.png",
-    builder.Configuration["Auraly:Email:SupportEmail"] ?? "soporte@auralyapp.co"));
+    builder.Configuration["Auraly:Email:SupportEmail"] ?? "soporte@auralyapp.co",
+    !builder.Environment.IsDevelopment() &&
+        builder.Configuration.GetValue<bool?>("Auraly:Email:DeliveryEnabled") != false));
 builder.Services.AddHostedService<PlatformEmailOutboxHostedService>();
 
 

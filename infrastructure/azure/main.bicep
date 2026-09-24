@@ -785,6 +785,10 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
           value: communicationService.listKeys().primaryConnectionString
         }
         {
+          name: 'Auraly__Email__DeliveryEnabled'
+          value: compactEnvironment == 'prod' ? 'true' : 'false'
+        }
+        {
           name: 'Auraly__Email__SenderAddress'
           value: 'DoNotReply@${emailDomain.properties.mailFromSenderDomain}'
         }

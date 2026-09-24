@@ -1107,9 +1107,8 @@ public static class PosEdgeHostApplication
                     !amountValue.TryGetDecimal(out localAmount) || localAmount <= 0))
                     throw new PosSalesReturnServerException(400, "MissingLocalRefundAmount",
                         "La devolución requiere el valor de reintegro para guardarse primero en la caja local.");
-                var method = isRefund
-                    ? request.GetProperty("refundMethodCode").GetString() ?? ""
-                    : "CustomerCredit";
+                if (!isRefund) return await server.ConfirmAsync(request, user, ct);
+                var method = request.GetProperty("refundMethodCode").GetString() ?? "";
                 var inserted = await closureStore.PrepareRefundAsync(new PosLocalWorkSessionRefund(
                     returnId, user.WorkSessionId, method, localAmount), ct);
                 try { return await server.ConfirmAsync(request, user, ct); }

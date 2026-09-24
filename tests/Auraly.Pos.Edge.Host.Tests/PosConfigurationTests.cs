@@ -15,6 +15,47 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PosConfigurationTests
 {
     [Fact]
+    public async Task Pending_rendered_print_does_not_delay_edge_shutdown()
+    {
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo(
+                OperatingSystem.IsWindows() ? "powershell.exe" : "/bin/sh")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        if (OperatingSystem.IsWindows())
+        {
+            process.StartInfo.ArgumentList.Add("-NoProfile");
+            process.StartInfo.ArgumentList.Add("-Command");
+            process.StartInfo.ArgumentList.Add("Start-Sleep -Seconds 60");
+        }
+        else
+        {
+            process.StartInfo.ArgumentList.Add("-c");
+            process.StartInfo.ArgumentList.Add("sleep 60");
+        }
+        Assert.True(process.Start());
+        using var applicationStopping = new CancellationTokenSource();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            var waiting = SystemWindowsRenderedPrintJob.WaitForExitAsync(
+                process, CancellationToken.None, applicationStopping.Token);
+            applicationStopping.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+            await process.WaitForExitAsync(deadline.Token);
+            Assert.True(process.HasExited);
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+    }
+
+    [Fact]
     public async Task Accounting_settlement_configuration_is_replaced_atomically_for_offline_use()
     {
         var directory = Path.Combine(

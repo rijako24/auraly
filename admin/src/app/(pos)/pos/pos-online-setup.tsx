@@ -184,9 +184,9 @@ function PreparationPanel({ value }: { value: PosSetupPreparation }) {
           </p>
         </div>
         {visibleProgress === null ? (
-          <div role="progressbar" aria-label="Preparación en curso" className="mt-4 h-2.5 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-teal-400 via-cyan-200 to-teal-400" />
-          </div>
+          <p role="status" className="mt-4 flex items-center gap-2 text-xs text-teal-200">
+            <Loader2 className="h-4 w-4 animate-spin" />{view.connectionLabel}
+          </p>
         ) : (
           <Progress aria-label={`Preparación ${visibleProgress}%`} value={visibleProgress} className="mt-4 h-2.5 bg-white/10 [&>div]:bg-gradient-to-r [&>div]:from-teal-400 [&>div]:to-cyan-200" />
         )}

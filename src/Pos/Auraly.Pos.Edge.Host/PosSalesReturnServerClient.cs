@@ -28,9 +28,13 @@ public sealed class PosSalesReturnServerClient(
             !Guid.TryParse(acceptedId.GetString(), out var confirmedId) || confirmedId != id)
             throw new PosSalesReturnServerException(502, "InvalidReturnAcceptance",
                 "La devolución fue aceptada, pero la respuesta no coincide. Reintenta con el mismo identificador.");
-        if (result.TryGetProperty("refundMethodCode", out var methodValue) &&
-            methodValue.ValueKind == JsonValueKind.String &&
-            result.TryGetProperty("totalAmount", out var amountValue) &&
+        var method = result.TryGetProperty("refundMethodCode", out var methodValue) &&
+            methodValue.ValueKind == JsonValueKind.String
+            ? methodValue.GetString()
+            : body.TryGetProperty("economicResolution", out var resolutionValue) &&
+              resolutionValue.ValueKind == JsonValueKind.String &&
+              resolutionValue.GetString() == "CustomerCredit" ? "CustomerCredit" : null;
+        if (method is not null && result.TryGetProperty("totalAmount", out var amountValue) &&
             amountValue.TryGetDecimal(out var amount) && amount > 0)
         {
             if (!result.TryGetProperty("workSessionId", out var sessionValue) ||
@@ -40,7 +44,7 @@ public sealed class PosSalesReturnServerClient(
                 throw new PosSalesReturnServerException(502, "InvalidReturnAcceptance",
                     "La devolución fue aceptada, pero no coincide con la sesión local. Reintenta con el mismo identificador.");
             await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
-                id, workSessionId, methodValue.GetString()!, amount), token);
+                id, workSessionId, method, amount), token);
         }
         return result;
     }
@@ -57,9 +61,10 @@ public sealed class PosSalesReturnServerClient(
         if (!response.IsSuccessStatusCode)
         {
             var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>(token);
+            var code = problem?.Title ?? "SalesReturnUnavailable";
             throw new PosSalesReturnServerException((int)response.StatusCode,
-                problem?.Title ?? "SalesReturnUnavailable",
-                problem?.Detail ?? "No fue posible procesar la devolución.");
+                code,
+                problem?.Detail ?? $"No fue posible procesar la devolución (HTTP {(int)response.StatusCode}: {code}).");
         }
         return await response.Content.ReadFromJsonAsync<JsonElement>(token);
     }

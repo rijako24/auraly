@@ -636,6 +636,7 @@ public sealed class PosOfflineWorkSessionClosureService(
         amounts.TryAdd("Card", 0);
         amounts.TryAdd("Transfer", 0);
         var refundAmounts = refunds
+            .Where(value => value.PaymentMethodCode != "CustomerCredit")
             .GroupBy(value => ClosureMethod(value.PaymentMethodCode), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(value => value.Amount),
                 StringComparer.OrdinalIgnoreCase);

@@ -94,8 +94,6 @@ import {
 } from "@/services/pos/pos-enrollment-transition";
 import {
   canIssuePosDocument,
-  dianQuotaExhaustedMessage,
-  fiscalConfigurationRequiredMessage,
   posDocumentReadinessError,
 } from "@/services/pos/pos-fiscal-guard";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
@@ -686,6 +684,7 @@ export default function PosPage() {
                 documentTypeRef.current,
                 health.fiscalReady,
                 health.dianQuotaAvailable !== false,
+                "edge",
               );
               if (readinessError) setError(readinessError);
             }
@@ -813,6 +812,7 @@ export default function PosPage() {
         documentType,
         health.fiscalReady,
         health.dianQuotaAvailable !== false,
+        "edge",
       );
       if (readinessError) setError(readinessError);
     };
@@ -2307,8 +2307,9 @@ export default function PosPage() {
     if (!client || busy) return;
     if (!canIssuePosDocument(value, workstation.fiscalReady, workstation.dianQuotaAvailable !== false)) {
       setDocumentTypeOpen(false);
-      setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
-        ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
+      setError(posDocumentReadinessError(
+        value, workstation.fiscalReady,
+        workstation.dianQuotaAvailable !== false, client.mode));
       if (paymentOpen) setPaymentFocusRequest((current) => current + 1);
       else focusScanner();
       return;
@@ -2353,8 +2354,9 @@ export default function PosPage() {
       : documentType;
     if (!canIssuePosDocument(effectiveDocumentType, workstation.fiscalReady,
       workstation.dianQuotaAvailable !== false)) {
-      setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
-        ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
+      setError(posDocumentReadinessError(
+        effectiveDocumentType, workstation.fiscalReady,
+        workstation.dianQuotaAvailable !== false, client.mode));
       return;
     }
     if (saleRequiresBelowCostAuthorization(draft.lines) &&
