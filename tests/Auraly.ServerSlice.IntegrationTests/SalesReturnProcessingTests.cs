@@ -88,7 +88,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
                 "Regresión de cierre por medio de pago",
                 [new ConfirmSalesReturnLineRequest(
                     1, .2m, ReturnInventoryDispositions.Sellable)],
-                refundMethod == SalesReturnRefundMethods.Cash ? null : fixture.WorkSessionId,
+                fixture.WorkSessionId,
                 refundMethod == SalesReturnRefundMethods.CreditCard ? 2 : null,
                 "Other",
                 BankAccountId: refundMethod == SalesReturnRefundMethods.Transfer
@@ -188,7 +188,10 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var acceptance = await response.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
         Assert.NotNull(acceptance);
-        Assert.Equal(fixture.WorkSessionId, acceptance.WorkSessionId);
+        Assert.NotNull(acceptance.WorkSessionId);
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.WorkSessions WHERE WorkSessionId=@Id AND Status=N'Open'",
+            acceptance.WorkSessionId.Value));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id",
             request.ReturnId));
