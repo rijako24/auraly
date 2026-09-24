@@ -114,6 +114,44 @@ jobs:
           LEFT JOIN dbo.AccountingPostingJobs job
             ON job.SourceDocumentId=s.DocumentId AND job.SourceDocumentType=s.DocumentType
           ORDER BY s.IssuedAt DESC;
+
+          SELECT m.ProductId,m.AverageUnitCostBefore,m.QuantityBefore,m.ValueChange
+          INTO #ZeroMovements
+          FROM dbo.InventoryMovements m
+          JOIN #Sales s ON s.DocumentId=m.DocumentId AND s.DocumentType=m.DocumentType
+          WHERE m.QuantityChange<0 AND COALESCE(m.ValueChange,0)=0;
+
+          SELECT COUNT(*) ZeroMovements,COUNT(DISTINCT ProductId) AffectedProducts,
+                 SUM(CASE WHEN COALESCE(AverageUnitCostBefore,0)=0 THEN 1 ELSE 0 END) ZeroAverageBefore,
+                 SUM(CASE WHEN QuantityBefore<=0 THEN 1 ELSE 0 END) NonPositiveQuantityBefore
+          FROM #ZeroMovements;
+
+          SELECT TOP (20) p.ProductCode,COUNT(*) ZeroMovements,
+                 MIN(z.AverageUnitCostBefore) MinAverageBefore,
+                 MAX(z.AverageUnitCostBefore) MaxAverageBefore,
+                 MAX(COALESCE(b.AverageUnitCost,0)) CurrentAverage,
+                 SUM(CASE WHEN z.QuantityBefore<=0 THEN 1 ELSE 0 END) NonPositiveQuantityBefore
+          FROM #ZeroMovements z
+          JOIN dbo.Products p ON p.ProductId=z.ProductId
+          LEFT JOIN (
+            SELECT ProductId,MAX(AverageUnitCost) AverageUnitCost
+            FROM dbo.InventoryBalances
+            WHERE ProductId IN (SELECT ProductId FROM #ZeroMovements)
+            GROUP BY ProductId
+          ) b ON b.ProductId=z.ProductId
+          GROUP BY z.ProductId,p.ProductCode
+          ORDER BY COUNT(*) DESC,p.ProductCode;
+
+          SELECT s.DocumentNumber,s.TaxAmount,a.Code AccountCode,
+                 SUM(l.Debit) Debit,SUM(l.Credit) Credit
+          FROM #Sales s
+          JOIN dbo.AccountingEntries e ON e.SourceDocumentId=s.DocumentId
+            AND e.SourceDocumentType=s.DocumentType
+          JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+          JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+          WHERE s.TaxAmount>0
+          GROUP BY s.DocumentNumber,s.TaxAmount,a.Code
+          ORDER BY s.DocumentNumber,a.Code;
           '@
               [void]$command.Parameters.Add('@TenantFragment',[System.Data.SqlDbType]::NVarChar,64)
               $command.Parameters['@TenantFragment'].Value = $env:TENANT_FRAGMENT
@@ -130,6 +168,14 @@ jobs:
                   $row = [ordered]@{}
                   for ($index=0; $index -lt $reader.FieldCount; $index++) { $row[$reader.GetName($index)] = $reader.GetValue($index) }
                   Write-Output ('SALE ' + ($row | ConvertTo-Json -Compress))
+                }
+                foreach ($label in @('ZERO_SUMMARY','ZERO_PRODUCT','TAX_LINE')) {
+                  [void]$reader.NextResult()
+                  while ($reader.Read()) {
+                    $row = [ordered]@{}
+                    for ($index=0; $index -lt $reader.FieldCount; $index++) { $row[$reader.GetName($index)] = if ($reader.IsDBNull($index)) { $null } else { $reader.GetValue($index) } }
+                    Write-Output ($label + ' ' + ($row | ConvertTo-Json -Compress))
+                  }
                 }
               } finally { $reader.Dispose() }
             } finally { $connection.Dispose() }
