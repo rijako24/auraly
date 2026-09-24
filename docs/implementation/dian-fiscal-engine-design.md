@@ -52,6 +52,19 @@ La antigua responsabilidad de `SalidaDeMercanciaFolio` no se migra. No hace falt
 
 Las devoluciones procesadas generan una nota crédito que referencia el número y CUFE originales. Su CUDE se calcula durante la generación fiscal, se persiste una sola vez y se usa sin renumerar en todos los reintentos. Facturas y notas crédito comparten workers, leases, artefactos, intentos y estados, pero conservan snapshots tipados distintos.
 
+Al regenerar una nota crédito o débito rechazada, la fecha declarada de firma
+corresponde a la fecha fiscal congelada en la nota, igual que en facturas y
+documentos soporte. La DIAN exige que la fecha de generación y la de firma
+coincidan; la fecha de transmisión puede ser posterior. El emisor consulta
+primero un resultado incierto y solo regenera tras un rechazo definitivo.
+Una excepción de datos históricos se limita a una nota nunca aceptada cuya
+fecha de referencia a la factura original fue congelada en UTC por error:
+se comprueba la fecha de Colombia del documento original aceptado, se corrige
+únicamente ese campo con bloqueo transaccional y se registra el antes y después
+en `AuditLogs`. El proceso ordinario ya congela la fecha de Colombia; esta
+reparación no autoriza modificar snapshots de documentos aceptados ni se usa
+para cambiar importes, identidad o numeración.
+
 Compras y gastos generan documento soporte únicamente cuando la política
 inmutable del proveedor lo exige. Una devolución de compra que referencia ese
 documento genera una nota de ajuste tipo `95`, con CUDS y referencia al CUDS

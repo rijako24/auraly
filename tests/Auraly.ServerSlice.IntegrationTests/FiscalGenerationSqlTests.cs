@@ -223,6 +223,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             new FixedTimeProvider(generatedAt));
         Assert.True(await generator.ProcessAsync(fixture.BusinessId, returnId, "credit-generator"));
         Assert.False(await generator.ProcessAsync(fixture.BusinessId, returnId, "credit-generator"));
+        Assert.Equal(returnRequest.ReturnedAt, await ScalarDateTimeOffsetAsync(
+            "SELECT SignedAt FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId", returnId));
 
         var unsigned = await ArtifactAsync(returnId, FiscalArtifactTypeCodes.UnsignedXml);
         var xml = XDocument.Parse(Encoding.UTF8.GetString(unsigned));
@@ -383,6 +385,15 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<DateTimeOffset> ScalarDateTimeOffsetAsync(string sql, Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        return (DateTimeOffset)(await command.ExecuteScalarAsync())!;
     }
 
     private async Task<byte[]> ArtifactAsync(Guid documentId, string type)

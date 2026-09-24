@@ -805,6 +805,8 @@ public sealed class FiscalGenerationWorker(
             FiscalDocumentTypeCodes.SupportDocumentAdjustment =>
                 work.SupportDocument?.Adjustment?.ReturnedAt ??
                 work.SupportDocument?.ExpenseCancellation?.CancelledAt,
+            FiscalDocumentTypeCodes.CreditNote => work.CreditNote?.Return.ReturnedAt,
+            FiscalDocumentTypeCodes.DebitNote => work.DebitNote?.DebitNote.IssuedAt,
             _ => null
         };
 
