@@ -197,6 +197,8 @@ public sealed class SqlTenantProvisioningStore(
                 FROM dbo.Permissions
                 WHERE Resource IN(
                   N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
+                  N'receivables.read',N'receivables.payments.create',N'payables.read',N'payables.payments.create',
+                  N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
                   N'pos.inventory.availability.read');
 
                 INSERT dbo.TenantUserInvitations

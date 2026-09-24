@@ -68,6 +68,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
   AND NOT (
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
+      N'receivables.read',N'receivables.payments.create',N'payables.read',N'payables.payments.create',
       N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
@@ -123,6 +124,7 @@ WHERE roleValue.IsActive=1
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
+      N'receivables.read',N'receivables.payments.create',N'payables.read',N'payables.payments.create',
       N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(

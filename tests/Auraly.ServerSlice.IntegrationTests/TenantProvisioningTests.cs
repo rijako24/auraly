@@ -239,6 +239,18 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", OrderPermissionCodes.Invoice));
         Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", CommercePermissionCodes.SalesCreate));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "receivables.read"));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "receivables.payments.create"));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "payables.read"));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "payables.payments.create"));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "work-sessions.read"));
+        Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SELLER", OrderPermissionCodes.Create));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SELLER", OrderPermissionCodes.Review));

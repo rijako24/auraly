@@ -26,7 +26,10 @@ export function defaultStartRoute(roles: readonly string[], permissions: readonl
 export function requiresCloudWorkspace(permissions: readonly string[]): boolean {
   const posOrderWorkspace = permissions.includes("sales.create");
   return authorizedNavigationItems(permissions).some((item) =>
-    item.href !== "/pos" && !(posOrderWorkspace && item.href === "/dashboard/orders"));
+    item.href !== "/pos" &&
+    !(posOrderWorkspace && item.href === "/dashboard/orders") &&
+    !(posOrderWorkspace && item.href === "/dashboard/receivables" && permissions.includes("receivables.payments.create")) &&
+    !(posOrderWorkspace && item.href === "/dashboard/payables" && permissions.includes("payables.payments.create")));
 }
 
 export function canOpenPosAdministrativeMenu(
