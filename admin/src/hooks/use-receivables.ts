@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   receivablesApi,
   type ReceivableStatus,
@@ -23,7 +23,8 @@ export function useReceivables(params: {
     queryKey: ["receivables", businessId, params],
     queryFn: () => receivablesApi.list(params),
     enabled: !!businessId && params.enabled !== false,
-    placeholderData: keepPreviousData,
+    staleTime: 0,
+    gcTime: 0,
   });
 }
 
@@ -33,5 +34,7 @@ export function useReceivableDetail(receivableId?: string) {
     queryKey: ["receivable", businessId, receivableId],
     queryFn: () => receivablesApi.get(receivableId!),
     enabled: !!businessId && !!receivableId,
+    staleTime: 0,
+    gcTime: 0,
   });
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect,useMemo,useRef,useState } from "react";
-import { useMutation,useQuery,useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { ArrowRight,CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { PartyRoleSelect,type PartyRoleSelection } from "@/components/parties/party-role-select";
@@ -24,12 +24,13 @@ import type { PosEdgeClient,PosPaymentInput } from "@/services/pos/pos-edge-clie
 
 type Direction="receivable"|"payable";
 type Invoice={id:string;number:string;dueDate:string;outstanding:number;currency:string;overdue:boolean};
+type InvoicePage={totalCount:number;totalPages:number;items:Invoice[]};
+type InvoiceLoad={key:string;status:"loading"|"success"|"error";data:InvoicePage|null};
 type PaymentAttempt={fingerprint:string;paymentId:string;paidAt:string;sessionId:string|null};
 const toPortfolioMethod=(code:string):CustomerPaymentMethod|null=>
   code==="Transfer"?"BankTransfer":code==="Cash"||code==="DebitCard"||code==="CreditCard"?code:null;
 
 export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty,initialInvoice,workSessionId,onCompleted,edgeClient,businessId:businessIdOverride}:{direction:Direction;open:boolean;onOpenChange:(open:boolean)=>void;initialParty?:PartyRoleSelection|null;initialInvoice?:Invoice|null;workSessionId?:string|null;onCompleted?:()=>void;edgeClient?:PosEdgeClient|null;businessId?:string|null}){
-  const queryClient=useQueryClient();
   const initialPartyRef=useRef(initialParty);initialPartyRef.current=initialParty;
   const initialInvoiceRef=useRef(initialInvoice);initialInvoiceRef.current=initialInvoice;
   const selectedBusinessId=useBusinessContextStore(state=>state.selectedBusinessId);const businessId=businessIdOverride??selectedBusinessId;
@@ -39,22 +40,49 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
   const [invoicePage,setInvoicePage]=useState(1);
   const [selected,setSelected]=useState<Record<string,string>>({});
   const [selectedLimits,setSelectedLimits]=useState<Record<string,number>>({});
+  const [invoiceLoad,setInvoiceLoad]=useState<InvoiceLoad|null>(null);
+  const invoiceRequestEpoch=useRef(0);
   const pendingAttempt=useRef<PaymentAttempt|null>(null);
   const role=direction==="receivable"?"Customer":"Supplier";
   const partyId=direction==="receivable"?party?.customerId:party?.supplierId;
-  useEffect(()=>{if(open){const party=initialPartyRef.current;const invoice=initialInvoiceRef.current;setStep(1);setParty(party??null);setInvoicePage(1);setSelected(invoice?{[invoice.id]:String(invoice.outstanding)}:{});setSelectedLimits(invoice?{[invoice.id]:invoice.outstanding}:{});}},[open]);
-  const invoicesQuery=useQuery({queryKey:["portfolio-payment-invoices",edgeClient?"edge":"web",direction,businessId,partyId,invoicePage],enabled:open&&!!partyId,queryFn:async()=>{
-    if(direction==="receivable"){const value=edgeClient?await edgeClient.portfolioReceivables(partyId!,invoicePage,20):await receivablesApi.list({page:invoicePage,pageSize:20,customerId:partyId!,outstandingOnly:true});return {totalCount:value.totalCount,totalPages:value.totalPages,items:value.items.map<Invoice>(x=>({id:x.receivableId,number:x.documentNumber,dueDate:x.dueDate,outstanding:x.outstandingAmount,currency:x.currencyCode,overdue:x.isOverdue}))};}
-    const value=edgeClient?await edgeClient.portfolioPayables(partyId!,invoicePage,20):await payablesApi.list({page:invoicePage,pageSize:20,supplierId:partyId!,outstandingOnly:true});return {totalCount:value.totalCount,totalPages:value.totalPages,items:value.items.map<Invoice>(x=>({id:x.payableId,number:x.documentNumber,dueDate:x.dueDate,outstanding:x.outstandingAmount,currency:x.currencyCode,overdue:x.isOverdue}))};
-  }});
-  const invoiceItems=useMemo(()=>{const items=invoicesQuery.data?.items??[];return initialInvoice&&partyId===(direction==="receivable"?initialParty?.customerId:initialParty?.supplierId)&&!items.some(item=>item.id===initialInvoice.id)?[initialInvoice,...items]:items;},[invoicesQuery.data,initialInvoice,initialParty,partyId,direction]);
+  useEffect(()=>{if(open){const party=initialPartyRef.current;setStep(1);setParty(party??null);setInvoicePage(1);setSelected({});setSelectedLimits({});}},[open]);
+  const invoiceKey=open&&partyId?JSON.stringify([edgeClient?"edge":"web",direction,businessId,partyId,invoicePage]):null;
+  const currentInvoices=invoiceLoad?.key===invoiceKey?invoiceLoad:null;
+  const invoicesQuery={data:currentInvoices?.data??null,isLoading:!!invoiceKey&&(!currentInvoices||currentInvoices.status==="loading"),isError:currentInvoices?.status==="error"};
   useEffect(()=>{
-    if(!open||initialInvoice||invoicesQuery.data?.totalCount!==1)return;
-    const only=invoicesQuery.data.items[0];
-    if(!only)return;
-    setSelected({[only.id]:String(only.outstanding)});
-    setSelectedLimits({[only.id]:only.outstanding});
-  },[open,initialInvoice,invoicesQuery.data]);
+    if(!invoiceKey||!partyId)return;
+    let active=true;
+    const epoch=++invoiceRequestEpoch.current;
+    const requested=initialInvoiceRef.current;
+    const initialPartyId=direction==="receivable"?initialPartyRef.current?.customerId:initialPartyRef.current?.supplierId;
+    setInvoiceLoad({key:invoiceKey,status:"loading",data:null});
+    const load=async():Promise<InvoicePage>=>{
+      let page:InvoicePage;
+      if(direction==="receivable"){const value=edgeClient?await edgeClient.portfolioReceivables(partyId,invoicePage,20):await receivablesApi.list({page:invoicePage,pageSize:20,customerId:partyId,outstandingOnly:true});page={totalCount:value.totalCount,totalPages:value.totalPages,items:value.items.map<Invoice>(x=>({id:x.receivableId,number:x.documentNumber,dueDate:x.dueDate,outstanding:x.outstandingAmount,currency:x.currencyCode,overdue:x.isOverdue}))};}
+      else{const value=edgeClient?await edgeClient.portfolioPayables(partyId,invoicePage,20):await payablesApi.list({page:invoicePage,pageSize:20,supplierId:partyId,outstandingOnly:true});page={totalCount:value.totalCount,totalPages:value.totalPages,items:value.items.map<Invoice>(x=>({id:x.payableId,number:x.documentNumber,dueDate:x.dueDate,outstanding:x.outstandingAmount,currency:x.currencyCode,overdue:x.isOverdue}))};}
+      if(!edgeClient&&invoicePage===1&&requested&&initialPartyId===partyId&&!page.items.some(item=>item.id===requested.id)){
+        if(direction==="receivable"){
+          const detail=await receivablesApi.get(requested.id);
+          if(detail.customerId===partyId&&detail.outstandingAmount>0&&detail.status!=="Cancelled")page.items.unshift({id:detail.receivableId,number:detail.documentNumber,dueDate:detail.dueDate,outstanding:detail.outstandingAmount,currency:detail.currencyCode,overdue:false});
+        }else{
+          const detail=await payablesApi.get(requested.id);
+          if(detail.supplierId===partyId&&detail.outstandingAmount>0&&detail.status!=="Cancelled")page.items.unshift({id:detail.payableId,number:detail.documentNumber,dueDate:detail.dueDate,outstanding:detail.outstandingAmount,currency:detail.currencyCode,overdue:false});
+        }
+      }
+      return page;
+    };
+    void load().then(data=>{if(active&&invoiceRequestEpoch.current===epoch)setInvoiceLoad({key:invoiceKey,status:"success",data});}).catch(()=>{if(active&&invoiceRequestEpoch.current===epoch)setInvoiceLoad({key:invoiceKey,status:"error",data:null});});
+    return()=>{active=false};
+  },[invoiceKey,partyId,invoicePage,direction,edgeClient]);
+  const invoiceItems=invoicesQuery.data?.items??[];
+  useEffect(()=>{
+    if(!open||!invoicesQuery.data)return;
+    const invoice=initialInvoiceRef.current;
+    const chosen=invoice?invoicesQuery.data.items.find(item=>item.id===invoice.id):invoicesQuery.data.totalCount===1?invoicesQuery.data.items[0]:null;
+    if(!chosen)return;
+    setSelected({[chosen.id]:String(chosen.outstanding)});
+    setSelectedLimits({[chosen.id]:chosen.outstanding});
+  },[open,invoicesQuery.data]);
   const allocations=useMemo(()=>Object.entries(selected).map(([id,value])=>({id,amount:Number(value)})).filter(x=>Number.isFinite(x.amount)&&x.amount>0),[selected]);
   const total=allocations.reduce((sum,x)=>sum+x.amount,0);
   const paymentClient=useMemo(()=>({
@@ -76,7 +104,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     const {paymentId,paidAt,sessionId}=attempt;
     if(direction==="receivable"){const request={paymentId,businessId,customerId:partyId,workSessionId:sessionId,paidAt,currencyCode:"COP",notes:null,allocations:allocations.map(x=>({receivableId:x.id,amount:x.amount})),payments:tenders.map(toCustomerTender)};return edgeClient?edgeClient.confirmPortfolioReceivable(request,`receivable-payment-${paymentId}`):receivablesApi.confirmPayment(request,`receivable-payment-${paymentId}`);}
     const request={paymentId,businessId,supplierId:partyId,workSessionId:sessionId,paidAt,currencyCode:"COP",notes:null,allocations:allocations.map(x=>({payableId:x.id,amount:x.amount})),payments:tenders.map(toSupplierTender)};return edgeClient?edgeClient.confirmPortfolioPayable(request,`payable-payment-${paymentId}`):payablesApi.confirmPayment(request,`payable-payment-${paymentId}`);
-  },onSuccess:accepted=>{sessionStorage.removeItem(attemptStorageKey);pendingAttempt.current=null;queryClient.removeQueries({queryKey:["portfolio-payment-invoices",edgeClient?"edge":"web",direction,businessId,partyId]});toast.success(`${accepted.documentNumber} quedó registrado. El saldo se actualizará al aplicar el movimiento.`);changeOpen(false);onCompleted?.();},onError:error=>toast.error(error instanceof Error?error.message:"No fue posible registrar el movimiento. Si no recibiste confirmación, reintenta sin cambiar los valores.")});
+  },onSuccess:accepted=>{sessionStorage.removeItem(attemptStorageKey);pendingAttempt.current=null;toast.success(`${accepted.documentNumber} quedó registrado. El saldo se actualizará al aplicar el movimiento.`);changeOpen(false);onCompleted?.();},onError:error=>toast.error(error instanceof Error?error.message:"No fue posible registrar el movimiento. Si no recibiste confirmación, reintenta sin cambiar los valores.")});
   const validateStepOne=()=>{if(!partyId||allocations.length===0){toast.error("Selecciona un tercero y al menos una factura.");return false;}if(allocations.some(x=>x.amount>(selectedLimits[x.id]??0))){toast.error("Ningún abono puede superar el saldo de la factura.");return false;}return true;};
   if(open&&step===2)return <PosPaymentDialog
     client={paymentClient} total={total} grossTotal={total} withholdingTotal={0}
@@ -95,7 +123,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
       <div className="flex justify-between rounded-xl bg-muted p-4"><span>Total seleccionado</span><b className="text-lg">{formatCurrency(total)}</b></div></div></div>
     <DialogFooter className="border-t px-6 py-4"><Button type="button" variant="ghost" onClick={()=>changeOpen(false)}>Cancelar</Button><Button type="button" disabled={invoicesQuery.isError} onClick={()=>validateStepOne()&&setStep(2)}>Ir a pagar<ArrowRight className="ml-2 h-4 w-4"/></Button></DialogFooter>
   </DialogContent></Dialog>;
-  function changeOpen(next:boolean){if(!next){setParty(null);setSelected({});setSelectedLimits({});setInvoicePage(1);setStep(1);}onOpenChange(next);}
+  function changeOpen(next:boolean){if(!next){invoiceRequestEpoch.current++;setParty(null);setSelected({});setSelectedLimits({});setInvoiceLoad(null);setInvoicePage(1);setStep(1);}onOpenChange(next);}
 }
 function toCustomerTender(value:PosPaymentInput):CustomerPaymentTender{const methodCode=toPortfolioMethod(value.methodCode);if(!methodCode)throw new Error("Medio de pago no admitido para cartera.");return {methodCode,amount:value.amount,tenderedAmount:value.methodCode==="Cash"?value.tenderedAmount??value.amount:null,bankAccountId:value.methodCode==="Transfer"?value.bankAccountId??null:null,reference:value.reference?.trim()||null,notes:value.notes?.trim()||null,cardFranchiseCode:value.cardFranchiseCode?.trim()||null,approvalNumber:value.approvalNumber?.trim()||null};}
 function toSupplierTender(value:PosPaymentInput):SupplierPaymentTender{const methodCode=toPortfolioMethod(value.methodCode);if(!methodCode)throw new Error("Medio de pago no admitido para proveedores.");return {methodCode,amount:value.amount,tenderedAmount:value.methodCode==="Cash"?value.tenderedAmount??value.amount:null,bankAccountId:value.methodCode==="Transfer"?value.bankAccountId??null:null,reference:value.reference?.trim()||null,notes:value.notes?.trim()||null,cardFranchiseCode:value.cardFranchiseCode?.trim()||null,approvalNumber:value.approvalNumber?.trim()||null};}

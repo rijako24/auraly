@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -60,7 +60,8 @@ export function PortfolioLedgerTabs({
       const result=await payablesApi.supplierPortfolio({...filters,supplierId:partyId}); return {...result,items:result.items.map(item=>({id:item.supplierId,name:item.supplierName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount}))};
     },
     enabled: !!businessId,
-    placeholderData: keepPreviousData,
+    staleTime: 0,
+    gcTime: 0,
   });
   const payments = useQuery<Page<PaymentRow>>({
     queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search, partyId, status, overdue, from, to],
@@ -76,7 +77,8 @@ export function PortfolioLedgerTabs({
         applications:item.applications.map(application=>({...application,invoiceId:application.payableId}))}))};
     },
     enabled: !!businessId && value === "payments",
-    placeholderData: keepPreviousData,
+    staleTime: 0,
+    gcTime: 0,
   });
 
   const partyItems = parties.data?.items ?? [];

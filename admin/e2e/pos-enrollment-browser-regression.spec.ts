@@ -315,7 +315,8 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   await page.getByLabel("Usuario").fill("admin");
   await page.getByLabel("Contraseña", { exact: true }).fill("prueba-local");
   await page.getByRole("button", { name: "Iniciar sesión" }).click();
-  await expect(page).toHaveURL(/\/pos(?:#|$)/, { timeout: 15_000 });
+  await expect(page).toHaveURL(/\/dashboard\/sales-returns(?:#|$)/, { timeout: 15_000 });
+  await page.goto("/pos");
   await expect(page.locator("#pos-scanner")).toBeEnabled({ timeout: 15_000 });
   expect(cloudLoginCalls).toBe(1);
   const returns = page.getByRole("button", { name: /Devoluciones/ });

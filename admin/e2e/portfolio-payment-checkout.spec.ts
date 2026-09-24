@@ -67,6 +67,13 @@ test("abono usa la caja de pago del POS y refresca la cartera al confirmar", asy
 
   await page.goto("/dashboard/receivables");
   await page.getByRole("row", { name: /Cliente prueba/ }).click();
+  await expect(page.getByLabel("Abono para FV-001")).toBeVisible();
+  const readsBeforeCancel = paymentInvoiceReads;
+  await page.getByRole("dialog", { name: "Abono a cartera" }).getByRole("button", { name: "Cancelar" }).click();
+  await expect(page.getByRole("dialog", { name: "Abono a cartera" })).not.toBeVisible();
+  await page.getByRole("row", { name: /Cliente prueba/ }).click();
+  await expect(page.getByLabel("Abono para FV-001")).toBeVisible();
+  await expect.poll(() => paymentInvoiceReads).toBe(readsBeforeCancel + 1);
   await page.getByRole("button", { name: "Ir a pagar" }).click();
   const checkout = page.getByRole("dialog", { name: "Abono a cartera" });
   await expect(checkout.getByText("Recibo de abono a cartera")).toBeVisible();
@@ -105,6 +112,7 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
 
   let paid = false;
   let paymentInvoiceReads = 0;
+  let supplierReads = 0;
   let confirmation: { payments: Array<{ methodCode: string; amount: number; cardFranchiseCode: string; approvalNumber: string }> } | null = null;
   await page.route("**/api/**", async route => {
     const url = new URL(route.request().url());
@@ -114,9 +122,12 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
     else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
-    else if (path.endsWith("/payables/suppliers")) body = { items: [{ supplierId, supplierName: "Proveedor prueba", identification: "1001", invoiceCount: 1,
-      originalAmount: 12400, paidAmount: 0, outstandingAmount: 12400, overdueAmount: 0 }], page: 1,
-      pageSize: 20, totalCount: 1, totalPages: 1, totalOutstanding: 12400, totalOverdue: 0, totalInvoiceCount: 1 };
+    else if (path.endsWith("/payables/suppliers")) {
+      supplierReads++;
+      body = { items: [{ supplierId, supplierName: "Proveedor prueba", identification: "1001", invoiceCount: 1,
+        originalAmount: 12400, paidAmount: paid ? 12400 : 0, outstandingAmount: paid ? 0 : 12400, overdueAmount: 0 }], page: 1,
+        pageSize: 20, totalCount: 1, totalPages: 1, totalOutstanding: paid ? 0 : 12400, totalOverdue: 0, totalInvoiceCount: 1 };
+    }
     else if (path.endsWith("/payables")) {
       if (url.searchParams.get("outstandingOnly") === "true") paymentInvoiceReads++;
       body = { items: paid ? [] : [{ payableId, supplierId, supplierName: "Proveedor prueba",
@@ -173,6 +184,8 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
   await expect(checkout).not.toBeVisible();
   expect(confirmation).toMatchObject({ payments: [{ methodCode: "CreditCard", amount: 12400,
     cardFranchiseCode: "Visa", approvalNumber: "CREDIT-001" }] });
+  await expect.poll(() => supplierReads).toBeGreaterThan(1);
+  await expect(page.getByLabel("Resumen de cartera")).toContainText("$ 0");
   const readsAfterPayment = paymentInvoiceReads;
   await page.getByRole("row", { name: /Proveedor prueba/ }).click();
   await expect(page.getByText("Este tercero no tiene facturas pendientes.")).toBeVisible();

@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   payablesApi,
   type PayableStatus,
@@ -23,7 +23,8 @@ export function usePayables(params: {
     queryKey: ["payables", businessId, params],
     queryFn: () => payablesApi.list(params),
     enabled: !!businessId && params.enabled !== false,
-    placeholderData: keepPreviousData,
+    staleTime: 0,
+    gcTime: 0,
   });
 }
 
@@ -33,5 +34,7 @@ export function usePayableDetail(payableId?: string) {
     queryKey: ["payable", businessId, payableId],
     queryFn: () => payablesApi.get(payableId!),
     enabled: !!businessId && !!payableId,
+    staleTime: 0,
+    gcTime: 0,
   });
 }
