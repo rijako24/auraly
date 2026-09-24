@@ -11,6 +11,12 @@ public static class PayablesApi
 {
     public static IEndpointRouteBuilder MapPayablesApi(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/commerce/v1/payables/expense-concepts",
+                async (HttpContext context, string? search, int page, int pageSize,
+                    PayablesService service, CancellationToken cancellationToken) =>
+                    await ExecuteAsync(() => service.ListExpenseConceptsAsync(
+                        context.User.ToPayablesIdentity(), search, page, pageSize, cancellationToken), Results.Ok))
+            .RequireAuthorization("payables.user");
         endpoints.MapGet(
                 "/api/commerce/v1/payables/suppliers",
                 async (HttpContext context,int page,int pageSize,string? search,bool? overdue,
@@ -23,11 +29,11 @@ public static class PayablesApi
                 "/api/commerce/v1/payables",
                 async (HttpContext context, int page, int pageSize, string? search,
                     Guid? supplierId, string? status, bool? overdue, bool? outstandingOnly,
-                    DateOnly? from,DateOnly? to,
+                    DateOnly? from,DateOnly? to,Guid? conceptId,
                     PayablesService service, CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListAsync(
                         context.User.ToPayablesIdentity(),
-                        new PayableQuery(page, pageSize, search, supplierId, status, overdue, outstandingOnly==true,from,to),
+                        new PayableQuery(page, pageSize, search, supplierId, status, overdue, outstandingOnly==true,from,to,conceptId),
                         cancellationToken), Results.Ok))
             .RequireAuthorization("payables.user");
 

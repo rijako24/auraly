@@ -25,7 +25,9 @@ public sealed partial class SqlExpenseStore
                 SELECT e.Status,e.CancellationId,e.CancellationReason,e.PurchaseEvidenceType,
                   source.PayloadJson,p.PayableId,p.OutstandingAmount,
                   fiscal.FiscalNumber,fiscal.UniqueCode,fiscal.IssuedAt,fiscal.FiscalStatus,
-                  snapshot.SnapshotJson,job.AccountingPostingJobId
+                  snapshot.SnapshotJson,job.AccountingPostingJobId,
+                  CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesReturnCharges returned WITH(UPDLOCK,HOLDLOCK)
+                    WHERE returned.AppliedChargeId=e.ExpenseId) THEN 1 ELSE 0 END AS bit)
                 FROM dbo.Expenses e WITH(UPDLOCK,HOLDLOCK)
                 JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.TenantId=@TenantId
                 JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=e.ExpenseId
@@ -46,6 +48,7 @@ public sealed partial class SqlExpenseStore
             Guid? existingId, payableId, existingJobId;
             string? existingReason, supportNumber, supportCuds, fiscalStatus, supportJson;
             DateOnly? originalIssuedOn; decimal outstanding;
+            bool returnedWithSale;
             await using (var reader = await command.ExecuteReaderAsync(ct))
             {
                 if (!await reader.ReadAsync(ct))
@@ -64,6 +67,7 @@ public sealed partial class SqlExpenseStore
                 fiscalStatus = reader.IsDBNull(10) ? null : reader.GetString(10);
                 supportJson = reader.IsDBNull(11) ? null : reader.GetString(11);
                 existingJobId = reader.IsDBNull(12) ? null : reader.GetGuid(12);
+                returnedWithSale = reader.GetBoolean(13);
             }
             if (existingId is not null)
             {
@@ -74,8 +78,10 @@ public sealed partial class SqlExpenseStore
                 return new(expenseId, existingId.Value, existingJobId.Value,
                     evidence == PurchaseEvidenceTypes.BuyerElectronicSupportDocument, true);
             }
-            if (status != "Processed" || original.SourceInvoiceId is not null)
-                throw new ExpenseValidationException("Solo se puede anular un gasto procesado que no provenga de una factura de venta.");
+            if (status != "Processed")
+                throw new ExpenseValidationException("Solo se puede anular un gasto procesado.");
+            if (returnedWithSale)
+                throw new ExpenseConflictException("El cargo de esta factura ya fue devuelto; su gasto no se puede anular otra vez.");
             if (original.BusinessId != user.BusinessId || original.TenantId != user.TenantId || original.ExpenseId != expenseId)
                 throw new InvalidOperationException("El origen contable del gasto no coincide con el tenant.");
             if (original.Withholding.NetAmount != outstanding && payableId is null && original.Withholding.NetAmount > 0)

@@ -7,6 +7,8 @@ namespace Auraly.Application.Payables;
 
 public interface IPayablesStore
 {
+    Task<PayableExpenseConceptPage> ListExpenseConceptsAsync(
+        PayablesUserIdentity user, string? search, int page, int pageSize, CancellationToken cancellationToken);
     Task<PayablePage> ListAsync(
         PayablesUserIdentity user,
         PayableQuery query,
@@ -39,6 +41,15 @@ public sealed class PayablesService(
     IPayablesStore store,
     AccountingProcessingCoordinator accounting)
 {
+    public Task<PayableExpenseConceptPage> ListExpenseConceptsAsync(
+        PayablesUserIdentity user, string? search, int page, int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        Require(user, PayablesPermissionCodes.Read);
+        if (page < 1 || pageSize is < 1 or > 100)
+            throw new PayablesValidationException("La paginación de conceptos no es válida.");
+        return store.ListExpenseConceptsAsync(user, Normalize(search, 120), page, pageSize, cancellationToken);
+    }
     public Task<SupplierPortfolioPage> ListSuppliersAsync(PayablesUserIdentity user,
         SupplierPortfolioQuery query, CancellationToken cancellationToken = default)
     {
@@ -59,6 +70,8 @@ public sealed class PayablesService(
         if (query.PageSize is < 1 or > 100)
             throw new PayablesValidationException("PageSize must be between 1 and 100.");
         ValidateLedgerFilters(query.Status,query.From,query.To);
+        if (query.ConceptId == Guid.Empty)
+            throw new PayablesValidationException("El concepto de gasto no es válido.");
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, cancellationToken);
     }
 

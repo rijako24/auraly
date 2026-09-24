@@ -12,6 +12,7 @@ export function usePayables(params: {
   pageSize: number;
   search?: string;
   supplierId?: string;
+  conceptId?: string;
   status?: PayableStatus;
   overdue?: boolean;
   from?: string;

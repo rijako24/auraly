@@ -493,6 +493,15 @@ public sealed partial class SqlAccountingPostingProcessor
             INSERT @Input SELECT AppliedChargeId,SupplierId,TransactionId,SupplierCreditId
             FROM OPENJSON(@Rows) WITH(AppliedChargeId uniqueidentifier,SupplierId uniqueidentifier,
               TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier);
+            DECLARE @ExpenseStatus TABLE(AppliedChargeId uniqueidentifier PRIMARY KEY,Status nvarchar(40));
+            INSERT @ExpenseStatus
+            SELECT input.AppliedChargeId,expense.Status FROM @Input input
+            JOIN dbo.Expenses expense WITH(UPDLOCK,HOLDLOCK)
+              ON expense.ExpenseId=input.AppliedChargeId AND expense.BusinessId=@BusinessId
+             AND expense.SourceInvoiceId=@OriginalDocumentId AND expense.SupplierId=input.SupplierId;
+            IF (SELECT COUNT(*) FROM @ExpenseStatus)<>@Count OR EXISTS(
+              SELECT 1 FROM @ExpenseStatus WHERE Status NOT IN(N'Processed',N'Cancelled'))
+              THROW 51607,'El estado de uno o más gastos del cargo cambió antes de procesar la devolución.',1;
             DECLARE @Effects TABLE(AppliedChargeId uniqueidentifier PRIMARY KEY,SupplierId uniqueidentifier,
               PayableId uniqueidentifier,OriginalAmount decimal(19,4),OutstandingAmount decimal(19,4),
               PayableCredit decimal(19,4),SupplierCredit decimal(19,4),TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier);
@@ -502,10 +511,12 @@ public sealed partial class SqlAccountingPostingProcessor
               payable.OriginalAmount-CASE WHEN payable.OutstandingAmount<payable.OriginalAmount THEN payable.OutstandingAmount ELSE payable.OriginalAmount END,
               input.TransactionId,input.SupplierCreditId
             FROM @Input input
+            JOIN @ExpenseStatus expense ON expense.AppliedChargeId=input.AppliedChargeId
+              AND expense.Status=N'Processed'
             JOIN dbo.Payables payable WITH(UPDLOCK,HOLDLOCK)
               ON payable.BusinessId=@BusinessId AND payable.SourceDocumentId=input.AppliedChargeId
              AND payable.SourceDocumentType=N'Expense' AND payable.SupplierId=input.SupplierId;
-            IF (SELECT COUNT(*) FROM @Effects)<>@Count
+            IF (SELECT COUNT(*) FROM @Effects)<>(SELECT COUNT(*) FROM @ExpenseStatus WHERE Status=N'Processed')
               THROW 51607,'No fue posible localizar la cuenta por pagar de uno o más cargos.',1;
             UPDATE payable SET OutstandingAmount=payable.OutstandingAmount-effect.PayableCredit,
               Status=CASE WHEN effect.PayableCredit=effect.OriginalAmount AND effect.OutstandingAmount=effect.OriginalAmount
@@ -522,6 +533,7 @@ public sealed partial class SqlAccountingPostingProcessor
             """, connection, transaction);
         command.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(rows);
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        command.Parameters.AddWithValue("@OriginalDocumentId", value.OriginalDocumentId);
         command.Parameters.AddWithValue("@ReturnId", value.ReturnId);
         command.Parameters.AddWithValue("@At", value.ReturnedAt);
         command.Parameters.AddWithValue("@Now", now);

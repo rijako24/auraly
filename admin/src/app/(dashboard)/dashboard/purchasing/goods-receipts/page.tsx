@@ -100,6 +100,7 @@ const withDerivedWeight = (line: GoodsReceiptLine): GoodsReceiptLine =>
     ? { ...line, totalGrossWeightKg: Math.round(line.quantity * line.unitGrossWeightKg * 1_000_000) / 1_000_000 }
     : line;
 export default function GoodsReceiptsPage() {
+  const router = useRouter();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const userId = useAuthStore((state) => state.user?.userId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
@@ -112,6 +113,18 @@ export default function GoodsReceiptsPage() {
   const [status, setStatus] = useState<GoodsReceiptStatus | "all">("all");
   const [editor, setEditor] = useState<EditorDraft>();
   const [detail, setDetail] = useState<GoodsReceiptDetail>();
+  useEffect(() => {
+    if (!businessId) return;
+    const receiptId = new URLSearchParams(window.location.search).get("receiptId");
+    if (!receiptId) return;
+    let active = true;
+    void goodsReceiptsApi.getDetail(receiptId).then(value => {
+      if (active) setDetail(value);
+    }).catch(() => {
+      if (active) toast.error("No fue posible consultar la recepción de compra.");
+    });
+    return () => { active = false; };
+  }, [businessId]);
   const list = useGoodsReceipts({
     page, pageSize, search: search.trim() || undefined,
     status: status === "all" ? undefined : status,
@@ -269,7 +282,7 @@ export default function GoodsReceiptsPage() {
     <ReceiptEditor key={editor?.draftId ?? "closed"} open={!!editor} draft={editor} businessId={businessId}
       canConfirm={canConfirm} canAssociateProducts={canAssociateProducts} onChange={rememberLocalDraft}
       onClose={() => setEditor(undefined)} onClear={clearLocalDraft} />
-    <ReceiptDetailDialog detail={detail} onClose={() => setDetail(undefined)} />
+    <ReceiptDetailDialog detail={detail} onClose={() => {setDetail(undefined);if(new URLSearchParams(window.location.search).has("receiptId"))router.replace("/dashboard/purchasing/goods-receipts")}} />
 
   </div>;
 }

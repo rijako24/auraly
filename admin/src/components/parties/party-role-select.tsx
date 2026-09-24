@@ -75,6 +75,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
     }}
     getOption={getOption}
     selectedOption={resolvedSelected}
+    onClear={value && !leadingOptions?.some(option=>option.value===value) ? ()=>onChange(leadingOptions?.[0]?.value ?? "") : undefined}
     leadingOptions={leadingOptions}
     placeholder={placeholder}
     ariaLabel={role ? `Seleccionar ${role.toLocaleLowerCase("es-CO")}` : "Seleccionar tercero"}

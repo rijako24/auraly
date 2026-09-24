@@ -117,7 +117,8 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
   const selection = calculateSalesReturnSelection(sale.lines, quantities);
   const selectedLineNumbers = new Set(selection.selectedLineNumbers);
   const chosen = sale.lines.filter((line) => selectedLineNumbers.has(line.originalLineNumber));
-  const availableCharges = sale.charges.filter((charge) => !charge.isReturned);
+  const availableCharges = sale.charges.filter((charge) => !charge.isReturned &&
+    (charge.expenseStatus === "Processed" || (charge.expenseStatus === "Cancelled" && charge.invoicedAmount > 0)));
   const returnedChargeAmount = returnCharges
     ? availableCharges.reduce((sum, charge) => sum + charge.invoicedAmount, 0)
     : 0;
@@ -255,9 +256,9 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
             <div><h3 className="font-semibold">Cargos aplicados a la factura</h3><p className="text-sm text-muted-foreground">Puedes conservarlos o devolver todos los cargos que aún estén disponibles.</p></div>
             <Field label="Tratamiento de cargos"><Select value={returnCharges ? "Return" : "Keep"} onValueChange={(value) => setReturnCharges(value === "Return")}><SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Keep">Conservar cargos</SelectItem><SelectItem value="Return" disabled={availableCharges.length === 0}>Devolver cargos</SelectItem></SelectContent></Select></Field>
           </div>
-          <div className="overflow-hidden rounded-xl border">
-            <div className="grid grid-cols-[1fr_8rem_8rem] gap-3 bg-muted px-3 py-2 text-xs font-semibold uppercase text-muted-foreground"><span>Cargo</span><span className="text-right">Cobrado</span><span className="text-right">Estado</span></div>
-            {sale.charges.map((charge) => <div key={charge.appliedChargeId} className="grid grid-cols-[1fr_8rem_8rem] gap-3 border-t px-3 py-2 text-sm"><span><b>{charge.name}</b><small className="block text-muted-foreground">{charge.code} · costo proveedor {formatCurrency(charge.amount)}</small></span><span className="text-right tabular-nums">{formatCurrency(charge.invoicedAmount)}</span><span className="text-right">{charge.isReturned ? "Devuelto" : "Disponible"}</span></div>)}
+          <div className="overflow-x-auto rounded-xl border">
+            <div className="grid min-w-[36rem] grid-cols-[1fr_8rem_13rem] gap-3 bg-muted px-3 py-2 text-xs font-semibold uppercase text-muted-foreground"><span>Cargo</span><span className="text-right">Cobrado</span><span className="text-right">Estado</span></div>
+            {sale.charges.map((charge) => <div key={charge.appliedChargeId} className="grid min-w-[36rem] grid-cols-[1fr_8rem_13rem] gap-3 border-t px-3 py-2 text-sm"><span><b>{charge.name}</b><small className="block text-muted-foreground">{charge.code} · costo proveedor {formatCurrency(charge.amount)}</small></span><span className="text-right tabular-nums">{formatCurrency(charge.invoicedAmount)}</span><span className="text-right">{charge.isReturned ? "Devuelto" : charge.expenseStatus === "Cancelled" ? charge.invoicedAmount > 0 ? "Gasto anulado; cobro disponible" : "Gasto anulado" : charge.expenseStatus === "CancellationPending" ? "Anulación en curso" : charge.expenseStatus === "Processed" ? "Disponible" : "Gasto en proceso"}</span></div>)}
           </div>
         </section>}
         <Card className="ml-auto w-full border-primary/20 bg-primary/5 sm:max-w-sm"><CardContent className="flex items-center justify-between gap-6 p-4"><div><p className="text-xs uppercase tracking-wide text-muted-foreground">Valor estimado</p><p className="text-xs text-muted-foreground">El servidor conserva el redondeo original.</p></div><p className="shrink-0 text-right text-2xl font-semibold tabular-nums">{formatCurrency(estimated)}</p></CardContent></Card>

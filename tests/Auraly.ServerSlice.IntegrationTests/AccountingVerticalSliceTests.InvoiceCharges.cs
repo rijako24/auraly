@@ -167,6 +167,29 @@ public sealed partial class AccountingVerticalSliceTests
             sale.Credit is not null && sale.Charges?.Any(candidate =>
                 candidate.AppliedChargeId == charge.AppliedChargeId) == true));
         var payableId = await ScalarAsync<Guid>("SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", firstCharge.AppliedChargeId);
+        var chargeSale = issued.Single(sale => sale.Charges?.Any(charge =>
+            charge.AppliedChargeId == firstCharge.AppliedChargeId) == true);
+        var payableReadTimer = System.Diagnostics.Stopwatch.StartNew();
+        var payableDetail = await admin.GetFromJsonAsync<PayableDetail>(
+            $"/api/commerce/v1/payables/{payableId}");
+        payableReadTimer.Stop();
+        Assert.True(payableReadTimer.ElapsedMilliseconds < 1000,
+            $"El detalle de cuenta por pagar tardó {payableReadTimer.ElapsedMilliseconds} ms.");
+        Assert.NotNull(payableDetail);
+        Assert.Equal("Domicilio matriz", payableDetail.ExpenseConceptName);
+        Assert.Contains(chargeSale.DocumentNumber.FullNumber, payableDetail.ExpenseDescription);
+        Assert.Equal(chargeSale.DocumentNumber.FullNumber, payableDetail.SourceInvoiceNumber);
+        var conceptOptions = (await admin.GetFromJsonAsync<PayableExpenseConceptPage>(
+            "/api/commerce/v1/payables/expense-concepts?page=1&pageSize=10&search=Domicilio"))!;
+        Assert.InRange(conceptOptions.Items.Count, 1, 10);
+        Assert.Contains(conceptOptions.Items, concept => concept.ConceptId == conceptId);
+        payableReadTimer.Restart();
+        var conceptPayables = (await admin.GetFromJsonAsync<PayablePage>(
+            $"/api/commerce/v1/payables?page=1&pageSize=25&conceptId={conceptId}&search={payableDetail.DocumentNumber}"))!;
+        payableReadTimer.Stop();
+        Assert.True(payableReadTimer.ElapsedMilliseconds < 1000,
+            $"El filtro por concepto tardó {payableReadTimer.ElapsedMilliseconds} ms.");
+        Assert.Equal("Domicilio matriz", Assert.Single(conceptPayables.Items).ExpenseConceptName);
         var payment = new ConfirmSupplierPaymentRequest(Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId,
             issued[0].CommercialSnapshot.IssuedAt.AddHours(1), "COP", "Pago domiciliario matriz",
             [new(payableId, firstCharge.Amount)],[new(SupplierPaymentMethods.Cash,firstCharge.Amount,firstCharge.Amount)],sessionId);
@@ -385,6 +408,118 @@ public sealed partial class AccountingVerticalSliceTests
             partialReturnId, "220505", debit: true));
         Assert.Equal(paidPart, await AccountAmountAsync(
             partialReturnId, "133595", debit: true));
+
+        using var cancellationUser = fixture.CreateAdminClient(
+            ExpensePermissionCodes.Read, ExpensePermissionCodes.Cancel);
+        using (var alreadyReturned = await cancellationUser.PostAsJsonAsync(
+                   $"/api/commerce/v1/expenses/{firstCharge.AppliedChargeId:D}/cancel",
+                   new CancelExpenseRequest(Guid.NewGuid(), "No repetir devolución")))
+            Assert.Equal(HttpStatusCode.Conflict, alreadyReturned.StatusCode);
+
+        var supplierOnlySale = issued.First(sale => sale.Credit is not null &&
+            sale.DocumentId != companySale.DocumentId && sale.DocumentId != partialSale.DocumentId &&
+            sale.Charges?.Any(charge => charge.ExpenseAmount > 0) == true);
+        var supplierOnlyCharge = supplierOnlySale.Charges!.Single(charge => charge.ExpenseAmount > 0);
+        var supplierOnlyCancellation = new CancelExpenseRequest(Guid.NewGuid(), "Cargo asumido anulado");
+        using (var response = await cancellationUser.PostAsJsonAsync(
+                   $"/api/commerce/v1/expenses/{supplierOnlyCharge.AppliedChargeId:D}/cancel",
+                   supplierOnlyCancellation))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await AssertBalancedAsync(supplierOnlyCancellation.CancellationId);
+        var supplierOnlyDetail = await cancellationUser.GetFromJsonAsync<ExpenseDetail>(
+            $"/api/commerce/v1/expenses/{supplierOnlyCharge.AppliedChargeId:D}");
+        Assert.Equal(supplierOnlySale.DocumentId, supplierOnlyDetail?.SourceInvoiceId);
+        Assert.Equal("Cancelled", supplierOnlyDetail?.Status);
+        var expenseListTimer = System.Diagnostics.Stopwatch.StartNew();
+        var cancelledList = await cancellationUser.GetFromJsonAsync<ExpensePage>(
+            $"/api/commerce/v1/expenses?page=1&pageSize=25&search={supplierOnlyDetail!.DocumentNumber}&status=Cancelled&payableStatus=Cancelled");
+        expenseListTimer.Stop();
+        Assert.True(expenseListTimer.ElapsedMilliseconds < 1_000,
+            $"La lista filtrada de gastos tardó {expenseListTimer.ElapsedMilliseconds} ms.");
+        var cancelledRow = Assert.Single(cancelledList!.Items);
+        Assert.Equal(supplierOnlyCharge.AppliedChargeId, cancelledRow.ExpenseId);
+        Assert.Equal("Cancelled", cancelledRow.PayableStatus);
+        Assert.Equal(0m, cancelledRow.OutstandingAmount);
+        var supplierOnlyReturnable = await admin.GetFromJsonAsync<ReturnableSale>(
+            $"/api/commerce/v1/sales-returns/sales/{supplierOnlySale.DocumentId:D}");
+        Assert.Equal("Cancelled", Assert.Single(supplierOnlyReturnable!.Charges).ExpenseStatus);
+        var staleReturnId = Guid.NewGuid();
+        var staleReturn = new ConfirmSalesReturnRequest(staleReturnId, fixture.BusinessId,
+            fixture.WarehouseId, supplierOnlySale.DocumentId,
+            supplierOnlySale.CommercialSnapshot.IssuedAt.AddHours(5),
+            ReturnEconomicResolutions.CustomerCredit, null, "Cargo ya anulado",
+            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
+            ReasonCode: "Other", ReturnedChargeIds: [supplierOnlyCharge.AppliedChargeId]);
+        using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+            { Content = JsonContent.Create(staleReturn) })
+        {
+            message.Headers.Add("Idempotency-Key", staleReturnId.ToString("N"));
+            using var response = await admin.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        }
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id", staleReturnId));
+
+        var billedSale = creditSale;
+        var billedCharge = billedSale.Charges!.Single(charge => charge.InvoicedAmount > 0);
+        var billedPayableId = await ScalarAsync<Guid>(
+            "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", billedCharge.AppliedChargeId);
+        var billedPayment = new ConfirmSupplierPaymentRequest(Guid.NewGuid(), fixture.BusinessId,
+            fixture.SupplierId, DateTimeOffset.UtcNow, "COP", "Pago previo a anulación de cargo facturado",
+            [new(billedPayableId, billedCharge.Amount)],
+            [new(SupplierPaymentMethods.Cash, billedCharge.Amount, billedCharge.Amount)]);
+        using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/payable-payments/confirm")
+            { Content = JsonContent.Create(billedPayment) })
+        {
+            message.Headers.Add("Idempotency-Key", billedPayment.PaymentId.ToString("N"));
+            using var response = await admin.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        await AssertBalancedAsync(billedPayment.PaymentId);
+        var billedCancellation = new CancelExpenseRequest(Guid.NewGuid(), "Gasto del cargo no procedente");
+        var cancellationTimer = System.Diagnostics.Stopwatch.StartNew();
+        using (var response = await cancellationUser.PostAsJsonAsync(
+                   $"/api/commerce/v1/expenses/{billedCharge.AppliedChargeId:D}/cancel",
+                   billedCancellation))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        cancellationTimer.Stop();
+        Assert.True(cancellationTimer.ElapsedMilliseconds < 1_000,
+            $"La anulación del cargo tardó {cancellationTimer.ElapsedMilliseconds} ms.");
+        await AssertBalancedAsync(billedCancellation.CancellationId);
+        Assert.Equal(billedCharge.Amount, await ScalarAsync<decimal>(
+            "SELECT AvailableAmount FROM dbo.SupplierCredits WHERE SourceDocumentId=@Id AND SourceDocumentType=N'ExpenseCancellation'",
+            billedCancellation.CancellationId));
+        var billedReturnable = await admin.GetFromJsonAsync<ReturnableSale>(
+            $"/api/commerce/v1/sales-returns/sales/{billedSale.DocumentId:D}");
+        Assert.Equal("Cancelled", Assert.Single(billedReturnable!.Charges).ExpenseStatus);
+        using var reopenResponse = await admin.PostAsJsonAsync("/api/commerce/v1/work-sessions/current",
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        Assert.True(reopenResponse.IsSuccessStatusCode, await reopenResponse.Content.ReadAsStringAsync());
+        var refundSessionId = (await reopenResponse.Content.ReadFromJsonAsync<WorkSessionView>())!.WorkSessionId;
+        var billedReturnId = Guid.NewGuid();
+        var billedReturn = new ConfirmSalesReturnRequest(billedReturnId, fixture.BusinessId,
+            fixture.WarehouseId, billedSale.DocumentId,
+            billedSale.CommercialSnapshot.IssuedAt.AddHours(6),
+            ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Cash, "Devolver cobro sin repetir gasto",
+            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
+            WorkSessionId: refundSessionId, ReasonCode: "Other",
+            ReturnedChargeIds: [billedCharge.AppliedChargeId]);
+        using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+            { Content = JsonContent.Create(billedReturn) })
+        {
+            message.Headers.Add("Idempotency-Key", billedReturnId.ToString("N"));
+            using var response = await admin.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        await AssertBalancedAsync(billedReturnId);
+        Assert.Equal(0, await AccountAmountAsync(billedReturnId, "519595", debit: false));
+        Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.SalesReturnChargeFinancialEffects WHERE ReturnId=@Id", billedReturnId));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SupplierCredits WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesReturnCharge'",
+            billedCharge.AppliedChargeId));
+        Assert.True((await admin.GetFromJsonAsync<ReturnableSale>(
+            $"/api/commerce/v1/sales-returns/sales/{billedSale.DocumentId:D}"))!.Charges.Single().IsReturned);
+
         var date = DateOnly.FromDateTime(DianFiscalDateTime.InColombia(issued[0].CommercialSnapshot.IssuedAt).Date);
         var historyTimer = System.Diagnostics.Stopwatch.StartNew();
         using var historyResponse = await admin.GetAsync(

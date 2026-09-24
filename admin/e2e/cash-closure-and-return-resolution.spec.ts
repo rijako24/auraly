@@ -83,7 +83,10 @@ test("la devolución ofrece destinos independientes y enlaza la reversión de ta
   await page.route("**/api/commerce/v1/pos/settlement-configuration**", route => json(route, { isAccountingEnabled: false, bankAccounts: [] }));
   await page.route("**/api/commerce/v1/sales-returns/sales?**", route => json(route, { items: [{ documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, hasAvailableQuantity: true, fiscalStatus: "Accepted" }], page: 1, pageSize: 25, totalCount: 1, totalPages: 1 }));
   await page.route(`**/api/commerce/v1/sales-returns/sales/${saleId}**`, route => json(route, {
-    documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, receivableOutstanding: 90000, fiscalStatus: "Accepted", payments: [{ paymentNumber: 1, methodCode: "CreditCard", originalAmount: 29000, refundedAmount: 0, availableAmount: 29000, cardFranchiseCode: "Visa", approvalNumber: "APP-900" }], charges: [], lines: [{ originalLineNumber: 1, productId: crypto.randomUUID(), productCode: "P-1", reference: null, description: "Producto", soldQuantity: 1, returnedQuantity: 0, availableQuantity: 1, unitPrice: 100000, discountAmount: 0, taxCode: "01", taxRate: 19, untaxedAmount: 100000, taxAmount: 19000, lineTotal: 119000, barcodes: "" }],
+    documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, receivableOutstanding: 90000, fiscalStatus: "Accepted", payments: [{ paymentNumber: 1, methodCode: "CreditCard", originalAmount: 29000, refundedAmount: 0, availableAmount: 29000, cardFranchiseCode: "Visa", approvalNumber: "APP-900" }], charges: [
+      { appliedChargeId: crypto.randomUUID(), code: "BILLED", name: "Domicilio", amount: 5000, invoicedAmount: 5000, expenseAmount: 0, isReturned: false, expenseStatus: "Cancelled" },
+      { appliedChargeId: crypto.randomUUID(), code: "ABSORBED", name: "Mensajería", amount: 2000, invoicedAmount: 0, expenseAmount: 2000, isReturned: false, expenseStatus: "Cancelled" },
+    ], lines: [{ originalLineNumber: 1, productId: crypto.randomUUID(), productCode: "P-1", reference: null, description: "Producto", soldQuantity: 1, returnedQuantity: 0, availableQuantity: 1, unitPrice: 100000, discountAmount: 0, taxCode: "01", taxRate: 19, untaxedAmount: 100000, taxAmount: 19000, lineTotal: 119000, barcodes: "" }],
   }));
   await page.route("**/api/commerce/v1/reference-options/sales-return-resolution-method", route => json(route, [
     { id: "cash", code: "Cash", label: "Efectivo", description: null, sortOrder: 10 },
@@ -99,6 +102,8 @@ test("la devolución ofrece destinos independientes y enlaza la reversión de ta
   await page.goto("/dashboard/sales-returns");
   await page.getByText("FV-900", { exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Nueva devolución" });
+  await expect(dialog).toContainText("Gasto anulado; cobro disponible");
+  await expect(dialog).toContainText("Gasto anulado");
   const resolution = dialog.getByText("Cómo devolver el valor", { exact: true }).locator("..");
   await expect(resolution.getByRole("combobox")).toContainText("Abono a cartera");
   await resolution.getByRole("combobox").click();

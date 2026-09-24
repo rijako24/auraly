@@ -14,6 +14,7 @@ export interface PayableListItem {
   status: PayableStatus;
   isOverdue: boolean;
   createdAt: string;
+  expenseConceptName: string | null;
 }
 
 export interface PayablePage {
@@ -48,6 +49,10 @@ export interface PayableDetail {
   dueDate: string;
   status: PayableStatus;
   transactions: PayableTransaction[];
+  expenseConceptName: string | null;
+  expenseDescription: string | null;
+  sourceInvoiceNumber: string | null;
+  goodsReceiptId: string | null;
 }
 
 export interface ConfirmSupplierPaymentRequest {
@@ -82,6 +87,9 @@ export interface SupplierPaymentHistoryPage {
 export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalSupplierCredit:number}
 
 export const payablesApi = {
+  expenseConcepts: (search: string, page: number, pageSize: number) =>
+    apiClient.get<{ items: Array<{ conceptId: string; name: string }>; page: number; pageSize: number; totalCount: number; totalPages: number }>(
+      "/commerce/v1/payables/expense-concepts", { search: search || undefined, page, pageSize }),
   supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;status?:PayableStatus;from?:string;to?:string})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
   payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
   settlementConfiguration: () =>
@@ -98,6 +106,7 @@ export const payablesApi = {
     outstandingOnly?: boolean;
     from?: string;
     to?: string;
+    conceptId?: string;
   }) => apiClient.get<PayablePage>(
     "/commerce/v1/payables",
     withPagedDefaults(params),

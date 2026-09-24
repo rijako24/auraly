@@ -31,6 +31,7 @@ export function PortfolioLedgerTabs({
   onRefreshInvoices,
   onPartyClick,
   onInvoiceClick,
+  filters,
   children,
 }: {
   direction: "receivable" | "payable";
@@ -45,6 +46,7 @@ export function PortfolioLedgerTabs({
   onRefreshInvoices: () => void;
   onPartyClick: (party: PartyRow) => void;
   onInvoiceClick: (invoiceId: string) => void;
+  filters: ReactNode;
   children: ReactNode;
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
@@ -97,6 +99,7 @@ export function PortfolioLedgerTabs({
       <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">{direction === "receivable" ? "Facturas encontradas" : "Obligaciones encontradas"}</p><p className="mt-1 text-2xl font-semibold">{summary.totalInvoiceCount}</p></CardContent></Card>
       {direction === "payable" && <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo a favor con proveedores</p><p className="mt-1 text-2xl font-semibold">{formatCurrency(summary.totalSupplierCredit)}</p></CardContent></Card>}
     </section>}
+    {filters}
     <TabsList className="grid h-auto w-full grid-cols-3">
       <TabsTrigger value="parties">{direction === "receivable" ? "Clientes" : "Proveedores"}</TabsTrigger>
       <TabsTrigger value="invoices">Facturas</TabsTrigger>

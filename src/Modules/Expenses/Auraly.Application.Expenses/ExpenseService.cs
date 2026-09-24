@@ -16,7 +16,7 @@ public interface IExpenseStore
     Task<IReadOnlyList<ExpenseConceptView>> ListConceptsAsync(ExpenseUserIdentity user, bool includeInactive, CancellationToken ct);
     Task<ExpenseConceptView> SaveConceptAsync(ExpenseUserIdentity user, SaveExpenseConceptRequest request, CancellationToken ct);
     Task<ExpensePage> ListAsync(ExpenseUserIdentity user, int page, int pageSize, string? search, Guid? conceptId,
-        Guid? supplierId, DateOnly? from, DateOnly? to, string? status, CancellationToken ct);
+        Guid? supplierId, DateOnly? from, DateOnly? to, string? status, string? payableStatus, CancellationToken ct);
     Task<ExpenseDetail?> GetAsync(ExpenseUserIdentity user, Guid expenseId, CancellationToken ct);
     Task<ExpenseCancellationAcceptance> CancelAsync(ExpenseUserIdentity user, Guid expenseId,
         CancelExpenseRequest request, CancellationToken ct);
@@ -48,14 +48,16 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
     }
 
     public Task<ExpensePage> ListAsync(ExpenseUserIdentity user, int page, int pageSize, string? search,
-        Guid? conceptId, Guid? supplierId, DateOnly? from, DateOnly? to, string? status,
+        Guid? conceptId, Guid? supplierId, DateOnly? from, DateOnly? to, string? status, string? payableStatus,
         CancellationToken ct = default)
     {
         Demand(user, ExpensePermissionCodes.Read);
         if (page < 1 || pageSize is < 1 or > 100 || to < from) throw new ExpenseValidationException("Los filtros del reporte no son válidos.");
-        if (status is not null and not ("Accepted" or "Processed" or "CancellationPending" or "Cancelled"))
+        if (status is not null and not ("Accepted" or "Processed" or "CancellationPending" or "Cancelled" or "Returned"))
             throw new ExpenseValidationException("El estado del gasto no es válido.");
-        return store.ListAsync(user, page, pageSize, Optional(search, 120), conceptId, supplierId, from, to, status, ct);
+        if (payableStatus is not null and not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled" or "None"))
+            throw new ExpenseValidationException("El estado de la cuenta por pagar no es válido.");
+        return store.ListAsync(user, page, pageSize, Optional(search, 120), conceptId, supplierId, from, to, status, payableStatus, ct);
     }
 
     public Task<ExpenseDetail?> GetAsync(ExpenseUserIdentity user, Guid expenseId, CancellationToken ct = default)

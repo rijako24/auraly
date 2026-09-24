@@ -569,6 +569,10 @@ public sealed class SqlSalesReturnStore(
             requestedIds.Distinct().Count() != requestedIds.Count)
             throw new SalesReturnValidationException("Los cargos seleccionados para devolver no son válidos.");
         await using var command = new SqlCommand("""
+            DECLARE @LockedExpenseCount int;
+            SELECT @LockedExpenseCount=COUNT(*) FROM dbo.Expenses WITH(UPDLOCK,HOLDLOCK)
+            WHERE SourceInvoiceId=@DocumentId AND ExpenseId IN (
+              SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@Ids));
             WITH Requested AS (
               SELECT DISTINCT TRY_CONVERT(uniqueidentifier,[value]) AppliedChargeId
               FROM OPENJSON(@Ids)
@@ -591,9 +595,13 @@ public sealed class SqlSalesReturnStore(
             JOIN Requested requested ON requested.AppliedChargeId=charge.AppliedChargeId
             LEFT JOIN dbo.SalesReturnCharges returned WITH(UPDLOCK,HOLDLOCK)
               ON returned.AppliedChargeId=charge.AppliedChargeId
+            JOIN dbo.Expenses expense WITH(UPDLOCK,HOLDLOCK)
+              ON expense.ExpenseId=charge.AppliedChargeId AND expense.SourceInvoiceId=payload.DocumentId
+              AND expense.BusinessId=payload.BusinessId
             WHERE payload.DocumentId=@DocumentId
               AND payload.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
-              AND returned.AppliedChargeId IS NULL;
+              AND returned.AppliedChargeId IS NULL
+              AND (expense.Status=N'Processed' OR (expense.Status=N'Cancelled' AND charge.InvoicedAmount>0));
             """, connection, transaction);
         command.Parameters.AddWithValue("@Ids", JsonSerializer.Serialize(requestedIds));
         command.Parameters.AddWithValue("@DocumentId", originalDocumentId);
@@ -606,7 +614,7 @@ public sealed class SqlSalesReturnStore(
                 reader.GetDecimal(12), reader.GetGuid(13), reader.GetGuid(14),
                 reader.IsDBNull(15) ? null : reader.GetGuid(15)));
         if (values.Count != requestedIds.Count)
-            throw new SalesReturnConflictException("Uno o más cargos ya fueron devueltos o no pertenecen a la factura.");
+            throw new SalesReturnConflictException("Uno o más cargos ya fueron devueltos, tienen una anulación en proceso o no pertenecen a la factura.");
         return values;
     }
 

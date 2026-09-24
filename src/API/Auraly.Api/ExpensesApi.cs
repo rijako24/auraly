@@ -49,6 +49,7 @@ public static class ExpensesApi
             DateOnly? from,
             DateOnly? to,
             string? status,
+            string? payableStatus,
             ExpenseService service,
             CancellationToken cancellationToken) =>
             Execute(() => service.ListAsync(
@@ -61,6 +62,7 @@ public static class ExpensesApi
                 from,
                 to,
                 status,
+                payableStatus,
                 cancellationToken)));
 
         group.MapGet("/{id:guid}", async (HttpContext context, Guid id,

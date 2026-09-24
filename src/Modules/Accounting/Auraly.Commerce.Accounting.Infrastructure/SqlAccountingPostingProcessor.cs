@@ -762,8 +762,11 @@ public sealed partial class SqlAccountingPostingProcessor(
         var chargeReversals = new List<ManualLineSpec>();
         var supplierCreditLines = new List<(decimal Amount, Guid? PartyId, Guid? CostCenterId, string Description)>();
         await using (var chargeLines = new SqlCommand("""
-            SELECT COUNT_BIG(*),COUNT_BIG(entry.SourceDocumentId),COUNT_BIG(effect.ReturnId)
+            SELECT COUNT_BIG(*),COUNT_BIG(entry.SourceDocumentId),COUNT_BIG(effect.ReturnId),
+              COALESCE(SUM(CASE WHEN expense.Status=N'Cancelled' THEN CONVERT(bigint,1) ELSE CONVERT(bigint,0) END),0)
             FROM dbo.SalesReturnCharges charge
+            JOIN dbo.Expenses expense ON expense.ExpenseId=charge.AppliedChargeId
+              AND expense.BusinessId=@BusinessId
             LEFT JOIN dbo.AccountingEntries entry
               ON entry.SourceDocumentId=charge.AppliedChargeId AND entry.SourceDocumentType=N'Expense'
              AND entry.BusinessId=@BusinessId AND entry.TenantId=@TenantId
@@ -791,10 +794,10 @@ public sealed partial class SqlAccountingPostingProcessor(
             chargeLines.Parameters.AddWithValue("@TenantId", source.TenantId);
             await using var reader = await chargeLines.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken) ||
-                reader.GetInt64(0) != reader.GetInt64(1) || reader.GetInt64(0) != reader.GetInt64(2))
+                reader.GetInt64(0) != reader.GetInt64(1) || reader.GetInt64(0) != reader.GetInt64(2) + reader.GetInt64(3))
                 throw new InvalidOperationException(
                     "The returned invoice charge has no original accounting entry or financial effect to reverse.");
-            var chargeCount = reader.GetInt64(0);
+            var chargeCount = reader.GetInt64(2);
             await reader.NextResultAsync(cancellationToken);
             var payableLines = new HashSet<Guid>();
             while (await reader.ReadAsync(cancellationToken))

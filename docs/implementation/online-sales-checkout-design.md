@@ -60,10 +60,16 @@ el importe facturado del cargo y realiza una consulta por lote.
 
 Una devolución muestra los cargos congelados de la factura y permite conservarlos
 o devolverlos. Devolver un cargo incluido aumenta la nota crédito al cliente;
-devolver uno asumido no altera ese total. En ambos casos el motor contable revierte
-el gasto del proveedor: cancela la cuenta por pagar aún abierta o crea un saldo a
-favor del proveedor por la parte ya pagada. La selección y los efectos son
-idempotentes y no recalculan la configuración vigente.
+devolver uno asumido no altera ese total. Si el gasto sigue procesado, el motor
+contable revierte su efecto frente al proveedor: cancela la cuenta por pagar
+abierta o crea un saldo a favor por la parte ya pagada. El gasto de cualquier
+cargo también puede anularse directamente desde Gastos. Si ya fue anulado, un
+cargo asumido no vuelve a estar disponible en la devolución; uno cobrado al
+cliente sí puede devolverse al cliente, sin repetir la reversión del gasto ni
+crear otro saldo a favor del proveedor. Una anulación pendiente bloquea la
+selección del cargo hasta que termine. Si el cargo ya entró en una devolución,
+se rechaza la anulación directa. La selección y los efectos son idempotentes y
+no recalculan la configuración vigente.
 
 El writer común `SqlExpenseStore.PersistAcceptedAsync` persiste gastos manuales
 y gastos originados por cargos, retenciones y fuentes financieras en la misma
@@ -79,6 +85,15 @@ referencia interna a la venta. Su `SupplierDocumentNumber` es nulo: no se invent
 una factura del proveedor. Los gastos manuales conservan la exigencia de ese
 número y su unicidad filtrada. El retry compara la solicitud original y no
 vuelve a calcular retenciones ni requiere maestros actualmente activos.
+
+La descripción congelada del gasto de cargo incluye el nombre del cargo y el
+número de la factura de venta. La consulta de cuentas por pagar obtiene concepto,
+descripción y origen desde el gasto vinculado y la factura original. Las cuentas
+originadas por recepción y por factura adicional conservan el vínculo a la
+recepción; la vista de cartera usa ese vínculo para abrir su detalle. El filtro
+por concepto se aplica únicamente a obligaciones de gastos en la pestaña de
+facturas, sin alterar los saldos de otras obligaciones. El selector busca los
+conceptos de forma paginada bajo el permiso de lectura de cuentas por pagar.
 
 Hasta diez aplicaciones de cargo por factura reutilizan operaciones en lote de numeración,
 fuentes contables, retenciones y, cuando la política del proveedor lo exige,

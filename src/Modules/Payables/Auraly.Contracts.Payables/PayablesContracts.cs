@@ -37,7 +37,7 @@ public sealed record PayableQuery(
     string? Status,
     bool? Overdue,
     bool OutstandingOnly = false,
-    DateOnly? From = null, DateOnly? To = null);
+    DateOnly? From = null, DateOnly? To = null, Guid? ConceptId = null);
 
 public sealed record PayableListItem(
     Guid PayableId,
@@ -50,7 +50,8 @@ public sealed record PayableListItem(
     DateTimeOffset DueDate,
     string Status,
     bool IsOverdue,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? ExpenseConceptName = null);
 
 public sealed record PayablePage(
     IReadOnlyList<PayableListItem> Items,
@@ -63,6 +64,13 @@ public sealed record PayablePage(
     public int TotalPages => TotalCount == 0
         ? 0
         : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
+
+public sealed record PayableExpenseConceptOption(Guid ConceptId, string Name);
+public sealed record PayableExpenseConceptPage(
+    IReadOnlyList<PayableExpenseConceptOption> Items, int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
 
 public sealed record PayableTransactionView(
@@ -85,7 +93,11 @@ public sealed record PayableDetail(
     decimal OutstandingAmount,
     DateTimeOffset DueDate,
     string Status,
-    IReadOnlyList<PayableTransactionView> Transactions);
+    IReadOnlyList<PayableTransactionView> Transactions,
+    string? ExpenseConceptName = null,
+    string? ExpenseDescription = null,
+    string? SourceInvoiceNumber = null,
+    Guid? GoodsReceiptId = null);
 
 public sealed record SupplierPaymentAllocationRequest(
     Guid PayableId,

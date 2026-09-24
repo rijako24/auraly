@@ -19,6 +19,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { PortfolioLedgerTabs, type PortfolioLedgerTab, type PartyRow } from "@/components/payments/portfolio-ledger-tabs";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { partiesApi } from "@/services/api/parties";
+import { DatePicker } from "@/components/ui/date-picker";
 import { PreexistingReceivablesImport, downloadPreexistingReceivablesTemplate } from "@/components/payments/preexisting-receivables-import";
 
 const statusLabels: Record<ReceivableStatus, string> = {
@@ -82,16 +83,17 @@ export default function ReceivablesPage() {
 
   return <div className="space-y-6">
     <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por cobrar</h1><p className="text-muted-foreground">Facturas financiadas, vencimientos y recaudos aplicados por el motor contable.</p></div><div className="ml-auto flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={downloadPreexistingReceivablesTemplate}><Download className="mr-2 h-4 w-4"/>Descargar plantilla</Button>{canImport&&<Button variant="outline" onClick={()=>setImportOpen(true)}><FileUp className="mr-2 h-4 w-4"/>Importar cartera</Button>}{canReceive&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPortfolioPaymentOpen(true)}}><CircleDollarSign className="mr-2 h-4 w-4"/>Abono a cartera</Button>}</div></header>
+    <PortfolioLedgerTabs direction="receivable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={customerId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} filters={
     <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Filtros</summary><div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
       <PartyRoleSelect role="Customer" value={customerId??""} sourceKey="web-portfolio" loadPage={(search,page,pageSize)=>partiesApi.portfolioRoleOptions({role:"Customer",search,page,pageSize})} selectedOption={customerFilter?{value:customerFilter.roleId,label:customerFilter.displayName}:null} placeholder="Filtrar por cliente" onChange={(id,party)=>{setCustomerId(id);setCustomerFilter(party??null);setPage(1)}}/>
       <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Número de documento o identificación" />
       <Select value={status} onValueChange={(value) => { setStatus(value as ReceivableStatus | "all"); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Open">Pendientes</SelectItem><SelectItem value="PartiallyPaid">Abono parcial</SelectItem><SelectItem value="Paid">Pagadas</SelectItem><SelectItem value="Cancelled">Canceladas</SelectItem></SelectContent></Select>
       <Button variant={overdue ? "destructive" : "outline"} onClick={() => { setOverdue((value) => !value); setPage(1); }}><CalendarClock className="mr-2 h-4 w-4" /> Solo vencidas</Button>
-      <label className="text-sm">Desde<input aria-label="Fecha desde" type="date" value={from} max={to || undefined} onChange={event=>setFrom(event.target.value)} className="mt-1 h-10 w-full rounded-md border bg-background px-3"/></label>
-      <label className="text-sm">Hasta<input aria-label="Fecha hasta" type="date" value={to} min={from || undefined} onChange={event=>setTo(event.target.value)} className="mt-1 h-10 w-full rounded-md border bg-background px-3"/></label>
-      <Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setOverdue(false);setCustomerId(undefined);setCustomerFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button>
+      <label className="space-y-1 text-sm">Desde<DatePicker value={from} max={to || undefined} onChange={value=>{setFrom(value);setPage(1)}} placeholder="Fecha inicial"/></label>
+      <label className="space-y-1 text-sm">Hasta<DatePicker value={to} min={from || undefined} onChange={value=>{setTo(value);setPage(1)}} placeholder="Fecha final"/></label>
+      <div className="col-span-full flex justify-end"><Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setOverdue(false);setCustomerId(undefined);setCustomerFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button></div>
     </div></details>
-    <PortfolioLedgerTabs direction="receivable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={customerId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId}>
+    }>
       {query.isError ? <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudo cargar la cartera. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div> : <><div className="mb-3 flex items-center justify-between">{customerId?<Badge variant="secondary">Cartera del cliente seleccionado</Badge>:<span/>}{customerId&&<Button size="sm" variant="ghost" onClick={()=>{setCustomerId(undefined);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading} page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages} totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }} onRowClick={(item) => setSelectedId(item.receivableId)} enableRowSelection={false} /></>}
     </PortfolioLedgerTabs>
 

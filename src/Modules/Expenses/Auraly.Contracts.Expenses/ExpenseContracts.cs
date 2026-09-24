@@ -74,7 +74,8 @@ public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, stri
     Guid SupplierId, string SupplierName, Guid ConceptId, string ConceptName, DateTimeOffset IssuedAt,
     DateTimeOffset DueDate, decimal GrossAmount, decimal WithholdingAmount, decimal NetPayable,
     string CurrencyCode, string Status, string? EvidenceUrl,
-    string PurchaseEvidenceType = "SupplierElectronicInvoice");
+    string PurchaseEvidenceType = "SupplierElectronicInvoice", string? PayableStatus = null,
+    decimal? OutstandingAmount = null, bool ChargeReturned = false);
 public sealed record ExpensePayableView(Guid PayableId, string Status, decimal OriginalAmount,
     decimal OutstandingAmount);
 public sealed record ExpenseDetail(Guid ExpenseId, string DocumentNumber, string? SupplierDocumentNumber,
@@ -84,7 +85,8 @@ public sealed record ExpenseDetail(Guid ExpenseId, string DocumentNumber, string
     decimal NetPayable, string Status, string PurchaseEvidenceType, string? EvidenceUrl,
     string? FiscalNumber, string? FiscalStatus, ExpensePayableView? Payable,
     Guid? CancellationId, string? CancellationReason,
-    string? AdjustmentFiscalNumber, string? AdjustmentFiscalStatus);
+    string? AdjustmentFiscalNumber, string? AdjustmentFiscalStatus,
+    Guid? SourceInvoiceId, string? SourceInvoiceNumber, bool ChargeReturned);
 public sealed record ExpensePage(IReadOnlyList<ExpenseListItem> Items, int Page, int PageSize, int TotalCount,
     decimal GrossTotal, decimal WithholdingTotal, decimal NetPayableTotal)
 { public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize); }

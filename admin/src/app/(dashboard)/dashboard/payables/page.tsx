@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { CalendarClock, Landmark } from "lucide-react";
 import { usePayableDetail, usePayables } from "@/hooks/use-payables";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { type PayableDetail, type PayableListItem, type PayableStatus } from "@/services/api/payables";
+import { payablesApi } from "@/services/api/payables";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +21,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { PortfolioLedgerTabs, type PortfolioLedgerTab, type PartyRow } from "@/components/payments/portfolio-ledger-tabs";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { partiesApi } from "@/services/api/parties";
+import { DatePicker } from "@/components/ui/date-picker";
+import { PagedEntitySelect, type PagedEntityOption } from "@/components/forms/paged-entity-select";
 
 const statusLabels: Record<PayableStatus, string> = {
   Open: "Pendiente",
@@ -26,8 +30,11 @@ const statusLabels: Record<PayableStatus, string> = {
   Paid: "Pagada",
   Cancelled: "Cancelada",
 };
+const allConceptOptions = [{ value: "all", label: "Todos los conceptos" }];
+const conceptOption = (item: { conceptId: string; name: string }) => ({ value: item.conceptId, label: item.name });
 
 export default function PayablesPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const businessId = useBusinessContextStore(state=>state.selectedBusinessId);
   const permissions = useAuthStore((state) => state.user?.permissions);
@@ -36,6 +43,8 @@ export default function PayablesPage() {
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<PayableStatus | "all">("all");
+  const [conceptId, setConceptId] = useState("all");
+  const [selectedConcept, setSelectedConcept] = useState<PagedEntityOption | null>(null);
   const [overdue, setOverdue] = useState(false);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -51,6 +60,7 @@ export default function PayablesPage() {
     page, pageSize,
     search: search.trim() || undefined,
     supplierId,
+    conceptId: conceptId === "all" ? undefined : conceptId,
     status: status === "all" ? undefined : status,
     overdue: overdue || undefined,
     from: from || undefined,
@@ -68,6 +78,7 @@ export default function PayablesPage() {
         <div>
           <p className="font-semibold">{row.original.documentNumber}</p>
           <p className="text-xs text-muted-foreground">{row.original.supplierName}</p>
+          {row.original.expenseConceptName && <p className="text-xs text-muted-foreground">{row.original.expenseConceptName}</p>}
         </div>
       ),
     },
@@ -120,10 +131,11 @@ export default function PayablesPage() {
     <div className="space-y-6">
       <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por pagar</h1>
-        <p className="text-muted-foreground">Obligaciones creadas por las entradas de mercancía y sus pagos aplicados.</p></div>
+        <p className="text-muted-foreground">Obligaciones de compras y gastos, con sus pagos aplicados.</p></div>
         <div className="ml-auto flex flex-wrap justify-end gap-2">{canPay&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPortfolioPaymentOpen(true)}}><Landmark className="mr-2 h-4 w-4"/>Pagar proveedores</Button>}</div>
       </header>
 
+    <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} filters={
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Filtros</summary><div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         <PartyRoleSelect role="Supplier" value={supplierId??""} sourceKey="web-portfolio" loadPage={(search,page,pageSize)=>partiesApi.portfolioRoleOptions({role:"Supplier",search,page,pageSize})} selectedOption={supplierFilter?{value:supplierFilter.roleId,label:supplierFilter.displayName}:null} placeholder="Filtrar por proveedor" onChange={(id,party)=>{setSupplierId(id);setSupplierFilter(party??null);setPage(1)}}/>
         <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Número de documento o identificación" />
@@ -137,15 +149,21 @@ export default function PayablesPage() {
             <SelectItem value="Cancelled">Canceladas</SelectItem>
           </SelectContent>
         </Select>
+        {activeTab === "invoices" && <PagedEntitySelect queryKey={["payable-expense-concepts", businessId]}
+          value={conceptId} onChange={(value, option) => { setConceptId(value); setSelectedConcept(option); setPage(1); }}
+          loadPage={payablesApi.expenseConcepts} getOption={conceptOption}
+          selectedOption={selectedConcept} leadingOptions={allConceptOptions}
+          disabled={!businessId}
+          onClear={conceptId !== "all" ? () => { setConceptId("all"); setSelectedConcept(null); setPage(1); } : undefined}
+          ariaLabel="Concepto de gasto" searchPlaceholder="Buscar concepto…" placeholder="Todos los conceptos" />}
         <Button variant={overdue ? "destructive" : "outline"} onClick={() => { setOverdue((value) => !value); setPage(1); }}>
           <CalendarClock className="mr-2 h-4 w-4" /> Solo vencidas
         </Button>
-        <label className="text-sm">Desde<input aria-label="Fecha desde" type="date" value={from} max={to || undefined} onChange={event=>setFrom(event.target.value)} className="mt-1 h-10 w-full rounded-md border bg-background px-3"/></label>
-        <label className="text-sm">Hasta<input aria-label="Fecha hasta" type="date" value={to} min={from || undefined} onChange={event=>setTo(event.target.value)} className="mt-1 h-10 w-full rounded-md border bg-background px-3"/></label>
-        <Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setOverdue(false);setSupplierId(undefined);setSupplierFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button>
+        <label className="space-y-1 text-sm">Desde<DatePicker value={from} max={to || undefined} onChange={value=>{setFrom(value);setPage(1)}} placeholder="Fecha inicial"/></label>
+        <label className="space-y-1 text-sm">Hasta<DatePicker value={to} min={from || undefined} onChange={value=>{setTo(value);setPage(1)}} placeholder="Fecha final"/></label>
+        <div className="col-span-full flex justify-end"><Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setConceptId("all");setSelectedConcept(null);setOverdue(false);setSupplierId(undefined);setSupplierFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button></div>
       </div></details>
-
-    <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId}>
+    }>
       {query.isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudieron cargar las obligaciones. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div>
       ) : (
@@ -169,6 +187,16 @@ export default function PayablesPage() {
                 <Metric label="Saldo actual" value={formatCurrency(detail.outstandingAmount, detail.currencyCode)} emphasized />
                 <Metric label="Vence" value={formatDate(detail.dueDate)} />
               </dl>
+              {detail.sourceDocumentType === "Expense" && <section className="rounded-xl border p-4 text-sm">
+                <h3 className="mb-2 font-semibold">Origen: gasto {detail.documentNumber}</h3>
+                <p><span className="text-muted-foreground">Concepto:</span> {detail.expenseConceptName ?? "Sin concepto"}</p>
+                <p><span className="text-muted-foreground">Descripción:</span> {detail.expenseDescription || "Sin descripción"}</p>
+                {detail.sourceInvoiceNumber && <p><span className="text-muted-foreground">Factura de venta:</span> {detail.sourceInvoiceNumber}</p>}
+              </section>}
+              {detail.goodsReceiptId && <section className="flex items-center justify-between gap-3 rounded-xl border p-4 text-sm">
+                <span>{detail.sourceDocumentType === "GoodsReceiptCostDocument" ? "Factura adicional de recepción" : "Recepción de compra"}</span>
+                {permissions?.includes("purchasing.goods-receipts.read") && <Button variant="outline" onClick={() => router.push(`/dashboard/purchasing/goods-receipts?receiptId=${detail.goodsReceiptId}`)}>Ver recepción</Button>}
+              </section>}
               <section>
                 <h3 className="mb-3 text-sm font-semibold">Movimientos</h3>
                 <div className="space-y-2">

@@ -79,6 +79,7 @@ export interface ReturnableSale {
     invoicedAmount: number;
     expenseAmount: number;
     isReturned: boolean;
+    expenseStatus: string;
   }>;
 }
 

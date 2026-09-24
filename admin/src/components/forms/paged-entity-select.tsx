@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, Loader2 } from "lucide-react";
+import { Check, ChevronsUpDown, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -37,6 +37,7 @@ export function PagedEntitySelect<T>({
   preload = false,
   pageSize = 10,
   className,
+  onClear,
 }: {
   queryKey: readonly unknown[];
   value: string;
@@ -53,6 +54,7 @@ export function PagedEntitySelect<T>({
   preload?: boolean;
   pageSize?: number;
   className?: string;
+  onClear?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -91,12 +93,15 @@ export function PagedEntitySelect<T>({
   }
 
   return <Popover modal open={open} onOpenChange={setOpen}>
+    <div className="relative">
     <PopoverTrigger asChild>
-      <Button ref={triggerRef} type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("w-full justify-between font-normal", className)}>
+      <Button ref={triggerRef} type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("w-full justify-between font-normal", onClear && "pr-10", className)}>
         <span className="truncate">{selected?.label ?? placeholder}</span>
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/>
       </Button>
     </PopoverTrigger>
+    {onClear && !disabled && <button type="button" aria-label={`Quitar selección de ${ariaLabel ?? "tercero"}`} className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={()=>{setOpen(false);onClear()}}><X className="h-4 w-4"/></button>}
+    </div>
     <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start" portalContainer={triggerRef.current?.closest<HTMLElement>("[role='dialog']") ?? undefined}>
       <Command shouldFilter={false}>
         <CommandInput

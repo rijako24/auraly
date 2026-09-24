@@ -18,6 +18,38 @@ public sealed class SqlPayablesStore(
     TimeProvider timeProvider) : IPayablesStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    public async Task<PayableExpenseConceptPage> ListExpenseConceptsAsync(
+        PayablesUserIdentity user, string? search, int page, int pageSize, CancellationToken token)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.ExpenseConcepts concept
+            JOIN dbo.Businesses business ON business.BusinessId=concept.BusinessId
+            WHERE concept.BusinessId=@BusinessId AND business.TenantId=@TenantId
+              AND (@Search IS NULL OR concept.Name LIKE N'%' + @Search + N'%');
+            SELECT concept.ExpenseConceptId,concept.Name
+            FROM dbo.ExpenseConcepts concept
+            JOIN dbo.Businesses business ON business.BusinessId=concept.BusinessId
+            WHERE concept.BusinessId=@BusinessId AND business.TenantId=@TenantId
+              AND (@Search IS NULL OR concept.Name LIKE N'%' + @Search + N'%')
+            ORDER BY concept.Name,concept.ExpenseConceptId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+        command.Parameters.AddWithValue("@PageSize", pageSize);
+        var items = new List<PayableExpenseConceptOption>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        await reader.ReadAsync(token);
+        var totalCount = reader.GetInt32(0);
+        await reader.NextResultAsync(token);
+        while (await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0), reader.GetString(1)));
+        return new(items, page, pageSize, totalCount);
+    }
     public async Task<SupplierPortfolioPage> ListSuppliersAsync(PayablesUserIdentity user,
         SupplierPortfolioQuery query,CancellationToken token)
     {
@@ -79,6 +111,10 @@ public sealed class SqlPayablesStore(
             p.BusinessId=@BusinessId
             AND b.TenantId=@TenantId
             AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
+            AND (@ConceptId IS NULL OR EXISTS (
+                SELECT 1 FROM dbo.Expenses expense
+                WHERE p.SourceDocumentType=N'Expense' AND expense.ExpenseId=p.SourceDocumentId
+                  AND expense.BusinessId=p.BusinessId AND expense.ExpenseConceptId=@ConceptId))
             AND (@Status IS NULL OR p.Status=@Status)
             AND (@From IS NULL OR p.CreatedAt>=@From)
             AND (@To IS NULL OR p.CreatedAt<@To)
@@ -116,10 +152,14 @@ public sealed class SqlPayablesStore(
             SELECT p.PayableId,p.SupplierId,s.Name,p.DocumentNumber,p.CurrencyCode,
                    p.OriginalAmount,p.OutstandingAmount,p.DueDate,p.Status,p.CreatedAt,
                    CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN CAST(1 AS BIT)
-                        ELSE CAST(0 AS BIT) END
+                        ELSE CAST(0 AS BIT) END,concept.Name
             FROM dbo.Payables p
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
+            LEFT JOIN dbo.Expenses expense ON p.SourceDocumentType=N'Expense'
+              AND expense.ExpenseId=p.SourceDocumentId AND expense.BusinessId=p.BusinessId
+            LEFT JOIN dbo.ExpenseConcepts concept ON concept.ExpenseConceptId=expense.ExpenseConceptId
+              AND concept.BusinessId=p.BusinessId
             WHERE {filters}
             ORDER BY CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN 0 ELSE 1 END,
                      p.DueDate,p.PayableId
@@ -137,7 +177,8 @@ public sealed class SqlPayablesStore(
                     reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
                     reader.GetString(3), reader.GetString(4), reader.GetDecimal(5),
                     reader.GetDecimal(6), reader.GetDateTimeOffset(7), reader.GetString(8),
-                    reader.GetBoolean(10), reader.GetDateTimeOffset(9)));
+                    reader.GetBoolean(10), reader.GetDateTimeOffset(9),
+                    reader.IsDBNull(11) ? null : reader.GetString(11)));
         }
         return new PayablePage(
             items, query.Page, query.PageSize, totalCount, totalOutstanding, totalOverdue);
@@ -258,10 +299,19 @@ public sealed class SqlPayablesStore(
         const string headerSql = """
             SELECT p.PayableId,p.SupplierId,s.Name,s.Identification,p.SourceDocumentId,
                    p.SourceDocumentType,p.DocumentNumber,p.CurrencyCode,p.OriginalAmount,
-                   p.OutstandingAmount,p.DueDate,p.Status
+                   p.OutstandingAmount,p.DueDate,p.Status,concept.Name,expense.Description,
+                   invoice.DocumentNumber,
+                   CASE WHEN p.SourceDocumentType=N'GoodsReceipt' THEN p.SourceDocumentId
+                        ELSE p.ParentGoodsReceiptId END
             FROM dbo.Payables p
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
+            LEFT JOIN dbo.Expenses expense ON p.SourceDocumentType=N'Expense'
+              AND expense.ExpenseId=p.SourceDocumentId AND expense.BusinessId=p.BusinessId
+            LEFT JOIN dbo.ExpenseConcepts concept ON concept.ExpenseConceptId=expense.ExpenseConceptId
+              AND concept.BusinessId=p.BusinessId
+            LEFT JOIN dbo.SalesDocuments invoice ON invoice.DocumentId=expense.SourceInvoiceId
+              AND invoice.BusinessId=p.BusinessId
             WHERE p.PayableId=@PayableId AND p.BusinessId=@BusinessId AND b.TenantId=@TenantId;
             """;
         Guid supplierId;
@@ -275,6 +325,10 @@ public sealed class SqlPayablesStore(
         decimal outstanding;
         DateTimeOffset dueDate;
         string status;
+        string? conceptName;
+        string? description;
+        string? sourceInvoiceNumber;
+        Guid? goodsReceiptId;
         await using (var command = new SqlCommand(headerSql, connection))
         {
             command.Parameters.AddWithValue("@PayableId", payableId);
@@ -293,6 +347,10 @@ public sealed class SqlPayablesStore(
             outstanding = reader.GetDecimal(9);
             dueDate = reader.GetDateTimeOffset(10);
             status = reader.GetString(11);
+            conceptName = reader.IsDBNull(12) ? null : reader.GetString(12);
+            description = reader.IsDBNull(13) ? null : reader.GetString(13);
+            sourceInvoiceNumber = reader.IsDBNull(14) ? null : reader.GetString(14);
+            goodsReceiptId = reader.IsDBNull(15) ? null : reader.GetGuid(15);
         }
         var transactions = new List<PayableTransactionView>();
         await using (var command = new SqlCommand("""
@@ -311,7 +369,8 @@ public sealed class SqlPayablesStore(
         return new PayableDetail(
             payableId, supplierId, supplierName, supplierIdentification,
             sourceDocumentId, sourceDocumentType, documentNumber, currency,
-            original, outstanding, dueDate, status, transactions);
+            original, outstanding, dueDate, status, transactions,
+            conceptName, description, sourceInvoiceNumber, goodsReceiptId);
     }
 
     public async Task<SupplierPaymentAcceptance> AcceptPaymentAsync(
@@ -405,6 +464,7 @@ public sealed class SqlPayablesStore(
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@SupplierId", (object?)query.SupplierId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@ConceptId", (object?)query.ConceptId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Status", (object?)query.Status ?? DBNull.Value);
         command.Parameters.AddWithValue("@OutstandingOnly", query.OutstandingOnly);
         command.Parameters.AddWithValue("@Overdue", (object?)query.Overdue ?? DBNull.Value);

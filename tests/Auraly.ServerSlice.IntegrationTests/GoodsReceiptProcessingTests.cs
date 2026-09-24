@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Payables;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
@@ -213,7 +214,8 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         const string idempotencyKey = "receipt-e2e-001";
         using var client = fixture.CreateAdminClient(
             PurchasingPermissionCodes.CreateGoodsReceipts,
-            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+            PurchasingPermissionCodes.ConfirmGoodsReceipts,
+            PayablesPermissionCodes.Read);
 
         using (var message = CreateMessage(request, idempotencyKey))
         using (var response = await client.SendAsync(message))
@@ -248,6 +250,13 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(59_500m, await ScalarAsync<decimal>(
             "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
             request.DocumentId));
+        var payableId = await ScalarAsync<Guid>(
+            "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            request.DocumentId);
+        var payableDetail = await client.GetFromJsonAsync<PayableDetail>(
+            $"/api/commerce/v1/payables/{payableId}");
+        Assert.Equal(request.DocumentId, payableDetail?.GoodsReceiptId);
+        Assert.Null(payableDetail?.ExpenseConceptName);
         Assert.Equal("PendingReview", await ScalarAsync<string>(
             "SELECT Status FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id",
             request.DocumentId));
@@ -318,7 +327,8 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         {
             using var client = fixture.CreateAdminClient(
                 PurchasingPermissionCodes.CreateGoodsReceipts,
-                PurchasingPermissionCodes.ConfirmGoodsReceipts);
+                PurchasingPermissionCodes.ConfirmGoodsReceipts,
+                PayablesPermissionCodes.Read);
 
             using var message = CreateMessage(request, $"freight-{request.DocumentId:N}");
             using var response = await client.SendAsync(message);
@@ -347,6 +357,12 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(freightDocumentNumber, await ScalarAsync<string>(
                 "SELECT DocumentNumber FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
                 freightDocumentId));
+            var costPayableId = await ScalarAsync<Guid>(
+                "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
+                freightDocumentId);
+            var costPayable = await client.GetFromJsonAsync<PayableDetail>(
+                $"/api/commerce/v1/payables/{costPayableId}");
+            Assert.Equal(request.DocumentId, costPayable?.GoodsReceiptId);
             Assert.Equal("Posted", await ScalarAsync<string>(
                 "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
                 freightDocumentId));

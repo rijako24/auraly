@@ -299,7 +299,8 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var command = new SqlCommand("""
             SELECT charge.AppliedChargeId,charge.Code,charge.Name,charge.Amount,
                    charge.InvoicedAmount,charge.ExpenseAmount,
-                   CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit)
+                   CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit),
+                   expense.Status
             FROM dbo.DocumentProcessingPayloads payload
             CROSS APPLY OPENJSON(payload.PayloadJson,N'$.charges') WITH(
               AppliedChargeId uniqueidentifier N'$.appliedChargeId',
@@ -308,6 +309,8 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
               ExpenseAmount decimal(19,4) N'$.expenseAmount') charge
             LEFT JOIN dbo.SalesReturnCharges returned
               ON returned.AppliedChargeId=charge.AppliedChargeId
+            JOIN dbo.Expenses expense ON expense.ExpenseId=charge.AppliedChargeId
+              AND expense.SourceInvoiceId=payload.DocumentId AND expense.BusinessId=payload.BusinessId
             WHERE payload.DocumentId=@Id AND payload.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
             ORDER BY charge.Name,charge.AppliedChargeId;
             """, connection);
@@ -316,7 +319,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             values.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
-                reader.GetDecimal(3), reader.GetDecimal(4), reader.GetDecimal(5), reader.GetBoolean(6)));
+                reader.GetDecimal(3), reader.GetDecimal(4), reader.GetDecimal(5), reader.GetBoolean(6), reader.GetString(7)));
         return values;
     }
 

@@ -78,7 +78,8 @@ public sealed record ReturnableSaleCharge(
     decimal Amount,
     decimal InvoicedAmount,
     decimal ExpenseAmount,
-    bool IsReturned);
+    bool IsReturned,
+    string ExpenseStatus);
 
 public sealed record ReturnableSale(
     Guid DocumentId,

@@ -40,7 +40,7 @@ public sealed partial class SqlExpenseStore
                 supplier.SupplierId, charge.ExpenseConceptId, charge.ExpenseAccountId, charge.CostCenterId,
                 sale.SoldByUserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode,
                 number.Consecutive, null, issuedAt, issuedAt.AddDays(supplier.DefaultPaymentDueDays),
-                "COP", charge.Name, charge.SupplierUntaxedAmount, charge.SupplierVatAmount,
+                "COP", $"{charge.Name} · Factura {sale.DocumentNumber.FullNumber}", charge.SupplierUntaxedAmount, charge.SupplierVatAmount,
                 charge.Amount, null, withholding, sale.DocumentId,
                 supplier.PurchaseEvidencePolicy == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
                     ? PurchaseEvidenceTypes.BuyerElectronicSupportDocument
