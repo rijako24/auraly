@@ -5,6 +5,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { CalendarClock, Landmark } from "lucide-react";
 import { usePayableDetail, usePayables } from "@/hooks/use-payables";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 import { type PayableDetail, type PayableListItem, type PayableStatus } from "@/services/api/payables";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
@@ -14,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
+import { useQueryClient } from "@tanstack/react-query";
 import { PortfolioLedgerTabs, type PortfolioLedgerTab, type PartyRow } from "@/components/payments/portfolio-ledger-tabs";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { partiesApi } from "@/services/api/parties";
@@ -26,6 +28,8 @@ const statusLabels: Record<PayableStatus, string> = {
 };
 
 export default function PayablesPage() {
+  const queryClient = useQueryClient();
+  const businessId = useBusinessContextStore(state=>state.selectedBusinessId);
   const permissions = useAuthStore((state) => state.user?.permissions);
   const canPay = permissions?.includes("payables.payments.create") ?? false;
   const [page, setPage] = useState(1);
@@ -41,7 +45,6 @@ export default function PayablesPage() {
   const [paymentParty, setPaymentParty] = useState<PartyRoleSelection | null>(null);
   const [selectedId, setSelectedId] = useState<string>();
   const [portfolioPaymentOpen,setPortfolioPaymentOpen]=useState(false);
-  const [paymentAccepted,setPaymentAccepted]=useState(false);
   const [paymentTarget,setPaymentTarget]=useState<PayableDetail>();
 
   const query = usePayables({
@@ -142,7 +145,7 @@ export default function PayablesPage() {
         <Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setOverdue(false);setSupplierId(undefined);setSupplierFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button>
       </div></details>
 
-      <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} paymentAccepted={paymentAccepted} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId}>
+    <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId}>
       {query.isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudieron cargar las obligaciones. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div>
       ) : (
@@ -186,7 +189,7 @@ export default function PayablesPage() {
         </DialogContent>
       </Dialog>
 
-      <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null)}}} onCompleted={()=>setPaymentAccepted(true)} initialInvoice={paymentTarget?{id:paymentTarget.payableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
+      <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null)}}} onCompleted={()=>{for(const key of ["payables","payable-suppliers","payable-payments","payable"]){void queryClient.invalidateQueries({queryKey:[key,businessId]});}}} initialInvoice={paymentTarget?{id:paymentTarget.payableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
     </div>
   );
 }

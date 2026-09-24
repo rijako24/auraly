@@ -255,7 +255,8 @@ public sealed class SqlPayablesStore(
         while(await reader.ReadAsync(cancellationToken)) byPayment[reader.GetGuid(0)].Add(new(
             reader.GetInt32(1),reader.GetString(2),reader.GetDecimal(3),
             reader.IsDBNull(4)?null:reader.GetDecimal(4),reader.IsDBNull(5)?null:reader.GetGuid(5),
-            reader.IsDBNull(6)?null:reader.GetString(6),reader.IsDBNull(7)?null:reader.GetString(7)));
+            reader.IsDBNull(6)?null:reader.GetString(6),reader.IsDBNull(7)?null:reader.GetString(7),
+            reader.IsDBNull(8)?null:reader.GetString(8),reader.IsDBNull(9)?null:reader.GetString(9)));
         await reader.NextResultAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken)) applications[reader.GetGuid(0)].Add(new(
             reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3)));
@@ -385,7 +386,7 @@ public sealed class SqlPayablesStore(
             var movementId = ids.NewId();
             var paymentSnapshots=tenders.Tenders.Select((item,index)=>new SupplierPaymentTenderSnapshot(
                 index+1,item.MethodCode,item.Amount,item.TenderedAmount,item.BankAccountId,
-                item.Reference,item.Notes)).ToArray();
+                item.Reference,item.Notes,item.CardFranchiseCode,item.ApprovalNumber)).ToArray();
             var payload = new SupplierPaymentDocumentPayload(
                 user.TenantId, user.BusinessId, request.PaymentId, request.SupplierId,
                 user.UserId, number.FullNumber, number.SeriesId, number.Prefix,

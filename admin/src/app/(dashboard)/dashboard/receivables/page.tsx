@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
+import { useQueryClient } from "@tanstack/react-query";
 import { PortfolioLedgerTabs, type PortfolioLedgerTab, type PartyRow } from "@/components/payments/portfolio-ledger-tabs";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { partiesApi } from "@/services/api/parties";
@@ -27,6 +28,7 @@ const statusLabels: Record<ReceivableStatus, string> = {
   Cancelled: "Cancelada",
 };
 export default function ReceivablesPage() {
+  const queryClient = useQueryClient();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const permissions = useAuthStore((state) => state.user?.permissions);
   const canReceive = permissions?.includes("receivables.payments.create") ?? false;
@@ -45,7 +47,6 @@ export default function ReceivablesPage() {
   const [selectedId, setSelectedId] = useState<string>();
   const [importOpen, setImportOpen] = useState(false);
   const [portfolioPaymentOpen,setPortfolioPaymentOpen]=useState(false);
-  const [paymentAccepted,setPaymentAccepted]=useState(false);
   const [paymentTarget,setPaymentTarget]=useState<ReceivableDetail>();
 
   const query = useReceivables({
@@ -90,13 +91,13 @@ export default function ReceivablesPage() {
       <label className="text-sm">Hasta<input aria-label="Fecha hasta" type="date" value={to} min={from || undefined} onChange={event=>setTo(event.target.value)} className="mt-1 h-10 w-full rounded-md border bg-background px-3"/></label>
       <Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setOverdue(false);setCustomerId(undefined);setCustomerFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button>
     </div></details>
-    <PortfolioLedgerTabs direction="receivable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={customerId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} paymentAccepted={paymentAccepted} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId}>
+    <PortfolioLedgerTabs direction="receivable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={customerId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId}>
       {query.isError ? <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudo cargar la cartera. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div> : <><div className="mb-3 flex items-center justify-between">{customerId?<Badge variant="secondary">Cartera del cliente seleccionado</Badge>:<span/>}{customerId&&<Button size="sm" variant="ghost" onClick={()=>{setCustomerId(undefined);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading} page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages} totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }} onRowClick={(item) => setSelectedId(item.receivableId)} enableRowSelection={false} /></>}
     </PortfolioLedgerTabs>
 
     <Dialog open={!!selectedId} onOpenChange={(open) => !open && setSelectedId(undefined)}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{detail?.documentNumber ?? "Detalle de cartera"}</DialogTitle><DialogDescription>{detail ? `${receivableCustomerLabel(detail)}${detail.customerIdentification ? ` · ${detail.customerIdentification}` : ""}` : "Cargando información..."}</DialogDescription></DialogHeader>{detailQuery.isLoading ? <p className="py-8 text-center text-muted-foreground">Cargando trazabilidad...</p> : detail ? <div className="space-y-5"><dl className="grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-3"><Metric label="Valor original" value={formatCurrency(detail.originalAmount, detail.currencyCode)} /><Metric label="Saldo actual" value={formatCurrency(detail.outstandingAmount, detail.currencyCode)} emphasized /><Metric label="Vence" value={formatDate(detail.dueDate)} /></dl><section><h3 className="mb-3 text-sm font-semibold">Movimientos</h3><div className="space-y-2">{detail.transactions.map((transaction) => <div key={transaction.transactionId} className="flex items-center justify-between rounded-lg border p-3 text-sm"><div><p className="font-medium">{transaction.type === "Opening" ? "Cuenta por cobrar creada" : "Abono aplicado"}</p><p className="text-xs text-muted-foreground">{formatDateTime(transaction.occurredAt)}</p></div><span className={transaction.type === "Payment" ? "font-semibold text-emerald-700" : "font-semibold"}>{transaction.type === "Payment" ? "−" : "+"}{formatCurrency(transaction.amount, detail.currencyCode)}</span></div>)}</div></section><DialogFooter><Button variant="outline" onClick={() => setSelectedId(undefined)}>Cerrar</Button>{canReceive && detail.outstandingAmount > 0 && <Button onClick={openPayment}><CircleDollarSign className="mr-2 h-4 w-4" /> Registrar abono</Button>}</DialogFooter></div> : <p className="py-8 text-center text-destructive">No fue posible cargar la cuenta por cobrar.</p>}</DialogContent></Dialog>
 
-    <PortfolioPaymentWizard direction="receivable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null)}}} onCompleted={()=>setPaymentAccepted(true)} initialInvoice={paymentTarget?{id:paymentTarget.receivableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.customerId,role:"Customer",displayName:paymentTarget.customerName,identification:paymentTarget.customerIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:paymentTarget.customerId,supplierId:null,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
+    <PortfolioPaymentWizard direction="receivable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null)}}} onCompleted={()=>{for(const key of ["receivables","receivable-customers","receivable-payments","receivable"]){void queryClient.invalidateQueries({queryKey:[key,businessId]});}}} initialInvoice={paymentTarget?{id:paymentTarget.receivableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.customerId,role:"Customer",displayName:paymentTarget.customerName,identification:paymentTarget.customerIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:paymentTarget.customerId,supplierId:null,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
     {businessId && <PreexistingReceivablesImport
       businessId={businessId}
       open={importOpen}

@@ -21,6 +21,9 @@ test("transporter-only users start in assigned dispatches", () => {
 test("the first authorized view owns the generic landing", () => {
   assert.equal(defaultStartRoute(["Vendedor", "Administrador"], ["orders.read"]), "/dashboard/orders");
   assert.equal(defaultStartRoute(["Cajero"], ["sales.create"]), "/pos");
+  assert.equal(defaultStartRoute(["Cajero"], ["sales.create", "orders.read"]), "/pos");
+  assert.equal(defaultStartRoute(["Administrador"], ["sales.create", "payables.read"]), "/dashboard/payables");
+  assert.equal(defaultStartRoute(["Administrador"], ["sales.create", "catalog.read"]), "/dashboard/products");
   assert.equal(defaultStartRoute(["Administrador"], ["parties.read", "catalog.read"]), "/dashboard/products");
   assert.equal(defaultStartRoute(["Administrador"], ["sales.reports.read", "catalog.read"]), "/dashboard");
 });
@@ -37,6 +40,7 @@ test("users without any navigable permission keep the neutral dashboard", () => 
 
 test("installed login distinguishes local POS access from administrative workspaces", () => {
   assert.equal(requiresCloudWorkspace(["sales.create", "sales.change-price"]), false);
+  assert.equal(requiresCloudWorkspace(["sales.create", "orders.read"]), false);
   assert.equal(requiresCloudWorkspace(["sales.create", "sales.reports.read"]), true);
   assert.equal(requiresCloudWorkspace(["catalog.read"]), true);
 });

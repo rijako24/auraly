@@ -28,7 +28,6 @@ export function PortfolioLedgerTabs({
   overdue,
   from,
   to,
-  paymentAccepted,
   onRefreshInvoices,
   onPartyClick,
   onInvoiceClick,
@@ -43,7 +42,6 @@ export function PortfolioLedgerTabs({
   overdue?: boolean;
   from?: string;
   to?: string;
-  paymentAccepted?: boolean;
   onRefreshInvoices: () => void;
   onPartyClick: (party: PartyRow) => void;
   onInvoiceClick: (invoiceId: string) => void;
@@ -90,7 +88,6 @@ export function PortfolioLedgerTabs({
   const failed = value === "parties" ? parties.isError : payments.isError;
 
   return <Tabs value={value} onValueChange={next => onValueChange(next as PortfolioLedgerTab)} className="space-y-4">
-    {paymentAccepted&&<div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-950"><span>Pago registrado. El saldo cambiará cuando el motor aplique el movimiento.</span><Button variant="outline" size="sm" disabled={value==="parties"?parties.isFetching:value==="payments"?payments.isFetching:false} onClick={()=>void(value==="parties"?parties.refetch():value==="payments"?payments.refetch():onRefreshInvoices())}><RefreshCw className="mr-2 h-4 w-4"/>Actualizar saldos</Button></div>}
     <section className="grid gap-3 md:grid-cols-3" aria-label="Resumen de cartera">
       <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo pendiente</p><p className="mt-1 text-2xl font-semibold">{formatCurrency(summary.totalOutstanding)}</p></CardContent></Card>
       <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo vencido</p><p className="mt-1 text-2xl font-semibold text-destructive">{formatCurrency(summary.totalOverdue)}</p></CardContent></Card>
@@ -101,7 +98,7 @@ export function PortfolioLedgerTabs({
       <TabsTrigger value="invoices">Facturas</TabsTrigger>
       <TabsTrigger value="payments">{direction === "receivable" ? "Recaudos" : "Pagos"}</TabsTrigger>
     </TabsList>
-    {value !== "invoices" && <div className="flex justify-end"><Button type="button" variant="outline" size="sm" disabled={value === "parties" ? parties.isFetching : payments.isFetching} onClick={() => void (value === "parties" ? parties.refetch() : payments.refetch())}><RefreshCw className="mr-2 h-4 w-4"/>Actualizar</Button></div>}
+    <div className="flex justify-end"><Button type="button" variant="outline" size="sm" disabled={value === "parties" ? parties.isFetching : value === "payments" ? payments.isFetching : false} onClick={() => { if (value === "invoices") onRefreshInvoices(); else void (value === "parties" ? parties.refetch() : payments.refetch()); }}><RefreshCw className="mr-2 h-4 w-4"/>Actualizar</Button></div>
     <TabsContent value="invoices" className="mt-0">{children}</TabsContent>
     <TabsContent value="parties" className="mt-0">
       <LedgerTable loading={loading} failed={failed} isEmpty={partyItems.length === 0} empty="No hay terceros con cartera para estos filtros.">

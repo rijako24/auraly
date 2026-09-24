@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Auraly.Application.Orders;
 using Auraly.Application.Sales;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
 using Auraly.Pos.Printing;
@@ -269,7 +270,8 @@ public static class OrdersClaimsPrincipalExtensions
                     OrderPermissionCodes.Review,
                     OrderPermissionCodes.Recover,
                     OrderPermissionCodes.Invoice,
-                    OrderPermissionCodes.Cancel
+                    OrderPermissionCodes.Cancel,
+                    CommercePermissionCodes.SalesCreate
                 ], StringComparer.Ordinal));
         }
         return new OrderActor(

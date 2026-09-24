@@ -250,9 +250,9 @@ public sealed class WorkSessionClosureReceiptRendererTests
     }
 
     [Fact]
-    public void Version_six_explains_local_portfolio_cash_without_changing_historical_receipts()
+    public void Portfolio_totals_use_recorded_payment_methods_without_inventing_other_movements()
     {
-        var baseClosure = Closure(6) with
+        var baseClosure = Closure(7) with
         {
             TotalSales = 45_400m,
             TotalRefunds = 4_300m,
@@ -260,29 +260,39 @@ public sealed class WorkSessionClosureReceiptRendererTests
             ExpectedCash = 41_100m,
             PaymentTotals =
             [
-                new("Cash", 35_400m, 4_300m, 10_000m, 41_100m, 10_000m, -31_100m, true),
-                new("Card", 10_000m, 0m, 0m, 10_000m, 0m, -10_000m, true)
+                new("Cash", 35_400m, 4_300m, 10_000m, 41_100m, 10_000m, -31_100m, true,
+                    0, 0, 12_000m, 2_000m),
+                new("Card", 10_000m, 0m, 0m, 10_000m, 0m, -10_000m, true),
+                new("Transfer", 0m, 0m, 0m, 0m, 0m, 0m, true)
             ],
             CashMovements = [],
             ReceivablePayments = [new(Guid.NewGuid(), "RCC00-00000001", string.Empty,
-                10_000m, new DateTimeOffset(2026, 9, 23, 18, 0, 0, TimeSpan.Zero), [])]
+                12_000m, new DateTimeOffset(2026, 9, 23, 18, 0, 0, TimeSpan.Zero), [])],
+            PayablePayments = [new(Guid.NewGuid(), "PGP00-00000001", string.Empty,
+                2_000m, new DateTimeOffset(2026, 9, 23, 18, 0, 0, TimeSpan.Zero), [])]
         };
         var current = WorkSessionClosureReceiptRenderer.RenderHtml(baseClosure);
         var cash = Section(current, "data-payment-method=\"Cash\"", "</section>");
         Assert.Contains("Ventas <strong>$ 35.400</strong>", cash);
         Assert.Contains("Devoluciones <strong>$ 4.300</strong>", cash);
-        Assert.Contains("Otros movimientos netos <strong>$ 10.000</strong>", cash);
+        Assert.Contains("Abonos a cartera <strong>$ 12.000</strong>", cash);
+        Assert.Contains("Pagos a proveedores <strong>$ 2.000</strong>", cash);
+        Assert.DoesNotContain("Otros movimientos netos", current);
         Assert.Contains("Efectivo esperado <strong>$ 41.100</strong>", cash);
-        Assert.Contains("RCC00-00000001", Section(current, "Abonos a cartera", "Pagos a proveedores"));
-        Assert.Contains("data-auraly-report-version=\"6\"", current);
+        Assert.Contains("RCC00-00000001", Section(current,
+            "<h2 class=\"section-title\">Abonos a cartera</h2>",
+            "<h2 class=\"section-title\">Pagos a proveedores</h2>"));
+        Assert.Contains("data-auraly-report-version=\"7\"", current);
+        Assert.Contains("Cierre de sesión · Confirmado", current);
+        Assert.Contains("Abonos a cartera</td><td>$ 12.000", Section(current, "Totales del turno", "Ventas a cartera</h2>"));
 
         var historical = WorkSessionClosureReceiptRenderer.RenderHtml(baseClosure with
         {
-            ReceiptTemplateVersion = 5,
+            ReceiptTemplateVersion = 6,
             ReceivablePayments = null
         });
         Assert.DoesNotContain("Otros movimientos netos", historical);
-        Assert.Contains("data-auraly-report-version=\"5\"", historical);
+        Assert.Contains("data-auraly-report-version=\"6\"", historical);
     }
 
     [Fact]

@@ -1139,12 +1139,12 @@ public static class PosEdgeHostApplication
             PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
                 "api/commerce/v1/orders/invoice/credit-validation", request,
-                RequiredOrderUser(sessions, OrderPermissionCodes.Invoice), ct)));
+                RequiredOrderInvoiceUser(sessions), ct)));
         edge.MapPost("/orders/invoice", async (HttpContext http, JsonElement request,
             PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
                 "api/commerce/v1/orders/invoice", request,
-                RequiredOrderUser(sessions, OrderPermissionCodes.Invoice), ct,
+                RequiredOrderInvoiceUser(sessions), ct,
                 http.Request.Headers["Idempotency-Key"])));
         edge.MapPost("/orders", async (JsonElement request,
             PosOrdersServerClient server, PosCustomerOutboxUploader customers,
@@ -1698,6 +1698,15 @@ public static class PosEdgeHostApplication
                 user.Permissions.Contains(permission, StringComparer.Ordinal)))
             throw new PosOrdersServerException(403, "Forbidden",
                 "El usuario local no tiene permiso para trabajar con pedidos.");
+        return user;
+    }
+
+    private static PosLocalUserSession RequiredOrderInvoiceUser(PosLocalSessionAccessor sessions)
+    {
+        var user = RequiredOrderUser(sessions, OrderPermissionCodes.Invoice);
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate, StringComparer.Ordinal))
+            throw new PosOrdersServerException(403, "Forbidden",
+                "El usuario local no tiene permiso para facturar ventas.");
         return user;
     }
 

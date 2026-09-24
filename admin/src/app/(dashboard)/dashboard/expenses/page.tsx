@@ -21,6 +21,8 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import {businessStatusLabel} from "@/lib/accounting-labels";
 import type { PurchaseEvidenceType } from "@/services/api/goods-receipts";
+import type { PurchaseEvidencePolicy } from "@/services/api/parties";
+import { allowedPurchaseEvidenceTypes } from "@/lib/purchase-evidence-policy";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 const localNoon = (date:string) => `${date}T12:00:00-05:00`;
@@ -52,15 +54,17 @@ export default function ExpensesPage() {
 
 function ExpenseForm({businessId,options,onSaved}:{businessId:string;options:ExpenseOptions;onSaved:()=>Promise<void>}){
   const today=new Date().toISOString().slice(0,10),[busy,setBusy]=useState(false);
+  const [supplierPolicy,setSupplierPolicy]=useState<PurchaseEvidencePolicy|null>(null);
   const [form,setForm]=useState<ConfirmExpense>(()=>({expenseId:newExpenseId(),businessId,supplierId:"",conceptId:"",costCenterId:null,supplierDocumentNumber:"",issuedAt:localNoon(today),dueDate:localNoon(today),currencyCode:"COP",description:"",taxExclusiveAmount:0,vatAmount:0,withholdingJurisdictionCode:"CO",evidenceUrl:null,purchaseEvidenceType:"SupplierElectronicInvoice"}));
   const concept=options.concepts.find(item=>item.conceptId===form.conceptId);
   const supplierInvoice=form.purchaseEvidenceType==="SupplierElectronicInvoice";
   const supportDocument=form.purchaseEvidenceType==="BuyerElectronicSupportDocument";
+  const visibleEvidenceTypes=options.purchaseEvidenceTypes.filter(item=>allowedPurchaseEvidenceTypes(supplierPolicy).includes(item.code));
   async function submit(event:React.FormEvent){event.preventDefault();setBusy(true);try{await expensesApi.confirm(form);toast.success("Gasto aceptado para procesamiento contable.");await onSaved()}catch(error){toast.error(error instanceof Error?error.message:"No fue posible registrar el gasto.")}finally{setBusy(false)}}
   return <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
-    <Field label="Proveedor o beneficiario"><PartyRoleSelect role="Supplier" value={form.supplierId} placeholder="Buscar proveedor o beneficiario" onChange={supplierId=>setForm({...form,supplierId})}/></Field>
+    <Field label="Proveedor o beneficiario"><PartyRoleSelect role="Supplier" value={form.supplierId} placeholder="Buscar proveedor o beneficiario" onChange={(supplierId,party)=>{const policy=party?.supplierPurchaseEvidencePolicy??null;setSupplierPolicy(policy);const allowed=options.purchaseEvidenceTypes.filter(item=>allowedPurchaseEvidenceTypes(policy).includes(item.code));setForm(current=>({...current,supplierId,purchaseEvidenceType:allowed.some(item=>item.code===current.purchaseEvidenceType)?current.purchaseEvidenceType:allowed[0]?.code??current.purchaseEvidenceType}));}}/></Field>
     <Field label="Concepto"><Select value={form.conceptId} onValueChange={conceptId=>{const selected=options.concepts.find(item=>item.conceptId===conceptId);setForm({...form,conceptId,costCenterId:selected?.defaultCostCenterId??null})}}><SelectTrigger><SelectValue placeholder="Selecciona"/></SelectTrigger><SelectContent>{options.concepts.filter(item=>item.isActive).map(item=><SelectItem key={item.conceptId} value={item.conceptId}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
-    <Field label="Tipo de documento"><Select value={form.purchaseEvidenceType} onValueChange={(purchaseEvidenceType:PurchaseEvidenceType)=>setForm({...form,purchaseEvidenceType,supplierDocumentNumber:purchaseEvidenceType==="SupplierElectronicInvoice"?form.supplierDocumentNumber:""})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{options.purchaseEvidenceTypes.map(item=><SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+    <Field label="Tipo de documento"><Select value={form.purchaseEvidenceType} onValueChange={(purchaseEvidenceType:PurchaseEvidenceType)=>setForm({...form,purchaseEvidenceType,supplierDocumentNumber:purchaseEvidenceType==="SupplierElectronicInvoice"?form.supplierDocumentNumber:""})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{visibleEvidenceTypes.map(item=><SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
     <Field label={supplierInvoice?"Número de factura electrónica":"Referencia (opcional)"}><Input required={supplierInvoice} value={form.supplierDocumentNumber??""} onChange={event=>setForm({...form,supplierDocumentNumber:event.target.value||null})}/></Field>
     <Field label="Fecha de emisión"><DatePicker value={form.issuedAt.slice(0,10)} onChange={date=>setForm({...form,issuedAt:localNoon(date)})}/></Field>
     <Field label="Fecha de vencimiento"><DatePicker value={form.dueDate.slice(0,10)} onChange={date=>setForm({...form,dueDate:localNoon(date)})}/></Field>

@@ -146,6 +146,10 @@ public sealed class PayablesService(
                 if (tender.MethodCode == SupplierPaymentMethods.BankTransfer &&
                     string.IsNullOrWhiteSpace(tender.Reference))
                     throw new ArgumentException("A bank transfer requires a reference.");
+                if (tender.MethodCode is SupplierPaymentMethods.DebitCard or SupplierPaymentMethods.CreditCard &&
+                    (string.IsNullOrWhiteSpace(tender.CardFranchiseCode) ||
+                     string.IsNullOrWhiteSpace(tender.ApprovalNumber)))
+                    throw new ArgumentException("A card payment requires franchise and approval number.");
                 if (tender.MethodCode != SupplierPaymentMethods.BankTransfer && tender.BankAccountId is not null)
                     throw new ArgumentException("Only a bank transfer can select a bank account.");
             }
@@ -165,17 +169,19 @@ public sealed class PayablesService(
     }
 
     private static readonly IReadOnlySet<string> SupportedMethods = new HashSet<string>(
-        [SupplierPaymentMethods.Cash, SupplierPaymentMethods.BankTransfer], StringComparer.Ordinal);
+        [SupplierPaymentMethods.Cash, SupplierPaymentMethods.BankTransfer,
+         SupplierPaymentMethods.DebitCard, SupplierPaymentMethods.CreditCard], StringComparer.Ordinal);
 
     private static SupplierPaymentTenderRequest NormalizeTender(SupplierPaymentTenderRequest value) => value with
     {
         MethodCode = value.MethodCode?.Trim() ?? string.Empty, Reference = Normalize(value.Reference, 120),
-        Notes = Normalize(value.Notes, 500)
+        Notes = Normalize(value.Notes, 500), CardFranchiseCode = Normalize(value.CardFranchiseCode, 40),
+        ApprovalNumber = Normalize(value.ApprovalNumber, 80)
     };
 
     private static PaymentTender ToDomain(SupplierPaymentTenderRequest value) => new(
         value.MethodCode, value.Amount, value.TenderedAmount, value.BankAccountId,
-        value.Reference, value.Notes);
+        value.Reference, value.Notes, value.CardFranchiseCode, value.ApprovalNumber);
 
     private static string? Normalize(string? value, int maximumLength)
     {

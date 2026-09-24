@@ -10,7 +10,7 @@ export type PosReferenceOptionsClient = Pick<
 >;
 
 export function usePosReferenceOptions(
-  client: PosReferenceOptionsClient,
+  client: Pick<PosReferenceOptionsClient, "mode" | "referenceOptions">,
   catalogCode: string,
   enabled = true,
 ) {

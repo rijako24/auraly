@@ -17,11 +17,16 @@ export function defaultStartRoute(roles: readonly string[], permissions: readonl
     return "/dashboard/deliveries";
   if (isSellerOperationalProfile(roles, permissions))
     return "/dashboard/my-routes";
-  return authorizedNavigationItems(permissions)[0]?.href ?? "/dashboard";
+  const items = authorizedNavigationItems(permissions);
+  return (requiresCloudWorkspace(permissions)
+    ? items.find((item) => item.href !== "/pos")
+    : items[0])?.href ?? "/dashboard";
 }
 
 export function requiresCloudWorkspace(permissions: readonly string[]): boolean {
-  return authorizedNavigationItems(permissions).some((item) => item.href !== "/pos");
+  const posOrderWorkspace = permissions.includes("sales.create");
+  return authorizedNavigationItems(permissions).some((item) =>
+    item.href !== "/pos" && !(posOrderWorkspace && item.href === "/dashboard/orders"));
 }
 
 export function canOpenPosAdministrativeMenu(

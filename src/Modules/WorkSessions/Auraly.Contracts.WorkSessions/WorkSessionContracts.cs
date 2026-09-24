@@ -86,7 +86,9 @@ public sealed record WorkSessionPaymentTotal(
     decimal? Difference = null,
     bool RequiresCount = false,
     decimal CashEntryAmount = 0,
-    decimal CashExitAmount = 0);
+    decimal CashExitAmount = 0,
+    decimal ReceivableAmount = 0,
+    decimal PayableAmount = 0);
 
 public sealed record WorkSessionCreditSale(
     string CustomerName,

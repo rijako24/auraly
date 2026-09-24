@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PosPaymentInput, type PosBankAccount, type PosClient, type PosCustomer, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import { PosPaymentInput, type PosClient, type PosCustomer, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
@@ -35,6 +35,9 @@ const money = new Intl.NumberFormat("es-CO", {
 });
 
 type PaymentRow = PosPaymentInput & { id: string };
+type PaymentCaptureClient = Pick<PosClient, "mode" | "referenceOptions"> & {
+  settlementConfiguration: () => Promise<{ isAccountingEnabled: boolean; bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean; accountNumber?: string }> }>;
+};
 
 export function PosPaymentDialog({
   client,
@@ -50,8 +53,11 @@ export function PosPaymentDialog({
   onChangeDocumentType,
   onCancel,
   onConfirm,
+  portfolioDirection,
+  onBack,
+  maxPaymentMethods,
 }: {
-  client: PosClient;
+  client: PaymentCaptureClient;
   total: number;
   grossTotal: number;
   withholdingTotal: number;
@@ -67,16 +73,21 @@ export function PosPaymentDialog({
     payments: PosPaymentInput[],
     settlement: PosPaymentSettlement,
   ) => Promise<void>;
+  portfolioDirection?: "receivable" | "payable";
+  onBack?: () => void;
+  maxPaymentMethods?: number;
 }) {
   const paymentMethods = usePosReferenceOptions(client, "payment-method");
   const cardFranchises = usePosReferenceOptions(client, "card-franchise");
   const methods = useMemo(
-    () => (paymentMethods.data ?? []).slice(0, 5).map((option, index) => ({
+    () => (paymentMethods.data ?? []).filter(option => !portfolioDirection ||
+      option.code === "Cash" || option.code === "Transfer" ||
+      option.code === "DebitCard" || option.code === "CreditCard").slice(0, 5).map((option, index) => ({
       code: option.code,
       label: option.label,
       shortcut: `F${index + 1}`,
     })),
-    [paymentMethods.data],
+    [paymentMethods.data, portfolioDirection],
   );
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
@@ -85,7 +96,7 @@ export function PosPaymentDialog({
   const [creditError, setCreditError] = useState<string | null>(null);
   const [cardCapture, setCardCapture] = useState<{ paymentId: string; franchiseCode: string; approvalNumber: string } | null>(null);
   const [transferCapture, setTransferCapture] = useState<{ paymentId: string; bankAccountId: string; reference: string; notes: string } | null>(null);
-  const [bankAccounts, setBankAccounts] = useState<PosBankAccount[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<Array<{ bankAccountId: string; displayName: string; isPrimary: boolean; accountNumber?: string }>>([]);
   const [accountingEnabled, setAccountingEnabled] = useState(false);
   const [settlementConfigurationLoaded, setSettlementConfigurationLoaded] = useState(false);
   const cardApprovalRef = useRef<HTMLInputElement>(null);
@@ -95,8 +106,8 @@ export function PosPaymentDialog({
   const modal = useRef<HTMLFormElement>(null);
   const handledFocusRequest = useRef(0);
   const settlement = useMemo(
-    () => calculatePaymentSettlement(total, payments),
-    [payments, total],
+    () => calculatePaymentSettlement(total, payments, !portfolioDirection),
+    [payments, total, portfolioDirection],
   );
 
   usePosModalBehavior({
@@ -115,8 +126,8 @@ export function PosPaymentDialog({
     const defaultMethod = methods.find((method) => method.code === "Cash");
     if (!defaultMethod || payments.length > 0) return;
     setPayments([{ id: crypto.randomUUID(), methodCode: defaultMethod.code,
-      amount: paymentTotalForCollection(total), reference: null }]);
-  }, [methods, payments.length, total]);
+      amount: portfolioDirection ? total : paymentTotalForCollection(total), reference: null }]);
+  }, [methods, payments.length, total, portfolioDirection]);
 
   useEffect(() => {
     let active = true;
@@ -202,7 +213,7 @@ export function PosPaymentDialog({
     const active = activePaymentId
       ? payments.find((payment) => payment.id === activePaymentId)
       : null;
-    if (requestedMethod && settlement.missing <= 0) {
+    if (requestedMethod && (settlement.missing <= 0 || payments.length >= (maxPaymentMethods ?? Number.POSITIVE_INFINITY))) {
       const current = active ?? payments[0];
       if (!current) return;
       update(current.id, { methodCode: requestedMethod, reference: null, notes: null,
@@ -243,7 +254,7 @@ export function PosPaymentDialog({
     if (requiresCardCapture(nextMethod.code)) openCardCapture(id);
     else if (nextMethod.code === "Transfer") openTransferCapture(id);
     else setPendingFocusId(id);
-  }, [activePaymentId, busy, focusAmount, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, settlement.missing]);
+  }, [activePaymentId, busy, focusAmount, maxPaymentMethods, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, settlement.missing]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -254,7 +265,7 @@ export function PosPaymentDialog({
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
       if (cardCapture || transferCapture) return;
-      if (isChangeDocumentShortcut(event.key, documentTypeLocked)) {
+      if (!portfolioDirection && isChangeDocumentShortcut(event.key, documentTypeLocked)) {
         event.preventDefault();
         event.stopImmediatePropagation();
         onChangeDocumentType();
@@ -263,6 +274,7 @@ export function PosPaymentDialog({
       const method = methods.find((value) => value.shortcut === event.key);
       if (method) {
         event.preventDefault();
+        event.stopImmediatePropagation();
         addPayment(method.code);
       } else if (event.key.toLowerCase() === "e" && activePaymentId && payments.length > 1 &&
           !(event.target instanceof HTMLElement && event.target.dataset.paymentReference === "true")) {
@@ -270,9 +282,9 @@ export function PosPaymentDialog({
         removePayment(activePaymentId);
       }
     };
-    window.addEventListener("keydown", shortcut);
-    return () => window.removeEventListener("keydown", shortcut);
-  }, [activePaymentId, addPayment, cardCapture, documentTypeLocked, methods, onChangeDocumentType, payments.length, removePayment, transferCapture]);
+    window.addEventListener("keydown", shortcut, true);
+    return () => window.removeEventListener("keydown", shortcut, true);
+  }, [activePaymentId, addPayment, cardCapture, documentTypeLocked, methods, onChangeDocumentType, payments.length, portfolioDirection, removePayment, transferCapture]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -349,10 +361,10 @@ export function PosPaymentDialog({
           <div>
             <h2 id="pos-payment-title" className="flex items-center gap-2 text-xl font-semibold">
               <CreditCard className="h-5 w-5 text-teal-700" />
-              Finalizar venta
+              {portfolioDirection === "receivable" ? "Abono a cartera" : portfolioDirection === "payable" ? "Pago a proveedores" : "Finalizar venta"}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Escribe el valor recibido. ↑/↓ recorre los valores; F1-F5 seleccionan el medio y F6 cambia el documento.
+              Escribe el valor recibido. ↑/↓ recorre los valores; {methods.length ? `F1-F${methods.length}` : "las teclas F"} seleccionan el medio{portfolioDirection ? "." : " y F6 cambia el documento."}
             </p>
           </div>
           <p className="text-right">
@@ -365,14 +377,16 @@ export function PosPaymentDialog({
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-5">
 
         <section className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          {portfolioDirection ? <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Documento de pago</p><p className="mt-1 flex items-center gap-2 font-semibold text-slate-950"><Receipt className="h-4 w-4 text-teal-700"/>{portfolioDirection === "receivable" ? "Recibo de abono a cartera" : "Comprobante de pago a proveedor"}</p><p className="mt-1 text-xs text-slate-500">Se genera al confirmar el pago.</p></div> : <>
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Documento de venta</p><p className="mt-1 flex items-center gap-2 font-semibold text-slate-950">{documentType==="SalesInvoice"?<FileText className="h-4 w-4 text-teal-700"/>:<Receipt className="h-4 w-4 text-teal-700"/>}{documentType==="SalesInvoice"?"Factura electrónica":"Comprobante de venta"}</p><p className="mt-1 text-xs text-slate-500">{documentTypeLocked?"Este cliente requiere factura electrónica; la selección está protegida.":"Puedes elegir el documento antes de confirmar el pago."}</p></div>
             <button type="button" onClick={onChangeDocumentType} disabled={busy||(documentTypeLocked&&documentTypeReady)} className="h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:border-teal-500 disabled:cursor-not-allowed disabled:opacity-50">{documentTypeLocked?(documentTypeReady?"Factura obligatoria":"Configurar factura"):<>Cambiar documento <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs">F6</span></>}</button>
           </div>
-          {!documentTypeReady&&<p className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">Completa la configuración de factura electrónica para poder emitir esta venta.</p>}
+          {!documentTypeReady&&<p className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">Completa la configuración de factura electrónica para poder emitir esta venta.</p>}</>}
         </section>
+        {maxPaymentMethods === 1 && <p className="mt-3 text-sm text-slate-500">Para varias facturas se usa un solo medio de pago.</p>}
 
-        <div className="mt-5 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
+        <div className={`mt-5 grid grid-cols-2 gap-2 ${portfolioDirection ? "sm:grid-cols-4" : "md:grid-cols-3 xl:grid-cols-5"}`}>
           {methods.map((method) => (
             <button
               key={method.code}
@@ -499,7 +513,7 @@ export function PosPaymentDialog({
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-slate-500">
-            F1-F5 cambian el medio enfocado; Enter confirma únicamente cuando el pago está completo y E elimina la fila activa.
+            {methods.length ? `F1-F${methods.length}` : "Las teclas F"} cambian el medio enfocado; Enter confirma únicamente cuando el pago está completo y E elimina la fila activa.
           </p>
           <PaymentStatus settlement={settlement} />
         </div>
@@ -527,14 +541,15 @@ export function PosPaymentDialog({
         )}
         </div>
 
-        <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:justify-end sm:px-5 sm:pb-4 sm:pt-4">
+        <div className={`grid shrink-0 gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:justify-end sm:px-5 sm:pb-4 sm:pt-4 ${portfolioDirection ? "grid-cols-3" : "grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]"}`}>
+          {portfolioDirection && <button type="button" onClick={onBack} disabled={busy} className="h-11 rounded-lg border border-slate-300 px-3 font-medium sm:px-5">Atrás</button>}
           <button
             type="button"
             onClick={onCancel}
             disabled={busy}
             className="h-11 min-w-0 rounded-lg border border-slate-300 px-3 font-medium focus:outline-none focus:ring-2 focus:ring-slate-400 sm:px-5"
           >
-            Cerrar <span className="ml-1 hidden text-xs text-slate-500 sm:inline">Esc</span>
+            {portfolioDirection ? "Cancelar" : "Cerrar"} <span className="ml-1 hidden text-xs text-slate-500 sm:inline">Esc</span>
           </button>
           <button
             type="submit"
@@ -546,8 +561,8 @@ export function PosPaymentDialog({
             className="flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45 sm:min-w-48 sm:px-5"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-            <span className="sm:hidden">Emitir</span>
-            <span className="hidden sm:inline">Emitir e imprimir</span>
+            <span className="sm:hidden">{portfolioDirection ? "Confirmar pago" : "Emitir"}</span>
+            <span className="hidden sm:inline">{portfolioDirection ? "Confirmar pago" : "Emitir e imprimir"}</span>
             <span className="hidden rounded bg-white/15 px-1.5 py-0.5 text-xs sm:inline">Enter</span>
           </button>
         </div>

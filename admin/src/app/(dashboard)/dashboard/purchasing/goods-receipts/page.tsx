@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
+import { allowedPurchaseEvidenceTypes } from "@/lib/purchase-evidence-policy";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
 import { ReportViewer } from "@/components/reports/report-viewer";
@@ -1655,13 +1656,6 @@ function newCostLine(
     taxCode: "00", taxRate: 0, taxAmount: 0, taxTreatment: "NotApplicable",
     costTreatment, allocationMethod,
   };
-}
-
-function allowedPurchaseEvidenceTypes(policy: string | null) {
-  if (policy === "SupplierElectronicInvoice") return ["SupplierElectronicInvoice", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
-  if (policy === "BuyerElectronicSupportDocument") return ["BuyerElectronicSupportDocument", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
-  if (policy === "InternalReceiptVoucher") return ["InternalReceiptVoucher", "ForeignCommercialInvoice"];
-  return ["SupplierElectronicInvoice", "BuyerElectronicSupportDocument", "InternalReceiptVoucher", "ForeignCommercialInvoice"];
 }
 
 function apiStatusCode(error: unknown) {

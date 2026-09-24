@@ -101,6 +101,8 @@ USING (VALUES
   (N'ClosurePaymentMethod',N'Transfer',N'TransferClearing'),
   (N'SupplierPaymentMethod',N'Cash',N'Cash'),
   (N'SupplierPaymentMethod',N'BankTransfer',N'Bank'),
+  (N'SupplierPaymentMethod',N'DebitCard',N'DebitCardClearing'),
+  (N'SupplierPaymentMethod',N'CreditCard',N'CreditCardClearing'),
   (N'CustomerPaymentMethod',N'Cash',N'Cash'),
   (N'CustomerPaymentMethod',N'BankTransfer',N'Bank'),
   (N'CustomerPaymentMethod',N'DebitCard',N'DebitCardClearing'),

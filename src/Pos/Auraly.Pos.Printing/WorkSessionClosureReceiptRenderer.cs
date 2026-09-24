@@ -18,7 +18,7 @@ public static class WorkSessionClosureReceiptRenderer
         {
             1 => RenderV1(value, companyName, companyLogoSource, paperWidthMillimeters),
             2 => RenderV2(value, companyName, companyLogoSource, paperWidthMillimeters),
-            3 or 4 or 5 or 6 => RenderMovementClosure(value, companyName, companyLogoSource, paperWidthMillimeters),
+            3 or 4 or 5 or 6 or 7 => RenderMovementClosure(value, companyName, companyLogoSource, paperWidthMillimeters),
             _ => throw new InvalidOperationException(
                 $"La versión {value.ReceiptTemplateVersion} de la tirilla de cierre no está disponible.")
         };
@@ -81,16 +81,13 @@ public static class WorkSessionClosureReceiptRenderer
                 var cashDetails = IsCash(payment.PaymentMethodCode)
                     ? $"<div class=\"payment-details\"><span>Entradas <strong>{Money(version >= 4 ? payment.CashEntryAmount : Math.Max(0, payment.OtherAmount))}</strong></span><span>Salidas <strong>{Money(version >= 4 ? payment.CashExitAmount : Math.Abs(Math.Min(0, payment.OtherAmount)))}</strong></span></div>"
                     : string.Empty;
-                var otherNet = version >= 6
-                    ? payment.OtherAmount - payment.CashEntryAmount + payment.CashExitAmount
-                    : 0;
-                var otherDetails = otherNet == 0
-                    ? string.Empty
-                    : $"<div class=\"payment-details\"><span>Otros movimientos netos <strong>{Money(otherNet)}</strong></span></div>";
+                var portfolioDetails = version >= 7
+                    ? $"<div class=\"payment-details\"><span>Abonos a cartera <strong>{Money(payment.ReceivableAmount)}</strong></span><span>Pagos a proveedores <strong>{Money(payment.PayableAmount)}</strong></span></div>"
+                    : string.Empty;
                 var reconciliation = payment.CountedAmount is not { } counted
                     ? string.Empty
                     : $"<div class=\"payment-details\"><span>{(IsCash(payment.PaymentMethodCode) ? "Efectivo esperado" : "Esperado")} <strong>{Money(payment.NetAmount)}</strong></span><span>{(IsCash(payment.PaymentMethodCode) ? "Efectivo contado" : "Contado")} <strong>{Money(counted)}</strong></span></div>{DifferenceBox(payment.Difference ?? counted - payment.NetAmount)}";
-                return $"<section class=\"payment\" data-payment-method=\"{Encode(payment.PaymentMethodCode)}\"><h3>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</h3><div class=\"payment-details\"><span>Ventas <strong>{Money(payment.SalesAmount)}</strong></span><span>Devoluciones <strong>{Money(payment.RefundAmount)}</strong></span></div>{cashDetails}{otherDetails}{(version == 4 ? ChargePaymentRows(value.InvoiceCharges ?? [], payment.PaymentMethodCode) : string.Empty)}{reconciliation}</section>";
+                return $"<section class=\"payment\" data-payment-method=\"{Encode(payment.PaymentMethodCode)}\"><h3>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</h3><div class=\"payment-details\"><span>Ventas <strong>{Money(payment.SalesAmount)}</strong></span><span>Devoluciones <strong>{Money(payment.RefundAmount)}</strong></span></div>{cashDetails}{portfolioDetails}{(version == 4 ? ChargePaymentRows(value.InvoiceCharges ?? [], payment.PaymentMethodCode) : string.Empty)}{reconciliation}</section>";
             }));
         var creditRows = string.Join(string.Empty, creditSales.Select(credit => version >= 4
             ? $"<tr><td>{Encode(credit.CustomerName)}</td><td>{Encode(credit.DocumentNumber)}</td><td>{Money(credit.Amount)}</td></tr>"
@@ -105,13 +102,19 @@ public static class WorkSessionClosureReceiptRenderer
             $"<tr class=\"count-row\"><td>{Encode(group.Name)}</td><td>{group.Count}</td></tr>"));
         var chargeTotals = string.Join(string.Empty, chargeGroups.Select(group =>
             $"<tr><td>{Encode(group.Name)}</td><td>{Money(group.Amount)}</td></tr>"));
+        var portfolioCounts = version >= 7
+            ? $"<tr class=\"count-row\"><td>Abonos a cartera</td><td>{value.ReceivablePayments?.Count ?? 0}</td></tr><tr class=\"count-row\"><td>Pagos a proveedores</td><td>{value.PayablePayments?.Count ?? 0}</td></tr>"
+            : string.Empty;
+        var portfolioTotals = version >= 7
+            ? $"<tr><td>Abonos a cartera</td><td>{Money(value.PaymentTotals.Sum(payment => payment.ReceivableAmount))}</td></tr><tr><td>Pagos a proveedores</td><td>{Money(value.PaymentTotals.Sum(payment => payment.PayableAmount))}</td></tr>"
+            : string.Empty;
         var logo = Logo(companyLogoSource, companyName ?? value.BusinessName);
         var body = $$"""
-<header>{{logo}}<h1>{{Encode(companyName ?? value.BusinessName)}}</h1><h2>Arqueo de caja · Cierre confirmado</h2><p class="scope">Sede: {{Encode(Location(value))}}</p>
+<header>{{logo}}<h1>{{Encode(companyName ?? value.BusinessName)}}</h1><h2>{{(version >= 7 ? "Cierre de sesión · Confirmado" : "Arqueo de caja · Cierre confirmado")}}</h2><p class="scope">Sede: {{Encode(Location(value))}}</p>
 <p class="session-details"><strong>Usuario que trabajó:</strong> {{Encode(value.UserName)}}<br><strong>Apertura:</strong> {{Date(value.OpenedAt)}}<br><strong>Cierre:</strong> {{Date(value.ClosedAt)}}<br><strong>Duración:</strong> {{Duration(value.OpenedAt, value.ClosedAt)}}</p>
 </header>
-<h2 class="section-title">Actividad del turno</h2><table class="rows"><tbody><tr class="count-row"><td>Número de ventas</td><td>{{value.SalesCount}}</td></tr><tr class="count-row"><td>Ventas a cartera</td><td>{{value.CreditSalesCount}}</td></tr><tr class="count-row"><td>Devoluciones</td><td>{{value.ReturnCount}}</td></tr>{{chargeCounts}}</tbody></table>
-<h2 class="section-title">Totales del turno</h2><table class="rows"><tbody><tr><td>Ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Valor a cartera</td><td>{{Money(value.CreditSalesAmount)}}</td></tr><tr><td>Entradas de caja</td><td>{{Money(CashEntries(value))}}</td></tr><tr><td>Salidas de caja</td><td>{{Money(CashExits(value))}}</td></tr>{{chargeTotals}}</tbody></table>
+<h2 class="section-title">Actividad del turno</h2><table class="rows"><tbody><tr class="count-row"><td>Número de ventas</td><td>{{value.SalesCount}}</td></tr><tr class="count-row"><td>Ventas a cartera</td><td>{{value.CreditSalesCount}}</td></tr><tr class="count-row"><td>Devoluciones</td><td>{{value.ReturnCount}}</td></tr>{{portfolioCounts}}{{chargeCounts}}</tbody></table>
+<h2 class="section-title">Totales del turno</h2><table class="rows"><tbody><tr><td>Ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Valor a cartera</td><td>{{Money(value.CreditSalesAmount)}}</td></tr><tr><td>Entradas de caja</td><td>{{Money(CashEntries(value))}}</td></tr><tr><td>Salidas de caja</td><td>{{Money(CashExits(value))}}</td></tr>{{portfolioTotals}}{{chargeTotals}}</tbody></table>
 <h2 class="section-title">Ventas a cartera</h2><table class="rows credit-sales"><tbody>{{(creditRows.Length > 0 ? creditRows : $"<tr><td{creditColumnSpan}>Sin ventas a cartera</td><td>$ 0</td></tr>")}}</tbody><tfoot><tr><th{{creditColumnSpan}}>Total cartera</th><th>{{Money(value.CreditSalesAmount)}}</th></tr></tfoot></table>
 {{(version == 4 ? ChargePaymentRows(value.InvoiceCharges ?? [], "Credit") : string.Empty)}}
 <h2 class="section-title">Detalle por medio de pago</h2>{{payments}}

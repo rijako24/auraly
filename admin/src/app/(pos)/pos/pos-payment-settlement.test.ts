@@ -81,6 +81,15 @@ describe("splitCreditCheckout", () => {
 });
 
 describe("calculatePaymentSettlement", () => {
+  it("keeps the exact amount for a portfolio payment", () => {
+    const result = calculatePaymentSettlement(10_450.45, [
+      { methodCode: "Cash", amount: 10_450.45, reference: null },
+    ], false);
+    assert.equal(result.isValid, true);
+    assert.equal(result.paymentTotal, 10_450.45);
+    assert.equal(result.appliedPayments[0].amount, 10_450.45);
+    assert.equal(result.appliedPayments[0].roundingAdjustment, undefined);
+  });
   it("never completes a sale after a cashier writes a negative correction", () => {
     const settlement = calculatePaymentSettlement(20_000, [
       { methodCode: "DebitCard", amount: 15_000, reference: null },

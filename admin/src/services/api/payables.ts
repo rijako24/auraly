@@ -61,7 +61,7 @@ export interface ConfirmSupplierPaymentRequest {
   payments: SupplierPaymentTender[];
   workSessionId: string | null;
 }
-export interface SupplierPaymentTender {methodCode:"Cash"|"BankTransfer";amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null}
+export interface SupplierPaymentTender {methodCode:"Cash"|"BankTransfer"|"DebitCard"|"CreditCard";amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null;cardFranchiseCode:string|null;approvalNumber:string|null}
 
 export interface PaymentSettlementConfiguration {
   isAccountingEnabled: boolean;

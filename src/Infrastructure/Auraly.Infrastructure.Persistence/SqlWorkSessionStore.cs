@@ -780,7 +780,9 @@ public sealed partial class SqlWorkSessionStore(
                   COALESCE(SUM(CASE WHEN MovementType NOT IN (N'SalePayment',N'Refund') THEN Amount ELSE 0 END),0) OtherAmount,
                   COALESCE(SUM(Amount),0) NetAmount,
                   COALESCE(SUM(CASE WHEN MovementType=N'CashIn' THEN Amount ELSE 0 END),0) CashEntryAmount,
-                  COALESCE(SUM(CASE WHEN MovementType=N'CashOut' THEN ABS(Amount) ELSE 0 END),0) CashExitAmount
+                  COALESCE(SUM(CASE WHEN MovementType=N'CashOut' THEN ABS(Amount) ELSE 0 END),0) CashExitAmount,
+                  COALESCE(SUM(CASE WHEN MovementType=N'ReceivablePayment' THEN Amount ELSE 0 END),0) ReceivableAmount,
+                  COALESCE(SUM(CASE WHEN MovementType=N'PayablePayment' THEN ABS(Amount) ELSE 0 END),0) PayableAmount
                 FROM PaymentMovements
                 GROUP BY PaymentMethodCode
             ),
@@ -792,14 +794,17 @@ public sealed partial class SqlWorkSessionStore(
                        COALESCE(totals.OtherAmount,0) OtherAmount,
                        COALESCE(totals.NetAmount,0) NetAmount,
                        COALESCE(totals.CashEntryAmount,0) CashEntryAmount,
-                       COALESCE(totals.CashExitAmount,0) CashExitAmount
+                       COALESCE(totals.CashExitAmount,0) CashExitAmount,
+                       COALESCE(totals.ReceivableAmount,0) ReceivableAmount,
+                       COALESCE(totals.PayableAmount,0) PayableAmount
                 FROM reference.Options options
                 LEFT JOIN Totals totals ON totals.PaymentMethodCode=options.Code
                 WHERE options.CatalogCode=N'cash-closure-method' AND options.IsActive=1
                 UNION ALL
                 SELECT totals.PaymentMethodCode,totals.SalesAmount,totals.RefundAmount,
                        totals.OtherAmount,totals.NetAmount,
-                       totals.CashEntryAmount,totals.CashExitAmount
+                       totals.CashEntryAmount,totals.CashExitAmount,
+                       totals.ReceivableAmount,totals.PayableAmount
                 FROM Totals totals
                 WHERE NOT EXISTS
                 (
@@ -810,7 +815,8 @@ public sealed partial class SqlWorkSessionStore(
             )
             SELECT total.PaymentMethodCode,total.SalesAmount,total.RefundAmount,total.OtherAmount,total.NetAmount,
                    CAST(CASE WHEN closureOption.OptionId IS NOT NULL THEN 1 ELSE 0 END AS bit),
-                   total.CashEntryAmount,total.CashExitAmount
+                   total.CashEntryAmount,total.CashExitAmount,
+                   total.ReceivableAmount,total.PayableAmount
             FROM AllTotals total
             LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=total.PaymentMethodCode AND closureOption.IsActive=1
@@ -824,7 +830,8 @@ public sealed partial class SqlWorkSessionStore(
             values.Add(new WorkSessionPaymentTotal(
                 reader.GetString(0), reader.GetDecimal(1), reader.GetDecimal(2),
                 reader.GetDecimal(3), reader.GetDecimal(4), RequiresCount: reader.GetBoolean(5),
-                CashEntryAmount: reader.GetDecimal(6), CashExitAmount: reader.GetDecimal(7)));
+                CashEntryAmount: reader.GetDecimal(6), CashExitAmount: reader.GetDecimal(7),
+                ReceivableAmount: reader.GetDecimal(8), PayableAmount: reader.GetDecimal(9)));
         return values;
     }
 

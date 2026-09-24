@@ -77,8 +77,9 @@ export function shouldShowCashChange(settlement: Pick<PosPaymentSettlement, "cha
 export function calculatePaymentSettlement(
   total: number,
   payments: PosPaymentInput[],
+  roundCollection = true,
 ): PosPaymentSettlement {
-  const paymentTotal = paymentTotalForCollection(total, payments);
+  const paymentTotal = roundCollection ? paymentTotalForCollection(total, payments) : total;
   const validAmounts =
     payments.length > 0 &&
     payments.every(

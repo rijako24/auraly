@@ -332,7 +332,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 new WorkSessionPaymentCount("Card", 0m),
                 new WorkSessionPaymentCount("Transfer", 0m)
             ]));
-        Assert.Equal(5, closure.ReceiptTemplateVersion);
+        Assert.Equal(7, closure.ReceiptTemplateVersion);
         Assert.Equal(closure.CreditSalesAmount, closure.CreditSales!.Sum(item => item.Amount));
 
         var verificationItems = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
@@ -350,7 +350,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var receipt = await receiptResponse.Content
             .ReadFromJsonAsync<WorkSessionClosureReceiptView>();
         Assert.NotNull(receipt);
-        Assert.Contains("data-auraly-report-version=\"5\"", receipt.Html);
+        Assert.Contains("data-auraly-report-version=\"7\"", receipt.Html);
         Assert.Contains("Cliente cartera exacta", receipt.Html);
         Assert.Contains("CVI-CARTERA-1", receipt.Html);
         Assert.Contains("Total cartera", receipt.Html);

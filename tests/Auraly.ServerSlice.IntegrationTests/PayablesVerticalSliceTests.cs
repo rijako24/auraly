@@ -69,8 +69,12 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             occurredAt.AddHours(1), "COP", "Abono por transferencia",
             [new SupplierPaymentAllocationRequest(payableId, 40_000m)],
             [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash,10_000m,10_000m),
-             new SupplierPaymentTenderRequest(SupplierPaymentMethods.BankTransfer,30_000m,
-                BankAccountId:bankAccount.BankAccountId,Reference:"TRX-9001")]);
+             new SupplierPaymentTenderRequest(SupplierPaymentMethods.BankTransfer,10_000m,
+                BankAccountId:bankAccount.BankAccountId,Reference:"TRX-9001"),
+             new SupplierPaymentTenderRequest(SupplierPaymentMethods.DebitCard,10_000m,
+                CardFranchiseCode:"Visa",ApprovalNumber:"DEBIT-9001"),
+             new SupplierPaymentTenderRequest(SupplierPaymentMethods.CreditCard,10_000m,
+                CardFranchiseCode:"Mastercard",ApprovalNumber:"CREDIT-9001")]);
         var key = $"payables-payment-{payment.PaymentId:N}";
         using (var response = await SendAsync(
                    client, "/api/commerce/v1/payable-payments/confirm", payment, key))
@@ -90,7 +94,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT Status FROM dbo.Payables WHERE PayableId=@Id", payableId));
         Assert.Equal(1, await CountAsync(
             "SupplierPaymentApplications", "PaymentId", payment.PaymentId));
-        Assert.Equal(2, await CountAsync(
+        Assert.Equal(4, await CountAsync(
             "SupplierPaymentTenders", "PaymentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "PayableTransactions", "SourceDocumentId", payment.PaymentId));
@@ -102,19 +106,27 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(5, paymentHistory.PageSize);
         Assert.Contains(paymentHistory.Items, item => item.PaymentId == payment.PaymentId
             && item.AppliedDocumentCount == 1
-            && item.Payments.Count == 2
+            && item.Payments.Count == 4
             && item.Payments[0].MethodCode == SupplierPaymentMethods.Cash
             && item.Payments[0].Amount == 10_000m
             && item.Payments[1].MethodCode == SupplierPaymentMethods.BankTransfer
-            && item.Payments[1].Amount == 30_000m
+            && item.Payments[1].Amount == 10_000m
+            && item.Payments[2].MethodCode == SupplierPaymentMethods.DebitCard
+            && item.Payments[2].CardFranchiseCode == "Visa"
+            && item.Payments[2].ApprovalNumber == "DEBIT-9001"
+            && item.Payments[3].MethodCode == SupplierPaymentMethods.CreditCard
+            && item.Payments[3].CardFranchiseCode == "Mastercard"
+            && item.Payments[3].ApprovalNumber == "CREDIT-9001"
             && item.Applications.Count == 1
             && item.Applications[0].PayableId == payableId
             && item.Applications[0].Amount == 40_000m);
         Assert.True(await PayloadHashMatchesAsync(payment.PaymentId));
         Assert.Equal(40_000m, await AccountAmountAsync(payment.PaymentId, "220505", true));
         Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "110505", false));
-        Assert.Equal(30_000m, await AccountAmountAsync(
+        Assert.Equal(10_000m, await AccountAmountAsync(
             payment.PaymentId, bankAccount.AccountingAccountCode, false));
+        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "130510", false));
+        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "130515", false));
 
         var paymentDate = DateOnly.FromDateTime(payment.PaidAt.UtcDateTime).ToString("yyyy-MM-dd");
         var createdDate = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
@@ -139,7 +151,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         }
         Assert.Equal(1, await CountAsync(
             "PayableTransactions", "SourceDocumentId", payment.PaymentId));
-        Assert.Equal(2, await CountAsync(
+        Assert.Equal(4, await CountAsync(
             "SupplierPaymentTenders", "PaymentId", payment.PaymentId));
         Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", payment.PaymentId));
@@ -157,10 +169,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
                 $"concurrent-{concurrentB.PaymentId:N}"));
         try
         {
-            Assert.Single(concurrentResponses.Where(response =>
-                response.StatusCode == HttpStatusCode.Accepted));
-            Assert.Single(concurrentResponses.Where(response =>
-                response.StatusCode == HttpStatusCode.Conflict));
+            Assert.Equal(new[] { HttpStatusCode.Accepted, HttpStatusCode.Conflict },
+                concurrentResponses.Select(response => response.StatusCode).OrderBy(status => status));
         }
         finally
         {
@@ -168,6 +178,18 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         }
         Assert.Equal(20_000m, await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+
+        var missingCardEvidence = payment with
+        {
+            PaymentId = Guid.NewGuid(),
+            Allocations = [new SupplierPaymentAllocationRequest(payableId, 1_000m)],
+            Payments = [new SupplierPaymentTenderRequest(SupplierPaymentMethods.CreditCard, 1_000m)]
+        };
+        using (var response = await SendAsync(client,
+                   "/api/commerce/v1/payable-payments/confirm", missingCardEvidence,
+                   $"missing-card-{missingCardEvidence.PaymentId:N}"))
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, await CountAsync("SupplierPayments", "PaymentId", missingCardEvidence.PaymentId));
 
         var overpayment = payment with
         {

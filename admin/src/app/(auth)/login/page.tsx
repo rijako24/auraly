@@ -149,8 +149,12 @@ function LoginForm() {
         setLocalPosAvailable(true);
         if (requiresCloudWorkspace(localSession.permissions)) {
           const health = await edgeClient.health();
-          if (health.serverConnected) await loginToCloud(localSession.userId);
-          else useAuthStore.getState().clearAuth();
+          if (health.serverConnected) {
+            const verifiedUser = await loginToCloud(localSession.userId);
+            window.location.replace(defaultStartRoute(verifiedUser.roles, verifiedUser.permissions));
+            return;
+          }
+          useAuthStore.getState().clearAuth();
         } else useAuthStore.getState().clearAuth();
         window.location.replace("/pos");
         return;

@@ -104,7 +104,7 @@ sede en el encabezado, separan al responsable como dato propio, usan reglas
 punteadas alrededor del valor y recuperan el espacio amplio de firma. Las
 versiones 1 y 2 permanecen disponibles e inmutables para reproducir los formatos
 publicados originalmente.
-`work-session-closure` tiene una versión 5 activa: conserva Actividad, Totales,
+`work-session-closure` tiene una versión 7 activa: conserva Actividad, Totales,
 Ventas a cartera y Detalle por medio de pago. Cada entrada y salida muestra
 motivo, observación debajo si existe y valor; la persona responsable permanece
 en el encabezado del cierre. Cartera ocupa una fila con nombre, factura y valor.
@@ -116,10 +116,16 @@ incluidos en facturas y registrados como gasto. No se repiten dentro de efectivo
 tarjeta, transferencia ni cartera. Son resúmenes informativos: no se vuelven a
 sumar al recaudo. Los medios conservan ventas, devoluciones, movimientos aplicables
 y conciliación sin recalcularlos. Los nombres se toman del snapshot del cargo;
-un cierre sin cargos no agrega filas a Actividad ni Totales.
+un cierre sin cargos no agrega filas a Actividad ni Totales. La versión 7 se
+titula «Cierre de sesión» y muestra
+abonos a cartera y pagos a proveedores por separado en Actividad, Totales y en
+cada medio de pago. El neto suma abonos y resta pagos, usando únicamente los
+importes originales del medio registrado en la sesión. Se eliminó de la versión
+6 la etiqueta inferida «Otros movimientos netos» porque no identificaba la
+operación real y podía inducir a error en reimpresiones.
 La sección «Cargos de facturación» se ubica después de «Salidas de dinero» y antes
 de «Detalle por medio de pago».
-Las versiones 1, 2, 3 y 4 permanecen disponibles e inmutables para reimpresiones;
+Las versiones 1 a 6 permanecen disponibles para reimpresiones históricas;
 la versión 4 conserva los cargos individuales dentro de cada medio.
 El detalle de efectivo de la consulta y de la tirilla procede del snapshot del
 cierre. No depende de cambios posteriores del motivo ni de que haya terminado

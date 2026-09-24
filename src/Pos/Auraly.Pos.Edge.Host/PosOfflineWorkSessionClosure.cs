@@ -641,10 +641,10 @@ public sealed class PosOfflineWorkSessionClosureService(
                 StringComparer.OrdinalIgnoreCase);
         foreach (var method in refundAmounts.Keys) amounts.TryAdd(method, 0);
         var portfolioAmounts=portfolio.SelectMany(payment=>payment.Tenders.Select(tender=>
-                (Method:ClosureMethod(tender.MethodCode),
-                 Amount:payment.Direction=="Receivable"?tender.Amount:-tender.Amount)))
+                (Method:ClosureMethod(tender.MethodCode),Direction:payment.Direction,Amount:tender.Amount)))
             .GroupBy(item=>item.Method,StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group=>group.Key,group=>group.Sum(item=>item.Amount),StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(group=>group.Key,group=>(Receivable:group.Where(item=>item.Direction=="Receivable").Sum(item=>item.Amount),
+                Payable:group.Where(item=>item.Direction=="Payable").Sum(item=>item.Amount)),StringComparer.OrdinalIgnoreCase);
         foreach(var method in portfolioAmounts.Keys)amounts.TryAdd(method,0);
         var counted = (counts ?? [])
             .GroupBy(value => value.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
@@ -655,7 +655,8 @@ public sealed class PosOfflineWorkSessionClosureService(
             .ThenBy(value => value.Key, StringComparer.Ordinal)
             .Select(value =>
             {
-                var other = portfolioAmounts.GetValueOrDefault(value.Key) +
+                var portfolioTotal = portfolioAmounts.GetValueOrDefault(value.Key);
+                var other = portfolioTotal.Receivable - portfolioTotal.Payable +
                     (value.Key.Equals("Cash", StringComparison.OrdinalIgnoreCase)
                     ? cashMovements.Sum(movement =>
                         movement.Direction == CashMovementDirections.In
@@ -680,7 +681,9 @@ public sealed class PosOfflineWorkSessionClosureService(
                         ? cashMovements.Where(movement =>
                             movement.Direction == CashMovementDirections.Out)
                             .Sum(movement => movement.Amount)
-                        : 0);
+                        : 0,
+                    portfolioTotal.Receivable,
+                    portfolioTotal.Payable);
             })
             .ToArray();
     }

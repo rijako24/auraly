@@ -18,7 +18,9 @@ public static class SupplierPaymentMethods
 {
     public const string Cash = "Cash";
     public const string BankTransfer = "BankTransfer";
-    public static bool IsSupported(string value) => value is Cash or BankTransfer;
+    public const string DebitCard = "DebitCard";
+    public const string CreditCard = "CreditCard";
+    public static bool IsSupported(string value) => value is Cash or BankTransfer or DebitCard or CreditCard;
 }
 
 public sealed record PayablesUserIdentity(
@@ -91,7 +93,7 @@ public sealed record SupplierPaymentAllocationRequest(
 
 public sealed record SupplierPaymentTenderRequest(string MethodCode, decimal Amount,
     decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
-    string? Notes = null);
+    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null);
 
 public sealed record ConfirmSupplierPaymentRequest(
     Guid PaymentId,
@@ -111,7 +113,7 @@ public sealed record SupplierPaymentAllocationSnapshot(
 
 public sealed record SupplierPaymentTenderSnapshot(int LineNumber, string MethodCode, decimal Amount,
     decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
-    string? Notes = null);
+    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null);
 
 public sealed record SupplierPaymentDocumentPayload(
     Guid TenantId,
