@@ -17,6 +17,7 @@ test("abono usa la caja de pago del POS y refresca la cartera al confirmar", asy
 
   let paid = false;
   let customerReads = 0;
+  let paymentInvoiceReads = 0;
   let confirmation: { payments: Array<{ methodCode: string; amount: number; cardFranchiseCode: string; approvalNumber: string }> } | null = null;
   const invoice = { receivableId, customerId, customerName: "Cliente prueba", partySiteId: null,
     partySiteName: null, documentNumber: "FV-001", currencyCode: "COP", originalAmount: 10450.45,
@@ -36,8 +37,11 @@ test("abono usa la caja de pago del POS y refresca la cartera al confirmar", asy
         originalAmount: 10450.45, paidAmount: paid ? 10450.45 : 0, outstandingAmount: paid ? 0 : 10450.45,
         overdueAmount: 0 }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1,
         totalOutstanding: paid ? 0 : 10450.45, totalOverdue: 0, totalInvoiceCount: 1 };
-    } else if (path.endsWith("/receivables")) body = { items: [{ ...invoice, outstandingAmount: paid ? 0 : 10450.45 }],
-      page: 1, pageSize: 20, totalCount: 1, totalPages: 1, totalOutstanding: paid ? 0 : 10450.45, totalOverdue: 0 };
+    } else if (path.endsWith("/receivables")) {
+      if (url.searchParams.get("outstandingOnly") === "true") paymentInvoiceReads++;
+      body = { items: paid ? [] : [invoice], page: 1, pageSize: 20, totalCount: paid ? 0 : 1,
+        totalPages: paid ? 0 : 1, totalOutstanding: paid ? 0 : 10450.45, totalOverdue: 0 };
+    }
     else if (path.endsWith("/receivable-payments")) body = { items: paid ? [{ paymentId: "66666666-6666-6666-6666-666666666666",
       documentNumber: "RCC-001", paidAt: "2026-09-23T12:00:00-05:00", currencyCode: "COP", totalAmount: 10450.45,
       status: "Accepted", appliedDocumentCount: 1, payments: [{ methodCode: "DebitCard" }],
@@ -78,6 +82,10 @@ test("abono usa la caja de pago del POS y refresca la cartera al confirmar", asy
     cardFranchiseCode: "Visa", approvalNumber: "AP-001" }] });
   await expect.poll(() => customerReads).toBeGreaterThan(1);
   await expect(page.getByLabel("Resumen de cartera")).toContainText("$ 0");
+  const readsAfterPayment = paymentInvoiceReads;
+  await page.getByRole("row", { name: /Cliente prueba/ }).click();
+  await expect(page.getByText("Este tercero no tiene facturas pendientes.")).toBeVisible();
+  expect(paymentInvoiceReads).toBe(readsAfterPayment + 1);
 });
 
 test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", async ({ page, baseURL }) => {
@@ -95,9 +103,12 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
     localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user }, version: 0 }));
   }, { user, businessId });
 
+  let paid = false;
+  let paymentInvoiceReads = 0;
   let confirmation: { payments: Array<{ methodCode: string; amount: number; cardFranchiseCode: string; approvalNumber: string }> } | null = null;
   await page.route("**/api/**", async route => {
-    const path = new URL(route.request().url()).pathname;
+    const url = new URL(route.request().url());
+    const path = url.pathname;
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
@@ -106,11 +117,15 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
     else if (path.endsWith("/payables/suppliers")) body = { items: [{ supplierId, supplierName: "Proveedor prueba", identification: "1001", invoiceCount: 1,
       originalAmount: 12400, paidAmount: 0, outstandingAmount: 12400, overdueAmount: 0 }], page: 1,
       pageSize: 20, totalCount: 1, totalPages: 1, totalOutstanding: 12400, totalOverdue: 0, totalInvoiceCount: 1 };
-    else if (path.endsWith("/payables")) body = { items: [{ payableId, supplierId, supplierName: "Proveedor prueba",
-      documentNumber: "FC-001", currencyCode: "COP", originalAmount: 12400, outstandingAmount: 12400,
-      dueDate: "2026-10-01T12:00:00-05:00", status: "Open", isOverdue: false,
-      createdAt: "2026-09-23T12:00:00-05:00" }], page: 1, pageSize: 20, totalCount: 1,
-      totalPages: 1, totalOutstanding: 12400, totalOverdue: 0 };
+    else if (path.endsWith("/payables")) {
+      if (url.searchParams.get("outstandingOnly") === "true") paymentInvoiceReads++;
+      body = { items: paid ? [] : [{ payableId, supplierId, supplierName: "Proveedor prueba",
+        documentNumber: "FC-001", currencyCode: "COP", originalAmount: 12400, outstandingAmount: 12400,
+        dueDate: "2026-10-01T12:00:00-05:00", status: "Open", isOverdue: false,
+        createdAt: "2026-09-23T12:00:00-05:00" }], page: 1, pageSize: 20,
+        totalCount: paid ? 0 : 1, totalPages: paid ? 0 : 1,
+        totalOutstanding: paid ? 0 : 12400, totalOverdue: 0 };
+    }
     else if (path.endsWith("/payable-payments")) body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 };
     else if (path.endsWith("/reference-options/payment-method")) body = [
       { id: "cash", code: "Cash", label: "Efectivo", sortOrder: 1 },
@@ -124,6 +139,7 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "77777777-7777-7777-7777-777777777777" };
     else if (path.endsWith("/payable-payments/confirm")) {
       confirmation = route.request().postDataJSON();
+      paid = true;
       body = { paymentId: "66666666-6666-6666-6666-666666666666", documentNumber: "PGP-001",
         accountingJobId: "88888888-8888-8888-8888-888888888888", status: "Accepted", idempotentReplay: false };
     }
@@ -154,6 +170,11 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
   await card.getByPlaceholder("Aprobación del datáfono").fill("CREDIT-001");
   await card.getByRole("button", { name: /Guardar datos/ }).click();
   await checkout.getByRole("button", { name: "Confirmar pago" }).click();
+  await expect(checkout).not.toBeVisible();
   expect(confirmation).toMatchObject({ payments: [{ methodCode: "CreditCard", amount: 12400,
     cardFranchiseCode: "Visa", approvalNumber: "CREDIT-001" }] });
+  const readsAfterPayment = paymentInvoiceReads;
+  await page.getByRole("row", { name: /Proveedor prueba/ }).click();
+  await expect(page.getByText("Este tercero no tiene facturas pendientes.")).toBeVisible();
+  expect(paymentInvoiceReads).toBe(readsAfterPayment + 1);
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect,useMemo,useRef,useState } from "react";
-import { useMutation,useQuery } from "@tanstack/react-query";
+import { useMutation,useQuery,useQueryClient } from "@tanstack/react-query";
 import { ArrowRight,CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { PartyRoleSelect,type PartyRoleSelection } from "@/components/parties/party-role-select";
@@ -29,6 +29,7 @@ const toPortfolioMethod=(code:string):CustomerPaymentMethod|null=>
   code==="Transfer"?"BankTransfer":code==="Cash"||code==="DebitCard"||code==="CreditCard"?code:null;
 
 export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty,initialInvoice,workSessionId,onCompleted,edgeClient,businessId:businessIdOverride}:{direction:Direction;open:boolean;onOpenChange:(open:boolean)=>void;initialParty?:PartyRoleSelection|null;initialInvoice?:Invoice|null;workSessionId?:string|null;onCompleted?:()=>void;edgeClient?:PosEdgeClient|null;businessId?:string|null}){
+  const queryClient=useQueryClient();
   const initialPartyRef=useRef(initialParty);initialPartyRef.current=initialParty;
   const initialInvoiceRef=useRef(initialInvoice);initialInvoiceRef.current=initialInvoice;
   const selectedBusinessId=useBusinessContextStore(state=>state.selectedBusinessId);const businessId=businessIdOverride??selectedBusinessId;
@@ -75,7 +76,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     const {paymentId,paidAt,sessionId}=attempt;
     if(direction==="receivable"){const request={paymentId,businessId,customerId:partyId,workSessionId:sessionId,paidAt,currencyCode:"COP",notes:null,allocations:allocations.map(x=>({receivableId:x.id,amount:x.amount})),payments:tenders.map(toCustomerTender)};return edgeClient?edgeClient.confirmPortfolioReceivable(request,`receivable-payment-${paymentId}`):receivablesApi.confirmPayment(request,`receivable-payment-${paymentId}`);}
     const request={paymentId,businessId,supplierId:partyId,workSessionId:sessionId,paidAt,currencyCode:"COP",notes:null,allocations:allocations.map(x=>({payableId:x.id,amount:x.amount})),payments:tenders.map(toSupplierTender)};return edgeClient?edgeClient.confirmPortfolioPayable(request,`payable-payment-${paymentId}`):payablesApi.confirmPayment(request,`payable-payment-${paymentId}`);
-  },onSuccess:accepted=>{sessionStorage.removeItem(attemptStorageKey);pendingAttempt.current=null;toast.success(`${accepted.documentNumber} quedó registrado. El saldo se actualizará al aplicar el movimiento.`);changeOpen(false);onCompleted?.();},onError:error=>toast.error(error instanceof Error?error.message:"No fue posible registrar el movimiento. Si no recibiste confirmación, reintenta sin cambiar los valores.")});
+  },onSuccess:accepted=>{sessionStorage.removeItem(attemptStorageKey);pendingAttempt.current=null;queryClient.removeQueries({queryKey:["portfolio-payment-invoices",edgeClient?"edge":"web",direction,businessId,partyId]});toast.success(`${accepted.documentNumber} quedó registrado. El saldo se actualizará al aplicar el movimiento.`);changeOpen(false);onCompleted?.();},onError:error=>toast.error(error instanceof Error?error.message:"No fue posible registrar el movimiento. Si no recibiste confirmación, reintenta sin cambiar los valores.")});
   const validateStepOne=()=>{if(!partyId||allocations.length===0){toast.error("Selecciona un tercero y al menos una factura.");return false;}if(allocations.some(x=>x.amount>(selectedLimits[x.id]??0))){toast.error("Ningún abono puede superar el saldo de la factura.");return false;}return true;};
   if(open&&step===2)return <PosPaymentDialog
     client={paymentClient} total={total} grossTotal={total} withholdingTotal={0}
