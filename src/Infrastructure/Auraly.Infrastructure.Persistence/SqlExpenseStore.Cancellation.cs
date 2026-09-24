@@ -27,7 +27,8 @@ public sealed partial class SqlExpenseStore
                   fiscal.FiscalNumber,fiscal.UniqueCode,fiscal.IssuedAt,fiscal.FiscalStatus,
                   snapshot.SnapshotJson,job.AccountingPostingJobId,
                   CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesReturnCharges returned WITH(UPDLOCK,HOLDLOCK)
-                    WHERE returned.AppliedChargeId=e.ExpenseId) THEN 1 ELSE 0 END AS bit)
+                    WHERE returned.AppliedChargeId=e.ExpenseId) THEN 1 ELSE 0 END AS bit),
+                  e.CancellationReasonOptionId
                 FROM dbo.Expenses e WITH(UPDLOCK,HOLDLOCK)
                 JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.TenantId=@TenantId
                 JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=e.ExpenseId
@@ -45,7 +46,7 @@ public sealed partial class SqlExpenseStore
             command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             command.Parameters.AddWithValue("@ExpenseId", expenseId);
             string status, evidence; ExpenseDocumentPayload original;
-            Guid? existingId, payableId, existingJobId;
+            Guid? existingId, payableId, existingJobId, existingReasonOptionId;
             string? existingReason, supportNumber, supportCuds, fiscalStatus, supportJson;
             DateOnly? originalIssuedOn; decimal outstanding;
             bool returnedWithSale;
@@ -68,10 +69,14 @@ public sealed partial class SqlExpenseStore
                 supportJson = reader.IsDBNull(11) ? null : reader.GetString(11);
                 existingJobId = reader.IsDBNull(12) ? null : reader.GetGuid(12);
                 returnedWithSale = reader.GetBoolean(13);
+                existingReasonOptionId = reader.IsDBNull(14) ? null : reader.GetGuid(14);
             }
             if (existingId is not null)
             {
-                if (existingId != request.CancellationId || existingReason != request.Reason)
+                if (existingId != request.CancellationId ||
+                    (request.ReasonOptionId is { } reasonOptionId
+                        ? existingReasonOptionId != reasonOptionId
+                        : existingReasonOptionId is not null || existingReason != request.Reason))
                     throw new ExpenseConflictException("El gasto ya tiene otra anulación.");
                 if (existingJobId is null) throw new InvalidOperationException("La anulación no tiene trabajo contable.");
                 await transaction.CommitAsync(ct);
@@ -82,6 +87,18 @@ public sealed partial class SqlExpenseStore
                 throw new ExpenseValidationException("Solo se puede anular un gasto procesado.");
             if (returnedWithSale)
                 throw new ExpenseConflictException("El cargo de esta factura ya fue devuelto; su gasto no se puede anular otra vez.");
+            var reason = request.Reason;
+            if (request.ReasonOptionId is { } optionId)
+            {
+                await using var option = new SqlCommand("""
+                    SELECT Label FROM [reference].[Options] WITH(HOLDLOCK)
+                    WHERE OptionId=@OptionId AND CatalogCode=N'expense-cancellation-reason' AND IsActive=1;
+                    """, connection, transaction);
+                option.Parameters.AddWithValue("@OptionId", optionId);
+                reason = (string?)await option.ExecuteScalarAsync(ct);
+                if (reason is null)
+                    throw new ExpenseValidationException("Selecciona un motivo de anulación activo.");
+            }
             if (original.BusinessId != user.BusinessId || original.TenantId != user.TenantId || original.ExpenseId != expenseId)
                 throw new InvalidOperationException("El origen contable del gasto no coincide con el tenant.");
             if (original.Withholding.NetAmount != outstanding && payableId is null && original.Withholding.NetAmount > 0)
@@ -134,17 +151,18 @@ public sealed partial class SqlExpenseStore
             }
             var jobId = ids.NewId();
             var payload = new ExpenseCancellationPayload(user.TenantId, user.BusinessId,
-                request.CancellationId, user.UserId, now, request.Reason, original, payableId,
+                request.CancellationId, user.UserId, now, reason!, original, payableId,
                 outstanding, original.Withholding.NetAmount - outstanding);
             await using (var update = new SqlCommand("""
                 UPDATE dbo.Expenses SET Status=N'CancellationPending',CancellationId=@CancellationId,
-                  CancellationReason=@Reason,CancellationAcceptedAt=@Now
+                  CancellationReason=@Reason,CancellationReasonOptionId=@ReasonOptionId,CancellationAcceptedAt=@Now
                 WHERE ExpenseId=@ExpenseId AND BusinessId=@BusinessId AND Status=N'Processed'
                   AND CancellationId IS NULL;
                 """, connection, transaction))
             {
                 update.Parameters.AddWithValue("@CancellationId", request.CancellationId);
-                update.Parameters.AddWithValue("@Reason", request.Reason);
+                update.Parameters.AddWithValue("@Reason", reason!);
+                update.Parameters.AddWithValue("@ReasonOptionId", (object?)request.ReasonOptionId ?? DBNull.Value);
                 update.Parameters.AddWithValue("@Now", now);
                 update.Parameters.AddWithValue("@ExpenseId", expenseId);
                 update.Parameters.AddWithValue("@BusinessId", user.BusinessId);

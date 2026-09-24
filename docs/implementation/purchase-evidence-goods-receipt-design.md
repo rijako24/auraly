@@ -59,7 +59,13 @@ referencia inmutable al número y CUDS originales. No crea otra cola ni otro
 emisor fiscal.
 
 La anulación de un gasto procesado conserva el gasto y el pago histórico. El
-motor contable reversa la cuenta de gasto, el IVA descontable y las retenciones;
+motivo se elige por identificador activo del catálogo persistido
+`reference.Options` (`expense-cancellation-reason`). El comando valida el
+catálogo dentro de la transacción y guarda tanto el identificador como el
+texto vigente para mantener legibles el historial y los documentos fiscales
+aunque cambie la etiqueta. Las solicitudes anteriores con texto se aceptan
+para conservar compatibilidad; la interfaz nueva envía el identificador.
+El motor contable reversa la cuenta de gasto, el IVA descontable y las retenciones;
 para estas líneas reutiliza las cuentas del asiento original aunque el mapeo
 PUC haya cambiado desde entonces. También reversa en su cuenta original el
 saldo no pagado de la cuenta por pagar y reconoce el importe ya

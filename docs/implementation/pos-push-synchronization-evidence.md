@@ -161,3 +161,19 @@ canónica separada y probada; esta rebanada no amplió ese modelo legacy.
 
 Para on-premise falta la implementación real del adaptador push autohospedado.
 No se agregó un fallback de polling ni una interfaz vacía para simularlo.
+
+## Incidente de aprobaciones en caja enrolada (2026-09-24)
+
+La decisión del supervisor se guarda en `PosApprovalRequests` y publica el stream
+durable `Approvals`. La caja enrolada recibe la invalidación por el grupo del
+negocio. El cambio `2c7a1a73` del 1 de septiembre retiró la conversión de ese
+stream a un trabajo de sincronización, pero también eliminó el aviso local que
+despertaba la pantalla del cajero. El diálogo sigue consultando la decisión al
+recibir un evento de `/edge/v1/events`, por lo que podía quedar esperando aun
+cuando la aprobación y su notificación móvil hubieran tenido éxito.
+
+Edge ahora publica una invalidación de `PosUiStateSignal` al recibir `Approvals`.
+El navegador consulta la decisión por la API local autenticada y ejecuta la
+acción pendiente con el mismo identificador de autorización. No se agrega una
+descarga de catálogo ni un sondeo de red. La regresión del host comprueba que
+el evento despierta al suscriptor local.

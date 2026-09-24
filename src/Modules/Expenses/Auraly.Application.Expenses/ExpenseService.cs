@@ -73,7 +73,10 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
         Demand(user, ExpensePermissionCodes.Cancel);
         if (expenseId == Guid.Empty || request.CancellationId == Guid.Empty)
             throw new ExpenseValidationException("El gasto y la anulación son obligatorios.");
-        var reason = Text(request.Reason, 300, "Motivo");
+        if (request.ReasonOptionId == Guid.Empty ||
+            (request.ReasonOptionId is not null && !string.IsNullOrWhiteSpace(request.Reason)))
+            throw new ExpenseValidationException("Selecciona un único motivo de anulación válido.");
+        var reason = request.ReasonOptionId is null ? Text(request.Reason, 300, "Motivo") : null;
         var accepted = await store.CancelAsync(user, expenseId, request with { Reason = reason }, ct);
         if (!accepted.IdempotentReplay)
         {

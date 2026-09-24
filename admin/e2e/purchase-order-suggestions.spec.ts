@@ -44,10 +44,10 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
     warehouses: [{ warehouseId, code: "PPL", name: "Principal" }, { warehouseId: "77777777-7777-7777-7777-777777777777", code: "AUX", name: "Auxiliar" }],
     suppliers: [], purchaseEvidenceTypes: [], withholdingConcepts: [], withholdingJurisdictions: [],
   }));
-  await page.route("**/api/commerce/v1/parties?**", route => {
+  await page.route("**/api/commerce/v1/parties/role-options?**", route => {
     partyRequests.push(new URL(route.request().url()));
     return json(route, {
-    items: [{ partyId: supplierId, supplierId, displayName: "Proveedor Andino", identification: "900100200", email: null, roles: ["Supplier"], isActive: true }],
+    items: [{ partyId: supplierId, roleId: supplierId, role: "Supplier", displayName: "Proveedor Andino", identification: "900100200", supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 }],
     page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
     });
   });
@@ -133,6 +133,16 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await expect(restored.getByText("Entrega esperada", { exact: true }).locator("..").getByRole("button").first()).toHaveText(selectedExpectedDate ?? "");
   await expect(restored.locator("tbody tr").first()).toContainText("Café tostado");
   await expect(restored.locator("tbody tr").first().locator('input[type="number"]')).toHaveValue("4");
+  await restored.getByRole("button", { name: "Quitar selección de Seleccionar supplier" }).click();
+  const clearSupplier = page.getByRole("dialog", { name: "Quitar proveedor" });
+  await expect(clearSupplier).toContainText("limpiaremos esas líneas");
+  await clearSupplier.getByRole("button", { name: "Conservar proveedor actual" }).click();
+  await expect(restored.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Proveedor Andino");
+  await expect(restored.locator("tbody tr").first()).toContainText("Café tostado");
+  await restored.getByRole("button", { name: "Quitar selección de Seleccionar supplier" }).click();
+  await page.getByRole("dialog", { name: "Quitar proveedor" }).getByRole("button", { name: "Quitar y limpiar productos" }).click();
+  await expect(restored.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Buscar proveedor");
+  await expect(restored.locator("tbody tr")).toHaveCount(0);
   await restored.getByRole("button", { name: "Descartar captura" }).click();
   await expect(restored).toBeHidden();
   await expect.poll(() => page.evaluate(({ key }) => localStorage.getItem(key), {

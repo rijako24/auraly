@@ -146,6 +146,7 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
     outstandingAmount: 5000, dueDate: expense.dueDate, status: "Open", isOverdue: false,
     createdAt: expense.issuedAt };
   const expenseQueries: URL[] = [];
+  let cancellationRequest: Record<string, string> | null = null;
   await page.route("**/api/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -155,6 +156,13 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
     else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
     else if (path.endsWith("/expenses/options")) body = { concepts: [], suppliers: [], expenseAccounts: [], costCenters: [], purchaseEvidenceTypes: [] };
+    else if (path.endsWith("/reference-options/expense-cancellation-reason")) body = [
+      { id: "74000000-0000-0000-0000-000000000004", code: "NOT_PERFORMED", label: "Compra o servicio no realizado", description: null, sortOrder: 40 },
+    ];
+    else if (path.endsWith(`/expenses/${expenseId}/cancel`)) {
+      cancellationRequest = route.request().postDataJSON() as Record<string, string>;
+      body = { expenseId, cancellationId: cancellationRequest.cancellationId, accountingJobId: "99999999-9999-9999-9999-999999999999", hasFiscalAdjustment: false, idempotentReplay: false };
+    }
     else if (path.endsWith(`/expenses/${expenseId}`)) body = { ...expense,
       description: "Domicilios agotados", taxExclusiveAmount: 5000, vatAmount: 0,
       fiscalNumber: null, fiscalStatus: null, payable: { payableId, status: "Open", originalAmount: 5000, outstandingAmount: 5000 },
@@ -203,4 +211,15 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
   await payment.getByRole("button", { name: "Ir a pagar" }).click();
   await expect(page.getByRole("dialog", { name: "Pago a proveedores" })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(1);
+  await page.goto("/dashboard/expenses");
+  await page.getByRole("button", { name: "Ver gasto GTO00-00000020" }).click();
+  await page.getByRole("dialog", { name: "GTO00-00000020" }).getByRole("button", { name: "Anular gasto" }).click();
+  const cancellation = page.getByRole("dialog", { name: "Anular gasto" });
+  await expect(cancellation.getByRole("textbox", { name: "Motivo de anulación" })).toHaveCount(0);
+  await cancellation.getByRole("combobox").click();
+  await page.getByRole("option", { name: "Compra o servicio no realizado" }).click();
+  await cancellation.getByRole("button", { name: "Confirmar anulación" }).click();
+  await expect.poll(() => cancellationRequest).toEqual({
+    cancellationId: expect.any(String), reasonOptionId: "74000000-0000-0000-0000-000000000004",
+  });
 });

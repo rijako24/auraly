@@ -543,7 +543,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
                 await enrollmentRevocation.ApplyAsync(targetDeviceId, credentials.DeviceId);
                 return;
             }
-            signal.Signal(ToTrigger(invalidation.Stream));
+            RouteBusinessInvalidation(invalidation.Stream, signal, uiState);
             events.Record("Info", "Push", "Evento recibido del servidor", invalidation.Stream);
         }
         catch (System.Text.Json.JsonException exception)
@@ -554,6 +554,19 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
                 "Se ignoró un evento de sincronización inválido",
                 exception.Message);
         }
+    }
+
+    internal static void RouteBusinessInvalidation(
+        string stream, PosSynchronizationSignal signal, PosUiStateSignal uiState)
+    {
+        if (stream == PosSynchronizationStreams.Approvals)
+        {
+            // The approval is already authoritative in the server. Wake the local
+            // browser so it reads that decision through its authenticated Edge API.
+            uiState.Publish();
+            return;
+        }
+        signal.Signal(ToTrigger(stream));
     }
 
     private static PosSynchronizationTrigger ToTrigger(string stream) =>

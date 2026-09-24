@@ -64,7 +64,7 @@ import {
   goodsReceiptConfirmationReceivedAt,
 } from "@/lib/goods-receipt-confirmation";
 
-type PendingSupplierChange = { supplier: PartyRoleSelection };
+type PendingSupplierChange = { supplier?: PartyRoleSelection };
 type GoodsReceiptCostLine = GoodsReceiptCostDocument["lines"][number];
 
 type EditorDraft = {
@@ -715,14 +715,14 @@ function ReceiptEditor({
     setCostsExpanded(true);
   };
 
-  const applySupplierChange = (supplier: PartyRoleSelection) => {
-    const supplierId = supplier.supplierId ?? "";
-    setSelectedSupplier(supplier);
-    const evidenceType = supplier.supplierPurchaseEvidencePolicy ?? "";
+  const applySupplierChange = (supplier?: PartyRoleSelection) => {
+    const supplierId = supplier?.supplierId ?? "";
+    setSelectedSupplier(supplier ?? null);
+    const evidenceType = supplier?.supplierPurchaseEvidencePolicy ?? "";
     const issueDate = draft.supplierInvoiceDate || todayInput();
     change({ supplierId, lines: [], purchaseOrderId: "", purchaseEvidenceType: evidenceType,
       supplierInvoiceNumber: "", supplierInvoiceDate: issueDate,
-      dueDate: draft.createsPayable
+      dueDate: draft.createsPayable && supplier
         ? plusDaysFrom(issueDate, supplier.supplierDefaultPaymentDueDays ?? 30) : "" });
     setPendingSupplierChange(undefined);
     setIncludeUnassociated(false);
@@ -730,8 +730,8 @@ function ReceiptEditor({
   };
 
   const requestSupplierChange = (supplierId: string, supplier?: PartyRoleSelection) => {
-    if (!supplier) return;
     if (supplierId === draft.supplierId) return;
+    if (supplierId && !supplier) return;
     if (draft.lines.length === 0) {
       applySupplierChange(supplier);
       return;
@@ -1523,7 +1523,7 @@ function ReceiptEditor({
 
       <SupplierChangeConfirmationDialog
         open={!!pendingSupplierChange}
-        supplierName={pendingSupplierChange?.supplier.displayName}
+        supplierName={pendingSupplierChange?.supplier?.displayName}
         productCount={draft.lines.length}
         documentName="recepción"
         onCancel={() => setPendingSupplierChange(undefined)}

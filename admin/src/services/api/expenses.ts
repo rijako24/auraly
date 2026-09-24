@@ -16,9 +16,9 @@ export const expensesApi = {
   options: () => apiClient.get<ExpenseOptions>("/commerce/v1/expenses/options"),
   list: (params:{page:number;pageSize:number;search?:string;supplierId?:string;conceptId?:string;from?:string;to?:string;status?:string;payableStatus?:string}) => apiClient.get<ExpensePage>("/commerce/v1/expenses", params),
   get: (expenseId:string) => apiClient.get<ExpenseDetail>(`/commerce/v1/expenses/${expenseId}`),
-  cancel: (expenseId:string, cancellationId:string, reason:string) =>
+  cancel: (expenseId:string, cancellationId:string, reasonOptionId:string) =>
     apiClient.post<{expenseId:string;cancellationId:string;accountingJobId:string;hasFiscalAdjustment:boolean;idempotentReplay:boolean}>(
-      `/commerce/v1/expenses/${expenseId}/cancel`, {cancellationId,reason}),
+      `/commerce/v1/expenses/${expenseId}/cancel`, {cancellationId,reasonOptionId}),
   confirm: (request: ConfirmExpense) => apiClient.postIdempotent("/commerce/v1/expenses/confirm", request, request.expenseId),
   saveConcept: (request: SaveExpenseConcept) => apiClient.put<ExpenseConcept>(`/commerce/v1/expenses/concepts/${request.conceptId}`, request),
 };

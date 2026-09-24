@@ -53,7 +53,7 @@ public sealed record ExpenseDocumentPayload(Guid TenantId, Guid BusinessId, Guid
 public sealed record ExpenseAcceptance(Guid ExpenseId, Guid MovementId, string DocumentNumber,
     string Status, long ProcessingSequence, bool IdempotentReplay, Guid? AccountingJobId = null, bool HasFiscalSupport = false);
 
-public sealed record CancelExpenseRequest(Guid CancellationId, string Reason);
+public sealed record CancelExpenseRequest(Guid CancellationId, string? Reason = null, Guid? ReasonOptionId = null);
 public sealed record ExpenseCancellationPayload(Guid TenantId, Guid BusinessId, Guid CancellationId,
     Guid CancelledByUserId, DateTimeOffset CancelledAt, string Reason,
     ExpenseDocumentPayload Original, Guid? PayableId, decimal PayableCredit,

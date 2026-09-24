@@ -5,6 +5,22 @@ namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosSynchronizationStateTests
 {
+    [Fact]
+    public void Approval_push_wakes_the_local_cashier()
+    {
+        var state = new PosUiStateSignal();
+        var synchronization = new PosSynchronizationSignal();
+        var (subscriptionId, reader) = state.Subscribe();
+
+        PosWebPubSubConnection.RouteBusinessInvalidation(
+            Auraly.BuildingBlocks.Application.Synchronization.PosSynchronizationStreams.Approvals,
+            synchronization, state);
+
+        Assert.True(reader.TryRead(out var notification));
+        Assert.Equal("state", notification);
+        state.Unsubscribe(subscriptionId);
+    }
+
     [Theory]
     [InlineData(1, false)]
     [InlineData(2, true)]

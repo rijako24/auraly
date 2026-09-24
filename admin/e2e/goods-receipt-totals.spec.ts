@@ -4,6 +4,7 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
   const documentId = "33333333-3333-3333-3333-333333333333";
+  const supplierId = "55555555-5555-5555-5555-555555555555";
   const permissions = ["dashboard.read", "purchasing.goods-receipts.read", "purchasing.goods-receipts.create"];
   const user = { userId: "44444444-4444-4444-4444-444444444444", tenantId,
     tenantKey: "TEST", username: "test", firstName: "Prueba", lastName: "Compras",
@@ -51,11 +52,19 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
       purchaseCostEvidenceTypes: [], purchaseCostKinds: [], purchaseCostTreatments: [], purchaseCostAllocationMethods: [],
       purchaseTaxRates: [], purchaseTaxTreatments: [], purchaseCurrencies: [], exchangeRateSources: [],
     };
+    else if (path.endsWith("/parties/role-options")) body = { items: [
+      { partyId: supplierId, roleId: supplierId, role: "Supplier", displayName: "Proveedor de prueba", identification: "900100200", supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 0 },
+    ], page: 1, pageSize: 10, totalCount: 1, totalPages: 1 };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
   await page.getByRole("button", { name: "Nueva entrada" }).click();
   const editor = page.getByRole("dialog", { name: "Recepción de compra" });
+  await editor.getByRole("combobox", { name: "Seleccionar supplier" }).first().click();
+  await page.getByRole("option", { name: /Proveedor de prueba/ }).click();
+  await expect(editor.getByRole("combobox", { name: "Seleccionar supplier" }).first()).toContainText("Proveedor de prueba");
+  await editor.getByRole("button", { name: "Quitar selección de Seleccionar supplier" }).first().click();
+  await expect(editor.getByRole("combobox", { name: "Seleccionar supplier" }).first()).toContainText("Buscar proveedor");
   await expect(editor.getByRole("columnheader", { name: "Costo unitario" })).toBeVisible();
   await expect(editor.getByRole("columnheader", { name: /Costo total/ })).toHaveCount(0);
   await expect(editor.getByRole("columnheader", { name: "Total factura · COP" })).toBeVisible();

@@ -20,16 +20,18 @@ export function SupplierChangeConfirmationDialog({
   return <Dialog open={open} onOpenChange={(value) => !value && onCancel()}>
     <DialogContent className="sm:max-w-md">
       <DialogHeader>
-        <DialogTitle>Cambiar proveedor</DialogTitle>
+        <DialogTitle>{supplierName ? "Cambiar proveedor" : "Quitar proveedor"}</DialogTitle>
         <DialogDescription>
           Esta {documentName} ya tiene {productCount} {productCount === 1 ? "producto agregado" : "productos agregados"}.
-          Al cambiar a {supplierName}, limpiaremos esas líneas para evitar mezclar productos, costos o códigos de proveedores distintos.
+          {supplierName
+            ? ` Al cambiar a ${supplierName}, limpiaremos esas líneas para evitar mezclar productos, costos o códigos de proveedores distintos.`
+            : " Al quitar el proveedor, limpiaremos esas líneas porque sus productos y costos dependen de él."}
         </DialogDescription>
       </DialogHeader>
-      <p className="text-sm text-muted-foreground">Los demás datos de la {documentName} se conservarán.</p>
+      <p className="text-sm text-muted-foreground">La captura quedará abierta para continuar.</p>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>Conservar proveedor actual</Button>
-        <Button type="button" variant="destructive" onClick={onConfirm}>Cambiar y limpiar productos</Button>
+        <Button type="button" variant="destructive" onClick={onConfirm}>{supplierName ? "Cambiar" : "Quitar"} y limpiar productos</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>;

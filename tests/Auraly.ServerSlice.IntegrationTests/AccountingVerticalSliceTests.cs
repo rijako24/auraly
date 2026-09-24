@@ -1863,7 +1863,15 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             using (var cancellationUser = fixture.CreateAdminClient(
                        ExpensePermissionCodes.Read, ExpensePermissionCodes.Cancel))
             {
-                var cancellation = new CancelExpenseRequest(Guid.NewGuid(), "Servicio no prestado");
+                var invalidReason = new CancelExpenseRequest(Guid.NewGuid(),
+                    ReasonOptionId: Guid.Parse("69000000-0000-0000-0000-000000000003"));
+                using var invalidResponse = await cancellationUser.PostAsJsonAsync(
+                    $"/api/commerce/v1/expenses/{expenseId:D}/cancel", invalidReason);
+                Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+                Assert.Equal("Processed", await ScalarAsync<string>(
+                    "SELECT Status FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
+                var reasonOptionId = Guid.Parse("74000000-0000-0000-0000-000000000004");
+                var cancellation = new CancelExpenseRequest(Guid.NewGuid(), ReasonOptionId: reasonOptionId);
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 using var response = await cancellationUser.PostAsJsonAsync(
                     $"/api/commerce/v1/expenses/{expenseId:D}/cancel", cancellation);
@@ -1890,6 +1898,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                     """, cancellation.CancellationId));
                 Assert.Equal("Cancelled", await ScalarAsync<string>(
                     "SELECT Status FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
+                Assert.Equal(reasonOptionId, await ScalarAsync<Guid>(
+                    "SELECT CancellationReasonOptionId FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
+                Assert.Equal("Compra o servicio no realizado", await ScalarAsync<string>(
+                    "SELECT CancellationReason FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
                 Assert.Equal(0m, await ScalarAsync<decimal>(
                     "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", expensePayableId));
                 Assert.Equal(40_000m, await ScalarAsync<decimal>(

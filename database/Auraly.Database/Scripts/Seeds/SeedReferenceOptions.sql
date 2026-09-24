@@ -193,6 +193,15 @@ VALUES
 ('6A000000-0000-0000-0000-000000000004',N'tax-responsibility',N'O-47',N'Régimen Simple de Tributación',N'Responsabilidad fiscal DIAN O-47.',40),
 ('6A000000-0000-0000-0000-000000000005',N'tax-responsibility',N'R-99-PN',N'No aplica · Otros',N'Responsabilidad fiscal DIAN R-99-PN.',50);
 
+INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
+VALUES
+('74000000-0000-0000-0000-000000000001',N'expense-cancellation-reason',N'DUPLICATE',N'Gasto duplicado',NULL,10),
+('74000000-0000-0000-0000-000000000002',N'expense-cancellation-reason',N'WRONG_SUPPLIER',N'Proveedor incorrecto',NULL,20),
+('74000000-0000-0000-0000-000000000003',N'expense-cancellation-reason',N'WRONG_AMOUNT',N'Valor o impuestos incorrectos',NULL,30),
+('74000000-0000-0000-0000-000000000004',N'expense-cancellation-reason',N'NOT_PERFORMED',N'Compra o servicio no realizado',NULL,40),
+('74000000-0000-0000-0000-000000000005',N'expense-cancellation-reason',N'INVALID_SUPPORT',N'Soporte inválido o reemplazado',NULL,50),
+('74000000-0000-0000-0000-000000000006',N'expense-cancellation-reason',N'INVOICE_CHARGE_CORRECTION',N'Corrección de cargo de facturación',NULL,60);
+
 MERGE [reference].[Options] AS target
 USING @Source AS source
 ON target.CatalogCode=source.CatalogCode AND target.Code=source.Code
@@ -205,7 +214,7 @@ WHEN NOT MATCHED THEN
            source.Description,1,source.SortOrder,@Now,@Now)
 WHEN NOT MATCHED BY SOURCE
      AND target.CatalogCode IN
-       (N'payment-method',N'cash-closure-method',N'cash-denomination',N'cash-reconciliation-reason',N'card-franchise',N'bank-account-type',N'sales-return-resolution-method',N'sales-return-scope',N'sales-document-type',N'purchase-presentation',
+       (N'payment-method',N'cash-closure-method',N'cash-denomination',N'cash-reconciliation-reason',N'expense-cancellation-reason',N'card-franchise',N'bank-account-type',N'sales-return-resolution-method',N'sales-return-scope',N'sales-document-type',N'purchase-presentation',
         N'inventory-operation-type',N'agent-bot-type',N'accounting-account-type',
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',
