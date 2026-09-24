@@ -156,6 +156,12 @@ test("pedidos agrupa filtros y consulta cliente y vendedor por identificador", a
   await page.getByRole("option", { name: /Cliente Ejemplo/ }).click();
   await page.getByRole("combobox", { name: "Seleccionar seller" }).click();
   await page.getByRole("option", { name: /Ana Vendedora/ }).click();
+  const sellerClear = page.getByRole("button", { name: "Quitar selección de Seleccionar seller" });
+  const sellerClearBox = await sellerClear.boundingBox();
+  const sellerChevronBox = await page.getByRole("combobox", { name: "Seleccionar seller" }).locator("svg").boundingBox();
+  expect(sellerClearBox).not.toBeNull();
+  expect(sellerChevronBox).not.toBeNull();
+  expect(sellerChevronBox!.x - sellerClearBox!.x - sellerClearBox!.width).toBeGreaterThanOrEqual(4);
 
   await expect.poll(() => orderRequests.some((value) => value.includes(`customerId=${customerId}`) && value.includes(`sellerId=${sellerId}`))).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("orders-filters.png"), fullPage: true });

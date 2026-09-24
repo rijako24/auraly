@@ -95,9 +95,9 @@ export function PagedEntitySelect<T>({
   return <Popover modal open={open} onOpenChange={setOpen}>
     <div className="relative">
     <PopoverTrigger asChild>
-      <Button ref={triggerRef} type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("w-full justify-between font-normal", onClear && "pr-10", className)}>
-        <span className="truncate">{selected?.label ?? placeholder}</span>
-        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/>
+      <Button ref={triggerRef} type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("relative w-full justify-start font-normal", onClear ? "pr-16" : "pr-10", className)}>
+        <span className="min-w-0 truncate text-left">{selected?.label ?? placeholder}</span>
+        <ChevronsUpDown className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50"/>
       </Button>
     </PopoverTrigger>
     {onClear && !disabled && <button type="button" aria-label={`Quitar selección de ${ariaLabel ?? "tercero"}`} className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={()=>{setOpen(false);onClear()}}><X className="h-4 w-4"/></button>}
